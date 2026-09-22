@@ -116,7 +116,8 @@ async def ws_status(ws: WebSocket):
 # --------------------------------------------------------------------------
 #  Служебные эндпоинты
 # --------------------------------------------------------------------------
-@app.get("/health", tags=["Служебные"], summary="Проверка работоспособности")
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["Служебные"],
+               summary="Проверка работоспособности")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION,
             "vendor": settings.VENDOR, "site": settings.VENDOR_SITE}
@@ -163,7 +164,7 @@ STATIC_DIR = BASE_DIR / "app" / "static"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
-@app.get("/{full_path:path}", include_in_schema=False)
+@app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(full_path: str):
     """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
     if full_path.startswith(("api/", "onec/", "ws/")):

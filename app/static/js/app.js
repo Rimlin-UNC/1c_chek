@@ -47,19 +47,43 @@ async function boot() {
   injectIcons();
   registerServiceWorker();
   bindShell();
+  showSplash(true);
 
   // Регистрация по приглашению: #/register/<token>
   const m = location.hash.match(/^#\/register\/(.+)$/);
-  if (m) { showRegister(m[1]); return; }
+  if (m) { showSplash(false); showRegister(m[1]); return; }
 
+  // Есть сохранённый токен — проверяем его (сеть могла «просыпаться»)
   if (getToken()) {
-    try {
-      state.me = await api.get('/api/v1/auth/me');
-      enterApp();
-      return;
-    } catch { clearToken(); }
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        state.me = await api.get('/api/v1/auth/me', { retries: 1 });
+        enterApp();
+        showSplash(false);
+        return;
+      } catch (e) {
+        if (e && e.status === 401) break;         // токен реально недействителен
+        // Сетевая проблема — НЕ стираем токен, ждём и пробуем снова
+        await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+      }
+    }
+    clearToken();
   }
+  showSplash(false);
   showLogin();
+}
+
+// Экран «Подключение…» — исключает мигание карточки входа при проверке токена
+function showSplash(show) {
+  let el = document.getElementById('boot-splash');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'boot-splash';
+    el.style.cssText = 'position:fixed;inset:0;z-index:300;background:#0b1020;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;color:#9aa3bd;font-size:14px';
+    el.innerHTML = '<img src="/img/logo.svg" width="52" height="52" alt=""><b>Ямастер Чек</b><span class="spinner"></span>';
+    document.body.appendChild(el);
+  }
+  el.style.display = show ? 'flex' : 'none';
 }
 
 function showLogin() {
@@ -99,6 +123,9 @@ async function showRegister(token) {
   $('#login-screen').classList.add('hidden');
   $('#app-shell').classList.add('hidden');
   $('#register-screen').classList.remove('hidden');
+  // Всегда есть выход на обычный вход (приглашение может оказаться недействительным)
+  const back = document.getElementById('reg-back-to-login');
+  if (back) back.onclick = (e) => { e.preventDefault(); history.replaceState(null, '', location.pathname); showLogin(); };
 
   const badge = $('#reg-invite-badge');
   try {
@@ -133,6 +160,7 @@ async function showRegister(token) {
       });
       setToken(r.access_token);
       state.me = r.user;
+      history.replaceState(null, '', location.pathname + '#/dashboard');
       toast(`Аккаунт создан. Ваша роль: ${roleLabel(r.user.role)}`, 'ok', 'Добро пожаловать!');
       enterApp();
     } catch (err) {
@@ -159,9 +187,19 @@ function enterApp() {
   $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
   $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
   connectWS();
-  window.addEventListener('ymaster:logout', () => { location.hash = ''; logout(); });
+
+  // Один обработчик выхода (без дублирования при повторных входах)
+  if (!window.__ymasterLogoutBound) {
+    window.__ymasterLogoutBound = true;
+    window.addEventListener('ymaster:logout', () => logout());
+  }
+
+  // При входе по ссылке-приглашению убираем токен приглашения из адреса
+  // (replaceState — без лишнего hashchange, иначе route() сработает дважды)
+  if (!location.hash || location.hash.startsWith('#/register')) {
+    history.replaceState(null, '', location.pathname + '#/dashboard');
+  }
   if (state.me.must_change_password) forcePasswordChange();
-  if (!location.hash || location.hash.startsWith('#/register')) location.hash = '#/dashboard';
   route();
   refreshBadges();
   window.addEventListener('online', flushOfflineQueue);
@@ -170,15 +208,21 @@ function enterApp() {
 
 function logout() {
   clearToken();
+  // Очищаем и серверную cookie сессии (fire-and-forget)
+  try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch (e) {}
   state.me = null;
-  if (state.ws) { state.ws.close(); state.ws = null; }
+  state.receiptsSelected.clear();
+  if (state.ws) { try { state.ws.close(); } catch (e) {} state.ws = null; }
   if (state.camera) { state.camera.stop(); state.camera = null; }
+  history.replaceState(null, '', location.pathname);
   location.reload();
 }
 
 // Обязательная смена временного пароля (первый вход администратора / после сброса)
 function forcePasswordChange() {
+  if (document.getElementById('force-change-overlay')) return; // уже показано
   const overlay = document.createElement('div');
+  overlay.id = 'force-change-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(4,7,16,.85);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px';
   overlay.innerHTML = `
     <div class="glass" style="width:min(440px,94vw);padding:30px">
@@ -195,6 +239,7 @@ function forcePasswordChange() {
           <input type="password" id="fc-new2"></label>
         <div id="fc-error" class="form-error hidden"></div>
         <button class="btn btn-primary btn-block" id="fc-save">Сохранить пароль</button>
+        <button class="btn btn-block" id="fc-logout">Выйти из системы</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -213,6 +258,7 @@ function forcePasswordChange() {
       err.textContent = e.message; err.classList.remove('hidden');
     }
   };
+  $('#fc-logout', overlay).onclick = () => logout();
 }
 
 // --------------------------------------------------------------------------
@@ -223,7 +269,12 @@ function connectWS() {
   const ws = new WebSocket(`${proto}://${location.host}/ws/status`);
   state.ws = ws;
   ws.onopen = () => setWsStatus(true);
-  ws.onclose = () => { setWsStatus(false); setTimeout(connectWS, 4000); };
+  ws.onclose = () => {
+    setWsStatus(false);
+    state.wsRetry = Math.min((state.wsRetry || 4) * 2, 15);
+    setTimeout(connectWS, state.wsRetry * 1000);
+  };
+  ws.onopen = () => { state.wsRetry = 4; };
   ws.onerror = () => setWsStatus(false);
   ws.onmessage = (ev) => {
     try {
@@ -293,6 +344,7 @@ function route(silent = false) {
   const hash = location.hash.replace(/^#\//, '') || 'dashboard';
   const parts = hash.split('/');
   const view = parts[0].split('?')[0];
+  if (view === 'register') { location.hash = '#/dashboard'; return; }
   state.routeParam = parts.slice(1).join('/') || '';
   state.view = view;
   const container = $('#view-container');

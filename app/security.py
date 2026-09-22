@@ -57,9 +57,11 @@ limiter = SlidingWindowLimiter()
 # Зоны: (префикс пути, ключ, лимит, окно сек)
 def _zone_for(path: str):
     if path.startswith("/api/v1/auth/login"):
-        return "login", 10, 60          # подбор пароля бессмыслен
+        # Подбор пароля бессмыслен: LoginGuard блокирует по (IP+логин) после 5 неудач.
+        # Лимит зоны выше, т.к. за одним IP превью/прокси могут быть несколько людей.
+        return "login", 25, 60
     if path.startswith(("/api/v1/auth/register", "/api/v1/auth/invite-info")):
-        return "register", 20, 3600
+        return "register", 40, 3600
     if path.startswith("/onec/"):
         return "onec", 120, 60
     if path.startswith("/api/"):

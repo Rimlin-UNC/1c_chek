@@ -81,12 +81,18 @@ def decode_token(token: str) -> dict:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    if credentials is None or not credentials.credentials:
+    # Приоритет: заголовок Authorization; запасной вариант — HttpOnly-cookie
+    # (гарантирует работу даже если JS не смог передать заголовок).
+    token = credentials.credentials if credentials and credentials.credentials else None
+    if not token:
+        token = request.cookies.get("ymaster_token")
+    if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется авторизация")
-    payload = decode_token(credentials.credentials)
+    payload = decode_token(token)
     user = db.get(User, payload.get("sub", ""))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Пользователь не найден или отключён")

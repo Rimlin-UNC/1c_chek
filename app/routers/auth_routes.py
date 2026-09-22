@@ -14,8 +14,10 @@ import datetime as dt
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, client_ip,
                     create_access_token, get_current_user, hash_password,
                     verify_password)
@@ -46,11 +48,20 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     user.last_login_at = dt.datetime.utcnow()
     db.commit()
     log_action(user, "login", details={"ip": ip})
-    return {
-        "access_token": create_access_token(user),
+    token = create_access_token(user)
+    resp = JSONResponse({
+        "access_token": token,
         "token_type": "bearer",
         "user": user.to_dict(),
-    }
+    })
+    # Дублируем токен в HttpOnly-cookie: браузер передаёт её автоматически,
+    # поэтому «вход успешен → следующий запрос 401» невозможен в принципе.
+    resp.set_cookie(
+        "ymaster_token", token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True, samesite="lax", path="/",
+    )
+    return resp
 
 
 # --------------------------------------------------------------------------
@@ -98,8 +109,15 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
     db.refresh(user)
     log_action(user, "register", "user", user.id,
                {"role": user.role, "invite": invite.id, "ip": client_ip(request)})
-    return {"access_token": create_access_token(user), "token_type": "bearer",
-            "user": user.to_dict()}
+    token = create_access_token(user)
+    resp = JSONResponse({"access_token": token, "token_type": "bearer",
+                         "user": user.to_dict()})
+    resp.set_cookie(
+        "ymaster_token", token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True, samesite="lax", path="/",
+    )
+    return resp
 
 
 @router.get("/me", summary="Текущий пользователь")
@@ -117,4 +135,19 @@ def change_password(body: PasswordChange, request: Request,
     user.must_change_password = False
     db.commit()
     log_action(user, "password_changed", details={"ip": client_ip(request)})
-    return {"ok": True, "message": "Пароль изменён"}
+    # Перевыпускаем токен и cookie (старый JWT содержит прежние claims)
+    token = create_access_token(user)
+    resp = JSONResponse({"ok": True, "message": "Пароль изменён",
+                         "access_token": token, "token_type": "bearer"})
+    resp.set_cookie(
+        "ymaster_token", token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True, samesite="lax", path="/",
+    )
+    return resp
+
+
+@router.post("/logout", summary="Выход (очистка cookie сессии)")
+def logout(response: Response):
+    response.delete_cookie("ymaster_token", path="/")
+    return {"ok": True, "message": "Вы вышли из системы"}

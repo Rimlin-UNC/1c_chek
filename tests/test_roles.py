@@ -214,3 +214,37 @@ class TestBruteForce:
         lim = SlidingWindowLimiter()
         allowed = sum(1 for _ in range(10) if lim.allow("k", 5, 60))
         assert allowed == 5
+
+
+# ---------------------------------------------------------------------------
+#  Петля входа: cookie-фолбэк (регрессия — логин 200, следующий запрос 401)
+# ---------------------------------------------------------------------------
+class TestSessionCookie:
+    def test_login_sets_cookie(self, client):
+        r = client.post("/api/v1/auth/login",
+                        json={"username": "admin", "password": "admin123"})
+        assert r.status_code == 200
+        assert "ymaster_token" in r.cookies, "cookie сессии не установлена"
+
+    def test_requests_work_via_cookie_only(self, client):
+        # Без заголовка Authorization — только cookie: не должно быть 401
+        client.post("/api/v1/auth/login",
+                    json={"username": "admin", "password": "admin123"})
+        r = client.get("/api/v1/dashboard/stats?days=7")
+        assert r.status_code == 200, r.text
+        r2 = client.get("/api/v1/auth/me")
+        assert r2.status_code == 200
+        assert r2.json()["username"] == "admin"
+
+    def test_no_cookie_no_token_returns_401(self, client):
+        client.cookies.clear()   # session-scoped клиент: убираем cookie прошлых тестов
+        assert client.get("/api/v1/auth/me").status_code == 401
+
+    def test_logout_clears_cookie(self, client):
+        client.post("/api/v1/auth/login",
+                    json={"username": "admin", "password": "admin123"})
+        r = client.post("/api/v1/auth/logout")
+        assert r.status_code == 200
+        # cookie удалена → запрос без заголовка снова 401
+        client.cookies.clear()
+        assert client.get("/api/v1/auth/me").status_code == 401

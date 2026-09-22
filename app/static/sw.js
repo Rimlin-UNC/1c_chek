@@ -5,7 +5,7 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v2';
+const CACHE = 'ymaster-check-v3';
 const ASSETS = [
   '/', '/index.html', '/css/app.css', '/js/app.js', '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/vendor/jsQR.js',
@@ -27,8 +27,35 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/onec/') || url.pathname.startsWith('/ws/')) {
-    return; // сеть
+    return; // API — только сеть
   }
+
+  // Код приложения (страницы, JS, CSS, манифест) — СНАЧАЛА сеть, чтобы
+  // клиент всегда соответствовал серверу; кэш — только если сеть недоступна.
+  const isAppCode =
+    e.request.mode === 'navigate' ||
+    url.pathname === '/' ||
+    url.pathname.endsWith('.html') ||
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.css') ||
+    url.pathname.endsWith('.webmanifest');
+
+  if (isAppCode) {
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        if (resp.ok && url.origin === location.origin) {
+          const copy = resp.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy));
+        }
+        return resp;
+      }).catch(() =>
+        caches.match(e.request).then(hit => hit || caches.match('/index.html'))
+      )
+    );
+    return;
+  }
+
+  // Картинки и прочая статика — cache-first
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(resp => {
       if (resp.ok && url.origin === location.origin) {
