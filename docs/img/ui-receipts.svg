@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" font-family="Segoe UI, Arial, sans-serif">
+  <!-- Ямастер Чек — скриншот-схема: Чеки. ООО «Ямастер», ymaster.ru -->
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="660" fill="#0b1020" rx="14"/>
+
+  <rect x="0" y="0" width="228" height="660" fill="#0a0e1e" stroke="#1c2340"/>
+  <circle cx="34" cy="38" r="15" fill="url(#g1)"/>
+  <text x="58" y="34" fill="#e8ecf8" font-size="15" font-weight="800">Ямастер <tspan fill="#22d3ee">Чек</tspan></text>
+  <g font-size="13">
+    <text x="34" y="109" fill="#9aa3bd">▦ Дашборд</text>
+    <text x="34" y="149" fill="#9aa3bd">⌗ Сканирование</text>
+    <rect x="12" y="164" width="204" height="40" rx="10" fill="rgba(99,102,241,.22)"/>
+    <text x="34" y="189" fill="#ffffff" font-weight="700">☰ Чеки</text>
+    <text x="34" y="229" fill="#9aa3bd">⬇ Выгрузка в 1С</text>
+    <text x="34" y="269" fill="#9aa3bd">⚙ Настройки</text>
+  </g>
+
+  <text x="258" y="46" fill="#e8ecf8" font-size="18" font-weight="750">База чеков</text>
+
+  <!-- Фильтры -->
+  <rect x="258" y="70" width="912" height="64" rx="12" fill="#131a38" stroke="#232c52"/>
+  <g font-size="11" fill="#9aa3bd">
+    <rect x="278" y="84" width="200" height="36" rx="8" fill="#0d1428" stroke="#2b3563"/>
+    <text x="290" y="106" fill="#6b7494">Поиск: ФН/ФД/ФП…</text>
+    <rect x="492" y="84" width="130" height="36" rx="8" fill="#0d1428" stroke="#2b3563"/>
+    <text x="504" y="106">Статус: все</text>
+    <rect x="636" y="84" width="140" height="36" rx="8" fill="#0d1428" stroke="#2b3563"/>
+    <text x="648" y="106">ФНС: любая</text>
+    <rect x="790" y="84" width="150" height="36" rx="8" fill="#0d1428" stroke="#2b3563"/>
+    <text x="802" y="106">1С: ожидают</text>
+    <rect x="954" y="84" width="110" height="36" rx="8" fill="url(#g1)"/>
+    <text x="1009" y="106" text-anchor="middle" fill="#fff" font-weight="700">Найти</text>
+  </g>
+
+  <!-- Кнопки массовых действий -->
+  <g font-size="11" font-weight="700">
+    <rect x="258" y="148" width="200" height="32" rx="8" fill="rgba(52,211,153,.1)" stroke="rgba(52,211,153,.4)"/>
+    <text x="358" y="168" text-anchor="middle" fill="#34d399">✓ Проверить в ФНС (выбранные)</text>
+    <rect x="470" y="148" width="230" height="32" rx="8" fill="url(#g1)"/>
+    <text x="585" y="168" text-anchor="middle" fill="#fff">⬇ Выгрузить в 1С (выбранные)</text>
+    <rect x="712" y="148" width="170" height="32" rx="8" fill="rgba(248,113,113,.08)" stroke="rgba(248,113,113,.4)"/>
+    <text x="797" y="168" text-anchor="middle" fill="#f87171">🗑 Удалить выбранные</text>
+    <text x="900" y="168" fill="#6b7494">выбрано: 2</text>
+  </g>
+
+  <!-- Таблица -->
+  <rect x="258" y="196" width="912" height="368" rx="12" fill="#131a38" stroke="#232c52"/>
+  <g font-size="10.5" fill="#6b7494" font-weight="700">
+    <text x="278" y="222">☐</text><text x="306" y="222">ДАТА ЧЕКА</text>
+    <text x="420" y="222">СУММА</text><text x="520" y="222">ФН</text>
+    <text x="650" y="222">ФД</text><text x="716" y="222">ФП</text>
+    <text x="790" y="222">СТАТУС</text><text x="888" y="222">ФНС</text><text x="990" y="222">1С</text>
+  </g>
+  <line x1="258" y1="234" x2="1170" y2="234" stroke="#232c52"/>
+  <g font-size="12">
+    <rect x="272" y="246" width="896" height="40" rx="6" fill="rgba(99,102,241,.14)"/>
+    <text x="278" y="271">☑</text><text x="306" y="271" fill="#9aa3bd">20.09.26 18:35</text>
+    <text x="420" y="271" fill="#e8ecf8" font-weight="700">3 420,00 ₽</text>
+    <text x="520" y="271" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">7281440300724321</text>
+    <text x="650" y="271" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">77890</text>
+    <text x="716" y="271" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">33445566…</text>
+    <rect x="782" y="254" width="82" height="24" rx="12" fill="rgba(52,211,153,.1)" stroke="rgba(52,211,153,.35)"/>
+    <text x="823" y="270" text-anchor="middle" fill="#34d399" font-size="10">Проверен</text>
+    <rect x="880" y="254" width="92" height="24" rx="12" fill="rgba(52,211,153,.1)" stroke="rgba(52,211,153,.35)"/>
+    <text x="926" y="270" text-anchor="middle" fill="#34d399" font-size="10">Действителен</text>
+    <rect x="984" y="254" width="66" height="24" rx="12" fill="rgba(192,132,252,.1)" stroke="rgba(192,132,252,.35)"/>
+    <text x="1017" y="270" text-anchor="middle" fill="#c084fc" font-size="10">да</text>
+
+    <text x="278" y="311">☐</text><text x="306" y="311" fill="#9aa3bd">18.09.26 10:15</text>
+    <text x="420" y="311" fill="#e8ecf8" font-weight="700">990,00 ₽</text>
+    <text x="520" y="311" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">7281440300721111</text>
+    <text x="650" y="311" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">11111</text>
+    <text x="716" y="311" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">22233344…</text>
+    <rect x="782" y="294" width="82" height="24" rx="12" fill="rgba(52,211,153,.1)" stroke="rgba(52,211,153,.35)"/>
+    <text x="823" y="310" text-anchor="middle" fill="#34d399" font-size="10">Проверен</text>
+    <rect x="880" y="294" width="92" height="24" rx="12" fill="rgba(52,211,153,.1)" stroke="rgba(52,211,153,.35)"/>
+    <text x="926" y="310" text-anchor="middle" fill="#34d399" font-size="10">Действителен</text>
+    <rect x="984" y="294" width="66" height="24" rx="12" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+    <text x="1017" y="310" text-anchor="middle" fill="#9aa3bd" font-size="10">нет</text>
+
+    <text x="278" y="351">☑</text><text x="306" y="351" fill="#9aa3bd">17.09.26 12:40</text>
+    <text x="420" y="351" fill="#e8ecf8" font-weight="700">1 520,50 ₽</text>
+    <text x="520" y="351" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">9999078902001234</text>
+    <text x="650" y="351" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">54321</text>
+    <text x="716" y="351" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">812345678</text>
+    <rect x="782" y="334" width="82" height="24" rx="12" fill="rgba(96,165,250,.1)" stroke="rgba(96,165,250,.35)"/>
+    <text x="823" y="350" text-anchor="middle" fill="#60a5fa" font-size="10">Новый</text>
+    <rect x="880" y="334" width="92" height="24" rx="12" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+    <text x="926" y="350" text-anchor="middle" fill="#9aa3bd" font-size="10">Не проверен</text>
+    <rect x="984" y="334" width="66" height="24" rx="12" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+    <text x="1017" y="350" text-anchor="middle" fill="#9aa3bd" font-size="10">нет</text>
+
+    <text x="278" y="391">☐</text><text x="306" y="391" fill="#9aa3bd">16.09.26 09:05</text>
+    <text x="420" y="391" fill="#e8ecf8" font-weight="700">799,99 ₽</text>
+    <text x="520" y="391" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">7281440300721234</text>
+    <text x="650" y="391" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">98765</text>
+    <text x="716" y="391" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">987654321</text>
+    <rect x="782" y="374" width="82" height="24" rx="12" fill="rgba(251,191,36,.1)" stroke="rgba(251,191,36,.35)"/>
+    <text x="823" y="390" text-anchor="middle" fill="#fbbf24" font-size="10">Проверяется</text>
+    <rect x="880" y="374" width="92" height="24" rx="12" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+    <text x="926" y="390" text-anchor="middle" fill="#9aa3bd" font-size="10">Не проверен</text>
+    <rect x="984" y="374" width="66" height="24" rx="12" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+    <text x="1017" y="390" text-anchor="middle" fill="#9aa3bd" font-size="10">нет</text>
+
+    <text x="278" y="431">☐</text><text x="306" y="431" fill="#9aa3bd">15.09.26 14:22</text>
+    <text x="420" y="431" fill="#e8ecf8" font-weight="700">2 210,00 ₽</text>
+    <text x="520" y="431" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">7281440300725555</text>
+    <text x="650" y="431" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">34567</text>
+    <text x="716" y="431" fill="#9aa3bd" font-family="Consolas, monospace" font-size="11">111222333</text>
+    <rect x="782" y="414" width="82" height="24" rx="12" fill="rgba(248,113,113,.1)" stroke="rgba(248,113,113,.35)"/>
+    <text x="823" y="430" text-anchor="middle" fill="#f87171" font-size="10">Отклонён</text>
+    <rect x="880" y="414" width="92" height="24" rx="12" fill="rgba(248,113,113,.1)" stroke="rgba(248,113,113,.35)"/>
+    <text x="926" y="430" text-anchor="middle" fill="#f87171" font-size="10">Недействителен</text>
+    <rect x="984" y="414" width="66" height="24" rx="12" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+    <text x="1017" y="430" text-anchor="middle" fill="#9aa3bd" font-size="10">нет</text>
+  </g>
+
+  <!-- Пагинация -->
+  <text x="1170" y="590" text-anchor="end" fill="#6b7494" font-size="11">Стр. 1 из 1 · всего 37 на 116 913,21 ₽</text>
+
+  <text x="600" y="640" text-anchor="middle" fill="#4a5478" font-size="10.5">Скриншот-схема веб-клиента «Ямастер Чек» · © ООО «Ямастер», 2026 · ymaster.ru</text>
+</svg>

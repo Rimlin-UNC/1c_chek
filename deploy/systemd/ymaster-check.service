@@ -1,0 +1,33 @@
+# ======================================================================
+# Ямастер Чек — systemd-юнит
+# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+#
+# Установка:
+#   sudo cp deploy/systemd/ymaster-check.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ymaster-check
+# ======================================================================
+[Unit]
+Description=Ямастер Чек — сканирование кассовых чеков и интеграция с 1С
+Documentation=https://ymaster.ru
+After=network.target
+
+[Service]
+Type=simple
+User=ymaster
+Group=ymaster
+WorkingDirectory=/opt/ymaster-check
+Environment=PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin
+ExecStart=/opt/ymaster-check/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+
+# Безопасность
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ymaster-check/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

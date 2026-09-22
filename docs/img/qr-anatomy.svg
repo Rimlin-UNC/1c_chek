@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 470" font-family="Segoe UI, Arial, sans-serif">
+  <!-- Ямастер Чек — анатомия QR-кода чека (54-ФЗ). ООО «Ямастер», ymaster.ru -->
+  <defs>
+    <linearGradient id="gh" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="1180" height="470" fill="#0b1020" rx="14"/>
+  <text x="590" y="42" text-anchor="middle" fill="#e8ecf8" font-size="24" font-weight="700">QR-код кассового чека: анатомия строки (54-ФЗ)</text>
+  <text x="590" y="64" text-anchor="middle" fill="#6b7494" font-size="12.5">Разработчик: ООО «Ямастер» · ymaster.ru</text>
+
+  <!-- Пример QR строки -->
+  <rect x="70" y="96" width="1040" height="64" rx="10" fill="#131a38" stroke="#3d4a7d"/>
+  <text x="590" y="124" text-anchor="middle" fill="#c9d4f5" font-size="17" font-family="Consolas, monospace">t=20250901T1430&amp;s=1520.50&amp;fn=9999078902001234&amp;i=54321&amp;fp=812345678&amp;n=1</text>
+  <text x="590" y="146" text-anchor="middle" fill="#6b7494" font-size="11.5" font-family="Consolas, monospace">дата и время ── сумма ── фискальный накопитель ── номер документа ── фискальный признак ── признак расчёта</text>
+
+  <!-- Карточки тегов -->
+  <g font-size="13">
+    <g transform="translate(70,200)">
+      <rect width="320" height="110" rx="12" fill="#141b36" stroke="#6366f1"/>
+      <text x="20" y="34" fill="#818cf8" font-weight="800" font-size="16">t=</text>
+      <text x="20" y="56" fill="#e8ecf8" font-weight="700">Дата и время расчёта</text>
+      <text x="20" y="78" fill="#9aa3bd" font-size="12">ГГГГММДДТЧЧММ — момент оплаты</text>
+      <text x="20" y="96" fill="#6b7494" font-size="12">2025-09-01 14:30</text>
+    </g>
+    <g transform="translate(410,200)">
+      <rect width="320" height="110" rx="12" fill="#141b36" stroke="#22d3ee"/>
+      <text x="20" y="34" fill="#67e8f9" font-weight="800" font-size="16">s=</text>
+      <text x="20" y="56" fill="#e8ecf8" font-weight="700">Сумма расчёта</text>
+      <text x="20" y="78" fill="#9aa3bd" font-size="12">в рублях, разделитель — точка</text>
+      <text x="20" y="96" fill="#6b7494" font-size="12">1520.50 ₽</text>
+    </g>
+    <g transform="translate(750,200)">
+      <rect width="360" height="110" rx="12" fill="#141b36" stroke="#8b5cf6"/>
+      <text x="20" y="34" fill="#a78bfa" font-weight="800" font-size="16">fn=</text>
+      <text x="20" y="56" fill="#e8ecf8" font-weight="700">ФН — заводской номер ФН</text>
+      <text x="20" y="78" fill="#9aa3bd" font-size="12">16 цифр, уникален для кассы</text>
+      <text x="20" y="96" fill="#6b7494" font-size="12">9999078902001234</text>
+    </g>
+    <g transform="translate(70,330)">
+      <rect width="320" height="110" rx="12" fill="#141b36" stroke="#fbbf24"/>
+      <text x="20" y="34" fill="#fcd34d" font-weight="800" font-size="16">i=</text>
+      <text x="20" y="56" fill="#e8ecf8" font-weight="700">ФД — номер фискального документа</text>
+      <text x="20" y="78" fill="#9aa3bd" font-size="12">порядковый номер чека в ФН</text>
+      <text x="20" y="96" fill="#6b7494" font-size="12">54321</text>
+    </g>
+    <g transform="translate(410,330)">
+      <rect width="320" height="110" rx="12" fill="#141b36" stroke="#34d399"/>
+      <text x="20" y="34" fill="#6ee7b7" font-weight="800" font-size="16">fp=</text>
+      <text x="20" y="56" fill="#e8ecf8" font-weight="700">ФП — фискальный признак</text>
+      <text x="20" y="78" fill="#9aa3bd" font-size="12">контрольная подпись документа</text>
+      <text x="20" y="96" fill="#6b7494" font-size="12">812345678 (алиас: fpd)</text>
+    </g>
+    <g transform="translate(750,330)">
+      <rect width="360" height="110" rx="12" fill="#141b36" stroke="#f87171"/>
+      <text x="20" y="34" fill="#fca5a5" font-weight="800" font-size="16">n=</text>
+      <text x="20" y="56" fill="#e8ecf8" font-weight="700">Признак расчёта</text>
+      <text x="20" y="78" fill="#9aa3bd" font-size="12">1 — приход, 2 — возврат прихода,</text>
+      <text x="20" y="96" fill="#6b7494" font-size="12">3 — расход, 4 — возврат расхода</text>
+    </g>
+  </g>
+
+  <text x="590" y="462" text-anchor="middle" fill="#6b7494" font-size="11">© ООО «Ямастер», 2026 · Ключ дедупликации системы: ФН + ФД + ФП</text>
+</svg>

@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" font-family="Segoe UI, Arial, sans-serif">
+  <!-- Ямастер Чек — скриншот-схема: Дашборд. ООО «Ямастер», ymaster.ru -->
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6366f1"/><stop offset="0.5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="760" fill="#0b1020" rx="14"/>
+
+  <!-- Сайдбар -->
+  <rect x="0" y="0" width="228" height="760" fill="#0a0e1e" stroke="#1c2340"/>
+  <circle cx="34" cy="38" r="15" fill="url(#g1)"/>
+  <text x="58" y="34" fill="#e8ecf8" font-size="15" font-weight="800">Ямастер <tspan fill="#22d3ee">Чек</tspan></text>
+  <text x="58" y="50" fill="#6b7494" font-size="9.5">v1.0 · ООО «Ямастер»</text>
+  <g font-size="13">
+    <rect x="12" y="84" width="204" height="40" rx="10" fill="rgba(99,102,241,.22)"/>
+    <text x="34" y="109" fill="#ffffff" font-weight="700">▦ Дашборд</text>
+    <text x="34" y="149" fill="#9aa3bd">⌗ Сканирование</text>
+    <text x="34" y="189" fill="#9aa3bd">☰ Чеки</text>
+    <text x="34" y="229" fill="#9aa3bd">⬇ Выгрузка в 1С</text>
+    <text x="34" y="269" fill="#9aa3bd">⑃ Маппинг</text>
+    <text x="34" y="309" fill="#9aa3bd">👥 Пользователи</text>
+    <text x="34" y="349" fill="#9aa3bd">📜 Журнал</text>
+    <text x="34" y="389" fill="#9aa3bd">⚙ Настройки</text>
+  </g>
+  <circle cx="40" cy="700" r="5" fill="#34d399"/>
+  <text x="54" y="704" fill="#9aa3bd" font-size="11">Живое подключение</text>
+  <text x="16" y="730" fill="#4a5478" font-size="9.5">© ООО «Ямастер» · ymaster.ru</text>
+
+  <!-- Топбар -->
+  <text x="258" y="46" fill="#e8ecf8" font-size="18" font-weight="750">Дашборд</text>
+  <circle cx="1118" cy="38" r="16" fill="url(#g1)"/>
+  <text x="1118" y="43" fill="#fff" font-size="13" font-weight="800" text-anchor="middle">A</text>
+  <text x="1096" y="34" fill="#e8ecf8" font-size="11.5" text-anchor="end" font-weight="700">Администратор</text>
+  <text x="1096" y="48" fill="#6b7494" font-size="9.5" text-anchor="end">admin</text>
+
+  <!-- KPI -->
+  <g>
+    <rect x="258" y="76" width="216" height="92" rx="14" fill="#131a38" stroke="#232c52"/>
+    <text x="278" y="104" fill="#9aa3bd" font-size="10.5" font-weight="700">ЧЕКОВ В СИСТЕМЕ</text>
+    <text x="278" y="138" fill="#e8ecf8" font-size="26" font-weight="800">37</text>
+    <text x="278" y="156" fill="#6b7494" font-size="10">всё время</text>
+    <circle cx="446" cy="102" r="26" fill="url(#g1)" opacity="0.13"/>
+
+    <rect x="490" y="76" width="216" height="92" rx="14" fill="#131a38" stroke="#232c52"/>
+    <text x="510" y="104" fill="#9aa3bd" font-size="10.5" font-weight="700">ОБЩАЯ СУММА</text>
+    <text x="510" y="138" fill="#e8ecf8" font-size="26" font-weight="800">116 913 ₽</text>
+    <text x="510" y="156" fill="#6b7494" font-size="10">все чеки</text>
+    <circle cx="678" cy="102" r="26" fill="url(#g1)" opacity="0.13"/>
+
+    <rect x="722" y="76" width="216" height="92" rx="14" fill="#131a38" stroke="#232c52"/>
+    <text x="742" y="104" fill="#9aa3bd" font-size="10.5" font-weight="700">ПРОВЕРЕНО ФНС</text>
+    <text x="742" y="138" font-size="26" font-weight="800" fill="#34d399">24</text>
+    <text x="742" y="156" fill="#6b7494" font-size="10">из 36 проверок · 1 дублей отсеяно</text>
+    <circle cx="910" cy="102" r="26" fill="url(#g1)" opacity="0.13"/>
+
+    <rect x="954" y="76" width="216" height="92" rx="14" fill="#131a38" stroke="#232c52"/>
+    <text x="974" y="104" fill="#9aa3bd" font-size="10.5" font-weight="700">ВЫГРУЖЕНО В 1С</text>
+    <text x="974" y="138" font-size="26" font-weight="800" fill="#34d399">8</text>
+    <text x="974" y="156" fill="#6b7494" font-size="10">ожидают выгрузки: 16</text>
+    <circle cx="1142" cy="102" r="26" fill="url(#g1)" opacity="0.13"/>
+  </g>
+
+  <!-- График по дням -->
+  <rect x="258" y="188" width="570" height="266" rx="14" fill="#131a38" stroke="#232c52"/>
+  <text x="280" y="216" fill="#9aa3bd" font-size="11" font-weight="750">ЧЕКИ ЗА 14 ДНЕЙ</text>
+  <g stroke="rgba(255,255,255,.06)"><line x1="280" y1="270" x2="806" y2="270"/><line x1="280" y1="330" x2="806" y2="330"/><line x1="280" y1="390" x2="806" y2="390"/><line x1="280" y1="430" x2="806" y2="430"/></g>
+  <g fill="url(#bar)">
+    <rect x="292" y="400" width="18" height="30" rx="4" opacity=".85"/>
+    <rect x="336" y="384" width="18" height="46" rx="4" opacity=".85"/>
+    <rect x="380" y="356" width="18" height="74" rx="4" opacity=".85"/>
+    <rect x="424" y="406" width="18" height="24" rx="4" opacity=".85"/>
+    <rect x="468" y="370" width="18" height="60" rx="4" opacity=".85"/>
+    <rect x="512" y="338" width="18" height="92" rx="4" opacity=".85"/>
+    <rect x="556" y="386" width="18" height="44" rx="4" opacity=".85"/>
+    <rect x="600" y="360" width="18" height="70" rx="4" opacity=".85"/>
+    <rect x="644" y="322" width="18" height="108" rx="4" opacity=".85"/>
+    <rect x="688" y="376" width="18" height="54" rx="4" opacity=".85"/>
+    <rect x="732" y="348" width="18" height="82" rx="4" opacity=".85"/>
+    <rect x="776" y="314" width="18" height="116" rx="4"/>
+  </g>
+  <g fill="#6b7494" font-size="9">
+    <text x="301" y="446" text-anchor="middle">09</text><text x="345" y="446" text-anchor="middle">10</text>
+    <text x="389" y="446" text-anchor="middle">11</text><text x="433" y="446" text-anchor="middle">12</text>
+    <text x="477" y="446" text-anchor="middle">13</text><text x="521" y="446" text-anchor="middle">14</text>
+    <text x="565" y="446" text-anchor="middle">15</text><text x="609" y="446" text-anchor="middle">16</text>
+    <text x="653" y="446" text-anchor="middle">17</text><text x="697" y="446" text-anchor="middle">18</text>
+    <text x="741" y="446" text-anchor="middle">19</text><text x="785" y="446" text-anchor="middle">20</text>
+  </g>
+
+  <!-- Кольцевая ФНС -->
+  <rect x="844" y="188" width="326" height="266" rx="14" fill="#131a38" stroke="#232c52"/>
+  <text x="866" y="216" fill="#9aa3bd" font-size="11" font-weight="750">ПРОВЕРКА В ФНС</text>
+  <g transform="translate(950,340)">
+    <circle r="52" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="20"/>
+    <circle r="52" fill="none" stroke="#34d399" stroke-width="20" stroke-dasharray="205 327" transform="rotate(-90)"/>
+    <circle r="52" fill="none" stroke="#6b7494" stroke-width="20" stroke-dasharray="55 327" stroke-dashoffset="-209" transform="rotate(-90)"/>
+    <circle r="52" fill="none" stroke="#f87171" stroke-width="20" stroke-dasharray="40 327" stroke-dashoffset="-268" transform="rotate(-90)"/>
+    <text y="-2" text-anchor="middle" fill="#e8ecf8" font-size="20" font-weight="800">37</text>
+    <text y="16" text-anchor="middle" fill="#6b7494" font-size="9">всего чеков</text>
+  </g>
+  <g font-size="10.5" fill="#9aa3bd" transform="translate(1030,296)">
+    <rect width="10" height="10" rx="3" fill="#34d399"/><text x="16" y="9">Действителен · 24</text>
+    <rect y="20" width="10" height="10" rx="3" fill="#6b7494"/><text x="16" y="29">Не проверен · 6</text>
+    <rect y="40" width="10" height="10" rx="3" fill="#f87171"/><text x="16" y="49">Недействителен · 7</text>
+  </g>
+
+  <!-- Источники -->
+  <rect x="258" y="470" width="570" height="240" rx="14" fill="#131a38" stroke="#232c52"/>
+  <text x="280" y="498" fill="#9aa3bd" font-size="11" font-weight="750">ИСТОЧНИКИ ЧЕКОВ</text>
+  <g transform="translate(390,600)">
+    <circle r="46" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="18"/>
+    <circle r="46" fill="none" stroke="#6366f1" stroke-width="18" stroke-dasharray="130 289" transform="rotate(-90)"/>
+    <circle r="46" fill="none" stroke="#22d3ee" stroke-width="18" stroke-dasharray="58 289" stroke-dashoffset="-134" transform="rotate(-90)"/>
+    <circle r="46" fill="none" stroke="#34d399" stroke-width="18" stroke-dasharray="58 289" stroke-dashoffset="-196" transform="rotate(-90)"/>
+    <circle r="46" fill="none" stroke="#fbbf24" stroke-width="18" stroke-dasharray="43 289" stroke-dashoffset="-258" transform="rotate(-90)"/>
+    <text y="5" text-anchor="middle" fill="#e8ecf8" font-size="18" font-weight="800">37</text>
+  </g>
+  <g font-size="10.5" fill="#9aa3bd" transform="translate(480,570)">
+    <rect width="10" height="10" rx="3" fill="#6366f1"/><text x="16" y="9">Камера (PWA) · 17</text>
+    <rect y="22" width="10" height="10" rx="3" fill="#22d3ee"/><text x="16" y="31">Веб-вставка · 8</text>
+    <rect y="44" width="10" height="10" rx="3" fill="#34d399"/><text x="16" y="53">Изображение · 7</text>
+    <rect y="66" width="10" height="10" rx="3" fill="#fbbf24"/><text x="16" y="75">Вручную · 5</text>
+  </g>
+
+  <!-- Лента -->
+  <rect x="844" y="470" width="326" height="240" rx="14" fill="#131a38" stroke="#232c52"/>
+  <text x="866" y="498" fill="#9aa3bd" font-size="11" font-weight="750">ЛЕНТА СОБЫТИЙ</text>
+  <g font-size="10.5">
+    <text x="866" y="524" fill="#6b7494">20:01</text><text x="912" y="524" fill="#9aa3bd"><tspan fill="#e8ecf8" font-weight="700">admin</tspan>: чек на <tspan fill="#e8ecf8" font-weight="700">3 420,00 ₽</tspan> (ФД 77890)</text>
+    <text x="866" y="548" fill="#6b7494">20:00</text><text x="912" y="548" fill="#9aa3bd"><tspan fill="#e8ecf8" font-weight="700">ФНС</tspan>: чек ФД 77890 — <tspan fill="#34d399">Действителен</tspan></text>
+    <text x="866" y="572" fill="#6b7494">19:58</text><text x="912" y="572" fill="#9aa3bd"><tspan fill="#e8ecf8" font-weight="700">admin</tspan>: отсеян дубликат чека</text>
+    <text x="866" y="596" fill="#6b7494">19:55</text><text x="912" y="596" fill="#9aa3bd"><tspan fill="#e8ecf8" font-weight="700">1С</tspan>: забрала чеки — 8 шт.</text>
+    <text x="866" y="620" fill="#6b7494">19:51</text><text x="912" y="620" fill="#9aa3bd"><tspan fill="#e8ecf8" font-weight="700">admin</tspan>: выгрузка чеков в 1С — 8 шт.</text>
+    <text x="866" y="644" fill="#6b7494">19:47</text><text x="912" y="644" fill="#9aa3bd"><tspan fill="#e8ecf8" font-weight="700">operator</tspan>: скан камерой, ФД 55210</text>
+  </g>
+
+  <!-- Подпись -->
+  <text x="600" y="744" text-anchor="middle" fill="#4a5478" font-size="10.5">Скриншот-схема веб-клиента «Ямастер Чек» · © ООО «Ямастер», 2026 · ymaster.ru</text>
+</svg>

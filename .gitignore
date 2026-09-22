@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Данные приложения
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/uploads/
+logs/
+
+# Конфигурация с секретами
+.env
+
+# Сборка и ОС
+.DS_Store
+*.log
+dist/
+build/
+node_modules/
