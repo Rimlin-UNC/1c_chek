@@ -25,14 +25,14 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=6, max_length=200)
     full_name: str = ""
     organization: str = ""
-    role: Literal["admin", "user"] = "user"
+    role: Literal["accountant", "user"] = "user"
 
 
 class UserPatch(BaseModel):
     full_name: Optional[str] = None
     organization: Optional[str] = None
     password: Optional[str] = Field(default=None, min_length=6, max_length=200)
-    role: Optional[Literal["admin", "user"]] = None
+    role: Optional[Literal["accountant", "user"]] = None
     is_active: Optional[bool] = None
 
 
@@ -96,3 +96,31 @@ class OnecSettingsPatch(BaseModel):
 class PasswordChange(BaseModel):
     old_password: str
     new_password: str = Field(min_length=6, max_length=200)
+
+class RegisterRequest(BaseModel):
+    """Регистрация по приглашению: роль приходит из приглашения."""
+    token: str = Field(min_length=8, max_length=64)
+    username: str = Field(min_length=2, max_length=100)
+    password: str = Field(min_length=6, max_length=200)
+    full_name: str = Field(default="", max_length=200)
+
+
+class InviteCreate(BaseModel):
+    role: Literal["accountant", "user"] = "user"
+    max_uses: int = Field(default=1, ge=1, le=200)
+    expires_hours: int = Field(default=72, ge=1, le=8760)
+    note: str = Field(default="", max_length=200)
+
+
+class AssignBulk(BaseModel):
+    receipt_ids: list[str] = Field(default_factory=list, max_length=1000)
+    assignee: str = Field(min_length=1, max_length=200)
+
+
+class ReceiptPatch(BaseModel):
+    assignee: Optional[str] = Field(default=None, max_length=200)
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class AppSettingsPatch(BaseModel):
+    auto_verify: Optional[bool] = None

@@ -14,12 +14,12 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, require_admin
+from ..auth import get_current_user, require_accountant, require_admin
 from ..config import settings as cfg
 from ..database import get_db
 from ..models import AppSetting, User
 from ..schemas import FnsSettingsPatch, MappingSave, OnecSettingsPatch
-from ..services import exporter
+from ..services import appsettings, exporter
 from ..services.audit import log_action
 
 router = APIRouter(prefix="/api/v1/settings", tags=["Настройки"])
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/v1/settings", tags=["Настройки"])
 #  Маппинг реквизитов (доступен всем пользователям на чтение)
 # --------------------------------------------------------------------------
 @router.get("/mapping", summary="Настройки маппинга чек → 1С")
-def get_mapping(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_mapping(db: Session = Depends(get_db), user: User = Depends(require_accountant)):
     from ..models import MappingSetting
     rows = (db.query(MappingSetting)
             .order_by(MappingSetting.position, MappingSetting.source_field).all())
@@ -161,3 +161,22 @@ def put_onec(body: OnecSettingsPatch, db: Session = Depends(get_db),
 @router.get("/onec/reveal", summary="Показать токен 1С полностью (админ)")
 def reveal_onec(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     return {"api_token": _get_setting(db, "onec_api_token", cfg.ONEC_API_TOKEN)}
+
+
+# --------------------------------------------------------------------------
+#  Общие настройки приложения (админ)
+# --------------------------------------------------------------------------
+@router.get("/app", summary="Общие настройки приложения")
+def get_app_settings(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    return {
+        "auto_verify": appsettings.auto_verify_enabled(db),
+    }
+
+
+@router.put("/app", summary="Сохранить общие настройки")
+def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
+                     user: User = Depends(require_admin)):
+    if body.auto_verify is not None:
+        appsettings.set_setting(db, "auto_verify", "1" if body.auto_verify else "0")
+    log_action(user, "app_settings_updated", details={"auto_verify": body.auto_verify})
+    return {"ok": True, "message": "Настройки сохранены"}

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, require_admin
+from ..auth import get_current_user, require_admin, require_accountant
 from ..database import get_db
 from ..models import AuditLog, Receipt, User
 from ..services.events import broadcast
@@ -77,7 +77,7 @@ def stats(days: int = Query(14, ge=7, le=90),
 
 @router.get("/recent", summary="Последние события (для ленты дашборда)")
 def recent(limit: int = Query(15, ge=1, le=100),
-           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+           user: User = Depends(require_accountant), db: Session = Depends(get_db)):
     rows = (db.query(AuditLog).order_by(AuditLog.id.desc()).limit(limit).all())
     return [a.to_dict() for a in rows]
 

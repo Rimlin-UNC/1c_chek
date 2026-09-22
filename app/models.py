@@ -42,8 +42,10 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
     organization: Mapped[str] = mapped_column(String(200), default="")
-    role: Mapped[str] = mapped_column(String(20), default="user")  # admin | user
+    # Роли: admin (единственный) | accountant (бухгалтер) | user (пользователь)
+    role: Mapped[str] = mapped_column(String(20), default="user", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -55,9 +57,50 @@ class User(Base):
             "organization": self.organization,
             "role": self.role,
             "is_active": self.is_active,
+            "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
         }
+
+
+# --------------------------------------------------------------------------
+#  Приглашения (регистрация только по ссылке от администратора)
+# --------------------------------------------------------------------------
+class Invite(Base):
+    __tablename__ = "invites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(20), default="user")   # user | accountant
+    note: Mapped[str] = mapped_column(String(200), default="")      # для кого (памятка)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "token": self.token,
+            "role": self.role,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "max_uses": self.max_uses,
+            "used_count": self.used_count,
+            "revoked": self.revoked,
+            "valid": self.is_valid,
+        }
+
+    @property
+    def is_valid(self) -> bool:
+        if self.revoked or self.used_count >= self.max_uses:
+            return False
+        if self.expires_at and self.expires_at < utcnow():
+            return False
+        return True
 
 
 # --------------------------------------------------------------------------
@@ -93,6 +136,9 @@ class Receipt(Base):
     # Источник
     source: Mapped[str] = mapped_column(String(20), default="web")  # web | mobile | camera | image | manual | api
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    # Для бухгалтерии: подотчётное лицо (сотрудник) и комментарий
+    assignee: Mapped[str] = mapped_column(String(200), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -119,7 +165,10 @@ class Receipt(Base):
             "exported": self.exported,
             "exported_at": self.exported_at.isoformat() if self.exported_at else None,
             "source": self.source,
+            "assignee": self.assignee or "",
+            "comment": self.comment or "",
             "created_by": (self.user.username if self.user else None),
+            "created_by_id": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "items_count": len(self.items),
         }

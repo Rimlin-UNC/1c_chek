@@ -24,6 +24,11 @@ from .config import settings
 from .database import get_db
 from .models import User
 
+# Роли системы: администратор всегда один (передача прав — отдельной процедурой)
+ROLE_ADMIN = "admin"
+ROLE_ACCOUNTANT = "accountant"
+ROLE_USER = "user"
+
 bearer_scheme = HTTPBearer(auto_error=False)
 
 # Количество итераций PBKDF2 (OWASP-рекомендация для SHA-256)
@@ -92,6 +97,20 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Требуются права администратора")
     return user
+
+
+def require_role(*roles: str):
+    """Фабрика зависимостей: доступ только для перечисленных ролей."""
+    def dep(user: User = Depends(get_current_user)) -> User:
+        if user.role not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Недостаточно прав для этого действия")
+        return user
+    return dep
+
+
+# Бухгалтер + администратор: проверка ФНС, выгрузка в 1С, редактирование чеков
+require_accountant = require_role(ROLE_ADMIN, ROLE_ACCOUNTANT)
 
 
 def client_ip(request: Request) -> str:

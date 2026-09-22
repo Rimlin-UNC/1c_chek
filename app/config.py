@@ -37,7 +37,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.1.0"
     VENDOR: str = "ООО «Ямастер»"
     VENDOR_SITE: str = "https://ymaster.ru"
     VENDOR_EMAIL: str = "info@ymaster.ru"

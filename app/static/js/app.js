@@ -3,12 +3,13 @@
 // Разработчик и владелец идеи: ООО «Ямастер»
 // Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
 //
-// Экраны: вход · дашборд · сканирование · чеки · выгрузка в 1С ·
-//         маппинг · пользователи · журнал · настройки
+// Роли: Администратор (один, все права) · Бухгалтер (расширенные) ·
+//       Пользователь (сканирует и видит свои чеки).
+// Регистрация — только по приглашению администратора, роль в приглашении.
 // ======================================================================
 
-import { api, getToken, setToken, clearToken, ApiError } from './api.js';
-import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, chip, openModal, animateNumber, debounce } from './ui.js';
+import { api, getToken, setToken, clearToken } from './api.js';
+import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, openModal, animateNumber } from './ui.js';
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
@@ -22,18 +23,22 @@ const state = {
   wsOk: false,
   camera: null,
   view: 'dashboard',
+  routeParam: '',
   receiptsSelected: new Set(),
   recents: JSON.parse(localStorage.getItem('ymaster_recents') || '[]'),
 };
 
 const VIEW_TITLES = {
   dashboard: 'Дашборд', scan: 'Сканирование чеков', receipts: 'База чеков',
-  export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи',
+  export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи и приглашения',
   audit: 'Журнал действий', settings: 'Настройки',
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+const isAccountant = () => state.me && (state.me.role === 'admin' || state.me.role === 'accountant');
+const isAdmin = () => state.me && state.me.role === 'admin';
 
 // --------------------------------------------------------------------------
 //  Точка входа
@@ -42,6 +47,10 @@ async function boot() {
   injectIcons();
   registerServiceWorker();
   bindShell();
+
+  // Регистрация по приглашению: #/register/<token>
+  const m = location.hash.match(/^#\/register\/(.+)$/);
+  if (m) { showRegister(m[1]); return; }
 
   if (getToken()) {
     try {
@@ -54,6 +63,7 @@ async function boot() {
 }
 
 function showLogin() {
+  $('#register-screen').classList.add('hidden');
   $('#login-screen').classList.remove('hidden');
   $('#app-shell').classList.add('hidden');
   const form = $('#login-form');
@@ -82,16 +92,76 @@ function showLogin() {
   };
 }
 
+// --------------------------------------------------------------------------
+//  Регистрация по приглашению
+// --------------------------------------------------------------------------
+async function showRegister(token) {
+  $('#login-screen').classList.add('hidden');
+  $('#app-shell').classList.add('hidden');
+  $('#register-screen').classList.remove('hidden');
+
+  const badge = $('#reg-invite-badge');
+  try {
+    const info = await api.get(`/api/v1/auth/invite-info?token=${encodeURIComponent(token)}`);
+    if (!info.valid) {
+      badge.className = 'chip failed';
+      badge.innerHTML = '<span class="dot"></span>Приглашение недействительно';
+      $('#register-form').classList.add('hidden');
+      toast(info.message || 'Приглашение недействительно', 'err', 'Регистрация');
+      return;
+    }
+    badge.className = `chip ${info.role === 'accountant' ? 'exported' : 'new'}`;
+    badge.innerHTML = `<span class="dot"></span>Роль: ${roleLabel(info.role)}${info.note ? ' · ' + esc(info.note) : ''}`;
+  } catch (e) {
+    badge.className = 'chip failed';
+    badge.innerHTML = '<span class="dot"></span>Ошибка проверки приглашения';
+    return;
+  }
+
+  $('#register-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $('#register-submit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+    $('#register-error').classList.add('hidden');
+    try {
+      const r = await api.post('/api/v1/auth/register', {
+        token,
+        username: $('#reg-username').value.trim(),
+        password: $('#reg-password').value,
+        full_name: $('#reg-fullname').value.trim(),
+      });
+      setToken(r.access_token);
+      state.me = r.user;
+      toast(`Аккаунт создан. Ваша роль: ${roleLabel(r.user.role)}`, 'ok', 'Добро пожаловать!');
+      enterApp();
+    } catch (err) {
+      const el = $('#register-error');
+      el.textContent = err.message || 'Ошибка регистрации';
+      el.classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Создать аккаунт';
+    }
+  };
+}
+
+// --------------------------------------------------------------------------
+//  Оболочка приложения
+// --------------------------------------------------------------------------
 function enterApp() {
   $('#login-screen').classList.add('hidden');
+  $('#register-screen').classList.add('hidden');
   $('#app-shell').classList.remove('hidden');
   $('#user-name').textContent = state.me.full_name || state.me.username;
-  $('#user-role').textContent = state.me.role === 'admin' ? 'Администратор' : 'Оператор';
+  $('#user-role').textContent = roleLabel(state.me.role);
   $('#user-avatar').textContent = (state.me.full_name || state.me.username)[0].toUpperCase();
-  $$('.admin-only').forEach(el => el.classList.toggle('hidden', state.me.role !== 'admin'));
+  $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
+  $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
   connectWS();
   window.addEventListener('ymaster:logout', () => { location.hash = ''; logout(); });
-  if (!location.hash) location.hash = '#/dashboard';
+  if (state.me.must_change_password) forcePasswordChange();
+  if (!location.hash || location.hash.startsWith('#/register')) location.hash = '#/dashboard';
   route();
   refreshBadges();
   window.addEventListener('online', flushOfflineQueue);
@@ -104,6 +174,45 @@ function logout() {
   if (state.ws) { state.ws.close(); state.ws = null; }
   if (state.camera) { state.camera.stop(); state.camera = null; }
   location.reload();
+}
+
+// Обязательная смена временного пароля (первый вход администратора / после сброса)
+function forcePasswordChange() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(4,7,16,.85);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px';
+  overlay.innerHTML = `
+    <div class="glass" style="width:min(440px,94vw);padding:30px">
+      <h2 style="font-size:19px;margin-bottom:8px">🔒 Смените пароль</h2>
+      <p style="color:var(--text-dim);font-size:13px;margin-bottom:16px">
+        Вход выполнен с временным паролем. Для защиты системы задайте собственный —
+        это обязательный шаг.</p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label class="field"><span>Временный пароль</span>
+          <input type="password" id="fc-old"></label>
+        <label class="field"><span>Новый пароль (мин. 6 символов)</span>
+          <input type="password" id="fc-new"></label>
+        <label class="field"><span>Повторите новый пароль</span>
+          <input type="password" id="fc-new2"></label>
+        <div id="fc-error" class="form-error hidden"></div>
+        <button class="btn btn-primary btn-block" id="fc-save">Сохранить пароль</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  $('#fc-save', overlay).onclick = async () => {
+    const oldP = $('#fc-old', overlay).value;
+    const newP = $('#fc-new', overlay).value;
+    const err = $('#fc-error', overlay);
+    if (newP.length < 6) { err.textContent = 'Минимум 6 символов'; err.classList.remove('hidden'); return; }
+    if (newP !== $('#fc-new2', overlay).value) { err.textContent = 'Пароли не совпадают'; err.classList.remove('hidden'); return; }
+    try {
+      await api.post('/api/v1/auth/change-password', { old_password: oldP, new_password: newP });
+      state.me.must_change_password = false;
+      overlay.remove();
+      toast('Пароль изменён. Добро пожаловать в систему!', 'ok', 'Готово');
+    } catch (e) {
+      err.textContent = e.message; err.classList.remove('hidden');
+    }
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -182,13 +291,22 @@ async function refreshBadges() {
 function route(silent = false) {
   if (state.camera) { state.camera.stop(); state.camera = null; }
   const hash = location.hash.replace(/^#\//, '') || 'dashboard';
-  const view = hash.split('?')[0];
+  const parts = hash.split('/');
+  const view = parts[0].split('?')[0];
+  state.routeParam = parts.slice(1).join('/') || '';
   state.view = view;
   const container = $('#view-container');
   $('#page-title').textContent = VIEW_TITLES[view] || 'Ямастер Чек';
   $$('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $('#sidebar').classList.remove('open');
-  if (!silent) container.classList.remove('view-enter');
+
+  // Защита разделов по ролям на клиенте (сервер дублирует)
+  const guard = {
+    export: isAccountant(), mapping: isAccountant(),
+    users: isAdmin(), audit: isAdmin(),
+  };
+  if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
+
   const renderers = {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
     export: viewExport, mapping: viewMapping, users: viewUsers,
@@ -201,7 +319,10 @@ function route(silent = false) {
 function bindShell() {
   $('#btn-logout').onclick = logout;
   $('#btn-sidebar').onclick = () => $('#sidebar').classList.toggle('open');
-  window.addEventListener('hashchange', () => route());
+  window.addEventListener('hashchange', () => {
+    if (location.hash.startsWith('#/register')) return;
+    route();
+  });
 }
 
 // ==========================================================================
@@ -261,14 +382,18 @@ async function viewDashboard(container) {
     label: srcLabels[k] || k, value: v,
   })), { size: 150, centerTitle: fmtInt(stats.total), centerSub: 'чеков' });
 
-  const feed = await api.get('/api/v1/dashboard/recent?limit=12');
-  const feedEl = $('#dash-feed');
-  if (!feed.length) feedEl.innerHTML = emptyState('🔔', 'События появятся здесь');
-  else feedEl.innerHTML = feed.map(f => `
-    <div class="feed-item"><span class="feed-time">${fmtDate(f.created_at)}</span>
-    <span class="feed-text">${esc(feedActionText(f))}</span></div>`).join('');
+  if (isAccountant()) {
+    const feed = await api.get('/api/v1/dashboard/recent?limit=12');
+    const feedEl = $('#dash-feed');
+    feedEl.innerHTML = !feed.length ? emptyState('🔔', 'События появятся здесь')
+      : feed.map(f => `
+        <div class="feed-item"><span class="feed-time">${fmtDate(f.created_at)}</span>
+        <span class="feed-text">${esc(feedActionText(f))}</span></div>`).join('');
+  } else {
+    $('#dash-feed').innerHTML = emptyState('🔑', 'Лента событий — для бухгалтера и администратора');
+  }
 
-  if (stats.total === 0 && state.me.role === 'admin') {
+  if (stats.total === 0 && isAdmin()) {
     $('#demo-zone').innerHTML = `
       <div class="glass card" style="margin-top:16px;text-align:center">
         <h3 style="margin-bottom:8px">Пустая база — посмотрите систему в действии</h3>
@@ -302,7 +427,10 @@ function feedActionText(f) {
     receipt_deleted: 'удалён чек', demo_data_loaded: 'загружены демо-данные',
     user_created: 'создан пользователь', mapping_updated: 'обновлён маппинг',
     fns_settings_updated: 'изменены настройки ФНС', onec_pull: '1С забрала чеки',
-    onec_ack: '1С подтвердила загрузку',
+    onec_ack: '1С подтвердила загрузку', invite_created: 'создано приглашение',
+    register: 'зарегистрирован пользователь', admin_transferred: 'передача прав администратора',
+    receipts_assigned: 'назначен сотрудник на чеки', receipts_exported_csv: 'выгружен CSV',
+    app_settings_updated: 'изменены общие настройки',
   };
   const d = (() => { try { return JSON.parse(f.details || '{}'); } catch { return {}; } })();
   const base = map[f.action] || f.action;
@@ -348,7 +476,8 @@ async function viewScan(container) {
           <span class="big-ico">⬇️</span>
           Перетащите сюда фотографии чеков — можно несколько сразу
         </div>
-        <div class="torch-note">Совет: чеки с экрана телефона тоже распознаются. Держите QR в рамке при хорошем свете.</div>
+        <div class="torch-note">Совет: чеки с экрана телефона тоже распознаются. Держите QR в рамке при хорошем свете.
+        После скана чек автоматически уходит на проверку в ФНС.</div>
       </div>
 
       <div>
@@ -368,8 +497,8 @@ async function viewScan(container) {
           <div class="steps">
             <div class="step"><span class="step-num"></span><div>Отсканируйте QR-код камерой, загрузите фото или введите реквизиты вручную.</div></div>
             <div class="step"><span class="step-num"></span><div>Система разбирает реквизиты 54-ФЗ: <b>ФН, ФД, ФП</b>, сумму и дату, отсекает дубликаты по ФН+ФД+ФП.</div></div>
-            <div class="step"><span class="step-num"></span><div>Чек автоматически проверяется в API ФНС (или демо-провайдером).</div></div>
-            <div class="step"><span class="step-num"></span><div>Проверенные чеки выгружаются в 1С по настройкам маппинга.</div></div>
+            <div class="step"><span class="step-num"></span><div>Чек автоматически проверяется в API ФНС.</div></div>
+            <div class="step"><span class="step-num"></span><div>Бухгалтер назначает сотрудника и выгружает чеки в 1С — без ручного ввода.</div></div>
           </div>
         </div>
       </div>
@@ -377,7 +506,6 @@ async function viewScan(container) {
 
   renderRecents();
 
-  // Камера
   $('#btn-camera-start').onclick = async () => {
     const video = $('#scan-video');
     try {
@@ -397,7 +525,6 @@ async function viewScan(container) {
     }
   };
 
-  // Загрузка файлов
   $('#btn-upload').onclick = () => $('#file-input').click();
   $('#file-input').onchange = (e) => handleFiles([...e.target.files]);
   const dz = $('#dropzone');
@@ -409,7 +536,6 @@ async function viewScan(container) {
     handleFiles([...e.dataTransfer.files]);
   };
 
-  // Вставка текста
   $('#btn-paste').onclick = () => pasteDialog();
   $('#btn-manual').onclick = () => manualDialog();
   const flush = $('#btn-flush');
@@ -434,7 +560,7 @@ function renderRecents() {
 function pushRecent(r) {
   state.recents.unshift({
     fn: r.fn, fd: r.fd, fp: r.fp, sum: r.total_sum,
-    duplicate: r.status === 'new' ? false : false,
+    duplicate: false,
     at: new Date().toISOString(),
   });
   state.recents = state.recents.slice(0, 12);
@@ -490,8 +616,8 @@ async function flushOfflineQueue(manual = false) {
       offlineQueue.shift();
       sent++;
     } catch (e) {
-      if (e.status === 422) { offlineQueue.shift(); continue; } // битые данные — выбрасываем
-      break; // сервер всё ещё недоступен
+      if (e.status === 422) { offlineQueue.shift(); continue; }
+      break;
     }
   }
   if (sent) toast(`Синхронизировано сканов: ${sent}`, 'ok', 'Офлайн-очередь');
@@ -499,14 +625,12 @@ async function flushOfflineQueue(manual = false) {
   if (state.view === 'scan') route(true);
 }
 
-// Обработка загруженных изображений
 async function handleFiles(files) {
   for (const file of files) {
     if (!file.type.startsWith('image/')) { toast(`${file.name}: не изображение`, 'warn'); continue; }
     try {
       const { valid, raws } = await decodeImageFile(file);
       if (valid.length === 0 && raws.length === 0) {
-        // Клиент не нашёл — пробуем серверный OpenCV (устойчивее)
         await serverScanImage(file);
       } else if (valid.length) {
         for (const p of valid) {
@@ -537,8 +661,7 @@ async function serverScanImage(file) {
     toast(r.message, 'ok', 'Сервер распознал QR');
   } catch (e) {
     if (e.status === 300) {
-      // Несколько чеков на изображении — предложим выбрать
-      const variants = e.data?.detail?.variants || [];
+      const variants = (e.data && e.data.detail && e.data.detail.variants) || [];
       pickVariantDialog(variants);
     } else {
       toast(e.message, 'err', file.name);
@@ -571,7 +694,6 @@ function pickVariantDialog(variants) {
   };
 }
 
-// Диалог: вставить QR-текст
 function pasteDialog() {
   const { slot } = openModal(`
     <div class="modal-title">📋 Вставка QR-текста</div>
@@ -593,7 +715,6 @@ function pasteDialog() {
   setTimeout(() => slot.querySelector('#paste-text').focus(), 50);
 }
 
-// Диалог: ручной ввод реквизитов
 function manualDialog() {
   const { slot } = openModal(`
     <div class="modal-title">⌨ Ручной ввод реквизитов</div>
@@ -642,11 +763,12 @@ function manualDialog() {
 //  ЭКРАН: Чеки
 // ==========================================================================
 async function viewReceipts(container) {
+  const acc = isAccountant();
   container.innerHTML = `
     <div class="glass card">
       <div class="filter-bar">
-        <label class="field"><span>Поиск (ФН/ФД/ФП)</span>
-          <input id="f-q" placeholder="номер…"></label>
+        <label class="field"><span>Поиск (ФН/ФД/ФП/сотрудник)</span>
+          <input id="f-q" placeholder="номер или имя…"></label>
         <label class="field"><span>Статус</span>
           <select id="f-status"><option value="">все</option>
             <option value="new">Новые</option><option value="verifying">Проверяются</option>
@@ -655,26 +777,35 @@ async function viewReceipts(container) {
           <select id="f-fns"><option value="">любая</option>
             <option value="valid">Действителен</option><option value="invalid">Недействителен</option>
             <option value="not_found">Не найден</option><option value="unknown">Не проверен</option></select></label>
+        ${acc ? `
         <label class="field"><span>Выгрузка в 1С</span>
           <select id="f-exp"><option value="">все</option>
             <option value="false">Ожидают выгрузки</option><option value="true">Выгружены</option></select></label>
+        <label class="field"><span>Сотрудник</span>
+          <input id="f-assignee" placeholder="Иванов"></label>` : ''}
         <label class="field"><span>С даты</span><input type="date" id="f-from"></label>
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
         <button class="btn" id="btn-filter">Найти</button>
       </div>
+      ${acc ? `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <button class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
         <button class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
+        <button class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
+        <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
         <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
-      </div>
+      </div>` : `
+      <p class="form-hint" style="margin-bottom:12px">Режим пользователя: видны только ваши чеки.
+      Проверка в ФНС и выгрузка в 1С выполняются бухгалтером.</p>`}
       <div class="table-wrap" id="receipts-table"><div class="skeleton" style="height:300px"></div></div>
       <div class="pagination" id="receipts-pager"></div>
     </div>`;
 
   const filters = {
-    q: '', status: '', fns_status: '', exported: '', date_from: '', date_to: '', page: 1,
+    q: '', status: '', fns_status: '', exported: '', assignee: '',
+    date_from: '', date_to: '', page: 1,
   };
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
 
@@ -688,9 +819,10 @@ async function viewReceipts(container) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
     } else {
       el.innerHTML = `<table class="data"><thead><tr>
-        <th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto"></th>
+        ${acc ? '<th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto"></th>' : ''}
         <th>Дата чека</th><th>Сумма</th><th>ФН</th><th>ФД</th><th>ФП</th>
-        <th>Статус</th><th>ФНС</th><th>1С</th><th>Источник</th></tr></thead>
+        ${acc ? '<th>Сотрудник</th>' : ''}
+        <th>Статус</th><th>ФНС</th><th>1С</th></tr></thead>
         <tbody>${data.items.map(r => receiptRow(r)).join('')}</tbody></table>`;
       $$('tbody tr', el).forEach(tr => {
         tr.onclick = (e) => {
@@ -727,19 +859,22 @@ async function viewReceipts(container) {
   }
 
   function receiptRow(r) {
-    return `<tr data-id="${r.id}">
-      <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
-        ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
+    const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
+    return `<tr data-id="${r.id}" title="${canDel ? '' : ''}">
+      ${acc ? `<td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
+        ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>` : ''}
       <td class="cell-date">${fmtDate(r.receipt_date)}</td>
       <td class="cell-sum">${fmtSum(r.total_sum)}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
+      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}</td>` : ''}
       <td>${chip(r.status)}</td>
       <td>${chip(r.fns_status)}</td>
       <td>${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
-      <td class="cell-mono">${esc(r.source)}</td></tr>`;
+    </tr>`;
   }
 
   function updateSelInfo() {
+    if (!$('#sel-info')) return;
     $('#sel-info').textContent = state.receiptsSelected.size
       ? `выбрано: ${state.receiptsSelected.size}` : 'не выбрано';
   }
@@ -748,7 +883,10 @@ async function viewReceipts(container) {
     filters.q = $('#f-q').value.trim();
     filters.status = $('#f-status').value;
     filters.fns_status = $('#f-fns').value;
-    filters.exported = $('#f-exp').value;
+    if (acc) {
+      filters.exported = $('#f-exp').value;
+      filters.assignee = $('#f-assignee').value.trim();
+    }
     filters.date_from = $('#f-from').value;
     filters.date_to = $('#f-to').value;
     filters.page = 1;
@@ -756,36 +894,78 @@ async function viewReceipts(container) {
   };
   $('#f-q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-filter').click(); });
 
-  $('#btn-bulk-verify').onclick = async () => {
-    if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
-    const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [...state.receiptsSelected] });
-    toast(r.message, 'info', 'Проверка ФНС');
-  };
-  $('#btn-bulk-verify-all').onclick = async () => {
-    const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [] });
-    toast(r.message, 'info', 'Проверка ФНС');
-  };
-  $('#btn-bulk-export').onclick = async () => {
-    if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
-    try {
-      const { blob, filename } = await api.download('/api/v1/receipts/export', {
-        receipt_ids: [...state.receiptsSelected], format: 'json',
-      });
-      downloadBlob(blob, filename);
-      toast(`Файл ${filename} сформирован, чеки помечены как выгруженные`, 'ok', 'Экспорт в 1С');
+  if (acc) {
+    $('#btn-bulk-verify').onclick = async () => {
+      if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
+      const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [...state.receiptsSelected] });
+      toast(r.message, 'info', 'Проверка ФНС');
+    };
+    $('#btn-bulk-verify-all').onclick = async () => {
+      const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [] });
+      toast(r.message, 'info', 'Проверка ФНС');
+    };
+    $('#btn-bulk-assign').onclick = () => bulkAssignDialog();
+    $('#btn-bulk-export').onclick = async () => {
+      if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
+      try {
+        const { blob, filename } = await api.download('/api/v1/receipts/export', {
+          receipt_ids: [...state.receiptsSelected], format: 'json',
+        });
+        downloadBlob(blob, filename);
+        toast(`Файл ${filename} сформирован, чеки помечены как выгруженные`, 'ok', 'Экспорт в 1С');
+        load();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#btn-csv').onclick = async () => {
+      try {
+        const ids = [...state.receiptsSelected];
+        const { blob, filename } = await api.download('/api/v1/receipts/export-csv', { receipt_ids: ids });
+        downloadBlob(blob, filename);
+        toast(`CSV ${filename} скачан (Excel-совместимый)`, 'ok');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#btn-bulk-delete').onclick = async () => {
+      if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
+      if (!confirm(`Удалить чеков: ${state.receiptsSelected.size}?`)) return;
+      for (const id of state.receiptsSelected) {
+        try { await api.del('/api/v1/receipts/' + id); } catch (e) { toast(e.message, 'err'); }
+      }
+      state.receiptsSelected.clear();
+      toast('Удаление выполнено', 'ok');
       load();
-    } catch (e) { toast(e.message, 'err'); }
-  };
-  $('#btn-bulk-delete').onclick = async () => {
+    };
+  }
+
+  function bulkAssignDialog() {
     if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
-    if (!confirm(`Удалить чеков: ${state.receiptsSelected.size}?`)) return;
-    for (const id of state.receiptsSelected) {
-      try { await api.del('/api/v1/receipts/' + id); } catch (e) { toast(e.message, 'err'); }
-    }
-    state.receiptsSelected.clear();
-    toast('Удаление выполнено', 'ok');
-    load();
-  };
+    const { slot } = openModal(`
+      <div class="modal-title">👤 Назначить сотрудника</div>
+      <p class="form-hint" style="margin-bottom:12px">Сотрудник (подотчётное лицо) попадёт в авансовый
+      отчёт при выгрузке в 1С. Выбрано чеков: <b>${state.receiptsSelected.size}</b></p>
+      <label class="field"><span>ФИО сотрудника</span>
+        <input id="ba-name" placeholder="Иванова Анна Петровна" list="ba-list">
+        <datalist id="ba-list">
+          ${[...new Set([...(viewReceipts._names || [])])].map(n => `<option value="${esc(n)}">`).join('')}
+        </datalist></label>
+      <div class="modal-actions">
+        <button class="btn" data-close>Отмена</button>
+        <button class="btn btn-primary" id="ba-save">Назначить</button>
+      </div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    slot.querySelector('#ba-save').onclick = async () => {
+      const name = slot.querySelector('#ba-name').value.trim();
+      if (!name) return toast('Введите ФИО сотрудника', 'warn');
+      try {
+        const r = await api.post('/api/v1/receipts/bulk-assign', {
+          receipt_ids: [...state.receiptsSelected], assignee: name,
+        });
+        $('#modal-root').classList.add('hidden');
+        toast(r.message, 'ok');
+        viewReceipts._names = [...(viewReceipts._names || []), name];
+        load();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
 
   await load();
 }
@@ -801,6 +981,8 @@ function downloadBlob(blob, filename) {
 // --- Drawer: карточка чека --------------------------------------------------
 async function receiptDrawer(id) {
   const r = await api.get('/api/v1/receipts/' + id);
+  const acc = isAccountant();
+  const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
   const drawer = document.createElement('div');
   drawer.className = 'drawer';
   drawer.innerHTML = `
@@ -823,15 +1005,24 @@ async function receiptDrawer(id) {
         <dt>Выгружен в 1С</dt><dd>${r.exported ? 'да · ' + fmtDate(r.exported_at) : 'нет'}</dd>
         <dt>Ответ ФНС</dt><dd>${esc(r.fns_message || '—')}</dd>
       </dl>
+      ${acc ? `
+      <div class="card-title">Для бухгалтерии</div>
+      <div class="form-grid" style="margin-bottom:16px">
+        <label class="field"><span>Сотрудник (подотчётник)</span>
+          <input id="d-assignee" value="${esc(r.assignee || '')}" placeholder="Иванов А.А."></label>
+        <label class="field"><span>Комментарий</span>
+          <input id="d-comment" value="${esc(r.comment || '')}" placeholder="например: канцтовары для офиса"></label>
+      </div>` : ''}
       <div class="card-title">Позиции чека (${r.items.length})</div>
       ${r.items.length ? `<table class="data" style="min-width:0"><thead><tr><th>Наименование</th><th>Кол.</th><th>Цена</th><th>Сумма</th></tr></thead>
         <tbody>${r.items.map(it => `<tr style="cursor:default">
           <td>${esc(it.name)}</td><td>${it.quantity}</td>
           <td class="cell-sum">${fmtSum(it.price)}</td><td class="cell-sum">${fmtSum(it.total)}</td></tr>`).join('')}</tbody></table>`
         : emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)')}
-      <div class="modal-actions" style="justify-content:flex-start">
-        <button class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>
-        ${state.me.role === 'admin' || !r.exported ? '<button class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
+      <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
+        ${acc ? '<button class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
+        ${acc ? '<button class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
+        ${canDel ? '<button class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
       </div>
     </div>`;
   document.body.appendChild(drawer);
@@ -839,10 +1030,22 @@ async function receiptDrawer(id) {
   const close = () => { drawer.classList.remove('open'); setTimeout(() => drawer.remove(), 300); };
   drawer.querySelector('.modal-close').onclick = close;
   drawer.querySelector('.qr-box').onclick = () => {
-    navigator.clipboard?.writeText(r.qr_data);
+    navigator.clipboard && navigator.clipboard.writeText(r.qr_data);
     toast('Строка QR скопирована', 'info');
   };
-  drawer.querySelector('#d-verify').onclick = async () => {
+  const save = drawer.querySelector('#d-save');
+  if (save) save.onclick = async () => {
+    try {
+      await api.patch('/api/v1/receipts/' + id, {
+        assignee: drawer.querySelector('#d-assignee').value.trim() || null,
+        comment: drawer.querySelector('#d-comment').value.trim() || null,
+      });
+      toast('Сохранено', 'ok');
+      close();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  const verify = drawer.querySelector('#d-verify');
+  if (verify) verify.onclick = async () => {
     await api.post(`/api/v1/receipts/${id}/verify`, {});
     toast('Чек отправлен на проверку', 'info');
     close();
@@ -868,8 +1071,10 @@ async function viewExport(container) {
     <div class="grid cards-2-even">
       <div class="glass card">
         <div class="card-title">Экспорт пакета чеков</div>
-        <div class="info-callout">Выгружаются <b>проверенные чеки</b>. Формат — EnterpriseData (JSON/XML),
-        совместим с 1С:БП 3.0, ERP 2, УТ 11. Дубликаты в 1С отсекаются по ключу <b>ФН+ФД+ФП</b>.</div>
+        <div class="info-callout">Выгружаются <b>проверенные чеки</b>. Сотрудник (подотчётник)
+        попадает в поле «Контрагент» документа 1С — авансовый отчёт заполняется сам.
+        Формат — EnterpriseData (JSON/XML) для 1С:БП 3.0, ERP 2, УТ 11.
+        Дубли в 1С отсекаются по ключу <b>ФН+ФД+ФП</b>.</div>
         <label class="field" style="margin-bottom:12px"><span>Документ 1С</span>
           <select id="exp-target">
             <option value="ПоступлениеТоваровУслуг">Поступление товаров и услуг</option>
@@ -896,7 +1101,7 @@ async function viewExport(container) {
             В 1С создайте HTTP-соединение к этому серверу: <code class="inline" id="pull-url">/onec/v1/receipts/pull</code></div></div>
           <div class="step"><span class="step-num"></span><div>
             Заголовок авторизации: <code class="inline">X-API-Token: …</code>
-            ${onecSettings ? `<button class="btn btn-sm" id="btn-reveal" style="margin-left:6px">показать токен</button>` : '(доступно администратору)'}</div></div>
+            ${onecSettings ? '<button class="btn btn-sm" id="btn-reveal" style="margin-left:6px">показать токен</button>' : '(токен показывает администратор)'}</div></div>
           <div class="step"><span class="step-num"></span><div>
             Регламентным заданием выполняйте выборку и подтверждение: <code class="inline">/onec/v1/receipts/ack</code></div></div>
           <div class="step"><span class="step-num"></span><div>
@@ -934,7 +1139,7 @@ async function viewExport(container) {
         `<div class="token-line"><input readonly value="${esc(s.api_token)}" id="token-input">
          <button class="btn btn-sm" id="btn-copy-token">копировать</button></div>`;
       $('#btn-copy-token').onclick = () => {
-        navigator.clipboard?.writeText(s.api_token);
+        navigator.clipboard && navigator.clipboard.writeText(s.api_token);
         toast('Токен скопирован', 'ok');
       };
     } catch (e) { toast(e.message, 'err'); }
@@ -949,37 +1154,35 @@ async function viewMapping(container) {
     api.get('/api/v1/settings/mapping'),
     api.get('/api/v1/settings/mapping/catalog'),
   ]);
-  const isAdmin = state.me.role === 'admin';
-  const sf = catalog.source_fields, to = catalog.target_objects, tr = catalog.transforms;
+  const admin = isAdmin();
 
   container.innerHTML = `
     <div class="info-callout">Маппинг определяет, <b>какие поля чека и в какие реквизиты 1С</b> попадут
     при выгрузке. Правила применяются и в файловом экспорте, и в Push-режиме.
-    ${isAdmin ? '' : 'Просмотр — изменения вносит администратор.'}</div>
+    ${admin ? '' : 'Просмотр — изменения вносит администратор.'}</div>
     <div class="glass card">
       <div class="card-title">Правила преобразования <span class="spacer"></span>
-        ${isAdmin ? '<button class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
+        ${admin ? '<button class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
       <div class="mapping-grid" id="mapping-rows">
         <div class="mapping-head">Поле чека</div><div class="mapping-head">Документ 1С</div>
         <div class="mapping-head">Реквизит 1С</div><div class="mapping-head">Преобразование</div><div></div><div></div>
       </div>
       <div class="modal-actions" style="justify-content:flex-start">
-        ${isAdmin ? '<button class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
+        ${admin ? '<button class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
       </div>
     </div>
     <div class="grid cards-2-even" style="margin-top:16px">
       <div class="glass card"><div class="card-title">Поля чека (источники)</div>
-        <ul class="catalog-list" style="list-style:none">${sf.map(f =>
+        <ul class="catalog-list" style="list-style:none">${catalog.source_fields.map(f =>
           `<li><span>${f.name}</span><code>${f.code}</code></li>`).join('')}</ul></div>
       <div class="glass card"><div class="card-title">Документы и преобразования</div>
-        <ul class="catalog-list" style="list-style:none">${to.map(o =>
+        <ul class="catalog-list" style="list-style:none">${catalog.target_objects.map(o =>
           `<li><span>${o.name}</span><code>${o.code}</code></li>`).join('')}
           <li style="border:none"></li>
-          ${tr.map(t => `<li><span>${t.name}</span><code>${t.code}</code></li>`).join('')}</ul></div>
+          ${catalog.transforms.map(t => `<li><span>${t.name}</span><code>${t.code}</code></li>`).join('')}</ul></div>
     </div>`;
 
   const rowsEl = $('#mapping-rows');
-  const rows = [...mapping.items];
 
   function addRow(m = { source_field: 'total_sum', target_object: 'ПоступлениеТоваровУслуг',
                         target_field: '', transform: 'direct', transform_param: '', is_active: true }) {
@@ -988,22 +1191,22 @@ async function viewMapping(container) {
     div.style.marginBottom = '8px';
     div.innerHTML = `
       <label><span class="mg-label">Поле чека</span>
-        <select class="mr-src">${sf.map(f => `<option value="${f.code}" ${f.code === m.source_field ? 'selected' : ''}>${f.name}</option>`).join('')}</select></label>
+        <select class="mr-src">${catalog.source_fields.map(f => `<option value="${f.code}" ${f.code === m.source_field ? 'selected' : ''}>${f.name}</option>`).join('')}</select></label>
       <label><span class="mg-label">Документ 1С</span>
-        <select class="mr-obj">${to.map(o => `<option value="${o.code}" ${o.code === m.target_object ? 'selected' : ''}>${o.name}</option>`).join('')}</select></label>
+        <select class="mr-obj">${catalog.target_objects.map(o => `<option value="${o.code}" ${o.code === m.target_object ? 'selected' : ''}>${o.name}</option>`).join('')}</select></label>
       <label><span class="mg-label">Реквизит 1С</span>
         <input class="mr-field" placeholder="СуммаДокумента" value="${esc(m.target_field)}"></label>
       <label><span class="mg-label">Преобразование</span>
-        <select class="mr-tr">${tr.map(t => `<option value="${t.code}" ${t.code === m.transform ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
+        <select class="mr-tr">${catalog.transforms.map(t => `<option value="${t.code}" ${t.code === m.transform ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
       <label title="Активно"><input type="checkbox" class="mr-active" ${m.is_active ? 'checked' : ''} style="width:auto"></label>
       <button class="btn-icon" title="Удалить правило" style="color:var(--bad)">🗑</button>`;
-    if (!isAdmin) div.querySelectorAll('input,select').forEach(el => el.disabled = true);
+    if (!admin) div.querySelectorAll('input,select').forEach(el => el.disabled = true);
     div.querySelector('.btn-icon').onclick = () => div.remove();
     rowsEl.appendChild(div);
   }
-  rows.forEach(addRow);
-  if (!rows.length) addRow();
-  if (isAdmin) {
+  mapping.items.forEach(addRow);
+  if (!mapping.items.length) addRow();
+  if (admin) {
     $('#m-add').onclick = () => addRow();
     $('#m-save').onclick = async () => {
       const items = $$('.mapping-row').map(div => ({
@@ -1023,31 +1226,142 @@ async function viewMapping(container) {
 }
 
 // ==========================================================================
-//  ЭКРАН: Пользователи
+//  ЭКРАН: Пользователи и приглашения (только администратор)
 // ==========================================================================
 async function viewUsers(container) {
-  const users = await api.get('/api/v1/users');
+  const [users, invites] = await Promise.all([
+    api.get('/api/v1/users'),
+    api.get('/api/v1/invites'),
+  ]);
+
   container.innerHTML = `
+    <div class="info-callout">Регистрация — <b>только по приглашениям</b>: создайте ссылку с ролью
+    и передайте сотруднику. Администратор в системе всегда <b>один</b> — права передаются
+    кнопкой «Сделать администратором» у бухгалтера.</div>
+
+    <div class="glass card" style="margin-bottom:16px">
+      <div class="card-title">Приглашения <span class="spacer"></span>
+        <button class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
+      <div class="table-wrap"><table class="data"><thead><tr>
+        <th>Кто (памятка)</th><th>Роль</th><th>Использовано</th><th>Действует до</th>
+        <th>Статус</th><th>Ссылка</th><th></th></tr></thead><tbody>
+        ${invites.length ? invites.map(i => `<tr style="cursor:default">
+          <td><b>${esc(i.note || '—')}</b></td>
+          <td>${roleChip(i.role)}</td>
+          <td>${i.used_count} / ${i.max_uses}</td>
+          <td class="cell-date">${i.expires_at ? fmtDate(i.expires_at) : '∞'}</td>
+          <td>${i.valid ? '<span class="chip verified"><span class="dot"></span>активно</span>' : '<span class="chip failed"><span class="dot"></span>' + (i.revoked ? 'отозвано' : 'исчерпано') + '</span>'}</td>
+          <td>${i.valid ? `<button class="btn btn-sm i-link" data-token="${esc(i.token)}">🔗 копировать</button>` : '—'}</td>
+          <td>${i.valid ? `<button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}">Отозвать</button>` : ''}</td>
+        </tr>`).join('') : `<tr style="cursor:default"><td colspan="7">${emptyState('✉️', 'Приглашений ещё нет')}</td></tr>`}
+      </tbody></table></div>
+    </div>
+
     <div class="glass card">
       <div class="card-title">Пользователи системы <span class="spacer"></span>
-        <button class="btn btn-sm btn-primary" id="u-add">+ Создать пользователя</button></div>
+        <button class="btn btn-sm" id="u-add">+ Создать вручную</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
-        <th>Логин</th><th>ФИО</th><th>Организация</th><th>Роль</th><th>Статус</th>
+        <th>Логин</th><th>ФИО</th><th>Роль</th><th>Статус</th>
         <th>Последний вход</th><th></th></tr></thead><tbody>
         ${users.map(u => `<tr data-id="${u.id}" style="cursor:default">
-          <td><b>${esc(u.username)}</b></td><td>${esc(u.full_name)}</td>
-          <td>${esc(u.organization || '—')}</td>
-          <td>${u.role === 'admin' ? '<span class="chip exported"><span class="dot"></span>админ</span>' : '<span class="chip unknown"><span class="dot"></span>оператор</span>'}</td>
+          <td><b>${esc(u.username)}</b>${u.must_change_password ? ' <span class="chip unknown mono">врем. пароль</span>' : ''}</td>
+          <td>${esc(u.full_name)}</td>
+          <td>${roleChip(u.role)}</td>
           <td>${u.is_active ? '<span class="chip verified"><span class="dot"></span>активен</span>' : '<span class="chip failed"><span class="dot"></span>отключён</span>'}</td>
           <td class="cell-date">${fmtDate(u.last_login_at)}</td>
-          <td><button class="btn btn-sm u-edit">✎</button></td></tr>`).join('')}
+          <td style="white-space:nowrap">
+            ${u.role === 'accountant' && u.is_active ? `<button class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}">⬆ Сделать администратором</button>` : ''}
+            <button class="btn btn-sm u-edit">✎</button>
+          </td></tr>`).join('')}
       </tbody></table></div>
     </div>`;
 
+  function roleChip(role) {
+    return role === 'admin'
+      ? '<span class="chip exported"><span class="dot"></span>Администратор</span>'
+      : (role === 'accountant'
+        ? '<span class="chip new"><span class="dot"></span>Бухгалтер</span>'
+        : '<span class="chip unknown"><span class="dot"></span>Пользователь</span>');
+  }
+
+  // --- Приглашения ---
+  $('#i-add').onclick = () => inviteDialog();
+  $$('.i-link').forEach(btn => btn.onclick = () => {
+    const url = `${location.origin}/#/register/${btn.dataset.token}`;
+    navigator.clipboard && navigator.clipboard.writeText(url);
+    toast('Ссылка-приглашение скопирована — отправьте сотруднику', 'ok', 'Ссылка готова');
+  });
+  $$('.i-revoke').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Отозвать приглашение? Ссылка перестанет работать.')) return;
+    await api.post(`/api/v1/invites/${btn.dataset.id}/revoke`, {});
+    toast('Приглашение отозвано', 'ok');
+    route(true);
+  });
+
+  function inviteDialog() {
+    const { slot } = openModal(`
+      <div class="modal-title">✉️ Новое приглашение</div>
+      <div class="form-grid">
+        <label class="field"><span>Роль нового пользователя</span>
+          <select id="iv-role">
+            <option value="accountant">Бухгалтер (расширенные права)</option>
+            <option value="user">Пользователь (сканирование)</option>
+          </select></label>
+        <label class="field"><span>Срок действия, часов</span>
+          <input id="iv-hours" type="number" value="72" min="1" max="8760"></label>
+        <label class="field"><span>Сколько раз можно использовать</span>
+          <input id="iv-uses" type="number" value="1" min="1" max="200"></label>
+        <label class="field full"><span>Для кого (памятка, попадёт в «Организацию»)</span>
+          <input id="iv-note" placeholder="Иванова — бухгалтерия"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close>Отмена</button>
+        <button class="btn btn-primary" id="iv-save">Создать ссылку</button>
+      </div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    slot.querySelector('#iv-save').onclick = async () => {
+      try {
+        const inv = await api.post('/api/v1/invites', {
+          role: slot.querySelector('#iv-role').value,
+          expires_hours: +slot.querySelector('#iv-hours').value || 72,
+          max_uses: +slot.querySelector('#iv-uses').value || 1,
+          note: slot.querySelector('#iv-note').value.trim(),
+        });
+        $('#modal-root').classList.add('hidden');
+        const url = `${location.origin}/#/register/${inv.token}`;
+        const { slot: s2 } = openModal(`
+          <div class="modal-title">🔗 Ссылка-приглашение готова</div>
+          <div class="info-callout">Роль: <b>${roleLabel(inv.role)}</b> ·
+            использований: ${inv.max_uses} · действует до ${inv.expires_at ? fmtDate(inv.expires_at) : '∞'}</div>
+          <div class="token-line"><input readonly value="${esc(url)}" id="iv-url">
+            <button class="btn btn-sm" id="iv-copy">копировать</button></div>
+          <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта).
+            После перехода он создаст логин и пароль — роль присвоится автоматически.</p>
+          <div class="modal-actions"><button class="btn btn-primary" data-close>Готово</button></div>`);
+        s2.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+        s2.querySelector('#iv-copy').onclick = () => {
+          navigator.clipboard && navigator.clipboard.writeText(url);
+          toast('Скопировано', 'ok');
+        };
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // --- Пользователи ---
   $('#u-add').onclick = () => userDialog();
   $$('.u-edit').forEach(btn => btn.onclick = () => {
     const u = users.find(x => x.id === btn.closest('tr').dataset.id);
     userDialog(u);
+  });
+  $$('.u-admin').forEach(btn => btn.onclick = async () => {
+    if (!confirm(`Передать права администратора пользователю ${btn.dataset.name}?\n\n` +
+      'Вы станете бухгалтером. Администратор в системе всегда один.')) return;
+    try {
+      const r = await api.post(`/api/v1/users/${btn.dataset.id}/promote-admin`, {});
+      toast(r.message, 'ok', 'Права переданы');
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) { toast(e.message, 'err'); }
   });
 
   function userDialog(u = null) {
@@ -1056,8 +1370,11 @@ async function viewUsers(container) {
       <div class="form-grid">
         <label class="field"><span>Логин</span><input id="u-username" value="${esc(u?.username || '')}" ${u ? 'disabled' : ''}></label>
         <label class="field"><span>Роль</span>
-          <select id="u-role"><option value="user" ${u?.role === 'user' ? 'selected' : ''}>Оператор</option>
-          <option value="admin" ${u?.role === 'admin' ? 'selected' : ''}>Администратор</option></select></label>
+          <select id="u-role" ${u && u.role === 'admin' ? 'disabled' : ''}>
+            <option value="user" ${u?.role === 'user' ? 'selected' : ''}>Пользователь</option>
+            <option value="accountant" ${u?.role === 'accountant' ? 'selected' : ''}>Бухгалтер</option>
+            ${u && u.role === 'admin' ? '<option value="admin" selected>Администратор</option>' : ''}
+          </select></label>
         <label class="field"><span>ФИО</span><input id="u-fullname" value="${esc(u?.full_name || '')}"></label>
         <label class="field"><span>Организация</span><input id="u-org" value="${esc(u?.organization || '')}"></label>
         <label class="field full"><span>${u ? 'Новый пароль (пусто — не менять)' : 'Пароль'}</span>
@@ -1078,7 +1395,6 @@ async function viewUsers(container) {
           const patch = {
             full_name: slot.querySelector('#u-fullname').value,
             organization: slot.querySelector('#u-org').value,
-            role: slot.querySelector('#u-role').value,
           };
           const pass = slot.querySelector('#u-pass').value;
           if (pass) patch.password = pass;
@@ -1130,15 +1446,25 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  const isAdmin = state.me.role === 'admin';
-  let fns = null, onec = null;
-  try { if (isAdmin) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); } }
+  let fns = null, onec = null, appSet = null;
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
 
   container.innerHTML = `
     <div class="settings-grid">
-      ${isAdmin && fns ? `
+      ${isAdmin() && appSet ? `
+      <div class="glass card">
+        <div class="card-title">Общие</div>
+        <label style="display:flex;gap:12px;align-items:center;cursor:pointer;margin-bottom:10px">
+          <input type="checkbox" id="app-autoverify" ${appSet.auto_verify ? 'checked' : ''} style="width:auto">
+          <span>Автоматически проверять чек в ФНС сразу после сканирования</span></label>
+        <p class="form-hint">Экономит время бухгалтера: чек проверяется без участия человека,
+        статусы обновляются в реальном времени у всех пользователей.</p>
+        <button class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
+      </div>` : ''}
+
+      ${isAdmin() && fns ? `
       <div class="glass card">
         <div class="card-title">Проверка чеков (ФНС)</div>
         <div class="segmented" style="margin-bottom:14px">
@@ -1157,7 +1483,7 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней (повторная проверка не расходует лимиты).</p>
       </div>` : ''}
 
-      ${isAdmin && onec ? `
+      ${isAdmin() && onec ? `
       <div class="glass card">
         <div class="card-title">Интеграция с 1С</div>
         <label class="field" style="margin-bottom:12px"><span>Токен Push-доступа</span>
@@ -1174,7 +1500,7 @@ async function viewSettings(container) {
         <div class="card-title">Мой профиль</div>
         <dl class="kv">
           <dt>Логин</dt><dd>${esc(state.me.username)}</dd>
-          <dt>Роль</dt><dd>${state.me.role === 'admin' ? 'Администратор' : 'Оператор'}</dd>
+          <dt>Роль</dt><dd>${roleLabel(state.me.role)}</dd>
           <dt>Организация</dt><dd>${esc(state.me.organization || '—')}</dd>
         </dl>
         <div class="form-grid">
@@ -1182,6 +1508,16 @@ async function viewSettings(container) {
           <label class="field"><span>Новый пароль</span><input id="p-new" type="password"></label>
         </div>
         <button class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
+      </div>
+
+      <div class="glass card">
+        <div class="card-title">Безопасность и доступ</div>
+        <dl class="kv">
+          <dt>Регистрация</dt><dd>только по приглашениям администратора</dd>
+          <dt>Администратор</dt><dd>всегда один, передача прав — в разделе «Пользователи»</dd>
+          <dt>Защита входа</dt><dd>блокировка после 5 неудачных попыток</dd>
+          <dt>Лимиты запросов</dt><dd>включены (защита от перебора и DoS)</dd>
+        </dl>
       </div>
 
       <div class="glass card">
@@ -1198,9 +1534,16 @@ async function viewSettings(container) {
       </div>
     </div>`;
 
-  if (isAdmin && fns) {
-    $('#seg-mock').onclick = () => route(true);
-    $('#seg-fns').onclick = () => route(true);
+  if (isAdmin() && appSet) {
+    $('#app-save').onclick = async () => {
+      try {
+        await api.put('/api/v1/settings/app', { auto_verify: $('#app-autoverify').checked });
+        toast('Настройки сохранены', 'ok');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  if (isAdmin() && fns) {
     $('#seg-mock').onclick = async () => { await saveFns('mock'); };
     $('#seg-fns').onclick = async () => {
       const token = $('#fns-token').value.trim();

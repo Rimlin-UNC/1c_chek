@@ -53,6 +53,39 @@
     </div>
   </div>
 
+  <!-- Экран регистрации по приглашению -->
+  <div id="register-screen" class="login-screen hidden">
+    <div class="login-card glass">
+      <div class="login-logo">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <h1 style="font-size:24px">Приглашение в <span class="grad-text">Ямастер Чек</span></h1>
+        <div id="reg-invite-badge" class="chip new" style="margin:10px auto 0;display:inline-flex"><span class="dot"></span>—</div>
+      </div>
+      <form id="register-form" autocomplete="on">
+        <label class="field">
+          <span>Ваше имя (ФИО)</span>
+          <input type="text" id="reg-fullname" placeholder="Иванова Анна Петровна">
+        </label>
+        <label class="field">
+          <span>Логин</span>
+          <input type="text" id="reg-username" required minlength="2" placeholder="ivanova">
+        </label>
+        <label class="field">
+          <span>Придумайте пароль (мин. 6 символов)</span>
+          <input type="password" id="reg-password" required minlength="6" placeholder="••••••••">
+        </label>
+        <div id="register-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="register-submit">
+          Создать аккаунт
+        </button>
+      </form>
+      <div class="login-footer">
+        Регистрация возможна только по приглашению администратора · ООО «Ямастер» ·
+        <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a>
+      </div>
+    </div>
+  </div>
+
   <!-- Основная оболочка -->
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
@@ -75,10 +108,10 @@
           <span class="nav-icon" data-icon="list"></span>Чеки
           <span class="nav-badge" id="nav-receipts-badge">0</span>
         </a>
-        <a href="#/export" data-view="export" class="nav-item">
+        <a href="#/export" data-view="export" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="export"></span>Выгрузка в 1С
         </a>
-        <a href="#/mapping" data-view="mapping" class="nav-item">
+        <a href="#/mapping" data-view="mapping" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="mapping"></span>Маппинг
         </a>
         <a href="#/users" data-view="users" class="nav-item admin-only hidden">

@@ -19,8 +19,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
+from .security import rate_limit_middleware, security_headers_middleware
 from .database import init_db
-from .routers import auth_routes, dashboard, onec, receipts, settings_routes, users
+from .routers import (auth_routes, dashboard, invites, onec, receipts,
+                      settings_routes, users)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
 logging.basicConfig(
@@ -56,6 +58,16 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+@app.middleware("http")
+async def _rate_limit(request, call_next):
+    return await rate_limit_middleware(request, call_next)
+
+
+@app.middleware("http")
+async def _sec_headers(request, call_next):
+    return await security_headers_middleware(request, call_next)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -138,6 +150,7 @@ app.include_router(receipts.router)
 app.include_router(dashboard.router)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
+app.include_router(invites.router)
 app.include_router(onec.router)
 
 

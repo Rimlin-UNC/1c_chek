@@ -44,6 +44,11 @@ const STATUS_LABELS = {
 };
 export function statusLabel(s) { return STATUS_LABELS[s] || s || '—'; }
 
+export const ROLE_LABELS = {
+  admin: 'Администратор', accountant: 'Бухгалтер', user: 'Пользователь',
+};
+export function roleLabel(r) { return ROLE_LABELS[r] || r || '—'; }
+
 export function chip(status, extra = '') {
   return `<span class="chip ${esc(status)} ${extra}"><span class="dot"></span>${esc(statusLabel(status))}</span>`;
 }

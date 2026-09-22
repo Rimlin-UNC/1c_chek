@@ -38,6 +38,7 @@ def seed_if_needed() -> None:
                 organization="ООО «Ямастер»",
                 password_hash=hash_password(DEFAULT_ADMIN["password"]),
                 role="admin",
+                must_change_password=True,  # потребуем сменить пароль при первом входе
             ))
             db.commit()
             print("=" * 62)

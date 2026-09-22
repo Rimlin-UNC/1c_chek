@@ -29,6 +29,24 @@ API ФНС и выгружает их в **1С:Бухгалтерия 3.0 / ERP 
 | **Офлайн-режим** | PWA ставится на телефон как приложение; сканы без связи сохраняются локально и синхронизируются автоматически |
 | **Безопасность** | JWT (HS256), PBKDF2-260k пароли, токены для 1С, защита от SQL-инъекций (ORM), CORS, Nginx+TLS |
 
+## 👥 Роли и доступ
+
+| Роль | Права |
+|---|---|
+| **Администратор** (всегда один) | Абсолютно всё: пользователи, приглашения, настройки, журнал, передача прав |
+| **Бухгалтер** | Все чеки, проверка ФНС, назначение сотрудника, выгрузка в 1С/CSV, маппинг |
+| **Пользователь** | Сканирование и просмотр только своих чеков |
+
+- Регистрация — **только по ссылке-приглашению** от администратора, роль вшита в ссылку;
+- Администратор заходит первым (`admin`/`admin123`) — система **обязательно** требует сменить пароль;
+- Второго администратора создать нельзя; права передаются кнопкой «Сделать администратором».
+
+## 🛡 Защита (всё бесплатно, из коробки)
+
+Rate-limit (antibrute + анти-DoS) · блокировка перебора паролей · UFW (наружу только 80/443) ·
+fail2ban (бан IP) · Nginx limit_req/conn · CSP/security headers · JWT+PBKDF2 · один админ ·
+приглашения · systemd-изоляция. Подробности: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), раздел 4.
+
 ## 🚀 Быстрый старт (2 минуты)
 
 Нужен Python 3.11+ (Ubuntu 24.04 — из коробки):
@@ -58,11 +76,17 @@ docker compose up -d --build
 # Веб-клиент: http://<сервер>:8000 · Swagger: http://<сервер>:8000/api/docs
 ```
 
-### Установка на Ubuntu 24.04 без Docker
+### Продакшен на сервере Ubuntu 24.04 прямо из GitHub
 
 ```bash
-sudo bash install.sh --with-nginx --with-ssl=check.example.ru
+ssh root@ВАШ_IP
+curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+sudo bash deploy.sh                       # код с GitHub + Nginx + UFW + fail2ban
+sudo bash deploy.sh --update              # обновление версии
+sudo bash deploy.sh --with-ssl=домен.ru   # + HTTPS
 ```
+
+(Классическая установка также доступна: `sudo bash install.sh --with-nginx --with-ssl=check.example.ru`.)
 
 Скрипт создаст пользователя, развернёт приложение в `/opt/ymaster-check`, настроит
 systemd-автозапуск, Nginx и SSL Let's Encrypt. Подробности — [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

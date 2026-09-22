@@ -34,6 +34,8 @@ SOURCE_FIELDS = [
     {"code": "operation", "name": "Признак расчёта (1/2)", "type": "number"},
     {"code": "qr_data", "name": "Строка QR-кода целиком", "type": "string"},
     {"code": "created_at", "name": "Дата сканирования", "type": "datetime"},
+    {"code": "assignee", "name": "Сотрудник (подотчётник)", "type": "string"},
+    {"code": "comment", "name": "Комментарий", "type": "string"},
     {"code": "fns_status", "name": "Статус проверки ФНС", "type": "string"},
 ]
 
@@ -99,6 +101,10 @@ def _receipt_field(receipt: Receipt, field_code: str):
         return receipt.created_at
     if field_code == "fns_status":
         return receipt.fns_status
+    if field_code == "assignee":
+        return getattr(receipt, "assignee", "") or None
+    if field_code == "comment":
+        return getattr(receipt, "comment", "") or None
     return None
 
 
@@ -134,7 +140,8 @@ def _ed_receipt_json(receipt: Receipt, target_object: str,
             "СуммаДокумента": round(receipt.total_sum, 2),
             "ВалютаДокумента": {"Код": "643", "Наименование": "Российский рубль"},
             "Контрагент": {
-                "Наименование": "Подотчётное лицо (укажите в маппинге)",
+                "Наименование": (getattr(receipt, "assignee", "") or
+                                 "Подотчётное лицо (укажите сотрудника)"),
             },
         },
         "ДополнительныеРеквизиты": _apply_mapping(receipt, mapping, target_object),
@@ -245,6 +252,8 @@ def build_push_payload(receipts: list[Receipt],
                 "sum_kopecks": int(round(r.total_sum * 100)),
                 "operation": r.operation,
                 "fns_status": r.fns_status,
+                "assignee": getattr(r, "assignee", "") or "",
+                "comment": getattr(r, "comment", "") or "",
                 "qr": r.qr_data,
                 "items": [
                     {
