@@ -4,11 +4,11 @@
 # Разработчик и владелец идеи: ООО «Ямастер»
 # Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
 #
-# БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (пример: 94.183.236.179):
+# БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru = 94.183.236.179):
 #   ssh root@94.183.236.179
 #   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
-#   sudo bash deploy.sh --with-ssl=check.my.ru   # установка + SSL
+#   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
 #   sudo bash deploy.sh --update                 # обновление версии с GitHub
 #
 # Что делает:
@@ -124,7 +124,7 @@ fi
 # ------------------------------------------------------------------
 bold "6/9 База данных и администратор"
 sudo -u "$APP_USER" sh -c "cd $APP_DIR && ./venv/bin/python -m app.seed"
-ok "администратор: admin / admin123 (сменится при первом входе — обязательно)"
+ok "администратор: admin / admin123 (смените при первом входе; если пароль уже меняли — он сохранён)"
 
 # ------------------------------------------------------------------
 bold "7/9 Сервис systemd"
@@ -154,35 +154,47 @@ fi
 ufw --force reset >/dev/null
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
-ufw limit OpenSSH >/dev/null      # защита от брутфорса SSH
+ufw limit OpenSSH >/dev/null 2>&1 || ufw limit 22/tcp >/dev/null  # анти-брутфорс SSH
 ufw allow 80/tcp >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
 systemctl enable --now fail2ban >/dev/null 2>&1 || true
 cp "$APP_DIR/deploy/fail2ban/ymaster-check.conf" /etc/fail2ban/filter.d/ymaster-check.conf
 cp "$APP_DIR/deploy/fail2ban/jail-ymaster.local" /etc/fail2ban/jail.d/ymaster.local
-systemctl restart fail2ban
+systemctl restart fail2ban 2>/dev/null || warn "fail2ban не перезапустился (проверьте: systemctl status fail2ban)"
 ufw status | grep -q "80/tcp" && ok "UFW: снаружи только 22 (limit), 80, 443. Порт 8000 закрыт."
 fail2ban-client status ymaster-check >/dev/null 2>&1 && ok "fail2ban: бан за перебор паролей активен"
 
 # ------------------------------------------------------------------
 bold "9/9 SSL (Let's Encrypt) — опционально"
 if [[ -n "$SSL_DOMAIN" ]]; then
-  apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
-  certbot --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos \
-    -m info@ymaster.ru && ok "сертификат выпущен, HTTPS включён" \
-    || warn "certbot не смог выпустить сертификат — проверьте DNS (A-запись → этот сервер)"
+  # Preflight: домен должен указывать на ЭТОТ сервер, иначе Let's Encrypt не пройдёт
+  SERVER_IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')
+  DOMAIN_IP=$(getent ahostsv4 "$SSL_DOMAIN" | awk '{print $1; exit}')
+  echo "  Домен $SSL_DOMAIN -> ${DOMAIN_IP:-не найден}; этот сервер: $SERVER_IP"
+  if [[ -n "$DOMAIN_IP" && "$DOMAIN_IP" == "$SERVER_IP" ]]; then
+    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+    certbot --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos --redirect \
+      -m info@ymaster.ru && ok "сертификат выпущен, HTTPS включён, http -> https автоматически" \
+      || warn "certbot не смог выпустить сертификат — повторите позже: sudo bash deploy.sh --update --with-ssl=$SSL_DOMAIN"
+  else
+    warn "DNS $SSL_DOMAIN пока не указывает на этот сервер ($DOMAIN_IP != $SERVER_IP)."
+    echo "     Сайт уже работает по http://$SERVER_IP — выпустите SSL после обновления DNS:"
+    echo "     sudo bash deploy.sh --update --with-ssl=$SSL_DOMAIN"
+  fi
 else
   warn "SSL не настроен. Для камеры на телефонах нужен HTTPS:"
   echo "     sudo bash deploy.sh --update --with-ssl=ваш-домен.ru"
 fi
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+URL="http://${SSL_DOMAIN:-$IP}"
+[[ -n "$SSL_DOMAIN" ]] && URL="https://$SSL_DOMAIN"
 echo ""
 echo "=============================================================="
 echo "  ✅ Ямастер Чек развёрнут!"
-echo "  Веб-клиент:       http://$IP  (или http://$IP:80, домен)"
-echo "  Swagger API:      http://$IP/api/docs"
+echo "  Веб-клиент:       $URL  (или http://$IP)"
+echo "  Swagger API:      $URL/api/docs"
 echo "  Логин:            admin / admin123  → смена пароля при входе"
 echo ""
 echo "  Управление:  systemctl status $SERVICE"

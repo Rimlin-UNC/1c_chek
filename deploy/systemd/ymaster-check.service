@@ -18,7 +18,8 @@ User=ymaster
 Group=ymaster
 WorkingDirectory=/opt/ymaster-check
 Environment=PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin
-ExecStart=/opt/ymaster-check/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+# Один воркер: корректные rate-limit'ы (общий счётчик в памяти) и минимум RAM на VPS 1-2 ГБ
+ExecStart=/opt/ymaster-check/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 
