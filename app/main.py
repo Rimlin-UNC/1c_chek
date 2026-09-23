@@ -161,6 +161,8 @@ app.include_router(onec.router)
 from .config import BASE_DIR  # noqa: E402
 STATIC_DIR = BASE_DIR / "app" / "static"
 
+# Каталог assets должен существовать (git не хранит пустые папки — страховка)
+(STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
 app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
