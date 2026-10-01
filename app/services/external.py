@@ -46,6 +46,7 @@ COOLDOWN_MAX_SECONDS = 6 * 3600.0    # максимум 6 часов
 MAX_SAME_PROVIDER_RETRIES = 2
 
 PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"
+OFDRU_URL = "https://ofd.ru/api/partner/v3/receipts/GetReceipt"   # ОФД-ру «QR Cash» (БД ФНС)
 
 
 @dataclass
@@ -81,15 +82,19 @@ class ExternalResult:
 # ==========================================================================
 #  Парсинг ответов (защитный: формы ответов у сервисов различаются)
 # ==========================================================================
+def _lc(d: dict) -> dict:
+    """Словарь с ключами в нижнем регистре (сервисы пишут totalSum/TotalSum/total_sum)."""
+    return {str(k).lower(): v for k, v in d.items()}
+
+
 def _find_receipt_dict(obj, depth: int = 0):
     """Рекурсивный поиск словаря чека: содержит 'items' (list) и сумму."""
     if depth > 6 or not isinstance(obj, dict):
         return None
-    items = obj.get("items")
-    if isinstance(items, list) and items and any(
-        isinstance(i, dict) and ("name" in i or "itemName" in i or "onlines" not in i) for i in items
-    ):
-        if any(k in obj for k in ("totalSum", "total", "sum")):
+    low = _lc(obj)
+    items = low.get("items")
+    if isinstance(items, list) and items and any(isinstance(i, dict) for i in items):
+        if any(k in low for k in ("totalsum", "total", "sum")):
             return obj
     for v in obj.values():
         hit = _find_receipt_dict(v, depth + 1)
@@ -154,7 +159,8 @@ def _parse_datetime(receipt: dict) -> datetime | None:
 def _money_divisor(receipt: dict, known_rub: float | None) -> float:
     """Определить делитель сумм (100 для копеек, 1 для рублей) ОДИН раз
     по итогу чека — и применить ко всем полям (позиции, наличные, НДС)."""
-    raw_total = float(receipt.get("totalSum") or receipt.get("total") or 0)
+    low = _lc(receipt)
+    raw_total = float(low.get("totalsum") or low.get("total") or 0)
     if known_rub and raw_total:
         if abs(raw_total / 100.0 - known_rub) <= max(1.0, known_rub * 0.5):
             return 100.0
@@ -173,38 +179,68 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
 
     div = _money_divisor(receipt, known_rub)
     money = lambda v: round(float(v or 0) / div, 2)   # noqa: E731
-    total = money(receipt.get("totalSum") or receipt.get("total"))
+    low = _lc(receipt)
+
+    def _g(*keys, default=None):
+        """Поиск ключа по алиасам (в нижнем регистре)."""
+        for k in keys:
+            if low.get(k) not in (None, ""):
+                return low[k]
+        return default
+
+    total = money(_g("totalsum", "total", default=0))
+    dt_raw = _g("datetime", "date_time", "datetimeiso", "docdatetime")
 
     items: list[ExternalItem] = []
-    for i, raw_item in enumerate(receipt.get("items") or []):
+    for i, raw_item in enumerate(low.get("items") or []):
         if not isinstance(raw_item, dict):
             continue
-        name = str(raw_item.get("name") or raw_item.get("itemName") or f"Позиция {i + 1}")
-        qty = float(raw_item.get("quantity") or 1)
-        price = money(raw_item.get("price"))
-        item_total = money(raw_item.get("sum") or raw_item.get("total"))
-        vat_rate = raw_item.get("nds") if isinstance(raw_item.get("nds"), (int, str)) else "none"
+        it = _lc(raw_item)
+        name = str(it.get("name") or it.get("itemname") or it.get("nomination")
+                   or f"Позиция {i + 1}")
+        try:
+            qty = float(it.get("quantity") or it.get("qty") or 1)
+        except (TypeError, ValueError):
+            qty = 1.0
+        price = money(it.get("price") or it.get("itemprice"))
+        item_total = money(it.get("sum") or it.get("itemsum") or it.get("total"))
+        vat_rate = it.get("nds") if isinstance(it.get("nds"), (int, str)) else "none"
         if vat_rate in (0, "0"):
             vat_rate = "0"
-        vat_sum = money(raw_item.get("ndsSum"))
+        vat_sum = money(it.get("ndssum"))
         items.append(ExternalItem(name=name, quantity=qty, price=price,
                                   total=item_total, vat_rate=str(vat_rate), vat_sum=vat_sum))
+
+    def _pdt(raw):
+        if not raw:
+            return None
+        if isinstance(raw, (int, float)):
+            try:
+                return datetime.utcfromtimestamp(int(raw))
+            except (ValueError, OSError, OverflowError):
+                return None
+        txt = str(raw)
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%d.%m.%Y %H:%M", "%Y%m%dT%H%M"):
+            try:
+                return datetime.strptime(txt[:19], fmt)
+            except ValueError:
+                continue
+        return None
 
     return ExternalResult(
         ok=True,
         source="",
         found=True,
         message="Данные чека получены",
-        date_time=_parse_datetime(receipt),
+        date_time=_pdt(dt_raw) or _parse_datetime(receipt),
         total_sum=total,
-        operation=_parse_operation(receipt),
-        merchant_name=str(receipt.get("user") or receipt.get("operatorName")
-                          or receipt.get("retailPlace") or "")[:500],
-        merchant_inn=str(receipt.get("userInn") or receipt.get("inn") or "")[:20],
-        merchant_address=str(receipt.get("retailPlaceAddress") or receipt.get("address") or "")[:500],
-        cashier=str(receipt.get("operator") or receipt.get("cashier") or "")[:200],
-        cash_sum=money(receipt.get("cashTotalSum")) if receipt.get("cashTotalSum") else None,
-        ecash_sum=money(receipt.get("ecashTotalSum")) if receipt.get("ecashTotalSum") else None,
+        operation=_parse_operation(low),
+        merchant_name=str(_g("user", "operatorname", "retailplace", default=""))[:500],
+        merchant_inn=str(_g("userinn", "inn", default=""))[:20],
+        merchant_address=str(_g("retailplaceaddress", "address", default=""))[:500],
+        cashier=str(_g("operator", "cashier", default=""))[:200],
+        cash_sum=money(_g("cashtotalsum")) if _g("cashtotalsum") else None,
+        ecash_sum=money(_g("ecashtotalsum")) if _g("ecashtotalsum") else None,
         items=items,
         raw=receipt,
     )
@@ -238,6 +274,47 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
         return True, "OK", resp.json()
     except ValueError:
         return False, "Ответ не JSON", {}
+
+
+def fetch_ofdru(fn: str, fd: str, fp: str, total_rub: float,
+                date_time: datetime, operation: int, token_secret: str) -> tuple[bool, str, dict]:
+    """
+    ОФД-ру «QR Cash» — получение фискального документа ИЗ БД ФНС
+    (POST /api/partner/v3/receipts/GetReceipt, tokenSecret из личного
+    кабинета ofd.ru). Документация: ofd.ru/razrabotchikam/qr-cash.
+    """
+    if not token_secret:
+        return False, "Не задан tokenSecret ofd.ru", {}
+    payload = {
+        "TotalSum": int(round((total_rub or 0) * 100)),          # копейки
+        "DocDateTime": (date_time or datetime.utcnow()).strftime("%Y-%m-%dT%H:%M:%S.000"),
+        "FnNumber": str(fn),
+        "ReceiptOperationType": "2" if operation == 2 else "1",
+        "DocNumber": str(fd),
+        "DocFiscalSign": str(fp),
+        "tokenSecret": token_secret,
+    }
+    try:
+        resp = httpx.post(OFDRU_URL, json=payload,
+                          headers={"User-Agent": "YmasterCheck/1.3"},
+                          timeout=REQUEST_TIMEOUT)
+    except httpx.HTTPError as e:
+        return False, f"Сеть: {e.__class__.__name__}", {}
+    if resp.status_code in (429, 403):
+        return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
+    if resp.status_code != 200:
+        return False, f"HTTP {resp.status_code}", {}
+    try:
+        data = resp.json()
+    except ValueError:
+        return False, "Ответ не JSON", {}
+    low = _lc(data)
+    code = low.get("code")
+    # ОФД-ру: Code != 0 → ошибка запроса (чек не найден/нет доступа)
+    if isinstance(code, int) and code != 0:
+        msg = str(low.get("desc") or low.get("message") or f"код {code}")
+        return True, f"ofd.ru: {msg}", data
+    return True, "OK", data
 
 
 def fetch_custom(qr_raw: str, url: str) -> tuple[bool, str, dict]:
@@ -304,8 +381,19 @@ class ExternalFetchEngine:
         from ..models import AppSetting
         rows = {r.key: r.value for r in db.query(AppSetting).filter(
             AppSetting.key.in_(["fns_master_token", "proverkacheka_token",
-                                "external_custom_url", "external_order",
+                                "ofd_ru_token", "external_custom_url",
+                                "external_custom_urls", "external_order",
                                 "external_auto"])).all()}
+        # Свои источники: список {name,url} из JSON + legacy одиночный URL
+        sources: list[dict] = []
+        try:
+            raw = json.loads(rows.get("external_custom_urls") or "[]")
+            sources += [s for s in raw if isinstance(s, dict) and s.get("url")]
+        except ValueError:
+            pass
+        if rows.get("external_custom_url"):
+            sources.append({"name": "custom", "url": rows["external_custom_url"]})
+        rows["custom_sources"] = sources
         return rows
 
     def provider_chain(self, db) -> list[str]:
@@ -315,12 +403,16 @@ class ExternalFetchEngine:
                              "fns_api,proverkacheka,custom").split(",") if p]
         chain: list[str] = []
         for p in order:
+            if p in chain:
+                continue                      # дедупликация порядка
             if p == "fns_api" and (cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN):
+                chain.append(p)
+            elif p == "ofd_ru" and cfg.get("ofd_ru_token"):
                 chain.append(p)
             elif p == "proverkacheka" and cfg.get("proverkacheka_token"):
                 chain.append(p)
-            elif p == "custom" and cfg.get("external_custom_url"):
-                chain.append(p)
+            elif p == "custom":
+                chain += [f"custom::{s['name']}" for s in cfg["custom_sources"]]
         # mock всегда в конце — чтобы чеки проверялись даже без токенов
         chain.append("mock")
         return chain
@@ -331,7 +423,7 @@ class ExternalFetchEngine:
     def status(self) -> dict:
         now = time.time()
         out = {}
-        for p in ("fns_api", "proverkacheka", "custom", "mock"):
+        for p in ("fns_api", "ofd_ru", "proverkacheka", "custom", "mock"):
             cd = self._cooldown_until.get(p, 0.0)
             out[p] = {
                 "available": now >= cd,
@@ -381,9 +473,18 @@ class ExternalFetchEngine:
                         if provider == "proverkacheka":
                             net_ok, msg, data = fetch_proverkacheka(
                                 qr_raw, cfg.get("proverkacheka_token", ""))
-                        elif provider == "custom":
-                            net_ok, msg, data = fetch_custom(
-                                qr_raw, cfg.get("external_custom_url", ""))
+                        elif provider.startswith("custom::"):
+                            name = provider.split("::", 1)[1]
+                            src = next((x for x in cfg["custom_sources"]
+                                        if x["name"] == name), None)
+                            net_ok, msg, data = (fetch_custom(qr_raw, src["url"])
+                                                 if src else
+                                                 (False, "источник удалён из настроек", {}))
+                        elif provider == "ofd_ru":
+                            net_ok, msg, data = fetch_ofdru(
+                                fn, fd, fp, total_rub, date_time,
+                                2 if False else 1,   # тип уточнится ответом источника
+                                cfg.get("ofd_ru_token", ""))
                         elif provider == "fns_api":
                             token = cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN
                             net_ok, msg, data = fetch_fns(

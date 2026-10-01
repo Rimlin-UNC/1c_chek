@@ -190,13 +190,22 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
 @router.get("/external", summary="Настройки источников данных чека (админ)")
 def get_external(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     from ..services.external import engine
+    import json as _json
+    try:
+        urls = _json.loads(_get_setting(db, "external_custom_urls", "[]"))
+    except ValueError:
+        urls = []
     return {
         "fns_master_token_masked": _mask(_get_setting(db, "fns_master_token", "")),
         "has_fns_master_token": bool(_get_setting(db, "fns_master_token", "")),
         "proverkacheka_token_masked": _mask(_get_setting(db, "proverkacheka_token", "")),
         "has_proverkacheka_token": bool(_get_setting(db, "proverkacheka_token", "")),
+        "ofd_ru_token_masked": _mask(_get_setting(db, "ofd_ru_token", "")),
+        "has_ofd_ru_token": bool(_get_setting(db, "ofd_ru_token", "")),
         "external_custom_url": _get_setting(db, "external_custom_url", ""),
-        "external_order": _get_setting(db, "external_order", "fns_api,proverkacheka,custom"),
+        "external_custom_urls": [u for u in urls if isinstance(u, dict)],
+        "external_order": _get_setting(db, "external_order",
+                                       "fns_api,ofd_ru,proverkacheka,custom"),
         "external_auto": _get_setting(db, "external_auto", "1") == "1",
         "engine": engine.status(),
     }
@@ -209,15 +218,26 @@ def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
         _set_setting(db, "fns_master_token", body.fns_master_token.strip())
     if body.proverkacheka_token is not None and "•" not in body.proverkacheka_token:
         _set_setting(db, "proverkacheka_token", body.proverkacheka_token.strip())
+    if body.ofd_ru_token is not None and "•" not in body.ofd_ru_token:
+        _set_setting(db, "ofd_ru_token", body.ofd_ru_token.strip())
+    if body.external_custom_urls is not None:
+        cleaned = [{"name": c.name.strip()[:60], "url": c.url.strip()[:500]}
+                   for c in body.external_custom_urls]
+        for c in cleaned:
+            if not c["url"].lower().startswith(("http://", "https://")):
+                raise HTTPException(400, f"URL источника «{c['name']}» должен начинаться с http(s)://")
+        _set_setting(db, "external_custom_urls",
+                     __import__("json").dumps(cleaned, ensure_ascii=False))
     if body.external_custom_url is not None:
         url = body.external_custom_url.strip()
         if url and not url.lower().startswith(("http://", "https://")):
             raise HTTPException(400, "URL должен начинаться с http:// или https://")
         _set_setting(db, "external_custom_url", url)
     if body.external_order is not None:
-        allowed = {"fns_api", "proverkacheka", "custom"}
+        allowed = {"fns_api", "ofd_ru", "proverkacheka", "custom"}
         items = [x.strip() for x in body.external_order.split(",") if x.strip() in allowed]
-        _set_setting(db, "external_order", ",".join(items or ["fns_api", "proverkacheka", "custom"]))
+        _set_setting(db, "external_order",
+                     ",".join(items or ["fns_api", "ofd_ru", "proverkacheka", "custom"]))
     if body.external_auto is not None:
         _set_setting(db, "external_auto", "1" if body.external_auto else "0")
     log_action(user, "external_settings_updated", details={"auto": body.external_auto})

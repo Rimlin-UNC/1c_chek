@@ -400,34 +400,49 @@ def bulk_assign(body: AssignBulk, user: User = Depends(require_accountant),
 #  (ФНС API / proverkacheka.com / свой сервис) — с паузами 2–7 с и ротацией
 # --------------------------------------------------------------------------
 def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -> None:
-    """Применение полученных данных к чеку (только непустые поля)."""
+    """Применение полученных данных к чеку (только непустые поля).
+
+    v1.3.0: если бухгалтер уже правил чек вручную (details_source ==
+    manual_edit) — машинные данные НЕ затирают человеческие: заполняются
+    только пустые поля, реквизиты/позиции/сумма остаются как задал человек.
+    """
     if not res.ok:
         receipt.fns_message = res.message
         db.commit()
         return
-    if res.date_time:
+    human_edited = receipt.details_source == "manual_edit"
+
+    def applyable(machine_val, human_val=None) -> bool:
+        """Машинное значение применяем, если оно есть и не конфликтует с ручным."""
+        if machine_val in (None, "", 0, []):
+            return False
+        if human_edited and human_val not in (None, "", 0, []):
+            return False
+        return True
+
+    if applyable(res.date_time, receipt.receipt_date):
         receipt.receipt_date = res.date_time
-    if res.total_sum:
+    if applyable(res.total_sum, receipt.total_sum):
         receipt.total_sum = res.total_sum
-    if res.operation in (1, 2):
+    if applyable(res.operation):
         receipt.operation = res.operation
-    if res.merchant_name:
+    if applyable(res.merchant_name, receipt.merchant_name):
         receipt.merchant_name = res.merchant_name
-    if res.merchant_inn:
+    if applyable(res.merchant_inn, receipt.merchant_inn):
         receipt.merchant_inn = res.merchant_inn
-    if res.merchant_address:
+    if applyable(res.merchant_address, receipt.merchant_address):
         receipt.merchant_address = res.merchant_address
-    if res.cashier:
+    if applyable(res.cashier, receipt.cashier):
         receipt.cashier = res.cashier
-    if res.cash_sum is not None:
+    if applyable(res.cash_sum):
         receipt.cash_sum = res.cash_sum
-    if res.ecash_sum is not None:
+    if applyable(res.ecash_sum):
         receipt.ecash_sum = res.ecash_sum
     if res.found:
         receipt.fns_status = "valid"
         receipt.fns_checked_at = dt.datetime.utcnow()
         receipt.fns_message = f"Данные получены ({res.source})"
-        if res.items:
+        if res.items and not (human_edited and receipt.items):
             receipt.items.clear()
             for pos, it in enumerate(res.items):
                 receipt.items.append(ReceiptItem(
@@ -435,7 +450,8 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
                     price=it.price, total=it.total,
                     vat_rate=it.vat_rate[:10], vat_sum=it.vat_sum,
                     position=pos))
-    receipt.details_source = res.source or receipt.details_source
+    if not human_edited:
+        receipt.details_source = res.source or receipt.details_source
     receipt.details_fetched_at = dt.datetime.utcnow()
     try:
         raw = json.loads(receipt.raw_data or "{}")

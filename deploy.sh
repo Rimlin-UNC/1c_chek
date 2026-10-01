@@ -188,11 +188,12 @@ else
 fi
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+APP_VERSION=$(grep -oP 'APP_VERSION: str = "\K[^"]+' "$APP_DIR/app/config.py" 2>/dev/null || echo "?")
 URL="http://${SSL_DOMAIN:-$IP}"
 [[ -n "$SSL_DOMAIN" ]] && URL="https://$SSL_DOMAIN"
 echo ""
 echo "=============================================================="
-echo "  ✅ Ямастер Чек развёрнут!"
+echo "  ✅ Ямастер Чек v$APP_VERSION развёрнут!"
 echo "  Веб-клиент:       $URL  (или http://$IP)"
 echo "  Swagger API:      $URL/api/docs"
 echo "  Логин:            admin / admin123  → смена пароля при входе"

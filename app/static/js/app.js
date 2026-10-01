@@ -43,11 +43,22 @@ const isAdmin = () => state.me && state.me.role === 'admin';
 // --------------------------------------------------------------------------
 //  Точка входа
 // --------------------------------------------------------------------------
+// v1.3.0: версия приложения — единый источник /api/v1/about (никаких хардкодов)
+async function loadAppVersion() {
+  try {
+    const about = await api.get('/api/v1/about', { retries: 1 });
+    state.appVersion = about.version;
+    const els = [$('#brand-version'), $('#footer-version')];
+    els.forEach(el => { if (el) el.textContent = 'v' + about.version; });
+  } catch { /* версия не критична */ }
+}
+
 async function boot() {
   injectIcons();
   registerServiceWorker();
   bindShell();
   showSplash(true);
+  loadAppVersion();
 
   // Регистрация по приглашению: #/register/<token>
   const m = location.hash.match(/^#\/register\/(.+)$/);
@@ -739,31 +750,54 @@ function openEditReceipt(r, onSaved) {
     <label style="display:flex;gap:10px;align-items:center;margin-top:12px;cursor:pointer">
       <input type="checkbox" id="er-notified" ${r.notified ? 'checked' : ''} style="width:auto">
       <span>🔔 Уведомление от сотрудника</span></label>
+    <details class="manual-check" style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🌐 Проверить чек вручную на сторонних сервисах</summary>
+      <div class="manual-check-links">
+        <a href="https://proverkacheka.com/" target="_blank" rel="noopener">proverkacheka.com</a>
+        <a href="https://xn--80aaemb2ac0aikd0g.xn--p1ai/" target="_blank" rel="noopener">проверкачека.рф</a>
+        <a href="https://proverka-cheka.ru/" target="_blank" rel="noopener">proverka-cheka.ru</a>
+        <a href="https://chek-pek.ru/" target="_blank" rel="noopener">chek-pek.ru</a>
+      </div>
+      <p class="form-hint" style="margin-top:6px">Реквизиты чека: ФН ${esc(r.fn)} · ФД ${esc(r.fd)} · ФП ${esc(r.fp)} · ${fmtSum(r.total_sum)} — скопируйте их на сайте сервиса.</p>
+    </details>
     <div class="modal-actions">
       <button class="btn btn-primary" id="er-save">💾 Сохранить</button>
       <button class="btn" id="er-cancel">Отмена</button>
     </div>`);
 
+  // v1.3.0 (баг-фикс): позиции — единый источник DOM; всё введённое читается
+  // при сохранении, удаление/добавление работают без потери набранного.
   const itemsBox = slot.querySelector('#er-items');
-  const renderItems = (items) => {
-    itemsBox.innerHTML = items.map((it, i) => `
-      <div class="form-grid" style="grid-template-columns:1fr 70px 90px 90px 40px;gap:6px;margin-bottom:6px">
-        <input class="it-name" value="${esc(it.name)}" placeholder="наименование">
-        <input class="it-qty" type="number" step="0.001" min="0" value="${it.quantity}">
-        <input class="it-price" type="number" step="0.01" min="0" value="${it.price}">
-        <input class="it-total" type="number" step="0.01" min="0" value="${it.total}">
-        <button class="btn btn-sm btn-bad it-del" title="Удалить позицию">✕</button>
-      </div>`).join('') || '<p class="form-hint">Позиций нет — получите данные из сервиса или добавьте вручную</p>';
-    itemsBox.querySelectorAll('.it-del').forEach(b => b.onclick = () => {
-      items.splice(+b.closest('.form-grid').querySelector('.it-name').dataset.i, 1);
-      renderItems();
-    });
-    itemsBox.querySelectorAll('.it-name').forEach((el, i) => el.dataset.i = i);
+  const itemRow = (it = { name: '', quantity: 1, price: 0, total: 0 }) => {
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML = `
+      <input class="it-name" value="${esc(it.name)}" placeholder="наименование позиции">
+      <input class="it-qty" type="number" step="0.001" min="0" value="${it.quantity}" title="Количество">
+      <input class="it-price" type="number" step="0.01" min="0" value="${it.price}" title="Цена">
+      <input class="it-total" type="number" step="0.01" min="0" value="${it.total}" title="Сумма">
+      <button class="btn btn-sm btn-bad it-del" type="button" title="Удалить позицию">✕</button>`;
+    row.querySelector('.it-del').onclick = () => row.remove();
+    return row;
   };
-  let items = (r.items || []).map(it => ({ ...it }));
-  renderItems(items);
+  (r.items || []).forEach(it => itemsBox.appendChild(itemRow(it)));
+  if (!(r.items || []).length) {
+    itemsBox.innerHTML = '<p class="form-hint" id="er-no-items">Позиций нет — получите данные из сервиса или добавьте вручную</p>';
+  }
   const addBtn = slot.querySelector('#er-add-item');
-  if (addBtn) addBtn.onclick = () => { items.push({ name: '', quantity: 1, price: 0, total: 0 }); renderItems(items); };
+  if (addBtn) addBtn.onclick = () => {
+    itemsBox.querySelector('#er-no-items')?.remove();
+    itemsBox.appendChild(itemRow());
+    itemsBox.querySelector('.item-row:last-child .it-name').focus();
+  };
+  const collectItems = () => [...itemsBox.querySelectorAll('.item-row')]
+    .map(row => ({
+      name: row.querySelector('.it-name').value.trim(),
+      quantity: parseFloat(row.querySelector('.it-qty').value) || 1,
+      price: parseFloat(row.querySelector('.it-price').value) || 0,
+      total: parseFloat(row.querySelector('.it-total').value) || 0,
+    }))
+    .filter(it => it.name);
 
   slot.querySelector('#er-cancel').onclick = close;
   slot.querySelector('#er-save').onclick = async () => {
@@ -785,9 +819,7 @@ function openEditReceipt(r, onSaved) {
       body.total_sum = parseFloat(sumEl.value) || 0;
       body.operation = parseInt(opEl.value);
       body.fn = fnEl.value.trim(); body.fd = fdEl.value.trim(); body.fp = fpEl.value.trim();
-      body.items = items.filter(it => it.name && it.name.trim())
-        .map(it => ({ name: it.name.trim(), quantity: parseFloat(it.quantity) || 1,
-                      price: parseFloat(it.price) || 0, total: parseFloat(it.total) || 0 }));
+      body.items = collectItems();
     }
     try {
       await api.patch('/api/v1/receipts/' + r.id, body);
@@ -829,26 +861,33 @@ function openNotifyDialog(r, onSaved) {
 // ==========================================================================
 //  v1.2.0: Блок «Что нового» — показывается один раз на каждую версию
 // ==========================================================================
-const CLIENT_VERSION = '1.2.0';
+const WHATS_NEW = {
+  '1.2.0': [
+    ['📥 Данные чека из сервисов', 'полная информация (магазин, ИНН, все позиции) — из API ФНС, proverkacheka.com или своего источника. Паузы 2–7 с и ротация источников — без блокировок.'],
+    ['✏️ Редактирование чеков', 'бухгалтер и администратор могут изменить любые поля чека и позиции — по одному или массово; изменения попадают в 1С и CSV.'],
+    ['👤 «От кого прислал»', 'чеки от сотрудников автоматически помечаются отправителем.'],
+    ['🔔 Уведомления сотрудников', 'флажок «уведомить бухгалтерию» и комментарий к своему чеку.'],
+    ['📱 Стабильная связь', 'исправлены «офлайн» и мерцание на телефоне.'],
+  ],
+  '1.3.0': [
+    ['🏦 Новый источник: ОФД-ру «QR Cash»', 'официальное API ofd.ru по базе ФНС — ещё один вариант получения полного чека (tokenSecret в Настройках).'],
+    ['🔗 Несколько своих источников', 'теперь можно подключить до 10 своих сервисов проверки (списком, у каждого своё «остывание»).'],
+    ['🌐 Ручная проверка в 1 клик', 'в редакторе чека — кнопки открытия сервисов: proverkacheka.com, проверкачека.рф, proverka-cheka.ru, chek-pek.ru.'],
+    ['🎨 Качество вёрстки', 'доработаны таблицы (липкие заголовки), модалки и сетки на телефоне, фокус с клавиатуры, безопасные отступы iOS.'],
+    ['🔢 Версия теперь всегда видна и честна', 'единая версия в шапке, футере, API и кэше — обновляется из одного места.'],
+  ],
+};
 function showWhatsNew() {
+  const v = state.appVersion;
+  if (!v || !WHATS_NEW[v]) return;                       // для этой версии новостей нет
   try {
-    if (localStorage.getItem('ymaster_seen_version') === CLIENT_VERSION) return;
-    localStorage.setItem('ymaster_seen_version', CLIENT_VERSION);
+    if (localStorage.getItem('ymaster_seen_version') === v) return;
+    localStorage.setItem('ymaster_seen_version', v);
   } catch (e) { return; }
+  const rows = WHATS_NEW[v].map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
   const { slot, close } = openModal(`
-    <div class="modal-title">🎉 Ямастер Чек v${CLIENT_VERSION} — что нового</div>
-    <dl class="kv" style="font-size:13.5px">
-      <dt>📥 Данные чека из сервисов</dt><dd>полная информация (магазин, ИНН, все позиции) — из API ФНС,
-        proverkacheka.com или своего источника. Паузы 2–7 с и ротация источников — без блокировок.</dd>
-      <dt>✏️ Редактирование чеков</dt><dd>бухгалтер и администратор могут изменить любые поля чека
-        и позиции — по одному или массово; изменения попадают в 1С и CSV.</dd>
-      <dt>👤 «От кого прислал»</dt><dd>чеки от сотрудников автоматически помечаются отправителем —
-        вручную ничего назначать не нужно (меняют только бухгалтер/админ).</dd>
-      <dt>🔔 Уведомления сотрудников</dt><dd>сотрудник ставит флажок «уведомить бухгалтерию» и пишет
-        комментарий к своему чеку (замена, возврат и т.п.).</dd>
-      <dt>📱 Стабильная связь</dt><dd>исправлены «офлайн» и мерцание на телефоне: умные паузы
-        переподключения и heartbeat — без лишних запросов к серверу.</dd>
-    </dl>
+    <div class="modal-title">🎉 Ямастер Чек v${esc(v)} — что нового</div>
+    <dl class="kv" style="font-size:13.5px;grid-template-columns:auto 1fr">${rows}</dl>
     <div class="modal-actions"><button class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
   slot.querySelector('#wn-ok').onclick = close;
 }
@@ -1101,6 +1140,10 @@ async function viewReceipts(container) {
     const data = await api.get('/api/v1/receipts?' + p.toString());
     pageInfo = data;
     viewReceipts._rows = data.items;
+    // datalist имён сотрудников — из текущих строк + ранее введённые
+    const names = new Set(viewReceipts._names || []);
+    data.items.forEach(x => { if (x.assignee) names.add(x.assignee); });
+    viewReceipts._names = [...names];
     const el = $('#receipts-table');
     if (!data.items.length) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
@@ -1819,11 +1862,15 @@ async function viewSettings(container) {
         <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
           ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
           <input id="ext-pke" type="password" placeholder="токен API"></label>
-        <label class="field" style="margin-bottom:10px"><span>Свой источник (URL) — контракт POST {qrraw} → JSON</span>
-          <input id="ext-custom" value="${esc(ext ? ext.external_custom_url : '')}" placeholder="https://… (напр. проверкачека.рф, когда появится API)"></label>
+        <label class="field" style="margin-bottom:10px"><span>ОФД-ру «QR Cash» (tokenSecret) — API ofd.ru по базе ФНС
+          ${ext && ext.has_ofd_ru_token ? '(задан: ' + esc(ext.ofd_ru_token_masked) + ')' : '(не задан — личный кабинет ofd.ru → QR Cash)'}</span>
+          <input id="ext-ofd" type="password" placeholder="tokenSecret"></label>
+        <label class="field" style="margin-bottom:10px"><span>Свои источники (до 10) — по одному в строке: Название | URL</span>
+          <textarea id="ext-custom-urls" rows="3" placeholder="проверкачека | https://…/api/check">${esc((ext ? ext.external_custom_urls : []) .map(u => (u.name || 'custom') + ' | ' + u.url).join('\n'))}</textarea>
+          <small class="form-hint">Контракт: POST {qrraw} → JSON с items + totalSum. Подойдёт любой ваш шлюз к сервисам проверки.</small></label>
         <label class="field" style="margin-bottom:10px"><span>Порядок источников</span>
-          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,proverkacheka,custom')}">
-          <small class="form-hint">fns_api — официальное API ФНС (токен в карточке «Проверка чеков»), proverkacheka, custom</small></label>
+          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,ofd_ru,proverkacheka,custom')}">
+          <small class="form-hint">fns_api — API ФНС (токен в карточке «Проверка чеков»), ofd_ru — ОФД-ру, proverkacheka, custom — свои</small></label>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>
@@ -1888,9 +1935,19 @@ async function viewSettings(container) {
   if (isAdmin() && ext) {
     $('#ext-save').onclick = async () => {
       try {
+        const urls = $('#ext-custom-urls').value.split('\n')
+          .map(l => l.trim()).filter(Boolean)
+          .map(line => {
+            const m = line.split('|');
+            return m.length >= 2
+              ? { name: m[0].trim(), url: m.slice(1).join('|').trim() }
+              : { name: 'custom', url: line };
+          })
+          .filter(u => u.url);
         await api.put('/api/v1/settings/external', {
           proverkacheka_token: $('#ext-pke').value.trim() || undefined,
-          external_custom_url: $('#ext-custom').value.trim(),
+          ofd_ru_token: $('#ext-ofd').value.trim() || undefined,
+          external_custom_urls: urls,
           external_order: $('#ext-order').value.trim(),
           external_auto: $('#ext-auto').checked,
         });

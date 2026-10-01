@@ -153,11 +153,18 @@ class FetchDetailsRequest(BaseModel):
     receipt_ids: list[str] = Field(min_length=1, max_length=200)
 
 
+class CustomSource(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    url: str = Field(min_length=8, max_length=500)
+
+
 class ExternalSettingsPatch(BaseModel):
     """Настройки источников данных о чеке (только администратор)."""
     fns_master_token: Optional[str] = Field(default=None, max_length=500)
     proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
-    external_custom_url: Optional[str] = Field(default=None, max_length=500)
+    ofd_ru_token: Optional[str] = Field(default=None, max_length=500)  # tokenSecret ofd.ru
+    external_custom_url: Optional[str] = Field(default=None, max_length=500)  # legacy
+    external_custom_urls: Optional[list[CustomSource]] = Field(default=None, max_length=10)
     external_order: Optional[str] = Field(default=None, max_length=100)
     external_auto: Optional[bool] = None
 

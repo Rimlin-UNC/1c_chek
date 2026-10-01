@@ -96,6 +96,7 @@ export const api = {
       try { const j = await resp.json(); msg = typeof j.detail === 'string' ? j.detail : msg; } catch {}
       throw new ApiError(resp.status, msg);
     }
+    window.__ymLastApiOk = Date.now();
     const blob = await resp.blob();
     const cd = resp.headers.get('content-disposition') || '';
     const m = cd.match(/filename="?([^";]+)"?/);
