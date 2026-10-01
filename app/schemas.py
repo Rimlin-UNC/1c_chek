@@ -125,6 +125,7 @@ class ReceiptPatch(BaseModel):
     assignee: Optional[str] = Field(default=None, max_length=200)
     comment: Optional[str] = Field(default=None, max_length=2000)
     notified: Optional[bool] = None
+    category: Optional[str] = Field(default=None, max_length=100)
     # --- поля для бухгалтера/админа ---
     fn: Optional[str] = Field(default=None, max_length=20)
     fd: Optional[str] = Field(default=None, max_length=20)

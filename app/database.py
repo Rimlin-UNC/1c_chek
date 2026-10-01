@@ -82,6 +82,8 @@ def _ensure_schema() -> None:
             ("details_source", "ALTER TABLE receipts ADD COLUMN details_source VARCHAR(30) DEFAULT ''"),
             ("details_fetched_at", "ALTER TABLE receipts ADD COLUMN details_fetched_at DATETIME NULL"),
             ("notified", "ALTER TABLE receipts ADD COLUMN notified BOOLEAN DEFAULT 0"),
+            ("category", "ALTER TABLE receipts ADD COLUMN category VARCHAR(100) DEFAULT ''"),
+            ("category_lc", "ALTER TABLE receipts ADD COLUMN category_lc VARCHAR(100) DEFAULT ''"),
         ],
     }
     insp = inspect(engine)
@@ -94,3 +96,13 @@ def _ensure_schema() -> None:
             for col, ddl in columns:
                 if col not in cols:
                     conn.execute(text(ddl))
+        # v1.4.0: заполнить category_lc для существующих строк (lower() в SQLite
+        # не понимает кириллицу — нормализуем в Python)
+        if "receipts" in existing_tables and "category_lc" in {
+                c["name"] for c in insp.get_columns("receipts")}:
+            rows = conn.execute(text(
+                "SELECT id, category FROM receipts WHERE category != '' "
+                "AND (category_lc IS NULL OR category_lc = '')")).fetchall()
+            for rid, cat in rows:
+                conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
+                             {"lc": (cat or "").casefold(), "i": rid})

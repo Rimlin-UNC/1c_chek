@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .security import rate_limit_middleware, security_headers_middleware
 from .database import init_db
-from .routers import (auth_routes, dashboard, invites, onec, receipts,
+from .routers import (admin, auth_routes, dashboard, invites, onec, receipts,
                       settings_routes, users)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
@@ -160,6 +160,7 @@ app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)
 app.include_router(onec.router)
+app.include_router(admin.router)
 
 
 # --------------------------------------------------------------------------

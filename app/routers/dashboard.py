@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, require_admin, require_accountant
 from ..database import get_db
-from ..models import AuditLog, Receipt, User
+from ..models import AuditLog, Receipt, ReceiptItem, User
 from ..services.events import broadcast
 from ..services.audit import log_action
 
@@ -61,6 +61,31 @@ def stats(days: int = Query(14, ge=7, le=90),
         db.query(Receipt.source, func.count(Receipt.id)).group_by(Receipt.source).all()
     )
 
+    # --- v1.4.0: виджеты бухгалтера ---
+    attention = 0
+    notified = 0
+    vat_month = 0.0
+    by_assignee: list[dict] = []
+    if user.role in ("admin", "accountant"):
+        cutoff = dt.datetime.utcnow() - dt.timedelta(days=3)
+        attention = (db.query(func.count(Receipt.id))
+                     .filter(Receipt.status.in_(["new", "verifying"]),
+                             Receipt.created_at < cutoff).scalar()) or 0
+        notified = (db.query(func.count(Receipt.id))
+                    .filter(Receipt.notified == True,  # noqa: E712
+                            Receipt.exported == False).scalar()) or 0   # noqa: E712
+        month_start = dt.datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
+        vat_month = (db.query(func.coalesce(func.sum(ReceiptItem.vat_sum), 0.0))
+                     .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
+                     .filter(Receipt.receipt_date >= month_start).scalar()) or 0.0
+        arows = (db.query(Receipt.assignee, func.count(Receipt.id),
+                          func.coalesce(func.sum(Receipt.total_sum), 0.0))
+                 .filter(Receipt.assignee != "")
+                 .group_by(Receipt.assignee)
+                 .order_by(func.sum(Receipt.total_sum).desc()).limit(8).all())
+        by_assignee = [{"name": a, "count": int(c), "sum": round(float(s), 2)}
+                       for a, c, s in arows]
+
     return {
         "total": int(total),
         "total_sum": round(float(total_sum), 2),
@@ -71,6 +96,11 @@ def stats(days: int = Query(14, ge=7, le=90),
         "duplicates_blocked": int(duplicates_blocked),
         "daily": daily,
         "by_source": by_source,
+        # v1.4.0
+        "attention_count": int(attention),      # не обработаны > 3 дней
+        "notified_count": int(notified),        # уведомления сотрудников
+        "vat_month": round(float(vat_month), 2),  # НДС за текущий месяц
+        "by_assignee": by_assignee,             # сводка по подотчётникам
         "generated_at": dt.datetime.utcnow().isoformat(),
     }
 

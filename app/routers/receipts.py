@@ -212,6 +212,9 @@ def list_receipts(
     exported: bool | None = Query(None, description="Выгружен ли чек в 1С"),
     q: str | None = Query(None, description="Поиск по ФН/ФД/ФП/сотруднику"),
     assignee: str | None = Query(None, description="Фильтр по сотруднику"),
+    category: str | None = Query(None, description="Статья расходов"),
+    notified: bool | None = Query(None, description="Только с уведомлениями сотрудников"),
+    attention: bool | None = Query(None, description="Требуют внимания: не обработан >3 дней"),
     date_from: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     date_to: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
@@ -231,6 +234,15 @@ def list_receipts(
         query = query.filter(Receipt.exported == exported)
     if assignee:
         query = query.filter(Receipt.assignee.ilike(f"%{assignee.strip()}%"))
+    if category:
+        # Ищем по нормализованному полю: работает и с кириллицей в любом регистре
+        query = query.filter(Receipt.category_lc.like(f"%{category.strip().casefold()}%"))
+    if notified is not None:
+        query = query.filter(Receipt.notified == notified)
+    if attention:
+        cutoff = dt.datetime.utcnow() - dt.timedelta(days=3)
+        query = query.filter(Receipt.status.in_(["new", "verifying"]),
+                             Receipt.created_at < cutoff)
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(Receipt.fn.like(like), Receipt.fd.like(like),
@@ -358,6 +370,11 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
         if body.notified is not None:
             receipt.notified = body.notified
             changed["fields"].append("notified")
+        if body.category is not None:
+            cat = body.category.strip()[:100]
+            receipt.category = cat
+            receipt.category_lc = cat.casefold()      # для регистронезависимого фильтра (кириллица)
+            changed["fields"].append("category")
         if body.items is not None:
             receipt.items.clear()
             for pos, it in enumerate(body.items):
@@ -716,7 +733,7 @@ def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
     writer = csv.writer(buf, delimiter=";", lineterminator="\n")
     writer.writerow(["Дата чека", "Сумма, ₽", "ФН", "ФД", "ФП", "Признак",
                      "Статус ФНС", "Сотрудник", "Сканеровал", "Магазин", "ИНН",
-                     "Комментарий", "Уведомление", "QR"])
+                     "Статья расходов", "Комментарий", "Уведомление", "QR"])
     op_names = {1: "Приход", 2: "Возврат"}
     fns_names = {"valid": "Действителен", "invalid": "Недействителен",
                  "not_found": "Не найден", "unknown": "Не проверен"}
@@ -731,6 +748,7 @@ def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
             r.user.username if r.user else "",
             r.merchant_name or "",
             r.merchant_inn or "",
+            r.category or "",
             r.comment or "",
             "Уведомляет" if r.notified else "",
             r.qr_data,

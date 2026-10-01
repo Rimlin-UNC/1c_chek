@@ -213,6 +213,7 @@ function enterApp() {
   if (state.me.must_change_password) forcePasswordChange();
   showWhatsNew();
   route();
+  if (isAdmin()) checkUpdatesSilently();   // v1.4.0: авто-проверка при запуске
   refreshBadges();
   window.addEventListener('online', flushOfflineQueue);
   flushOfflineQueue();
@@ -457,6 +458,10 @@ async function viewDashboard(container) {
       ${kpiCard('kpi-sum', 'Общая сумма', 'все чеки')}
       ${kpiCard('kpi-fns', 'Проверено ФНС', 'действительных')}
       ${kpiCard('kpi-export', 'Выгружено в 1С', 'ждут выгрузки')}
+      ${isAccountant() ? `
+      ${kpiCard('kpi-attention', '⏳ Требуют внимания', 'не обработаны > 3 дней')}
+      ${kpiCard('kpi-notified', '🔔 Уведомления', 'от сотрудников')}
+      ${kpiCard('kpi-vat', 'НДС за месяц', 'сумма к учёту')}` : ''}
     </div>
     <div class="grid cards-2" style="margin-top:16px">
       <div class="glass card">
@@ -479,11 +484,30 @@ async function viewDashboard(container) {
         <div id="dash-feed"><div class="skeleton" style="height:150px"></div></div>
       </div>
     </div>
+    ${isAccountant() ? `
+    <div class="glass card" style="margin-top:16px">
+      <div class="card-title">👥 По подотчётным лицам <span class="spacer"></span>
+        <span class="form-hint">кто сколько принёс (все чеки)</span></div>
+      <div id="dash-assignee"><div class="skeleton" style="height:80px"></div></div>
+    </div>` : ''}
     <div id="demo-zone"></div>`;
 
   const stats = await api.get('/api/v1/dashboard/stats?days=14');
   animateNumber($('#kpi-total .kpi-value'), stats.total);
   animateNumber($('#kpi-sum .kpi-value'), stats.total_sum, fmtSum);
+  if (isAccountant()) {
+    animateNumber($('#kpi-attention .kpi-value'), stats.attention_count || 0);
+    animateNumber($('#kpi-notified .kpi-value'), stats.notified_count || 0);
+    animateNumber($('#kpi-vat .kpi-value'), stats.vat_month || 0, fmtSum);
+    const az = $('#dash-assignee');
+    if (az) {
+      az.innerHTML = (stats.by_assignee || []).length
+        ? `<table class="data" style="min-width:0"><thead><tr><th>Сотрудник</th><th>Чеков</th><th>Сумма</th></tr></thead><tbody>
+           ${(stats.by_assignee || []).map(a => `<tr><td>${esc(a.name)}</td><td>${a.count}</td><td class="cell-sum">${fmtSum(a.sum)}</td></tr>`).join('')}
+           </tbody></table>`
+        : '<p class="form-hint">Пока нет чеков с назначенным сотрудником</p>';
+    }
+  }
   const validCount = (stats.by_fns.valid || 0);
   animateNumber($('#kpi-fns .kpi-value'), validCount);
   $('#kpi-fns .kpi-sub').textContent =
@@ -739,6 +763,9 @@ function openEditReceipt(r, onSaved) {
       <label class="field"><span>Сотрудник (подотчётник)</span>
         <input id="er-assignee" value="${esc(r.assignee || '')}" list="er-names">
         <datalist id="er-names">${[...(viewReceipts._names || [])].map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+      <label class="field"><span>Статья расходов</span>
+        <input id="er-category" value="${esc(r.category || '')}" list="er-cats" placeholder="Канцелярия, ГСМ, Хозтовары…">
+        <datalist id="er-cats">${[...(viewReceipts._cats || [])].map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label class="field"><span>Комментарий</span>
         <input id="er-comment" value="${esc(r.comment || '')}"></label>
     </div>
@@ -803,6 +830,7 @@ function openEditReceipt(r, onSaved) {
   slot.querySelector('#er-save').onclick = async () => {
     const body = {
       merchant_name: slot.querySelector('#er-shop').value.trim(),
+      category: slot.querySelector('#er-category').value.trim(),
       merchant_inn: slot.querySelector('#er-inn').value.trim(),
       merchant_address: slot.querySelector('#er-addr').value.trim(),
       cashier: slot.querySelector('#er-cashier').value.trim(),
@@ -861,7 +889,88 @@ function openNotifyDialog(r, onSaved) {
 // ==========================================================================
 //  v1.2.0: Блок «Что нового» — показывается один раз на каждую версию
 // ==========================================================================
+// ==========================================================================
+//  v1.4.0: Обновления из приложения (админ)
+// ==========================================================================
+function checkUpdatesSilently() {
+  api.get('/api/v1/admin/update/check', { retries: 1 }).then(r => {
+    if (r.update_available) {
+      state.updateAvailable = r;
+      toast(`Доступно обновление v${r.remote_version} — откройте Настройки → Обновления`, 'info', '🔄 Обновление');
+    }
+  }).catch(() => {});
+}
+
+function showUpdateDialog(checkInfo) {
+  const r = checkInfo;
+  const { slot, close } = openModal(`
+    <div class="modal-title">🔄 Обновление системы</div>
+    <dl class="kv" style="font-size:13.5px">
+      <dt>Текущая версия</dt><dd>v${esc(r.current_version)}</dd>
+      <dt>Доступна</dt><dd><b style="color:var(--ok)">v${esc(r.remote_version)}</b></dd>
+      <dt>Ветка</dt><dd><code class="inline">${esc(r.branch)}</code></dd>
+    </dl>
+    <details style="margin:10px 0"><summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">📋 Что изменится в новой версии</summary>
+      <pre class="codeblock" style="max-height:220px">${esc(r.changelog_excerpt || 'описание уточняется')}</pre></details>
+    <div class="info-callout" style="font-size:12.5px">Обновление безопасно для данных: перед установкой автоматически
+    создаётся резервная копия базы; проверяется целостность; при сбое — откат на прежнюю версию.
+    Устанавливаются только изменения (не весь проект).</div>
+    <div class="modal-actions">
+      <button class="btn" id="upd-close">Позже</button>
+      <button class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
+    </div>`);
+  slot.querySelector('#upd-close').onclick = close;
+  slot.querySelector('#upd-apply').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const resp = await api.post('/api/v1/admin/update/apply');
+      close();
+      if (!resp.updated) return toast(resp.message, 'ok');
+      openUpdateProgress();
+    } catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
+  };
+}
+
+function openUpdateProgress() {
+  const { slot, close } = openModal(`
+    <div class="modal-title">🔄 Обновление системы</div>
+    <div class="progress-outer"><div class="progress-inner" id="upd-bar" style="width:5%"></div></div>
+    <p class="form-hint" id="upd-step">Запуск…</p>
+    <pre class="codeblock" id="upd-log" style="max-height:240px;font-size:11.5px"></pre>
+    <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`, { onClose: () => clearInterval(state.updTimer) });
+  clearInterval(state.updTimer);
+  state.updTimer = setInterval(async () => {
+    let st;
+    try { st = (await api.get('/api/v1/admin/update/status')).job; }
+    catch { return; }
+    const bar = slot.querySelector('#upd-bar');
+    if (bar) bar.style.width = Math.max(5, st.progress) + '%';
+    const stepEl = slot.querySelector('#upd-step');
+    if (stepEl) stepEl.textContent = st.running ? (st.step || '…') : (st.success ? 'Обновление завершено' : (st.error ? 'Ошибка: ' + st.error : ''));
+    const log = slot.querySelector('#upd-log');
+    if (log) log.textContent = (st.log || []).join('\n');
+    if (st.finished) {
+      clearInterval(state.updTimer);
+      const btn = slot.querySelector('#upd-done');
+      if (btn) btn.classList.remove('hidden');
+      btn.onclick = () => { close(); if (st.success) location.reload(); };
+      if (st.success) toast(st.needs_restart
+        ? 'Обновление установлено. Перезапустите сервис (systemctl restart ymaster-check) — в облаке Timeweb это делает панель'
+        : 'Обновление установлено и применено!', 'ok', 'v' + st.to_version);
+      if (st.rolled_back) toast('Произошёл сбой — система автоматически откатилась на прежнюю версию. Данные целы.', 'warn', 'Безопасность');
+    }
+  }, 1500);
+}
+
 const WHATS_NEW = {
+  '1.4.0': [
+    ['🔄 Обновления из приложения', 'проверка при запуске и в Настройках, установка в один клик — без терминала: копия БД → только изменения → проверка целостности → рестарт, при сбое авто-откат. Данные и настройки сохраняются.'],
+    ['⏳ «Требуют внимания»', 'на дашборде чеки, которые висят необработанными дольше 3 дней — срок отчёта по подотчётным суммам (риск НДФЛ).'],
+    ['🏷 Статьи расходов', 'категория на чеке (Канцелярия, ГСМ…), подсказки, фильтр и колонка в CSV — разделение личных и рабочих покупок.'],
+    ['🧾 НДС за месяц', 'сумма НДС по всем чекам месяца — прямо на дашборде.'],
+    ['👥 Сводка по подотчётникам', 'кто сколько чеков и на какую сумму принёс.'],
+    ['🔑 Больше прав админа', 'смена роли пользователя, временный пароль в 1 клик (сотрудник сменит сам), восстановление из архива.'],
+  ],
   '1.2.0': [
     ['📥 Данные чека из сервисов', 'полная информация (магазин, ИНН, все позиции) — из API ФНС, proverkacheka.com или своего источника. Паузы 2–7 с и ротация источников — без блокировок.'],
     ['✏️ Редактирование чеков', 'бухгалтер и администратор могут изменить любые поля чека и позиции — по одному или массово; изменения попадают в 1С и CSV.'],
@@ -1106,7 +1215,13 @@ async function viewReceipts(container) {
           <select id="f-exp"><option value="">все</option>
             <option value="false">Ожидают выгрузки</option><option value="true">Выгружены</option></select></label>
         <label class="field"><span>Сотрудник</span>
-          <input id="f-assignee" placeholder="Иванов"></label>` : ''}
+          <input id="f-assignee" placeholder="Иванов"></label>
+        <label class="field"><span>Статья расходов</span>
+          <input id="f-category" placeholder="Канцелярия" list="f-cats">
+          <datalist id="f-cats">${(viewReceipts._cats || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+        <label class="field"><span>Уведомления 🔔</span>
+          <select id="f-notified"><option value="">все</option>
+            <option value="true">только уведомления</option></select></label>` : ''}
         <label class="field"><span>С даты</span><input type="date" id="f-from"></label>
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
         <button class="btn" id="btn-filter">Найти</button>
@@ -1130,7 +1245,7 @@ async function viewReceipts(container) {
 
   const filters = {
     q: '', status: '', fns_status: '', exported: '', assignee: '',
-    date_from: '', date_to: '', page: 1,
+    category: '', notified: '', date_from: '', date_to: '', page: 1,
   };
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
 
@@ -1144,6 +1259,9 @@ async function viewReceipts(container) {
     const names = new Set(viewReceipts._names || []);
     data.items.forEach(x => { if (x.assignee) names.add(x.assignee); });
     viewReceipts._names = [...names];
+    const cats = new Set(viewReceipts._cats || []);
+    data.items.forEach(x => { if (x.category) cats.add(x.category); });
+    viewReceipts._cats = [...cats];
     const el = $('#receipts-table');
     if (!data.items.length) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
@@ -1206,7 +1324,7 @@ async function viewReceipts(container) {
       <td class="cell-date">${fmtDate(r.receipt_date)}${notifiedMark}</td>
       <td class="cell-sum">${fmtSum(r.total_sum)}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
-      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}</td>` : ''}
+      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}</td>` : ''}
       <td>${chip(r.status)}</td>
       <td>${chip(r.fns_status)} ${detailsMark}</td>
       <td>${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
@@ -1227,6 +1345,8 @@ async function viewReceipts(container) {
     if (acc) {
       filters.exported = $('#f-exp').value;
       filters.assignee = $('#f-assignee').value.trim();
+      filters.category = $('#f-category') ? $('#f-category').value.trim() : '';
+      filters.notified = $('#f-notified') ? $('#f-notified').value : '';
     }
     filters.date_from = $('#f-from').value;
     filters.date_to = $('#f-to').value;
@@ -1640,8 +1760,11 @@ async function viewUsers(container) {
           <td>${u.is_active ? '<span class="chip verified"><span class="dot"></span>активен</span>' : '<span class="chip failed"><span class="dot"></span>отключён</span>'}</td>
           <td class="cell-date">${fmtDate(u.last_login_at)}</td>
           <td style="white-space:nowrap">
-            ${u.role === 'accountant' && u.is_active ? `<button class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}">⬆ Сделать администратором</button>` : ''}
-            <button class="btn btn-sm u-edit">✎</button>
+            ${u.role === 'accountant' && u.is_active ? `<button class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
+            ${!u.is_active ? `<button class="btn btn-sm u-unarchive" data-id="${u.id}" data-name="${esc(u.username)}" title="Восстановить из архива">♻</button>` : ''}
+            <button class="btn btn-sm u-edit" title="Изменить данные">✎</button>
           </td></tr>`).join('')}
       </tbody></table></div>
     </div>`;
@@ -1724,6 +1847,29 @@ async function viewUsers(container) {
     const u = users.find(x => x.id === btn.closest('tr').dataset.id);
     userDialog(u);
   });
+  // v1.4.0: расширенные действия администратора
+  $$('.u-role').forEach(btn => btn.onclick = async () => {
+    const to = btn.dataset.role === 'accountant' ? 'user' : 'accountant';
+    if (!confirm(`Сделать ${btn.dataset.name} ${to === 'accountant' ? 'БУХГАЛТЕРОМ (расширенный доступ)' : 'ПОЛЬЗОВАТЕЛЕМ (только свои чеки)'}?`)) return;
+    try { const r = await api.patch(`/api/v1/admin/users/${btn.dataset.id}/role`, { role: to }); toast(r.message, 'ok'); route(true); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+  $$('.u-reset').forEach(btn => btn.onclick = async () => {
+    if (!confirm(`Сбросить пароль ${btn.dataset.name}? Сотрудник получит временный пароль и сменит его при входе.`)) return;
+    try {
+      const r = await api.post(`/api/v1/admin/users/${btn.dataset.id}/reset-password`);
+      openModal(`<div class="modal-title">🔑 Временный пароль для ${esc(btn.dataset.name)}</div>
+        <p class="form-hint" style="margin-bottom:10px">Передайте его сотруднику — при входе система потребует сменить пароль.</p>
+        <div class="qr-box" style="font-size:16px;justify-content:center">${esc(r.temp_password)}</div>
+        <div class="modal-actions"><button class="btn btn-primary" id="tp-ok">Передал</button></div>`).slot.querySelector('#tp-ok').onclick = function(){ this.closest('.modal-root').classList.add('hidden'); };
+      route(true);
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $$('.u-unarchive').forEach(btn => btn.onclick = async () => {
+    try { const r = await api.post(`/api/v1/admin/users/${btn.dataset.id}/unarchive`); toast(r.message, 'ok'); route(true); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+
   $$('.u-admin').forEach(btn => btn.onclick = async () => {
     if (!confirm(`Передать права администратора пользователю ${btn.dataset.name}?\n\n` +
       'Вы станете бухгалтером. Администратор в системе всегда один.')) return;
@@ -1881,6 +2027,28 @@ async function viewSettings(container) {
         <p class="form-hint" id="ext-status" style="margin-top:10px"></p>
       </div>` : ''}
 
+      ${isAdmin() ? `
+      <div class="glass card">
+        <div class="card-title">🔄 Обновления <span class="form-hint">(v1.4.0)</span></div>
+        <dl class="kv" style="font-size:13px">
+          <dt>Установлена</dt><dd id="upd-current">v—</dd>
+          <dt>Проверено</dt><dd id="upd-checked">—</dd>
+          <dt>Ветка</dt><dd><code class="inline" id="upd-branch">—</code></dd>
+        </dl>
+        <div id="upd-avail" class="hidden" style="margin:10px 0">
+          <div class="info-callout" style="margin-bottom:10px">🆕 Доступна версия <b id="upd-remote">v—</b>.
+            <a href="#" id="upd-whats" style="margin-left:6px">Что изменится?</a></div>
+          <button class="btn btn-primary btn-sm" id="btn-apply-update">⬇ Обновить (данные и настройки сохранятся)</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
+          <button class="btn btn-sm" id="btn-changelog">📜 История версий</button>
+          <button class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
+        </div>
+        <p class="form-hint" style="margin-top:10px">Обновление ставится прямо отсюда: копия БД → только изменения с GitHub →
+        установка зависимостей → проверка целостности → рестарт. При сбое — автоматический откат.</p>
+      </div>` : ''}
+
       ${isAdmin() && onec ? `
       <div class="glass card">
         <div class="card-title">Интеграция с 1С</div>
@@ -1931,6 +2099,46 @@ async function viewSettings(container) {
         — согласно лицензии проекта.</p>
       </div>
     </div>`;
+
+  if (isAdmin()) {
+    const loadUpdCard = async () => {
+      try {
+        const st = await api.get('/api/v1/admin/system');
+        const cur = $('#upd-current'); if (cur) cur.textContent = 'v' + st.version;
+        const br = $('#upd-branch'); if (br) br.textContent = st.branch;
+        try {
+          const r = await api.get('/api/v1/admin/update/check', { retries: 1 });
+          const ch = $('#upd-checked');
+          if (ch) ch.textContent = new Date(r.checked_at).toLocaleTimeString('ru-RU');
+          state.updateAvailable = r.update_available ? r : null;
+          const avail = $('#upd-avail');
+          if (avail) avail.classList.toggle('hidden', !r.update_available);
+          const rem = $('#upd-remote'); if (rem) rem.textContent = 'v' + r.remote_version;
+        } catch { const ch = $('#upd-checked'); if (ch) ch.textContent = 'нет связи с GitHub'; }
+      } catch {}
+    };
+    loadUpdCard();
+    const bc = $('#btn-check-update');
+    if (bc) bc.onclick = async () => { bc.disabled = true; bc.textContent = 'Проверяю…'; await loadUpdCard(); bc.disabled = false; bc.textContent = '🔍 Проверить обновления'; };
+    const ba = $('#btn-apply-update');
+    if (ba) ba.onclick = async () => {
+      ba.disabled = true;
+      try {
+        const r = await api.post('/api/v1/admin/update/apply');
+        if (!r.updated) { toast(r.message, 'ok'); } else openUpdateProgress();
+      } catch (e) { toast(e.message, 'err'); }
+      ba.disabled = false;
+    };
+    const bw = $('#upd-whats');
+    if (bw) bw.onclick = (e) => { e.preventDefault(); api.get('/api/v1/admin/update/changelog').then(r => openModal(`<div class="modal-title">📜 Что изменится</div><pre class="codeblock" style="max-height:55vh">${esc(r.changelog.slice(0, 6000))}</pre>`)); };
+    const bl = $('#btn-changelog');
+    if (bl) bl.onclick = () => api.get('/api/v1/admin/update/changelog').then(r => openModal(`<div class="modal-title">📜 История версий</div><pre class="codeblock" style="max-height:55vh">${esc(r.changelog.slice(0, 6000))}</pre>`));
+    const bb = $('#btn-backup');
+    if (bb) bb.onclick = async () => {
+      try { const { blob, filename } = await api.download('/api/v1/admin/backup'); downloadBlob(blob, filename); toast('Резервная копия скачана: ' + filename, 'ok'); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+  }
 
   if (isAdmin() && ext) {
     $('#ext-save').onclick = async () => {

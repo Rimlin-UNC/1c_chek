@@ -150,6 +150,8 @@ class Receipt(Base):
     details_source: Mapped[str] = mapped_column(String(30), default="")     # fns_api|proverkacheka|custom|manual_edit
     details_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notified: Mapped[bool] = mapped_column(Boolean, default=False)          # флаг «Уведомляю бухгалтерию» от сотрудника
+    category: Mapped[str] = mapped_column(String(100), default="")          # v1.4.0: статья расходов
+    category_lc: Mapped[str] = mapped_column(String(100), default="", index=True)  # нормализованная (регистр/кириллица)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
@@ -189,6 +191,7 @@ class Receipt(Base):
             "details_fetched_at": (self.details_fetched_at.isoformat() + "Z"
                                    if self.details_fetched_at else None),
             "notified": self.notified,
+            "category": self.category or "",
         }
         if with_items:
             d["items"] = [it.to_dict() for it in self.items]

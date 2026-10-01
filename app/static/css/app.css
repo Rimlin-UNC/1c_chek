@@ -575,3 +575,7 @@ pre.codeblock {
 @media (max-width: 860px) {
   .form-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* --- v1.4.0: прогресс обновления ------------------------------------ */
+.progress-outer { height: 10px; border-radius: 10px; background: rgba(255,255,255,.08); overflow: hidden; margin: 12px 0 8px; }
+.progress-inner { height: 100%; border-radius: 10px; background: var(--grad); transition: width .6s ease; box-shadow: 0 0 12px rgba(99,102,241,.6); }
