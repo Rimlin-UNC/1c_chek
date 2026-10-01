@@ -140,6 +140,16 @@ class Receipt(Base):
     assignee: Mapped[str] = mapped_column(String(200), default="")
     comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
+    # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
+    merchant_name: Mapped[str] = mapped_column(String(500), default="")     # наименование магазина/ИП
+    merchant_inn: Mapped[str] = mapped_column(String(20), default="")       # ИНН продавца
+    merchant_address: Mapped[str] = mapped_column(String(500), default="")  # адрес места расчёта
+    cashier: Mapped[str] = mapped_column(String(200), default="")           # оператор/кассир
+    cash_sum: Mapped[float] = mapped_column(Float, default=0.0)             # оплата наличными
+    ecash_sum: Mapped[float] = mapped_column(Float, default=0.0)            # оплата безналичными
+    details_source: Mapped[str] = mapped_column(String(30), default="")     # fns_api|proverkacheka|custom|manual_edit
+    details_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)          # флаг «Уведомляю бухгалтерию» от сотрудника
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
@@ -171,6 +181,14 @@ class Receipt(Base):
             "created_by_id": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "items_count": len(self.items),
+            # v1.2.0: данные источников и уведомления — во всех представлениях
+            "merchant_name": self.merchant_name, "merchant_inn": self.merchant_inn,
+            "merchant_address": self.merchant_address, "cashier": self.cashier,
+            "cash_sum": self.cash_sum, "ecash_sum": self.ecash_sum,
+            "details_source": self.details_source,
+            "details_fetched_at": (self.details_fetched_at.isoformat() + "Z"
+                                   if self.details_fetched_at else None),
+            "notified": self.notified,
         }
         if with_items:
             d["items"] = [it.to_dict() for it in self.items]

@@ -200,6 +200,7 @@ function enterApp() {
     history.replaceState(null, '', location.pathname + '#/dashboard');
   }
   if (state.me.must_change_password) forcePasswordChange();
+  showWhatsNew();
   route();
   refreshBadges();
   window.addEventListener('online', flushOfflineQueue);
@@ -264,34 +265,92 @@ function forcePasswordChange() {
 // --------------------------------------------------------------------------
 //  WebSocket: живые статусы
 // --------------------------------------------------------------------------
+// v1.2.0: WS без «мерцания» — пауза между попытками растёт до 60 с
+// (с разбросом), статус меняется с гистерезисом, «офлайн» показываем
+// только при реальной недоступности, а не на каждом переподключении.
+const WS_BACKOFF = [2, 5, 10, 20, 30, 60, 60];   // секунды
+
 function connectWS() {
+  if (document.hidden) { scheduleReconnect(5); return; }  // в фоне не дёргаемся
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws/status`);
+  let ws;
+  try { ws = new WebSocket(`${proto}://${location.host}/ws/status`); }
+  catch (e) { scheduleReconnect(10); return; }
   state.ws = ws;
-  ws.onopen = () => setWsStatus(true);
-  ws.onclose = () => {
-    setWsStatus(false);
-    state.wsRetry = Math.min((state.wsRetry || 4) * 2, 15);
-    setTimeout(connectWS, state.wsRetry * 1000);
+
+  ws.onopen = () => {
+    state.wsAttempts = 0;
+    setWsStatus(true);
+    // heartbeat клиента: не даём прокси считать соединение пустым
+    clearInterval(state.wsPing);
+    state.wsPing = setInterval(() => {
+      if (ws.readyState === 1) { try { ws.send('ping'); } catch (e) {} }
+    }, 25000);
   };
-  ws.onopen = () => { state.wsRetry = 4; };
-  ws.onerror = () => setWsStatus(false);
+  ws.onclose = () => {
+    clearInterval(state.wsPing);
+    setWsStatus(false);
+    const delay = WS_BACKOFF[Math.min(state.wsAttempts || 0, WS_BACKOFF.length - 1)];
+    state.wsAttempts = (state.wsAttempts || 0) + 1;
+    scheduleReconnect(delay);
+  };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
   ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data);
+      if (msg.type === 'ping') return;             // серверный heartbeat
       handleWsEvent(msg.type, msg.payload);
     } catch { /* ignore */ }
   };
+}
+
+function scheduleReconnect(seconds) {
+  clearTimeout(state.wsTimer);
+  const jitter = seconds * (0.8 + Math.random() * 0.4);   // ±20% — анти-шторм
+  state.wsTimer = setTimeout(connectWS, jitter * 1000);
+}
+
+// Возврат в приложение (телефон «проснулся») — одно мягкое переподключение
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    updateConnIndicator(true);
+    if (!state.ws || state.ws.readyState > 1) {
+      clearTimeout(state.wsTimer);
+      try { if (state.ws) state.ws.close(); } catch (e) {}
+      connectWS();
+    }
+    if (state.me) { route(true); }
+  }
+});
+window.addEventListener('online', () => updateConnIndicator(true));
+window.addEventListener('offline', () => updateConnIndicator(false));
+
+function updateConnIndicator(force) {
+  const lastOk = window.__ymLastApiOk || 0;
+  // «Офлайн» только если: браузер считает сеть недоступной ИЛИ и WS не может
+  // подключиться (3+ попыток), и API не отвечал дольше 30 секунд.
+  const apiStale = Date.now() - lastOk > 30000;
+  const reallyOffline = !navigator.onLine ||
+    ((state.wsAttempts || 0) >= 3 && apiStale && !(state.ws && state.ws.readyState === 1));
+  const ind = $('#offline-indicator');
+  if (!ind) return;
+  if (force) ind.dataset.lastFlip = '0';
+  const now = Date.now();
+  const last = Number(ind.dataset.lastFlip || 0);
+  if (now - last < 8000) return;                  // гистерезис: не мигаем
+  const isHidden = ind.classList.contains('hidden');
+  if (reallyOffline && isHidden) { ind.classList.remove('hidden'); ind.dataset.lastFlip = now; }
+  if (!reallyOffline && !isHidden) { ind.classList.add('hidden'); ind.dataset.lastFlip = now; }
 }
 
 function setWsStatus(ok) {
   state.wsOk = ok;
   const dot = $('#ws-status .live-dot');
   const txt = $('#ws-status-text');
-  dot.classList.toggle('on', ok);
-  dot.classList.toggle('off', !ok);
-  txt.textContent = ok ? 'Живое подключение' : 'Переподключение…';
-  $('#offline-indicator').classList.toggle('hidden', navigator.onLine && ok !== false);
+  if (dot) dot.classList.toggle('on', ok);
+  if (dot) dot.classList.toggle('off', !ok);
+  if (txt) txt.textContent = ok ? 'Живое подключение' : 'Переподключение…';
+  updateConnIndicator(false);
 }
 
 function handleWsEvent(type, p) {
@@ -620,6 +679,180 @@ function pushRecent(r) {
   renderRecents();
 }
 
+// ==========================================================================
+//  v1.2.0: Диалог редактирования чека (бухгалтер/админ — все поля и позиции)
+// ==========================================================================
+function _dtLocal(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function openEditReceipt(r, onSaved) {
+  const isAdminUser = isAdmin();
+  const exportedWarn = r.exported && !isAdminUser
+    ? '<div class="info-callout" style="margin-bottom:12px">⚠️ Чек уже выгружен в 1С: реквизиты и позиции менять нельзя (только администратор).</div>' : '';
+  const { slot, close } = openModal(`
+    <div class="modal-title">✏️ Чек ${esc(r.fn)} / ${esc(r.fd)} / ${esc(r.fp)}</div>
+    ${exportedWarn}
+    <div class="form-grid">
+      <label class="field"><span>Дата и время</span>
+        <input id="er-date" type="datetime-local" value="${_dtLocal(r.receipt_date)}"
+          ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
+      <label class="field"><span>Сумма, ₽</span>
+        <input id="er-sum" type="number" step="0.01" min="0" value="${r.total_sum}"
+          ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
+      <label class="field"><span>Тип</span>
+        <select id="er-op" ${r.exported && !isAdminUser ? 'disabled' : ''}>
+          <option value="1" ${r.operation === 1 ? 'selected' : ''}>Приход</option>
+          <option value="2" ${r.operation === 2 ? 'selected' : ''}>Возврат</option>
+        </select></label>
+      <label class="field"><span>ФН</span>
+        <input id="er-fn" value="${esc(r.fn)}" ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
+      <label class="field"><span>ФД</span>
+        <input id="er-fd" value="${esc(r.fd)}" ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
+      <label class="field"><span>ФП</span>
+        <input id="er-fp" value="${esc(r.fp)}" ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
+    </div>
+    <div class="form-grid" style="margin-top:10px">
+      <label class="field"><span>Магазин</span>
+        <input id="er-shop" value="${esc(r.merchant_name || '')}" placeholder="из данных ФНС"></label>
+      <label class="field"><span>ИНН магазина</span>
+        <input id="er-inn" value="${esc(r.merchant_inn || '')}"></label>
+      <label class="field"><span>Адрес магазина</span>
+        <input id="er-addr" value="${esc(r.merchant_address || '')}"></label>
+      <label class="field"><span>Кассир</span>
+        <input id="er-cashier" value="${esc(r.cashier || '')}"></label>
+      <label class="field"><span>Сотрудник (подотчётник)</span>
+        <input id="er-assignee" value="${esc(r.assignee || '')}" list="er-names">
+        <datalist id="er-names">${[...(viewReceipts._names || [])].map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+      <label class="field"><span>Комментарий</span>
+        <input id="er-comment" value="${esc(r.comment || '')}"></label>
+    </div>
+    <div style="margin-top:14px">
+      <b style="font-size:13.5px">Позиции чека (${(r.items || []).length})</b>
+      ${r.exported && !isAdminUser ? '' : '<button class="btn btn-sm" id="er-add-item" style="margin-left:8px">+ позиция</button>'}
+      <div id="er-items" style="margin-top:8px"></div>
+    </div>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:12px;cursor:pointer">
+      <input type="checkbox" id="er-notified" ${r.notified ? 'checked' : ''} style="width:auto">
+      <span>🔔 Уведомление от сотрудника</span></label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="er-save">💾 Сохранить</button>
+      <button class="btn" id="er-cancel">Отмена</button>
+    </div>`);
+
+  const itemsBox = slot.querySelector('#er-items');
+  const renderItems = (items) => {
+    itemsBox.innerHTML = items.map((it, i) => `
+      <div class="form-grid" style="grid-template-columns:1fr 70px 90px 90px 40px;gap:6px;margin-bottom:6px">
+        <input class="it-name" value="${esc(it.name)}" placeholder="наименование">
+        <input class="it-qty" type="number" step="0.001" min="0" value="${it.quantity}">
+        <input class="it-price" type="number" step="0.01" min="0" value="${it.price}">
+        <input class="it-total" type="number" step="0.01" min="0" value="${it.total}">
+        <button class="btn btn-sm btn-bad it-del" title="Удалить позицию">✕</button>
+      </div>`).join('') || '<p class="form-hint">Позиций нет — получите данные из сервиса или добавьте вручную</p>';
+    itemsBox.querySelectorAll('.it-del').forEach(b => b.onclick = () => {
+      items.splice(+b.closest('.form-grid').querySelector('.it-name').dataset.i, 1);
+      renderItems();
+    });
+    itemsBox.querySelectorAll('.it-name').forEach((el, i) => el.dataset.i = i);
+  };
+  let items = (r.items || []).map(it => ({ ...it }));
+  renderItems(items);
+  const addBtn = slot.querySelector('#er-add-item');
+  if (addBtn) addBtn.onclick = () => { items.push({ name: '', quantity: 1, price: 0, total: 0 }); renderItems(items); };
+
+  slot.querySelector('#er-cancel').onclick = close;
+  slot.querySelector('#er-save').onclick = async () => {
+    const body = {
+      merchant_name: slot.querySelector('#er-shop').value.trim(),
+      merchant_inn: slot.querySelector('#er-inn').value.trim(),
+      merchant_address: slot.querySelector('#er-addr').value.trim(),
+      cashier: slot.querySelector('#er-cashier').value.trim(),
+      assignee: slot.querySelector('#er-assignee').value.trim(),
+      comment: slot.querySelector('#er-comment').value.trim(),
+      notified: slot.querySelector('#er-notified').checked,
+    };
+    const dateEl = slot.querySelector('#er-date'), sumEl = slot.querySelector('#er-sum');
+    const opEl = slot.querySelector('#er-op'), fnEl = slot.querySelector('#er-fn');
+    const fdEl = slot.querySelector('#er-fd'), fpEl = slot.querySelector('#er-fp');
+    const coreLocked = r.exported && !isAdminUser;
+    if (!coreLocked) {
+      if (dateEl.value) body.receipt_date = new Date(dateEl.value).toISOString();
+      body.total_sum = parseFloat(sumEl.value) || 0;
+      body.operation = parseInt(opEl.value);
+      body.fn = fnEl.value.trim(); body.fd = fdEl.value.trim(); body.fp = fpEl.value.trim();
+      body.items = items.filter(it => it.name && it.name.trim())
+        .map(it => ({ name: it.name.trim(), quantity: parseFloat(it.quantity) || 1,
+                      price: parseFloat(it.price) || 0, total: parseFloat(it.total) || 0 }));
+    }
+    try {
+      await api.patch('/api/v1/receipts/' + r.id, body);
+      toast('Чек обновлён', 'ok');
+      close(); onSaved && onSaved();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+// --- Уведомление от сотрудника (только свой чек) ---
+function openNotifyDialog(r, onSaved) {
+  const { slot, close } = openModal(`
+    <div class="modal-title">🔔 Уведомить бухгалтерию</div>
+    <p class="form-hint" style="margin-bottom:12px">Чек ${esc(r.fn)}/${esc(r.fd)}/${esc(r.fp)} на ${fmtSum(r.total_sum)}.
+    Сообщите бухгалтеру о замене, возврате товара или другой особенности этого чека.</p>
+    <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer">
+      <input type="checkbox" id="nt-on" ${r.notified ? 'checked' : ''} style="width:auto">
+      <span>Требует внимания бухгалтерии</span></label>
+    <label class="field"><span>Комментарий к чеку</span>
+      <textarea id="nt-comment" rows="3" maxlength="2000" placeholder="например: товар вернули, чек заменяю позже…">${esc(r.comment || '')}</textarea></label>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="nt-send">Отправить</button>
+      <button class="btn" id="nt-cancel">Отмена</button>
+    </div>`);
+  slot.querySelector('#nt-cancel').onclick = close;
+  slot.querySelector('#nt-send').onclick = async () => {
+    try {
+      await api.patch('/api/v1/receipts/' + r.id, {
+        notified: slot.querySelector('#nt-on').checked,
+        comment: slot.querySelector('#nt-comment').value.trim(),
+      });
+      toast('Уведомление отправлено бухгалтеру', 'ok');
+      close(); onSaved && onSaved();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+
+// ==========================================================================
+//  v1.2.0: Блок «Что нового» — показывается один раз на каждую версию
+// ==========================================================================
+const CLIENT_VERSION = '1.2.0';
+function showWhatsNew() {
+  try {
+    if (localStorage.getItem('ymaster_seen_version') === CLIENT_VERSION) return;
+    localStorage.setItem('ymaster_seen_version', CLIENT_VERSION);
+  } catch (e) { return; }
+  const { slot, close } = openModal(`
+    <div class="modal-title">🎉 Ямастер Чек v${CLIENT_VERSION} — что нового</div>
+    <dl class="kv" style="font-size:13.5px">
+      <dt>📥 Данные чека из сервисов</dt><dd>полная информация (магазин, ИНН, все позиции) — из API ФНС,
+        proverkacheka.com или своего источника. Паузы 2–7 с и ротация источников — без блокировок.</dd>
+      <dt>✏️ Редактирование чеков</dt><dd>бухгалтер и администратор могут изменить любые поля чека
+        и позиции — по одному или массово; изменения попадают в 1С и CSV.</dd>
+      <dt>👤 «От кого прислал»</dt><dd>чеки от сотрудников автоматически помечаются отправителем —
+        вручную ничего назначать не нужно (меняют только бухгалтер/админ).</dd>
+      <dt>🔔 Уведомления сотрудников</dt><dd>сотрудник ставит флажок «уведомить бухгалтерию» и пишет
+        комментарий к своему чеку (замена, возврат и т.п.).</dd>
+      <dt>📱 Стабильная связь</dt><dd>исправлены «офлайн» и мерцание на телефоне: умные паузы
+        переподключения и heartbeat — без лишних запросов к серверу.</dd>
+    </dl>
+    <div class="modal-actions"><button class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
+  slot.querySelector('#wn-ok').onclick = close;
+}
+
 // Отправка отсканированной строки на сервер (+ офлайн-режим)
 async function handleScannedText(text, source) {
   const parsed = parseQrClient(text);
@@ -844,6 +1077,7 @@ async function viewReceipts(container) {
         <button class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
         <button class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
         <button class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
+        <button class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
         <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
@@ -866,6 +1100,7 @@ async function viewReceipts(container) {
     Object.entries(filters).forEach(([k, v]) => { if (v !== '' && v != null) p.set(k, v); });
     const data = await api.get('/api/v1/receipts?' + p.toString());
     pageInfo = data;
+    viewReceipts._rows = data.items;
     const el = $('#receipts-table');
     if (!data.items.length) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
@@ -874,7 +1109,7 @@ async function viewReceipts(container) {
         ${acc ? '<th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto"></th>' : ''}
         <th>Дата чека</th><th>Сумма</th><th>ФН</th><th>ФД</th><th>ФП</th>
         ${acc ? '<th>Сотрудник</th>' : ''}
-        <th>Статус</th><th>ФНС</th><th>1С</th></tr></thead>
+        <th>Статус</th><th>ФНС</th><th>1С</th><th style="width:86px"></th></tr></thead>
         <tbody>${data.items.map(r => receiptRow(r)).join('')}</tbody></table>`;
       $$('tbody tr', el).forEach(tr => {
         tr.onclick = (e) => {
@@ -912,16 +1147,27 @@ async function viewReceipts(container) {
 
   function receiptRow(r) {
     const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
-    return `<tr data-id="${r.id}" title="${canDel ? '' : ''}">
+    const isOwner = r.created_by_id === state.me.id;
+    const notifiedMark = r.notified ? ' <span title="Сотрудник уведомляет бухгалтерию">🔔</span>' : '';
+    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    const actions = acc
+      ? `<td style="white-space:nowrap">
+           <button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}" title="Получить полные данные чека из сервиса проверки">📥</button>
+           <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
+         </td>`
+      : (isOwner ? `<td><button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+            title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button></td>` : '<td></td>');
+    return `<tr data-id="${r.id}">
       ${acc ? `<td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
         ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>` : ''}
-      <td class="cell-date">${fmtDate(r.receipt_date)}</td>
+      <td class="cell-date">${fmtDate(r.receipt_date)}${notifiedMark}</td>
       <td class="cell-sum">${fmtSum(r.total_sum)}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
       ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}</td>` : ''}
       <td>${chip(r.status)}</td>
-      <td>${chip(r.fns_status)}</td>
+      <td>${chip(r.fns_status)} ${detailsMark}</td>
       <td>${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
+      ${actions}
     </tr>`;
   }
 
@@ -957,6 +1203,12 @@ async function viewReceipts(container) {
       toast(r.message, 'info', 'Проверка ФНС');
     };
     $('#btn-bulk-assign').onclick = () => bulkAssignDialog();
+    $('#btn-bulk-fetch').onclick = async () => {
+      if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
+      const r = await api.post('/api/v1/receipts/fetch-details',
+                               { receipt_ids: [...state.receiptsSelected] });
+      toast(r.message, 'info', 'Получение данных');
+    };
     $('#btn-bulk-export').onclick = async () => {
       if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
       try {
@@ -985,6 +1237,29 @@ async function viewReceipts(container) {
       state.receiptsSelected.clear();
       toast('Удаление выполнено', 'ok');
       load();
+    };
+  }
+
+  // --- v1.2.0: действия в строках чеков (делегирование) ---
+  const tbody = $('#receipts-table');
+  if (tbody) {
+    tbody.onclick = async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const row = (viewReceipts._rows || []).find(x => x.id === id);
+      if (btn.dataset.act === 'fetch') {
+        btn.disabled = true; btn.textContent = '⏳';
+        try {
+          const r = await api.post(`/api/v1/receipts/${id}/fetch-details`);
+          toast(r.message, 'info', 'Получение данных');
+        } catch (err) { toast(err.message, 'err'); }
+        setTimeout(() => { btn.disabled = false; btn.textContent = '📥'; }, 4000);
+      } else if (btn.dataset.act === 'edit') {
+        if (row) openEditReceipt(row, () => load());
+      } else if (btn.dataset.act === 'notify') {
+        if (row) openNotifyDialog(row, () => load());
+      }
     };
   }
 
@@ -1498,8 +1773,8 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null;
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); } }
+  let fns = null, onec = null, appSet = null, ext = null;
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
 
@@ -1533,6 +1808,30 @@ async function viewSettings(container) {
           <input id="fns-appid" value="${esc(fns.client_app_id)}"></label>
         <button class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
         <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней (повторная проверка не расходует лимиты).</p>
+      </div>` : ''}
+
+      ${isAdmin() && appSet ? `
+      <div class="glass card">
+        <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.2.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции) система получает
+        из источников по порядку. Между запросами — случайная пауза 2–7 секунд,
+        при блокировке источник временно «остывает» и включается следующий — банов не будет.</p>
+        <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
+          ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
+          <input id="ext-pke" type="password" placeholder="токен API"></label>
+        <label class="field" style="margin-bottom:10px"><span>Свой источник (URL) — контракт POST {qrraw} → JSON</span>
+          <input id="ext-custom" value="${esc(ext ? ext.external_custom_url : '')}" placeholder="https://… (напр. проверкачека.рф, когда появится API)"></label>
+        <label class="field" style="margin-bottom:10px"><span>Порядок источников</span>
+          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,proverkacheka,custom')}">
+          <small class="form-hint">fns_api — официальное API ФНС (токен в карточке «Проверка чеков»), proverkacheka, custom</small></label>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
+          <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
+          <span>Автоматически получать данные после сканирования</span></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="ext-save">💾 Сохранить источники</button>
+          <button class="btn btn-sm" id="ext-test">🧪 Тест контрольным чеком</button>
+        </div>
+        <p class="form-hint" id="ext-status" style="margin-top:10px"></p>
       </div>` : ''}
 
       ${isAdmin() && onec ? `
@@ -1585,6 +1884,31 @@ async function viewSettings(container) {
         — согласно лицензии проекта.</p>
       </div>
     </div>`;
+
+  if (isAdmin() && ext) {
+    $('#ext-save').onclick = async () => {
+      try {
+        await api.put('/api/v1/settings/external', {
+          proverkacheka_token: $('#ext-pke').value.trim() || undefined,
+          external_custom_url: $('#ext-custom').value.trim(),
+          external_order: $('#ext-order').value.trim(),
+          external_auto: $('#ext-auto').checked,
+        });
+        toast('Источники данных сохранены', 'ok');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#ext-test').onclick = async () => {
+      const st = $('#ext-status');
+      st.textContent = 'Проверяю (учтите паузу 2–7 с между запросами)…';
+      try {
+        const r = await api.post('/api/v1/settings/external/test', {});
+        st.innerHTML = r.ok
+          ? `Результат: источник <b>${esc(r.source || '—')}</b>, чек ${r.found ? 'найден' : 'не найден'}${r.items_count ? `, позиций: ${r.items_count}` : ''}. ${esc(r.message)}`
+          : `Не удалось: ${esc(r.message)}`;
+      } catch (e) { st.textContent = 'Ошибка: ' + e.message; }
+    };
+  }
 
   if (isAdmin() && appSet) {
     $('#app-save').onclick = async () => {

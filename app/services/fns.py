@@ -100,7 +100,8 @@ class FnsClient:
     def __init__(self, api_base: str | None = None, master_token: str | None = None,
                  client_app_id: str | None = None, timeout: int | None = None):
         self.api_base = (api_base or settings.FNS_API_BASE).rstrip("/")
-        self.master_token = master_token or settings.FNS_MASTER_TOKEN
+        # Приоритет: явный аргумент → настройка из админки (БД) → переменная окружения
+        self.master_token = master_token or _db_master_token() or settings.FNS_MASTER_TOKEN
         self.client_app_id = client_app_id or settings.FNS_CLIENT_APP_ID
         self.timeout = timeout or settings.FNS_TIMEOUT_SECONDS
         self._temp_token: str | None = None
@@ -190,6 +191,21 @@ class FnsClient:
 # ==========================================================================
 #  Фабрика провайдера + кэш результатов
 # ==========================================================================
+def _db_master_token() -> str:
+    """Мастер-токен ФНС, сохранённый администратором в настройках (v1.2.0)."""
+    try:
+        from ..models import AppSetting
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            from .appsettings import get_setting
+            return get_setting(db, "fns_master_token", "")
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
 def get_provider() -> str:
     from ..models import AppSetting
     from ..database import SessionLocal

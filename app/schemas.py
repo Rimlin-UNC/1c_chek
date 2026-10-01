@@ -9,6 +9,7 @@ Pydantic-схемы для валидации запросов и ответов
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -118,8 +119,52 @@ class AssignBulk(BaseModel):
 
 
 class ReceiptPatch(BaseModel):
+    """v1.2.0: расширенное редактирование чека.
+    Права: сотрудник — только notified/comment (свой чек);
+    бухгалтер/админ — все поля + позиции (items)."""
     assignee: Optional[str] = Field(default=None, max_length=200)
     comment: Optional[str] = Field(default=None, max_length=2000)
+    notified: Optional[bool] = None
+    # --- поля для бухгалтера/админа ---
+    fn: Optional[str] = Field(default=None, max_length=20)
+    fd: Optional[str] = Field(default=None, max_length=20)
+    fp: Optional[str] = Field(default=None, max_length=20)
+    receipt_date: Optional[datetime] = None
+    total_sum: Optional[float] = Field(default=None, ge=0)
+    operation: Optional[int] = None          # 1 приход / 2 возврат
+    merchant_name: Optional[str] = Field(default=None, max_length=500)
+    merchant_inn: Optional[str] = Field(default=None, max_length=20)
+    merchant_address: Optional[str] = Field(default=None, max_length=500)
+    cashier: Optional[str] = Field(default=None, max_length=200)
+    items: Optional[list["ReceiptItemPatch"]] = None
+
+
+class ReceiptItemPatch(BaseModel):
+    name: str = Field(min_length=1, max_length=1000)
+    quantity: float = Field(default=1.0, gt=0)
+    price: float = Field(default=0.0, ge=0)
+    total: float = Field(default=0.0, ge=0)
+    vat_rate: Optional[str] = Field(default="none", max_length=10)
+    vat_sum: Optional[float] = Field(default=None, ge=0)
+
+
+class FetchDetailsRequest(BaseModel):
+    """Массовое получение данных чеков из внешних источников (v1.2.0)."""
+    receipt_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class ExternalSettingsPatch(BaseModel):
+    """Настройки источников данных о чеке (только администратор)."""
+    fns_master_token: Optional[str] = Field(default=None, max_length=500)
+    proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
+    external_custom_url: Optional[str] = Field(default=None, max_length=500)
+    external_order: Optional[str] = Field(default=None, max_length=100)
+    external_auto: Optional[bool] = None
+
+
+class ExternalTestRequest(BaseModel):
+    provider: str = "chain"  # chain (весь порядок) | fns_api | proverkacheka | custom
+    qrraw: Optional[str] = None
 
 
 class AppSettingsPatch(BaseModel):

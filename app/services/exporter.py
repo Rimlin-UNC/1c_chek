@@ -254,6 +254,10 @@ def build_push_payload(receipts: list[Receipt],
                 "fns_status": r.fns_status,
                 "assignee": getattr(r, "assignee", "") or "",
                 "comment": getattr(r, "comment", "") or "",
+                "merchant": getattr(r, "merchant_name", "") or "",
+                "merchant_inn": getattr(r, "merchant_inn", "") or "",
+                "merchant_address": getattr(r, "merchant_address", "") or "",
+                "notified": bool(getattr(r, "notified", False)),
                 "qr": r.qr_data,
                 "items": [
                     {

@@ -28,16 +28,18 @@ from fastapi.responses import Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ADMIN, ROLE_USER, get_current_user, require_accountant
+from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER, get_current_user,
+                    require_accountant)
 from ..config import settings
 from ..database import get_db
 from ..models import FnsLog, MappingSetting, Receipt, ReceiptItem, User
-from ..schemas import (AssignBulk, ExportRequest, ManualReceipt, ReceiptPatch,
-                       ScanRequest, VerifyRequest)
+from ..schemas import (AssignBulk, ExportRequest, FetchDetailsRequest,
+                       ManualReceipt, ReceiptPatch, ScanRequest, VerifyRequest)
 from ..services import appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
 from ..services.fns import check_receipt
+from ..services.external import engine as external_engine, ExternalResult
 from ..services.qr import (MultipleReceiptsError, ParsedQR, QRParseError,
                            build_qr_string, parse_qr, receipts_json)
 
@@ -56,6 +58,12 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
     if existing:
         return existing, False  # уже есть — дубликат
 
+    # v1.2.0: чек, присланный сотрудником, сразу помечается «от кого» —
+    # бухгалтеру не нужно назначать вручную; меняют только бухгалтер/админ.
+    auto_assignee = ""
+    if user is not None and user.role == ROLE_USER:
+        auto_assignee = (user.full_name or user.username or "")[:200]
+
     receipt = Receipt(
         qr_data=parsed.qr_data,
         fn=parsed.fn, fd=parsed.fd, fp=parsed.fp,
@@ -64,6 +72,7 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         operation=parsed.operation if parsed.operation in (1, 2) else 1,
         source=source,
         created_by=user.id if user else None,
+        assignee=auto_assignee,
         raw_data=receipts_json(parsed),
         status="new",
     )
@@ -99,6 +108,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
                    {"fn": receipt.fn, "fd": receipt.fd, "sum": receipt.total_sum})
         broadcast("receipt_created", receipt.to_dict())
         auto = _maybe_auto_verify(background, db, receipt)
+        _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     else:
         log_action(user, "receipt_duplicate", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd})
@@ -143,6 +153,7 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
                    {"fn": receipt.fn, "fd": receipt.fd, "source": "image"})
         broadcast("receipt_created", receipt.to_dict())
         auto = _maybe_auto_verify(background, db, receipt)
+        _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     else:
         auto = False
     return {
@@ -185,6 +196,7 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
         broadcast("receipt_created", receipt.to_dict())
         _maybe_auto_verify(background, db, receipt)
+        _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     return {"receipt": receipt.to_dict(with_items=True), "duplicate": not created,
             "message": "Чек принят" if created else "Чек уже есть в системе"}
 
@@ -267,20 +279,103 @@ def get_receipt(receipt_id: str, user: User = Depends(get_current_user),
     return d
 
 
-@router.patch("/{receipt_id}", summary="Назначить сотрудника / комментарий (бухгалтер+)")
+@router.patch("/{receipt_id}", summary="Изменение чека (сотрудник: уведомление/комментарий; бухгалтер+: всё)")
 def patch_receipt(receipt_id: str, body: ReceiptPatch,
-                  user: User = Depends(require_accountant),
+                  user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
     if not receipt:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    if body.assignee is not None:
-        receipt.assignee = body.assignee.strip()[:200]
-    if body.comment is not None:
-        receipt.comment = body.comment.strip()[:2000]
+
+    is_staff = user.role in (ROLE_ADMIN, ROLE_ACCOUNTANT)
+    is_owner = receipt.created_by == user.id
+    if not is_staff and not is_owner:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Сотрудник работает только со своими чеками")
+
+    changed = {"fields": []}
+
+    if not is_staff:
+        # Сотрудник: только галочка «Уведомляю бухгалтерию» и комментарий
+        forbidden = [f for f in ("assignee", "fn", "fd", "fp", "receipt_date",
+                                 "total_sum", "operation", "merchant_name",
+                                 "merchant_inn", "merchant_address", "cashier",
+                                 "items") if getattr(body, f) is not None]
+        if forbidden:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Сотрудник может изменить только уведомление и комментарий")
+        if body.notified is not None:
+            receipt.notified = body.notified
+            changed["fields"].append("notified")
+        if body.comment is not None:
+            receipt.comment = body.comment.strip()[:2000]
+            changed["fields"].append("comment")
+    else:
+        # Бухгалтер/админ: любые поля. Изменять реквизиты УЖЕ выгруженного
+        # чека может только администратор (целостность данных в 1С).
+        core_edit = any(getattr(body, f) is not None for f in
+                        ("fn", "fd", "fp", "receipt_date", "total_sum",
+                         "operation", "items"))
+        if core_edit and receipt.exported and user.role != ROLE_ADMIN:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Чек уже выгружен в 1С — обратитесь к администратору")
+
+        # Уникальность ФН+ФД+ФП при изменении реквизитов
+        if any(getattr(body, f) is not None for f in ("fn", "fd", "fp")):
+            new_fn = (body.fn or receipt.fn).strip()
+            new_fd = (body.fd or receipt.fd).strip()
+            new_fp = (body.fp or receipt.fp).strip()
+            dup = (db.query(Receipt)
+                   .filter(Receipt.fn == new_fn, Receipt.fd == new_fd,
+                           Receipt.fp == new_fp, Receipt.id != receipt.id)
+                   .first())
+            if dup:
+                raise HTTPException(status.HTTP_409_CONFLICT,
+                                    "Чек с такими ФН/ФД/ФП уже существует")
+            receipt.fn, receipt.fd, receipt.fp = new_fn, new_fd, new_fp
+            changed["fields"] += ["fn", "fd", "fp"]
+
+        if body.receipt_date is not None:
+            receipt.receipt_date = body.receipt_date
+            changed["fields"].append("receipt_date")
+        if body.total_sum is not None:
+            receipt.total_sum = body.total_sum
+            changed["fields"].append("total_sum")
+        if body.operation in (1, 2):
+            receipt.operation = body.operation
+            changed["fields"].append("operation")
+        for f in ("merchant_name", "merchant_inn", "merchant_address", "cashier"):
+            v = getattr(body, f)
+            if v is not None:
+                setattr(receipt, f, v.strip()[:500])
+                changed["fields"].append(f)
+        if body.assignee is not None:
+            receipt.assignee = body.assignee.strip()[:200]
+            changed["fields"].append("assignee")
+        if body.comment is not None:
+            receipt.comment = body.comment.strip()[:2000]
+            changed["fields"].append("comment")
+        if body.notified is not None:
+            receipt.notified = body.notified
+            changed["fields"].append("notified")
+        if body.items is not None:
+            receipt.items.clear()
+            for pos, it in enumerate(body.items):
+                receipt.items.append(ReceiptItem(
+                    name=it.name.strip()[:1000],
+                    quantity=it.quantity, price=it.price, total=it.total,
+                    vat_rate=(it.vat_rate or "none")[:10],
+                    vat_sum=it.vat_sum or 0.0, position=pos))
+            changed["fields"].append(f"items({len(body.items)})")
+        if changed["fields"]:
+            # Ручная правка — последний и главный источник данных о чеке
+            receipt.details_source = "manual_edit"
+            receipt.details_fetched_at = dt.datetime.utcnow()
+
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,
-               {"assignee": receipt.assignee})
+               {"fields": changed["fields"], "role": user.role})
+    broadcast("receipt_updated", receipt.to_dict())
     return receipt.to_dict(with_items=True)
 
 
@@ -298,6 +393,133 @@ def bulk_assign(body: AssignBulk, user: User = Depends(require_accountant),
                                                    "assignee": body.assignee})
     return {"ok": True, "updated": updated,
             "message": f"Сотрудник назначен, чеков обновлено: {updated}"}
+
+
+# --------------------------------------------------------------------------
+#  v1.2.0: Получение ПОЛНЫХ данных чека из внешних источников
+#  (ФНС API / proverkacheka.com / свой сервис) — с паузами 2–7 с и ротацией
+# --------------------------------------------------------------------------
+def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -> None:
+    """Применение полученных данных к чеку (только непустые поля)."""
+    if not res.ok:
+        receipt.fns_message = res.message
+        db.commit()
+        return
+    if res.date_time:
+        receipt.receipt_date = res.date_time
+    if res.total_sum:
+        receipt.total_sum = res.total_sum
+    if res.operation in (1, 2):
+        receipt.operation = res.operation
+    if res.merchant_name:
+        receipt.merchant_name = res.merchant_name
+    if res.merchant_inn:
+        receipt.merchant_inn = res.merchant_inn
+    if res.merchant_address:
+        receipt.merchant_address = res.merchant_address
+    if res.cashier:
+        receipt.cashier = res.cashier
+    if res.cash_sum is not None:
+        receipt.cash_sum = res.cash_sum
+    if res.ecash_sum is not None:
+        receipt.ecash_sum = res.ecash_sum
+    if res.found:
+        receipt.fns_status = "valid"
+        receipt.fns_checked_at = dt.datetime.utcnow()
+        receipt.fns_message = f"Данные получены ({res.source})"
+        if res.items:
+            receipt.items.clear()
+            for pos, it in enumerate(res.items):
+                receipt.items.append(ReceiptItem(
+                    name=it.name[:1000], quantity=it.quantity,
+                    price=it.price, total=it.total,
+                    vat_rate=it.vat_rate[:10], vat_sum=it.vat_sum,
+                    position=pos))
+    receipt.details_source = res.source or receipt.details_source
+    receipt.details_fetched_at = dt.datetime.utcnow()
+    try:
+        raw = json.loads(receipt.raw_data or "{}")
+    except ValueError:
+        raw = {}
+    raw["external"] = {"source": res.source, "message": res.message,
+                       "fetched_at": dt.datetime.utcnow().isoformat() + "Z"}
+    receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+    db.commit()
+
+
+def _run_external_fetch(receipt_ids: list[str]) -> None:
+    """Фоновый воркер: последовательно, с встроенными паузами движка."""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        for rid in receipt_ids:
+            receipt = db.get(Receipt, rid)
+            if receipt is None:
+                continue
+            res = external_engine.fetch(
+                db, receipt.qr_data, receipt.fn, receipt.fd, receipt.fp,
+                receipt.total_sum, receipt.receipt_date)
+            _apply_external_result(db, receipt, res)
+            db.refresh(receipt)
+            broadcast("receipt_updated", receipt.to_dict(with_items=True))
+    finally:
+        db.close()
+
+
+def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt) -> bool:
+    """Автозагрузка деталей после скана (настройка external_auto, по умолч. вкл)."""
+    if appsettings.get_setting(db, "external_auto", "1") == "1" and receipt.status == "new":
+        background.add_task(_run_external_fetch, [receipt.id])
+        return True
+    return False
+
+
+@router.post("/{receipt_id}/fetch-details",
+             summary="Получить полные данные чека из сервиса проверки (бухгалтер+)")
+def fetch_details_one(receipt_id: str, background: BackgroundTasks,
+                      user: User = Depends(require_accountant),
+                      db: Session = Depends(get_db)):
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    background.add_task(_run_external_fetch, [receipt.id])
+    log_action(user, "external_fetch", "receipt", receipt.id, {"queued": 1})
+    return {"ok": True, "queued": True,
+            "message": "Запрос отправлен (пауза 2–7 с для защиты от блокировки). "
+                       "Данные появятся автоматически"}
+
+
+@router.post("/fetch-details",
+             summary="Массовое получение данных чеков (бухгалтер+, очередь с паузами)")
+def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
+                       user: User = Depends(require_accountant),
+                       db: Session = Depends(get_db)):
+    ids = [i for i in dict.fromkeys(body.receipt_ids)
+           if db.get(Receipt, i) is not None]
+    if not ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
+    background.add_task(_run_external_fetch, ids)
+    log_action(user, "external_fetch", details={"queued": len(ids)})
+    return {"ok": True, "queued": len(ids),
+            "message": f"В очереди чеков: {len(ids)}. Источники опрашиваются "
+                       f"по очереди с паузами 2–7 с — блокировок не будет"}
+
+
+@router.get("/external/status",
+            summary="Состояние источников данных (бухгалтер+)")
+def external_status(user: User = Depends(require_accountant),
+                    db: Session = Depends(get_db)):
+    cfg = external_engine._settings(db)
+    return {
+        "chain": external_engine.provider_chain(db),
+        "engine": external_engine.status(),
+        "configured": {
+            "fns_api": bool(cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN),
+            "proverkacheka": bool(cfg.get("proverkacheka_token")),
+            "custom": bool(cfg.get("external_custom_url")),
+        },
+        "auto_fetch": appsettings.get_setting(db, "external_auto", "1") == "1",
+    }
 
 
 @router.delete("/{receipt_id}", summary="Удаление чека (по правилам ролей)")
@@ -477,7 +699,8 @@ def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";", lineterminator="\n")
     writer.writerow(["Дата чека", "Сумма, ₽", "ФН", "ФД", "ФП", "Признак",
-                     "Статус ФНС", "Сотрудник", "Сканеровал", "Комментарий", "QR"])
+                     "Статус ФНС", "Сотрудник", "Сканеровал", "Магазин", "ИНН",
+                     "Комментарий", "Уведомление", "QR"])
     op_names = {1: "Приход", 2: "Возврат"}
     fns_names = {"valid": "Действителен", "invalid": "Недействителен",
                  "not_found": "Не найден", "unknown": "Не проверен"}
@@ -490,7 +713,10 @@ def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
             fns_names.get(r.fns_status, r.fns_status),
             r.assignee or "",
             r.user.username if r.user else "",
+            r.merchant_name or "",
+            r.merchant_inn or "",
             r.comment or "",
+            "Уведомляет" if r.notified else "",
             r.qr_data,
         ])
     log_action(user, "receipts_exported_csv", details={"count": len(receipts)})

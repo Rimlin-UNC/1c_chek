@@ -18,7 +18,9 @@ from ..auth import get_current_user, require_accountant, require_admin
 from ..config import settings as cfg
 from ..database import get_db
 from ..models import AppSetting, User
-from ..schemas import FnsSettingsPatch, MappingSave, OnecSettingsPatch
+from ..schemas import (AppSettingsPatch, ExternalSettingsPatch,
+                       ExternalTestRequest, FnsSettingsPatch, MappingSave,
+                       OnecSettingsPatch)
 from ..services import appsettings, exporter
 from ..services.audit import log_action
 
@@ -180,3 +182,67 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
         appsettings.set_setting(db, "auto_verify", "1" if body.auto_verify else "0")
     log_action(user, "app_settings_updated", details={"auto_verify": body.auto_verify})
     return {"ok": True, "message": "Настройки сохранены"}
+
+
+# --------------------------------------------------------------------------
+#  v1.2.0: Источники данных о чеке (ФНС API / proverkacheka.com / свой сервис)
+# --------------------------------------------------------------------------
+@router.get("/external", summary="Настройки источников данных чека (админ)")
+def get_external(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    from ..services.external import engine
+    return {
+        "fns_master_token_masked": _mask(_get_setting(db, "fns_master_token", "")),
+        "has_fns_master_token": bool(_get_setting(db, "fns_master_token", "")),
+        "proverkacheka_token_masked": _mask(_get_setting(db, "proverkacheka_token", "")),
+        "has_proverkacheka_token": bool(_get_setting(db, "proverkacheka_token", "")),
+        "external_custom_url": _get_setting(db, "external_custom_url", ""),
+        "external_order": _get_setting(db, "external_order", "fns_api,proverkacheka,custom"),
+        "external_auto": _get_setting(db, "external_auto", "1") == "1",
+        "engine": engine.status(),
+    }
+
+
+@router.put("/external", summary="Сохранить источники данных чека (админ)")
+def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
+                 user: User = Depends(require_admin)):
+    if body.fns_master_token is not None and "•" not in body.fns_master_token:
+        _set_setting(db, "fns_master_token", body.fns_master_token.strip())
+    if body.proverkacheka_token is not None and "•" not in body.proverkacheka_token:
+        _set_setting(db, "proverkacheka_token", body.proverkacheka_token.strip())
+    if body.external_custom_url is not None:
+        url = body.external_custom_url.strip()
+        if url and not url.lower().startswith(("http://", "https://")):
+            raise HTTPException(400, "URL должен начинаться с http:// или https://")
+        _set_setting(db, "external_custom_url", url)
+    if body.external_order is not None:
+        allowed = {"fns_api", "proverkacheka", "custom"}
+        items = [x.strip() for x in body.external_order.split(",") if x.strip() in allowed]
+        _set_setting(db, "external_order", ",".join(items or ["fns_api", "proverkacheka", "custom"]))
+    if body.external_auto is not None:
+        _set_setting(db, "external_auto", "1" if body.external_auto else "0")
+    log_action(user, "external_settings_updated", details={"auto": body.external_auto})
+    return {"ok": True, "message": "Источники данных сохранены"}
+
+
+@router.post("/external/test", summary="Проверить источник контрольным чеком (админ)")
+def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
+                  user: User = Depends(require_admin)):
+    """Синхронный тест: движок сам выдержит паузу 2–7 с и вернёт ответ источника."""
+    from ..services.external import engine
+    qr = body.qrraw or ("t=20260927T1529&s=2150.00&fn=7381440700130934"
+                        "&i=33079&fp=3673437411&n=1")
+    from ..services.qr import parse_qr, QRParseError
+    try:
+        parsed = parse_qr(qr)
+    except QRParseError as e:
+        return {"ok": False, "message": f"Строка QR не распознана: {e}"}
+    res = engine.fetch(db, qr, parsed.fn, parsed.fd, parsed.fp,
+                       parsed.total_sum, parsed.date_time)
+    return {
+        "ok": res.ok,
+        "source": res.source,
+        "found": res.found,
+        "items_count": len(res.items),
+        "message": res.message,
+        "engine": engine.status(),
+    }

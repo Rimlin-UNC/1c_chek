@@ -72,6 +72,16 @@ def _ensure_schema() -> None:
              "ALTER TABLE receipts ADD COLUMN assignee VARCHAR(200) DEFAULT ''"),
             ("comment",
              "ALTER TABLE receipts ADD COLUMN comment TEXT DEFAULT ''"),
+            # --- v1.2.0: полные данные чека + флаг уведомления ---
+            ("merchant_name", "ALTER TABLE receipts ADD COLUMN merchant_name VARCHAR(500) DEFAULT ''"),
+            ("merchant_inn", "ALTER TABLE receipts ADD COLUMN merchant_inn VARCHAR(20) DEFAULT ''"),
+            ("merchant_address", "ALTER TABLE receipts ADD COLUMN merchant_address VARCHAR(500) DEFAULT ''"),
+            ("cashier", "ALTER TABLE receipts ADD COLUMN cashier VARCHAR(200) DEFAULT ''"),
+            ("cash_sum", "ALTER TABLE receipts ADD COLUMN cash_sum FLOAT DEFAULT 0"),
+            ("ecash_sum", "ALTER TABLE receipts ADD COLUMN ecash_sum FLOAT DEFAULT 0"),
+            ("details_source", "ALTER TABLE receipts ADD COLUMN details_source VARCHAR(30) DEFAULT ''"),
+            ("details_fetched_at", "ALTER TABLE receipts ADD COLUMN details_fetched_at DATETIME NULL"),
+            ("notified", "ALTER TABLE receipts ADD COLUMN notified BOOLEAN DEFAULT 0"),
         ],
     }
     insp = inspect(engine)

@@ -102,10 +102,17 @@ async def ws_status(ws: WebSocket):
         await ws.send_json({"type": "connected",
                             "payload": {"app": settings.APP_NAME,
                                         "vendor": settings.VENDOR}})
+        # v1.2.0: ping каждые ~20 с — прокси/NAT не рвут «пустое» соединение,
+        # телефон перестаёт циклично переподключаться («офлайн/мерцание»).
+        idle_ticks = 0
         while connected["ok"]:
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=5.0)
+                idle_ticks = 0
             except asyncio.TimeoutError:
+                idle_ticks += 1
+                if idle_ticks % 4 == 0:
+                    await ws.send_json({"type": "ping", "payload": {"demo": False}})
                 continue
             await ws.send_text(message)
     finally:

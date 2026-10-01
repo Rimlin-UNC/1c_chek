@@ -59,6 +59,7 @@ async function once(method, path, body, options = {}) {
     } catch { /* не JSON */ }
     throw new ApiError(resp.status, msg, data);
   }
+  window.__ymLastApiOk = Date.now();   // для индикатора «офлайн» (гистерезис)
   const ct = resp.headers.get('content-type') || '';
   return ct.includes('json') ? resp.json() : resp.text();
 }
