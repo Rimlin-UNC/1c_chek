@@ -35,6 +35,7 @@ SERVICE="ymaster-check"
 DOMAIN=""
 SSL_DOMAIN=""
 UPDATE=0
+DIAGNOSE=0
 WITH_NGINX=1
 CONF_DIR="/etc/ymaster-check"
 CONF_FILE="$CONF_DIR/deploy.conf"
@@ -42,6 +43,7 @@ CONF_FILE="$CONF_DIR/deploy.conf"
 for arg in "$@"; do
   case "$arg" in
     --update) UPDATE=1 ;;
+    --diagnose) DIAGNOSE=1 ;;
     --no-nginx) WITH_NGINX=0 ;;
     --with-ssl=*) OPT_SSL="${arg#*=}"; WITH_NGINX=1 ;;
     --no-ssl) OPT_SSL="none" ;;
@@ -66,6 +68,31 @@ DOMAIN="${OPT_DOMAIN:-$DOMAIN}"
 SSL_DOMAIN="${OPT_SSL:-$SSL_DOMAIN}"
 [[ "$SSL_DOMAIN" == "none" ]] && SSL_DOMAIN=""
 BRANCH="${OPT_BRANCH:-$BRANCH}"
+
+# ------------------------------------------------------------------
+# Режим диагностики: deploy.sh --diagnose — быстро понять, почему сайт недоступен
+if [[ $DIAGNOSE -eq 1 ]]; then
+  echo "======== Диагностика Ямастер Чек ========"
+  echo "-- сервис:"; systemctl is-active "$SERVICE" || true
+  journalctl -u "$SERVICE" -n 12 --no-pager 2>/dev/null | tail -12 || true
+  echo "-- приложение напрямую (health):"
+  curl -s -o /dev/null -w "   127.0.0.1:8000/health -> HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8000/health || echo "   127.0.0.1:8000 -> НЕ ОТВЕЧАЕТ"
+  echo "-- nginx:"; nginx -t 2>&1 || true
+  systemctl is-active nginx || true
+  echo "-- порты (80/443/8000):"
+  ss -tlnp 2>/dev/null | grep -E ':(80|443|8000)\s' || echo "   ничего не слушает?!"
+  echo "-- локальный сайт через nginx:"
+  curl -s -o /dev/null -w "   http://127.0.0.1/ -> HTTP %{http_code}\n" --max-time 5 http://127.0.0.1/ || echo "   http://127.0.0.1 -> НЕ ОТВЕЧАЕТ"
+  D="${SSL_DOMAIN:-$DOMAIN}"
+  if [[ -n "$D" && -f "/etc/letsencrypt/live/$D/fullchain.pem" ]]; then
+    echo "-- https ($D):"
+    curl -sk -o /dev/null -w "   https://127.0.0.1/ (SNI $D) -> HTTP %{http_code}\n" --max-time 5 --resolve "$D:443:127.0.0.1" "https://$D/" || echo "   https -> НЕ ОТВЕЧАЕТ"
+    openssl x509 -in "/etc/letsencrypt/live/$D/fullchain.pem" -noout -dates 2>/dev/null | sed 's/^/   /' || true
+  fi
+  echo "-- UFW:"; ufw status 2>/dev/null | sed -n '1,8p' || true
+  echo "========================================="
+  exit 0
+fi
 
 # Автопоиск домена: если сертификат уже выпускался — восстанавливаем HTTPS
 if [[ -z "$SSL_DOMAIN" && -d /etc/letsencrypt/live ]]; then
@@ -248,6 +275,14 @@ else
   echo "     sudo bash deploy.sh --update --with-ssl=ваш-домен.ru"
 fi
 
+# v1.6.1: самопроверка — деплой сразу говорит, отвечает ли сайт
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 6 http://127.0.0.1/ 2>/dev/null || echo 000)
+if [[ "$HTTP_CODE" =~ ^(200|301|302|401)$ ]]; then
+  ok "сайт отвечает (HTTP $HTTP_CODE)"
+else
+  warn "сайт НЕ отвечает через nginx (HTTP $HTTP_CODE) — смотрите: journalctl -u $SERVICE -n 30"
+fi
+
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 APP_VERSION=$(grep -oP 'APP_VERSION: str = "\K[^"]+' "$APP_DIR/app/config.py" 2>/dev/null || echo "?")
 
@@ -279,6 +314,7 @@ echo "  Управление:  systemctl status $SERVICE"
 echo "  Обновление:  sudo bash deploy.sh --update"
 echo "  Логи:        journalctl -u $SERVICE -f"
 echo "  Безопасность: UFW + fail2ban + rate-limit активны"
+echo "  Диагностика: sudo bash deploy.sh --diagnose   (если сайт недоступен)"
 echo ""
 echo "  ООО «Ямастер» — https://ymaster.ru · info@ymaster.ru"
 echo "=============================================================="
