@@ -9,7 +9,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
 #   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
-#   sudo bash deploy.sh --update                 # обновление версии с GitHub
+#   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
+#                                                #   в /etc/ymaster-check/deploy.conf
+#                                                #   и применяются автоматически)
 #
 # Что делает:
 #   1) ставит пакеты: nginx, ufw, fail2ban, python3-venv, git, sqlite3, certbot*;
@@ -34,13 +36,16 @@ DOMAIN=""
 SSL_DOMAIN=""
 UPDATE=0
 WITH_NGINX=1
+CONF_DIR="/etc/ymaster-check"
+CONF_FILE="$CONF_DIR/deploy.conf"
 
 for arg in "$@"; do
   case "$arg" in
     --update) UPDATE=1 ;;
     --no-nginx) WITH_NGINX=0 ;;
-    --with-ssl=*) SSL_DOMAIN="${arg#*=}"; WITH_NGINX=1 ;;
-    --domain=*) DOMAIN="${arg#*=}" ;;
+    --with-ssl=*) OPT_SSL="${arg#*=}"; WITH_NGINX=1 ;;
+    --no-ssl) OPT_SSL="none" ;;
+    --domain=*) OPT_DOMAIN="${arg#*=}" ;;
     --repo=*) REPO_URL="${arg#*=}" ;;
     --branch=*) BRANCH="${arg#*=}" ;;
     -h|--help)
@@ -48,6 +53,28 @@ for arg in "$@"; do
     *) echo "Неизвестный аргумент: $arg"; exit 1 ;;
   esac
 done
+
+# v1.6.1: параметры предыдущего запуска (домен, SSL, ветка) сохраняются в
+# /etc/ymaster-check/deploy.conf и автоматически применяются при --update.
+# Раньше повторный запуск без аргументов затирал домен и HTTPS-конфиг Nginx.
+if [[ -f "$CONF_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONF_FILE"
+  echo "  ℹ Параметры прошлого запуска: домен=${DOMAIN:-нет}, ssl=${SSL_DOMAIN:-нет}, ветка=$BRANCH"
+fi
+DOMAIN="${OPT_DOMAIN:-$DOMAIN}"
+SSL_DOMAIN="${OPT_SSL:-$SSL_DOMAIN}"
+[[ "$SSL_DOMAIN" == "none" ]] && SSL_DOMAIN=""
+BRANCH="${OPT_BRANCH:-$BRANCH}"
+
+# Автопоиск домена: если сертификат уже выпускался — восстанавливаем HTTPS
+if [[ -z "$SSL_DOMAIN" && -d /etc/letsencrypt/live ]]; then
+  DETECTED=$(ls /etc/letsencrypt/live 2>/dev/null | grep -Ev 'README|^$' | head -1 || true)
+  if [[ -n "$DETECTED" ]]; then
+    SSL_DOMAIN="$DETECTED"
+    echo "  ℹ Найден выпущенный сертификат: $DETECTED — HTTPS будет сохранён"
+  fi
+fi
 
 bold() { echo -e "\n\e[1m==> $*\e[0m"; }
 ok()   { echo "  ✔ $*"; }
@@ -139,10 +166,42 @@ systemctl is-active --quiet "$SERVICE" && ok "сервис запущен" || {
 # ------------------------------------------------------------------
 bold "8/9 Nginx + файрвол UFW + fail2ban"
 if [[ $WITH_NGINX -eq 1 ]]; then
-  cp "$APP_DIR/deploy/nginx/ymaster-check.conf" /etc/nginx/sites-available/ymaster-check
+  NGX_CONF=/etc/nginx/sites-available/ymaster-check
+  cp "$APP_DIR/deploy/nginx/ymaster-check.conf" "$NGX_CONF"
   if [[ -n "${SSL_DOMAIN:-$DOMAIN}" ]]; then
-    sed -i "s/server_name _;/server_name ${SSL_DOMAIN:-$DOMAIN};/" \
-      /etc/nginx/sites-available/ymaster-check
+    sed -i "s/server_name _;/server_name ${SSL_DOMAIN:-$DOMAIN};/" "$NGX_CONF"
+  fi
+  # v1.6.1: если сертификат уже выпущен — сразу собираем HTTPS-блок
+  # (прежде повторный --update возвращал голый HTTP-шаблон)
+  D="${SSL_DOMAIN:-$DOMAIN}"
+  if [[ -n "$D" && -f "/etc/letsencrypt/live/$D/fullchain.pem" ]]; then
+    EXTRA_SSL=""
+    [[ -f /etc/letsencrypt/options-ssl-nginx ]] && EXTRA_SSL="    include /etc/letsencrypt/options-ssl-nginx;"
+    [[ -f /etc/letsencrypt/ssl-dhparams.pem ]] && EXTRA_SSL="${EXTRA_SSL}
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;"
+    sed -i "s|listen 80;|listen 443 ssl; listen [::]:443 ssl;|" "$NGX_CONF"
+    # вставка ssl-строк после server_name через awk: sed-«a\» внутри кавычек
+    # ломается — bash склеивает backslash+перевод строки
+    awk -v d="$D" -v cdir="/etc/letsencrypt/live/$D" -v extra="$EXTRA_SSL" '
+      { print }
+      /server_name / && !ins {
+        ins = 1
+        print "    ssl_certificate " cdir "/fullchain.pem;"
+        print "    ssl_certificate_key " cdir "/privkey.pem;"
+        if (extra != "") print extra
+      }' "$NGX_CONF" > "$NGX_CONF.tmp" && mv "$NGX_CONF.tmp" "$NGX_CONF"
+    cat >> "$NGX_CONF" <<NGXEOF
+
+# HTTP -> HTTPS — восстанавливается deploy.sh при каждом обновлении
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $D;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://\$host\$request_uri; }
+}
+NGXEOF
+    ok "HTTPS восстановлен из существующего сертификата ($D)"
   fi
   rm -f /etc/nginx/sites-enabled/default
   ln -sf /etc/nginx/sites-available/ymaster-check /etc/nginx/sites-enabled/
@@ -167,7 +226,9 @@ fail2ban-client status ymaster-check >/dev/null 2>&1 && ok "fail2ban: бан з�
 
 # ------------------------------------------------------------------
 bold "9/9 SSL (Let's Encrypt) — опционально"
-if [[ -n "$SSL_DOMAIN" ]]; then
+if [[ -n "$SSL_DOMAIN" && -f "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" ]]; then
+  ok "SSL-сертификат на месте ($SSL_DOMAIN), HTTPS работает, продление — таймер certbot"
+elif [[ -n "$SSL_DOMAIN" ]]; then
   # Preflight: домен должен указывать на ЭТОТ сервер, иначе Let's Encrypt не пройдёт
   SERVER_IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')
   DOMAIN_IP=$(getent ahostsv4 "$SSL_DOMAIN" | awk '{print $1; exit}')
@@ -189,14 +250,30 @@ fi
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 APP_VERSION=$(grep -oP 'APP_VERSION: str = "\K[^"]+' "$APP_DIR/app/config.py" 2>/dev/null || echo "?")
-URL="http://${SSL_DOMAIN:-$IP}"
-[[ -n "$SSL_DOMAIN" ]] && URL="https://$SSL_DOMAIN"
+
+# v1.6.1: запоминаем параметры — следующий --update подхватит их сам
+mkdir -p "$CONF_DIR"
+cat > "$CONF_FILE" <<CFGEOF
+# Параметры развёртывания Ямастер Чек (используются при повторных запусках deploy.sh)
+DOMAIN="$DOMAIN"
+SSL_DOMAIN="$SSL_DOMAIN"
+BRANCH="$BRANCH"
+CFGEOF
+chown -R "$APP_USER:$APP_USER" "$CONF_DIR" 2>/dev/null || true
+
+if [[ -n "$SSL_DOMAIN" && -f "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" ]]; then
+  URL="https://$SSL_DOMAIN"; ALT="  (или http://$IP)"
+elif [[ -n "$SSL_DOMAIN" ]]; then
+  URL="http://$SSL_DOMAIN"; ALT="  (или http://$IP)"
+else
+  URL="http://$IP"; ALT=""
+fi
 echo ""
 echo "=============================================================="
 echo "  ✅ Ямастер Чек v$APP_VERSION развёрнут!"
-echo "  Веб-клиент:       $URL  (или http://$IP)"
+echo "  Веб-клиент:       $URL$ALT"
 echo "  Swagger API:      $URL/api/docs"
-echo "  Логин:            admin / admin123  → смена пароля при входе"
+echo "  Логин:            admin  (пароль admin123 — только если не меняли)"
 echo ""
 echo "  Управление:  systemctl status $SERVICE"
 echo "  Обновление:  sudo bash deploy.sh --update"
