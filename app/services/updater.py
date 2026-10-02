@@ -210,24 +210,9 @@ def _guess_repo() -> str:
 #  Применение обновления
 # ==========================================================================
 def _backup_database() -> str:
-    """Копия БД в data/backups; держим последние BACKUPS_TO_KEEP."""
-    from ..config import settings as s
-    db_path = s.DATABASE_URL.replace("sqlite:///", "") if s.DATABASE_URL.startswith("sqlite") \
-        else os.path.join(APP_DIR, "data", "ymaster_check.db")
-    if not os.path.exists(db_path):
-        return ""
-    bdir = os.path.join(APP_DIR, "data", "backups")
-    os.makedirs(bdir, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = os.path.join(bdir, f"db-{stamp}.db")
-    shutil.copy2(db_path, dest)
-    olds = sorted(os.listdir(bdir))
-    for name in olds[:-BACKUPS_TO_KEEP]:
-        try:
-            os.remove(os.path.join(bdir, name))
-        except OSError:
-            pass
-    return dest
+    """Совместимость: ручная копия через сервис бэкапов (v1.5.0)."""
+    from .backups import create_backup
+    return create_backup("manual") or ""
 
 
 def _health_check() -> tuple[bool, str]:
@@ -259,7 +244,8 @@ def _do_apply(target_version: str, repo: str, branch: str) -> None:
         req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
 
         job.say("backup", 10, "Резервная копия базы данных…")
-        backup = _backup_database()
+        from .backups import create_backup
+        backup = create_backup("preupdate")
         if backup:
             job.say("backup", 15, f"Бэкап: {os.path.basename(backup)}")
 

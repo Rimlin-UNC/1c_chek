@@ -214,6 +214,11 @@ function enterApp() {
   showWhatsNew();
   route();
   if (isAdmin()) checkUpdatesSilently();   // v1.4.0: авто-проверка при запуске
+  const pwaBtn = document.getElementById('pwa-install-btn');
+  if (pwaBtn && !pwaBtn.dataset.bound) {
+    pwaBtn.dataset.bound = '1';
+    pwaBtn.onclick = showInstallDialog;
+  }
   refreshBadges();
   window.addEventListener('online', flushOfflineQueue);
   flushOfflineQueue();
@@ -890,6 +895,56 @@ function openNotifyDialog(r, onSaved) {
 //  v1.2.0: Блок «Что нового» — показывается один раз на каждую версию
 // ==========================================================================
 // ==========================================================================
+//  v1.5.0: Установка приложения на устройство (PWA: Android/iOS/десктоп)
+// ==========================================================================
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  window.__ymInstallPrompt = e;
+});
+
+function isIOSLike() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function showInstallDialog() {
+  const iOS = isIOSLike();
+  const standalone = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  if (standalone) {
+    toast('Приложение уже установлено на этом устройстве', 'ok', '📲');
+    return;
+  }
+  const { close } = openModal(`
+    <div class="modal-title">📲 Установить Ямастер Чек</div>
+    ${iOS ? `
+      <div class="steps" style="font-size:13.5px">
+        <div class="step"><div class="step-num"></div><div>В Safari нажмите кнопку <b>«Поделиться»</b>
+          <span style="font-size:16px">⎋</span> (внизу на iPhone / справа сверху на iPad)</div></div>
+        <div class="step"><div class="step-num"></div><div>Выберите <b>«На экран "Домой"»</b>
+          <span style="font-size:16px">➕</span></div></div>
+        <div class="step"><div class="step-num"></div><div>Подтвердите — иконка <b>Ямастер Чек</b> появится
+          на домашнем экране, приложение откроется на весь экран.</div></div>
+      </div>` : `
+      <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите приложение
+      на устройство — быстрый доступ с иконки, работа на весь экран, офлайн-сканирование.</p>
+      <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
+      <p class="form-hint" style="margin-top:10px">Если кнопка не сработала: меню браузера →
+      «Установить приложение» / «Добавить на главный экран».</p>`}
+    <div class="modal-actions"><button class="btn" id="pwa-close">Понятно</button></div>`);
+  const go = document.getElementById('pwa-go');
+  if (go) go.onclick = async () => {
+    const p = window.__ymInstallPrompt;
+    if (!p) return toast('Браузер сам предложит установку — откройте меню браузера', 'info');
+    p.prompt();
+    const { outcome } = await p.userChoice;
+    if (outcome === 'accepted') toast('Приложение устанавливается…', 'ok');
+    close();
+  };
+  document.getElementById('pwa-close').onclick = close;
+}
+
+// ==========================================================================
 //  v1.4.0: Обновления из приложения (админ)
 // ==========================================================================
 function checkUpdatesSilently() {
@@ -963,6 +1018,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.5.0': [
+    ['📲 Установка на устройство', 'кнопка «Установить приложение»: иконка на домашнем экране Android/iPhone/iPad/ПК, полноэкранный режим (для iPhone — пошаговая инструкция).'],
+    ['💾 Архивные бэкапы', 'автоматически: ежедневные (7 шт.), перед каждым обновлением (5) и АРХИВ МЕСЯЦА (12 месяцев) + создание и скачивание копий из Настроек.'],
+    ['🎨 Вёрстка маппинга', 'правила — аккуратные карточки с подписями, счётчик правил, корректная раскладка на телефоне.'],
+    ['⏰ Ежедневная копия БД', 'приложение само делает копию базы раз в сутки — надёжность без участия человека.'],
+  ],
   '1.4.0': [
     ['🔄 Обновления из приложения', 'проверка при запуске и в Настройках, установка в один клик — без терминала: копия БД → только изменения → проверка целостности → рестарт, при сбое авто-откат. Данные и настройки сохраняются.'],
     ['⏳ «Требуют внимания»', 'на дашборде чеки, которые висят необработанными дольше 3 дней — срок отчёта по подотчётным суммам (риск НДФЛ).'],
@@ -1652,11 +1713,9 @@ async function viewMapping(container) {
     ${admin ? '' : 'Просмотр — изменения вносит администратор.'}</div>
     <div class="glass card">
       <div class="card-title">Правила преобразования <span class="spacer"></span>
+        <span class="form-hint" id="m-count"></span>
         ${admin ? '<button class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
-      <div class="mapping-grid" id="mapping-rows">
-        <div class="mapping-head">Поле чека</div><div class="mapping-head">Документ 1С</div>
-        <div class="mapping-head">Реквизит 1С</div><div class="mapping-head">Преобразование</div><div></div><div></div>
-      </div>
+      <div id="mapping-rows"></div>
       <div class="modal-actions" style="justify-content:flex-start">
         ${admin ? '<button class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
       </div>
@@ -1676,26 +1735,37 @@ async function viewMapping(container) {
 
   function addRow(m = { source_field: 'total_sum', target_object: 'ПоступлениеТоваровУслуг',
                         target_field: '', transform: 'direct', transform_param: '', is_active: true }) {
+    // v1.5.0: правило = карточка-строка с подписями; на телефоне — стек
     const div = document.createElement('div');
-    div.className = 'mapping-grid mapping-row';
-    div.style.marginBottom = '8px';
+    div.className = 'map-row';
     div.innerHTML = `
-      <label><span class="mg-label">Поле чека</span>
+      <label class="map-cell map-src"><span>Поле чека</span>
         <select class="mr-src">${catalog.source_fields.map(f => `<option value="${f.code}" ${f.code === m.source_field ? 'selected' : ''}>${f.name}</option>`).join('')}</select></label>
-      <label><span class="mg-label">Документ 1С</span>
+      <label class="map-cell"><span>Документ 1С</span>
         <select class="mr-obj">${catalog.target_objects.map(o => `<option value="${o.code}" ${o.code === m.target_object ? 'selected' : ''}>${o.name}</option>`).join('')}</select></label>
-      <label><span class="mg-label">Реквизит 1С</span>
+      <label class="map-cell"><span>Реквизит 1С</span>
         <input class="mr-field" placeholder="СуммаДокумента" value="${esc(m.target_field)}"></label>
-      <label><span class="mg-label">Преобразование</span>
+      <label class="map-cell"><span>Преобразование</span>
         <select class="mr-tr">${catalog.transforms.map(t => `<option value="${t.code}" ${t.code === m.transform ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
-      <label title="Активно"><input type="checkbox" class="mr-active" ${m.is_active ? 'checked' : ''} style="width:auto"></label>
-      <button class="btn-icon" title="Удалить правило" style="color:var(--bad)">🗑</button>`;
+      <label class="map-cell map-check" title="Правило включено">
+        <span>Вкл.</span><input type="checkbox" class="mr-active" ${m.is_active ? 'checked' : ''} style="width:auto"></label>
+      <div class="map-actions">
+        <button class="btn btn-sm btn-bad mr-del" type="button" title="Удалить правило">🗑</button></div>`;
     if (!admin) div.querySelectorAll('input,select').forEach(el => el.disabled = true);
-    div.querySelector('.btn-icon').onclick = () => div.remove();
+    div.querySelector('.mr-del').onclick = () => { div.remove(); updateCount(); };
+    div.addEventListener('input', updateCount);
     rowsEl.appendChild(div);
+  }
+  function updateCount() {
+    const el = $('#m-count');
+    if (!el) return;
+    const rows = $$('.map-row');
+    const valid = rows.filter(d => d.querySelector('.mr-field')?.value.trim()).length;
+    el.textContent = rows.length ? `правил: ${rows.length} · с реквизитом: ${valid}` : '';
   }
   mapping.items.forEach(addRow);
   if (!mapping.items.length) addRow();
+  updateCount();
   if (admin) {
     $('#m-add').onclick = () => addRow();
     $('#m-save').onclick = async () => {
@@ -2063,6 +2133,27 @@ async function viewSettings(container) {
       </div>` : ''}
 
       <div class="glass card">
+        <div class="card-title">📲 Приложение на устройстве <span class="form-hint">(v1.5.0)</span></div>
+        <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
+        полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
+        Windows и macOS — без магазина приложений.</p>
+        <button class="btn btn-primary btn-sm" id="btn-pwa" style="margin-top:10px">📲 Установить / как установить</button>
+      </div>
+
+      ${isAdmin() ? `
+      <div class="glass card">
+        <div class="card-title">💾 Резервные копии <span class="form-hint">(v1.5.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Копии создаются автоматически: ежедневные (7 шт.),
+        перед каждым обновлением (5) и архив месяца (12 месяцев) — каталог data/backups на сервере.
+        Данные не затрагиваются ни обновлениями, ни git.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
+          <button class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
+        </div>
+        <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
+      </div>` : ''}
+
+      <div class="glass card">
         <div class="card-title">Мой профиль</div>
         <dl class="kv">
           <dt>Логин</dt><dd>${esc(state.me.username)}</dd>
@@ -2099,6 +2190,43 @@ async function viewSettings(container) {
         — согласно лицензии проекта.</p>
       </div>
     </div>`;
+
+  // PWA-кнопка в настройках (все роли)
+  const bp = $('#btn-pwa');
+  if (bp) bp.onclick = showInstallDialog;
+
+  // Резервные копии (админ)
+  if (isAdmin()) {
+    const renderBackups = (items) => {
+      const el = $('#bk-list');
+      if (!el) return;
+      const kindNames = { daily: 'ежедневная', preupdate: 'перед обновлением',
+                          manual: 'вручную', archive: 'архив месяца' };
+      el.innerHTML = items.length
+        ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>Размер</th><th></th></tr></thead><tbody>
+           ${items.slice(0, 12).map(b => `<tr style="cursor:default">
+             <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
+             <td>${kindNames[b.kind] || b.kind}</td>
+             <td>${b.size_kb} КБ</td>
+             <td><a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download>⬇</a></td>
+           </tr>`).join('')}</tbody></table>`
+        : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>';
+    };
+    const loadBackups = async () => {
+      try { renderBackups((await api.get('/api/v1/admin/backups')).items); }
+      catch { const el = $('#bk-list'); if (el) el.innerHTML = '<p class="form-hint">Список недоступен</p>'; }
+    };
+    loadBackups();
+    const bcr = $('#btn-bk-create');
+    if (bcr) bcr.onclick = async () => {
+      bcr.disabled = true;
+      try { const r = await api.post('/api/v1/admin/backups'); toast(r.message, 'ok', '💾'); renderBackups(r.items); }
+      catch (e) { toast(e.message, 'err'); }
+      bcr.disabled = false;
+    };
+    const brf = $('#btn-bk-refresh');
+    if (brf) brf.onclick = loadBackups;
+  }
 
   if (isAdmin()) {
     const loadUpdCard = async () => {

@@ -36,6 +36,9 @@ log = logging.getLogger("ymaster")
 async def lifespan(app: FastAPI):
     register_loop()
     init_db()
+    # v1.5.0: автоматическая ежедневная копия БД + архив месяца (в фоне)
+    from .services.backups import daily_backup
+    daily_backup.start()
     from .seed import seed_if_needed
     seed_if_needed()
     log.info("%s v%s запущен. Разработчик: %s (%s)",

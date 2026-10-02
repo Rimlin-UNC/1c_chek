@@ -120,6 +120,34 @@ def backup_db(db: Session = Depends(get_db), user: User = Depends(require_admin)
                  f'attachment; filename="ymaster-backup-{stamp}.db"'})
 
 
+@router.get("/backups", summary="Список резервных копий (админ)")
+def backups_list(user: User = Depends(require_admin)):
+    from ..services.backups import list_backups
+    return {"items": list_backups()}
+
+
+@router.post("/backups", summary="Создать резервную копию сейчас (админ)")
+def backups_create(user: User = Depends(require_admin)):
+    from ..services.backups import create_backup, list_backups
+    path = create_backup("manual")
+    if not path:
+        raise HTTPException(500, "Не удалось создать копию")
+    log_action(user, "backup_created", details={"file": os.path.basename(path)})
+    return {"ok": True, "message": "Копия создана", "items": list_backups()}
+
+
+@router.get("/backups/{name}/download", summary="Скачать копию по имени (админ)")
+def backups_download(name: str, user: User = Depends(require_admin)):
+    from ..services.backups import backup_path
+    p = backup_path(name)
+    if not p:
+        raise HTTPException(404, "Копия не найдена")
+    log_action(user, "backup_downloaded", details={"file": name})
+    with open(p, "rb") as f:
+        return Response(content=f.read(), media_type="application/x-sqlite3",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 class RepoPatch(BaseModel):
     repo_url: Optional[str] = Field(default=None, max_length=300)
     repo_branch: Optional[str] = Field(default=None, max_length=120)
@@ -145,10 +173,8 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
     import sys
     from ..services.updater import _local_commit
     db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
-    backups = []
-    bdir = os.path.join(APP_DIR, "data", "backups")
-    if os.path.isdir(bdir):
-        backups = sorted(os.listdir(bdir), reverse=True)[:5]
+    from ..services.backups import list_backups
+    backups = [b["name"] for b in list_backups()[:8]]
     return {
         "version": settings.APP_VERSION,
         "python": sys.version.split()[0],
