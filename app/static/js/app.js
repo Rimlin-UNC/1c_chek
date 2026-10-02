@@ -301,6 +301,7 @@ function connectWS() {
     // heartbeat клиента: не даём прокси считать соединение пустым
     clearInterval(state.wsPing);
     state.wsPing = setInterval(() => {
+      if (document.hidden) return;                 // v1.6.0: в фоне не тратим трафик
       if (ws.readyState === 1) { try { ws.send('ping'); } catch (e) {} }
     }, 25000);
   };
@@ -370,30 +371,41 @@ function setWsStatus(ok) {
   updateConnIndicator(false);
 }
 
+// v1.6.0: события сливаются в одну перерисовку — при пачке чеков не дёргаем
+// сервер N полными запросами, а обновляемся один раз через 1.2 с
+let _routeRefreshTimer = null;
+function scheduleRouteRefresh(ms = 1200) {
+  if (_routeRefreshTimer) return;
+  _routeRefreshTimer = setTimeout(() => {
+    _routeRefreshTimer = null;
+    if (!document.hidden && state.me) route(true);
+  }, ms);
+}
+
 function handleWsEvent(type, p) {
-  if (p && p.demo) { refreshBadges(); if (state.view === 'dashboard' || state.view === 'receipts') route(true); return; }
+  if (p && p.demo) { refreshBadges(); if (state.view === 'dashboard' || state.view === 'receipts') scheduleRouteRefresh(); return; }
   switch (type) {
     case 'receipt_created':
       toast(`Чек ФН ${p.fn || ''} ФД ${p.fd || ''} на ${fmtSum(p.total_sum)} принят`, 'ok', 'Новый чек');
       refreshBadges();
-      if (state.view === 'dashboard' || state.view === 'receipts') route(true);
+      if (state.view === 'dashboard' || state.view === 'receipts') scheduleRouteRefresh();
       break;
     case 'receipt_duplicate':
       toast(`Чек ФН ${p.fn} ФД ${p.fd} уже есть в базе — дубликат отсеян`, 'warn', 'Дубликат');
       break;
     case 'receipt_verifying':
-      if (state.view === 'receipts' || state.view === 'dashboard') route(true);
+      if (state.view === 'receipts' || state.view === 'dashboard') scheduleRouteRefresh();
       break;
     case 'receipt_verified': {
       const ok = p.fns_status === 'valid';
       toast(`ФНС: чек ФД ${p.fd} — ${statusLabel(p.fns_status)}`, ok ? 'ok' : (p.fns_status === 'invalid' ? 'err' : 'warn'), 'Проверка ФНС');
       refreshBadges();
-      if (state.view === 'dashboard' || state.view === 'receipts') route(true);
+      if (state.view === 'dashboard' || state.view === 'receipts') scheduleRouteRefresh();
       break;
     }
     case 'receipt_deleted':
       refreshBadges();
-      if (state.view === 'receipts') route(true);
+      if (state.view === 'receipts') scheduleRouteRefresh();
       break;
   }
 }
@@ -513,6 +525,21 @@ async function viewDashboard(container) {
         : '<p class="form-hint">Пока нет чеков с назначенным сотрудником</p>';
     }
   }
+  // v1.6.0: тренд «неделя к неделе» из daily за 14 дней
+  const dd = stats.daily || [];
+  if (dd.length >= 14) {
+    const last7 = dd.slice(-7).reduce((a, x) => a + (x.count || 0), 0);
+    const prev7 = dd.slice(0, 7).reduce((a, x) => a + (x.count || 0), 0);
+    const sub = $('#kpi-total .kpi-sub');
+    if (sub) {
+      if (last7 + prev7 === 0) sub.textContent = 'за 7 дней: 0';
+      else {
+        const pct = prev7 ? Math.round((last7 - prev7) / prev7 * 100) : 100;
+        sub.innerHTML = `за 7 дней: ${last7} · <span class="${pct >= 0 ? 'trend-up' : 'trend-down'}">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}%</span> к предыдущей неделе`;
+      }
+    }
+  }
+
   const validCount = (stats.by_fns.valid || 0);
   animateNumber($('#kpi-fns .kpi-value'), validCount);
   $('#kpi-fns .kpi-sub').textContent =
@@ -949,11 +976,39 @@ function showInstallDialog() {
 // ==========================================================================
 function checkUpdatesSilently() {
   api.get('/api/v1/admin/update/check', { retries: 1 }).then(r => {
+    if (r.ok === false) {
+      // v1.6.0: GitHub недоступен с сервера — не молчим, но и не спамим (1 раз за сессию)
+      state.githubUnreachable = true;
+      if (!state.ghWarnShown) {
+        state.ghWarnShown = true;
+        toast('Проверка обновлений не удалась: GitHub недоступен с сервера. Инструкция — Настройки → Обновления', 'warn', '🔄 Обновление');
+      }
+      return;
+    }
+    state.githubUnreachable = false;
     if (r.update_available) {
       state.updateAvailable = r;
       toast(`Доступно обновление v${r.remote_version} — откройте Настройки → Обновления`, 'info', '🔄 Обновление');
     }
-  }).catch(() => {});
+  }).catch(() => { state.githubUnreachable = true; });
+}
+
+// v1.6.0: визуальное состояние карточки «Обновления»
+function setUpdState(kind, errText, r) {
+  const dot = $('#upd-dot'), txt = $('#upd-status-text'), man = $('#upd-manual');
+  if (!dot || !txt) return;
+  const cls = { checking: 'upd-dot--wait', latest: 'upd-dot--ok',
+                available: 'upd-dot--new', error: 'upd-dot--err' }[kind] || '';
+  dot.className = 'upd-dot ' + cls;
+  txt.textContent = {
+    checking: 'Проверяю доступность обновлений…',
+    latest: `У вас последняя версия${r && r.current_version ? ' — v' + r.current_version : ''}`,
+    available: r && r.remote_version ? `Доступна новая версия — v${r.remote_version}` : 'Доступна новая версия',
+    error: 'GitHub недоступен с сервера',
+  }[kind] || '';
+  if (man) man.classList.toggle('hidden', kind !== 'error');
+  const err = $('#upd-err');
+  if (err) { err.textContent = errText || ''; err.classList.toggle('hidden', !errText); }
 }
 
 function showUpdateDialog(checkInfo) {
@@ -1018,6 +1073,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.6.0': [
+    ['🔄 Обновления работают даже при блокировках', 'проверка идёт по трём независимым каналам GitHub (api → raw → git); при сбое видна точная причина и кнопка-инструкция ручного обновления одной командой.'],
+    ['🪶 Лёгкий клиент — меньше нагрузки', 'ответы сжимаются (gzip), статика кэшируется на неделю, в скрытой вкладке приложение почти не общается с сервером, а события приходят одной пачкой вместо частых перерисовок.'],
+    ['🎛 Источник обновлений в интерфейсе', 'репозиторий и ветку теперь видно и можно поменять прямо в карточке «Обновления».'],
+    ['📈 Тренды на дашборде', 'динамика чеков «неделя к неделе» (▲/▼) прямо в карточке показателя.'],
+  ],
   '1.5.0': [
     ['📲 Установка на устройство', 'кнопка «Установить приложение»: иконка на домашнем экране Android/iPhone/iPad/ПК, полноэкранный режим (для iPhone — пошаговая инструкция).'],
     ['💾 Архивные бэкапы', 'автоматически: ежедневные (7 шт.), перед каждым обновлением (5) и АРХИВ МЕСЯЦА (12 месяцев) + создание и скачивание копий из Настроек.'],
@@ -2099,24 +2160,45 @@ async function viewSettings(container) {
 
       ${isAdmin() ? `
       <div class="glass card">
-        <div class="card-title">🔄 Обновления <span class="form-hint">(v1.4.0)</span></div>
-        <dl class="kv" style="font-size:13px">
+        <div class="card-title">🔄 Обновления <span class="form-hint">(v1.6.0)</span></div>
+        <div class="upd-status-line"><span class="upd-dot upd-dot--wait" id="upd-dot"></span>
+          <span id="upd-status-text">Проверяю…</span></div>
+        <dl class="kv" style="font-size:13px;margin-top:10px">
           <dt>Установлена</dt><dd id="upd-current">v—</dd>
           <dt>Проверено</dt><dd id="upd-checked">—</dd>
-          <dt>Ветка</dt><dd><code class="inline" id="upd-branch">—</code></dd>
         </dl>
         <div id="upd-avail" class="hidden" style="margin:10px 0">
           <div class="info-callout" style="margin-bottom:10px">🆕 Доступна версия <b id="upd-remote">v—</b>.
             <a href="#" id="upd-whats" style="margin-left:6px">Что изменится?</a></div>
           <button class="btn btn-primary btn-sm" id="btn-apply-update">⬇ Обновить (данные и настройки сохранятся)</button>
         </div>
+        <p class="form-error hidden" id="upd-err" style="margin:8px 0"></p>
+        <div id="upd-manual" class="hidden" style="margin:10px 0">
+          <div class="info-callout" style="margin-bottom:8px">Сервер не смог достучаться до GitHub
+          (в РФ периодически блокируют <code class="inline">raw.githubusercontent.com</code>).
+          Обновите вручную одной командой на сервере — данные сохранятся:</div>
+          <pre class="codeblock">curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh && sudo bash deploy.sh --update</pre>
+          <p class="form-hint" style="margin-top:6px">Скрипт сам подтянет версию из любого доступного канала,
+          поставит зависимости и перезапустит сервис.</p>
+        </div>
+        <details style="margin:10px 0">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim)">🎛 Источник обновлений (репозиторий и ветка)</summary>
+          <div class="upd-repo-grid" style="margin-top:10px">
+            <label class="field"><span>Репозиторий (owner/repo)</span>
+              <input id="upd-repo" placeholder="Rimlin-UNC/1c_chek"></label>
+            <label class="field"><span>Ветка</span>
+              <input id="upd-branch-input" placeholder="arena/01a0caaa-1c-chek"></label>
+          </div>
+          <button class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
+        </details>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
           <button class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
           <button class="btn btn-sm" id="btn-changelog">📜 История версий</button>
           <button class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
         </div>
         <p class="form-hint" style="margin-top:10px">Обновление ставится прямо отсюда: копия БД → только изменения с GitHub →
-        установка зависимостей → проверка целостности → рестарт. При сбое — автоматический откат.</p>
+        установка зависимостей → проверка целостности → рестарт. При сбое — автоматический откат.
+        Проверка идёт по трём независимым каналам (api.github.com → raw → git), поэтому работает даже при блокировках.</p>
       </div>` : ''}
 
       ${isAdmin() && onec ? `
@@ -2233,21 +2315,53 @@ async function viewSettings(container) {
       try {
         const st = await api.get('/api/v1/admin/system');
         const cur = $('#upd-current'); if (cur) cur.textContent = 'v' + st.version;
-        const br = $('#upd-branch'); if (br) br.textContent = st.branch;
-        try {
-          const r = await api.get('/api/v1/admin/update/check', { retries: 1 });
-          const ch = $('#upd-checked');
-          if (ch) ch.textContent = new Date(r.checked_at).toLocaleTimeString('ru-RU');
-          state.updateAvailable = r.update_available ? r : null;
-          const avail = $('#upd-avail');
-          if (avail) avail.classList.toggle('hidden', !r.update_available);
-          const rem = $('#upd-remote'); if (rem) rem.textContent = 'v' + r.remote_version;
-        } catch { const ch = $('#upd-checked'); if (ch) ch.textContent = 'нет связи с GitHub'; }
+        const ri = $('#upd-repo'); if (ri) ri.value = st.repo_url || '';
+        const bi = $('#upd-branch-input'); if (bi) bi.value = st.branch || '';
       } catch {}
+      setUpdState('checking');
+      try {
+        const r = await api.get('/api/v1/admin/update/check', { retries: 1 });
+        const ch = $('#upd-checked');
+        if (r.ok === false) {                    // v1.6.0: структурированный ответ
+          state.githubUnreachable = true;
+          state.updateAvailable = null;
+          const avail = $('#upd-avail'); if (avail) avail.classList.add('hidden');
+          if (ch) ch.textContent = '—';
+          setUpdState('error', r.error);
+          return;
+        }
+        state.githubUnreachable = false;
+        if (ch) { ch.textContent = new Date(r.checked_at).toLocaleTimeString('ru-RU');
+                  ch.title = 'канал: ' + (r.source || ''); }
+        state.updateAvailable = r.update_available ? r : null;
+        const avail = $('#upd-avail');
+        if (avail) avail.classList.toggle('hidden', !r.update_available);
+        const rem = $('#upd-remote'); if (rem) rem.textContent = 'v' + r.remote_version;
+        setUpdState(r.update_available ? 'available' : 'latest', null, r);
+      } catch (e) {
+        state.githubUnreachable = true;
+        setUpdState('error', e.message);
+      }
     };
     loadUpdCard();
     const bc = $('#btn-check-update');
-    if (bc) bc.onclick = async () => { bc.disabled = true; bc.textContent = 'Проверяю…'; await loadUpdCard(); bc.disabled = false; bc.textContent = '🔍 Проверить обновления'; };
+    if (bc) bc.onclick = async () => {
+      bc.disabled = true; bc.textContent = 'Проверяю…';
+      await loadUpdCard();
+      bc.disabled = false; bc.textContent = '🔍 Проверить обновления';
+      if (state.githubUnreachable) toast('GitHub недоступен с сервера — воспользуйтесь ручной инструкцией в карточке', 'err', '🔄 Обновление');
+    };
+    const bsr = $('#btn-save-repo');
+    if (bsr) bsr.onclick = async () => {
+      bsr.disabled = true;
+      try {
+        const r = await api.put('/api/v1/admin/update/repo', {
+          repo_url: $('#upd-repo').value.trim() || undefined,
+          repo_branch: $('#upd-branch-input').value.trim() || undefined });
+        toast(r.message, 'ok', '🔄');
+      } catch (e) { toast(e.message, 'err'); }
+      bsr.disabled = false;
+    };
     const ba = $('#btn-apply-update');
     if (ba) ba.onclick = async () => {
       ba.disabled = true;
