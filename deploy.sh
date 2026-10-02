@@ -229,13 +229,15 @@ if [[ $WITH_NGINX -eq 1 ]]; then
       }' "$NGX_CONF" > "$NGX_CONF.tmp" && mv "$NGX_CONF.tmp" "$NGX_CONF"
     cat >> "$NGX_CONF" <<NGXEOF
 
-# HTTP -> HTTPS — восстанавливается deploy.sh при каждом обновлении
+# HTTP -> HTTPS — восстанавливается deploy.sh при каждом обновлении.
+# Перенаправляем ВСЕ http-запросы (включая заход по IP) на https-домен:
+# сертификат выпущен на домен, редирект на https://IP дал бы ошибку браузера.
 server {
-    listen 80;
-    listen [::]:80;
-    server_name $D;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name $D _;
     location /.well-known/acme-challenge/ { root /var/www/html; }
-    location / { return 301 https://\$host\$request_uri; }
+    location / { return 301 https://$D\$request_uri; }
 }
 NGXEOF
     ok "HTTPS восстановлен из существующего сертификата ($D)"
@@ -307,16 +309,20 @@ CFGEOF
 chown -R "$APP_USER:$APP_USER" "$CONF_DIR" 2>/dev/null || true
 
 if [[ -n "$SSL_DOMAIN" && -f "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" ]]; then
-  URL="https://$SSL_DOMAIN"; ALT="  (или http://$IP)"
+  URL="https://$SSL_DOMAIN"
+  CERT_END=$(openssl x509 -in "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+  ALT="  ← открывайте этот адрес (заход по IP тоже приведёт сюда)"
 elif [[ -n "$SSL_DOMAIN" ]]; then
-  URL="http://$SSL_DOMAIN"; ALT="  (или http://$IP)"
+  URL="http://$SSL_DOMAIN"; ALT=""
 else
   URL="http://$IP"; ALT=""
 fi
 echo ""
 echo "=============================================================="
 echo "  ✅ Ямастер Чек v$APP_VERSION развёрнут!"
-echo "  Веб-клиент:       $URL$ALT"
+echo "  Веб-клиент:       $URL"
+[[ -n "$ALT" ]] && echo "  $ALT"
+[[ -n "${CERT_END:-}" ]] && echo "  Сертификат SSL:   действует до $CERT_END (продлевается автоматически)"
 echo "  Swagger API:      $URL/api/docs"
 echo "  Логин:            admin  (пароль admin123 — только если не меняли)"
 echo ""
