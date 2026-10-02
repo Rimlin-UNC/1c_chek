@@ -114,3 +114,33 @@ class TestLightClient:
         from app.main import app
         mids = [m.cls.__name__ for m in app.user_middleware]
         assert "GZipMiddleware" in mids
+
+
+class TestRepoNormalize:
+    def test_normalize_all_forms(self):
+        f = updater._normalize_repo
+        assert f("https://github.com/Rimlin-UNC/1c_chek.git") == "Rimlin-UNC/1c_chek"
+        assert f("http://github.com/o/r/") == "o/r"
+        assert f("git@github.com:o/r.git") == "o/r"
+        assert f("o/r") == "o/r"
+        assert f("https://gitlab.com/o/r.git") == "o/r"
+        assert f("мусор") == ""
+        assert f("") == ""
+
+    def test_guess_repo_normalized(self, monkeypatch):
+        monkeypatch.setattr(updater, "_git", lambda *a, **kw: (0, "https://github.com/Rimlin-UNC/1c_chek.git\n"))
+        assert updater._guess_repo() == "Rimlin-UNC/1c_chek"
+
+    def test_check_uses_normalized(self, client, monkeypatch):
+        """Даже с полным URL клона в настройках запрос идёт на owner/repo."""
+        seen = {}
+        def fake_fetch(repo, branch, path):
+            seen["repo"] = repo
+            return 'APP_VERSION: str = "1.6.0"', "raw.githubusercontent.com"
+        monkeypatch.setattr(updater, "_fetch_remote_file", fake_fetch)
+        hdr = login(client, "admin", "admin123")
+        client.put("/api/v1/admin/update/repo", headers=hdr,
+                   json={"repo_url": "https://github.com/Rimlin-UNC/1c_chek.git"})
+        r = client.get("/api/v1/admin/update/check", headers=hdr)
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert seen["repo"] == "Rimlin-UNC/1c_chek"

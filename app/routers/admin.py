@@ -45,6 +45,8 @@ def _repo_branch(db: Session) -> tuple[str, str]:
     if not repo:
         from ..services.updater import _guess_repo
         repo = _guess_repo()
+    from ..services.updater import _normalize_repo
+    repo = _normalize_repo(repo) or repo      # полный URL клона → owner/repo
     return repo, branch
 
 

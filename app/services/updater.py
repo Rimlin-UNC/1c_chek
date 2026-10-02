@@ -250,7 +250,7 @@ def _append_history(db, entry: dict) -> None:
 # ==========================================================================
 def check_update(db) -> dict:
     from . import appsettings
-    repo = appsettings.get_setting(db, "repo_url", "") or _guess_repo()
+    repo = _normalize_repo(appsettings.get_setting(db, "repo_url", "")) or _guess_repo()
     branch = appsettings.get_setting(db, "repo_branch", "") or settings.DEFAULT_BRANCH
     remote = _remote_version(repo, branch)
     # v1.6.0: только обновление вперёд (семвер-сравнение)
@@ -274,9 +274,26 @@ def check_update(db) -> dict:
     return result
 
 
+DEFAULT_REPO = "Rimlin-UNC/1c_chek"
+
+
+def _normalize_repo(repo: str) -> str:
+    """Любой вид ссылки → 'owner/repo':
+    https://github.com/o/r.git | git@github.com:o/r.git | o/r → o/r.
+    v1.6.0: из-за полного URL клона адреса GitHub API собирались неверно
+    (api.github.com/repos/https://...) — проверка обновлений не работала ВЕЗДЕ,
+    а не только при блокировках. Это и есть главная причина «ничего не произошло»."""
+    r = (repo or "").strip()
+    r = re.sub(r"^https?://[^/]+/", "", r)
+    r = re.sub(r"^git@[^:]+:", "", r)
+    r = re.sub(r"\.git$", "", r).strip("/")
+    return r if re.fullmatch(r"[\w.\-]+/[\w.\-]+", r) else ""
+
+
 def _guess_repo() -> str:
+    """owner/repo из git remote, либо значение по умолчанию."""
     code, out = _git(["remote", "get-url", "origin"], timeout=15)
-    return out if code == 0 else "https://github.com/Rimlin-UNC/1c_chek.git"
+    return _normalize_repo(out) or DEFAULT_REPO
 
 
 # ==========================================================================

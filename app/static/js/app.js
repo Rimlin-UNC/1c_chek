@@ -2177,9 +2177,9 @@ async function viewSettings(container) {
           <div class="info-callout" style="margin-bottom:8px">Сервер не смог достучаться до GitHub
           (в РФ периодически блокируют <code class="inline">raw.githubusercontent.com</code>).
           Обновите вручную одной командой на сервере — данные сохранятся:</div>
-          <pre class="codeblock">curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh && sudo bash deploy.sh --update</pre>
-          <p class="form-hint" style="margin-top:6px">Скрипт сам подтянет версию из любого доступного канала,
-          поставит зависимости и перезапустит сервис.</p>
+          <pre class="codeblock">sudo bash /opt/ymaster-check/deploy.sh --update</pre>
+          <p class="form-hint" style="margin-top:6px">Скрипт обновит файлы через git (порт 443 — работает даже при блокировках),
+          поставит зависимости и перезапустит сервис. Данные и настройки сохраняются.</p>
         </div>
         <details style="margin:10px 0">
           <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim)">🎛 Источник обновлений (репозиторий и ветка)</summary>
