@@ -122,13 +122,23 @@ bold "2/9 Пользователь и каталог"
 id -u "$APP_USER" &>/dev/null || useradd --system --create-home --shell /bin/bash "$APP_USER"
 mkdir -p "$APP_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+# ручные git-команды root здесь не должны падать с «dubious ownership»
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
 # ------------------------------------------------------------------
 bold "3/9 Код с GitHub ($REPO_URL, ветка $BRANCH)"
 if [[ $UPDATE -eq 1 && -d "$APP_DIR/.git" ]]; then
+  OLD_SCRIPT_MD5=$(md5sum "$APP_DIR/deploy.sh" 2>/dev/null | cut -d" " -f1 || true)
   sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin "$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
   ok "обновлено из GitHub"
+  # v1.6.2: deploy.sh обновил сам себя — bash уже загрузил СТАРЫЙ текст в
+  # память, поэтому перезапускаемся новой версией с теми же аргументами
+  NEW_SCRIPT_MD5=$(md5sum "$APP_DIR/deploy.sh" 2>/dev/null | cut -d" " -f1 || true)
+  if [[ -n "$OLD_SCRIPT_MD5" && "$OLD_SCRIPT_MD5" != "$NEW_SCRIPT_MD5" ]]; then
+    bold "deploy.sh обновился — перезапускаюсь новой версией…"
+    exec bash "$APP_DIR/deploy.sh" "$@"
+  fi
 else
   rm -rf "$APP_DIR/app" "$APP_DIR/docs" "$APP_DIR/deploy" 2>/dev/null || true
   if sudo -u "$APP_USER" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR" 2>/dev/null; then
