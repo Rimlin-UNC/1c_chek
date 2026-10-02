@@ -6,6 +6,7 @@
 # ======================================================================
 import uuid
 
+from app.config import settings
 from tests.conftest import login
 
 
@@ -36,7 +37,7 @@ class TestUpdater:
         d = r.json()
         assert d["update_available"] is True
         assert d["remote_version"] == "9.9.9"
-        assert d["current_version"] == "1.4.0"
+        assert d["current_version"] == settings.APP_VERSION
         assert "9.9.9" in d["changelog_excerpt"]
 
     def test_check_requires_admin(self, client):
@@ -51,7 +52,7 @@ class TestUpdater:
     def test_apply_when_no_update(self, client, monkeypatch):
         from app.services import updater
         monkeypatch.setattr(updater, "_remote_version", lambda repo, branch: {
-            "version": "1.4.0", "checked_at": "2026-10-01T00:00:00Z"})
+            "version": settings.APP_VERSION, "checked_at": "2026-10-01T00:00:00Z"})
         hdr = login(client, "admin", "admin123")
         r = client.post("/api/v1/admin/update/apply", headers=hdr)
         assert r.status_code == 200
@@ -74,7 +75,7 @@ class TestUpdater:
         r = client.get("/api/v1/admin/system", headers=hdr)
         assert r.status_code == 200
         d = r.json()
-        assert d["version"] == "1.4.0"
+        assert d["version"] == settings.APP_VERSION
         assert "db_size_mb" in d and "counts" in d
 
     def test_backup_download(self, client):
