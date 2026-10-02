@@ -272,6 +272,7 @@ def check_update(db) -> dict:
         "branch": branch,
         "local_commit": _local_commit(),
         "checked_at": remote["checked_at"],
+        "source": remote.get("source", ""),
         "changelog_excerpt": "",
     }
     if available:
