@@ -13,6 +13,7 @@ import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, open
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
+import { packCut, splitBlocks, COL_H, COL_W, columnX } from './printpack.js'; // v1.7.0: печать PDF
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -362,11 +363,13 @@ function updateConnIndicator(force) {
 }
 
 function setWsStatus(ok) {
+  // v1.7.0: трогаем DOM только при РЕАЛЬНОЙ смене состояния — иначе текст
+  // дёргается при каждом переподключении и кажется, что «мерцает сайт»
+  if (state.wsOk === ok) return;
   state.wsOk = ok;
   const dot = $('#ws-status .live-dot');
   const txt = $('#ws-status-text');
-  if (dot) dot.classList.toggle('on', ok);
-  if (dot) dot.classList.toggle('off', !ok);
+  if (dot) { dot.classList.toggle('on', ok); dot.classList.toggle('off', !ok); }
   if (txt) txt.textContent = ok ? 'Живое подключение' : 'Переподключение…';
   updateConnIndicator(false);
 }
@@ -922,6 +925,24 @@ function openNotifyDialog(r, onSaved) {
 //  v1.2.0: Блок «Что нового» — показывается один раз на каждую версию
 // ==========================================================================
 // ==========================================================================
+//  v1.7.0: Темы — светлая / тёмная / авто («как на устройстве»)
+// ==========================================================================
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('ymaster-theme', t); } catch (e) {}
+  const meta = document.querySelector('meta[name="theme-color"]');
+  const dark = t === 'dark'
+    || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (meta) meta.setAttribute('content', dark ? '#0b1020' : '#eef1f8');
+}
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+  let cur = 'auto';
+  try { cur = localStorage.getItem('ymaster-theme') || 'auto'; } catch (e) {}
+  if (cur === 'auto') applyTheme('auto');   // перерисовать под новую системную тему
+});
+
+// ==========================================================================
 //  v1.5.0: Установка приложения на устройство (PWA: Android/iOS/десктоп)
 // ==========================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -1073,6 +1094,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.7.0': [
+    ['🖨 Печать чеков в PDF', 'отметьте чеки → «Печать PDF»: раскрой листов A4 на колонки, чеки реального размера 80 мм, длинные автоматически продолжаются в соседней колонке — в диалоге печати выберите «Сохранить как PDF».'],
+    ['🎨 Темы: светлая, тёмная и «как на устройстве»', 'переключатель в Настройках; авто-режим следует системной настройке телефона/компьютера.'],
+    ['⏰ SSL-сертификат под присмотром', 'deploy.sh сам включает таймер продления и обновляет сертификат, когда до конца срока меньше 25 дней; срок виден в итоговом отчёте.'],
+    ['✨ Меньше мерцания', 'индикатор «Живое подключение» больше не мигает, тема применяется без вспышки при загрузке.'],
+  ],
   '1.6.0': [
     ['🔄 Обновления работают даже при блокировках', 'проверка идёт по трём независимым каналам GitHub (api → raw → git); при сбое видна точная причина и кнопка-инструкция ручного обновления одной командой.'],
     ['🪶 Лёгкий клиент — меньше нагрузки', 'ответы сжимаются (gzip), статика кэшируется на неделю, в скрытой вкладке приложение почти не общается с сервером, а события приходят одной пачкой вместо частых перерисовок.'],
@@ -1356,9 +1383,14 @@ async function viewReceipts(container) {
         <button class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
+        <button class="btn btn-sm" id="btn-print-pdf">🖨 Печать PDF</button>
         <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
       </div>` : `
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+        <button class="btn btn-sm" id="btn-print-pdf">🖨 Печать PDF (выбранные)</button>
+        <span class="form-hint" style="align-self:center" id="sel-info-user">не выбрано</span>
+      </div>
       <p class="form-hint" style="margin-bottom:12px">Режим пользователя: видны только ваши чеки.
       Проверка в ФНС и выгрузка в 1С выполняются бухгалтером.</p>`}
       <div class="table-wrap" id="receipts-table"><div class="skeleton" style="height:300px"></div></div>
@@ -1389,7 +1421,7 @@ async function viewReceipts(container) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
     } else {
       el.innerHTML = `<table class="data"><thead><tr>
-        ${acc ? '<th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto"></th>' : ''}
+        <th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto" title="Выбрать все на странице"></th>
         <th>Дата чека</th><th>Сумма</th><th>ФН</th><th>ФД</th><th>ФП</th>
         ${acc ? '<th>Сотрудник</th>' : ''}
         <th>Статус</th><th>ФНС</th><th>1С</th><th style="width:86px"></th></tr></thead>
@@ -1441,8 +1473,8 @@ async function viewReceipts(container) {
       : (isOwner ? `<td><button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
             title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button></td>` : '<td></td>');
     return `<tr data-id="${r.id}">
-      ${acc ? `<td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
-        ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>` : ''}
+      <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
+        ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
       <td class="cell-date">${fmtDate(r.receipt_date)}${notifiedMark}</td>
       <td class="cell-sum">${fmtSum(r.total_sum)}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
@@ -1454,7 +1486,25 @@ async function viewReceipts(container) {
     </tr>`;
   }
 
+  // v1.7.0: счётчик выбора в пользовательском тулбаре
+  function updateUserSelInfo() {
+    const el = $('#sel-info-user');
+    if (el) el.textContent = state.receiptsSelected.size
+      ? `выбрано: ${state.receiptsSelected.size}` : 'не выбрано';
+  }
   function updateSelInfo() {
+    updateUserSelInfo();
+    // v1.7.0: печать выбранных чеков PDF (кнопка у бухгалтера и пользователя)
+    const bpdf = $('#btn-print-pdf');
+    if (bpdf && !bpdf.dataset.bound) {
+      bpdf.dataset.bound = '1';
+      bpdf.onclick = () => {
+        const ids = [...state.receiptsSelected];
+        if (!ids.length) return toast('Отметьте чеки галочками — распечатаю выбранные', 'info', '🖨');
+        printReceiptsPDF(ids);
+      };
+    }
+
     if (!$('#sel-info')) return;
     $('#sel-info').textContent = state.receiptsSelected.size
       ? `выбрано: ${state.receiptsSelected.size}` : 'не выбрано';
@@ -1580,6 +1630,124 @@ async function viewReceipts(container) {
   }
 
   await load();
+}
+
+// ==========================================================================
+//  v1.7.0: Печать чеков PDF — раскрой листов A4 под чеки 80 мм
+//  Чеки печатаются реального размера (как из кассового аппарата), длинные
+//  разрезаются по строкам позиций и продолжаются в соседней колонке.
+//  Геометрия — в app/static/js/printpack.js (чистые функции, тесты node).
+// ==========================================================================
+function rcptDate(v) {
+  try { const d = new Date(v); return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
+  catch { return String(v || ''); }
+}
+
+function rcptBlocks(r) {
+  const op = Number(r.operation) === 2 ? 'ВОЗВРАТ ПРИХОДА' : 'ПРИХОД';
+  const rule = '<div class="rcpt-rule"></div>';
+  const blocks = [];
+  blocks.push(`<div class="rcpt-head">${esc(r.merchant_name || 'КАССОВЫЙ ЧЕК')}</div>`);
+  if (r.merchant_inn || r.merchant_address) {
+    blocks.push(`<div class="rcpt-sub">${r.merchant_inn ? 'ИНН ' + esc(r.merchant_inn) : ''}${r.merchant_inn && r.merchant_address ? ' · ' : ''}${esc(r.merchant_address || '')}</div>`);
+  }
+  blocks.push(rule);
+  blocks.push(`<div style="text-align:center"><b>${op}</b> · ${rcptDate(r.receipt_date)}</div>`);
+  blocks.push(rule);
+  const items = r.items || [];
+  if (items.length) {
+    for (const it of items) {
+      const qty = Number(it.quantity) || 0;
+      const price = Number(it.price) || 0;
+      const sum = Number(it.sum ?? qty * price) || 0;
+      blocks.push(`<div class="r-item"><div class="r-name">${esc(it.name || 'товар')}</div>
+        <div class="r-line"><span>${qty} × ${price.toFixed(2)}</span><span>${sum.toFixed(2)}</span></div></div>`);
+    }
+  } else {
+    blocks.push('<div class="rcpt-part">(позиции чека не загружены — получите данные сервисов)</div>');
+  }
+  blocks.push(rule);
+  blocks.push(`<div class="r-line" style="font-weight:700"><span>ИТОГ:</span><span>${Number(r.total_sum || 0).toFixed(2)} ₽</span></div>`);
+  if (r.cash_sum || r.ecash_sum) {
+    blocks.push(`<div class="r-line rcpt-sub"><span>${r.cash_sum ? 'наличные: ' + Number(r.cash_sum).toFixed(2) : ''}</span><span>${r.ecash_sum ? 'безнал: ' + Number(r.ecash_sum).toFixed(2) : ''}</span></div>`);
+  }
+  blocks.push(rule);
+  const fnsMap = { valid: '✓ проверен ФНС', invalid: '✗ НЕ действителен', not_found: '? не найден в ФНС', unknown: 'не проверялся' };
+  blocks.push(`<div class="rcpt-foot">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>${fnsMap[r.fns_status] || ''}<br>Ямастер Чек · ymaster.ru</div>`);
+  return blocks;
+}
+
+async function printReceiptsPDF(ids) {
+  const { close } = openModal(`<div class="modal-title">🖨 Печать чеков</div>
+    <p class="form-hint">Готовлю раскрой листов A4…</p><div class="spinner"></div>`);
+  try {
+    const data = await api.get('/api/v1/receipts?ids=' + ids.join(','));
+    if (!data.items.length) { close(); return toast('Чеки не найдены', 'err'); }
+    const MM = 25.4 / 96;                                   // CSS px → мм
+    let root = document.getElementById('print-root');
+    if (root) root.remove();
+    root = document.createElement('div');
+    root.id = 'print-root';
+    document.body.appendChild(root);
+    const meas = document.createElement('div');
+    meas.style.cssText = `width:${COL_W}mm;position:absolute;left:0;top:0;`;
+    root.appendChild(meas);
+
+    // 1) Рендерим чеки и режем длинные по строкам позиций
+    const pieces = [];                                      // { html, h }
+    for (const r of data.items) {
+      const blocks = rcptBlocks(r);
+      const full = document.createElement('div');
+      full.className = 'rcpt';
+      full.innerHTML = blocks.join('');
+      meas.appendChild(full);
+      let hFull = full.getBoundingClientRect().height * MM;
+      if (hFull <= COL_H) {
+        pieces.push({ html: full.outerHTML, h: hFull });
+        meas.removeChild(full);
+        continue;
+      }
+      // длинный: режем по блокам, части продолжаются в соседней колонке
+      const nodes = [...full.children];
+      const hs = nodes.map(n => n.getBoundingClientRect().height * MM);
+      meas.removeChild(full);
+      const parts = splitBlocks(hs);
+      for (let pi = 0; pi < parts.length; pi++) {
+        const [a, b] = parts[pi];
+        const part = document.createElement('div');
+        part.className = 'rcpt';
+        let html = pi > 0
+          ? `<div class="rcpt-part">— продолжение чека ФД ${esc(r.fd || '')} —</div>` : '';
+        html += nodes.slice(a, b).map(n => n.outerHTML).join('');
+        if (pi < parts.length - 1) {
+          html += `<div class="rcpt-part">↓ продолжение — часть ${pi + 2} из ${parts.length} ↓</div>`;
+        }
+        part.innerHTML = html;
+        meas.appendChild(part);
+        pieces.push({ html: part.outerHTML, h: part.getBoundingClientRect().height * MM });
+        meas.removeChild(part);
+      }
+    }
+
+    // 2) Раскрой по страницам A4 (каждый кусок ЦЕЛИКОМ на странице)
+    const pages = packCut(pieces.map(p => p.h));
+
+    // 3) Собираем страницы печати
+    root.innerHTML = pages.map(page =>
+      `<div class="print-page">${page.map(pl =>
+        `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${pl.y}mm">${pieces[pl.piece].html}</div>`
+      ).join('')}</div>`).join('');
+    close();
+    toast(`Раскрой готов: ${pages.length} стр. · ${data.items.length} чек. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
+    window.print();
+    window.addEventListener('afterprint', () => {
+      const el = document.getElementById('print-root');
+      if (el) el.remove();
+    }, { once: true });
+  } catch (e) {
+    close();
+    toast(e.message, 'err');
+  }
 }
 
 function downloadBlob(blob, filename) {
@@ -2215,6 +2383,17 @@ async function viewSettings(container) {
       </div>` : ''}
 
       <div class="glass card">
+        <div class="card-title">🎨 Оформление <span class="form-hint">(v1.7.0)</span></div>
+        <div class="seg" id="theme-seg">
+          <button data-t="auto" type="button">🌓 Как на устройстве</button>
+          <button data-t="light" type="button">☀️ Светлая</button>
+          <button data-t="dark" type="button">🌙 Тёмная</button>
+        </div>
+        <p class="form-hint" style="margin-top:8px">«Как на устройстве» — тема меняется вместе с
+        настройкой системы/телефона автоматически.</p>
+      </div>
+
+      <div class="glass card">
         <div class="card-title">📲 Приложение на устройстве <span class="form-hint">(v1.5.0)</span></div>
         <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
         полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
@@ -2272,6 +2451,21 @@ async function viewSettings(container) {
         — согласно лицензии проекта.</p>
       </div>
     </div>`;
+
+  // v1.7.0: переключатель тем
+  const seg = $('#theme-seg');
+  if (seg) {
+    let cur = 'auto';
+    try { cur = localStorage.getItem('ymaster-theme') || 'auto'; } catch (e) {}
+    seg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('on', b.dataset.t === cur);
+      b.onclick = () => {
+        applyTheme(b.dataset.t);
+        seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+        toast(b.dataset.t === 'auto' ? 'Тема следует за устройством' : b.dataset.t === 'light' ? 'Светлая тема' : 'Тёмная тема', 'ok', '🎨');
+      };
+    });
+  }
 
   // PWA-кнопка в настройках (все роли)
   const bp = $('#btn-pwa');

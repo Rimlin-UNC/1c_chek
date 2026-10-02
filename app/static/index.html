@@ -7,6 +7,18 @@
   Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
 -->
 <meta charset="UTF-8">
+<script>
+  /* v1.7.0: тема применяется до отрисовки — без «вспышки» неправильной темы */
+  (function () {
+    try {
+      var t = localStorage.getItem('ymaster-theme') || 'auto';
+      document.documentElement.setAttribute('data-theme', t);
+      if (t === 'light' || (t === 'auto' && matchMedia('(prefers-color-scheme: light)').matches)) {
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', '#eef1f8');
+      }
+    } catch (e) {}
+  })();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0b1020">
 <meta name="description" content="Ямастер Чек — сканирование кассовых чеков и загрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)">

@@ -266,7 +266,21 @@ fail2ban-client status ymaster-check >/dev/null 2>&1 && ok "fail2ban: бан з�
 # ------------------------------------------------------------------
 bold "9/9 SSL (Let's Encrypt) — опционально"
 if [[ -n "$SSL_DOMAIN" && -f "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" ]]; then
-  ok "SSL-сертификат на месте ($SSL_DOMAIN), HTTPS работает, продление — таймер certbot"
+  # v1.7.0: следим за сроком сертификата и продлеваем автоматически
+  systemctl enable --now certbot.timer >/dev/null 2>&1 \
+    && ok "таймер автопродления certbot активен" \
+    || warn "не удалось включить certbot.timer — проверьте: systemctl status certbot.timer"
+  CERT_END_EPOCH=$(date -d "$(openssl x509 -in "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" -noout -enddate | cut -d= -f2)" +%s 2>/dev/null || echo 0)
+  DAYS_LEFT=$(( (CERT_END_EPOCH - $(date +%s)) / 86400 ))
+  if [[ $DAYS_LEFT -lt 25 ]]; then
+    bold "Сертификат истекает через ${DAYS_LEFT} дн. — продлеваю…"
+    certbot renew --cert-name "$SSL_DOMAIN" --quiet \
+      && systemctl reload nginx \
+      && ok "сертификат продлён" \
+      || warn "автопродление не прошло — выполните вручную: sudo certbot renew && sudo systemctl reload nginx"
+  else
+    ok "SSL-сертификат ($SSL_DOMAIN) действителен ещё ${DAYS_LEFT} дн. — продлится автоматически"
+  fi
 elif [[ -n "$SSL_DOMAIN" ]]; then
   # Preflight: домен должен указывать на ЭТОТ сервер, иначе Let's Encrypt не пройдёт
   SERVER_IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')

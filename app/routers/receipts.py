@@ -211,6 +211,7 @@ def list_receipts(
     fns_status: str | None = Query(None, description="valid|invalid|not_found|unknown"),
     exported: bool | None = Query(None, description="Выгружен ли чек в 1С"),
     q: str | None = Query(None, description="Поиск по ФН/ФД/ФП/сотруднику"),
+    ids: str | None = Query(None, description="CSV UUID — выборка конкретных чеков (печать/экспорт)"),
     assignee: str | None = Query(None, description="Фильтр по сотруднику"),
     category: str | None = Query(None, description="Статья расходов"),
     notified: bool | None = Query(None, description="Только с уведомлениями сотрудников"),
@@ -221,6 +222,12 @@ def list_receipts(
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
     query = db.query(Receipt)
+
+    # v1.7.0: выборка конкретных чеков (печать PDF) — с позициями товаров
+    id_list = [x.strip() for x in (ids or "").split(",") if x.strip()][:100]
+    with_items = bool(id_list)
+    if id_list:
+        query = query.filter(Receipt.id.in_(id_list))
 
     # Пользователь видит только свои чеки
     if user.role == ROLE_USER:
@@ -271,7 +278,7 @@ def list_receipts(
         "total_sum": round(float(total_sum or 0), 2),
         "page": page,
         "page_size": page_size,
-        "items": [r.to_dict() for r in rows],
+        "items": [r.to_dict(with_items=with_items) for r in rows],
     }
 
 

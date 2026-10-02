@@ -23,6 +23,11 @@
   --bad: #f87171;
   --info: #60a5fa;
   --shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.55);
+  --overlay-1: rgba(10, 14, 30, 0.72);   /* сайдбар, плотные подложки */
+  --overlay-2: rgba(10, 14, 30, 0.55);   /* топбар */
+  --hover-bg: rgba(255, 255, 255, 0.12);
+  --hover-border: rgba(255, 255, 255, 0.3);
+  --scroll-thumb: rgba(255, 255, 255, 0.12);
   --radius: 16px;
   --radius-sm: 10px;
   --sidebar-w: 248px;
@@ -51,7 +56,7 @@ a:hover { text-decoration: underline; }
 
 /* --- Скроллбары --------------------------------------------------- */
 *::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
 *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); border: 2px solid transparent; background-clip: padding-box; }
 *::-webkit-scrollbar-track { background: transparent; }
 
@@ -60,7 +65,7 @@ a:hover { text-decoration: underline; }
   radial-gradient(1200px 700px at 85% -10%, rgba(99,102,241,.16), transparent 60%),
   radial-gradient(900px 600px at -10% 110%, rgba(34,211,238,.12), transparent 60%),
   var(--bg); }
-.blob { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .5; will-change: transform; }
+.blob { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .32; will-change: transform; }
 .blob-1 { width: 480px; height: 480px; background: rgba(99,102,241,.35); top: -140px; left: -100px; animation: drift1 26s ease-in-out infinite alternate; }
 .blob-2 { width: 420px; height: 420px; background: rgba(34,211,238,.22); bottom: -160px; right: -80px; animation: drift2 32s ease-in-out infinite alternate; }
 .blob-3 { width: 320px; height: 320px; background: rgba(139,92,246,.25); top: 40%; left: 55%; animation: drift3 38s ease-in-out infinite alternate; }
@@ -96,7 +101,7 @@ a:hover { text-decoration: underline; }
   transition: transform var(--speed), background var(--speed), border-color var(--speed), box-shadow var(--speed);
   user-select: none; white-space: nowrap;
 }
-.btn:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.12); }
+.btn:hover { transform: translateY(-1px); border-color: var(--hover-border); background: var(--hover-bg); }
 .btn:active { transform: translateY(0); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .btn-primary {
@@ -157,7 +162,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .sidebar {
   width: var(--sidebar-w); min-width: var(--sidebar-w);
   display: flex; flex-direction: column;
-  background: rgba(10, 14, 30, 0.72);
+  background: var(--overlay-1);
   border-right: 1px solid var(--border);
   backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   z-index: 30; transition: margin-left .25s ease;
@@ -194,7 +199,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .sidebar-footer { padding: 14px 16px; border-top: 1px solid var(--border); }
 .live-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); }
 .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 8px var(--warn); transition: background .3s; }
-.live-dot.on { background: var(--ok); box-shadow: 0 0 10px var(--ok); animation: pulse 2.2s infinite; }
+.live-dot.on { background: var(--ok); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 70%, transparent); }
 .live-dot.off { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
 .vendor-line { margin-top: 8px; font-size: 11px; color: var(--text-faint); }
 
@@ -205,7 +210,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   height: var(--topbar-h); min-height: var(--topbar-h);
   display: flex; align-items: center; gap: 14px; padding: 0 22px;
   border-bottom: 1px solid var(--border);
-  background: rgba(10, 14, 30, 0.55);
+  background: var(--overlay-2);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   z-index: 20;
 }
@@ -626,3 +631,131 @@ pre.codeblock {
 @media (max-width: 560px) { .upd-repo-grid { grid-template-columns: 1fr; } }
 .trend-up { color: var(--ok); font-weight: 700; }
 .trend-down { color: var(--bad); font-weight: 700; }
+
+/* ======================================================================
+   v1.7.0 — ТЕМЫ: светлая / тёмная / авто («как на устройстве»).
+   Выбор хранится в localStorage('ymaster-theme'): auto|light|dark,
+   на <html> ставится data-theme. Тёмная — по умолчанию (выше по файлу).
+   ====================================================================== */
+html[data-theme="light"] {
+  --bg: #eef1f8;
+  --bg-soft: #e4e9f4;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-strong: rgba(255, 255, 255, 0.95);
+  --border: rgba(15, 23, 42, 0.10);
+  --border-strong: rgba(15, 23, 42, 0.20);
+  --text: #17203a;
+  --text-dim: #4a5578;
+  --text-faint: #7c86a6;
+  --accent: #5561e8;
+  --accent-2: #0e7490;
+  --ok: #059669;
+  --warn: #b45309;
+  --bad: #dc2626;
+  --info: #2563eb;
+  --shadow: 0 16px 40px -18px rgba(15, 23, 42, 0.25);
+  --overlay-1: rgba(255, 255, 255, 0.88);
+  --overlay-2: rgba(255, 255, 255, 0.70);
+  --hover-bg: rgba(15, 23, 42, 0.06);
+  --hover-border: rgba(15, 23, 42, 0.24);
+  --scroll-thumb: rgba(15, 23, 42, 0.20);
+}
+html[data-theme="light"] .bg-aurora {
+  background:
+    radial-gradient(1200px 700px at 85% -10%, rgba(99,102,241,.10), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(34,211,238,.08), transparent 60%),
+    var(--bg);
+}
+html[data-theme="light"] .toast,
+html[data-theme="light"] .modal { color: var(--text); }
+
+/* авто-режим: follows системной настройке устройства */
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] {
+    --bg: #eef1f8;
+    --bg-soft: #e4e9f4;
+    --panel: rgba(255, 255, 255, 0.78);
+    --panel-strong: rgba(255, 255, 255, 0.95);
+    --border: rgba(15, 23, 42, 0.10);
+    --border-strong: rgba(15, 23, 42, 0.20);
+    --text: #17203a;
+    --text-dim: #4a5578;
+    --text-faint: #7c86a6;
+    --accent: #5561e8;
+    --accent-2: #0e7490;
+    --ok: #059669;
+    --warn: #b45309;
+    --bad: #dc2626;
+    --info: #2563eb;
+    --shadow: 0 16px 40px -18px rgba(15, 23, 42, 0.25);
+    --overlay-1: rgba(255, 255, 255, 0.88);
+    --overlay-2: rgba(255, 255, 255, 0.70);
+    --hover-bg: rgba(15, 23, 42, 0.06);
+    --hover-border: rgba(15, 23, 42, 0.24);
+    --scroll-thumb: rgba(15, 23, 42, 0.20);
+  }
+  html[data-theme="auto"] .bg-aurora {
+    background:
+      radial-gradient(1200px 700px at 85% -10%, rgba(99,102,241,.10), transparent 60%),
+      radial-gradient(900px 600px at -10% 110%, rgba(34,211,238,.08), transparent 60%),
+      var(--bg);
+  }
+}
+
+/* ======================================================================
+   v1.7.0 — ПЕЧАТЬ ЧЕКОВ PDF: раскрой листов A4 на колонки 80 мм.
+   Экран: #print-root спрятан справа (в нём меряем высоты в мм).
+   Печать: показываем только #print-root, каждая страница — .print-page.
+   ====================================================================== */
+#print-root { position: fixed; left: -10000px; top: 0; width: 210mm; }
+.rcpt {
+  width: 80mm;
+  background: #fff;
+  color: #111;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 3.4mm;
+  line-height: 1.32;
+  padding: 3mm 2.5mm;
+  box-sizing: border-box;
+  word-break: break-word;
+}
+.rcpt-head { text-align: center; font-weight: 700; text-transform: uppercase; }
+.rcpt-sub  { text-align: center; font-size: 3mm; }
+.rcpt-rule { border-top: 1px dashed #444; margin: 1.6mm 0; }
+.rcpt table { width: 100%; border-collapse: collapse; font-size: 3.2mm; }
+.rcpt td { vertical-align: top; padding: 0.4mm 0; }
+.rcpt .r-name { }
+.rcpt .r-sum  { text-align: right; white-space: nowrap; }
+.rcpt-totals td { padding-top: 0.8mm; }
+.rcpt .r-item { margin: 0.6mm 0; }
+.rcpt .r-name { font-weight: 700; }
+.rcpt .r-line { display: flex; justify-content: space-between; gap: 2mm; }
+.rcpt-foot { font-size: 2.9mm; text-align: center; }
+.rcpt-part { font-size: 2.8mm; text-align: center; color: #444; }
+.print-page {
+  width: 210mm; height: 296mm;
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+}
+.print-piece { position: absolute; }
+
+@media print {
+  @page { size: A4 portrait; margin: 0; }
+  /* прячем всё приложение, показываем только раскрой чеков */
+  body > *:not(#print-root) { display: none !important; }
+  body { overflow: visible; background: #fff; }
+  #print-root { position: static; left: 0; width: auto; }
+  .print-page { page-break-after: always; box-shadow: none; }
+  .print-page:last-child { page-break-after: auto; }
+  .print-piece .rcpt { box-shadow: none; }
+  .print-cut { border-top: 1px dashed #999; margin: 2mm 0; }
+}
+
+/* переключатель тем в настройках */
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
+.seg button {
+  padding: 9px 16px; border: 0; background: transparent; color: var(--text-dim);
+  font: inherit; font-weight: 600; cursor: pointer; transition: background var(--speed), color var(--speed);
+}
+.seg button.on { background: var(--accent); color: #fff; }

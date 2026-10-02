@@ -258,11 +258,18 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
         return {"ok": False, "message": f"Строка QR не распознана: {e}"}
     res = engine.fetch(db, qr, parsed.fn, parsed.fd, parsed.fp,
                        parsed.total_sum, parsed.date_time)
+    ok, message = res.ok, res.message
+    # v1.7.0: mock-источник всегда «доступен» — чек не находится в ФНС это его
+    # нормальный режим, а не ошибка (раньше тест показывал сбой без причины)
+    if res.source == "mock" and not res.found:
+        ok = True
+        message = ("Мок-источник работает корректно: тестовый чек не найден "
+                   "в ФНС (эмуляция) — это ожидаемое поведение")
     return {
-        "ok": res.ok,
+        "ok": ok,
         "source": res.source,
         "found": res.found,
         "items_count": len(res.items),
-        "message": res.message,
+        "message": message,
         "engine": engine.status(),
     }
