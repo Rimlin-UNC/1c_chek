@@ -181,11 +181,21 @@ def _gh_raw(repo: str, branch: str, path: str) -> str:
     return resp.text
 
 
+def _run_full(cmd: list[str], timeout: int = 60) -> tuple[int, str]:
+    """Как _run, но БЕЗ обрезки хвоста на 2000 символов — для содержимого файлов
+    (config.py ~2 КБ, CHANGELOG десятки КБ; _run режет хвост и ломает парсинг)."""
+    p = subprocess.run(cmd, cwd=APP_DIR, capture_output=True, text=True,
+                       timeout=timeout)
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
 def _gh_git(repo: str, branch: str, path: str) -> str:
     """Третий канал: git-протокол по 443 — самый живучий при блокировках."""
-    _run(["git", "fetch", "--depth=1", f"https://github.com/{repo}.git", branch],
-         timeout=60)
-    code, out = _run(["git", "show", f"FETCH_HEAD:{path}"], timeout=30)
+    fcode, ferr = _run(["git", "fetch", "--depth=1",
+                        f"https://github.com/{repo}.git", branch], timeout=60)
+    if fcode != 0:
+        raise RuntimeError(f"git fetch: {ferr[:120]}")
+    code, out = _run_full(["git", "show", f"FETCH_HEAD:{path}"], timeout=30)
     if code != 0 or not out.strip():
         raise RuntimeError(_short_err(RuntimeError(out)) or "git show пуст")
     return out

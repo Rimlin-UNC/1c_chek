@@ -47,7 +47,8 @@ class TestMultiSource:
         def fake_get(url, **kw):
             raise updater.httpx.ConnectError("blocked")
         monkeypatch.setattr(updater.httpx, "get", fake_get)
-        monkeypatch.setattr(updater, "_run",
+        monkeypatch.setattr(updater, "_run", lambda *a, **kw: (0, ""))
+        monkeypatch.setattr(updater, "_run_full",
                             lambda *a, **kw: (0, 'APP_VERSION: str = "8.8.8"'))
         text, source = updater._fetch_remote_file("o/r", "b", "app/config.py")
         assert source == "git (github.com:443)"
@@ -57,6 +58,7 @@ class TestMultiSource:
             raise updater.httpx.ConnectError("blocked")
         monkeypatch.setattr(updater.httpx, "get", fake_get)
         monkeypatch.setattr(updater, "_run", lambda *a, **kw: (1, "TLS EOF"))
+        monkeypatch.setattr(updater, "_run_full", lambda *a, **kw: (1, "TLS EOF"))
         try:
             updater._fetch_remote_file("o/r", "b", "app/config.py")
             assert False, "должна быть ошибка"
