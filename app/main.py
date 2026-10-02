@@ -72,6 +72,26 @@ async def _sec_headers(request, call_next):
     return await security_headers_middleware(request, call_next)
 
 
+# v1.6.0: сжатие ответов — меньше трафика между браузером и сервером
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+app.add_middleware(GZipMiddleware, minimum_size=600)
+
+
+# v1.6.0: HTTP-кэш статики — браузер не перекачивает одни и те же файлы;
+# sw.js и оболочка приложения — всегда свежие (no-cache)
+@app.middleware("http")
+async def _cache_headers(request, call_next):
+    response = await call_next(request)
+    p = request.url.path
+    if p == "/sw.js" or p == "/manifest.webmanifest":
+        response.headers.setdefault("Cache-Control", "no-cache")
+    elif p.startswith(("/static/", "/img/", "/assets/")):
+        response.headers.setdefault("Cache-Control", "public, max-age=604800")
+    elif p == "/" or p == "/app" or p.startswith("/app/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS or ["*"],

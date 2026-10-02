@@ -130,24 +130,96 @@ def _file_sha256(path: str) -> str:
     return h.hexdigest()
 
 
+# v1.6.0: три канала доступа к GitHub. raw.githubusercontent.com периодически
+# блокируется провайдерами РФ — поэтому сначала api.github.com, затем raw,
+# затем git-протокол (github.com:443), который работает даже при блокировке raw.
+_GH_CANONICAL = (
+    ("api.github.com", "_gh_api_raw"),
+    ("raw.githubusercontent.com", "_gh_raw"),
+    ("git (github.com:443)", "_gh_git"),
+)
+
+
+def _short_err(e: Exception) -> str:
+    return (str(e) or e.__class__.__name__).strip().split("\n")[0][:90]
+
+
+def _parse_ver(v: str) -> tuple[int, ...]:
+    """'1.6.0' → (1, 6, 0); нечисловые части → 0."""
+    parts = []
+    for x in str(v).strip().split("."):
+        try:
+            parts.append(int(x))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts) or (0, 0, 0)
+
+
+def _is_newer(remote: str, current: str) -> bool:
+    """Обновление только вперёд: remote строго больше current (1.10 > 1.9)."""
+    a, b = _parse_ver(remote), _parse_ver(current)
+    n = max(len(a), len(b))
+    a, b = a + (0,) * (n - len(a)), b + (0,) * (n - len(b))
+    return a > b
+
+
+def _gh_api_raw(repo: str, branch: str, path: str) -> str:
+    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+    resp = httpx.get(url, timeout=10, headers={
+        "User-Agent": "YmasterCheck-Updater",
+        "Accept": "application/vnd.github.raw+json"})
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    return resp.text
+
+
+def _gh_raw(repo: str, branch: str, path: str) -> str:
+    url = RAW_BASE.format(repo=repo, branch=branch, path=path)
+    resp = httpx.get(url, timeout=10, headers={"User-Agent": "YmasterCheck-Updater"})
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    return resp.text
+
+
+def _gh_git(repo: str, branch: str, path: str) -> str:
+    """Третий канал: git-протокол по 443 — самый живучий при блокировках."""
+    _run(["git", "fetch", "--depth=1", f"https://github.com/{repo}.git", branch],
+         timeout=60)
+    code, out = _run(["git", "show", f"FETCH_HEAD:{path}"], timeout=30)
+    if code != 0 or not out.strip():
+        raise RuntimeError(_short_err(RuntimeError(out)) or "git show пуст")
+    return out
+
+
+def _fetch_remote_file(repo: str, branch: str, path: str) -> tuple[str, str]:
+    """Файл с GitHub через 3 канала. Возвращает (текст, источник)."""
+    errors = []
+    for name, fname in _GH_CANONICAL:
+        try:
+            return globals()[fname](repo, branch, path), name
+        except Exception as e:                               # noqa: BLE001
+            errors.append(f"{name}: {_short_err(e)}")
+    raise RuntimeError(
+        "GitHub недоступен с сервера — перепробованы все каналы ("
+        + "; ".join(errors) + "). Возможна блокировка провайдером: "
+        "обновите вручную — sudo bash deploy.sh --update")
+
+
 def _remote_version(repo: str, branch: str) -> dict:
     """Текущая версия на GitHub: качаем только app/config.py (~3 КБ)."""
-    url = RAW_BASE.format(repo=repo, branch=branch, path="app/config.py")
-    resp = httpx.get(url, timeout=15, headers={"User-Agent": "YmasterCheck-Updater"})
-    if resp.status_code != 200:
-        raise RuntimeError(f"GitHub вернул HTTP {resp.status_code} для app/config.py")
-    m = re.search(r'APP_VERSION: str = "([^"]+)"', resp.text)
+    text, source = _fetch_remote_file(repo, branch, "app/config.py")
+    m = re.search(r'APP_VERSION: str = "([^"]+)"', text)
     if not m:
         raise RuntimeError("Не удалось прочитать APP_VERSION из config.py на GitHub")
-    return {"version": m.group(1), "checked_at": datetime.utcnow().isoformat() + "Z"}
+    return {"version": m.group(1), "source": source,
+            "checked_at": datetime.utcnow().isoformat() + "Z"}
 
 
 def _remote_changelog(repo: str, branch: str) -> str:
-    url = RAW_BASE.format(repo=repo, branch=branch, path="CHANGELOG.md")
     try:
-        resp = httpx.get(url, timeout=15, headers={"User-Agent": "YmasterCheck-Updater"})
-        return resp.text if resp.status_code == 200 else ""
-    except httpx.HTTPError:
+        text, _src = _fetch_remote_file(repo, branch, "CHANGELOG.md")
+        return text
+    except Exception:                                        # noqa: BLE001
         return ""
 
 
@@ -181,7 +253,8 @@ def check_update(db) -> dict:
     repo = appsettings.get_setting(db, "repo_url", "") or _guess_repo()
     branch = appsettings.get_setting(db, "repo_branch", "") or settings.DEFAULT_BRANCH
     remote = _remote_version(repo, branch)
-    available = remote["version"] != settings.APP_VERSION
+    # v1.6.0: только обновление вперёд (семвер-сравнение)
+    available = _is_newer(remote["version"], settings.APP_VERSION)
     result = {
         "current_version": settings.APP_VERSION,
         "remote_version": remote["version"],

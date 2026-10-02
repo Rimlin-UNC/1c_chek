@@ -5,7 +5,7 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.5.0';
+const CACHE = 'ymaster-check-v1.6.0';
 const ASSETS = [
   '/', '/index.html', '/css/app.css', '/js/app.js', '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/vendor/jsQR.js',

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from datetime import datetime
 
@@ -53,11 +54,34 @@ def update_check(db: Session = Depends(get_db),
     try:
         result = check_update(db)
     except Exception as e:                                   # noqa: BLE001
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
-                            f"Не удалось проверить обновления: {e}")
+        # v1.6.0: отдаём 200 с ok:false — клиент всегда получает понятную причину
+        log_action(user, "update_check_failed", details={"error": str(e)[:200]})
+        return {"ok": False, "error": str(e)[:600]}
     log_action(user, "update_check", details={
         "available": result["update_available"], "remote": result["remote_version"]})
-    return result
+    return {"ok": True, **result}
+
+
+@router.put("/update/repo", summary="Источник обновлений: репозиторий и ветка (админ)")
+def update_repo(body: dict,
+                db: Session = Depends(get_db),
+                user: User = Depends(require_admin)):
+    """v1.6.0: репозиторий (owner/repo) и ветка для проверки/установки обновлений."""
+    from ..services import appsettings
+    repo = (body.get("repo_url") or "").strip()
+    branch = (body.get("repo_branch") or "").strip()
+    if repo and not re.fullmatch(r"[\w.\-]+/[\w.\-]+", repo):
+        raise HTTPException(422, "Репозиторий указывается как owner/repo, например Rimlin-UNC/1c_chek")
+    if branch and (len(branch) > 120 or not re.fullmatch(r"[\w./\-]+", branch)):
+        raise HTTPException(422, "Некорректное имя ветки")
+    if repo:
+        appsettings.set_setting(db, "repo_url", repo)
+    if branch:
+        appsettings.set_setting(db, "repo_branch", branch)
+    cur_repo, cur_branch = _repo_branch(db)
+    log_action(user, "update_repo_changed", details={"repo": cur_repo, "branch": cur_branch})
+    return {"ok": True, "message": "Источник обновлений сохранён",
+            "repo_url": cur_repo, "repo_branch": cur_branch}
 
 
 @router.post("/update/apply", summary="Применить обновление (админ)")
@@ -175,10 +199,13 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
     db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
     from ..services.backups import list_backups
     backups = [b["name"] for b in list_backups()[:8]]
+    _repo, _branch = _repo_branch(db)
     return {
         "version": settings.APP_VERSION,
         "python": sys.version.split()[0],
         "commit": _local_commit(),
+        "repo_url": _repo,
+        "branch": _branch,
         "db_size_mb": round(os.path.getsize(db_path) / 1_048_576, 1)
                       if os.path.exists(db_path) else 0,
         "counts": {
