@@ -772,3 +772,15 @@ html[data-theme="light"] .modal { color: var(--text); }
 .dl-badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .dl-badge.bad  { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 
+/* ======================================================================
+   v1.8.2 — QR-код приглашения (просмотр/сканирование с телефона)
+   ====================================================================== */
+.invite-qr-box {
+  display: flex; justify-content: center; align-items: center;
+  min-height: 224px; margin-top: 12px;
+}
+.invite-qr-box img {
+  width: 220px; height: 220px; border-radius: 12px;
+  border: 1px solid var(--border-strong); background: #fff; padding: 8px;
+}
+

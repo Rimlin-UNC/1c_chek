@@ -2195,7 +2195,9 @@ async function viewUsers(container) {
           <td>${i.used_count} / ${i.max_uses}</td>
           <td class="cell-date">${i.expires_at ? fmtDate(i.expires_at) : '∞'}</td>
           <td>${i.valid ? '<span class="chip verified"><span class="dot"></span>активно</span>' : '<span class="chip failed"><span class="dot"></span>' + (i.revoked ? 'отозвано' : 'исчерпано') + '</span>'}</td>
-          <td>${i.valid ? `<button class="btn btn-sm i-link" data-token="${esc(i.token)}">🔗 копировать</button>` : '—'}</td>
+          <td style="white-space:nowrap">${i.valid
+            ? `<button class="btn btn-sm i-link" data-token="${esc(i.token)}">🔗 копировать</button>
+               <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>` : '—'}</td>
           <td>${i.valid ? `<button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}">Отозвать</button>` : ''}</td>
         </tr>`).join('') : `<tr style="cursor:default"><td colspan="7">${emptyState('✉️', 'Приглашений ещё нет')}</td></tr>`}
       </tbody></table></div>
@@ -2238,12 +2240,39 @@ async function viewUsers(container) {
     navigator.clipboard && navigator.clipboard.writeText(url);
     toast('Ссылка-приглашение скопирована — отправьте сотруднику', 'ok', 'Ссылка готова');
   });
+  // v1.8.2: QR из списка приглашений
+  $$('.i-qr').forEach(btn => btn.onclick = () =>
+    openInviteQr({ id: btn.dataset.id }, `${location.origin}/#/register/${btn.dataset.token}`));
   $$('.i-revoke').forEach(btn => btn.onclick = async () => {
     if (!confirm('Отозвать приглашение? Ссылка перестанет работать.')) return;
     await api.post(`/api/v1/invites/${btn.dataset.id}/revoke`, {});
     toast('Приглашение отозвано', 'ok');
     route(true);
   });
+
+  // v1.8.2: модал QR-кода приглашения — показать/скачать PNG
+  async function openInviteQr(inv, url) {
+    const { slot } = openModal(`
+      <div class="modal-title">▣ QR-код приглашения</div>
+      <div class="invite-qr-box"><div class="skeleton" style="height:220px;width:220px"></div></div>
+      <p class="form-hint" style="margin-top:10px">Пусть сотрудник наведёт камеру телефона
+      (сканер QR — камера или «Google Объектив») — откроется страница регистрации,
+      роль присвоится автоматически. Ссылка: <span class="mono" style="font-size:11px">${esc(url || '')}</span></p>
+      <div class="modal-actions">
+        <button class="btn" data-close>Закрыть</button>
+        <button class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
+      </div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    const box = slot.querySelector('.invite-qr-box');
+    try {
+      const { blob, filename } = await api.download(`/api/v1/invites/${inv.id}/qr`);
+      const objUrl = URL.createObjectURL(blob);
+      box.innerHTML = `<img src="${objUrl}" alt="QR-код приглашения" width="220" height="220">`;
+      slot.querySelector('#iv-qr-dl').onclick = () => downloadBlob(blob, filename);
+    } catch (e) {
+      box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`;
+    }
+  }
 
   function inviteDialog() {
     const { slot } = openModal(`
@@ -2281,8 +2310,10 @@ async function viewUsers(container) {
           <div class="info-callout">Роль: <b>${roleLabel(inv.role)}</b> ·
             использований: ${inv.max_uses} · действует до ${inv.expires_at ? fmtDate(inv.expires_at) : '∞'}</div>
           <div class="token-line"><input readonly value="${esc(url)}" id="iv-url">
-            <button class="btn btn-sm" id="iv-copy">копировать</button></div>
-          <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта).
+            <button class="btn btn-sm" id="iv-copy">копировать</button>
+            <button class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
+          <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта)
+            или покажите QR-код — ему достаточно навести камеру телефона.
             После перехода он создаст логин и пароль — роль присвоится автоматически.</p>
           <div class="modal-actions"><button class="btn btn-primary" data-close>Готово</button></div>`);
         s2.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
@@ -2290,6 +2321,8 @@ async function viewUsers(container) {
           navigator.clipboard && navigator.clipboard.writeText(url);
           toast('Скопировано', 'ok');
         };
+        // v1.8.2: показать QR-код для сканирования с телефона
+        s2.querySelector('#iv-qr').onclick = () => openInviteQr(inv, url);
         route(true);
       } catch (e) { toast(e.message, 'err'); }
     };
