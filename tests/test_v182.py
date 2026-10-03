@@ -42,7 +42,7 @@ class TestInviteQr:
 
     def test_qr_revoked(self, client):
         hdr, inv = self._invite(client)
-        client.post(f"/api/v1/invites/{inv['id']}/revoke", {}, headers=hdr)
+        client.post(f"/api/v1/invites/{inv['id']}/revoke", json={}, headers=hdr)
         r = client.get(f"/api/v1/invites/{inv['id']}/qr", headers=hdr)
         assert r.status_code == 400
         assert "отозвано" in r.json()["detail"]

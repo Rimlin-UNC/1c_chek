@@ -62,11 +62,13 @@ def invite_qr(invite_id: str, request: Request,
     inv = db.get(Invite, invite_id)
     if not inv:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Приглашение не найдено")
-    if not inv.valid:
-        why = "отозвано" if inv.revoked else "исчерпан лимит использований"
-        if (not inv.revoked and inv.expires_at
-                and inv.expires_at < dt.datetime.utcnow()):
+    if not inv.is_valid:                       # v1.8.2: у модели свойство is_valid
+        if inv.revoked:
+            why = "отозвано"
+        elif inv.expires_at and inv.expires_at < dt.datetime.utcnow():
             why = "истёк срок действия"
+        else:
+            why = "исчерпан лимит использований"
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Приглашение недоступно: {why}")
     # адрес собираем как его видит пользователь (за nginx — https и боевой домен)
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
