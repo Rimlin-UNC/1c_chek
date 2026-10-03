@@ -23,5 +23,9 @@ python-multipart>=0.0.9
 opencv-python-headless>=4.9
 numpy>=1.26
 
+# Генерация QR-кодов приглашений (v1.8.2) + Pillow для сохранения PNG
+qrcode>=7.4
+pillow>=10.0
+
 # Для production-варианта с PostgreSQL (раскомментируйте):
 # psycopg2-binary>=2.9
