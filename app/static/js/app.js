@@ -1494,6 +1494,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.12.3': [
+    ['👤 На чеках видно, кто добавил и для какой компании', 'в списке чеков, в карточке чека и в сводке выбранных чеков показывается автор (кто отсканировал/прислал) и компания; в CSV-выгрузке — новые колонки «Кто добавил» и «Компания».'],
+    ['🎉 Окно «Что нового» — аккуратно на любом экране', 'исправлена вёрстка на телефоне: новости показываются карточками, без разъезжающейся таблицы.'],
+  ],
   '1.12.2': [
     ['📐 Вёрстка выровнена на всех устройствах', 'исправлена шапка после добавления селектора компаний: заголовок больше не переносится и не «прыгает», селектор компактный на телефоне, фильтр группы — на всю строку. CSS и JS теперь загружаются с маркером версии — после обновления оформление всегда соответствует коду.'],
   ],
@@ -1596,10 +1600,14 @@ function showWhatsNew() {
     if (localStorage.getItem('ymaster_seen_version') === v) return;
     localStorage.setItem('ymaster_seen_version', v);
   } catch (e) { return; }
-  const rows = WHATS_NEW[v].map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
+  // v1.12.3: вертикальные карточки — аккуратно на любом экране
+  // (раньше была сетка .kv «auto 1fr»: длинные заголовки раздували колонку
+  // и ломали вёрстку на телефоне)
+  const rows = WHATS_NEW[v].map(([title, text]) =>
+    `<div class="wn-item"><div class="wn-title">${title}</div><div class="wn-text">${text}</div></div>`).join('');
   const { slot, close } = openModal(`
     <div class="modal-title">🎉 Ямастер Чек v${esc(v)} — что нового</div>
-    <dl class="kv" style="font-size:13.5px;grid-template-columns:auto 1fr">${rows}</dl>
+    <div class="whats-new">${rows}</div>
     <div class="modal-actions"><button class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
   slot.querySelector('#wn-ok').onclick = close;
 }
@@ -1964,7 +1972,8 @@ async function viewReceipts(container) {
       <td class="cell-sum">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
         ? `<div class="form-hint">к учёту: ${fmtSum((r.total_sum || 0) - r.personal_sum)}</div>` : ''}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
-      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}</td>` : ''}
+      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}
+        <div class="rcpt-added" title="Кто добавил чек">＋ ${esc(r.created_by_name || r.created_by || '—')}</div></td>` : ''}
       <td>${chip(r.status)}</td>
       <td>${chip(r.fns_status)} ${detailsMark}</td>
       <td>${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
@@ -2005,9 +2014,16 @@ async function viewReceipts(container) {
       };
     }
 
-    if (!$('#sel-info')) return;
-    $('#sel-info').textContent = state.receiptsSelected.size
-      ? `выбрано: ${state.receiptsSelected.size}` : 'не выбрано';
+    const el = $('#sel-info');
+    if (!el) return;
+    if (!state.receiptsSelected.size) { el.textContent = 'не выбрано'; return; }
+    // v1.12.3: кто добавил выбранные чеки и какие они компании
+    const sel = (viewReceipts._rows || []).filter(r => state.receiptsSelected.has(r.id));
+    const comps = [...new Set(sel.map(r => r.company_name).filter(Boolean))];
+    const authors = [...new Set(sel.map(r => r.created_by_name).filter(Boolean))];
+    el.textContent = `выбрано: ${state.receiptsSelected.size}`
+      + (comps.length ? ` · компании: ${comps.join(', ')}` : '')
+      + (authors.length ? ` · добавили: ${authors.join(', ')}` : '');
   }
 
   $('#btn-filter').onclick = () => {
@@ -2502,7 +2518,8 @@ async function receiptDrawer(id) {
         <dt>ФП</dt><dd class="cell-mono">${r.fp}</dd>
         <dt>Признак расчёта</dt><dd>${r.operation === 2 ? 'Возврат прихода' : 'Приход'}</dd>
         <dt>Источник</dt><dd>${esc(r.source)}</dd>
-        <dt>Сканировал</dt><dd>${esc(r.created_by || '—')}</dd>
+        <dt>Кто добавил</dt><dd>${esc(r.created_by_name || r.created_by || '—')}${r.created_by_name && r.created_by ? ` <span class="form-hint">(${esc(r.created_by)})</span>` : ''}</dd>
+        ${r.company_name ? `<dt>Компания</dt><dd>${esc(r.company_name)}${companyChip(r.company_id)}</dd>` : ''}
         <dt>Принят в систему</dt><dd>${fmtDate(r.created_at)}</dd>
         <dt>Выгружен в 1С</dt><dd>${r.exported ? 'да · ' + fmtDate(r.exported_at) : 'нет'}</dd>
         <dt>Ответ ФНС</dt><dd>${esc(r.fns_message || '—')}</dd>

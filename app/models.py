@@ -234,6 +234,10 @@ class Receipt(Base):
                                    if self.details_fetched_at else None),
             "notified": self.notified,
             "category": self.category or "",
+            # v1.12.3: кто добавил чек (ФИО/логин автора скана) —
+            # user подгружен joined, доп. запроса нет
+            "created_by_name": ((self.user.full_name or self.user.username)
+                                if self.user else None),
         }
         if with_items:
             d["items"] = [it.to_dict() for it in self.items]

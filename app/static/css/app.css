@@ -906,3 +906,25 @@ tr.archived-row td { opacity: .55; }
 @media (max-width: 400px) {
   .company-select { flex: 0 1 38vw; max-width: 38vw; font-size: 11.5px; }
 }
+
+/* ======================================================================
+   v1.12.3 — «Что нового» (карточки вместо сетки) + автор чека в таблице
+   ====================================================================== */
+.whats-new { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.wn-item {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px;
+}
+.wn-title { font-weight: 750; font-size: 13.5px; line-height: 1.35; margin-bottom: 4px; }
+.wn-text { color: var(--text-dim); font-size: 12.5px; line-height: 1.5;
+           overflow-wrap: anywhere; }
+.rcpt-added {
+  font-size: 11px; color: var(--text-faint); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 860px) {
+  /* модалка новостей: всегда в пределах экрана, без горизонтального скролла */
+  .modal-title { font-size: 16px; line-height: 1.3; padding-right: 30px; }
+  .wn-title { font-size: 13px; }
+  .wn-text { font-size: 12px; }
+}

@@ -89,6 +89,21 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
     return receipt, True
 
 
+def _company_names(db: Session, ids) -> dict:
+    """v1.12.3: {id: название} компаний одним запросом (для чеков)."""
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    return {c.id: c.name for c in db.query(Company).filter(Company.id.in_(ids)).all()}
+
+
+def _attach_company(db: Session, d: dict) -> dict:
+    """Добавить company_name к dict чека (карточка/скан)."""
+    if d.get("company_id"):
+        d["company_name"] = _company_names(db, [d["company_id"]]).get(d["company_id"])
+    return d
+
+
 def _maybe_auto_verify(background: BackgroundTasks, db: Session,
                        receipt: Receipt) -> bool:
     """Если включена настройка auto_verify — сразу ставим чек в проверку ФНС."""
@@ -131,7 +146,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
                                "администратора переместить его."}
 
     return {
-        "receipt": receipt.to_dict(with_items=True),
+        "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
         "duplicate": not created,
         "auto_verify": auto,
         "message": ("Чек уже был отсканирован ранее — дубликат отсеян"
@@ -173,7 +188,7 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
     else:
         auto = False
     return {
-        "receipt": receipt.to_dict(with_items=True),
+        "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
         "duplicate": not created,
         "auto_verify": auto,
         "message": "Чек принят" if created else "Чек уже был отсканирован ранее",
@@ -214,7 +229,8 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
         broadcast("receipt_created", receipt.to_dict())
         _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
-    return {"receipt": receipt.to_dict(with_items=True), "duplicate": not created,
+    return {"receipt": _attach_company(db, receipt.to_dict(with_items=True)),
+            "duplicate": not created,
             "message": "Чек принят" if created else "Чек уже есть в системе"}
 
 
@@ -292,12 +308,19 @@ def list_receipts(
     total_sum = query.with_entities(func.coalesce(func.sum(Receipt.total_sum), 0)).scalar()
     rows = (query.order_by(Receipt.receipt_date.desc())
             .offset((page - 1) * page_size).limit(page_size).all())
+    # v1.12.3: название компании для каждой строки (карта одним запросом)
+    cname = _company_names(db, (r.company_id for r in rows))
+    items = []
+    for r in rows:
+        d = r.to_dict(with_items=with_items)
+        d["company_name"] = cname.get(r.company_id)
+        items.append(d)
     return {
         "total": total,
         "total_sum": round(float(total_sum or 0), 2),
         "page": page,
         "page_size": page_size,
-        "items": [r.to_dict(with_items=with_items) for r in rows],
+        "items": items,
     }
 
 
@@ -314,6 +337,7 @@ def get_receipt(receipt_id: str,
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
     d = receipt.to_dict(with_items=True)
     d["raw_data"] = receipt.raw_data
+    _attach_company(db, d)                     # v1.12.3: название компании
     return d
 
 
@@ -836,7 +860,9 @@ def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
     writer = csv.writer(buf, delimiter=";", lineterminator="\n")
     writer.writerow(["Дата чека", "Сумма, ₽", "ФН", "ФД", "ФП", "Признак",
                      "Статус ФНС", "Сотрудник", "Сканеровал", "Магазин", "ИНН",
-                     "Статья расходов", "Комментарий", "Уведомление", "QR"])
+                     "Статья расходов", "Комментарий", "Уведомление", "QR",
+                     "Кто добавил", "Компания"])            # v1.12.3
+    cname = _company_names(db, (r.company_id for r in receipts))
     op_names = {1: "Приход", 2: "Возврат"}
     fns_names = {"valid": "Действителен", "invalid": "Недействителен",
                  "not_found": "Не найден", "unknown": "Не проверен"}
@@ -855,6 +881,8 @@ def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
             r.comment or "",
             "Уведомляет" if r.notified else "",
             r.qr_data,
+            (r.user.full_name or r.user.username) if r.user else "",   # v1.12.3
+            cname.get(r.company_id, ""),
         ])
     log_action(user, "receipts_exported_csv", details={"count": len(receipts)})
     now = dt.datetime.utcnow()
