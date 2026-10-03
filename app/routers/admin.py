@@ -27,7 +27,8 @@ from ..auth import ROLE_ACCOUNTANT, ROLE_USER, require_admin
 from ..config import settings
 from ..database import get_db
 from ..models import AppSetting, Receipt, User
-from ..schemas import Optional, UpdateApplyBody
+from ..schemas import UpdateApplyBody
+from typing import Optional
 from ..services import appsettings
 from ..services.audit import log_action
 from ..services.updater import (APP_DIR, check_update, job as update_job,

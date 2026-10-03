@@ -3004,13 +3004,9 @@ async function viewSettings(container) {
       bsr.disabled = false;
     };
     const ba = $('#btn-apply-update');
-    if (ba) ba.onclick = async () => {
-      ba.disabled = true;
-      try {
-        const r = await api.post('/api/v1/admin/update/apply');
-        if (!r.updated) { toast(r.message, 'ok'); } else openUpdateProgress();
-      } catch (e) { toast(e.message, 'err'); }
-      ba.disabled = false;
+    if (ba) ba.onclick = () => {
+      // v1.10.0: через диалог — там предпроверка и поле пароля сервера
+      if (state.updateAvailable) showUpdateDialog(state.updateAvailable);
     };
     const bw = $('#upd-whats');
     if (bw) bw.onclick = (e) => { e.preventDefault(); api.get('/api/v1/admin/update/changelog').then(r => openModal(`<div class="modal-title">📜 Что изменится</div><pre class="codeblock" style="max-height:55vh">${esc(r.changelog.slice(0, 6000))}</pre>`)); };
