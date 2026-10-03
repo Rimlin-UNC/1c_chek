@@ -361,6 +361,9 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
         if body.total_sum is not None:
             receipt.total_sum = body.total_sum
             changed["fields"].append("total_sum")
+        if body.personal_sum is not None:            # v1.8.0: личные суммы
+            receipt.personal_sum = body.personal_sum
+            changed["fields"].append("personal_sum")
         if body.operation in (1, 2):
             receipt.operation = body.operation
             changed["fields"].append("operation")

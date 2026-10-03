@@ -91,7 +91,10 @@ job = UpdateJob()
 # ==========================================================================
 #  Вспомогательные: git, pip, версия с GitHub
 # ==========================================================================
-def _run(cmd: list[str], cwd: str = APP_DIR, timeout: int = 180) -> tuple[int, str]:
+def _run(cmd: list[str], cwd: str | None = None, timeout: int = 180) -> tuple[int, str]:
+    # v1.8.0: cwd разрешается В МОМЕНТ ВЫЗОВА (иначе значение APP_DIR
+    # фиксируется при импорте и не следует за тестами/переконфигурацией)
+    cwd = cwd or APP_DIR
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
         return p.returncode, (p.stdout + p.stderr).strip()[-2000:]
@@ -181,10 +184,10 @@ def _gh_raw(repo: str, branch: str, path: str) -> str:
     return resp.text
 
 
-def _run_full(cmd: list[str], timeout: int = 60) -> tuple[int, str]:
+def _run_full(cmd: list[str], cwd: str | None = None, timeout: int = 60) -> tuple[int, str]:
     """Как _run, но БЕЗ обрезки хвоста на 2000 символов — для содержимого файлов
     (config.py ~2 КБ, CHANGELOG десятки КБ; _run режет хвост и ломает парсинг)."""
-    p = subprocess.run(cmd, cwd=APP_DIR, capture_output=True, text=True,
+    p = subprocess.run(cmd, cwd=cwd or APP_DIR, capture_output=True, text=True,
                        timeout=timeout)
     return p.returncode, (p.stdout + p.stderr).strip()
 

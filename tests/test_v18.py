@@ -78,6 +78,9 @@ class TestUpdatePipelineE2E:
         dst = tmp_path / "appcopy"
         subprocess.run(["git", "clone", "-q", "--no-hardlinks",
                         os.getcwd(), str(dst)], check=True)
+        # клон песочницы shallow — раскрываем историю, чтобы откатиться на 5 коммитов
+        subprocess.run(["git", "-C", str(dst), "fetch", "-q", "--unshallow", "origin"],
+                       check=False)
         subprocess.run(["git", "-C", str(dst), "reset", "-q",
                         "--hard", "HEAD~5"], check=True)
         old_cfg = (dst / "app" / "config.py").read_text(encoding="utf-8")

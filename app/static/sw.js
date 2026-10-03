@@ -9,10 +9,9 @@ const CACHE = 'ymaster-check-v1.8.0';
 // v1.8.0: исправлены пути (файлы лежат в /static/…; прежние /js/… давали 404
 // при установке кэша — Service Worker не устанавливался)
 const ASSETS = [
-  '/', '/index.html', '/static/css/app.css', '/static/js/app.js',
-  '/static/js/api.js', '/static/js/ui.js', '/static/js/charts.js',
-  '/static/js/icons.js', '/static/js/scanner.js', '/static/js/printpack.js',
-  '/static/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
+  '/', '/index.html', '/css/app.css', '/js/app.js', '/js/api.js', '/js/ui.js',
+  '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
+  '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
 ];
 
 self.addEventListener('install', (e) => {
