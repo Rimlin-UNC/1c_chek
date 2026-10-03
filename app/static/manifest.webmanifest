@@ -5,7 +5,6 @@
   "lang": "ru",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#0b1020",
   "theme_color": "#0b1020",
   "icons": [
@@ -22,5 +21,31 @@
       "purpose": "any maskable"
     }
   ],
-  "version": "1.9.1"
+  "version": "1.9.1",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "shortcuts": [
+    {
+      "name": "Сканер чека",
+      "url": "/#/scan",
+      "icons": [
+        {
+          "src": "/img/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "База чеков",
+      "url": "/#/receipts",
+      "icons": [
+        {
+          "src": "/img/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
 }

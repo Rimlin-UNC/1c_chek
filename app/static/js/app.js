@@ -1019,8 +1019,13 @@ function isIOSLike() {
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
+function isWindows() {
+  return /windows/i.test(navigator.userAgent);
+}
+
 function showInstallDialog() {
   const iOS = isIOSLike();
+  const win = isWindows();
   const standalone = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true;
   if (standalone) {
@@ -1038,11 +1043,19 @@ function showInstallDialog() {
         <div class="step"><div class="step-num"></div><div>Подтвердите — иконка <b>Ямастер Чек</b> появится
           на домашнем экране, приложение откроется на весь экран.</div></div>
       </div>` : `
+      ${win ? `
+      <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите <b>Ямастер Чек</b>
+      как приложение Windows 11 — работа в своём окне без браузера, иконка в «Пуск» и на панели задач.</p>
+      <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
+      <p class="form-hint" style="margin-top:10px">Если кнопка не сработала (Microsoft Edge): нажмите
+      <b>⊕ / «Установить приложение»</b> в адресной строке, либо меню <b>⋯ → Приложения → Установить
+      этот сайт как приложение</b>. Приложение появится в «Пуск» и будет запускаться в своём окне.</p>`
+      : `
       <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите приложение
       на устройство — быстрый доступ с иконки, работа на весь экран, офлайн-сканирование.</p>
       <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
       <p class="form-hint" style="margin-top:10px">Если кнопка не сработала: меню браузера →
-      «Установить приложение» / «Добавить на главный экран».</p>`}
+      «Установить приложение» / «Добавить на главный экран».</p>`}`}
     <div class="modal-actions"><button class="btn" id="pwa-close">Понятно</button></div>`);
   const go = document.getElementById('pwa-go');
   if (go) go.onclick = async () => {
