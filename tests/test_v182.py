@@ -84,3 +84,67 @@ class TestPyBinV18_3:
         ok_flag, msg = up._health_check()
         assert ok_flag is True
         assert seen[0][0] == up._py_bin()
+
+class TestSelfUpdateV19:
+    """v1.9.1: механизм «админ в приложении = суперпользователь»:
+    предпроверка готовности, отказ без права на перезапуск,
+    уведомление всех пользователей, свежий код у всех."""
+
+    def test_restart_mode_sudoers(self, monkeypatch):
+        import app.services.updater as up
+        seq = [(0, "active")]
+        monkeypatch.setattr(up, "_run",
+                            lambda cmd, **kw: (seq.pop(0) if seq else (1, "")))
+        ok_flag, mode = up._restart_mode()
+        assert ok_flag and mode == "sudoers"
+
+    def test_restart_mode_none(self, monkeypatch):
+        import app.services.updater as up
+        monkeypatch.setattr(up, "_run", lambda cmd, **kw: (1, "nope"))
+        ok_flag, mode = up._restart_mode()
+        assert not ok_flag and mode == ""
+
+    def test_apply_refuses_without_restart_right(self, client, monkeypatch):
+        """Без sudoers обновление не начинается — никакого полу-состояния."""
+        import app.services.updater as up
+        monkeypatch.setattr(up, "pre_flight", lambda db: {
+            "can_restart": False, "restart_mode": "", "db_backup_ok": True,
+            "github_ok": True, "github_error": "", "ready": False})
+        hdr = login(client, "admin", "admin123")
+        r = client.post("/api/v1/admin/update/apply", headers=hdr)
+        assert r.status_code == 409
+        assert "deploy.sh" in r.json()["detail"]
+
+    def test_apply_refuses_without_github(self, client, monkeypatch):
+        import app.services.updater as up
+        monkeypatch.setattr(up, "pre_flight", lambda db: {
+            "can_restart": True, "restart_mode": "sudoers", "db_backup_ok": True,
+            "github_ok": False, "github_error": "blocked", "ready": False})
+        hdr = login(client, "admin", "admin123")
+        r = client.post("/api/v1/admin/update/apply", headers=hdr)
+        assert r.status_code == 502
+
+    def test_preflight_endpoint(self, client, monkeypatch):
+        import app.services.updater as up
+        monkeypatch.setattr(up, "pre_flight", lambda db: {
+            "can_restart": True, "restart_mode": "sudoers", "db_backup_ok": True,
+            "github_ok": True, "github_error": "", "ready": True})
+        hdr = login(client, "admin", "admin123")
+        r = client.get("/api/v1/admin/update/preflight", headers=hdr)
+        assert r.status_code == 200 and r.json()["ready"] is True
+
+    def test_broadcast_before_restart_in_source(self):
+        src = open("app/services/updater.py", encoding="utf-8").read()
+        assert 'broadcast("server_update"' in src
+
+    def test_ui_handles_server_update_event(self):
+        js = open("app/static/js/app.js", encoding="utf-8").read()
+        assert "case 'server_update':" in js
+
+    def test_app_code_always_fresh(self, client):
+        """Код (js/css) — no-cache: после рестарта все пользователи сразу
+        получают новую версию, а не кэш семидневной давности."""
+        r = client.get("/static/js/app.js")
+        assert "no-cache" in r.headers.get("cache-control", "")
+        i = client.get("/img/logo.svg")
+        assert "max-age=604800" in i.headers.get("cache-control", "")

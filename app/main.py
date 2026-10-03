@@ -85,7 +85,15 @@ async def _cache_headers(request, call_next):
     p = request.url.path
     if p == "/sw.js" or p == "/manifest.webmanifest":
         response.headers.setdefault("Cache-Control", "no-cache")
-    elif p.startswith(("/static/", "/img/", "/assets/")):
+    elif p.startswith(("/static/", "/assets/")):
+        if p.endswith((".js", ".css", ".webmanifest")):
+            # v1.9.1: код приложения — всегда свежий у ВСЕХ пользователей сразу
+            # после рестарта (revalidate по ETag — дёшево); иначе браузер мог бы
+            # держать старый app.js до 7 дней, а бэкенд уже новый
+            response.headers.setdefault("Cache-Control", "no-cache")
+        else:
+            response.headers.setdefault("Cache-Control", "public, max-age=604800")
+    elif p.startswith("/img/"):
         response.headers.setdefault("Cache-Control", "public, max-age=604800")
     elif p == "/" or p == "/app" or p.startswith("/app/"):
         response.headers.setdefault("Cache-Control", "no-cache")

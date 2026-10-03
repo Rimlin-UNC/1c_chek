@@ -419,6 +419,10 @@ function handleWsEvent(type, p) {
       refreshBadges();
       if (state.view === 'receipts') scheduleRouteRefresh();
       break;
+    case 'server_update':  // v1.9.1: администратор обновил сервер — все получают новую версию
+      toast(`Сервер обновляется (v${p.to || ''}) — страница перезагрузится автоматически`, 'info', '🔄 Обновление');
+      setTimeout(() => location.reload(), 4000);
+      break;
   }
 }
 
@@ -2541,6 +2545,7 @@ async function viewSettings(container) {
           <dt>Проверено</dt><dd id="upd-checked">—</dd>
           <dt>Последнее обновление</dt><dd id="upd-last">—</dd>
         </dl>
+        <div id="upd-ready" style="margin:10px 0"><div class="skeleton" style="height:34px"></div></div>
         <div id="upd-avail" class="hidden" style="margin:10px 0">
           <div class="info-callout" style="margin-bottom:10px">🆕 Доступна версия <b id="upd-remote">v—</b>.
             <a href="#" id="upd-whats" style="margin-left:6px">Что изменится?</a></div>
@@ -2728,6 +2733,22 @@ async function viewSettings(container) {
           ? `v${ls.to} · ${new Date(ls.at).toLocaleString('ru-RU')}`
           : 'ещё не было';
       }).catch(() => {});
+      // v1.9.1: готовность к обновлению (GitHub / право на перезапуск / копия БД)
+      api.get('/api/v1/admin/update/preflight').then(pf => {
+        const el = $('#upd-ready');
+        if (!el) return;
+        const chip = (name, ok, hint) =>
+          `<span class="pf-chip ${ok ? 'ok' : 'bad'}" title="${hint}">${ok ? '✓' : '✗'} ${name}</span>`;
+        el.innerHTML = [
+          chip('GitHub', pf.github_ok, 'Сервер может скачать обновление'),
+          chip('Перезапуск сервиса', pf.can_restart,
+            pf.can_restart ? 'Правило sudoers установлено — приложение перезапустится само' :
+              'Нет права: однократно выполните на сервере sudo bash deploy.sh --update'),
+          chip('Копия БД', pf.db_backup_ok, 'Перед обновлением будет сделана резервная копия'),
+        ].join(' ') + (pf.ready
+          ? '<span class="form-hint" style="margin-left:8px">готово к обновлению из приложения</span>'
+          : '<span class="form-hint" style="margin-left:8px">обновление из приложения недоступно</span>');
+      }).catch(() => { const el = $('#upd-ready'); if (el) el.textContent = ''; });
       setUpdState('checking');
       try {
         const r = await api.get('/api/v1/admin/update/check', { retries: 1 });

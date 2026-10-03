@@ -369,6 +369,44 @@ def load_last_update() -> dict | None:
         return None
 
 
+def _restart_mode() -> tuple[bool, str]:
+    """v1.9.1: есть ли право перезапустить сервис. Проверяем БЕЗВРЕДНОЙ командой
+    `systemctl is-active` (разрешена sudoers-правилом вместе с restart):
+    rc 0/3 — команда доступна (0=active, 3=inactive)."""
+    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", "ymaster-check"], timeout=15)
+    if rc in (0, 3):
+        return True, "sudoers"
+    rc, _o = _run(["systemctl", "is-active", "ymaster-check"], timeout=15)
+    if rc in (0, 3):
+        return True, "systemctl"
+    return False, ""
+
+
+def pre_flight(db) -> dict:
+    """v1.9.1: готовность к обновлению из приложения. Всё, что должно быть
+    истинным ДО старта — иначе обновление не начинаем (никаких полу-состояний)."""
+    can_restart, mode = _restart_mode()
+    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
+    db_ok = os.path.exists(db_path)
+    github_ok, github_err = False, ""
+    try:
+        from . import appsettings
+        repo = appsettings.get_setting(db, "repo_url", "") or _guess_repo()
+        branch = appsettings.get_setting(db, "repo_branch", "") or settings.DEFAULT_BRANCH
+        _remote_version(repo, branch)
+        github_ok = True
+    except Exception as e:                                   # noqa: BLE001
+        github_err = str(e)[:200]
+    return {
+        "can_restart": can_restart,
+        "restart_mode": mode,
+        "db_backup_ok": db_ok,
+        "github_ok": github_ok,
+        "github_error": github_err,
+        "ready": can_restart and db_ok and github_ok,
+    }
+
+
 def _restart_service() -> tuple[bool, str]:
     """v1.8.1: приложение само перезапускает свой сервис. deploy.sh добавляет
     sudoers-правило NOPASSWD на точную команду (пользователь ymaster);
@@ -427,6 +465,12 @@ def _do_apply(target_version: str, repo: str, branch: str) -> None:
         if not ok:
             raise RuntimeError(f"Проверка целостности не пройдена: {msg}")
 
+        # v1.9.1: предупреждаем всех подключённых — их клиенты сами перезагрузятся
+        try:
+            from .events import broadcast
+            broadcast("server_update", {"to": target_version})
+        except Exception:                                    # noqa: BLE001
+            pass
         # v1.8.1: маркер успеха пишем ДО рестарта — после него процесс новый
         write_last_update({
             "from": getattr(job, "from_version", "") or "",

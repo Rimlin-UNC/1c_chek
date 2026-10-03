@@ -64,6 +64,14 @@ def update_check(db: Session = Depends(get_db),
     return {"ok": True, **result}
 
 
+@router.get("/update/preflight", summary="Готовность к обновлению из приложения (админ)")
+def update_preflight(db: Session = Depends(get_db),
+                     user: User = Depends(require_admin)):
+    """v1.9.1: GitHub / право на перезапуск / копия БД — до нажатия «Обновить»."""
+    from ..services.updater import pre_flight
+    return pre_flight(db)
+
+
 @router.put("/update/repo", summary="Источник обновлений: репозиторий и ветка (админ)")
 def update_repo(body: dict,
                 db: Session = Depends(get_db),
@@ -90,6 +98,18 @@ def update_repo(body: dict,
 def update_apply(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     if update_job.running:
         raise HTTPException(status.HTTP_409_CONFLICT, "Обновление уже выполняется")
+    # v1.9.1: предпроверка — без права на перезапуск обновление НЕ начинаем
+    # (иначе обновятся файлы, а сервис останется на старом коде)
+    from ..services.updater import pre_flight
+    pf = pre_flight(db)
+    if not pf["can_restart"]:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+            "Нет права на перезапуск сервиса. Однократно выполните на сервере: "
+            "sudo bash /opt/ymaster-check/deploy.sh --update — после этого "
+            "обновляйтесь прямо отсюда.")
+    if not pf["github_ok"]:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"GitHub недоступен с сервера: {pf['github_error']}")
     try:
         info = check_update(db)
     except Exception as e:                                   # noqa: BLE001

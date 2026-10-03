@@ -784,3 +784,14 @@ html[data-theme="light"] .modal { color: var(--text); }
   border: 1px solid var(--border-strong); background: #fff; padding: 8px;
 }
 
+/* ======================================================================
+   v1.9.1 — готовность к обновлению из приложения (чипы-предпроверки)
+   ====================================================================== */
+.pf-chip {
+  display: inline-block; margin: 2px 6px 2px 0; padding: 3px 10px;
+  font-size: 12px; font-weight: 700; border-radius: 10px;
+  border: 1px solid transparent; cursor: default;
+}
+.pf-chip.ok  { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.pf-chip.bad { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+
