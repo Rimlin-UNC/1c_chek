@@ -207,7 +207,13 @@ if [[ ! -d "$APP_DIR/venv" ]]; then
 fi
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
-ok "зависимости установлены"
+# v1.10.0: самопроверка целостности зависимостей (конфликты версий = откат по git)
+if sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" check >/dev/null 2>&1; then
+  ok "зависимости установлены и согласованы (pip check ok)"
+else
+  warn "pip check: конфликты зависимостей! Откат: sudo git -C $APP_DIR revert <коммит> && sudo bash $APP_DIR/deploy.sh --update"
+  sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" check | sed 's/^/     /' | head -5
+fi
 
 # ------------------------------------------------------------------
 bold "5/9 Секреты (.env)"
