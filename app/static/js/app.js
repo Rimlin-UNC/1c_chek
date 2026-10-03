@@ -1773,7 +1773,7 @@ function rcptDate(v) {
   catch { return String(v || ''); }
 }
 
-function rcptBlocks(r) {
+function rcptBlocks(r, qrUrl) {
   const op = Number(r.operation) === 2 ? 'ВОЗВРАТ ПРИХОДА' : 'ПРИХОД';
   const rule = '<div class="rcpt-rule"></div>';
   const blocks = [];
@@ -1804,6 +1804,10 @@ function rcptBlocks(r) {
   blocks.push(rule);
   const fnsMap = { valid: '✓ проверен ФНС', invalid: '✗ НЕ действителен', not_found: '? не найден в ФНС', unknown: 'не проверялся' };
   blocks.push(`<div class="rcpt-foot">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>${fnsMap[r.fns_status] || ''}<br>Ямастер Чек · ymaster.ru</div>`);
+  // v1.10.0: фискальный QR — как на настоящем кассовом чеке
+  if (qrUrl) {
+    blocks.push(`<div style="text-align:center;margin-top:1.5mm"><img src="${qrUrl}" alt="Фискальный QR чека" style="width:26mm;height:26mm"></div>`);
+  }
   return blocks;
 }
 
@@ -1823,10 +1827,19 @@ async function printReceiptsPDF(ids) {
     meas.style.cssText = `width:${COL_W}mm;position:absolute;left:0;top:0;`;
     root.appendChild(meas);
 
-    // 1) Рендерим чеки и режем длинные по строкам позиций
+    // 1) Фискальные QR-коды чеков (PNG с сервера) — как на кассовом чеке
+    const qrUrls = {};
+    for (const r of data.items.slice(0, 60)) {
+      try {
+        const { blob } = await api.download(`/api/v1/receipts/${r.id}/qr.png`);
+        qrUrls[r.id] = URL.createObjectURL(blob);
+      } catch { /* чек без QR — печатаем без него */ }
+    }
+
+    // 2) Рендерим чеки и режем длинные по строкам позиций
     const pieces = [];                                      // { html, h }
     for (const r of data.items) {
-      const blocks = rcptBlocks(r);
+      const blocks = rcptBlocks(r, qrUrls[r.id]);
       const full = document.createElement('div');
       full.className = 'rcpt';
       full.innerHTML = blocks.join('');

@@ -286,6 +286,27 @@ def list_receipts(
 #  Карточка / изменение / удаление
 # --------------------------------------------------------------------------
 @router.get("/{receipt_id}", summary="Чек с позициями")
+@router.get("/{receipt_id}/qr.png", summary="QR-код чека как в кассовом аппарате (PNG)")
+def receipt_qr_png(receipt_id: str,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """v1.10.0: PNG с фискальной строкой чека (t=…&s=…&fn=…&i=…&fp=…&n=…) —
+    в печатной версии чек выглядит как настоящий кассовый, с QR для проверки."""
+    import io
+
+    import qrcode
+    from fastapi.responses import Response
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    if user.role == ROLE_USER and receipt.created_by != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступны только свои чеки")
+    img = qrcode.make(receipt.qr_data, box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
 def get_receipt(receipt_id: str, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
