@@ -89,8 +89,14 @@ export const api = {
   patch: (p, b, o) => request('PATCH', p, b, o),
   del: (p, o) => request('DELETE', p, undefined, o),
   download: async (p, b) => {
-    const headers = { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' };
-    const resp = await fetch(p, { method: 'POST', headers, body: JSON.stringify(b || {}) });
+    // v1.8.2: без тела — GET (эндпоинты скачивания — GET: бэкап, QR и т.п.);
+    // прежде отправлялся POST и кнопка «Скачать резервную копию БД» падала 405
+    const headers = { 'Authorization': 'Bearer ' + getToken() };
+    const opts = b === undefined
+      ? { method: 'GET', headers }
+      : { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(b) };
+    const resp = await fetch(p, opts);
     if (!resp.ok) {
       let msg = 'Ошибка ' + resp.status;
       try { const j = await resp.json(); msg = typeof j.detail === 'string' ? j.detail : msg; } catch {}
