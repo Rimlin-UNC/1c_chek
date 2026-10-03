@@ -124,8 +124,9 @@ class TestNoFlickerAndStandards:
         for p in paths:
             if p == "/":
                 continue
-            # URL /css/app.css обслуживается из app/static/css/app.css (SPA)
-            fs = pathlib.Path("app/static") / p.lstrip("/")
+            # URL /css/app.css обслуживается из app/static/css/app.css (SPA);
+            # v1.12.2: маркер версии (?v=…) срезаем — файл тот же
+            fs = pathlib.Path("app/static") / p.split("?")[0].lstrip("/")
             if not fs.exists():
                 missing.append(p)
         assert not missing, f"в кэше SW несуществующие файлы: {missing}"

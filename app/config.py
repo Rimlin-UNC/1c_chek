@@ -37,7 +37,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.12.1"
+    APP_VERSION: str = "1.12.2"
     DEFAULT_BRANCH: str = "arena/01a0caaa-1c-chek"   # ветка для обновлений из приложения
     VENDOR: str = "ООО «Ямастер»"
     VENDOR_SITE: str = "https://ymaster.ru"
