@@ -827,3 +827,33 @@ html[data-theme="light"] .modal { color: var(--text); }
   .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
 }
 
+/* ======================================================================
+   v1.10.0 — авансовый отчёт АО-1 (классическая форма, A4 → PDF)
+   ====================================================================== */
+.ao-page {
+  height: auto; min-height: 0; overflow: visible;
+  padding: 12mm 14mm;
+  background: #fff; color: #111;
+  font-family: "Times New Roman", Georgia, serif;
+  font-size: 12.5px; line-height: 1.45;
+}
+.ao-head { display: flex; justify-content: space-between; gap: 10mm; margin-bottom: 4mm; }
+.ao-org { font-size: 14px; max-width: 45%; }
+.ao-docnum { text-align: right; font-size: 11.5px; color: #333; }
+.ao-title { text-align: center; font-size: 18px; margin: 3mm 0 5mm; letter-spacing: .5px; }
+.ao-meta { width: 100%; border-collapse: collapse; margin-bottom: 5mm; }
+.ao-meta td { padding: 1.5mm 2mm; border-bottom: 1px solid #bbb; }
+.ao-meta td:first-child { width: 34mm; color: #444; }
+.ao-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ao-table th, .ao-table td { border: 1px solid #333; padding: 1.8mm 2mm; vertical-align: top; }
+.ao-table th { background: #efefef; font-weight: 700; }
+.ao-table tfoot td { border-top: 2px solid #333; }
+.ao-c { text-align: center; }
+.ao-r { text-align: right; white-space: nowrap; }
+.ao-note { margin: 4mm 0; font-size: 12px; }
+.ao-sign { width: 100%; border-collapse: collapse; margin-top: 10mm; font-size: 11.5px; }
+.ao-sign td { padding: 2.5mm 2mm; vertical-align: bottom; }
+.ao-line { border-bottom: 1px solid #333; min-width: 38mm; }
+.ao-foot { margin-top: 8mm; font-size: 9.5px; color: #666; text-align: right; }
+@media print { .ao-page { box-shadow: none; } }
+

@@ -1508,6 +1508,7 @@ async function viewReceipts(container) {
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
         <button class="btn btn-sm" id="btn-print-pdf">🖨 Печать PDF</button>
+        <button class="btn btn-sm" id="btn-ao1">🧾 Авансовый отчёт (АО-1)</button>
         <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
       </div>` : `
@@ -1624,6 +1625,13 @@ async function viewReceipts(container) {
   }
   function updateSelInfo() {
     updateUserSelInfo();
+    // v1.10.0: авансовый отчёт АО-1 (бухгалтер/админ)
+    const bao = $('#btn-ao1');
+    if (bao && !bao.dataset.bound) {
+      bao.dataset.bound = '1';
+      bao.onclick = () => openAO1Modal();
+    }
+
     // v1.7.0: печать выбранных чеков PDF (кнопка у бухгалтера и пользователя)
     const bpdf = $('#btn-print-pdf');
     if (bpdf && !bpdf.dataset.bound) {
@@ -1891,6 +1899,149 @@ async function printReceiptsPDF(ids) {
     close();
     toast(e.message, 'err');
   }
+}
+
+// ==========================================================================
+//  v1.10.0: АВАНСОВЫЙ ОТЧЁТ АО-1 (бухгалтер/админ).
+//  Шаблон — редактируемый; при формировании заполняется автоматически
+//  по чекам сотрудника за период. Вывод: страница A4 → «Сохранить как PDF».
+//  Форма по структуре соответствует классическому АО-1 (Указание ЦБ 3210-У:
+//  подотчётное лицо, назначение аванса, приложенные чеки, итоги, подписи).
+// ==========================================================================
+const AO_DOC_NAMES = { 1: 'приход', 2: 'возврат прихода' };
+
+async function openAO1Modal() {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const names = [...(viewReceipts._names || [])];
+  const { slot } = openModal(`
+    <div class="modal-title">🧾 Авансовый отчёт (АО-1) — шаблон</div>
+    <p class="form-hint" style="margin-bottom:10px">Поля шаблона можно править —
+    в форму попадут отредактированные значения. Чеки подставятся автоматически
+    по сотруднику и периоду.</p>
+    <div class="form-grid">
+      <label class="field"><span>Организация</span>
+        <input id="ao-org" value="${esc(state.me?.organization || 'ООО «Ямастер»')}"></label>
+      <label class="field"><span>Номер документа</span>
+        <input id="ao-num" value="АО-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(Math.floor(Math.random() * 90) + 10)}"></label>
+      <label class="field"><span>Дата составления</span>
+        <input id="ao-date" type="date" value="${now.toISOString().slice(0, 10)}"></label>
+      <label class="field"><span>Подотчётное лицо (сотрудник)</span>
+        <input id="ao-assignee" list="ao-names" placeholder="Иванов Иван">
+        <datalist id="ao-names">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+      <label class="field"><span>Должность подотчётного</span>
+        <input id="ao-post" placeholder="менеджер"></label>
+      <label class="field"><span>Назначение аванса</span>
+        <input id="ao-purpose" value="На хозяйственные расходы"></label>
+      <label class="field"><span>Месяц отчёта</span>
+        <input id="ao-month" type="month" value="${ym}"></label>
+      <label class="field"><span>Бухгалтер (ФИО для подписи)</span>
+        <input id="ao-buh" value="${esc(state.me?.full_name || '')}"></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>Отмена</button>
+      <button class="btn btn-primary" id="ao-make">🧾 Сформировать PDF</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  slot.querySelector('#ao-make').onclick = async (e) => {
+    const btn = e.target;
+    const assignee = slot.querySelector('#ao-assignee').value.trim();
+    if (!assignee) return toast('Укажите подотчётное лицо', 'warn');
+    btn.disabled = true;
+    try {
+      const mv = slot.querySelector('#ao-month').value || ym;
+      const [y, m] = mv.split('-').map(Number);
+      const from = `${y}-${String(m).padStart(2, '0')}-01`;
+      const to = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+      const data = await api.get(`/api/v1/receipts?assignee=${encodeURIComponent(assignee)}&date_from=${from}&date_to=${to}&page_size=200`);
+      if (!data.items.length) { btn.disabled = false; return toast('За период чеков этого сотрудника нет', 'warn'); }
+      ao1Print(slot, data.items, { ...Object.fromEntries(['ao-org', 'ao-num', 'ao-date', 'ao-post', 'ao-purpose', 'ao-buh'].map(id => [id, slot.querySelector('#' + id).value])), assignee, month: mv });
+    } catch (err) { toast(err.message, 'err'); }
+    btn.disabled = false;
+  };
+}
+
+function ao1Print(f, items, meta) {
+  const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
+  const total = items.reduce((a, r) => a + (r.total_sum || 0), 0);
+  const rows = items.map((r, i) => `<tr>
+      <td class="ao-c">${i + 1}</td>
+      <td class="ao-c">${fmtDate(r.receipt_date)}</td>
+      <td class="ao-c">Чек ФД №${esc(r.fd || '—')}${AO_DOC_NAMES[r.operation] ? ' (' + AO_DOC_NAMES[r.operation] + ')' : ''}</td>
+      <td>${esc(r.merchant_name || 'Товары (по чеку)')}</td>
+      <td class="ao-c">${esc(r.category || '—')}</td>
+      <td class="ao-r">${sum(r.total_sum)}</td>
+    </tr>`).join('');
+  let root = document.getElementById('print-root');
+  if (root) root.remove();
+  root = document.createElement('div');
+  root.id = 'print-root';
+  root.innerHTML = `
+    <div class="print-page ao-page">
+      <div class="ao-head">
+        <div class="ao-org"><b>${esc(meta['ao-org'] || '')}</b></div>
+        <div class="ao-docnum">Приложение №&nbsp;${items.length} · документов<br>
+          <b>${esc(meta['ao-num'] || '')}</b> от <b>${esc(meta['ao-date'] || '')}</b></div>
+      </div>
+      <h2 class="ao-title">АВАНСОВЫЙ ОТЧЁТ № ${esc((meta['ao-num'] || '').split('-').pop())}</h2>
+      <table class="ao-meta">
+        <tr><td>Подотчётное лицо:</td><td><b>${esc(meta.assignee || '')}</b></td>
+            <td>Должность:</td><td>${esc(meta['ao-post'] || '—')}</td></tr>
+        <tr><td>Назначение аванса:</td><td colspan="3">${esc(meta['ao-purpose'] || '')}</td></tr>
+        <tr><td>Отчётный период:</td><td colspan="3">${esc(meta.month || '')}</td></tr>
+      </table>
+      <table class="ao-table">
+        <thead><tr><th>№</th><th>Дата чека</th><th>Документ</th>
+          <th>Наименование (продавец)</th><th>Статья расходов</th><th>Сумма, ₽</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="5" class="ao-r"><b>ИТОГО</b></td>
+          <td class="ao-r"><b>${sum(total)}</b></td></tr></tfoot>
+      </table>
+      <p class="ao-note">Приложено кассовых чеков — <b>${items.length}</b> шт. на сумму
+        <b>${sum(total)} ₽</b> (${ruMoney(total)}).</p>
+      <table class="ao-sign">
+        <tr><td>Отчёт составил(а), подотчётное лицо</td><td class="ao-line"></td>
+            <td>Подпись</td><td class="ao-line"></td></tr>
+        <tr><td>Проверил(а) бухгалтер</td><td class="ao-line">${esc(meta['ao-buh'] || '')}</td>
+            <td>Подпись</td><td class="ao-line"></td></tr>
+      </table>
+      <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>
+    </div>`;
+  document.body.appendChild(root);
+  toast(`АО-1: ${items.length} чек(а) на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
+  window.print();
+}
+
+// сумма прописью (рубли; копейки цифрами) — для классической формы отчёта
+function ruMoney(n) {
+  n = Math.round((Number(n) || 0) * 100) / 100;
+  const rub = Math.floor(n), kop = Math.round((n - rub) * 100);
+  const ones = ['ноль', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять',
+    'десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать',
+    'семнадцать', 'восемнадцать', 'девятнадцать'];
+  const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+  const hun = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+  const tri = (x, forms) => {
+    let s = '';
+    const h = Math.floor(x / 100), t = Math.floor((x % 100) / 10), o = x % 10;
+    if (h) s += hun[h] + ' ';
+    if (t >= 2) { s += tens[t] + ' '; s += ones[o] + ' '; }
+    else if (x % 100) s += ones[x % 100] + ' ';
+    const last = x % 100;
+    if (last >= 11 && last <= 19) s += forms[2];
+    else if (o === 1) s += forms[0];
+    else if (o >= 2 && o <= 4) s += forms[1];
+    else s += forms[2];
+    return (s + ' ').replace(/\s+/g, ' ').trim();
+  };
+  const mil = Math.floor(rub / 1e6), th = Math.floor((rub % 1e6) / 1e3), rest = rub % 1e3;
+  let out = [];
+  if (mil) out.push(tri(mil, ['миллион', 'миллиона', 'миллионов']));
+  if (th) out.push(tri(th, ['тысяча', 'тысячи', 'тысяч']));
+  if (rest) out.push(tri(rest, ['рубль', 'рубля', 'рублей']));
+  if (!rub) out.push('ноль рублей');
+  return out.join(' ').replace('один тысяча', 'одна тысяча').replace('два тысячи', 'две тысячи') +
+    ' ' + String(kop).padStart(2, '0') + ' коп.';
 }
 
 // ==========================================================================
