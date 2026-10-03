@@ -6,8 +6,9 @@
 // ======================================================================
 
 const CACHE = 'ymaster-check-v1.8.0';
-// v1.8.0: исправлены пути (файлы лежат в /static/…; прежние /js/… давали 404
-// при установке кэша — Service Worker не устанавливался)
+// v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
+// SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
+// addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html', '/css/app.css', '/js/app.js', '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
