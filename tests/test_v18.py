@@ -82,11 +82,12 @@ class TestUpdatePipelineE2E:
         dst = tmp_path / "appcopy"
         subprocess.run(["git", "clone", "-q", "--no-hardlinks",
                         os.getcwd(), str(dst)], check=True)
-        # «старая версия»: понижаем APP_VERSION (актуальную читаем из config)
+        # «старая версия»: понижаем APP_VERSION (читаем из КОПИИ — клона, а не
+        # рабочего дерева: в дереве версия может быть ещё не закоммичена)
         import re as _re
-        cur = _re.search(r'APP_VERSION: str = "([^"]+)"',
-                         open("app/config.py", encoding="utf-8").read()).group(1)
         cfg = dst / "app" / "config.py"
+        cur = _re.search(r'APP_VERSION: str = "([^"]+)"',
+                         cfg.read_text(encoding="utf-8")).group(1)
         cfg.write_text(cfg.read_text(encoding="utf-8")
                        .replace(f'APP_VERSION: str = "{cur}"',
                                 'APP_VERSION: str = "0.0.9"'), encoding="utf-8")

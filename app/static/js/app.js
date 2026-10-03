@@ -478,13 +478,18 @@ function bindShell() {
   const closeSidebar = () => {
     $('#sidebar').classList.remove('open');
     document.body.classList.remove('sb-open');
+    $('#btn-sidebar').setAttribute('aria-expanded', 'false');   // v1.10.1: a11y
   };
   $('#btn-sidebar').onclick = () => {
     const opened = $('#sidebar').classList.toggle('open');
     document.body.classList.toggle('sb-open', opened);
+    $('#btn-sidebar').setAttribute('aria-expanded', String(opened)); // v1.10.1: a11y
   };
   $('#sidebar-backdrop').onclick = closeSidebar;
   $('#sb-close').onclick = closeSidebar;
+  // v1.10.1: выбор пункта меню закрывает меню — включая клик по ТЕКУЩЕМУ
+  // разделу (hash не меняется, hashchange не сработает, меню осталось бы открытым)
+  $$('.nav-item').forEach((a) => a.addEventListener('click', closeSidebar));
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeSidebar();
   });
@@ -499,6 +504,7 @@ function bindShell() {
   }, { passive: true });
   window.addEventListener('hashchange', () => {
     if (location.hash.startsWith('#/register')) return;
+    closeSidebar();                       // v1.10.1: перешли в другой раздел — меню закрыто
     route();
   });
 }
@@ -1194,6 +1200,9 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.10.1': [
+    ['🐛 В приложении теперь выбирается пункт меню', 'исправлена ошибка слоёв: фон-затемнение перекрывал меню на телефоне — нажатие по пункту лишь закрывало меню. Теперь пункт открывает раздел, и меню сворачивается само; «чёлка» и жест-бар iPhone/Android больше не перекрывают меню в установленном приложении.'],
+  ],
   '1.10.0': [
     ['📱 Меню и экран: удобно на любом устройстве', 'меню сворачивается всегда — фон, ✕, Esc или свайп; интерфейс адаптируется к планшету и горизонтальному экрану, поворот телефона больше не заблокирован.'],
     ['🧾 Чеки в PDF — как кассовые', 'в печатной версии каждого чека — настоящий фискальный QR-код, как выдаёт касса: проверяется любым приложением проверки чеков.'],

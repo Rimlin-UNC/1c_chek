@@ -514,7 +514,11 @@ pre.codeblock {
   .mapping-grid .mg-label { display: block; font-size: 10.5px; color: var(--text-faint); margin-bottom: 3px; }
 }
 @media (max-width: 860px) {
-  .sidebar { position: fixed; top: 0; bottom: 0; margin-left: calc(-1 * var(--sidebar-w)); }
+  /* v1.10.1: в standalone (установленное приложение) «чёлка» iPhone и жест-бар
+     Android/iPhone не должны перекрывать шапку меню и его подвал */
+  .sidebar { position: fixed; top: 0; bottom: 0; margin-left: calc(-1 * var(--sidebar-w));
+             padding-top: env(safe-area-inset-top, 0px);
+             padding-bottom: env(safe-area-inset-bottom, 0px); }
   .sidebar.open { margin-left: 0; box-shadow: 40px 0 80px rgba(0,0,0,.6); }
   .hamburger { display: inline-flex; }
   .content { padding: 14px; }
@@ -801,7 +805,9 @@ html[data-theme="light"] .modal { color: var(--text); }
 * { -webkit-tap-highlight-color: transparent; }
 .sidebar-backdrop {
   display: none;
-  position: fixed; inset: 0; z-index: 40;
+  /* v1.10.1: фон НИЖЕ меню (у меню 30) — раньше фон был 40 и перекрывал
+     пункты меню на телефоне: тап закрывал меню, раздел не открывался */
+  position: fixed; inset: 0; z-index: 25;
   background: rgba(4, 8, 20, .55);
   opacity: 0; pointer-events: none;
   transition: opacity var(--speed);
