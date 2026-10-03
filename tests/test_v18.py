@@ -73,22 +73,34 @@ class TestAdvanceDeadline:
 
 
 class TestUpdatePipelineE2E:
+    """Полный конвейер: backup → fetch → reset → clean → deps → проверка.
+    «Старая версия» эмулируется локальным коммитом с пониженной версией —
+    update обязан перезатереть локальный дрейф кодом с GitHub."""
+
     def test_apply_pipeline_real_git(self, tmp_path, monkeypatch):
         import app.services.updater as up
         dst = tmp_path / "appcopy"
         subprocess.run(["git", "clone", "-q", "--no-hardlinks",
                         os.getcwd(), str(dst)], check=True)
-        # клон песочницы shallow — раскрываем историю, чтобы откатиться на 5 коммитов
-        subprocess.run(["git", "-C", str(dst), "fetch", "-q", "--unshallow", "origin"],
-                       check=False)
-        subprocess.run(["git", "-C", str(dst), "reset", "-q",
-                        "--hard", "HEAD~5"], check=True)
-        old_cfg = (dst / "app" / "config.py").read_text(encoding="utf-8")
-        assert 'APP_VERSION: str = "1.8.0"' not in old_cfg
+        # «старая версия»: понижаем APP_VERSION и коммитим в локальной копии
+        cfg = dst / "app" / "config.py"
+        cfg.write_text(cfg.read_text(encoding="utf-8")
+                       .replace('APP_VERSION: str = "1.8.0"',
+                                'APP_VERSION: str = "0.0.9"'), encoding="utf-8")
+        subprocess.run(["git", "-C", str(dst), "config", "user.email", "t@t"],
+                       check=True)
+        subprocess.run(["git", "-C", str(dst), "config", "user.name", "t"],
+                       check=True)
+        subprocess.run(["git", "-C", str(dst), "commit", "-qam", "old"], check=True)
+        # заглушка БД — чтобы preupdate-копия создалась как в бою
+        (dst / "data").mkdir(exist_ok=True)
+        (dst / "data" / "ymaster_check.db").write_bytes(b"fake-db-for-test")
         monkeypatch.setattr(up, "APP_DIR", str(dst))
+        monkeypatch.setattr(up, "_append_history", lambda *a, **k: None)
         up._do_apply("1.8.0", "Rimlin-UNC/1c_chek", "arena/01a0caaa-1c-chek")
         assert up.job.success, getattr(up.job, "log", None) or getattr(up.job, "error", None)
-        new_cfg = (dst / "app" / "config.py").read_text(encoding="utf-8")
+        # локальный дрейф перезатёрт кодом с origin (версия снова 1.8.0)
+        new_cfg = cfg.read_text(encoding="utf-8")
         assert 'APP_VERSION: str = "1.8.0"' in new_cfg
         backups = os.listdir(dst / "data" / "backups")
         assert any(b.startswith("db-preupdate-") for b in backups)

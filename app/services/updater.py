@@ -403,7 +403,10 @@ def _do_apply(target_version: str, repo: str, branch: str) -> None:
             _append_history(db, {
                 "action": "apply", "from": settings.APP_VERSION,
                 "to": target_version, "commit_before": old_commit,
-                "commit_after": _local_commit(), "backup": os.path.basename(backup),
+                "commit_after": _local_commit(),
+                # v1.8.0: backup может быть None (например, БД ещё не создана) —
+                # обновление всё равно успешно, не роняем запись истории
+                "backup": os.path.basename(backup) if backup else "",
                 "at": datetime.utcnow().isoformat() + "Z", "ok": True})
         finally:
             db.close()
