@@ -121,6 +121,9 @@ class InviteCreate(BaseModel):
     note: str = Field(default="", max_length=200)
     company_id: Optional[str] = Field(default=None, max_length=36,
                                       description="v1.11.0: компания приглашённого")
+    company_name: Optional[str] = Field(default=None, max_length=200,
+                                        description="v1.12.0: название компании — "
+                                                    "найдётся или будет создана")
 
 
 class AssignBulk(BaseModel):

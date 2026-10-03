@@ -529,9 +529,19 @@ function scanCompanyId() {
 // v1.11.0: приглашение с привязкой к компании (глобальная — используется
 // и на экране «Пользователи», и на экране «Компании»)
 function inviteDialog(companyIdPref = '', companyName = '') {
+    // v1.12.0: компания — первичное поле: выбрать из списка или ввести новую
+    // (создастся автоматически); по компании определяется группа доступа
+    const prefName = companyName || (state.companies.find(c => c.id === companyIdPref) || {}).name || '';
     const { slot } = openModal(`
       <div class="modal-title">✉️ Новое приглашение</div>
       <div class="form-grid">
+        ${isAdmin() ? `<label class="field full"><span>Компания — группа доступа (выберите или введите новую)</span>
+          <input id="iv-company-name" list="iv-company-list" value="${esc(prefName)}"
+                 placeholder="ООО «Партнёр-СВ», ИП Иванов…">
+          <datalist id="iv-company-list">
+            ${state.companies.filter(c => c.is_active).map(c =>
+              `<option value="${esc(c.name)}"></option>`).join('')}
+          </datalist></label>` : ''}
         <label class="field"><span>Роль нового пользователя</span>
           <select id="iv-role">
             <option value="accountant">Бухгалтер (расширенные права)</option>
@@ -541,15 +551,8 @@ function inviteDialog(companyIdPref = '', companyName = '') {
           <input id="iv-hours" type="number" value="72" min="1" max="8760"></label>
         <label class="field"><span>Сколько раз можно использовать</span>
           <input id="iv-uses" type="number" value="1" min="1" max="200"></label>
-        <label class="field full"><span>Для кого (памятка, попадёт в «Организацию»)</span>
+        <label class="field full"><span>Памятка (для кого ссылка, необязательно)</span>
           <input id="iv-note" placeholder="Иванова — бухгалтерия"></label>
-        ${isAdmin() ? `<label class="field full"><span>Компания (пространство сотрудника)</span>
-          <select id="iv-company">
-            <option value="">— без компании —</option>
-            ${state.companies.filter(c => c.is_active).map(c =>
-              `<option value="${c.id}" ${companyIdPref === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
-          </select></label>
-          ${companyName ? `<p class="form-hint full" style="grid-column:1/-1">Приглашение для компании: <b>${esc(companyName)}</b></p>` : ''}` : ''}
       </div>
       <div class="modal-actions">
         <button class="btn" data-close>Отмена</button>
@@ -558,13 +561,20 @@ function inviteDialog(companyIdPref = '', companyName = '') {
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#iv-save').onclick = async () => {
       try {
-        const ivComp = slot.querySelector('#iv-company');
+        // v1.12.0: резолюция компании по названию (есть — берём, нет — создаём)
+        const nameInput = slot.querySelector('#iv-company-name');
+        let companyNameVal = nameInput ? nameInput.value.trim() : '';
+        if (companyNameVal && !state.companies.some(
+            c => c.name.toLowerCase() === companyNameVal.toLowerCase())) {
+          const created = await api.post('/api/v1/companies', { name: companyNameVal });
+          state.companies.push(created);
+        }
         const inv = await api.post('/api/v1/invites', {
           role: slot.querySelector('#iv-role').value,
           expires_hours: +slot.querySelector('#iv-hours').value || 72,
           max_uses: +slot.querySelector('#iv-uses').value || 1,
           note: slot.querySelector('#iv-note').value.trim(),
-          ...(ivComp && ivComp.value ? { company_id: ivComp.value } : {}),
+          ...(companyNameVal ? { company_name: companyNameVal } : {}),
         });
         $('#modal-root').classList.add('hidden');
         const url = `${location.origin}/#/register/${inv.token}`;
@@ -1484,6 +1494,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.12.0': [
+    ['🏢 Компании определяются по «памятке» — существующие данные уже распределены', 'каждый различающийся текст «памятки» приглашения (он же «Организация» сотрудника) стал компанией: приглашения, сотрудники и их чеки перепривязаны автоматически — при первом запуске новой версии.'],
+    ['✉️ В приглашении компания — первое поле', 'выберите существующую или введите новую — создастся сама; группа доступа определяется компанией. На странице «Пользователи» — фильтр по компании.'],
+  ],
   '1.11.0': [
     ['🏢 Приложение стало платформой: ведите бухгалтерию нескольких компаний', 'администратор создаёт неограниченное число компаний (ООО, ИП), в каждой — свои бухгалтеры и сотрудники со своими чеками. Компании видят только своё пространство; вы видите всё.'],
     ['🔓 Фильтр «Все компании / одна компания» в шапке', 'выберите компанию — дашборд и чеки показывают только её данные; карточка «По компаниям» на дашборде показывает сводку по всем сразу.'],
@@ -2726,20 +2740,35 @@ async function viewUsers(container) {
   if (isAdmin() && !state.companies.length) {
     try { state.companies = await api.get('/api/v1/companies'); } catch (e) {}
   }
+  // v1.12.0: фильтр «группа-компания» (сохраняется между перерисовками)
+  if (viewUsers._companyFilter == null) viewUsers._companyFilter = 'all';
+  const cf = viewUsers._companyFilter;
+  const byCompany = (arr) => cf === 'all' ? arr
+    : arr.filter(x => x.company_id === cf);
+  const usersV = byCompany(users), invitesV = byCompany(invites);
 
   container.innerHTML = `
     <div class="info-callout">Регистрация — <b>только по приглашениям</b>: создайте ссылку с ролью
     и передайте сотруднику. Администратор в системе всегда <b>один</b> — права передаются
     кнопкой «Сделать администратором» у бухгалтера.</div>
+    ${isAdmin() && state.companies.length ? `
+    <div class="filter-bar" style="margin-bottom:14px">
+      <label class="field"><span>Группа-компания</span>
+        <select id="p-company-filter">
+          <option value="all" ${cf === 'all' ? 'selected' : ''}>Все компании</option>
+          ${state.companies.map(c => `<option value="${c.id}" ${cf === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select></label>
+      <span class="form-hint" style="align-self:end">сотрудники и приглашения выбранной группы</span>
+    </div>` : ''}`
 
     <div class="glass card" style="margin-bottom:16px">
       <div class="card-title">Приглашения <span class="spacer"></span>
         <button class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
-        <th>Кто (памятка)</th><th>Роль</th><th>Компания</th><th>Использовано</th><th>Действует до</th>
+        <th>Компания (группа)</th><th>Роль</th><th>Компания</th><th>Использовано</th><th>Действует до</th>
         <th>Статус</th><th>Ссылка</th><th></th></tr></thead><tbody>
-        ${invites.length ? invites.map(i => `<tr style="cursor:default">
-          <td><b>${esc(i.note || '—')}</b></td>
+        ${invitesV.length ? invitesV.map(i => `<tr style="cursor:default">
+          <td><b>${esc(i.company_name || '—')}</b>${i.note ? `<div class="form-hint">${esc(i.note)}</div>` : ''}</td>
           <td>${roleChip(i.role)}</td>
           <td>${esc(i.company_name || '—')}</td>
           <td>${i.used_count} / ${i.max_uses}</td>
@@ -2749,7 +2778,7 @@ async function viewUsers(container) {
             ? `<button class="btn btn-sm i-link" data-token="${esc(i.token)}">🔗 копировать</button>
                <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>` : '—'}</td>
           <td>${i.valid ? `<button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}">Отозвать</button>` : ''}</td>
-        </tr>`).join('') : `<tr style="cursor:default"><td colspan="8">${emptyState('✉️', 'Приглашений ещё нет')}</td></tr>`}
+        </tr>`).join('') : `<tr style="cursor:default"><td colspan="8">${emptyState('✉️', 'Приглашений для этой группы нет')}</td></tr>`}
       </tbody></table></div>
     </div>
 
@@ -2759,7 +2788,7 @@ async function viewUsers(container) {
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>Логин</th><th>ФИО</th><th>Роль</th><th>Компания</th><th>Статус</th>
         <th>Последний вход</th><th></th></tr></thead><tbody>
-        ${users.map(u => `<tr data-id="${u.id}" style="cursor:default">
+        ${usersV.map(u => `<tr data-id="${u.id}" style="cursor:default">
           <td><b>${esc(u.username)}</b>${u.must_change_password ? ' <span class="chip unknown mono">врем. пароль</span>' : ''}</td>
           <td>${esc(u.full_name)}</td>
           <td>${roleChip(u.role)}</td>
@@ -2785,6 +2814,8 @@ async function viewUsers(container) {
   }
 
   // --- Приглашения ---
+  const pcf = $('#p-company-filter');
+  if (pcf) pcf.onchange = () => { viewUsers._companyFilter = pcf.value; route(true); };
   $('#i-add').onclick = () => inviteDialog();
   $$('.i-link').forEach(btn => btn.onclick = () => {
     const url = `${location.origin}/#/register/${btn.dataset.token}`;

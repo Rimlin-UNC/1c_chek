@@ -68,6 +68,12 @@ def init_db() -> None:
     from . import models  # noqa: F401 — регистрируем модели
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
+    # v1.12.0: распределение существующих данных по компаниям из «памятки»
+    try:
+        migrate_companies_from_notes()
+    except Exception:  # noqa: BLE001 — старт не должен ломаться на миграции
+        import traceback
+        traceback.print_exc()
 
 
 def _ensure_schema() -> None:
@@ -173,3 +179,98 @@ def _backfill_companies(conn, existing_tables: set) -> None:
     if "invites" in existing_tables:
         conn.execute(text("UPDATE invites SET company_id = :c WHERE company_id IS NULL"),
                      {"c": cid})
+
+
+def migrate_companies_from_notes() -> dict:
+    """v1.12.0: компании из «памятки» приглашений и «Организации» пользователей.
+
+    Исторически клиентские группы различались текстом памятки приглашения
+    (он же попадал в «Организацию» сотрудника). Эта процедура превращает
+    каждый различающийся текст в компанию (если её ещё нет) и перепривязывает:
+      * приглашения    (invites.note       → invites.company_id);
+      * пользователей  (users.organization → users.company_id);
+      * их чеки        (receipts, созданные этими пользователями и всё ещё
+                        находящиеся в компании по умолчанию).
+    Процедура идемпотентна: повторный запуск ничего не меняет. Вызывается
+    при старте однократно (флаг в app_settings) — существующие данные
+    распределяются по компаниям автоматически, ничего не теряется.
+    """
+    from sqlalchemy import inspect, text
+
+    from .models import (AppSetting, Company, Invite, Receipt, User)
+
+    FLAG = "v1112_notes_companies_done"
+    db = SessionLocal()
+    try:
+        insp = inspect(engine)
+        tables = set(insp.get_table_names())
+        for tbl, col in (("companies", "name"), ("invites", "note"),
+                         ("users", "organization"), ("receipts", "company_id")):
+            if tbl not in tables or col not in {c["name"] for c in insp.get_columns(tbl)}:
+                return {"skipped": "schema"}
+        out = {"companies_created": 0, "users_moved": 0,
+               "invites_bound": 0, "receipts_moved": 0}
+        if db.query(AppSetting).filter(AppSetting.key == FLAG).first():
+            return {"skipped": "done"}
+
+        def ensure_company(name: str):
+            cf = name.casefold()
+            for c in db.query(Company):
+                if c.name.casefold() == cf:
+                    return c
+            c = Company(name=name[:200])
+            db.add(c)
+            db.flush()
+            out["companies_created"] += 1
+            return c
+
+        # компания по умолчанию (создана бэкфиллом 1.11.0) — только из неё
+        # забираем чеки, чтобы не трогать уже перенесённые администратором
+        default_id = None
+        admin = db.query(User).filter(User.role == "admin").first()
+        first_comp = db.query(Company).order_by(Company.created_at).first()
+        if first_comp is not None:
+            default_id = first_comp.id
+
+        # 1) приглашения: памятка → компания
+        for inv in db.query(Invite).all():
+            note = (inv.note or "").strip()
+            if not note or inv.company_id:
+                continue
+            comp = ensure_company(note)
+            inv.company_id = comp.id
+            out["invites_bound"] += 1
+
+        # 2) пользователи: «Организация» → компания (кроме админа)
+        for u in db.query(User).filter(User.role != "admin").all():
+            org = (u.organization or "").strip()
+            if not org:
+                continue
+            comp = ensure_company(org)
+            if u.company_id != comp.id:
+                u.company_id = comp.id
+                out["users_moved"] += 1
+                # 3) чеки сотрудника из прежней (дефолтной/без) компании — за ним
+                #    (IN с NULL в SQL не матчит NULL — ветки через or_)
+                from sqlalchemy import or_
+                q = db.query(Receipt).filter(Receipt.created_by == u.id)
+                q = (q.filter(or_(Receipt.company_id == default_id,
+                                  Receipt.company_id.is_(None)))
+                     if default_id else q.filter(Receipt.company_id.is_(None)))
+                for r in q.all():
+                    if r.company_id != comp.id:
+                        r.company_id = comp.id
+                        out["receipts_moved"] += 1
+
+        row = db.query(AppSetting).filter(AppSetting.key == FLAG).first()
+        if row:
+            row.value = "1"
+        else:
+            db.add(AppSetting(key=FLAG, value="1"))
+        db.commit()
+        return out
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

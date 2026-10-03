@@ -42,11 +42,23 @@ def list_invites(db: Session = Depends(get_db), admin: User = Depends(require_ad
 @router.post("", summary="Создать приглашение (получить ссылку)")
 def create_invite(body: InviteCreate, db: Session = Depends(get_db),
                   admin: User = Depends(require_admin)):
+    # v1.12.0: компания приглашения — company_id, либо company_name
+    # (находится по названию без учёта регистра, при отсутствии создаётся)
     company_id = None
     if body.company_id:
         comp = db.get(Company, body.company_id)
         if not comp:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+        company_id = comp.id
+    elif (body.company_name or "").strip():
+        name = body.company_name.strip()[:200]
+        cf = name.casefold()
+        comp = next((c for c in db.query(Company).all()
+                     if c.name.casefold() == cf), None)
+        if comp is None:
+            comp = Company(name=name)
+            db.add(comp)
+            db.flush()
         company_id = comp.id
     invite = Invite(
         token=secrets.token_urlsafe(16),
@@ -60,10 +72,12 @@ def create_invite(body: InviteCreate, db: Session = Depends(get_db),
     db.add(invite)
     db.commit()
     db.refresh(invite)
+    comp = db.get(Company, invite.company_id) if invite.company_id else None
     log_action(admin, "invite_created", "invite", invite.id,
                {"role": invite.role, "max_uses": invite.max_uses,
-                "company_id": invite.company_id})
-    return invite.to_dict()
+                "company_id": invite.company_id,
+                "company": comp.name if comp else None})
+    return {**invite.to_dict(), "company_name": comp.name if comp else None}
 
 
 @router.get("/{invite_id}/qr", summary="QR-код ссылки-приглашения (PNG)")
