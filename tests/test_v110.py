@@ -55,15 +55,12 @@ class TestWindowsPwa:
 
 class TestSudoPassword:
     def test_run_passes_stdin(self, monkeypatch):
-        import subprocess
         import app.services.updater as up
         seen = {}
-        def fake_run(cmd, cwd=None, timeout=180, input_text=None):
-            seen["cmd"], seen["input"] = cmd, input_text
-            return 0, ""
-        monkeypatch.setattr(up.subprocess, "run",
-                            lambda **kw: seen.update(kw) or type("P", (), {
-                                "returncode": 0, "stdout": "", "stderr": ""})())
+        def fake_popen_run(cmd, **kw):
+            seen.update(cmd=cmd, input=kw.get("input"))
+            return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        monkeypatch.setattr(up.subprocess, "run", fake_popen_run)
         rc, _ = up._run(["sudo", "-S", "systemctl", "restart", "x"],
                         input_text="secret\n")
         assert rc == 0 and seen["input"] == "secret\n"
