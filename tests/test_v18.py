@@ -82,10 +82,13 @@ class TestUpdatePipelineE2E:
         dst = tmp_path / "appcopy"
         subprocess.run(["git", "clone", "-q", "--no-hardlinks",
                         os.getcwd(), str(dst)], check=True)
-        # «старая версия»: понижаем APP_VERSION и коммитим в локальной копии
+        # «старая версия»: понижаем APP_VERSION (актуальную читаем из config)
+        import re as _re
+        cur = _re.search(r'APP_VERSION: str = "([^"]+)"',
+                         open("app/config.py", encoding="utf-8").read()).group(1)
         cfg = dst / "app" / "config.py"
         cfg.write_text(cfg.read_text(encoding="utf-8")
-                       .replace('APP_VERSION: str = "1.8.0"',
+                       .replace(f'APP_VERSION: str = "{cur}"',
                                 'APP_VERSION: str = "0.0.9"'), encoding="utf-8")
         subprocess.run(["git", "-C", str(dst), "config", "user.email", "t@t"],
                        check=True)
@@ -101,7 +104,7 @@ class TestUpdatePipelineE2E:
         assert up.job.success, getattr(up.job, "log", None) or getattr(up.job, "error", None)
         # локальный дрейф перезатёрт кодом с origin (версия снова 1.8.0)
         new_cfg = cfg.read_text(encoding="utf-8")
-        assert 'APP_VERSION: str = "1.8.0"' in new_cfg
+        assert f'APP_VERSION: str = "{cur}"' in new_cfg
         backups = os.listdir(dst / "data" / "backups")
         assert any(b.startswith("db-preupdate-") for b in backups)
 

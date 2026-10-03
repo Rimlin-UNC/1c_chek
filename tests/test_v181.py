@@ -47,8 +47,9 @@ class TestRestartFromApp:
         assert got["to"] == "1.8.1" and got["backup"] == "x.db"
 
     def test_status_has_last_success(self, client, monkeypatch):
-        import app.routers.admin as admin_mod
-        monkeypatch.setattr(admin_mod, "load_last_update",
+        # admin.py импортирует load_last_update внутри функции — патчим источник
+        import app.services.updater as up
+        monkeypatch.setattr(up, "load_last_update",
                             lambda: {"from": "1.8.0", "to": "1.8.1",
                                      "at": "2026-10-03T09:00:00Z"})
         hdr = login(client, "admin", "admin123")
