@@ -108,8 +108,9 @@ def update_apply(db: Session = Depends(get_db), user: User = Depends(require_adm
 
 @router.get("/update/status", summary="Статус/журнал обновления (админ)")
 def update_status(user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    from ..services.updater import _history
-    return {"job": update_job.public(), "history": _history(db)[:20]}
+    from ..services.updater import _history, load_last_update
+    return {"job": update_job.public(), "history": _history(db)[:20],
+            "last_success": load_last_update()}
 
 
 @router.get("/update/changelog", summary="История версий — что менялось (админ)")

@@ -336,6 +336,43 @@ def _health_check() -> tuple[bool, str]:
     return True, out.strip()
 
 
+def _last_update_path() -> str:
+    return os.path.join(APP_DIR, "data", "last_update.json")
+
+
+def write_last_update(payload: dict) -> None:
+    """v1.8.1: маркер успешного обновления на диске. После рестарта процесс
+    новый, in-memory job пуст — фронтенд по маркеру показывает успех."""
+    try:
+        path = _last_update_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except OSError:
+        pass                                    # не критично
+
+
+def load_last_update() -> dict | None:
+    try:
+        with open(_last_update_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _restart_service() -> tuple[bool, str]:
+    """v1.8.1: приложение само перезапускает свой сервис. deploy.sh добавляет
+    sudoers-правило NOPASSWD на точную команду (пользователь ymaster);
+    порядок: sudo -n (боевой сервер) → plain systemctl (dev-окружение)."""
+    for cmd in (["sudo", "-n", "systemctl", "restart", "ymaster-check"],
+                ["systemctl", "restart", "ymaster-check"]):
+        rc, out = _run(cmd, timeout=60)
+        if rc == 0:
+            return True, "Сервис перезапущен — новая версия уже работает"
+    return False, ("Автоперезапуск недоступен — выполните на сервере: "
+                   "sudo systemctl restart ymaster-check (данные сохранены)")
+
+
 def _do_apply(target_version: str, repo: str, branch: str) -> None:
     """Основной конвейер обновления (выполняется в фоновом потоке)."""
     try:
@@ -381,15 +418,16 @@ def _do_apply(target_version: str, repo: str, branch: str) -> None:
         if not ok:
             raise RuntimeError(f"Проверка целостности не пройдена: {msg}")
 
-        job.say("restart", 90, "Перезапуск сервиса…")
-        needs_restart = True
-        rc, out = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
-        if rc == 0:
-            needs_restart = False
-            job.say("restart", 95, "Сервис перезапущен (systemd)")
-        else:
-            job.say("restart", 95,
-                    "В среде без systemd: перезапустите процесс — данные и настройки сохранены")
+        # v1.8.1: маркер успеха пишем ДО рестарта — после него процесс новый
+        write_last_update({
+            "from": getattr(job, "from_version", "") or "",
+            "to": target_version,
+            "at": datetime.utcnow().isoformat() + "Z",
+            "backup": os.path.basename(backup) if backup else ""})
+        job.say("restart", 92, "Перезапуск сервиса…")
+        restarted, rmsg = _restart_service()
+        needs_restart = not restarted
+        job.say("restart", 95, rmsg)
 
         job.success = True
         job.needs_restart = needs_restart
