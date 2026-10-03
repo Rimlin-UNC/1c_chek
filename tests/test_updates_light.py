@@ -105,8 +105,12 @@ class TestCheckEndpoint:
 
 class TestLightClient:
     def test_static_cached(self, client):
+        # v1.9.1: код (js/css) — no-cache (всегда свежий после рестарта),
+        # картинки — долгий кэш
         r = client.get("/static/css/app.css")
-        assert "max-age=604800" in r.headers.get("cache-control", "")
+        assert "no-cache" in r.headers.get("cache-control", "")
+        i = client.get("/img/logo.svg")
+        assert "max-age=604800" in i.headers.get("cache-control", "")
 
     def test_sw_not_cached(self, client):
         r = client.get("/sw.js")
