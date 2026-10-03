@@ -132,6 +132,7 @@ class ReceiptPatch(BaseModel):
     fp: Optional[str] = Field(default=None, max_length=20)
     receipt_date: Optional[datetime] = None
     total_sum: Optional[float] = Field(default=None, ge=0)
+    personal_sum: Optional[float] = Field(default=None, ge=0)   # v1.8.0: личные
     operation: Optional[int] = None          # 1 приход / 2 возврат
     merchant_name: Optional[str] = Field(default=None, max_length=500)
     merchant_inn: Optional[str] = Field(default=None, max_length=20)
@@ -177,3 +178,6 @@ class ExternalTestRequest(BaseModel):
 
 class AppSettingsPatch(BaseModel):
     auto_verify: Optional[bool] = None
+    # v1.8.0: срок сдачи авансового отчёта от даты чека (дней; приказ руководителя,
+    # п. 6.3 Указания ЦБ 3210-У — не более 3 рабочих дней после израсходования)
+    advance_deadline_days: Optional[int] = Field(default=None, ge=1, le=365)

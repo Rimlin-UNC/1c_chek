@@ -84,6 +84,8 @@ def _ensure_schema() -> None:
             ("notified", "ALTER TABLE receipts ADD COLUMN notified BOOLEAN DEFAULT 0"),
             ("category", "ALTER TABLE receipts ADD COLUMN category VARCHAR(100) DEFAULT ''"),
             ("category_lc", "ALTER TABLE receipts ADD COLUMN category_lc VARCHAR(100) DEFAULT ''"),
+            # --- v1.8.0: личные суммы в чеке ---
+            ("personal_sum", "ALTER TABLE receipts ADD COLUMN personal_sum FLOAT DEFAULT 0"),
         ],
     }
     insp = inspect(engine)

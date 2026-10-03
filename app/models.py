@@ -138,6 +138,8 @@ class Receipt(Base):
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     # Для бухгалтерии: подотчётное лицо (сотрудник) и комментарий
     assignee: Mapped[str] = mapped_column(String(200), default="")
+    # v1.8.0: личные покупки в чеке (не для учёта) — к учёту = total_sum - personal_sum
+    personal_sum: Mapped[float] = mapped_column(Float, default=0.0)
     comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
     # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
@@ -169,6 +171,7 @@ class Receipt(Base):
             "fp": self.fp,
             "receipt_date": self.receipt_date.isoformat() if self.receipt_date else None,
             "total_sum": self.total_sum,
+            "personal_sum": self.personal_sum or 0.0,
             "operation": self.operation,
             "status": self.status,
             "fns_status": self.fns_status,
