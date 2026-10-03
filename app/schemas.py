@@ -176,6 +176,13 @@ class ExternalTestRequest(BaseModel):
     qrraw: Optional[str] = None
 
 
+class UpdateApplyBody(BaseModel):
+    """v1.10.0: пароль sudo сервера — ТОЛЬКО на время обновления.
+    Не сохраняется и не логируется; используется исключительно для
+    `sudo -S systemctl restart`, если sudoers-правило ещё не установлено."""
+    sudo_password: Optional[str] = Field(default=None, max_length=256)
+
+
 class AppSettingsPatch(BaseModel):
     auto_verify: Optional[bool] = None
     # v1.8.0: срок сдачи авансового отчёта от даты чека (дней; приказ руководителя,

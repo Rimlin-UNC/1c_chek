@@ -27,7 +27,7 @@ from ..auth import ROLE_ACCOUNTANT, ROLE_USER, require_admin
 from ..config import settings
 from ..database import get_db
 from ..models import AppSetting, Receipt, User
-from ..schemas import Optional
+from ..schemas import Optional, UpdateApplyBody
 from ..services import appsettings
 from ..services.audit import log_action
 from ..services.updater import (APP_DIR, check_update, job as update_job,
@@ -95,18 +95,22 @@ def update_repo(body: dict,
 
 
 @router.post("/update/apply", summary="Применить обновление (админ)")
-def update_apply(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+def update_apply(body: "UpdateApplyBody | None" = None,
+                 db: Session = Depends(get_db),
+                 user: User = Depends(require_admin)):
     if update_job.running:
         raise HTTPException(status.HTTP_409_CONFLICT, "Обновление уже выполняется")
     # v1.9.1: предпроверка — без права на перезапуск обновление НЕ начинаем
     # (иначе обновятся файлы, а сервис останется на старом коде)
     from ..services.updater import pre_flight
+    sudo_password = (body.sudo_password or None) if body else None
     pf = pre_flight(db)
-    if not pf["can_restart"]:
+    if not pf["can_restart"] and not sudo_password:
         raise HTTPException(status.HTTP_409_CONFLICT,
-            "Нет права на перезапуск сервиса. Однократно выполните на сервере: "
-            "sudo bash /opt/ymaster-check/deploy.sh --update — после этого "
-            "обновляйтесь прямо отсюда.")
+            "Нет права на перезапуск сервиса: укажите пароль сервера в диалоге "
+            "обновления (он используется только на время обновления и нигде "
+            "не сохраняется) либо однократно выполните на сервере: "
+            "sudo bash /opt/ymaster-check/deploy.sh --update")
     if not pf["github_ok"]:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"GitHub недоступен с сервера: {pf['github_error']}")
@@ -118,7 +122,7 @@ def update_apply(db: Session = Depends(get_db), user: User = Depends(require_adm
         return {"ok": True, "updated": False,
                 "message": f"У вас уже последняя версия (v{settings.APP_VERSION})"}
     repo, branch = _repo_branch(db)
-    start_apply(info["remote_version"], repo, branch)
+    start_apply(info["remote_version"], repo, branch, sudo_password)
     log_action(user, "update_apply", details={
         "target": info["remote_version"], "branch": branch})
     return {"ok": True, "updated": True,

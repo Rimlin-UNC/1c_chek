@@ -1123,6 +1123,10 @@ function showUpdateDialog(checkInfo) {
     <div class="info-callout" style="font-size:12.5px">Обновление безопасно для данных: перед установкой автоматически
     создаётся резервная копия базы; проверяется целостность; при сбое — откат на прежнюю версию.
     Устанавливаются только изменения (не весь проект).</div>
+    <label class="field" style="margin-top:10px"><span>🔑 Пароль сервера (sudo) — необязательно</span>
+      <input type="password" id="upd-sudo-pw" autocomplete="off" placeholder="нужен, только если не настроено sudo-правило">
+      <span class="form-hint">Используется исключительно для перезапуска сервиса в момент обновления
+      и нигде не сохраняется — узнать его из приложения, кода или базы невозможно.</span></label>
     <div class="modal-actions">
       <button class="btn" id="upd-close">Позже</button>
       <button class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
@@ -1131,7 +1135,10 @@ function showUpdateDialog(checkInfo) {
   slot.querySelector('#upd-apply').onclick = async (e) => {
     e.target.disabled = true;
     try {
-      const resp = await api.post('/api/v1/admin/update/apply');
+      const pwEl = slot.querySelector('#upd-sudo-pw');
+      const pw = pwEl && pwEl.value ? pwEl.value : undefined;
+      const resp = await api.post('/api/v1/admin/update/apply',
+        pw ? { sudo_password: pw } : undefined);
       close();
       if (!resp.updated) return toast(resp.message, 'ok');
       openUpdateProgress();

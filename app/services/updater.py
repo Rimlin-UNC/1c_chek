@@ -91,12 +91,14 @@ job = UpdateJob()
 # ==========================================================================
 #  Вспомогательные: git, pip, версия с GitHub
 # ==========================================================================
-def _run(cmd: list[str], cwd: str | None = None, timeout: int = 180) -> tuple[int, str]:
+def _run(cmd: list[str], cwd: str | None = None, timeout: int = 180,
+         input_text: str | None = None) -> tuple[int, str]:
     # v1.8.0: cwd разрешается В МОМЕНТ ВЫЗОВА (иначе значение APP_DIR
     # фиксируется при импорте и не следует за тестами/переконфигурацией)
     cwd = cwd or APP_DIR
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout, input=input_text)
         return p.returncode, (p.stdout + p.stderr).strip()[-2000:]
     except subprocess.TimeoutExpired:
         return 124, f"timeout: {' '.join(cmd)}"
@@ -407,20 +409,32 @@ def pre_flight(db) -> dict:
     }
 
 
-def _restart_service() -> tuple[bool, str]:
-    """v1.8.1: приложение само перезапускает свой сервис. deploy.sh добавляет
-    sudoers-правило NOPASSWD на точную команду (пользователь ymaster);
-    порядок: sudo -n (боевой сервер) → plain systemctl (dev-окружение)."""
-    for cmd in (["sudo", "-n", "systemctl", "restart", "ymaster-check"],
-                ["systemctl", "restart", "ymaster-check"]):
-        rc, out = _run(cmd, timeout=60)
+def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
+    """v1.8.1/v1.10.0: приложение само перезапускает свой сервис.
+    Цепочка: 1) sudoers NOPASSWD (ставит deploy.sh); 2) sudo -S с паролем,
+    переданным администратором ТОЛЬКО на время обновления (не сохраняется
+    и не попадает в логи); 3) plain systemctl (dev-окружение)."""
+    rc, _o = _run(["sudo", "-n", "systemctl", "restart", "ymaster-check"], timeout=60)
+    if rc == 0:
+        return True, "Сервис перезапущен (sudoers) — новая версия уже работает"
+    if sudo_password:
+        rc, out = _run(["sudo", "-S", "-p", "", "systemctl", "restart",
+                        "ymaster-check"], timeout=60,
+                       input_text=sudo_password + "\n")
         if rc == 0:
-            return True, "Сервис перезапущен — новая версия уже работает"
+            return True, "Сервис перезапущен (по паролю администратора)"
+        if "incorrect password" in (out or "").lower():
+            return False, ("Пароль сервера отклонён sudo — обновление не "
+                           "применено целиком; файлы уже обновлены, данные целы")
+    rc, _o = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
+    if rc == 0:
+        return True, "Сервис перезапущен — новая версия уже работает"
     return False, ("Автоперезапуск недоступен — выполните на сервере: "
                    "sudo systemctl restart ymaster-check (данные сохранены)")
 
 
-def _do_apply(target_version: str, repo: str, branch: str) -> None:
+def _do_apply(target_version: str, repo: str, branch: str,
+              sudo_password: str | None = None) -> None:
     """Основной конвейер обновления (выполняется в фоновом потоке)."""
     try:
         job.reset()
@@ -478,7 +492,7 @@ def _do_apply(target_version: str, repo: str, branch: str) -> None:
             "at": datetime.utcnow().isoformat() + "Z",
             "backup": os.path.basename(backup) if backup else ""})
         job.say("restart", 92, "Перезапуск сервиса…")
-        restarted, rmsg = _restart_service()
+        restarted, rmsg = _restart_service(sudo_password)
         needs_restart = not restarted
         job.say("restart", 95, rmsg)
 
@@ -526,9 +540,11 @@ def _do_apply(target_version: str, repo: str, branch: str) -> None:
         job.running = False
 
 
-def start_apply(target_version: str, repo: str, branch: str) -> None:
+def start_apply(target_version: str, repo: str, branch: str,
+                sudo_password: str | None = None) -> None:
     if job.running:
         raise RuntimeError("Обновление уже выполняется")
-    t = threading.Thread(target=_do_apply, args=(target_version, repo, branch),
+    t = threading.Thread(target=_do_apply,
+                         args=(target_version, repo, branch, sudo_password),
                          daemon=True, name="ymaster-updater")
     t.start()
