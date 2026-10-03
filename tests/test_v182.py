@@ -144,7 +144,9 @@ class TestSelfUpdateV19:
     def test_app_code_always_fresh(self, client):
         """Код (js/css) — no-cache: после рестарта все пользователи сразу
         получают новую версию, а не кэш семидневной давности."""
-        r = client.get("/static/js/app.js")
+        r = client.get("/js/app.js")   # v1.10.0: реальный URL из index.html
         assert "no-cache" in r.headers.get("cache-control", "")
+        r2 = client.get("/static/js/app.js")
+        assert "no-cache" in r2.headers.get("cache-control", "")
         i = client.get("/img/logo.svg")
         assert "max-age=604800" in i.headers.get("cache-control", "")

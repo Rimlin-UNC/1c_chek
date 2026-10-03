@@ -106,11 +106,20 @@ class TestCheckEndpoint:
 class TestLightClient:
     def test_static_cached(self, client):
         # v1.9.1: код (js/css) — no-cache (всегда свежий после рестарта),
-        # картинки — долгий кэш
-        r = client.get("/static/css/app.css")
-        assert "no-cache" in r.headers.get("cache-control", "")
+        # картинки — долгий кэш.
+        # v1.10.0: код отдаётся и с корня SPA (/js/app.js, /css/app.css) —
+        # именно эти URL грузит index.html; no-cache обязателен для ЛЮБОГО префикса.
+        for url in ("/static/css/app.css", "/css/app.css", "/js/app.js"):
+            r = client.get(url)
+            assert "no-cache" in r.headers.get("cache-control", ""), url
         i = client.get("/img/logo.svg")
         assert "max-age=604800" in i.headers.get("cache-control", "")
+
+    def test_spa_deeplink_fresh(self, client):
+        # v1.10.0: оболочка SPA и deep-link'и — тоже всегда свежие
+        for url in ("/", "/receipts", "/scan"):
+            r = client.get(url)
+            assert "no-cache" in r.headers.get("cache-control", ""), url
 
     def test_sw_not_cached(self, client):
         r = client.get("/sw.js")

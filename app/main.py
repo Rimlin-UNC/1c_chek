@@ -85,17 +85,20 @@ async def _cache_headers(request, call_next):
     p = request.url.path
     if p == "/sw.js" or p == "/manifest.webmanifest":
         response.headers.setdefault("Cache-Control", "no-cache")
+    elif p.endswith((".js", ".css", ".webmanifest")):
+        # v1.9.1: код приложения — всегда свежий у ВСЕХ пользователей сразу
+        # после рестарта (revalidate по ETag — дёшево); иначе браузер мог бы
+        # держать старый app.js до 7 дней, а бэкенд уже новый.
+        # v1.10.0: правило — для ЛЮБОГО префикса: SPA отдаёт код и с корня
+        # (/js/app.js, /css/app.css), а не только из /static/ и /assets/.
+        response.headers.setdefault("Cache-Control", "no-cache")
     elif p.startswith(("/static/", "/assets/")):
-        if p.endswith((".js", ".css", ".webmanifest")):
-            # v1.9.1: код приложения — всегда свежий у ВСЕХ пользователей сразу
-            # после рестарта (revalidate по ETag — дёшево); иначе браузер мог бы
-            # держать старый app.js до 7 дней, а бэкенд уже новый
-            response.headers.setdefault("Cache-Control", "no-cache")
-        else:
-            response.headers.setdefault("Cache-Control", "public, max-age=604800")
+        response.headers.setdefault("Cache-Control", "public, max-age=604800")
     elif p.startswith("/img/"):
         response.headers.setdefault("Cache-Control", "public, max-age=604800")
-    elif p == "/" or p == "/app" or p.startswith("/app/"):
+    elif "." not in p.rsplit("/", 1)[-1] and not p.startswith(("api/", "onec/", "ws/", "/api/", "/onec/", "/ws/")):
+        # v1.10.0: оболочка SPA и deep-link'и (/receipts, /scan) — тоже всегда
+        # свежие, без эвристического кэша браузера. API не трогаем.
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
