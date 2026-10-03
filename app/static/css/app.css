@@ -178,6 +178,9 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   font-weight: 600; font-size: 14px; text-decoration: none;
   transition: background var(--speed), color var(--speed);
   position: relative;
+  /* v1.10.2: палец, а не курсор — без задержки двойного тапа и выделения текста */
+  cursor: pointer; touch-action: manipulation;
+  -webkit-user-select: none; user-select: none;
 }
 .nav-item:hover { background: var(--panel); color: var(--text); text-decoration: none; }
 .nav-item.active {
@@ -519,7 +522,9 @@ pre.codeblock {
   .sidebar { position: fixed; top: 0; bottom: 0; margin-left: calc(-1 * var(--sidebar-w));
              padding-top: env(safe-area-inset-top, 0px);
              padding-bottom: env(safe-area-inset-bottom, 0px); }
-  .sidebar.open { margin-left: 0; box-shadow: 40px 0 80px rgba(0,0,0,.6); }
+  /* v1.10.2: ОТКРЫТОЕ меню — самый верхний интерактивный слой (выше фона 55 и
+     любого контента): никакой невидимый слой не может перехватить тап по пункту */
+  .sidebar.open { margin-left: 0; box-shadow: 40px 0 80px rgba(0,0,0,.6); z-index: 60; }
   .hamburger { display: inline-flex; }
   .content { padding: 14px; }
   .kpi-value { font-size: 24px; }
@@ -805,9 +810,9 @@ html[data-theme="light"] .modal { color: var(--text); }
 * { -webkit-tap-highlight-color: transparent; }
 .sidebar-backdrop {
   display: none;
-  /* v1.10.1: фон НИЖЕ меню (у меню 30) — раньше фон был 40 и перекрывал
-     пункты меню на телефоне: тап закрывал меню, раздел не открывался */
-  position: fixed; inset: 0; z-index: 25;
+  /* v1.10.2: фон НИЖЕ открытого меню (у того 60 на мобильных) и ВЫШЕ любого
+     контента — тап по пункту попадает в пункт, по остальному экрану — в фон */
+  position: fixed; inset: 0; z-index: 55;
   background: rgba(4, 8, 20, .55);
   opacity: 0; pointer-events: none;
   transition: opacity var(--speed);

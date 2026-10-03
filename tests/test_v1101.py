@@ -31,19 +31,22 @@ def _zindex(selector: str):
 
 
 class TestMenuSelectable:
-    def test_backdrop_below_sidebar(self):
-        """Фон-затемнение обязан быть НИЖЕ меню и ВЫШЕ контента:
-        тап по пункту меню попадает в пункт, а не в фон."""
-        sidebar = _zindex(".sidebar")
+    def test_backdrop_below_open_sidebar(self):
+        """Фон-затемнение НИЖЕ ОТКРЫТОГО меню (иначе тап по пункту закрывает
+        меню вместо перехода — баг 1.10.0) и ВЫШЕ шапки (затемняет контент)."""
+        open_sidebar = _zindex(".sidebar.open")
         backdrop = _zindex(".sidebar-backdrop")
-        assert sidebar is not None and backdrop is not None, \
-            "z-index меню и фона должен быть задан явно"
-        assert backdrop < sidebar, \
-            f"фон (z={backdrop}) перекрывает меню (z={sidebar}) — баг 1.10.0"
+        topbar = _zindex(".topbar")
+        assert open_sidebar is not None and backdrop is not None, \
+            "z-index открытого меню и фона должен быть задан явно"
+        assert backdrop < open_sidebar, \
+            f"фон (z={backdrop}) перекрывает открытое меню (z={open_sidebar})"
+        assert topbar is None or backdrop > topbar, "фон должен затемнять контент"
 
     def test_selecting_item_closes_menu(self):
-        # клик по пункту (в т.ч. по текущему разделу) закрывает меню
-        assert "$$('.nav-item').forEach((a) => a.addEventListener('click', closeSidebar));" in JS
+        # v1.10.2: делегирование — переход по пункту выполняет приложение само
+        assert "e.target.closest('a.nav-item')" in JS
+        assert "closeSidebar();\n    if (location.hash === target) route();" in JS
         # переход по hash (назад/вперёд, ссылки) тоже закрывает
         assert re.search(r"hashchange[^}]*closeSidebar\(\)", JS, re.S)
 
@@ -64,11 +67,11 @@ class TestMenuSelectable:
 
 class TestVersion1101:
     def test_version_everywhere(self):
+        """Версия согласована во всех файлах (бамп-независимо)."""
         import re as _re
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = _re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.10.1"
         assert f"ymaster-check-v{ver}" in open("app/static/sw.js", encoding="utf-8").read()
         assert f'"version": "{ver}"' in open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f"'{ver}'" in JS                      # WHATS_NEW
-        assert f"[{ver}]" in open("CHANGELOG.md", encoding="utf-8").read()
+        assert f"## [{ver}]" in open("CHANGELOG.md", encoding="utf-8").read()  # свежий раздел
