@@ -1148,6 +1148,11 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.9.0': [
+    ['🏗 Хэш сборки в карточке «Обновления»', 'строка «Сборка» показывает короткий коммит установленной версии — после обновления сразу видно, что код реально применился (сравните с хэшем на GitHub).'],
+    ['🧪 Релиз-контроль', 'все зависимости сверяются с requirements.txt автоматическим тестом-стражем; проверка целостности обновления идёт интерпретатором приложения; deploy.sh проверяет живость сайта после рестарта.'],
+    ['▣ QR-код приглашения', 'из 1.8.2: пригласите сотрудника QR-кодом — камера телефона, и страница регистрации открылась.'],
+  ],
   '1.8.3': [
     ['🛡 Обновления — ещё надёжнее', 'проверка целостности теперь выполняется интерпретатором окружения приложения (venv) — исключён ложный откат исправного обновления; весь конвейер покрыт сквозными тестами.'],
   ],
@@ -2532,6 +2537,7 @@ async function viewSettings(container) {
           <span id="upd-status-text">Проверяю…</span></div>
         <dl class="kv" style="font-size:13px;margin-top:10px">
           <dt>Установлена</dt><dd id="upd-current">v—</dd>
+          <dt>Сборка</dt><dd><code class="inline" id="upd-commit">—</code></dd>
           <dt>Проверено</dt><dd id="upd-checked">—</dd>
           <dt>Последнее обновление</dt><dd id="upd-last">—</dd>
         </dl>
@@ -2709,6 +2715,9 @@ async function viewSettings(container) {
       try {
         const st = await api.get('/api/v1/admin/system');
         const cur = $('#upd-current'); if (cur) cur.textContent = 'v' + st.version;
+        // v1.9.0: хэш сборки — сразу видно, что обновление реально применилось
+        const cm = $('#upd-commit');
+        if (cm) { cm.textContent = (st.commit || '—').slice(0, 7) || '—'; cm.title = st.commit || ''; }
         const ri = $('#upd-repo'); if (ri) ri.value = st.repo_url || '';
         const bi = $('#upd-branch-input'); if (bi) bi.value = st.branch || '';
       } catch {}
