@@ -474,7 +474,29 @@ function route(silent = false) {
 
 function bindShell() {
   $('#btn-logout').onclick = logout;
-  $('#btn-sidebar').onclick = () => $('#sidebar').classList.toggle('open');
+  // v1.10.0: меню можно закрыть ВСЕГДА — гамбургер, фон, ✕, Esc, свайп влево
+  const closeSidebar = () => {
+    $('#sidebar').classList.remove('open');
+    document.body.classList.remove('sb-open');
+  };
+  $('#btn-sidebar').onclick = () => {
+    const opened = $('#sidebar').classList.toggle('open');
+    document.body.classList.toggle('sb-open', opened);
+  };
+  $('#sidebar-backdrop').onclick = closeSidebar;
+  $('#sb-close').onclick = closeSidebar;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSidebar();
+  });
+  // свайп влево по сайдбару закрывает (телефон/планшет)
+  let _sbTouchX = null;
+  $('#sidebar').addEventListener('touchstart', (e) => {
+    _sbTouchX = e.touches[0].clientX;
+  }, { passive: true });
+  $('#sidebar').addEventListener('touchend', (e) => {
+    if (_sbTouchX != null && _sbTouchX - e.changedTouches[0].clientX > 60) closeSidebar();
+    _sbTouchX = null;
+  }, { passive: true });
   window.addEventListener('hashchange', () => {
     if (location.hash.startsWith('#/register')) return;
     route();

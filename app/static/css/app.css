@@ -795,3 +795,35 @@ html[data-theme="light"] .modal { color: var(--text); }
 .pf-chip.ok  { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
 .pf-chip.bad { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 
+/* ======================================================================
+   v1.10.0 — меню: фон-затемнение, кнопка ✕ (мобильные), адаптив поворота
+   ====================================================================== */
+* { -webkit-tap-highlight-color: transparent; }
+.sidebar-backdrop {
+  display: none;
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(4, 8, 20, .55);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--speed);
+}
+.sb-close { display: none; }
+@media (max-width: 860px) {
+  .sidebar-backdrop { display: block; }
+  body.sb-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
+  .sb-close { display: inline-flex; order: -1; margin-right: 4px; }
+}
+/* поворот телефона/планшета в альбомную (низкие экраны) */
+@media (orientation: landscape) and (max-height: 520px) {
+  :root { --topbar-h: 50px; }
+  body { font-size: 13.5px; }
+  .kpi-value { font-size: 22px; }
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .content { padding: 10px 14px; }
+  .modal { max-height: 94vh; }
+  .filter-bar { gap: 8px; }
+}
+/* планшеты в узкой колонке — плотнее KPI */
+@media (min-width: 861px) and (max-width: 1150px) {
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
+}
+
