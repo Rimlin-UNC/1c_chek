@@ -317,8 +317,9 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
     if not is_staff:
         # Сотрудник: только галочка «Уведомляю бухгалтерию» и комментарий
         forbidden = [f for f in ("assignee", "fn", "fd", "fp", "receipt_date",
-                                 "total_sum", "operation", "merchant_name",
-                                 "merchant_inn", "merchant_address", "cashier",
+                                 "total_sum", "personal_sum", "operation",
+                                 "merchant_name", "merchant_inn",
+                                 "merchant_address", "cashier",
                                  "items") if getattr(body, f) is not None]
         if forbidden:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,

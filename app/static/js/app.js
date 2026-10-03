@@ -338,7 +338,12 @@ document.addEventListener('visibilitychange', () => {
       try { if (state.ws) state.ws.close(); } catch (e) {}
       connectWS();
     }
-    if (state.me) { route(true); }
+    // v1.8.0: не чаще раза в 8 с — телефон «просыпается» часто,
+    // а каждая перерисовка выглядит как мигание сайта
+    if (state.me && Date.now() - (state._lastVisRoute || 0) > 8000) {
+      state._lastVisRoute = Date.now();
+      route(true);
+    }
   }
 });
 window.addEventListener('online', () => updateConnIndicator(true));
@@ -370,7 +375,11 @@ function setWsStatus(ok) {
   const dot = $('#ws-status .live-dot');
   const txt = $('#ws-status-text');
   if (dot) { dot.classList.toggle('on', ok); dot.classList.toggle('off', !ok); }
-  if (txt) txt.textContent = ok ? 'Живое подключение' : 'Переподключение…';
+  if (txt) {
+    // v1.8.0: одиночный разрыв не показываем — статус перестаёт мигать
+    if (ok) txt.textContent = 'Живое подключение';
+    else if ((state.wsAttempts || 0) >= 2) txt.textContent = 'Переподключение…';
+  }
   updateConnIndicator(false);
 }
 
@@ -472,6 +481,16 @@ function bindShell() {
 //  ЭКРАН: Дашборд
 // ==========================================================================
 async function viewDashboard(container) {
+  // v1.8.0: сначала данные — если ничего не изменилось, DOM не трогаем
+  // (устраняет «мерцание сайта» при WS-обновлениях и возврате на вкладку)
+  const [dashStats, dashFeed] = await Promise.all([
+    api.get('/api/v1/dashboard/stats?days=14'),
+    api.get('/api/v1/dashboard/recent?limit=12').catch(() => []),
+  ]);
+  const dashSig = JSON.stringify([dashStats, dashFeed]);
+  if (viewDashboard._sig === dashSig && container.children.length) return;
+  viewDashboard._sig = dashSig;
+
   container.innerHTML = `
     <div class="grid kpi-grid">
       ${kpiCard('kpi-total', 'Чеков в системе', 'всё время')}
@@ -507,18 +526,21 @@ async function viewDashboard(container) {
     ${isAccountant() ? `
     <div class="glass card" style="margin-top:16px">
       <div class="card-title">👥 По подотчётным лицам <span class="spacer"></span>
-        <span class="form-hint">кто сколько принёс (все чеки)</span></div>
+        <span class="form-hint">кто сколько принёс (все чеки)</span>
+        <button class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
       <div id="dash-assignee"><div class="skeleton" style="height:80px"></div></div>
     </div>` : ''}
     <div id="demo-zone"></div>`;
 
-  const stats = await api.get('/api/v1/dashboard/stats?days=14');
+  const stats = dashStats;
   animateNumber($('#kpi-total .kpi-value'), stats.total);
   animateNumber($('#kpi-sum .kpi-value'), stats.total_sum, fmtSum);
   if (isAccountant()) {
     animateNumber($('#kpi-attention .kpi-value'), stats.attention_count || 0);
     animateNumber($('#kpi-notified .kpi-value'), stats.notified_count || 0);
     animateNumber($('#kpi-vat .kpi-value'), stats.vat_month || 0, fmtSum);
+    const bs = $('#btn-statement');
+    if (bs) bs.onclick = () => openStatementModal();
     const az = $('#dash-assignee');
     if (az) {
       az.innerHTML = (stats.by_assignee || []).length
@@ -564,7 +586,7 @@ async function viewDashboard(container) {
   })), { size: 150, centerTitle: fmtInt(stats.total), centerSub: 'чеков' });
 
   if (isAccountant()) {
-    const feed = await api.get('/api/v1/dashboard/recent?limit=12');
+    const feed = dashFeed;
     const feedEl = $('#dash-feed');
     feedEl.innerHTML = !feed.length ? emptyState('🔔', 'События появятся здесь')
       : feed.map(f => `
@@ -774,6 +796,10 @@ function openEditReceipt(r, onSaved) {
       <label class="field"><span>Сумма, ₽</span>
         <input id="er-sum" type="number" step="0.01" min="0" value="${r.total_sum}"
           ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
+      <label class="field"><span>Личные, ₽ <span class="form-hint">(не для учёта)</span></span>
+        <input id="er-personal" type="number" step="0.01" min="0" value="${r.personal_sum || 0}"
+          ${r.exported && !isAdminUser ? 'disabled' : ''}>
+        <span class="form-hint" id="er-work-hint">к учёту: ${fmtSum((r.total_sum || 0) - (r.personal_sum || 0))}</span></label>
       <label class="field"><span>Тип</span>
         <select id="er-op" ${r.exported && !isAdminUser ? 'disabled' : ''}>
           <option value="1" ${r.operation === 1 ? 'selected' : ''}>Приход</option>
@@ -842,6 +868,17 @@ function openEditReceipt(r, onSaved) {
     row.querySelector('.it-del').onclick = () => row.remove();
     return row;
   };
+  // v1.8.0: живой пересчёт «к учёту» при вводе личной суммы
+  const personalEl = slot.querySelector('#er-personal'), workHint = slot.querySelector('#er-work-hint');
+  if (personalEl && workHint) {
+    const recalcWork = () => {
+      const sum = parseFloat(slot.querySelector('#er-sum').value) || 0;
+      const per = parseFloat(personalEl.value) || 0;
+      workHint.textContent = 'к учёту: ' + fmtSum(Math.max(0, sum - per));
+    };
+    personalEl.addEventListener('input', recalcWork);
+    slot.querySelector('#er-sum').addEventListener('input', recalcWork);
+  }
   (r.items || []).forEach(it => itemsBox.appendChild(itemRow(it)));
   if (!(r.items || []).length) {
     itemsBox.innerHTML = '<p class="form-hint" id="er-no-items">Позиций нет — получите данные из сервиса или добавьте вручную</p>';
@@ -870,6 +907,7 @@ function openEditReceipt(r, onSaved) {
       merchant_address: slot.querySelector('#er-addr').value.trim(),
       cashier: slot.querySelector('#er-cashier').value.trim(),
       assignee: slot.querySelector('#er-assignee').value.trim(),
+      personal_sum: parseFloat(slot.querySelector('#er-personal').value) || 0,
       comment: slot.querySelector('#er-comment').value.trim(),
       notified: slot.querySelector('#er-notified').checked,
     };
@@ -1344,8 +1382,28 @@ function manualDialog() {
 // ==========================================================================
 //  ЭКРАН: Чеки
 // ==========================================================================
+// v1.8.0: бейдж контроля срока авансового отчёта (п. 6.3 Указания ЦБ 3210-У)
+function advanceBadge(r) {
+  const dl = viewReceipts._deadline;
+  if (!dl || !r.receipt_date || r.exported) return '';
+  const DAY = 86400000;
+  const due = new Date(r.receipt_date).getTime() + dl * DAY;
+  const left = Math.ceil((due - Date.now()) / DAY);
+  const dueStr = new Date(due).toLocaleDateString('ru-RU');
+  if (left < 0) return `<span class="dl-badge bad" title="Срок сдачи авансового отчёта истёк">просрочен: ${-left} дн</span>`;
+  if (left <= 2) return `<span class="dl-badge warn" title="Скоро истечёт срок сдачи">сдать до ${dueStr}</span>`;
+  return `<span class="dl-badge ok" title="В пределах срока сдачи">сдать до ${dueStr}</span>`;
+}
+
 async function viewReceipts(container) {
   const acc = isAccountant();
+  // v1.8.0: срок сдачи авансового отчёта (настройка приказа руководителя)
+  if (acc && !viewReceipts._deadline) {
+    api.get('/api/v1/settings/app')
+      .then(r => { viewReceipts._deadline = r.advance_deadline_days || 10;
+                   viewReceipts._sig = null; load(); })
+      .catch(() => {});
+  }
   container.innerHTML = `
     <div class="glass card">
       <div class="filter-bar">
@@ -1408,6 +1466,10 @@ async function viewReceipts(container) {
     Object.entries(filters).forEach(([k, v]) => { if (v !== '' && v != null) p.set(k, v); });
     const data = await api.get('/api/v1/receipts?' + p.toString());
     pageInfo = data;
+    // v1.8.0: данные не изменились → не перерисовываем (без мерцания)
+    const rcptSig = JSON.stringify(data);
+    if (viewReceipts._sig === rcptSig) { updateSelInfo(); return; }
+    viewReceipts._sig = rcptSig;
     viewReceipts._rows = data.items;
     // datalist имён сотрудников — из текущих строк + ранее введённые
     const names = new Set(viewReceipts._names || []);
@@ -1475,8 +1537,10 @@ async function viewReceipts(container) {
     return `<tr data-id="${r.id}">
       <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
         ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
-      <td class="cell-date">${fmtDate(r.receipt_date)}${notifiedMark}</td>
-      <td class="cell-sum">${fmtSum(r.total_sum)}</td>
+      <td class="cell-date">${fmtDate(r.receipt_date)}${notifiedMark}
+        ${acc ? advanceBadge(r) : ''}</td>
+      <td class="cell-sum">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
+        ? `<div class="form-hint">к учёту: ${fmtSum((r.total_sum || 0) - r.personal_sum)}</div>` : ''}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
       ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}</td>` : ''}
       <td>${chip(r.status)}</td>
@@ -1750,6 +1814,72 @@ async function printReceiptsPDF(ids) {
   }
 }
 
+// ==========================================================================
+//  v1.8.0: Ведомость подотчётников за месяц (бухгалтер) — таблица + CSV
+// ==========================================================================
+async function openStatementModal() {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const { slot, close } = openModal(`
+    <div class="modal-title">📋 Ведомость подотчётников</div>
+    <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px">
+      <label class="field"><span>Месяц</span><input type="month" id="st-month" value="${ym}"></label>
+      <button class="btn btn-sm btn-primary" id="st-load">Показать</button>
+      <button class="btn btn-sm" id="st-csv">⬇ CSV</button>
+    </div>
+    <div id="st-body"><div class="skeleton" style="height:120px"></div></div>
+    <p class="form-hint" style="margin-top:8px">«К учёту» = сумма чека минус личные покупки.
+    «Просрочено» — чеки, по которым истёк срок сдачи авансового отчёта
+    (Настройки → Общие; п. 6.3 Указания ЦБ 3210-У).</p>`);
+  let lastRows = [];
+  const load = async () => {
+    const body = slot.querySelector('#st-body');
+    const mv = slot.querySelector('#st-month').value;
+    if (!mv) return;
+    const [y, m] = mv.split('-').map(Number);
+    const from = `${y}-${String(m).padStart(2, '0')}-01`;
+    const to = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+    body.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get(`/api/v1/receipts?date_from=${from}&date_to=${to}&page_size=200`);
+      const dl = viewReceipts._deadline || 10;
+      const by = {};
+      data.items.forEach(r => {
+        const k = r.assignee || '— не назначен —';
+        const b = by[k] = by[k] || { count: 0, sum: 0, work: 0, late: 0 };
+        b.count++;
+        b.sum += r.total_sum || 0;
+        b.work += (r.total_sum || 0) - (r.personal_sum || 0);
+        if (!r.exported && r.receipt_date
+            && Date.now() - new Date(r.receipt_date).getTime() > dl * 86400000) b.late++;
+      });
+      const keys = Object.keys(by).sort((a, b) => by[b].sum - by[a].sum);
+      lastRows = keys.map(k => ({ name: k, ...by[k] }));
+      body.innerHTML = lastRows.length
+        ? `<table class="data" style="min-width:0"><thead><tr><th>Сотрудник</th><th>Чеков</th>
+           <th>Сумма</th><th>К учёту</th><th>Просрочено</th></tr></thead><tbody>
+           ${lastRows.map(x => `<tr><td>${esc(x.name)}</td><td>${x.count}</td>
+             <td class="cell-sum">${fmtSum(x.sum)}</td><td class="cell-sum">${fmtSum(x.work)}</td>
+             <td>${x.late ? `<span class="dl-badge bad">${x.late}</span>` : '—'}</td></tr>`).join('')}
+           </tbody><tfoot><tr><th>Итого</th><th>${lastRows.reduce((a, x) => a + x.count, 0)}</th>
+           <th class="cell-sum">${fmtSum(lastRows.reduce((a, x) => a + x.sum, 0))}</th>
+           <th class="cell-sum">${fmtSum(lastRows.reduce((a, x) => a + x.work, 0))}</th>
+           <th>${lastRows.reduce((a, x) => a + x.late, 0)}</th></tr></tfoot></table>`
+        : '<p class="form-hint">За этот месяц чеков нет</p>';
+    } catch (e) { body.innerHTML = `<p class="form-error">${esc(e.message)}</p>`; }
+  };
+  slot.querySelector('#st-load').onclick = load;
+  load();
+  slot.querySelector('#st-csv').onclick = () => {
+    if (!lastRows.length) return toast('Нет данных для CSV', 'info');
+    const rows = [['Сотрудник', 'Чеков', 'Сумма', 'К учёту', 'Просрочено'],
+      ...lastRows.map(x => [x.name, x.count, x.sum.toFixed(2), x.work.toFixed(2), x.late])];
+    const csv = '\ufeff' + rows.map(r => r.join(';')).join('\n');
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+      `vedomost-${slot.querySelector('#st-month').value}.csv`);
+  };
+}
+
 function downloadBlob(blob, filename) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1774,7 +1904,7 @@ async function receiptDrawer(id) {
     <div class="drawer-body">
       <div class="qr-box" title="Нажмите, чтобы скопировать">${esc(r.qr_data)}</div>
       <dl class="kv">
-        <dt>Дата чека</dt><dd>${fmtDate(r.receipt_date)}</dd>
+        <dt>Дата чека</dt><dd>${fmtDate(r.receipt_date)}${isAccountant() ? ' ' + advanceBadge(r) : ''}</dd>
         <dt>ФН</dt><dd class="cell-mono">${r.fn}</dd>
         <dt>ФД</dt><dd class="cell-mono">${r.fd}</dd>
         <dt>ФП</dt><dd class="cell-mono">${r.fp}</dd>
@@ -2276,6 +2406,11 @@ async function viewSettings(container) {
           <span>Автоматически проверять чек в ФНС сразу после сканирования</span></label>
         <p class="form-hint">Экономит время бухгалтера: чек проверяется без участия человека,
         статусы обновляются в реальном времени у всех пользователей.</p>
+        <label class="field" style="max-width:280px;margin-top:12px"><span>Срок сдачи авансового отчёта, дней от даты чека</span>
+          <input type="number" id="app-deadline" min="1" max="365" value="${appSet.advance_deadline_days || 10}">
+          <span class="form-hint">По умолчанию 10. Подотчётник обязан отчитаться не позднее 3 рабочих
+          дней после израсходования (п. 6.3 Указания ЦБ 3210-У) — срок в организации устанавливает
+          руководитель приказом; просрочка подсвечивается в «Базе чеков».</span></label>
         <button class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
       </div>` : ''}
 
@@ -2614,7 +2749,9 @@ async function viewSettings(container) {
   if (isAdmin() && appSet) {
     $('#app-save').onclick = async () => {
       try {
-        await api.put('/api/v1/settings/app', { auto_verify: $('#app-autoverify').checked });
+        await api.put('/api/v1/settings/app', {
+          auto_verify: $('#app-autoverify').checked,
+          advance_deadline_days: parseInt($('#app-deadline').value, 10) || 10 });
         toast('Настройки сохранены', 'ok');
       } catch (e) { toast(e.message, 'err'); }
     };
@@ -2668,7 +2805,21 @@ async function viewSettings(container) {
 // --------------------------------------------------------------------------
 function registerServiceWorker() {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('/sw.js').catch(() => { /* не критично */ });
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      // v1.8.0: новый Service Worker установлен → предлагаем перезагрузку
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            toast('Обновление загружено — нажмите, чтобы перезагрузить страницу',
+                  'info', '🔄');
+            document.querySelector('.toast:last-child')?.addEventListener('click',
+              () => location.reload(), { once: true });
+          }
+        });
+      });
+    }).catch(() => { /* не критично */ });
   }
 }
 

@@ -759,3 +759,16 @@ html[data-theme="light"] .modal { color: var(--text); }
   font: inherit; font-weight: 600; cursor: pointer; transition: background var(--speed), color var(--speed);
 }
 .seg button.on { background: var(--accent); color: #fff; }
+
+/* ======================================================================
+   v1.8.0 — контроль срока авансового отчёта (бейджи в списке чеков)
+   ====================================================================== */
+.dl-badge {
+  display: inline-block; margin: 2px 0 0; padding: 1px 7px;
+  font-size: 10.5px; font-weight: 700; border-radius: 8px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.dl-badge.ok   { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.dl-badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.dl-badge.bad  { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+

@@ -168,10 +168,17 @@ def reveal_onec(db: Session = Depends(get_db), user: User = Depends(require_admi
 # --------------------------------------------------------------------------
 #  Общие настройки приложения (админ)
 # --------------------------------------------------------------------------
-@router.get("/app", summary="Общие настройки приложения")
-def get_app_settings(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+@router.get("/app", summary="Общие настройки приложения (админ/бухгалтер)")
+def get_app_settings(db: Session = Depends(get_db),
+                     user: User = Depends(require_accountant)):
+    # v1.8.0: бухгалтеру нужен срок авансового отчёта для контроля просрочки
+    try:
+        deadline = int(appsettings.get_setting(db, "advance_deadline_days", "10") or 10)
+    except ValueError:
+        deadline = 10
     return {
         "auto_verify": appsettings.auto_verify_enabled(db),
+        "advance_deadline_days": deadline,
     }
 
 
@@ -180,7 +187,11 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
                      user: User = Depends(require_admin)):
     if body.auto_verify is not None:
         appsettings.set_setting(db, "auto_verify", "1" if body.auto_verify else "0")
-    log_action(user, "app_settings_updated", details={"auto_verify": body.auto_verify})
+    if body.advance_deadline_days is not None:
+        appsettings.set_setting(db, "advance_deadline_days", str(body.advance_deadline_days))
+    log_action(user, "app_settings_updated", details={
+        "auto_verify": body.auto_verify,
+        "advance_deadline_days": body.advance_deadline_days})
     return {"ok": True, "message": "Настройки сохранены"}
 
 
