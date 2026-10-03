@@ -36,7 +36,9 @@ DOMAIN=""
 SSL_DOMAIN=""
 UPDATE=0
 DIAGNOSE=0
+FIXSSL=0
 WITH_NGINX=1
+CERTBOT_BIN="$(command -v certbot || echo /snap/bin/certbot)"
 CONF_DIR="/etc/ymaster-check"
 CONF_FILE="$CONF_DIR/deploy.conf"
 
@@ -44,6 +46,7 @@ for arg in "$@"; do
   case "$arg" in
     --update) UPDATE=1 ;;
     --diagnose) DIAGNOSE=1 ;;
+    --fix-ssl) FIXSSL=1 ;;
     --no-nginx) WITH_NGINX=0 ;;
     --with-ssl=*) OPT_SSL="${arg#*=}"; WITH_NGINX=1 ;;
     --no-ssl) OPT_SSL="none" ;;
@@ -70,6 +73,39 @@ SSL_DOMAIN="${OPT_SSL:-$SSL_DOMAIN}"
 BRANCH="${OPT_BRANCH:-$BRANCH}"
 
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Режим ремонта SSL: deploy.sh --fix-ssl — diagnos + выпуск/продление с полным выводом
+if [[ $FIXSSL -eq 1 ]]; then
+  echo "======== Починка SSL — Ямастер Чек ========"
+  D="${SSL_DOMAIN:-$DOMAIN}"
+  echo "-- сертификаты на сервере:"
+  ls /etc/letsencrypt/live 2>/dev/null || echo "   (папка letsencrypt пуста/отсутствует)"
+  if [[ -n "$D" && -f "/etc/letsencrypt/live/$D/fullchain.pem" ]]; then
+    echo "-- срок текущего сертификата ($D):"
+    openssl x509 -in "/etc/letsencrypt/live/$D/fullchain.pem" -noout -dates 2>/dev/null | sed 's/^/   /'
+    echo "-- пробую продлить (полный вывод):"
+    "$CERTBOT_BIN" renew --cert-name "$D" ; RC=$?
+  else
+    [[ -z "$D" ]] && { echo "   Домен не задан. Запустите: sudo bash deploy.sh --update --with-ssl=ваш-домен.ru"; exit 1; }
+    echo "-- сертификата нет, выпускаю новый для $D (полный вывод):"
+    SERVER_IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')
+    DOMAIN_IP=$(getent ahostsv4 "$D" | awk '{print $1; exit}')
+    echo "   DNS: $D -> ${DOMAIN_IP:-не найден} | этот сервер: $SERVER_IP"
+    [[ "$DOMAIN_IP" != "$SERVER_IP" ]] && echo "   ⚠ DNS указывает не на этот сервер — Let's Encrypt не пройдёт!"
+    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
+    "$CERTBOT_BIN" certonly --nginx -d "$D" --non-interactive --agree-tos \
+      -m info@ymaster.ru ; RC=$?
+  fi
+  if [[ ${RC:-1} -eq 0 ]]; then
+    ok "SSL готов. Перезапускаю nginx и собираю HTTPS-конфиг: sudo bash deploy.sh --update"
+    systemctl reload nginx 2>/dev/null || true
+  else
+    warn "certbot завершился с ошибкой ${RC} — текст выше содержит точную причину"
+    echo "   Лимиты Let's Encrypt: 5 одинаковых сертификатов в неделю / 5 неудач проверки в час."
+  fi
+  exit ${RC:-1}
+fi
+
 # Режим диагностики: deploy.sh --diagnose — быстро понять, почему сайт недоступен
 if [[ $DIAGNOSE -eq 1 ]]; then
   echo "======== Диагностика Ямастер Чек ========"
@@ -89,6 +125,11 @@ if [[ $DIAGNOSE -eq 1 ]]; then
     curl -sk -o /dev/null -w "   https://127.0.0.1/ (SNI $D) -> HTTP %{http_code}\n" --max-time 5 --resolve "$D:443:127.0.0.1" "https://$D/" || echo "   https -> НЕ ОТВЕЧАЕТ"
     openssl x509 -in "/etc/letsencrypt/live/$D/fullchain.pem" -noout -dates 2>/dev/null | sed 's/^/   /' || true
   fi
+  echo "-- certbot (автопродление):"
+  systemctl is-active certbot.timer 2>/dev/null && echo "   certbot.timer: активен" \
+    || { systemctl is-active snap.certbot.renew.timer >/dev/null 2>&1 && echo "   snap.certbot.renew.timer: активен" \
+         || echo "   таймер не найден (см.: systemctl list-timers | grep -i cert)"; }
+  ls /etc/letsencrypt/live 2>/dev/null | sed 's/^/   cert: /' || echo "   сертификатов нет"
   echo "-- UFW:"; ufw status 2>/dev/null | sed -n '1,8p' || true
   echo "========================================="
   exit 0
@@ -202,14 +243,18 @@ systemctl is-active --quiet "$SERVICE" && ok "сервис запущен" || {
 
 # v1.8.1: разрешаем приложению (пользователь ymaster) перезапускать свой сервис
 # — без этого «Обновить из приложения» обновляло файлы, но не могло применить их
+# v1.8.3: блок защищён — любая ошибка здесь НЕ должна ронять весь деплой
 SUDOERS_FILE=/etc/sudoers.d/ymaster-check
-echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart ymaster-check, /usr/bin/systemctl status ymaster-check" > "$SUDOERS_FILE"
-chmod 440 "$SUDOERS_FILE"
-if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
+if (
+  mkdir -p /etc/sudoers.d
+  echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart ymaster-check, /usr/bin/systemctl status ymaster-check" > "$SUDOERS_FILE"
+  chmod 440 "$SUDOERS_FILE"
+  visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1
+) >/dev/null 2>&1; then
   ok "sudoers: приложение может перезапускать себя (обновление из приложения)"
 else
-  rm -f "$SUDOERS_FILE"
-  warn "sudoers-правило не прошло проверку — обновление из приложения потребует ручного рестарта"
+  rm -f "$SUDOERS_FILE" 2>/dev/null || true
+  warn "sudoers-правило не установлено — обновление из приложения потребует ручного рестарта"
 fi
 
 # ------------------------------------------------------------------
@@ -256,8 +301,14 @@ NGXEOF
   fi
   rm -f /etc/nginx/sites-enabled/default
   ln -sf /etc/nginx/sites-available/ymaster-check /etc/nginx/sites-enabled/
-  nginx -t && systemctl reload nginx
-  ok "Nginx настроен (rate-limit, headers, служебные пути закрыты)"
+  # v1.8.3: ошибка конфига не роняет деплой — показываем её и продолжаем
+  if nginx -t 2>/tmp/ymaster-nginx-test.log; then
+    systemctl reload nginx || systemctl restart nginx || true
+    ok "Nginx настроен (rate-limit, headers, служебные пути закрыты)"
+  else
+    warn "Nginx: конфиг не прошёл проверку (см. ниже) — предыдущий конфиг мог остаться активным"
+    sed 's/^/     /' /tmp/ymaster-nginx-test.log | tail -5
+  fi
 fi
 
 # UFW: снаружи только SSH/HTTP/HTTPS; 8000 остаётся внутренним
@@ -278,20 +329,31 @@ fail2ban-client status ymaster-check >/dev/null 2>&1 && ok "fail2ban: бан з�
 # ------------------------------------------------------------------
 bold "9/9 SSL (Let's Encrypt) — опционально"
 if [[ -n "$SSL_DOMAIN" && -f "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" ]]; then
-  # v1.7.0: следим за сроком сертификата и продлеваем автоматически
-  systemctl enable --now certbot.timer >/dev/null 2>&1 \
-    && ok "таймер автопродления certbot активен" \
-    || warn "не удалось включить certbot.timer — проверьте: systemctl status certbot.timer"
-  CERT_END_EPOCH=$(date -d "$(openssl x509 -in "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" -noout -enddate | cut -d= -f2)" +%s 2>/dev/null || echo 0)
-  DAYS_LEFT=$(( (CERT_END_EPOCH - $(date +%s)) / 86400 ))
-  if [[ $DAYS_LEFT -lt 25 ]]; then
-    bold "Сертификат истекает через ${DAYS_LEFT} дн. — продлеваю…"
-    certbot renew --cert-name "$SSL_DOMAIN" --quiet \
-      && systemctl reload nginx \
-      && ok "сертификат продлён" \
-      || warn "автопродление не прошло — выполните вручную: sudo certbot renew && sudo systemctl reload nginx"
+  # v1.8.3: следим за сроком сертификата и продлеваем автоматически.
+  # Таймер бывает systemd (apt) или snap — пробуем оба, ошибка не фатальна.
+  if systemctl enable --now certbot.timer >/dev/null 2>&1 \
+     || systemctl enable --now snap.certbot.renew.timer >/dev/null 2>&1; then
+    ok "таймер автопродления certbot активен"
   else
-    ok "SSL-сертификат ($SSL_DOMAIN) действителен ещё ${DAYS_LEFT} дн. — продлится автоматически"
+    warn "автотаймер certbot не найден — проверьте: systemctl list-timers | grep -i cert"
+  fi
+  END_STR=$(openssl x509 -in "/etc/letsencrypt/live/$SSL_DOMAIN/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+  CERT_END_EPOCH=$(date -d "$END_STR" +%s 2>/dev/null || echo 0)
+  if [[ "${CERT_END_EPOCH:-0}" -eq 0 ]]; then
+    warn "не удалось прочитать срок сертификата — пропускаю автопродление (сертификат на месте)"
+  else
+    DAYS_LEFT=$(( (CERT_END_EPOCH - $(date +%s)) / 86400 ))
+    if [[ $DAYS_LEFT -lt 25 ]]; then
+      bold "Сертификат истекает через ${DAYS_LEFT} дн. — продлеваю…"
+      if "$CERTBOT_BIN" renew --cert-name "$SSL_DOMAIN" 2>&1 | tail -3 \
+         && systemctl reload nginx 2>/dev/null; then
+        ok "сертификат продлён"
+      else
+        warn "автопродление не прошло (вывод выше) — вручную: sudo certbot renew && sudo systemctl reload nginx"
+      fi
+    else
+      ok "SSL-сертификат ($SSL_DOMAIN) действителен ещё ${DAYS_LEFT} дн. — продлится автоматически"
+    fi
   fi
 elif [[ -n "$SSL_DOMAIN" ]]; then
   # Preflight: домен должен указывать на ЭТОТ сервер, иначе Let's Encrypt не пройдёт
@@ -299,10 +361,17 @@ elif [[ -n "$SSL_DOMAIN" ]]; then
   DOMAIN_IP=$(getent ahostsv4 "$SSL_DOMAIN" | awk '{print $1; exit}')
   echo "  Домен $SSL_DOMAIN -> ${DOMAIN_IP:-не найден}; этот сервер: $SERVER_IP"
   if [[ -n "$DOMAIN_IP" && "$DOMAIN_IP" == "$SERVER_IP" ]]; then
-    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
-    certbot --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos --redirect \
-      -m info@ymaster.ru && ok "сертификат выпущен, HTTPS включён, http -> https автоматически" \
-      || warn "certbot не смог выпустить сертификат — повторите позже: sudo bash deploy.sh --update --with-ssl=$SSL_DOMAIN"
+    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
+    echo "  Выпускаю сертификат (вывод certbot ниже)…"
+    if "$CERTBOT_BIN" --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos --redirect \
+        -m info@ymaster.ru 2>&1 | tail -6; then
+      ok "сертификат выпущен, HTTPS включён, http -> https автоматически"
+    else
+      warn "certbot не смог выпустить сертификат (вывод выше — там точная причина)."
+      echo "     Частые причины: лимит Let's Encrypt (5 одинаковых за неделю — повторите завтра),"
+      echo "     80-й порт закрыт, домен не на этот сервер."
+      echo "     Повтор: sudo bash deploy.sh --update --with-ssl=$SSL_DOMAIN"
+    fi
   else
     warn "DNS $SSL_DOMAIN пока не указывает на этот сервер ($DOMAIN_IP != $SERVER_IP)."
     echo "     Сайт уже работает по http://$SERVER_IP — выпустите SSL после обновления DNS:"
