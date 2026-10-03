@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, hash_password, require_admin
 from ..database import get_db
-from ..models import User
+from ..models import Company, User
 from ..schemas import UserCreate, UserPatch
 from ..services.audit import log_action
 
@@ -24,7 +24,13 @@ router = APIRouter(prefix="/api/v1/users", tags=["Пользователи"])
 
 @router.get("", summary="Список пользователей")
 def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    return [u.to_dict() for u in db.query(User).order_by(User.username).all()]
+    comps = {c.id: c.name for c in db.query(Company).all()}
+    rows = []
+    for u in db.query(User).order_by(User.username).all():
+        d = u.to_dict()
+        d["company_name"] = comps.get(u.company_id)      # v1.11.0
+        rows.append(d)
+    return rows
 
 
 @router.post("", summary="Создать пользователя (роль: бухгалтер или пользователь)")
@@ -36,11 +42,19 @@ def create_user(body: UserCreate, db: Session = Depends(get_db),
                             "Администратор один — передача прав через promote-admin.")
     if db.query(User).filter(User.username == body.username.strip()).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Логин уже занят")
+    # v1.11.0: сотрудник создаётся в компании (админ указывает пространство)
+    company_id = None
+    if body.company_id:
+        comp = db.get(Company, body.company_id)
+        if not comp:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+        company_id = comp.id
     user = User(
         username=body.username.strip(),
         full_name=body.full_name or body.username,
         organization=body.organization or "",
         role=body.role,
+        company_id=company_id,
         password_hash=hash_password(body.password),
         must_change_password=True,     # новый пользователь обязан сменить пароль
     )
@@ -62,6 +76,17 @@ def patch_user(user_id: str, body: UserPatch, db: Session = Depends(get_db),
         user.full_name = body.full_name
     if body.organization is not None:
         user.organization = body.organization
+    # v1.11.0: перевод сотрудника в другую компанию
+    if body.company_id is not None and body.company_id != user.company_id:
+        if user.role == ROLE_ADMIN:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Администратор не привязан к компаниям")
+        comp = db.get(Company, body.company_id)
+        if not comp:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+        user.company_id = comp.id
+        log_action(admin, "user_moved", "user", user.id,
+                   {"username": user.username, "company": comp.name})
     if body.role is not None and body.role != user.role:
         # Единственного админа нельзя ни разжаловать, ни повысить через patch
         raise HTTPException(status.HTTP_400_BAD_REQUEST,

@@ -32,6 +32,32 @@ def utcnow() -> datetime:
 
 
 # --------------------------------------------------------------------------
+#  v1.11.0: Компании (мультикомпанийность — аутсорсинг бухгалтерии)
+#  Пространство клиента: ООО/ИП со своими сотрудниками, чеками и отчётами.
+#  Администратор платформы видит все компании; сотрудники — только свою.
+# --------------------------------------------------------------------------
+class Company(Base):
+    __tablename__ = "companies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    inn: Mapped[str] = mapped_column(String(20), default="")     # ИНН организации/ИП
+    note: Mapped[str] = mapped_column(String(500), default="")   # памятка (договор, контакт)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "inn": self.inn,
+            "note": self.note,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# --------------------------------------------------------------------------
 #  Пользователи
 # --------------------------------------------------------------------------
 class User(Base):
@@ -42,8 +68,11 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
     organization: Mapped[str] = mapped_column(String(200), default="")
-    # Роли: admin (единственный) | accountant (бухгалтер) | user (пользователь)
+    # Роли: admin (единственный, вне компаний) | accountant | user
     role: Mapped[str] = mapped_column(String(20), default="user", index=True)
+    # v1.11.0: пространство клиента. NULL — платформенный уровень (админ).
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id"), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -56,6 +85,7 @@ class User(Base):
             "full_name": self.full_name,
             "organization": self.organization,
             "role": self.role,
+            "company_id": self.company_id,
             "is_active": self.is_active,
             "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -73,6 +103,9 @@ class Invite(Base):
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     role: Mapped[str] = mapped_column(String(20), default="user")   # user | accountant
     note: Mapped[str] = mapped_column(String(200), default="")      # для кого (памятка)
+    # v1.11.0: в какую компанию попадёт приглашённый (NULL — без компании)
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id"), nullable=True, index=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -86,6 +119,7 @@ class Invite(Base):
             "token": self.token,
             "role": self.role,
             "note": self.note,
+            "company_id": self.company_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "max_uses": self.max_uses,
@@ -112,6 +146,7 @@ class Receipt(Base):
         UniqueConstraint("fn", "fd", "fp", name="uq_receipt_fnfd_fp"),
         Index("idx_receipts_date", "receipt_date"),
         Index("idx_receipts_status", "status"),
+        Index("idx_receipts_company", "company_id"),   # v1.11.0: изоляция компаний
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -120,6 +155,9 @@ class Receipt(Base):
     fn: Mapped[str] = mapped_column(String(20), index=True)       # ФН — заводской номер фискального накопителя
     fd: Mapped[str] = mapped_column(String(20), index=True)       # ФД — номер фискального документа
     fp: Mapped[str] = mapped_column(String(20), index=True)       # ФП/ФПД — фискальный признак
+    # v1.11.0: пространство клиента, которому принадлежит чек (индекс ниже)
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id"), nullable=True)
     receipt_date: Mapped[datetime] = mapped_column(DateTime)      # дата и время расчёта
     total_sum: Mapped[float] = mapped_column(Float, default=0.0)  # сумма расчёта, ₽
     operation: Mapped[int] = mapped_column(Integer, default=1)    # 1 — приход, 2 — возврат прихода
@@ -169,6 +207,7 @@ class Receipt(Base):
             "fn": self.fn,
             "fd": self.fd,
             "fp": self.fp,
+            "company_id": self.company_id,          # v1.11.0: пространство клиента
             "receipt_date": self.receipt_date.isoformat() if self.receipt_date else None,
             "total_sum": self.total_sum,
             "personal_sum": self.personal_sum or 0.0,
@@ -266,6 +305,7 @@ class AuditLog(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     username: Mapped[str] = mapped_column(String(100), default="")
+    company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # v1.11.0
     action: Mapped[str] = mapped_column(String(50))
     entity_type: Mapped[str] = mapped_column(String(50), default="")
     entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

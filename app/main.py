@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .security import rate_limit_middleware, security_headers_middleware
 from .database import init_db
-from .routers import (admin, auth_routes, dashboard, invites, onec, receipts,
+from .routers import (admin, auth_routes, companies, dashboard, invites, onec, receipts,
                       settings_routes, users)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
@@ -118,9 +118,30 @@ app.add_middleware(
 @app.websocket("/ws/status")
 async def ws_status(ws: WebSocket):
     """Клиент подключается и получает события: receipt_created,
-    receipt_duplicate, receipt_verifying, receipt_verified, receipt_deleted."""
+    receipt_duplicate, receipt_verifying, receipt_verified, receipt_deleted.
+    v1.11.0: подписчик видит события СВОЕЙ компании (аутентификация —
+    по ?token= или HttpOnly-cookie); без токена — только платформенные."""
     await ws.accept()
-    queue = await subscribe()
+    # --- аутентификация подписчика (v1.11.0) ---
+    company_id, authed = None, False
+    try:
+        from .auth import ROLE_ADMIN, decode_token
+        from .database import SessionLocal
+        from .models import User
+        token = ws.query_params.get("token") or ws.cookies.get("ymaster_token")
+        if token:
+            payload = decode_token(token)
+            db = SessionLocal()
+            try:
+                u = db.get(User, payload.get("sub", ""))
+                if u is not None and u.is_active:
+                    authed = True
+                    company_id = u.company_id if u.role != ROLE_ADMIN else None
+            finally:
+                db.close()
+    except Exception:
+        authed = False                            # анонимный подписчик
+    queue = await subscribe(company_id, authed)
     connected = {"ok": True}
 
     async def _pump_incoming():
@@ -188,6 +209,7 @@ def about():
 #  API-роутеры
 # --------------------------------------------------------------------------
 app.include_router(auth_routes.router)
+app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)
 app.include_router(settings_routes.router)

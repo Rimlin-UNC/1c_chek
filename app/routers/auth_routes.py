@@ -22,7 +22,7 @@ from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, client_ip,
                     create_access_token, get_current_user, hash_password,
                     verify_password)
 from ..database import get_db
-from ..models import Invite, User
+from ..models import Company, Invite, User
 from ..schemas import LoginRequest, PasswordChange, RegisterRequest
 from ..security import login_guard
 from ..services.audit import log_action
@@ -72,10 +72,13 @@ def invite_info(token: str, db: Session = Depends(get_db)):
     invite = db.query(Invite).filter(Invite.token == token.strip()).first()
     if not invite or not invite.is_valid:
         return {"valid": False, "message": "Приглашение недействительно или уже использовано"}
+    comp = db.get(Company, invite.company_id) if invite.company_id else None
     return {
         "valid": True,
         "role": invite.role,
         "note": invite.note,
+        "company_id": invite.company_id,           # v1.11.0
+        "company_name": comp.name if comp else None,
         "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
     }
 
@@ -101,6 +104,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
         organization=invite.note or "",
         password_hash=hash_password(body.password),
         role=invite.role,               # роль из приглашения — сразу, без путаницы
+        company_id=invite.company_id,   # v1.11.0: пространство приглашённого
         must_change_password=False,
     )
     invite.used_count += 1
@@ -121,8 +125,13 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
 
 
 @router.get("/me", summary="Текущий пользователь")
-def me(user: User = Depends(get_current_user)):
-    return user.to_dict()
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    d = user.to_dict()
+    # v1.11.0: название своей компании — для шапки интерфейса
+    d["company_name"] = (db.get(Company, user.company_id).name
+                         if user.company_id else None)
+    d["is_platform_admin"] = (user.role == "admin")
+    return d
 
 
 @router.post("/change-password", summary="Смена собственного пароля")

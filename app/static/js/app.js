@@ -20,6 +20,10 @@ import { packCut, splitBlocks, COL_H, COL_W, columnX } from './printpack.js'; //
 // --------------------------------------------------------------------------
 const state = {
   me: null,
+  companies: [],                 // v1.11.0: список компаний (администратор)
+  companyFilter: (function () {
+    try { return localStorage.getItem('ymaster-company') || 'all'; } catch (e) { return 'all'; }
+  })(),
   ws: null,
   wsOk: false,
   camera: null,
@@ -32,7 +36,7 @@ const state = {
 const VIEW_TITLES = {
   dashboard: 'Дашборд', scan: 'Сканирование чеков', receipts: 'База чеков',
   export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи и приглашения',
-  audit: 'Журнал действий', settings: 'Настройки',
+  audit: 'Журнал действий', settings: 'Настройки', companies: 'Компании',
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -150,7 +154,7 @@ async function showRegister(token) {
       return;
     }
     badge.className = `chip ${info.role === 'accountant' ? 'exported' : 'new'}`;
-    badge.innerHTML = `<span class="dot"></span>Роль: ${roleLabel(info.role)}${info.note ? ' · ' + esc(info.note) : ''}`;
+    badge.innerHTML = `<span class="dot"></span>Роль: ${roleLabel(info.role)}${info.company_name ? ' · компания: <b>' + esc(info.company_name) + '</b>' : ''}${info.note ? ' · ' + esc(info.note) : ''}`;
   } catch (e) {
     badge.className = 'chip failed';
     badge.innerHTML = '<span class="dot"></span>Ошибка проверки приглашения';
@@ -199,6 +203,7 @@ function enterApp() {
   $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
   $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
   connectWS();
+  if (isAdmin()) initCompanyFilter();          // v1.11.0: селектор пространства
 
   // Один обработчик выхода (без дублирования при повторных входах)
   if (!window.__ymasterLogoutBound) {
@@ -443,6 +448,17 @@ async function refreshBadges() {
 // --------------------------------------------------------------------------
 //  Роутер
 // --------------------------------------------------------------------------
+// v1.11.0: «открыть пространство» из виджета «По компаниям» (делегирование)
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.c-open');
+  if (!b) return;
+  state.companyFilter = b.dataset.id;
+  try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (err) {}
+  const sel = $('#company-filter');
+  if (sel) sel.value = b.dataset.id;
+  route();
+});
+
 function route(silent = false) {
   if (state.camera) { state.camera.stop(); state.camera = null; }
   const hash = location.hash.replace(/^#\//, '') || 'dashboard';
@@ -459,17 +475,255 @@ function route(silent = false) {
   // Защита разделов по ролям на клиенте (сервер дублирует)
   const guard = {
     export: isAccountant(), mapping: isAccountant(),
-    users: isAdmin(), audit: isAdmin(),
+    users: isAdmin(), audit: isAdmin(), companies: isAdmin(),
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
 
   const renderers = {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
     export: viewExport, mapping: viewMapping, users: viewUsers,
-    audit: viewAudit, settings: viewSettings,
+    audit: viewAudit, settings: viewSettings, companies: viewCompanies,
   };
   (renderers[view] || viewDashboard)(container);
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
+}
+
+
+// ==========================================================================
+//  v1.11.0: МУЛЬТИКОМПАНИЙНОСТЬ — компании, фильтр пространства, перемещение
+// ==========================================================================
+async function initCompanyFilter() {
+  const sel = $('#company-filter');
+  if (!sel) return;
+  try { state.companies = await api.get('/api/v1/companies'); }
+  catch (e) { return; }
+  sel.innerHTML = '<option value="all">🏢 Все компании</option>' +
+    state.companies.filter(c => c.is_active).map(c =>
+      `<option value="${c.id}" ${state.companyFilter === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  sel.classList.remove('hidden');
+  sel.onchange = () => {
+    state.companyFilter = sel.value;
+    try { localStorage.setItem('ymaster-company', sel.value); } catch (e) {}
+    route();
+  };
+}
+
+function companyIdParam() {
+  // Параметр фильтра пространства для GET-запросов (только админ)
+  return (isAdmin() && state.companyFilter !== 'all') ? state.companyFilter : null;
+}
+
+function companyChip(cid) {
+  // Бейдж компании для админа (когда не включён фильтр одной компании)
+  if (!isAdmin() || !cid) return '';
+  const c = state.companies.find(x => x.id === cid);
+  if (!c) return '';
+  return ` <span class="chip company-chip" title="Компания: ${esc(c.name)}">${esc(c.name)}</span>`;
+}
+
+function scanCompanyId() {
+  // Компания для НОВОГО чека (админ сканирует в выбранное пространство)
+  return companyIdParam();
+}
+
+// v1.11.0: приглашение с привязкой к компании (глобальная — используется
+// и на экране «Пользователи», и на экране «Компании»)
+function inviteDialog(companyIdPref = '', companyName = '') {
+    const { slot } = openModal(`
+      <div class="modal-title">✉️ Новое приглашение</div>
+      <div class="form-grid">
+        <label class="field"><span>Роль нового пользователя</span>
+          <select id="iv-role">
+            <option value="accountant">Бухгалтер (расширенные права)</option>
+            <option value="user">Пользователь (сканирование)</option>
+          </select></label>
+        <label class="field"><span>Срок действия, часов</span>
+          <input id="iv-hours" type="number" value="72" min="1" max="8760"></label>
+        <label class="field"><span>Сколько раз можно использовать</span>
+          <input id="iv-uses" type="number" value="1" min="1" max="200"></label>
+        <label class="field full"><span>Для кого (памятка, попадёт в «Организацию»)</span>
+          <input id="iv-note" placeholder="Иванова — бухгалтерия"></label>
+        ${isAdmin() ? `<label class="field full"><span>Компания (пространство сотрудника)</span>
+          <select id="iv-company">
+            <option value="">— без компании —</option>
+            ${state.companies.filter(c => c.is_active).map(c =>
+              `<option value="${c.id}" ${companyIdPref === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select></label>
+          ${companyName ? `<p class="form-hint full" style="grid-column:1/-1">Приглашение для компании: <b>${esc(companyName)}</b></p>` : ''}` : ''}
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close>Отмена</button>
+        <button class="btn btn-primary" id="iv-save">Создать ссылку</button>
+      </div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    slot.querySelector('#iv-save').onclick = async () => {
+      try {
+        const ivComp = slot.querySelector('#iv-company');
+        const inv = await api.post('/api/v1/invites', {
+          role: slot.querySelector('#iv-role').value,
+          expires_hours: +slot.querySelector('#iv-hours').value || 72,
+          max_uses: +slot.querySelector('#iv-uses').value || 1,
+          note: slot.querySelector('#iv-note').value.trim(),
+          ...(ivComp && ivComp.value ? { company_id: ivComp.value } : {}),
+        });
+        $('#modal-root').classList.add('hidden');
+        const url = `${location.origin}/#/register/${inv.token}`;
+        const { slot: s2 } = openModal(`
+          <div class="modal-title">🔗 Ссылка-приглашение готова</div>
+          <div class="info-callout">Роль: <b>${roleLabel(inv.role)}</b> ·
+            использований: ${inv.max_uses} · действует до ${inv.expires_at ? fmtDate(inv.expires_at) : '∞'}</div>
+          <div class="token-line"><input readonly value="${esc(url)}" id="iv-url">
+            <button class="btn btn-sm" id="iv-copy">копировать</button>
+            <button class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
+          <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта)
+            или покажите QR-код — ему достаточно навести камеру телефона.
+            После перехода он создаст логин и пароль — роль присвоится автоматически.</p>
+          <div class="modal-actions"><button class="btn btn-primary" data-close>Готово</button></div>`);
+        s2.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+        s2.querySelector('#iv-copy').onclick = () => {
+          navigator.clipboard && navigator.clipboard.writeText(url);
+          toast('Скопировано', 'ok');
+        };
+        // v1.8.2: показать QR-код для сканирования с телефона
+        s2.querySelector('#iv-qr').onclick = () => openInviteQr(inv, url);
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+// --- Экран «Компании» ------------------------------------------------------
+async function viewCompanies(container) {
+  let comps = [];
+  try { comps = await api.get('/api/v1/companies'); } catch (e) {
+    container.innerHTML = `<div class="glass card"><p class="form-error">${esc(e.message)}</p></div>`;
+    return;
+  }
+  state.companies = comps;
+  const sel = $('#company-filter');
+  if (sel) initCompanyFilter();
+  container.innerHTML = `
+    <div class="glass card">
+      <div class="card-title">🏢 Компании-клиенты <span class="spacer"></span>
+        <button class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button></div>
+      <p class="form-hint" style="margin-bottom:12px">Каждая компания (ООО, ИП) — изолированное пространство:
+      свои сотрудники, свои чеки, своя отчётность. Сотрудники видят только свою компанию,
+      вы видите всё и можете перемещать чеки между компаниями.</p>
+      <div class="table-wrap" id="cp-table"></div>
+    </div>`;
+  const rows = comps.map(c => `
+    <tr data-id="${c.id}" class="${c.is_active ? '' : 'archived-row'}">
+      <td><b>${esc(c.name)}</b>${c.inn ? `<div class="form-hint">ИНН ${esc(c.inn)}</div>` : ''}
+          ${c.note ? `<div class="form-hint">${esc(c.note)}</div>` : ''}</td>
+      <td>${c.is_active ? '<span class="chip verified">активна</span>' : '<span class="chip unknown">архив</span>'}</td>
+      <td>${c.accountants} бух. · ${c.users} сотр.</td>
+      <td>${fmtInt(c.receipts)} на ${fmtSum(c.receipts_sum)}</td>
+      <td>${c.last_activity ? fmtDate(c.last_activity) : '—'}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
+        <button class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
+        <button class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
+      </td>
+    </tr>`).join('');
+  $('#cp-table').innerHTML = comps.length ? `
+    <table class="data"><thead><tr>
+      <th>Компания</th><th>Статус</th><th>Сотрудники</th><th>Чеки</th><th>Активность</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`
+    : emptyState('🏢', 'Компаний пока нет — добавьте первую компанию-клиента');
+
+  $('#cp-add').onclick = () => companyDialog();
+  $$('.cp-open').forEach(b => b.onclick = () => {
+    state.companyFilter = b.dataset.id;
+    try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (e) {}
+    if (sel) { sel.value = b.dataset.id; }
+    location.hash = '#/dashboard';
+    toast('Пространство компании включено — «Все компании» в шапке вернёт общий вид', 'ok', '🔓');
+  });
+  $$('.cp-invite').forEach(b => b.onclick = () => {
+    const c = comps.find(x => x.id === b.dataset.id);
+    inviteDialog(b.dataset.id, c ? c.name : '');
+  });
+  $$('.cp-edit').forEach(b => b.onclick = () => companyDialog(comps.find(x => x.id === b.dataset.id)));
+}
+
+function companyDialog(c = null) {
+  const { slot } = openModal(`
+    <div class="modal-title">${c ? '✎ ' + esc(c.name) : '＋ Новая компания-клиент'}</div>
+    <div class="form-grid">
+      <label class="field full"><span>Название (ООО «…», ИП …)</span>
+        <input id="cp-name" value="${esc(c?.name || '')}" placeholder="ООО «Партнёр-СВ»"></label>
+      <label class="field"><span>ИНН (необязательно)</span>
+        <input id="cp-inn" value="${esc(c?.inn || '')}" placeholder="7801234567"></label>
+      ${c ? `<label class="field"><span>Статус</span>
+        <select id="cp-active"><option value="1" ${c.is_active ? 'selected' : ''}>Активна</option>
+        <option value="0" ${!c.is_active ? 'selected' : ''}>Архив</option></select></label>` : ''}
+      <label class="field full"><span>Памятка (договор, контакт)</span>
+        <input id="cp-note" value="${esc(c?.note || '')}"></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>Отмена</button>
+      <button class="btn btn-primary" id="cp-save">Сохранить</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  slot.querySelector('#cp-save').onclick = async () => {
+    const name = slot.querySelector('#cp-name').value.trim();
+    if (name.length < 2) return toast('Укажите название компании', 'err');
+    try {
+      if (c) {
+        const active = slot.querySelector('#cp-active');
+        await api.patch('/api/v1/companies/' + c.id, {
+          name, inn: slot.querySelector('#cp-inn').value.trim(),
+          note: slot.querySelector('#cp-note').value.trim(),
+          ...(active ? { is_active: active.value === '1' } : {}),
+        });
+      } else {
+        await api.post('/api/v1/companies', {
+          name, inn: slot.querySelector('#cp-inn').value.trim(),
+          note: slot.querySelector('#cp-note').value.trim(),
+        });
+      }
+      $('#modal-root').classList.add('hidden');
+      toast(c ? 'Компания обновлена' : 'Компания создана — теперь пригласите её бухгалтера', 'ok', '🏢');
+      route(true);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+// --- Перемещение чеков между компаниями (админ) -----------------------------
+function openMoveDialog() {
+  const ids = [...state.receiptsSelected];
+  if (!ids.length) return toast('Отметьте чеки галочками — перемещу выбранные', 'info', '🏢');
+  const active = state.companies.filter(c => c.is_active);
+  const { slot } = openModal(`
+    <div class="modal-title">🏢 Переместить чеки в компанию</div>
+    <p class="form-hint" style="margin-bottom:10px">Выбрано чеков: <b>${ids.length}</b>.
+      Чек переезжает целиком: реквизиты, позиции, статус проверки. Флаг «выгружен в 1С»
+      сбрасывается — выгрузку новой компании контролирует её бухгалтер.</p>
+    <div class="form-grid">
+      <label class="field full"><span>Компания назначения</span>
+        <select id="mv-company">${active.map(c =>
+          `<option value="${c.id}" ${state.companyFilter === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field full"><span>Назначить подотчётное лицо (необязательно)</span>
+        <input id="mv-assignee" placeholder="Иванов И.И. — оставить как есть, если пусто"></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>Отмена</button>
+      <button class="btn btn-primary" id="mv-save">Переместить</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  slot.querySelector('#mv-save').onclick = async () => {
+    try {
+      const r = await api.post('/api/v1/receipts/move', {
+        receipt_ids: ids,
+        company_id: slot.querySelector('#mv-company').value,
+        ...(slot.querySelector('#mv-assignee').value.trim()
+            ? { assignee: slot.querySelector('#mv-assignee').value.trim() } : {}),
+      });
+      $('#modal-root').classList.add('hidden');
+      state.receiptsSelected.clear();
+      toast(r.message, 'ok', '🏢');
+      route(true);
+    } catch (e) { toast(e.message, 'err'); }
+  };
 }
 
 function bindShell() {
@@ -524,8 +778,9 @@ function bindShell() {
 async function viewDashboard(container) {
   // v1.8.0: сначала данные — если ничего не изменилось, DOM не трогаем
   // (устраняет «мерцание сайта» при WS-обновлениях и возврате на вкладку)
+  const cq = companyIdParam() ? '&company_id=' + companyIdParam() : '';   // v1.11.0
   const [dashStats, dashFeed] = await Promise.all([
-    api.get('/api/v1/dashboard/stats?days=14'),
+    api.get('/api/v1/dashboard/stats?days=14' + cq),
     api.get('/api/v1/dashboard/recent?limit=12').catch(() => []),
   ]);
   const dashSig = JSON.stringify([dashStats, dashFeed]);
@@ -570,6 +825,17 @@ async function viewDashboard(container) {
         <span class="form-hint">кто сколько принёс (все чеки)</span>
         <button class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
       <div id="dash-assignee"><div class="skeleton" style="height:80px"></div></div>
+    </div>` : ''}
+    ${isAdmin() && !companyIdParam() && dashStats.by_company && dashStats.by_company.length ? `
+    <div class="glass card" style="margin-top:16px">
+      <div class="card-title">🏢 По компаниям <span class="spacer"></span>
+        <span class="form-hint">чеки и суммы каждой компании-клиента</span></div>
+      <div class="table-wrap"><table class="data"><thead><tr>
+        <th>Компания</th><th>Чеков</th><th>Сумма, ₽</th><th></th></tr></thead><tbody>
+        ${dashStats.by_company.map(c => `<tr>
+          <td>${esc(c.name)}</td><td>${fmtInt(c.count)}</td><td>${fmtSum(c.sum)}</td>
+          <td><button class="btn btn-sm c-open" data-id="${c.id}">открыть пространство</button></td></tr>`).join('')}
+      </tbody></table></div>
     </div>` : ''}
     <div id="demo-zone"></div>`;
 
@@ -693,6 +959,7 @@ function feedActionText(f) {
 // ==========================================================================
 async function viewScan(container) {
   const queueSize = offlineQueue.size();
+  // v1.11.0: подсказка — в какую компанию попадут новые чеки (админ меняет в шапке)
   container.innerHTML = `
     <div class="scan-layout">
       <div class="glass camera-card">
@@ -722,6 +989,7 @@ async function viewScan(container) {
         </div>
         <div class="torch-note">Совет: чеки с экрана телефона тоже распознаются. Держите QR в рамке при хорошем свете.
         После скана чек автоматически уходит на проверку в ФНС.</div>
+        ${isAdmin() ? `<div class="torch-note" id="scan-space-hint">🏢</div>` : ''}
       </div>
 
       <div>
@@ -750,6 +1018,13 @@ async function viewScan(container) {
 
   renderRecents();
 
+  const _hint = $('#scan-space-hint');
+  if (_hint) {
+    const c = companyIdParam() ? state.companies.find(x => x.id === companyIdParam()) : null;
+    _hint.innerHTML = c
+      ? `Новые чеки попадут в компанию: <b>${esc(c.name)}</b> (меняется селектором в шапке)`
+      : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
+  }
   $('#btn-camera-start').onclick = async () => {
     const video = $('#scan-video');
     try {
@@ -1209,6 +1484,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.11.0': [
+    ['🏢 Приложение стало платформой: ведите бухгалтерию нескольких компаний', 'администратор создаёт неограниченное число компаний (ООО, ИП), в каждой — свои бухгалтеры и сотрудники со своими чеками. Компании видят только своё пространство; вы видите всё.'],
+    ['🔓 Фильтр «Все компании / одна компания» в шапке', 'выберите компанию — дашборд и чеки показывают только её данные; карточка «По компаниям» на дашборде показывает сводку по всем сразу.'],
+    ['🔁 Чеки можно перемещать между компаниями', 'отметьте чеки в базе → «Переместить в компанию»: чек переезжает целиком, при желании — сразу с новым подотчётным лицом.'],
+    ['✉️ Приглашения с привязкой к компании', 'при создании ссылки выберите компанию — новый сотрудник сразу попадёт в её пространство.'],
+  ],
   '1.10.2': [
     ['📱 Меню: выбор пункта работает гарантированно', 'открытое меню — самый верхний слой экрана: ничто не перехватывает нажатие; выбор пункта выполняется самим приложением, без зависимости от поведения браузера. Если пункт не выбирался — после обновления сервера полностью закройте приложение и откройте снова.'],
   ],
@@ -1311,7 +1592,8 @@ async function handleScannedText(text, source) {
   }
   if (navigator.onLine && state.wsOk) {
     try {
-      const r = await api.post('/api/v1/receipts/scan', { qr_data: text, source });
+      const r = await api.post('/api/v1/receipts/scan',
+                               { qr_data: text, source, company_id: scanCompanyId() });
       pushRecent(r.receipt);
       if (!r.duplicate) beep();
       return;
@@ -1346,7 +1628,8 @@ async function flushOfflineQueue(manual = false) {
   while (offlineQueue.size() > 0) {
     const item = offlineQueue.all()[0];
     try {
-      await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data, source: item.source || 'web' });
+      await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
+                                                source: item.source || 'web', company_id: scanCompanyId() });
       offlineQueue.shift();
       sent++;
     } catch (e) {
@@ -1482,6 +1765,7 @@ function manualDialog() {
       operation: +slot.querySelector('#m-op').value,
     };
     try {
+      payload.company_id = scanCompanyId();   // v1.11.0
       const r = await api.post('/api/v1/receipts/manual', payload);
       $('#modal-root').classList.add('hidden');
       pushRecent(r.receipt);
@@ -1552,6 +1836,7 @@ async function viewReceipts(container) {
         <button class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
         <button class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
         <button class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
+        ${isAdmin() ? '<button class="btn btn-sm" id="btn-bulk-move">🏢 Переместить в компанию</button>' : ''}
         <button class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
@@ -1579,6 +1864,7 @@ async function viewReceipts(container) {
   async function load() {
     const p = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => { if (v !== '' && v != null) p.set(k, v); });
+    if (companyIdParam()) p.set('company_id', companyIdParam());   // v1.11.0
     const data = await api.get('/api/v1/receipts?' + p.toString());
     pageInfo = data;
     // v1.8.0: данные не изменились → не перерисовываем (без мерцания)
@@ -1657,7 +1943,7 @@ async function viewReceipts(container) {
       <td class="cell-sum">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
         ? `<div class="form-hint">к учёту: ${fmtSum((r.total_sum || 0) - r.personal_sum)}</div>` : ''}</td>
       <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
-      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}</td>` : ''}
+      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}</td>` : ''}
       <td>${chip(r.status)}</td>
       <td>${chip(r.fns_status)} ${detailsMark}</td>
       <td>${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
@@ -1678,6 +1964,13 @@ async function viewReceipts(container) {
     if (bao && !bao.dataset.bound) {
       bao.dataset.bound = '1';
       bao.onclick = () => openAO1Modal();
+    }
+
+    // v1.11.0: перемещение выбранных чеков в другую компанию (админ)
+    const bmove = $('#btn-bulk-move');
+    if (bmove && !bmove.dataset.bound) {
+      bmove.dataset.bound = '1';
+      bmove.onclick = () => openMoveDialog();
     }
 
     // v1.7.0: печать выбранных чеков PDF (кнопка у бухгалтера и пользователя)
@@ -2430,6 +2723,9 @@ async function viewUsers(container) {
     api.get('/api/v1/users'),
     api.get('/api/v1/invites'),
   ]);
+  if (isAdmin() && !state.companies.length) {
+    try { state.companies = await api.get('/api/v1/companies'); } catch (e) {}
+  }
 
   container.innerHTML = `
     <div class="info-callout">Регистрация — <b>только по приглашениям</b>: создайте ссылку с ролью
@@ -2440,11 +2736,12 @@ async function viewUsers(container) {
       <div class="card-title">Приглашения <span class="spacer"></span>
         <button class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
-        <th>Кто (памятка)</th><th>Роль</th><th>Использовано</th><th>Действует до</th>
+        <th>Кто (памятка)</th><th>Роль</th><th>Компания</th><th>Использовано</th><th>Действует до</th>
         <th>Статус</th><th>Ссылка</th><th></th></tr></thead><tbody>
         ${invites.length ? invites.map(i => `<tr style="cursor:default">
           <td><b>${esc(i.note || '—')}</b></td>
           <td>${roleChip(i.role)}</td>
+          <td>${esc(i.company_name || '—')}</td>
           <td>${i.used_count} / ${i.max_uses}</td>
           <td class="cell-date">${i.expires_at ? fmtDate(i.expires_at) : '∞'}</td>
           <td>${i.valid ? '<span class="chip verified"><span class="dot"></span>активно</span>' : '<span class="chip failed"><span class="dot"></span>' + (i.revoked ? 'отозвано' : 'исчерпано') + '</span>'}</td>
@@ -2452,7 +2749,7 @@ async function viewUsers(container) {
             ? `<button class="btn btn-sm i-link" data-token="${esc(i.token)}">🔗 копировать</button>
                <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>` : '—'}</td>
           <td>${i.valid ? `<button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}">Отозвать</button>` : ''}</td>
-        </tr>`).join('') : `<tr style="cursor:default"><td colspan="7">${emptyState('✉️', 'Приглашений ещё нет')}</td></tr>`}
+        </tr>`).join('') : `<tr style="cursor:default"><td colspan="8">${emptyState('✉️', 'Приглашений ещё нет')}</td></tr>`}
       </tbody></table></div>
     </div>
 
@@ -2460,12 +2757,13 @@ async function viewUsers(container) {
       <div class="card-title">Пользователи системы <span class="spacer"></span>
         <button class="btn btn-sm" id="u-add">+ Создать вручную</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
-        <th>Логин</th><th>ФИО</th><th>Роль</th><th>Статус</th>
+        <th>Логин</th><th>ФИО</th><th>Роль</th><th>Компания</th><th>Статус</th>
         <th>Последний вход</th><th></th></tr></thead><tbody>
         ${users.map(u => `<tr data-id="${u.id}" style="cursor:default">
           <td><b>${esc(u.username)}</b>${u.must_change_password ? ' <span class="chip unknown mono">врем. пароль</span>' : ''}</td>
           <td>${esc(u.full_name)}</td>
           <td>${roleChip(u.role)}</td>
+          <td>${esc(u.company_name || '—')}</td>
           <td>${u.is_active ? '<span class="chip verified"><span class="dot"></span>активен</span>' : '<span class="chip failed"><span class="dot"></span>отключён</span>'}</td>
           <td class="cell-date">${fmtDate(u.last_login_at)}</td>
           <td style="white-space:nowrap">
@@ -2527,59 +2825,6 @@ async function viewUsers(container) {
     }
   }
 
-  function inviteDialog() {
-    const { slot } = openModal(`
-      <div class="modal-title">✉️ Новое приглашение</div>
-      <div class="form-grid">
-        <label class="field"><span>Роль нового пользователя</span>
-          <select id="iv-role">
-            <option value="accountant">Бухгалтер (расширенные права)</option>
-            <option value="user">Пользователь (сканирование)</option>
-          </select></label>
-        <label class="field"><span>Срок действия, часов</span>
-          <input id="iv-hours" type="number" value="72" min="1" max="8760"></label>
-        <label class="field"><span>Сколько раз можно использовать</span>
-          <input id="iv-uses" type="number" value="1" min="1" max="200"></label>
-        <label class="field full"><span>Для кого (памятка, попадёт в «Организацию»)</span>
-          <input id="iv-note" placeholder="Иванова — бухгалтерия"></label>
-      </div>
-      <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="iv-save">Создать ссылку</button>
-      </div>`);
-    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
-    slot.querySelector('#iv-save').onclick = async () => {
-      try {
-        const inv = await api.post('/api/v1/invites', {
-          role: slot.querySelector('#iv-role').value,
-          expires_hours: +slot.querySelector('#iv-hours').value || 72,
-          max_uses: +slot.querySelector('#iv-uses').value || 1,
-          note: slot.querySelector('#iv-note').value.trim(),
-        });
-        $('#modal-root').classList.add('hidden');
-        const url = `${location.origin}/#/register/${inv.token}`;
-        const { slot: s2 } = openModal(`
-          <div class="modal-title">🔗 Ссылка-приглашение готова</div>
-          <div class="info-callout">Роль: <b>${roleLabel(inv.role)}</b> ·
-            использований: ${inv.max_uses} · действует до ${inv.expires_at ? fmtDate(inv.expires_at) : '∞'}</div>
-          <div class="token-line"><input readonly value="${esc(url)}" id="iv-url">
-            <button class="btn btn-sm" id="iv-copy">копировать</button>
-            <button class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
-          <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта)
-            или покажите QR-код — ему достаточно навести камеру телефона.
-            После перехода он создаст логин и пароль — роль присвоится автоматически.</p>
-          <div class="modal-actions"><button class="btn btn-primary" data-close>Готово</button></div>`);
-        s2.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
-        s2.querySelector('#iv-copy').onclick = () => {
-          navigator.clipboard && navigator.clipboard.writeText(url);
-          toast('Скопировано', 'ok');
-        };
-        // v1.8.2: показать QR-код для сканирования с телефона
-        s2.querySelector('#iv-qr').onclick = () => openInviteQr(inv, url);
-        route(true);
-      } catch (e) { toast(e.message, 'err'); }
-    };
-  }
 
   // --- Пользователи ---
   $('#u-add').onclick = () => userDialog();
@@ -2638,6 +2883,10 @@ async function viewUsers(container) {
         ${u ? `<label class="field"><span>Активен</span>
           <select id="u-active"><option value="1" ${u.is_active ? 'selected' : ''}>Да</option>
           <option value="0" ${!u.is_active ? 'selected' : ''}>Нет</option></select></label>` : ''}
+        ${isAdmin() && state.companies.length ? `<label class="field full"><span>Компания (пространство)</span>
+          <select id="u-company"><option value="">— без компании —</option>
+          ${state.companies.map(c => `<option value="${c.id}" ${(u ? (u.company_id || '') : state.companyFilter) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select></label>` : ''}
       </div>
       <div class="modal-actions">
         ${u && u.id !== state.me.id ? '<button class="btn btn-bad" id="u-delete">Архивировать</button>' : ''}
@@ -2656,11 +2905,15 @@ async function viewUsers(container) {
           if (pass) patch.password = pass;
           const active = slot.querySelector('#u-active');
           if (active) patch.is_active = active.value === '1';
+          const uc = slot.querySelector('#u-company');
+          if (uc) patch.company_id = uc.value || null;
           await api.patch('/api/v1/users/' + u.id, patch);
         } else {
+          const ucNew = slot.querySelector('#u-company');
           await api.post('/api/v1/users', {
             username: slot.querySelector('#u-username').value.trim(),
             password: slot.querySelector('#u-pass').value,
+            ...(ucNew && ucNew.value ? { company_id: ucNew.value } : {}),
             full_name: slot.querySelector('#u-fullname').value,
             organization: slot.querySelector('#u-org').value,
             role: slot.querySelector('#u-role').value,

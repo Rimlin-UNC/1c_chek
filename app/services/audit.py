@@ -24,6 +24,7 @@ def log_action(user: User | None, action: str, entity_type: str = "",
         db.add(AuditLog(
             user_id=user.id if user else None,
             username=user.username if user else "system",
+            company_id=getattr(user, "company_id", None),   # v1.11.0
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,

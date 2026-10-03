@@ -130,6 +130,9 @@
         <a href="#/mapping" data-view="mapping" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="mapping"></span>Маппинг
         </a>
+        <a href="#/companies" data-view="companies" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="users"></span>Компании
+        </a>
         <a href="#/users" data-view="users" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Пользователи
         </a>
@@ -156,6 +159,8 @@
         <button class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
         <h2 class="page-title" id="page-title">Дашборд</h2>
         <div class="topbar-right">
+          <select id="company-filter" class="company-select admin-only hidden"
+                  title="Пространство: все компании или одна (администратор)"></select>
           <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
             ⚡ Офлайн
           </div>

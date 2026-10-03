@@ -27,6 +27,8 @@ class UserCreate(BaseModel):
     full_name: str = ""
     organization: str = ""
     role: Literal["accountant", "user"] = "user"
+    company_id: Optional[str] = Field(default=None, max_length=36,
+                                      description="v1.11.0: компания сотрудника")
 
 
 class UserPatch(BaseModel):
@@ -35,6 +37,8 @@ class UserPatch(BaseModel):
     password: Optional[str] = Field(default=None, min_length=6, max_length=200)
     role: Optional[Literal["accountant", "user"]] = None
     is_active: Optional[bool] = None
+    company_id: Optional[str] = Field(default=None, max_length=36,
+                                      description="v1.11.0: перевод в другую компанию")
 
 
 # --- Чеки ------------------------------------------------------------------
@@ -44,6 +48,8 @@ class ManualReceipt(BaseModel):
     total_sum: float = Field(gt=0, description="Сумма чека, ₽")
     fn: str = Field(min_length=8, max_length=20, description="ФН")
     fd: str = Field(min_length=1, max_length=20, description="ФД")
+    company_id: Optional[str] = Field(default=None, max_length=36,
+                                      description="v1.11.0: компания чека (админ)")
     fp: str = Field(min_length=4, max_length=20, description="ФП/ФПД")
     operation: int = Field(default=1, ge=1, le=2, description="1 приход, 2 возврат")
 
@@ -53,6 +59,8 @@ class ScanRequest(BaseModel):
     qr_data: str = Field(min_length=10, max_length=4000)
     source: str = Field(default="web", max_length=20)
     verify: bool = Field(default=True, description="Запустить проверку в ФНС")
+    company_id: Optional[str] = Field(default=None, max_length=36,
+                                      description="v1.11.0: компания чека (админ)")
 
 
 class VerifyRequest(BaseModel):
@@ -111,6 +119,8 @@ class InviteCreate(BaseModel):
     max_uses: int = Field(default=1, ge=1, le=200)
     expires_hours: int = Field(default=72, ge=1, le=8760)
     note: str = Field(default="", max_length=200)
+    company_id: Optional[str] = Field(default=None, max_length=36,
+                                      description="v1.11.0: компания приглашённого")
 
 
 class AssignBulk(BaseModel):
@@ -188,3 +198,26 @@ class AppSettingsPatch(BaseModel):
     # v1.8.0: срок сдачи авансового отчёта от даты чека (дней; приказ руководителя,
     # п. 6.3 Указания ЦБ 3210-У — не более 3 рабочих дней после израсходования)
     advance_deadline_days: Optional[int] = Field(default=None, ge=1, le=365)
+
+
+# --- v1.11.0: мультикомпанийность -------------------------------------------
+class CompanyCreate(BaseModel):
+    """Новая компания-клиент (ООО, ИП) — пространство аутсорсинга."""
+    name: str = Field(min_length=2, max_length=200)
+    inn: str = Field(default="", max_length=20)
+    note: str = Field(default="", max_length=500)
+
+
+class CompanyPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=200)
+    inn: Optional[str] = Field(default=None, max_length=20)
+    note: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+
+class ReceiptMoveBody(BaseModel):
+    """Перемещение чеков между компаниями (только администратор платформы)."""
+    receipt_ids: list[str] = Field(max_length=1000)
+    company_id: str = Field(max_length=36)
+    assignee: Optional[str] = Field(default=None, max_length=200,
+                                    description="Переназначить подотчётное лицо")

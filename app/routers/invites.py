@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ACCOUNTANT, ROLE_USER, require_admin
 from ..database import get_db
-from ..models import Invite, User
+from ..models import Company, Invite, User
 from ..schemas import InviteCreate
 from ..services.audit import log_action
 
@@ -30,17 +30,29 @@ router = APIRouter(prefix="/api/v1/invites", tags=["Приглашения"])
 
 @router.get("", summary="Список приглашений")
 def list_invites(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    rows = db.query(Invite).order_by(Invite.created_at.desc()).limit(200).all()
-    return [i.to_dict() for i in rows]
+    comps = {c.id: c.name for c in db.query(Company).all()}
+    out = []
+    for i in db.query(Invite).order_by(Invite.created_at.desc()).limit(200).all():
+        d = i.to_dict()
+        d["company_name"] = comps.get(i.company_id)      # v1.11.0
+        out.append(d)
+    return out
 
 
 @router.post("", summary="Создать приглашение (получить ссылку)")
 def create_invite(body: InviteCreate, db: Session = Depends(get_db),
                   admin: User = Depends(require_admin)):
+    company_id = None
+    if body.company_id:
+        comp = db.get(Company, body.company_id)
+        if not comp:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+        company_id = comp.id
     invite = Invite(
         token=secrets.token_urlsafe(16),
         role=body.role if body.role in (ROLE_ACCOUNTANT, ROLE_USER) else ROLE_USER,
         note=body.note.strip(),
+        company_id=company_id,               # v1.11.0: пространство приглашённого
         created_by=admin.id,
         expires_at=dt.datetime.utcnow() + dt.timedelta(hours=body.expires_hours),
         max_uses=body.max_uses,
@@ -49,7 +61,8 @@ def create_invite(body: InviteCreate, db: Session = Depends(get_db),
     db.commit()
     db.refresh(invite)
     log_action(admin, "invite_created", "invite", invite.id,
-               {"role": invite.role, "max_uses": invite.max_uses})
+               {"role": invite.role, "max_uses": invite.max_uses,
+                "company_id": invite.company_id})
     return invite.to_dict()
 
 

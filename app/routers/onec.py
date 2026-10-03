@@ -59,11 +59,15 @@ def ping(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
 def pull(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
          since: str | None = Query(None, description="Получить чеки с даты ГГГГ-ММ-ДДТЧЧ:ММ:СС"),
          only_verified: bool = Query(True),
+         company_id: str | None = Query(None, max_length=36,
+                                        description="v1.11.0: только чеки компании"),
          limit: int = Query(default=100, ge=1, le=settings.ONEC_BATCH_SIZE),
          db: Session = Depends(get_db)):
     _require_token(x_api_token, db)
 
     query = db.query(Receipt).filter(Receipt.exported == False)  # noqa: E712
+    if company_id:                                   # v1.11.0: пространство
+        query = query.filter(Receipt.company_id == company_id)
     if only_verified:
         query = query.filter(Receipt.status == "verified")
     if since:

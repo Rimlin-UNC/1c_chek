@@ -29,12 +29,17 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER, get_current_user,
-                    require_accountant)
+                    require_accountant, require_admin)
+from ..services.scoping import (can_edit_receipt, can_view_receipt,
+                                scope_receipts, target_company_id)   # v1.11.0
+
 from ..config import settings
 from ..database import get_db
-from ..models import FnsLog, MappingSetting, Receipt, ReceiptItem, User
+from ..models import (Company, FnsLog, MappingSetting, Receipt,
+                      ReceiptItem, User)
 from ..schemas import (AssignBulk, ExportRequest, FetchDetailsRequest,
-                       ManualReceipt, ReceiptPatch, ScanRequest, VerifyRequest)
+                       ManualReceipt, ReceiptMoveBody, ReceiptPatch,
+                       ScanRequest, VerifyRequest)
 from ..services import appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
@@ -50,7 +55,8 @@ router = APIRouter(prefix="/api/v1/receipts", tags=["Чеки"])
 #  Создание чека из разобранного QR (общая для всех источников)
 # --------------------------------------------------------------------------
 def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
-                    user: User | None) -> tuple[Receipt, bool]:
+                    user: User | None,
+                    company_id: str | None = None) -> tuple[Receipt, bool]:
     """Создание чека с дедупликацией по ФН+ФД+ФП."""
     existing = db.query(Receipt).filter(
         Receipt.fn == parsed.fn, Receipt.fd == parsed.fd, Receipt.fp == parsed.fp
@@ -72,6 +78,7 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         operation=parsed.operation if parsed.operation in (1, 2) else 1,
         source=source,
         created_by=user.id if user else None,
+        company_id=company_id,                     # v1.11.0: пространство клиента
         assignee=auto_assignee,
         raw_data=receipts_json(parsed),
         status="new",
@@ -102,7 +109,9 @@ def scan(body: ScanRequest, background: BackgroundTasks,
     except QRParseError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, parsed, body.source, user)
+    # v1.11.0: чек попадает в пространство компании (админ может выбрать)
+    company_id = target_company_id(db, user, body.company_id)
+    receipt, created = _upsert_receipt(db, parsed, body.source, user, company_id)
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "sum": receipt.total_sum})
@@ -114,6 +123,12 @@ def scan(body: ScanRequest, background: BackgroundTasks,
                    {"fn": receipt.fn, "fd": receipt.fd})
         broadcast("receipt_duplicate", receipt.to_dict())
         auto = False
+        # v1.11.0: дубликат из ЧУЖОЙ компании — данные не раскрываем
+        if not can_view_receipt(user, receipt):
+            return {"receipt": None, "duplicate": True, "auto_verify": False,
+                    "message": "Этот чек уже учтён в другой организации. "
+                               "Если он должен относиться к вашей — попросите "
+                               "администратора переместить его."}
 
     return {
         "receipt": receipt.to_dict(with_items=True),
@@ -147,7 +162,8 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
     except (QRParseError, ValueError) as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, result.parsed, "image", user)
+    receipt, created = _upsert_receipt(db, result.parsed, "image", user,
+                                       target_company_id(db, user, None))
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "source": "image"})
@@ -191,7 +207,8 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
     except QRParseError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, parsed, "manual", user)
+    receipt, created = _upsert_receipt(db, parsed, "manual", user,
+                                       target_company_id(db, user, getattr(body, "company_id", None)))
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
         broadcast("receipt_created", receipt.to_dict())
@@ -218,6 +235,8 @@ def list_receipts(
     attention: bool | None = Query(None, description="Требуют внимания: не обработан >3 дней"),
     date_from: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     date_to: str | None = Query(None, description="ГГГГ-ММ-ДД"),
+    company_id: str | None = Query(None, max_length=36,
+                                   description="v1.11.0: компания (только админ)"),
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
@@ -229,9 +248,9 @@ def list_receipts(
     if id_list:
         query = query.filter(Receipt.id.in_(id_list))
 
-    # Пользователь видит только свои чеки
-    if user.role == ROLE_USER:
-        query = query.filter(Receipt.created_by == user.id)
+    # v1.11.0: изоляция пространства (админ — все/фильтр; бухгалтер — компания;
+    # пользователь — свои в своей компании)
+    query = scope_receipts(query, user, company_id)
 
     if status_filter:
         query = query.filter(Receipt.status == status_filter)
@@ -290,10 +309,9 @@ def get_receipt(receipt_id: str,
                 user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
-    if not receipt:
+    if not receipt or not can_view_receipt(user, receipt):
+        # v1.11.0: чужая компания/чужой чек — «не найден» (не раскрываем существование)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    if user.role == ROLE_USER and receipt.created_by != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступны только свои чеки")
     d = receipt.to_dict(with_items=True)
     d["raw_data"] = receipt.raw_data
     return d
@@ -310,10 +328,9 @@ def receipt_qr_png(receipt_id: str,
     import qrcode
     from fastapi.responses import Response
     receipt = db.get(Receipt, receipt_id)
-    if not receipt:
+    if not receipt or not can_view_receipt(user, receipt):
+        # v1.11.0: чужая компания/чужой чек — «не найден» (не раскрываем существование)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    if user.role == ROLE_USER and receipt.created_by != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступны только свои чеки")
     img = qrcode.make(receipt.qr_data, box_size=6, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -328,8 +345,11 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
     if not receipt:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
 
-    is_staff = user.role in (ROLE_ADMIN, ROLE_ACCOUNTANT)
-    is_owner = receipt.created_by == user.id
+    # v1.11.0: права = компания + роль. Чужая компания выглядит как «нет чека».
+    if not can_view_receipt(user, receipt):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    is_staff = can_edit_receipt(user, receipt)          # бухгалтер/админ своей компании
+    is_owner = (not is_staff and receipt.created_by == user.id)  # свой чек (user)
     if not is_staff and not is_owner:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Сотрудник работает только со своими чеками")
@@ -434,7 +454,7 @@ def bulk_assign(body: AssignBulk, user: User = Depends(require_accountant),
                 db: Session = Depends(get_db)):
     if not body.receipt_ids:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Не выбраны чеки")
-    updated = (db.query(Receipt)
+    updated = (scope_receipts(db.query(Receipt), user)          # v1.11.0
                .filter(Receipt.id.in_(body.receipt_ids))
                .update({Receipt.assignee: body.assignee.strip()[:200]},
                        synchronize_session=False))
@@ -443,6 +463,51 @@ def bulk_assign(body: AssignBulk, user: User = Depends(require_accountant),
                                                    "assignee": body.assignee})
     return {"ok": True, "updated": updated,
             "message": f"Сотрудник назначен, чеков обновлено: {updated}"}
+
+
+# --------------------------------------------------------------------------
+#  v1.11.0: Перемещение чеков между компаниями (администратор платформы).
+#  «Забрать чек и передать в любую компанию»: чек уникален глобально
+#  (ФН+ФД+ФП), перемещение меняет только компанию-владельца.
+# --------------------------------------------------------------------------
+@router.post("/move", summary="Переместить чеки в другую компанию (администратор)")
+def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
+                  db: Session = Depends(get_db)):
+    comp = db.get(Company, body.company_id)
+    if not comp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания назначения не найдена")
+    if not comp.is_active:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Компания заархивирована — перемещение недоступно")
+    rows = db.query(Receipt).filter(Receipt.id.in_(body.receipt_ids)).all()
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
+    moved_ids, moved, same = [], 0, 0
+    for r in rows:
+        if r.company_id == comp.id:
+            same += 1
+            continue
+        r.company_id = comp.id
+        # выгрузка относилась к прежней компании — сбрасываем, чтобы выгрузку
+        # новой компании бухгалтер проконтролировал сам
+        r.exported = False
+        r.exported_at = None
+        if body.assignee is not None:
+            r.assignee = body.assignee.strip()[:200]
+        moved_ids.append(r.id)
+        moved += 1
+    db.commit()
+    if moved:
+        log_action(user, "receipts_moved", details={
+            "count": moved, "to_company": comp.name, "ids": moved_ids[:50]})
+        broadcast("receipts_moved", {"ids": moved_ids, "company_id": comp.id,
+                                     "company_name": comp.name})
+    msg = (f"Перемещено чеков: {moved} → {comp.name}" if moved
+           else "Все выбранные чеки уже в этой компании")
+    if moved:
+        msg += "; флаг выгрузки в 1С сброшен"
+    return {"ok": True, "moved": moved, "already_there": same,
+            "company": {"id": comp.id, "name": comp.name}, "message": msg}
 
 
 # --------------------------------------------------------------------------
@@ -546,7 +611,7 @@ def fetch_details_one(receipt_id: str, background: BackgroundTasks,
                       user: User = Depends(require_accountant),
                       db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
-    if not receipt:
+    if not receipt or not can_view_receipt(user, receipt):      # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
     background.add_task(_run_external_fetch, [receipt.id])
     log_action(user, "external_fetch", "receipt", receipt.id, {"queued": 1})
@@ -560,8 +625,9 @@ def fetch_details_one(receipt_id: str, background: BackgroundTasks,
 def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
                        user: User = Depends(require_accountant),
                        db: Session = Depends(get_db)):
-    ids = [i for i in dict.fromkeys(body.receipt_ids)
-           if db.get(Receipt, i) is not None]
+    visible = {r.id for r in scope_receipts(
+        db.query(Receipt).filter(Receipt.id.in_(body.receipt_ids)), user).all()}
+    ids = [i for i in dict.fromkeys(body.receipt_ids) if i in visible]
     if not ids:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
     background.add_task(_run_external_fetch, ids)
@@ -594,16 +660,17 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
     receipt = db.get(Receipt, receipt_id)
     if not receipt:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    if not can_view_receipt(user, receipt):                     # v1.11.0
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
     if receipt.exported and user.role != ROLE_ADMIN:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Чек уже выгружен в 1С; удалять может только администратор")
-    if user.role == ROLE_USER and receipt.created_by != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Можно удалять только свои чеки")
     info = {"fn": receipt.fn, "fd": receipt.fd, "fp": receipt.fp}
     db.delete(receipt)
     db.commit()
     log_action(user, "receipt_deleted", "receipt", receipt_id, info)
-    broadcast("receipt_deleted", {"id": receipt_id})
+    broadcast("receipt_deleted", {"id": receipt_id,
+                               "company_id": receipt.company_id})
     return {"ok": True}
 
 
@@ -692,10 +759,13 @@ def verify(body: VerifyRequest, background: BackgroundTasks,
            user: User = Depends(require_accountant), db: Session = Depends(get_db)):
     ids = body.receipt_ids
     if ids:
-        found = db.query(Receipt).filter(Receipt.id.in_(ids)).all()
+        found = scope_receipts(
+            db.query(Receipt).filter(Receipt.id.in_(ids)), user).all()   # v1.11.0
         ids = [r.id for r in found]
     else:
-        found = db.query(Receipt).filter(Receipt.status.in_(["new", "failed"])).all()
+        found = scope_receipts(
+            db.query(Receipt).filter(Receipt.status.in_(["new", "failed"])),
+            user).all()
         ids = [r.id for r in found]
     if not ids:
         return {"queued": 0, "message": "Нет чеков для проверки"}
@@ -708,7 +778,7 @@ def verify(body: VerifyRequest, background: BackgroundTasks,
 def verify_one(receipt_id: str, background: BackgroundTasks,
                user: User = Depends(require_accountant), db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
-    if not receipt:
+    if not receipt or not can_view_receipt(user, receipt):      # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
     background.add_task(_run_verification, [receipt.id])
     return {"queued": 1, "message": "Чек отправлен на проверку в ФНС"}
@@ -720,7 +790,7 @@ def verify_one(receipt_id: str, background: BackgroundTasks,
 @router.post("/export", summary="Экспорт чеков в 1С (EnterpriseData, бухгалтер+)")
 def export_receipts(body: ExportRequest, user: User = Depends(require_accountant),
                     db: Session = Depends(get_db)):
-    query = db.query(Receipt)
+    query = scope_receipts(db.query(Receipt), user)             # v1.11.0
     if body.receipt_ids:
         query = query.filter(Receipt.id.in_(body.receipt_ids))
     else:
@@ -757,7 +827,7 @@ def export_receipts(body: ExportRequest, user: User = Depends(require_accountant
 @router.post("/export-csv", summary="Экспорт CSV для бухгалтерии (бухгалтер+)")
 def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
                db: Session = Depends(get_db)):
-    query = db.query(Receipt)
+    query = scope_receipts(db.query(Receipt), user)             # v1.11.0
     if body.receipt_ids:
         query = query.filter(Receipt.id.in_(body.receipt_ids))
     receipts = query.order_by(Receipt.receipt_date.desc()).limit(10000).all()
