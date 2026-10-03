@@ -241,6 +241,26 @@ sleep 2
 systemctl is-active --quiet "$SERVICE" && ok "сервис запущен" || {
   echo "  ✘ Сервис не запустился. Журнал:"; journalctl -u "$SERVICE" -n 25 --no-pager; exit 1; }
 
+# v1.8.3: проверяем ЖИВОСТЬ приложения по HTTP — «systemctl is-active» не
+# видит падение импорта (например, забыли зависимость), а nginx тогда отдаёт 502
+HEALTH_OK=0
+for i in 1 2 3 4 5 6 7 8; do
+  if curl -fs --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    HEALTH_OK=1; break
+  fi
+  sleep 1
+done
+if [[ $HEALTH_OK -eq 1 ]]; then
+  ok "приложение отвечает (/health ok)"
+else
+  echo "  ✘ Приложение НЕ отвечает после рестарта (nginx покажет 502). Последние строки журнала:"
+  journalctl -u "$SERVICE" -n 20 --no-pager | tail -20
+  echo "     Частая причина: не хватает зависимости. Лечение:"
+  echo "       sudo -u $APP_USER $APP_DIR/venv/bin/pip install -r $APP_DIR/requirements.txt"
+  echo "       sudo systemctl restart $SERVICE"
+  exit 1
+fi
+
 # v1.8.1: разрешаем приложению (пользователь ymaster) перезапускать свой сервис
 # — без этого «Обновить из приложения» обновляло файлы, но не могло применить их
 # v1.8.3: блок защищён — любая ошибка здесь НЕ должна ронять весь деплой
