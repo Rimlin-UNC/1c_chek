@@ -319,6 +319,15 @@ def _backup_database() -> str:
     return create_backup("manual") or ""
 
 
+def _py_bin() -> str:
+    """v1.8.3: python ЦЕЛЕВОГО окружения для проверок обновления.
+    На проде зависимости стоят в venv — системный python3 не имеет fastapi,
+    и проверка целостности могла ложно провалиться (обновление откатилось бы
+    даже при исправном коде). venv есть → берём его, иначе системный python3."""
+    venv_py = os.path.join(APP_DIR, "venv", "bin", "python3")
+    return venv_py if os.path.exists(venv_py) else "python3"
+
+
 def _health_check() -> tuple[bool, str]:
     """Целостность после обновления: импорт приложения и миграции БД
     в ОТДЕЛЬНОМ процессе (как это увидит uvicorn при рестарте)."""
@@ -330,7 +339,7 @@ def _health_check() -> tuple[bool, str]:
         "from app.config import settings;"
         "print(settings.APP_VERSION)"
     ).format(app=APP_DIR)
-    rc, out = _run(["python3", "-c", code], timeout=120)
+    rc, out = _run([_py_bin(), "-c", code], timeout=120)
     if rc != 0:
         return False, out or "импорт приложения не удался"
     return True, out.strip()

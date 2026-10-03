@@ -65,3 +65,22 @@ class TestApiDownloadGet:
         assert "openInviteQr" in js and "iv-qr" in js
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert ".invite-qr-box" in css
+
+class TestPyBinV18_3:
+    def test_py_bin_prefers_venv(self, tmp_path, monkeypatch):
+        import app.services.updater as up
+        monkeypatch.setattr(up, "APP_DIR", str(tmp_path))
+        assert up._py_bin() == "python3"                 # venv нет → системный
+        vbin = tmp_path / "venv" / "bin"
+        vbin.mkdir(parents=True)
+        (vbin / "python3").write_text("#!/bin/sh\n")
+        assert up._py_bin() == str(vbin / "python3")     # venv есть → его python
+
+    def test_health_check_uses_py_bin(self, monkeypatch):
+        import app.services.updater as up
+        seen = []
+        monkeypatch.setattr(up, "_run",
+                            lambda cmd, **kw: (seen.append(cmd), (0, "1.8.3"))[1])
+        ok_flag, msg = up._health_check()
+        assert ok_flag is True
+        assert seen[0][0] == up._py_bin()
