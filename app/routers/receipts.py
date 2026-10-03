@@ -286,6 +286,19 @@ def list_receipts(
 #  Карточка / изменение / удаление
 # --------------------------------------------------------------------------
 @router.get("/{receipt_id}", summary="Чек с позициями")
+def get_receipt(receipt_id: str,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    if user.role == ROLE_USER and receipt.created_by != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступны только свои чеки")
+    d = receipt.to_dict(with_items=True)
+    d["raw_data"] = receipt.raw_data
+    return d
+
+
 @router.get("/{receipt_id}/qr.png", summary="QR-код чека как в кассовом аппарате (PNG)")
 def receipt_qr_png(receipt_id: str,
                    user: User = Depends(get_current_user),
@@ -305,18 +318,6 @@ def receipt_qr_png(receipt_id: str,
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return Response(content=buf.getvalue(), media_type="image/png")
-
-
-def get_receipt(receipt_id: str, user: User = Depends(get_current_user),
-                db: Session = Depends(get_db)):
-    receipt = db.get(Receipt, receipt_id)
-    if not receipt:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    if user.role == ROLE_USER and receipt.created_by != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступны только свои чеки")
-    d = receipt.to_dict(with_items=True)
-    d["raw_data"] = receipt.raw_data
-    return d
 
 
 @router.patch("/{receipt_id}", summary="Изменение чека (сотрудник: уведомление/комментарий; бухгалтер+: всё)")
