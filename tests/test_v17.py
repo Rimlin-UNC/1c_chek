@@ -67,8 +67,10 @@ class TestThemesAndPrint:
 
     def test_ssl_auto_renew_in_deploy(self):
         d = open("deploy.sh", encoding="utf-8").read()
-        assert "certbot.timer" in d
-        assert "certbot renew --cert-name" in d
+        # v1.8.3: таймер systemd или snap; продление через CERTBOT_BIN
+        assert "renew --cert-name" in d
+        assert "certbot.timer" in d or "snap.certbot.renew.timer" in d
+        assert "--fix-ssl" in d                       # режим починки SSL
 
     def test_no_blinking_indicator(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
