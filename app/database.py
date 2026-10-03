@@ -68,12 +68,17 @@ def init_db() -> None:
     from . import models  # noqa: F401 — регистрируем модели
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
-    # v1.12.0: распределение существующих данных по компаниям из «памятки»
-    try:
-        migrate_companies_from_notes()
-    except Exception:  # noqa: BLE001 — старт не должен ломаться на миграции
-        import traceback
-        traceback.print_exc()
+    # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
+    # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
+    # ошибка уходит в журнал, приложение стартует на прежней схеме.
+    for step in (migrate_companies_from_notes, repair_company_names):
+        try:
+            result = step()
+            if result and result.get("skipped") is None:
+                print(f"  Миграция компаний ({step.__name__}): {result}")
+        except Exception:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
 
 
 def _ensure_schema() -> None:
@@ -181,6 +186,22 @@ def _backfill_companies(conn, existing_tables: set) -> None:
                      {"c": cid})
 
 
+def company_name_from_note(note: str) -> str:
+    """v1.12.1: НАЗВАНИЕ компании из текста памятки/организации.
+
+    Памятка могла быть вида «Иванова — ООО «Альфа-Трейд»» — компанией
+    является часть ПОСЛЕ тире (—, – или - с пробелами). Если тире нет,
+    берём текст целиком. Внутренние дефисы без пробелов («Альфа-Трейд»)
+    не разрезаются."""
+    import re as _re
+
+    text_ = (note or "").strip()
+    if not text_:
+        return ""
+    parts = _re.split(r"\s+[—–-]\s+", text_)
+    return (parts[-1].strip() or text_) if len(parts) > 1 else text_
+
+
 def migrate_companies_from_notes() -> dict:
     """v1.12.0: компании из «памятки» приглашений и «Организации» пользователей.
 
@@ -232,12 +253,12 @@ def migrate_companies_from_notes() -> dict:
         if first_comp is not None:
             default_id = first_comp.id
 
-        # 1) приглашения: памятка → компания
+        # 1) приглашения: памятка → компания (по НАЗВАНИЮ, v1.12.1)
         for inv in db.query(Invite).all():
             note = (inv.note or "").strip()
             if not note or inv.company_id:
                 continue
-            comp = ensure_company(note)
+            comp = ensure_company(company_name_from_note(note))
             inv.company_id = comp.id
             out["invites_bound"] += 1
 
@@ -246,7 +267,7 @@ def migrate_companies_from_notes() -> dict:
             org = (u.organization or "").strip()
             if not org:
                 continue
-            comp = ensure_company(org)
+            comp = ensure_company(company_name_from_note(org))
             if u.company_id != comp.id:
                 u.company_id = comp.id
                 out["users_moved"] += 1
@@ -261,6 +282,65 @@ def migrate_companies_from_notes() -> dict:
                     if r.company_id != comp.id:
                         r.company_id = comp.id
                         out["receipts_moved"] += 1
+
+        row = db.query(AppSetting).filter(AppSetting.key == FLAG).first()
+        if row:
+            row.value = "1"
+        else:
+            db.add(AppSetting(key=FLAG, value="1"))
+        db.commit()
+        return out
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def repair_company_names() -> dict:
+    """v1.12.1: ремонт после миграции 1.12.0.
+
+    Если компания была создана из ПОЛНОГО текста памятки («Иванова — ООО
+    «Альфа-Трейд»»), переименовывает её в название («ООО «Альфа-Трейд»») и,
+    если такая компания уже есть, ПЕРЕПРИВЯЗЫВАЕТ сотрудников, приглашения,
+    чеки и записи аудита в неё, а дубль удаляет. Идемпотентна: чистые имена
+    не трогает, повторный запуск ничего не меняет. Выполняется однократно
+    (флаг в app_settings) при старте."""
+    from .models import (AppSetting, AuditLog, Company, Invite, Receipt,
+                         User)
+
+    FLAG = "v1112_company_names_repaired"
+    db = SessionLocal()
+    try:
+        out = {"renamed": 0, "merged": 0}
+        if db.query(AppSetting).filter(AppSetting.key == FLAG).first():
+            return {"skipped": "done"}
+
+        def find_by_name(cf: str):
+            return next((c for c in db.query(Company)
+                         if c.name.casefold() == cf), None)
+
+        for comp in db.query(Company).all():
+            canonical = company_name_from_note(comp.name)
+            if not canonical or canonical == comp.name:
+                continue                       # чистое имя — не трогаем
+            target = find_by_name(canonical.casefold())
+            if target is None:
+                comp.name = canonical          # просто переименовать
+                out["renamed"] += 1
+                continue
+            if target.id == comp.id:
+                comp.name = canonical
+                continue
+            # слить: всё от comp → target
+            for q, attr in ((db.query(User), User.company_id),
+                            (db.query(Invite), Invite.company_id),
+                            (db.query(Receipt), Receipt.company_id),
+                            (db.query(AuditLog), AuditLog.company_id)):
+                for row in q.filter(attr == comp.id).all():
+                    setattr(row, attr.key, target.id)
+            db.delete(comp)
+            out["merged"] += 1
 
         row = db.query(AppSetting).filter(AppSetting.key == FLAG).first()
         if row:
