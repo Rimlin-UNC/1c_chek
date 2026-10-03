@@ -1109,9 +1109,25 @@ function openUpdateProgress() {
     <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`, { onClose: () => clearInterval(state.updTimer) });
   clearInterval(state.updTimer);
   state.updTimer = setInterval(async () => {
-    let st;
-    try { st = (await api.get('/api/v1/admin/update/status')).job; }
+    let resp;
+    try { resp = await api.get('/api/v1/admin/update/status'); }
     catch { return; }
+    let st = resp.job;
+    // v1.8.1: после рестарта процесс новый, in-memory job пуст — успех
+    // читаем из сохранённого маркера (свежий < 10 минут)
+    const last = resp.last_success;
+    if (!st.running && !st.finished && last && last.to
+        && Date.now() - new Date(last.at).getTime() < 10 * 60 * 1000) {
+      clearInterval(state.updTimer);
+      const bar = slot.querySelector('#upd-bar');
+      if (bar) bar.style.width = '100%';
+      const stepEl = slot.querySelector('#upd-step');
+      if (stepEl) stepEl.textContent = `Обновление до v${last.to} установлено — сервис перезапущен`;
+      const btn = slot.querySelector('#upd-done');
+      if (btn) { btn.classList.remove('hidden'); btn.onclick = () => { close(); location.reload(); }; }
+      toast(`Готово: v${last.to} — страница будет перезагружена`, 'ok', '🔄');
+      return;
+    }
     const bar = slot.querySelector('#upd-bar');
     if (bar) bar.style.width = Math.max(5, st.progress) + '%';
     const stepEl = slot.querySelector('#upd-step');
@@ -2475,6 +2491,7 @@ async function viewSettings(container) {
         <dl class="kv" style="font-size:13px;margin-top:10px">
           <dt>Установлена</dt><dd id="upd-current">v—</dd>
           <dt>Проверено</dt><dd id="upd-checked">—</dd>
+          <dt>Последнее обновление</dt><dd id="upd-last">—</dd>
         </dl>
         <div id="upd-avail" class="hidden" style="margin:10px 0">
           <div class="info-callout" style="margin-bottom:10px">🆕 Доступна версия <b id="upd-remote">v—</b>.
@@ -2653,6 +2670,13 @@ async function viewSettings(container) {
         const ri = $('#upd-repo'); if (ri) ri.value = st.repo_url || '';
         const bi = $('#upd-branch-input'); if (bi) bi.value = st.branch || '';
       } catch {}
+      // v1.8.1: когда обновлялись в последний раз
+      api.get('/api/v1/admin/update/status').then(r => {
+        const ls = r.last_success, el = $('#upd-last');
+        if (el) el.textContent = ls && ls.to
+          ? `v${ls.to} · ${new Date(ls.at).toLocaleString('ru-RU')}`
+          : 'ещё не было';
+      }).catch(() => {});
       setUpdState('checking');
       try {
         const r = await api.get('/api/v1/admin/update/check', { retries: 1 });

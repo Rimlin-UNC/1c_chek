@@ -200,6 +200,18 @@ sleep 2
 systemctl is-active --quiet "$SERVICE" && ok "сервис запущен" || {
   echo "  ✘ Сервис не запустился. Журнал:"; journalctl -u "$SERVICE" -n 25 --no-pager; exit 1; }
 
+# v1.8.1: разрешаем приложению (пользователь ymaster) перезапускать свой сервис
+# — без этого «Обновить из приложения» обновляло файлы, но не могло применить их
+SUDOERS_FILE=/etc/sudoers.d/ymaster-check
+echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart $SERVICE, /usr/bin/systemctl status $SERVICE" > "$SUDOERS_FILE"
+chmod 440 "$SUDOERS_FILE"
+if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
+  ok "sudoers: приложение может перезапускать себя (обновление из приложения)"
+else
+  rm -f "$SUDOERS_FILE"
+  warn "sudoers-правило не прошло проверку — обновление из приложения потребует ручного рестарта"
+fi
+
 # ------------------------------------------------------------------
 bold "8/9 Nginx + файрвол UFW + fail2ban"
 if [[ $WITH_NGINX -eq 1 ]]; then
