@@ -64,10 +64,14 @@ class TestRestartFromApp:
         assert "visudo -cf" in d                      # правило проверяется перед применением
 
     def test_version_bump(self):
+        """Версия в config/sw синхронны (проверяем без привязки к номеру)."""
+        import re
         c = open("app/config.py", encoding="utf-8").read()
-        assert 'APP_VERSION: str = "1.8.1"' in c
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"', c).group(1)
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v1.8.1" in sw
+        assert f"ymaster-check-v{ver}" in sw          # SW-кэш следует версии
+        mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
+        assert ver in mf
 
     def test_marker_success_flow_in_ui(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
