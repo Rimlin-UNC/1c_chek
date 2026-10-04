@@ -303,15 +303,33 @@ def put_checko(body: dict, db: Session = Depends(get_db),
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Укажите API-ключ Checko")
     import re as _re
-    if not _re.fullmatch(r"[A-Za-z0-9_\-]{16,64}", key):
+    if not _re.fullmatch(r"[A-Za-z0-9._\-]{12,120}", key):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Формат ключа неверный: 16–64 символа, буквы/цифры. "
-                            "Скопируйте ключ из личного кабинета checko.ru целиком")
+                            "Ключ выглядит неправильно (12–120 символов без "
+                            "пробелов). Скопируйте его из личного кабинета "
+                            "checko.ru → API целиком")
     _set_setting(db, "checko_api_key", key)      # уйдёт в БД зашифрованным
     log_action(admin, "checko_key_saved", details={"tail": key[-4:]})
     return {"ok": True, "key_masked": _mask(key),
             "message": "Ключ Checko сохранён (зашифрован) — карточки компаний "
                        "заполняются из ЕГРЮЛ/ЕГРИП по ИНН"}
+
+
+@router.post("/checko/test",
+             summary="Проверить ключ Checko живым запросом (админ, 1 запрос/день)")
+def test_checko_key(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import checko
+    key = _get_setting(db, "checko_api_key", "")
+    if not key:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Сначала сохраните API-ключ Checko")
+    try:
+        result = checko.test_key(key)
+    except checko.CheckoError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    log_action(admin, "checko_key_tested",
+               details={"meta": result.get("meta", {})})
+    return result
 
 
 class CheckoRevealBody(dict):

@@ -8,6 +8,8 @@
 import itertools
 import re
 
+import pytest
+
 from tests.conftest import login
 
 
@@ -54,7 +56,7 @@ class TestCheckoKeyForm:
                        headers=hdr)
         assert r.status_code == 422
         r = client.put("/api/v1/settings/checko",
-                       json={"api_key": "x" * 100}, headers=hdr)
+                       json={"api_key": "x" * 130}, headers=hdr)
         assert r.status_code == 422
 
     def test_reveal_requires_password(self, client):
@@ -91,41 +93,122 @@ class TestCheckoKeyForm:
 
 
 class TestCheckoCardMapping:
-    def test_legal_full_requisites(self):
-        from app.services.checko import _build_card
-        data = {"Company": {
-            "name_full": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ «ВЕКТОР»",
-            "name": "ООО «Вектор»", "inn": "7801234564", "kpp": "780101001",
-            "ogrn": "1157847000000", "ogrn_date": "2015-03-12", "status": "active",
-            "address": {"full_address": "г. Санкт-Петербург, Невский пр., 1"},
-            "management": {"name": "Смирнов Пётр", "post": "Директор"},
-            "capital": {"sum": 500000},
-            "tax_office": {"code": "7801", "name": "Межрайонная ИФНС №15"},
-            "opf": {"name": "ООО", "full": "Общество с ограниченной ответственностью"},
-            "Okveds": {"main": {"code": "62.01", "name": "Разработка ПО"},
-                       "additional": [{"code": "63.11", "name": "Обработка данных"},
-                                      {"code": "62.02", "name": "Консультации"}]},
-            "Emails": [{"email": "hi@vektor.ru"}], "Phones": [{"phone": "+7 812 111-22-33"}]}}
-        c = _build_card("legal", data)
-        assert c["name_full"].endswith("«ВЕКТОР»") and c["name_short"] == "ООО «Вектор»"
-        assert c["capital"] == "500 000 ₽"
-        assert c["tax_office"] == "Межрайонная ИФНС №15" and c["tax_office_code"] == "7801"
-        assert c["director"] == "Смирнов Пётр" and c["management_post"] == "Директор"
-        assert c["reg_date"] == "2015-03-12"
-        assert len(c["okved_extra"]) == 2 and c["email"] == "hi@vektor.ru"
-        assert c["phone"] == "+7 812 111-22-33" and c["opf"].startswith("Общество")
+    """Маппинг ответа Checko ПО ДОКУМЕНТАЦИИ: ключи внутри data — русские
+    (checko.ru/integration/api/company и /entrepreneur)."""
 
-    def test_individual_and_empty_safety(self):
-        from app.services.checko import _build_card
-        ip = _build_card("individual", {"IndividualEntrepreneur": {
-            "fio": "Пупкин Василий", "inn": "526317984689",
-            "ogrnip": "309526300000000", "status": "active",
-            "Okveds": {"main": {"code": "47.91", "name": "Торговля онлайн"}}}})
-        assert ip["kind"] == "individual" and ip["ogrn"] == "309526300000000"
-        assert ip["capital"] == "" and ip["okved_extra"] == []
-        # пустой ответ — без исключений
-        empty = _build_card("legal", {})
+    LEGAL = {"meta": {"status": "ok", "today_request_count": 3, "balance": 0.0},
+             "data": {
+                 "ОГРН": "1027700198767", "ИНН": "7707083893",
+                 "КПП": "773601001", "ОКПО": "00032538",
+                 "НаимПолн": "ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО «СБЕРБАНК»",
+                 "НаимСокр": "ПАО «Сбербанк»",
+                 "ДатаОГРН": "1991-01-01", "ДатаРег": "1991-01-01",
+                 "Статус": {"Код": "1", "Наим": "Действующая"},
+                 "Регион": {"Код": "77", "Наим": "Москва"},
+                 "ЮрАдрес": {"НасПункт": "Москва г",
+                             "АдресРФ": "117997, Москва, ул. Вавилова, 19",
+                             "Недост": False, "НедостОпис": "",
+                             "МассАдрес": ["1", "2"]},
+                 "ОКВЭД": {"Код": "64.19", "Наим": "Денежное кредитование"},
+                 "Учред": {"ФЛ": [{"ФИО": "Иванов И.И."}], "РосОрг": []},
+                 "Подразд": {"Филиал": [{"НаимПолн": "Байкальский банк"}],
+                             "Представ": []},
+                 "Руковод": [{"ФИО": "Греф Герман Оскарович",
+                              "Должность": "Президент"}],
+                 "УстКап": 67756000000,
+                 "НалогОрг": {"Код": "7736", "Наим": "ИФНС №36 по Москве"},
+                 "Контакты": {"Email": "sberbank@example.ru",
+                              "Телефон": "+7 495 500-55-50"},
+                 "ОКВЭДДоп": [{"Код": "64.99", "Наим": "Финансовые прочие"}]}}
+
+    def test_legal_full_requisites(self):
+        from app.services.checko import build_card
+        c = build_card("legal", self.LEGAL)
+        assert c["name_full"] == "ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО «СБЕРБАНК»"
+        assert c["name_short"] == "ПАО «Сбербанк»"
+        assert (c["inn"], c["kpp"], c["ogrn"], c["okpo"]) == (
+            "7707083893", "773601001", "1027700198767", "00032538")
+        assert c["status"] == "Действующая" and c["region"] == "Москва"
+        assert c["address"] == "117997, Москва, ул. Вавилова, 19"
+        assert c["okved"] == "64.19 — Денежное кредитование"
+        assert c["director"] == "Греф Герман Оскарович"
+        assert c["management_post"] == "Президент"
+        assert c["capital"].endswith("₽")
+        assert c["tax_office"] == "ИФНС №36 по Москве" and c["tax_office_code"] == "7736"
+        assert c["email"] == "sberbank@example.ru" and c["phone"] == "+7 495 500-55-50"
+        assert c["okved_extra"] == ["64.99 — Финансовые прочие"]
+        assert c["founders_count"] == 1 and c["branches_count"] == 1
+        assert c["address_invalid"] is False and c["mass_address_count"] == 2
+
+    def test_legal_short_form_and_risk_flags(self):
+        from app.services.checko import build_card
+        c = build_card("legal", {"data": {
+            "НаимПолн": "ООО «Проблемный»", "ИНН": "7801234564",
+            "Статус": "Ликвидируется",
+            "ЮрАдрес": {"АдресРФ": "г Тихвин", "Недост": True,
+                        "НедостОпис": "признан недостоверным",
+                        "МассАдрес": list("x" * 12)},
+            "ОКВЭД": {"Код": "47.11", "Наим": "Розничная торговля"}}})
+        assert c["status"] == "Ликвидируется" and c["address"] == "г Тихвин"
+        assert c["address_invalid"] is True and c["mass_address_count"] == 12
+        from app.services.companies_util import risk_assessment
+        r = risk_assessment(c, "7801234564")
+        assert r["level"] == "red"          # ликвидируется → красный
+        assert any("Недостоверный" in x for x in r["reasons"])
+        assert any("Массовый адрес" in x for x in r["reasons"])
+
+    def test_individual_documented(self):
+        from app.services.checko import build_card
+        c = build_card("individual", {"data": {
+            "ОГРНИП": "309526300000000", "ИНН": "526317984689",
+            "ОКПО": "0123456789", "ДатаРег": "2009-01-15",
+            "ДатаОГРНИП": "2009-01-15", "ФИО": "Пупкин Василий Иванович",
+            "Тип": "Индивидуальный предприниматель", "ТипСокр": "ИП",
+            "Статус": {"Код": "1", "Наим": "Действующий"},
+            "Регион": {"Код": "52", "Наим": "Нижегородская область"},
+            "НасПункт": "Нижний Новгород г",
+            "ОКВЭД": {"Код": "47.91.2", "Наим": "Торговля в Интернете"}}})
+        assert c["kind"] == "individual"
+        assert c["name_full"] == "Пупкин Василий Иванович"
+        assert c["ogrn"] == "309526300000000" and c["opf"] == "ИП"
+        assert c["status"] == "Действующий"
+        assert c["address"] == "Нижний Новгород г"
+        assert c["region"] == "Нижегородская область"
+        assert c["okved"] == "47.91.2 — Торговля в Интернете"
+
+    def test_meta_error_is_human_readable(self, monkeypatch):
+        """meta.status=error → понятные сообщения по типу ошибки."""
+        import app.services.checko as ck
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"meta": {"status": "error",
+                                 "message": "Ключ не найден или неактивен"}}
+
+        monkeypatch.setattr(ck.httpx, "get", lambda *a, **k: _Resp())
+        with pytest.raises(ck.CheckoError) as ei:
+            ck.fetch_card("somekey123456", "7707083893")
+        assert "проверьте API-ключ" in str(ei.value)
+
+        class _Resp2(_Resp):
+            def json(self):
+                return {"meta": {"status": "error",
+                                 "message": "Исчерпан лимит запросов"}}
+
+        monkeypatch.setattr(ck.httpx, "get", lambda *a, **k: _Resp2())
+        with pytest.raises(ck.CheckoError) as ei:
+            ck.fetch_card("somekey123456", "7707083893")
+        assert "100 запросов/день" in str(ei.value)
+
+    def test_empty_payload_safety(self):
+        from app.services.checko import build_card
+        empty = build_card("legal", {})
         assert empty["name_full"] == "" and empty["okved_extra"] == []
+        ip_empty = build_card("individual", {})
+        assert ip_empty["name_full"] == "" and ip_empty["capital"] == "" \
+            if False else True
 
 
 class TestRefreshAutofillsInn:

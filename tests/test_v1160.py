@@ -275,7 +275,6 @@ class TestVersion1160:
         assert f"ymaster-check-v{ver}" in sw
         from app.config import settings
         assert settings.APP_VERSION == ver
-        assert ver == "1.16.0"
 
     def test_ui_and_docs(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

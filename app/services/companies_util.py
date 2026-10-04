@@ -133,6 +133,15 @@ def risk_assessment(card: dict | None, company_inn: str = "") -> dict:
     cap = _capital_value(card.get("capital") or "")
     if cap is not None and cap < 10000 and card.get("kind") != "individual":
         reasons.append("Уставный капитал меньше 10 000 ₽")
+    # v1.16.1: факторы риска из ЕГРЮЛ (Checko)
+    if card.get("address_invalid"):
+        note = card.get("address_invalid_note") or ""
+        reasons.append("Недостоверный юридический адрес (ЕГРЮЛ)"
+                       + (f": {note}" if note else ""))
+    mass = card.get("mass_address_count") or 0
+    if mass >= 10:
+        reasons.append(f"Массовый адрес: {mass} организаций зарегистрировано "
+                       "по тому же адресу")
     if not (company_inn or "").strip():
         reasons.append("ИНН не указан — риск-оценка неполная")
     level = "red" if any("Статус" in r for r in reasons) else (

@@ -802,7 +802,13 @@ async function openCompanyCard(id) {
         ${k.inn ? 'ИНН <b>' + esc(k.inn) + '</b>' : ''}${k.kpp ? ' · КПП ' + esc(k.kpp) : ''}
         ${k.ogrn ? ' · ' + (k.kind === 'individual' ? 'ОГРНИП' : 'ОГРН') + ' ' + esc(k.ogrn) : ''}
       </div>
+      ${k.okpo ? `<div>ОКПО: ${esc(k.okpo)}</div>` : ''}
+      ${k.region ? `<div>Регион: ${esc(k.region)}</div>` : ''}
       ${k.reg_date ? `<div>Зарегистрирован(о): ${esc(k.reg_date)}</div>` : ''}
+      ${k.address_invalid ? `<div style="color:#f87171">⚠ Адрес признан недостоверным (ЕГРЮЛ)${k.address_invalid_note ? ': ' + esc(k.address_invalid_note) : ''}</div>` : ''}
+      ${(k.mass_address_count || 0) >= 10 ? `<div style="color:#fbbf24">⚠ Массовый адрес: ещё ${k.mass_address_count} организаций по тому же адресу</div>` : ''}
+      ${(k.founders_count || 0) ? `<div>Учредителей: ${k.founders_count}</div>` : ''}
+      ${(k.branches_count || 0) ? `<div>Филиалов/представительств: ${k.branches_count}</div>` : ''}
       ${k.director ? `<div>Руководитель: ${esc(k.director)}${k.management_post ? ' (' + esc(k.management_post) + ')' : ''}</div>` : ''}
       ${k.capital ? `<div>Уставный капитал: ${esc(k.capital)}</div>` : ''}
       ${k.tax_office ? `<div>ИФНС: ${esc(k.tax_office)}${k.tax_office_code ? ' (код ' + esc(k.tax_office_code) + ')' : ''}</div>` : ''}
@@ -1709,6 +1715,14 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.16.1': [
+    { icon: '🗂', title: 'Checko: интеграция переписана по официальной документации',
+      text: 'Найдена причина неработающих карточек ЕГРЮЛ: API Checko отвечает РУССКИМИ ключами (НаимПолн, ОГРН, ЮрАдрес…), а мы ждали английские. Теперь разбирается ровно тот формат, что присылает Checko: полное/краткое наименование, ОКПО, регион, дата регистрации, руководитель, учредители, филиалы, ОКВЭДы, недостоверность и массовость адреса.' },
+    { icon: '🧪', title: 'Кнопка «Проверить ключ» в настройках',
+      text: 'Один клик делает настоящий запрос в ЕГРЮЛ и показывает, что вернул Checko: наименование организации, статус и остаток запросов на сегодня — ключ либо работает, и вы это видите, либо получаете точную причину ошибки (не тот ключ / лимит / компания не найдена).' },
+    { icon: '🚦', title: 'Светофор видит факторы риска ЕГРЮЛ',
+      text: 'Недостоверный юридический адрес и «массовость» адреса (10+ организаций по одному адресу) теперь попадают в жёлтые причины риск-оценки контрагента — это официальные маркеры ФНС.' },
+  ],
   '1.16.0': [
     { icon: '🔄', title: 'Обновление из приложения — чинит себя само',
       text: 'Найдена причина «обновление не работает»: при установке без git-репозитория применение всегда падало. Теперь приложение само восстанавливает репозиторий (init + fetch с GitHub), preflight честно показывает состояние, а ошибка «ветка не содержит приложения» больше не маскируется под недоступность GitHub.' },
@@ -3483,6 +3497,7 @@ async function viewSettings(container) {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" id="checko-save">💾 Сохранить ключ</button>
           <button class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
+          <button class="btn btn-sm" id="checko-test" title="Живой запрос ЕГРЮЛ по тестовому ИНН — тратит 1 запрос из 100 дневных">🧪 Проверить ключ</button>
         </div>
         <p class="form-hint" id="checko-status" style="margin-top:10px">${esc(checkoSet && checkoSet.hint || '')}</p>
       </div>` : ''}
@@ -3904,6 +3919,21 @@ async function viewSettings(container) {
         route(true);
       } catch (e) { toast(e.message, 'err'); }
       cs.disabled = false;
+    };
+    const ct = $('#checko-test');
+    if (ct) ct.onclick = async () => {
+      ct.disabled = true; ct.textContent = '…запрашиваю ЕГРЮЛ';
+      try {
+        const r = await api.post('/api/v1/settings/checko/test', {});
+        if (cstat) cstat.textContent = r.message +
+          (r.meta && r.meta.today_request_count !== undefined
+            ? ` · запросов сегодня: ${r.meta.today_request_count}` : '');
+        toast(r.message, 'ok', '🗂');
+      } catch (e) {
+        toast(e.message, 'err');
+        if (cstat) cstat.textContent = 'Ошибка: ' + e.message;
+      }
+      ct.disabled = false; ct.textContent = '🧪 Проверить ключ';
     };
     const cr = $('#checko-reveal');
     if (cr) cr.onclick = async () => {
