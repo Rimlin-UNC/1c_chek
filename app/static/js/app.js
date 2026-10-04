@@ -576,9 +576,10 @@ function handleWsEvent(type, p) {
       refreshBadges();
       if (state.view === 'receipts') scheduleRouteRefresh();
       break;
-    case 'server_update':  // v1.9.1/1.17.0: сервер обновлён — сброс кэша и перезагрузка
-      toast(`Сервер обновлён (v${p.to || ''}) — сбрасываю кэш и перезагружаюсь…`, 'info', '🔄 Обновление');
-      setTimeout(hardReset, 1500);
+    case 'server_update':  // v1.21.0: сервер обновлён — сообщаем и ждём решения
+      // кэш чистим тихо (чтобы интерфейс точно подтянулся), перезагрузка — по кнопке
+      hardReset(true, false).catch(() => {});
+      showUpdateBanner(p.to || '');
       break;
   }
 }
@@ -1110,7 +1111,8 @@ function openMoveDialog() {
 }
 
 function bindShell() {
-  $('#btn-logout').onclick = logout;
+  $('#btn-logout').onclick = showLogoutDialog;   // v1.21.0: сначала подтверждение
+  $('#btn-manual').onclick = openManual;   // v1.21.0: инструкция по приложению
   // v1.18.0: меню профиля закрывается кликом мимо и по Esc (один обработчик)
   if (!window.__ymasterPersonaBound) {
     window.__ymasterPersonaBound = true;
@@ -1330,6 +1332,54 @@ async function viewDashboard(container) {
 }
 
 // ==========================================================================
+// v1.21.0: СВОРАЧИВАЕМЫЕ БЛОКИ НАСТРОЕК — заголовок блока виден всегда,
+// сворачивается содержимое; состояние запоминается на устройстве.
+// ==========================================================================
+function foldKey(card) {
+  const title = card.querySelector('.card-title');
+  return 'f' + ((title ? title.textContent : '?').trim().replace(/\s+/g, ' ').slice(0, 48));
+}
+function foldState() {
+  try { return JSON.parse(localStorage.getItem('ymaster-fold') || '{}'); }
+  catch (e) { return {}; }
+}
+function makeSettingsCollapsible(container) {
+  const st = foldState();
+  container.querySelectorAll('.settings-grid > .glass.card, .settings-grid .glass.card').forEach(card => {
+    const title = card.querySelector('.card-title');
+    if (!title || card.classList.contains('foldable')) return;
+    card.classList.add('foldable');
+    // тело = всё, кроме заголовка
+    const body = document.createElement('div');
+    body.className = 'fold-body';
+    while (title.nextSibling) body.appendChild(title.nextSibling);
+    card.appendChild(body);
+    // «стрелка»
+    const ch = document.createElement('span');
+    ch.className = 'fold-chevron';
+    ch.textContent = '▼';
+    ch.setAttribute('aria-hidden', 'true');
+    title.appendChild(ch);
+    // применить сохранённое состояние
+    const key = foldKey(card);
+    if (st[key]) card.classList.add('collapsed');
+    const apply = () => {
+      const collapsed = card.classList.toggle('collapsed');
+      const s = foldState();
+      s[key] = collapsed;
+      try { localStorage.setItem('ymaster-fold', JSON.stringify(s)); } catch (e) {}
+    };
+    title.setAttribute('role', 'button');
+    title.setAttribute('tabindex', '0');
+    title.setAttribute('aria-expanded', String(!card.classList.contains('collapsed')));
+    title.onclick = apply;
+    title.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); }
+    };
+  });
+}
+
+// ==========================================================================
 // v1.20.0: ОФОРМЛЕНИЕ — акцентный цвет, плотность, «Спокойный час»
 // (ТЗ «Ямастер» п.6: пользователь выбирает акцент и плотность; хранится
 // локально, применяется до отрисовки — без вспышки)
@@ -1415,6 +1465,90 @@ function renderAppearanceState() {
       if (qs) qs.textContent = '';
     }
   }
+}
+
+// ==========================================================================
+// v1.21.0: ИНСТРУКЦИЯ — всплывающее окно «классическая инструкция».
+// Содержание хранится НА СЕРВЕРЕ (/api/v1/manual), версия = версия
+// приложения: обновляется вместе с программой. Администратор может
+// посмотреть инструкцию любой роли (вкладки).
+// ==========================================================================
+async function openManual() {
+  let data;
+  try {
+    data = await api.get('/api/v1/manual');
+  } catch (e) {
+    toast(e.message || 'Инструкция недоступна', 'err', '📖 Инструкция');
+    return;
+  }
+  const { slot, close } = openModal(
+    `<div class="manual-shell" id="manual-shell">
+       <button class="btn btn-sm" id="manual-close" style="float:right">✕ Закрыть</button>
+       <div class="card-title font-accent" style="margin-bottom:2px">📖 Инструкция</div>
+       <div class="manual-meta">Ямастер Чек · актуально для версии
+         <b>v${esc(data.version)}</b> · ${esc(data.vendor || '')}</div>
+       ${data.show_tabs ? `<div class="manual-tabs" id="manual-tabs">
+         <button class="manual-tab" data-aud="admin">Администратор</button>
+         <button class="manual-tab" data-aud="accountant">Бухгалтер</button>
+         <button class="manual-tab" data-aud="user">Сотрудник</button>
+       </div>` : ''}
+       <div id="manual-body"></div>
+       <div class="manual-foot">© ООО «Ямастер» — разработка и идея · ymaster.ru ·
+         info@ymaster.ru. Инструкция обновляется вместе с программой.</div>
+     </div>`, { onClose: null });
+  $('#manual-close', slot).onclick = close;
+  const body = $('#manual-body', slot);
+  const myRole = data.your_role || 'user';
+
+  const render = (aud) => {
+    const list = (data.sections || [])
+      .filter(s => aud === 'all' || s.audience === 'all' || s.audience === aud);
+    let n = 0;
+    body.innerHTML = list.map(s => {
+      n += 1;
+      return `<div class="manual-sec">
+        <h3><span class="manual-num">${n}</span>${s.icon || ''} ${esc(s.title)}</h3>
+        ${s.image ? `<img src="${esc(s.image)}" alt="" loading="lazy">` : ''}
+        ${s.html || ''}
+      </div>`;
+    }).join('');
+  };
+
+  if (data.show_tabs) {
+    const tabs = $('#manual-tabs', slot);
+    tabs.querySelectorAll('.manual-tab').forEach(b => {
+      b.onclick = () => {
+        tabs.querySelectorAll('.manual-tab').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        render(b.dataset.aud);
+        $('#manual-shell', slot).scrollTop = 0;
+      };
+    });
+    (tabs.querySelector(`[data-aud="${myRole}"]`) || tabs.firstElementChild).classList.add('active');
+    render((tabs.querySelector('.manual-tab.active') || { dataset: { aud: 'admin' } }).dataset.aud);
+  } else {
+    render('all');
+  }
+}
+
+// ==========================================================================
+// v1.21.0: ДИАЛОГ ВЫХОДА — предлагаем «Остаться» (по умолчанию): случайный
+// Enter не завершает сеанс. Корпоративный стиль, Esc = остаться.
+// ==========================================================================
+function showLogoutDialog() {
+  const { slot, close } = openModal(
+    `<div class="modal-title">👋 Выйти из аккаунта?</div>
+     <p class="modal-text">Вы всегда сможете вернуться — данные и настройки
+     сохранятся на сервере.</p>
+     <div class="modal-actions">
+       <button class="btn btn-primary" id="lo-stay">Остаться</button>
+       <button class="btn btn-danger" id="lo-exit">Выйти</button>
+     </div>`);
+  const stay = $('#lo-stay', slot);
+  const exit = $('#lo-exit', slot);
+  stay.focus();                       // Enter = «Остаться»
+  stay.onclick = close;
+  exit.onclick = () => { close(); logout(); };
 }
 
 // v1.20.0: «Умный фокус» — остаётся только текущая задача, остальное затемнено
@@ -2019,6 +2153,16 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.21.0': [
+    { icon: '📖', title: 'Инструкция по приложению — для каждой роли',
+      text: 'В меню слева появилась кнопка «📖 Инструкция»: подробное руководство с картинками — своё для администратора, бухгалтера и сотрудника. Хранится на сервере и обновляется вместе с программой, поэтому всегда актуально. Администратор может почитать инструкцию любой роли.' },
+    { icon: '✅', title: 'Обновление — теперь без сюрпризов',
+      text: 'Когда программа обновится на сервере, вы увидите аккуратное сообщение «Можно перезагрузиться» с кнопкой — переход на новую версию только по вашему решению, ничего не перезагружается само.' },
+    { icon: '👋', title: 'Выход — с подтверждением',
+      text: 'При выходе появляется окно «Выйти из аккаунта?» с кнопкой «Остаться» по умолчанию: случайный Enter больше не завершает сеанс.' },
+    { icon: '📂', title: 'Блоки настроек сворачиваются',
+      text: 'Нажмите на заголовок любого блока в Настройках — содержимое свернётся, а название останется видимым. Состояние запоминается. Также повысили контраст текстов в обеих темах — читается легче.' },
+  ],
   '1.20.0': [
     { icon: '🎯', title: 'Умный фокус и тепловая карта сроков',
       text: 'Кнопка «Умный фокус» на дашборде затемняет всё, кроме задач, требующих внимания. Ведомость по подотчётникам стала цветовой картой: зелёный — в срок, оранжевый — до конца срока отчёта меньше 40% времени, красный — просрочка.' },
@@ -3750,7 +3894,32 @@ async function viewUsers(container) {
 // --------------------------------------------------------------------------
 //  v1.17.0: жёсткий сброс приложения после обновления сервера
 // --------------------------------------------------------------------------
-async function hardReset(silent = false) {
+// ==========================================================================
+// v1.21.0: БАННЕР «ПРОГРАММА ОБНОВИЛАСЬ НА СЕРВЕРЕ» — перезагрузка по кнопке
+// ==========================================================================
+function showUpdateBanner(newVer) {
+  let b = document.getElementById('update-banner');
+  if (b) {      // уже показан — обновляем версию
+    const span = b.querySelector('.ub-ver');
+    if (span && newVer) span.textContent = newVer;
+    return;
+  }
+  b = document.createElement('div');
+  b.id = 'update-banner';
+  b.className = 'update-banner';
+  b.setAttribute('role', 'status');
+  b.innerHTML =
+    `<span class="ub-text">✅ Программа обновилась на сервере` +
+    (newVer ? ` — <b>v<span class="ub-ver">${esc(newVer)}</span></b>` : '') +
+    `. Можно перезагрузиться, чтобы увидеть новую версию.</span>` +
+    ` <button class="btn btn-sm btn-primary" id="ub-reload">🔄 Перезагрузиться</button>` +
+    ` <button class="btn btn-sm" id="ub-later">Позже</button>`;
+  document.body.appendChild(b);
+  $('#ub-reload', b).onclick = () => hardReset(false);
+  $('#ub-later', b).onclick = () => b.remove();
+}
+
+async function hardReset(silent = false, autoReload = true) {
   try {
     if ('caches' in window) {
       const keys = await caches.keys();
@@ -3764,7 +3933,8 @@ async function hardReset(silent = false) {
   } catch (e) { /* кэш не критичен */ }
   try { sessionStorage.clear(); } catch (e) {}
   if (!silent) toast('Кэш приложения сброшен — загружаю новую версию…', 'ok', '🧹');
-  setTimeout(() => location.reload(), 400);
+  // v1.21.0: при уведомлении об обновлении перезагрузка — только по кнопке
+  if (autoReload) setTimeout(() => location.reload(), 400);
 }
 
 // v1.17.0: сторож версии — если сервер стал новее, клиент сам сбрасывает кэш
@@ -3774,7 +3944,8 @@ setInterval(async () => {
     const r = await api.get('/api/v1/about', { retries: 1 });
     if (state.appVersion && r.version && r.version !== state.appVersion) {
       state.appVersion = r.version;
-      await hardReset(true);
+      hardReset(true, false).catch(() => {});        // кэш — тихо
+      showUpdateBanner(r.version);            // перезагрузка — решает человек
     }
   } catch (e) { /* сервер недоступен — молча */ }
 }, 60000);
@@ -3784,7 +3955,8 @@ document.addEventListener('visibilitychange', async () => {
     const r = await api.get('/api/v1/about', { retries: 1 });
     if (state.appVersion && r.version && r.version !== state.appVersion) {
       state.appVersion = r.version;
-      await hardReset(true);
+      hardReset(true, false).catch(() => {});
+      showUpdateBanner(r.version);
     }
   } catch (e) {}
 });
@@ -4410,6 +4582,7 @@ async function viewSettings(container) {
       b.onclick = () => copyCmd(b.dataset.cmd, b);
     });
   }
+  makeSettingsCollapsible(container);   // v1.21.0: сворачиваемые блоки
   bindAppearance();                 // v1.20.0: акцент, плотность, тихий час
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();

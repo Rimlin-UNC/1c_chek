@@ -224,6 +224,8 @@ app.include_router(users.router)
 app.include_router(invites.router)
 app.include_router(onec.router)
 app.include_router(admin.router)
+from .routers import manual as manual_routes  # v1.21.0: инструкция
+app.include_router(manual_routes.router)
 
 
 # --------------------------------------------------------------------------

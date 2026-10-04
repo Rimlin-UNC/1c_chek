@@ -122,9 +122,10 @@ class TestEmptyIllustrations:
 class TestVersion1200:
     def test_versions_synced(self):
         import re
+        # согласованность ?v= с APP_VERSION (актуальный пин — в тесте текущей
+        # версии; здесь только синхронность — v1.21.0)
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.20.0"
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()

@@ -1047,13 +1047,13 @@ tr.archived-row td { opacity: .55; }
   --border-strong: rgba(224, 224, 224, 0.2);
   --text: #e0e0e0;
   --text-dim: #a9a9a9;
-  --text-faint: #7c7c7c;
+  --text-faint: #949494;
   --accent: #e06d00;                   /* приглушённый оранжевый #E06D00 */
   --accent-2: #b9a3d9;
   --grad: linear-gradient(135deg, #e06d00 0%, #c25f06 55%, #6d3fa8 160%);
   --ok: #3cb371;                       /* мягкая зелень #3CB371 */
   --warn: #d9a441;
-  --bad: #c94c4c;                      /* красный #C94C4C — не ядовитый */
+  --bad: #d4635f;                      /* красный #C94C4C — не ядовитый */
   --info: #5bc0de;
   --shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.5);
   --overlay-1: rgba(20, 20, 20, 0.78);
@@ -1073,14 +1073,14 @@ html[data-theme="light"] {
   --border-strong: rgba(51, 51, 51, 0.22);
   --text: #333333;                     /* основной текст #333333 */
   --text-dim: #5c5c5c;
-  --text-faint: #8a8a8a;
+  --text-faint: #6b6b6b;
   --accent: #ff7a00;                   /* корпоративный оранжевый #FF7A00 */
   --accent-2: #4b0082;
   --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
   --ok: #2e8b57;                       /* морская зелень #2E8B57 — успех */
   --warn: #b45309;
   --bad: #d9534f;                      /* терракота #D9534F — ошибки */
-  --info: #2d8fa8;                     /* голубой #5BC0DE, читаемый как текст */
+  --info: #237a90;                     /* голубой #5BC0DE, читаемый как текст */
   --shadow: 0 10px 34px -14px rgba(51, 51, 51, 0.28);
   --overlay-1: rgba(245, 245, 245, 0.9);
   --overlay-2: rgba(245, 245, 245, 0.72);
@@ -1101,10 +1101,10 @@ html[data-theme="light"] .bg-aurora {
     --bg: #f5f5f5; --bg-soft: #ececec;
     --panel: #ffffff; --panel-strong: #ffffff;
     --border: rgba(51, 51, 51, 0.12); --border-strong: rgba(51, 51, 51, 0.22);
-    --text: #333333; --text-dim: #5c5c5c; --text-faint: #8a8a8a;
+    --text: #333333; --text-dim: #5c5c5c; --text-faint: #6b6b6b;
     --accent: #ff7a00; --accent-2: #4b0082;
     --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
-    --ok: #2e8b57; --warn: #b45309; --bad: #d9534f; --info: #2d8fa8;
+    --ok: #2e8b57; --warn: #b45309; --bad: #d9534f; --info: #237a90;
     --shadow: 0 10px 34px -14px rgba(51, 51, 51, 0.28);
     --overlay-1: rgba(245, 245, 245, 0.9); --overlay-2: rgba(245, 245, 245, 0.72);
     --hover-bg: rgba(51, 51, 51, 0.06);
@@ -1170,7 +1170,8 @@ html[data-theme="light"] .btn-primary:hover { background: #454545; }
   html[data-theme="auto"] .btn-primary:hover { background: #454545; }
 }
 .btn-accent {
-  background: var(--accent); border-color: var(--accent); color: #ffffff;
+  background: var(--accent); border-color: var(--accent); color: #1a1a1a;
+  font-weight: 600;
 }
 .btn-accent:hover { filter: brightness(1.07); }
 [data-theme="dark"] .btn-primary,
@@ -1303,4 +1304,87 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
     0%, 100% { transform: translateY(0); }
     50%      { transform: translateY(-4px); }
   }
+}
+
+/* ==========================================================================
+   v1.21.0 — Читаемость, сворачиваемые блоки, инструкция, баннер обновления,
+   диалог выхода. Проверка контраста WCAG AA во всех темах.
+   ========================================================================== */
+
+/* --- Фокус с клавиатуры — заметный, фирменный --- */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- Кнопка «Выйти» в диалоге (терракота) --- */
+.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+.btn-danger:hover { filter: brightness(1.06); }
+
+/* --- Сворачиваемые блоки настроек (заголовок виден всегда) --- */
+.glass.card.foldable > .card-title { cursor: pointer; user-select: none; }
+.glass.card.foldable > .card-title:hover { color: var(--accent-2); }
+.fold-chevron {
+  display: inline-block; margin-left: 8px; font-size: 12px;
+  transition: transform var(--speed); color: var(--text-faint);
+}
+.foldable.collapsed > .card-title .fold-chevron { transform: rotate(-90deg); }
+.foldable.collapsed > .card-title { margin-bottom: 0; }
+.foldable > .fold-body { min-width: 0; }
+.foldable.collapsed > .fold-body { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .foldable > .fold-body { animation: ym-unfold .16s ease-out; }
+  @keyframes ym-unfold { from { opacity: 0; transform: translateY(-3px); } }
+}
+
+/* --- Инструкция: классическое окно с картинками --- */
+.manual-shell { max-width: 760px; width: min(92vw, 760px); max-height: min(84vh, 900px);
+  overflow: auto; padding: 22px 22px 26px; }
+.manual-hero { width: 100%; border-radius: 14px; display: block; margin-bottom: 6px;
+  border: 1px solid var(--border); }
+.manual-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px; }
+.manual-tab {
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+  border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13.5px;
+  cursor: pointer; font-weight: 600;
+}
+.manual-tab.active { background: var(--accent); border-color: var(--accent); color: #1a1a1a; }
+.manual-meta { font-size: 12.5px; color: var(--text-faint); margin: 2px 0 14px; }
+.manual-sec h3 {
+  font-size: 19px; margin: 20px 0 8px; color: var(--indigo);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.manual-sec h3 .manual-num {
+  font-family: var(--font-mono); font-size: 13px; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 8px; padding: 2px 8px;
+}
+.manual-sec p { font-size: 14.5px; line-height: 1.55; margin: 6px 0; }
+.manual-sec ul { margin: 6px 0 10px 2px; padding-left: 20px; }
+.manual-sec li { font-size: 14.5px; line-height: 1.55; margin: 4px 0; }
+.manual-sec img { width: 100%; border-radius: 12px; margin: 10px 0 4px;
+  border: 1px solid var(--border); }
+.manual-note {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 10px; padding: 9px 12px; font-size: 13.5px; margin: 10px 0;
+}
+.manual-foot { margin-top: 18px; font-size: 12.5px; color: var(--text-faint);
+  border-top: 1px dashed var(--border); padding-top: 10px; }
+@media (max-width: 640px) {
+  .manual-shell { padding: 14px; max-height: 88vh; }
+  .manual-sec h3 { font-size: 17px; }
+}
+
+/* --- Баннер «Программа обновилась» --- */
+.update-banner {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 18px; z-index: 260; display: flex; align-items: center; gap: 12px;
+  flex-wrap: wrap; justify-content: center;
+  background: var(--panel-strong); color: var(--text);
+  border: 1px solid var(--ok); border-radius: 14px;
+  box-shadow: var(--shadow); padding: 12px 16px; max-width: min(94vw, 560px);
+}
+.update-banner .ub-text { font-size: 14px; line-height: 1.4; }
+.update-banner .ub-text b { color: var(--ok); }
+@media (prefers-reduced-motion: no-preference) {
+  .update-banner { animation: ub-in .25s ease-out; }
+  @keyframes ub-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 }
