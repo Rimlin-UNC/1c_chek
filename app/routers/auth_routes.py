@@ -18,8 +18,9 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, client_ip,
-                    create_access_token, get_current_user, hash_password,
+from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, act_admin_id,
+                    client_ip, create_access_token, decode_token,
+                    get_current_user, hash_password, raw_bearer_token,
                     verify_password)
 from ..database import get_db
 from ..models import Company, Invite, User
@@ -125,7 +126,8 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
 
 
 @router.get("/me", summary="Текущий пользователь")
-def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
+       token: str | None = Depends(raw_bearer_token)):
     d = user.to_dict()
     # v1.11.0: название своей компании — для шапки интерфейса
     d["company_name"] = (db.get(Company, user.company_id).name
@@ -138,6 +140,16 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         c = db.get(Company, user.company_id)
         if c:
             d["company_inn"] = c.inn or ""
+    # v1.18.0: режим просмотра — клиенту нужно знать, чьими глазами смотрят
+    if token:
+        admin_id = act_admin_id(decode_token(token))
+        if admin_id:
+            admin = db.get(User, admin_id)
+            d["viewing_as"] = {
+                "admin_id": admin_id,
+                "admin_username": admin.username if admin else "?",
+                "admin_name": (admin.full_name or admin.username) if admin else "?",
+            }
     return d
 
 

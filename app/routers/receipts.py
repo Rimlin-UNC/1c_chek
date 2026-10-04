@@ -762,7 +762,11 @@ def _verify_one_sync(receipt_id: str) -> None:
         receipt.raw_data = json.dumps(raw, ensure_ascii=False)
         db.commit()
 
-        db.add(FnsLog(receipt_id=receipt.id,
+        # v1.18.0: id задаём явно (max+1) — на таблицах старой схемы SQLite
+        # не автоинкрементировал BigInteger PK и журнал ФНС молча не вёлся
+        _nid = (db.query(func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1
+        db.add(FnsLog(id=_nid,
+                      receipt_id=receipt.id,
                       request_data=json.dumps({"fn": receipt.fn, "fd": receipt.fd,
                                                "fp": receipt.fp}, ensure_ascii=False),
                       response_data=json.dumps(result.raw, ensure_ascii=False)[:4000],

@@ -202,6 +202,7 @@ function enterApp() {
   $('#user-avatar').textContent = (state.me.full_name || state.me.username)[0].toUpperCase();
   $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
   $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
+  applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
   if (isAdmin()) initCompanyFilter();          // v1.11.0: селектор пространства
 
@@ -216,7 +217,8 @@ function enterApp() {
   if (!location.hash || location.hash.startsWith('#/register')) {
     history.replaceState(null, '', location.pathname + '#/dashboard');
   }
-  if (state.me.must_change_password) forcePasswordChange();
+  // v1.18.0: в режиме просмотра окно смены пароля не мешает осмотру
+  if (state.me.must_change_password && !isViewingAs()) forcePasswordChange();
   showWhatsNew();
   route();
   if (isAdmin()) checkUpdatesSilently();   // v1.4.0: авто-проверка при запуске
@@ -234,11 +236,161 @@ function logout() {
   clearToken();
   // Очищаем и серверную cookie сессии (fire-and-forget)
   try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch (e) {}
+  // v1.18.0: выход из режима просмотра не оставляет «хвостов»
+  viewAsForget();
   state.me = null;
   state.receiptsSelected.clear();
   if (state.ws) { try { state.ws.close(); } catch (e) {} state.ws = null; }
   if (state.camera) { state.camera.stop(); state.camera = null; }
   history.replaceState(null, '', location.pathname);
+  location.reload();
+}
+
+// ==========================================================================
+// v1.18.0: РЕЖИМ ПРОСМОТРА — администратор видит приложение глазами
+// бухгалтера или сотрудника. Переключение — по иконке профиля в правом
+// верхнем углу; ПАРОЛЬ НЕ ЗАПРАШИВАЕТСЯ: админ-сессия сохраняется в
+// sessionStorage и возвращается одной кнопкой. Токен просмотра выдан
+// сервером на целевого пользователя (claim «act» = администратор), поэтому
+// админ-эндпоинты в этом режиме недоступны — всё ровно как у пользователя.
+// ==========================================================================
+const VIEWAS_TOK = 'ymaster_viewas_master_token';   // админ-токен на время просмотра
+const VIEWAS_NAME = 'ymaster_viewas_admin_name';    // имя администратора для полосы
+
+const isViewingAs = () => !!(state.me && state.me.viewing_as);
+
+function viewAsForget() {
+  try { sessionStorage.removeItem(VIEWAS_TOK); } catch (e) {}
+  try { sessionStorage.removeItem(VIEWAS_NAME); } catch (e) {}
+}
+
+// Полоса возврата под шапкой + скрытие «Выйти» в режиме просмотра
+function applyViewAsMode() {
+  const bar = $('#viewas-bar');
+  const chip = $('#user-chip');
+  if (!bar || !chip) return;
+  const viewing = isViewingAs();
+  bar.classList.toggle('hidden', !viewing);
+  $('#btn-logout').classList.toggle('hidden', viewing);
+  if (viewing) {
+    const nm = state.me.full_name || state.me.username;
+    $('#viewas-text').innerHTML =
+      `Вы смотрите приложение как <b>${esc(nm)}</b> ` +
+      `<span class="viewas-role">(${roleLabel(state.me.role)})</span>` +
+      (state.me.must_change_password
+        ? ' <span class="viewas-warn">этот пользователь ещё не сменил временный пароль</span>' : '');
+    $('#btn-viewas-back').onclick = stopViewAs;
+  }
+  chip.setAttribute('aria-expanded', 'false');
+  chip.onclick = (e) => {
+    if (e.target.closest('#btn-logout')) return;   // «Выйти» — отдельное действие
+    togglePersonaMenu();
+  };
+  chip.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePersonaMenu(); }
+  };
+}
+
+function closePersonaMenu() {
+  const m = $('#persona-menu');
+  if (m) { m.classList.add('hidden'); $('#user-chip').setAttribute('aria-expanded', 'false'); }
+}
+
+function togglePersonaMenu() {
+  const m = $('#persona-menu');
+  if (!m) return;
+  if (!m.classList.contains('hidden')) { closePersonaMenu(); return; }
+  m.classList.remove('hidden');
+  $('#user-chip').setAttribute('aria-expanded', 'true');
+  renderPersonaMenu(m);
+}
+
+async function renderPersonaMenu(m) {
+  if (isViewingAs()) {
+    // В режиме просмотра меню предлагает только возврат
+    m.innerHTML =
+      `<div class="pm-head">👁 Режим просмотра</div>
+       <div class="pm-note">Вы вошли как <b>${esc(state.me.full_name || state.me.username)}</b>
+       (${roleLabel(state.me.role)}). Действия выполняются от его имени.</div>
+       <button class="pm-item pm-back" id="pm-return">🛡 Вернуться в администратора</button>`;
+    $('#pm-return').onclick = stopViewAs;
+    return;
+  }
+  m.innerHTML =
+    `<div class="pm-head">Мой профиль</div>
+     <div class="pm-item pm-self">🛡 <span class="pm-name">${esc(state.me.full_name || state.me.username)}</span>
+       <span class="pm-tag">администратор · это вы</span></div>
+     <div class="pm-head">Посмотреть глазами <span class="pm-hint">пароль не нужен</span></div>
+     <div class="pm-body"><div class="pm-none"><span class="spinner"></span></div></div>`;
+  try {
+    const users = await api.get('/api/v1/users');
+    const act = users.filter(u => u.is_active && u.role !== 'admin');
+    const acc = act.filter(u => u.role === 'accountant');
+    const usr = act.filter(u => u.role === 'user');
+    const row = (u) =>
+      `<button class="pm-item" data-uid="${esc(u.id)}" role="menuitem">
+         <span class="pm-dot ${u.role === 'accountant' ? 'acc' : 'usr'}"></span>
+         <span class="pm-name">${esc(u.full_name || u.username)}</span>
+         <span class="pm-sub">${esc(u.username)}${u.company_name ? ' · ' + esc(u.company_name) : ''}</span>
+       </button>`;
+    m.querySelector('.pm-body').innerHTML =
+      `<div class="pm-group">Бухгалтеры</div>` +
+      (acc.length ? acc.map(row).join('') : '<div class="pm-none">нет бухгалтеров</div>') +
+      `<div class="pm-group">Сотрудники</div>` +
+      (usr.length ? usr.map(row).join('') : '<div class="pm-none">нет сотрудников</div>');
+    m.querySelectorAll('.pm-item[data-uid]').forEach(b => {
+      b.onclick = () => startViewAs(
+        b.dataset.uid, b.querySelector('.pm-name').textContent);
+    });
+  } catch (e) {
+    m.querySelector('.pm-body').innerHTML =
+      `<div class="pm-none">${esc(e.message || 'Не удалось загрузить список')}</div>`;
+  }
+}
+
+async function startViewAs(uid, name) {
+  closePersonaMenu();
+  const { slot, close } = openModal(
+    `<div class="modal-title">👁 Режим просмотра</div>
+     <p class="modal-text">Открыть приложение глазами <b>${esc(name)}</b>?<br>
+     Экран перезагрузится в его профиле; действия будут выполняться от его имени.
+     Возврат — кнопка «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
+     <div class="modal-actions">
+       <button class="btn" id="va-cancel">Отмена</button>
+       <button class="btn btn-primary" id="va-go">Открыть его профиль</button>
+     </div>`);
+  $('#va-cancel', slot).onclick = close;
+  $('#va-go', slot).onclick = async () => {
+    try {
+      const r = await api.post(`/api/v1/admin/impersonate/${uid}`);
+      try {
+        sessionStorage.setItem(VIEWAS_TOK, getToken());
+        sessionStorage.setItem(VIEWAS_NAME,
+          state.me.full_name || state.me.username || 'Администратор');
+      } catch (e) {}
+      setToken(r.access_token);
+      close();
+      location.reload();      // полный перезапуск интерфейса в новой роли
+    } catch (e) {
+      toast(e.message || 'Не удалось переключиться', 'err', 'Режим просмотра');
+    }
+  };
+}
+
+async function stopViewAs() {
+  closePersonaMenu();
+  try {
+    const r = await api.post('/api/v1/admin/impersonate/stop');
+    viewAsForget();
+    setToken(r.access_token);
+  } catch (e) {
+    // Запасной путь: возвращаем сохранённый админ-токен
+    let saved = null;
+    try { saved = sessionStorage.getItem(VIEWAS_TOK); } catch (err) {}
+    if (!saved) { toast(e.message || 'Не удалось вернуться', 'err', 'Режим просмотра'); return; }
+    viewAsForget();
+    setToken(saved);
+  }
   location.reload();
 }
 
@@ -959,6 +1111,20 @@ function openMoveDialog() {
 
 function bindShell() {
   $('#btn-logout').onclick = logout;
+  // v1.18.0: меню профиля закрывается кликом мимо и по Esc (один обработчик)
+  if (!window.__ymasterPersonaBound) {
+    window.__ymasterPersonaBound = true;
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('persona-menu');
+      if (m && !m.classList.contains('hidden') &&
+          !e.target.closest('#persona-menu') && !e.target.closest('#user-chip')) {
+        closePersonaMenu();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closePersonaMenu();
+    });
+  }
   // v1.10.0: меню можно закрыть ВСЕГДА — гамбургер, фон, ✕, Esc, свайп влево
   const closeSidebar = () => {
     $('#sidebar').classList.remove('open');
@@ -1719,6 +1885,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.18.0': [
+    { icon: '👁', title: 'Режим просмотра: приложение глазами сотрудника или бухгалтера',
+      text: 'Нажмите на свою карточку в правом верхнем углу — появится меню переключения профилей. Выберите бухгалтера или сотрудника, и вы увидите приложение ровно так, как видит его он: свои разделы, свои настройки, свои права. Пароль не запрашивается, ваш административный сеанс не прерывается: вернуться можно кнопкой «Вернуться в администратора» вверху экрана в любой момент. Действия в режиме просмотра выполняются от имени выбранного пользователя — будьте внимательны.' },
+  ],
   '1.17.0': [
     { icon: '🔄', title: 'Обновление из приложения — теперь и без пароля',
       text: 'Найдено, почему ваш пароль из терминала не работал в окне обновления: sudo проверяет пароль СЛУЖЕБНОГО пользователя приложения, а не ваш. Теперь приложение перезапускается само (re-exec) — обновление проходит целиком из окна, пароль не нужен вовсе. В настройках появилась готовая sudoers-команда — при желании можно включить и классический перезапуск сервиса.' },

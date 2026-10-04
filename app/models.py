@@ -311,7 +311,12 @@ class MappingSetting(Base):
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # v1.18.0 (исправление): в SQLite автоинкрементирует только INTEGER
+    # PRIMARY KEY — «голый» BigInteger делал запись в журнал невозможной
+    # (тихий сбой NOT NULL id). with_variant даёт BIGINT на прочих СУБД.
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True)
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     username: Mapped[str] = mapped_column(String(100), default="")
     company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # v1.11.0
@@ -339,7 +344,10 @@ class AuditLog(Base):
 class FnsLog(Base):
     __tablename__ = "fns_log"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # v1.18.0: как в AuditLog — INTEGER PRIMARY KEY для SQLite
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True)
     receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     request_data: Mapped[str] = mapped_column(Text, default="")
     response_data: Mapped[str] = mapped_column(Text, default="")

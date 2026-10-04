@@ -26,7 +26,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.17.0">
+<link rel="stylesheet" href="/css/app.css?v=1.18.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -164,16 +164,27 @@
           <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
             ⚡ Офлайн
           </div>
-          <div class="user-chip" id="user-chip">
+          <div class="user-chip" id="user-chip" role="button" tabindex="0"
+               title="Профиль и переключение просмотра (v1.18.0)" aria-haspopup="true" aria-expanded="false">
             <div class="avatar" id="user-avatar">A</div>
             <div class="user-meta">
               <div class="user-name" id="user-name">—</div>
               <div class="user-role" id="user-role">—</div>
             </div>
+            <!-- v1.18.0: режим просмотра — меню переключения профилей -->
+            <span class="chip-caret" id="chip-caret" aria-hidden="true">▾</span>
             <button class="btn-icon" id="btn-logout" title="Выйти">⎋</button>
           </div>
+          <div class="persona-menu glass hidden" id="persona-menu" role="menu"
+               aria-label="Переключение профиля"></div>
         </div>
       </header>
+      <!-- v1.18.0: режим просмотра — постоянная полоса возврата -->
+      <div class="viewas-bar hidden" id="viewas-bar">
+        <span class="viewas-eye" aria-hidden="true">👁</span>
+        <div class="viewas-text" id="viewas-text"></div>
+        <button class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
+      </div>
       <main class="content" id="view-container"></main>
       <footer class="app-footer">
         Ямастер Чек <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
@@ -189,6 +200,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.17.0"></script>
+  <script type="module" src="/js/app.js?v=1.18.0"></script>
 </body>
 </html>

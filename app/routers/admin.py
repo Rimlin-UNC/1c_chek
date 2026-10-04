@@ -23,7 +23,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ACCOUNTANT, ROLE_USER, require_admin
+from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER,
+                    act_admin_id, create_access_token,
+                    create_impersonation_token, decode_token,
+                    get_current_user, raw_bearer_token, require_admin)
 from ..config import settings
 from ..database import get_db
 from ..models import AppSetting, Receipt, User
@@ -258,6 +261,61 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
         "unit": unit,
         "sudoers_cmd": sudoers_cmd,
         "reexec": _reexec_allowed(),
+    }
+
+
+# --------------------------------------------------------------------------
+#  v1.18.0: Режим просмотра — админ видит приложение глазами пользователя
+#  или бухгалтера. Пароль не запрашивается: сессия администратора не
+#  прерывается, возврат — одной кнопкой. Цепочки запрещены: токен просмотра
+#  не проходит require_admin, поэтому «просмотр из просмотра» невозможен.
+# --------------------------------------------------------------------------
+@router.post("/impersonate/stop",
+             summary="Вернуться в профиль администратора (режим просмотра)")
+def impersonate_stop(token: str = Depends(raw_bearer_token),
+                     db: Session = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется авторизация")
+    admin_id = act_admin_id(decode_token(token))
+    if not admin_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Вы сейчас не в режиме просмотра")
+    admin = db.get(User, admin_id)
+    if admin is None or admin.role != ROLE_ADMIN or not admin.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "Аккаунт администратора недоступен")
+    log_action(admin, "impersonate_stop",
+               details={"target": user.username, "target_role": user.role})
+    return {"ok": True, "access_token": create_access_token(admin),
+            "user": admin.to_dict(),
+            "message": "Вы вернулись в профиль администратора"}
+
+
+@router.post("/impersonate/{user_id}",
+             summary="Посмотреть приложение глазами пользователя (админ)")
+def impersonate_start(user_id: str, db: Session = Depends(get_db),
+                      admin: User = Depends(require_admin)):
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    if target.id == admin.id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Вы уже в своём профиле администратора")
+    if target.role == ROLE_ADMIN:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Профиль администратора нельзя открыть в режиме просмотра")
+    if not target.is_active:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Пользователь в архиве — сначала восстановите его")
+    log_action(admin, "impersonate_start", entity_type="user", entity_id=target.id,
+               details={"target": target.username, "target_role": target.role})
+    return {
+        "ok": True,
+        "access_token": create_impersonation_token(admin, target),
+        "user": target.to_dict(),
+        "act": {"sub": admin.id, "username": admin.username},
+        "message": f"Режим просмотра: {target.full_name or target.username}",
     }
 
 

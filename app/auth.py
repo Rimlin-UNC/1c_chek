@@ -80,6 +80,46 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Недействительный токен")
 
 
+# --------------------------------------------------------------------------
+#  v1.18.0: Режим просмотра — администратор смотрит приложение глазами
+#  сотрудника или бухгалтера. Токен выписывается НА целевого пользователя,
+#  а личность администратора фиксируется стандартным claim-ом «act»
+#  (RFC 8693 «Actor claim»): act.sub = id администратора. Пароль при
+#  переключении НЕ запрашивается — admin-сессия не прерывается.
+# --------------------------------------------------------------------------
+def create_impersonation_token(admin: User, target: User) -> str:
+    """Токен «просмотра от имени»: sub = целевой пользователь, act.sub = админ."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": target.id,
+        "username": target.username,
+        "role": target.role,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        "iss": "ymaster-check",
+        "act": {"sub": admin.id, "username": admin.username},
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def act_admin_id(payload: dict) -> str | None:
+    """v1.18.0: id администратора из токена просмотра (или None)."""
+    act = payload.get("act")
+    if isinstance(act, dict):
+        return act.get("sub") or None
+    return None
+
+
+def raw_bearer_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> str | None:
+    """v1.18.0: сырой токен запроса (заголовок, иначе cookie) — для /stop."""
+    if credentials and credentials.credentials:
+        return credentials.credentials
+    return request.cookies.get("ymaster_token")
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
