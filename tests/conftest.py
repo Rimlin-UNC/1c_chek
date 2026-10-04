@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 _TMP = tempfile.mkdtemp(prefix="ymaster-test-")
+os.environ["YM_NO_REEXEC"] = "1"   # v1.17.0: тесты не должны ре-исполнять процесс
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

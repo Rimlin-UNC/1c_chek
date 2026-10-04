@@ -424,9 +424,9 @@ function handleWsEvent(type, p) {
       refreshBadges();
       if (state.view === 'receipts') scheduleRouteRefresh();
       break;
-    case 'server_update':  // v1.9.1: администратор обновил сервер — все получают новую версию
-      toast(`Сервер обновляется (v${p.to || ''}) — страница перезагрузится автоматически`, 'info', '🔄 Обновление');
-      setTimeout(() => location.reload(), 4000);
+    case 'server_update':  // v1.9.1/1.17.0: сервер обновлён — сброс кэша и перезагрузка
+      toast(`Сервер обновлён (v${p.to || ''}) — сбрасываю кэш и перезагружаюсь…`, 'info', '🔄 Обновление');
+      setTimeout(hardReset, 1500);
       break;
   }
 }
@@ -1644,10 +1644,14 @@ function showUpdateDialog(checkInfo) {
     <div class="info-callout" style="font-size:12.5px">Обновление безопасно для данных: перед установкой автоматически
     создаётся резервная копия базы; проверяется целостность; при сбое — откат на прежнюю версию.
     Устанавливаются только изменения (не весь проект).</div>
-    <label class="field" style="margin-top:10px"><span>🔑 Пароль сервера (sudo) — необязательно</span>
-      <input type="password" id="upd-sudo-pw" autocomplete="off" placeholder="нужен, только если не настроено sudo-правило">
-      <span class="form-hint">Используется исключительно для перезапуска сервиса в момент обновления
-      и нигде не сохраняется — узнать его из приложения, кода или базы невозможно.</span></label>
+    <div class="info-callout" style="font-size:12.5px;margin-top:10px">✅ Пароль не нужен:
+    с v1.17.0 приложение перезапускается само (re-exec) — обновление проходит целиком из этого окна.
+    Поле пароля ниже можно оставить пустым.</div>
+    <label class="field" style="margin-top:10px"><span>🔑 Пароль сервера (sudo) — обычно не требуется</span>
+      <input type="password" id="upd-sudo-pw" autocomplete="off" placeholder="оставьте пустым">
+      <span class="form-hint">sudo проверяет пароль служебного пользователя приложения, а не ваш —
+      поэтому ваш пароль из терминала тут не работал. Теперь перезапуск идёт без пароля.
+      Используется только в момент обновления и нигде не сохраняется.</span></label>
     <div class="modal-actions">
       <button class="btn" id="upd-close">Позже</button>
       <button class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
@@ -1715,6 +1719,16 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.17.0': [
+    { icon: '🔄', title: 'Обновление из приложения — теперь и без пароля',
+      text: 'Найдено, почему ваш пароль из терминала не работал в окне обновления: sudo проверяет пароль СЛУЖЕБНОГО пользователя приложения, а не ваш. Теперь приложение перезапускается само (re-exec) — обновление проходит целиком из окна, пароль не нужен вовсе. В настройках появилась готовая sudoers-команда — при желании можно включить и классический перезапуск сервиса.' },
+    { icon: '🧹', title: 'Сброс кэша после обновления — автоматически',
+      text: 'Клиенты сами узнают о новой версии (даже без открытого окна): кэш PWA удаляется, страница перезагружается на свежем интерфейсе. На всякий случай в Настройках появилась кнопка «Сбросить кэш приложения».' },
+    { icon: '🖥', title: 'Блок «Сервер и команды» для администратора',
+      text: 'Версия, сборка, аптайм, размер базы, счётчики данных, служебный пользователь — и готовые команды с кнопкой «копировать»: разрешить автоперезапуск, обновить из терминала, статус и логи сервиса.' },
+    { icon: '🏢', title: 'Настройки для бухгалтера и сотрудника стали информативнее',
+      text: 'Бухгалтер видит свою компанию, ИНН, срок авансовых отчётов и режим проверки ФНС; сотрудник — свои правила и подсказку про Telegram-напоминания. У всех появилась карточка обслуживания устройства.' },
+  ],
   '1.16.1': [
     { icon: '🗂', title: 'Checko: интеграция переписана по официальной документации',
       text: 'Найдена причина неработающих карточек ЕГРЮЛ: API Checko отвечает РУССКИМИ ключами (НаимПолн, ОГРН, ЮрАдрес…), а мы ждали английские. Теперь разбирается ровно тот формат, что присылает Checko: полное/краткое наименование, ОКПО, регион, дата регистрации, руководитель, учредители, филиалы, ОКВЭДы, недостоверность и массовость адреса.' },
@@ -3416,6 +3430,64 @@ async function viewUsers(container) {
   }
 }
 
+
+// --------------------------------------------------------------------------
+//  v1.17.0: жёсткий сброс приложения после обновления сервера
+// --------------------------------------------------------------------------
+async function hardReset(silent = false) {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(k => k.startsWith('ymaster-check-'))
+        .map(k => caches.delete(k)));
+    }
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.update().catch(() => {})));
+    }
+  } catch (e) { /* кэш не критичен */ }
+  try { sessionStorage.clear(); } catch (e) {}
+  if (!silent) toast('Кэш приложения сброшен — загружаю новую версию…', 'ok', '🧹');
+  setTimeout(() => location.reload(), 400);
+}
+
+// v1.17.0: сторож версии — если сервер стал новее, клиент сам сбрасывает кэш
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    const r = await api.get('/api/v1/about', { retries: 1 });
+    if (state.appVersion && r.version && r.version !== state.appVersion) {
+      state.appVersion = r.version;
+      await hardReset(true);
+    }
+  } catch (e) { /* сервер недоступен — молча */ }
+}, 60000);
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden) return;
+  try {
+    const r = await api.get('/api/v1/about', { retries: 1 });
+    if (state.appVersion && r.version && r.version !== state.appVersion) {
+      state.appVersion = r.version;
+      await hardReset(true);
+    }
+  } catch (e) {}
+});
+
+// v1.17.0: копирование команд в буфер (блок «Сервер и команды»)
+async function copyCmd(txt, btn) {
+  try {
+    await navigator.clipboard.writeText(txt);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e2) {}
+    ta.remove();
+  }
+  if (btn) { const o = btn.textContent; btn.textContent = '✓ скопировано';
+    setTimeout(() => { btn.textContent = o; }, 1500); }
+}
+
 // ==========================================================================
 //  ЭКРАН: Журнал
 // ==========================================================================
@@ -3441,6 +3513,9 @@ async function viewSettings(container) {
   try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
+  let appSum = null, sysInfo = null;
+  try { appSum = await api.get('/api/v1/settings/app/summary'); } catch {}
+  if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
 
   container.innerHTML = `
     <div class="settings-grid">
@@ -3578,6 +3653,15 @@ async function viewSettings(container) {
 
       ${isAdmin() ? `
       <div class="glass card">
+        <div class="card-title">🖥 Сервер и команды <span class="form-hint">(v1.17.0)</span></div>
+        <dl class="kv" style="font-size:13px" id="sys-info"><dt>Загрузка…</dt><dd></dd></dl>
+        <p class="form-hint" style="margin:10px 0 6px">Команды выполняются на сервере по SSH.
+        Первая — одноразовая: разрешает приложению перезапускать себя без пароля
+        (после неё обновления из приложения идут полностью автоматически).</p>
+        <div id="sys-cmds"></div>
+      </div>
+
+      <div class="glass card">
         <div class="card-title">🔄 Обновления <span class="form-hint">(v1.6.0)</span></div>
         <div class="upd-status-line"><span class="upd-dot upd-dot--wait" id="upd-dot"></span>
           <span id="upd-status-text">Проверяю…</span></div>
@@ -3644,6 +3728,32 @@ async function viewSettings(container) {
         </div>
         <p class="form-hint" style="margin-top:8px">«Как на устройстве» — тема меняется вместе с
         настройкой системы/телефона автоматически.</p>
+      </div>
+
+      ${!isAdmin() && me ? `
+      <div class="glass card">
+        <div class="card-title">${state.me.role === 'accountant' ? '🏢 Ваша компания' : '👤 Мои чеки'} <span class="form-hint">(v1.17.0)</span></div>
+        ${state.me.role === 'accountant' ? `
+        <dl class="kv" style="font-size:13px">
+          <dt>Компания</dt><dd>${esc(me.company_name || '—')}</dd>
+          <dt>ИНН</dt><dd>${esc(me.company_inn || 'не задан — попросите администратора указать ИНН в карточке компании')}</dd>
+          <dt>Срок авансового отчёта</dt><dd>${appSum ? appSum.advance_deadline_days + ' дн. от даты чека (п. 6.3 Указания ЦБ 3210-У)' : '—'}</dd>
+          <dt>Проверка ФНС сразу</dt><dd>${appSum && appSum.auto_verify ? 'включена' : 'по кнопке'}</dd>
+        </dl>` : `
+        <dl class="kv" style="font-size:13px">
+          <dt>Срок авансового отчёта</dt><dd>${appSum ? appSum.advance_deadline_days + ' дн. от даты чека' : '—'}</dd>
+          <dt>Проверка чеков</dt><dd>${appSum && appSum.auto_verify ? 'автоматическая (ФНС)' : 'по кнопке «Проверить»'}</dd>
+        </dl>
+        <p class="form-hint">Сфотографируйте чек сразу после покупки — он сам попадёт
+        к бухгалтеру. Если забыли — Telegram напомнит (привяжите чат ниже).</p>`}
+      </div>` : ''}
+
+      <div class="glass card">
+        <div class="card-title">🧹 Обслуживание устройства <span class="form-hint">(v1.17.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Если после обновления сервера что-то
+        отображается по-старому (иконки, цифры, интерфейс) — сбросьте локальный кэш приложения.
+        Обычно сброс происходит автоматически.</p>
+        <button class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
       </div>
 
       <div class="glass card">
@@ -3781,11 +3891,16 @@ async function viewSettings(container) {
         if (!el) return;
         const chip = (name, ok, hint) =>
           `<span class="pf-chip ${ok ? 'ok' : 'bad'}" title="${hint}">${ok ? '✓' : '✗'} ${name}</span>`;
+        const rmode = pf.reexec_ok
+          ? (pf.restart_mode === 'sudoers' || pf.restart_mode === 'systemctl'
+              ? 'sudoers + самоперезапуск' : 'самоперезапуск без пароля')
+          : 'нет права';
         el.innerHTML = [
           chip('GitHub', pf.github_ok, 'Сервер может скачать обновление'),
-          chip('Перезапуск сервиса', pf.can_restart,
-            pf.can_restart ? 'Правило sudoers установлено — приложение перезапустится само' :
-              'Нет права: однократно выполните на сервере sudo bash deploy.sh --update'),
+          chip('Git-репозиторий', pf.git_ok !== false,
+            pf.git_ok === false ? 'Будет восстановлен автоматически при обновлении' : 'git на месте'),
+          chip('Перезапуск', pf.can_restart,
+            pf.can_restart ? 'Режим: ' + rmode : 'Недоступен — sudo bash deploy.sh --update'),
           chip('Копия БД', pf.db_backup_ok, 'Перед обновлением будет сделана резервная копия'),
         ].join(' ') + (pf.ready
           ? '<span class="form-hint" style="margin-left:8px">готово к обновлению из приложения</span>'
@@ -3850,6 +3965,40 @@ async function viewSettings(container) {
       catch (e) { toast(e.message, 'err'); }
     };
   }
+
+  // v1.17.0: «Сервер и команды» + сброс кэша
+  if (isAdmin() && sysInfo) {
+    const si = $('#sys-info');
+    if (si) {
+      const up = sysInfo.uptime_s
+        ? Math.floor(sysInfo.uptime_s / 86400) + ' д. ' + Math.floor(sysInfo.uptime_s % 86400 / 3600) + ' ч.'
+        : '—';
+      si.innerHTML = `
+        <dt>Версия / сборка</dt><dd>v${esc(sysInfo.version)} · <code class="inline">${esc((sysInfo.commit || '').slice(0, 7) || '—')}</code></dd>
+        <dt>Python</dt><dd>${esc(sysInfo.python)}</dd>
+        <dt>Работает</dt><dd>${up} · БД ${esc(String(sysInfo.db_size_mb))} МБ</dd>
+        <dt>Данных</dt><dd>компаний ${sysInfo.counts.companies} · пользователей ${sysInfo.counts.users} · чеков ${fmtInt(sysInfo.counts.receipts)}</dd>
+        <dt>Служебный пользователь</dt><dd><code class="inline">${esc(sysInfo.service_user)}</code>${sysInfo.reexec ? ' · самоперезапуск ✅' : ''}</dd>`;
+    }
+    const cmds = [
+      ['Разрешить автоперезапуск (однократно)', sysInfo.sudoers_cmd],
+      ['Обновить из терминала', 'sudo bash deploy.sh --update'],
+      ['Статус сервиса', 'systemctl status ' + sysInfo.unit],
+      ['Логи сервера', 'journalctl -u ' + sysInfo.unit + ' -f'],
+    ];
+    const sc = $('#sys-cmds');
+    if (sc) sc.innerHTML = cmds.map(([name, cmd], i) => `
+      <div style="margin-bottom:10px">
+        <div class="form-hint" style="margin-bottom:4px">${esc(name)}</div>
+        <div class="cmd-line"><code>${esc(cmd)}</code>
+          <button class="btn btn-sm cmd-copy" data-cmd="${esc(cmd)}">копировать</button></div>
+      </div>`).join('');
+    sc && sc.querySelectorAll('.cmd-copy').forEach(b => {
+      b.onclick = () => copyCmd(b.dataset.cmd, b);
+    });
+  }
+  const bcr = $('#btn-cache-reset');
+  if (bcr) bcr.onclick = () => hardReset();
 
   // v1.16.0: Telegram — сохранение/тест/личная привязка
   if (isAdmin() && tgSet) {

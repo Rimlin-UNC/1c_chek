@@ -418,6 +418,43 @@ def load_last_update() -> dict | None:
         return None
 
 
+def _reexec_allowed() -> bool:
+    """v1.17.0: разрешён ли самоперезапуск (re-exec). Запрещён в тестах
+    (YM_NO_REEXEC=1) и при выключенном SELF_REEXEC в конфиге."""
+    import sys as _sys
+    if os.environ.get("YM_NO_REEXEC") == "1":
+        return False
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    import sys as _sys2
+    return bool(settings.SELF_REEXEC) and len(_sys2.argv) > 0
+
+
+def _self_reexec() -> bool:
+    """v1.17.0: заменить собственный процесс тем же запуском — Python под
+    тем же интерпретатором загрузит УЖЕ обновлённый код. PID сохраняется
+    (systemd видит тот же работающий сервис), сокет освобождается
+    (close-on-exec) и переоткрывается. Прав root НЕ требуется — обновление
+    из приложения работает без пароля и без sudoers-правил.
+
+    Вызывается только из фонового потока после записи маркера успеха."""
+    import logging as _logging
+    import os as _os
+    import sys as _sys
+    try:
+        for h in _logging.getLogger().handlers:
+            try:
+                h.flush()
+            except Exception:                                # noqa: BLE001
+                pass
+        argv = [_sys.executable] + list(_sys.argv)
+        _os.execv(_sys.executable, argv)     # не возвращает
+        return True
+    except OSError as e:
+        job.say("restart", None, f"Самоперезапуск не удался: {e}")
+        return False
+
+
 def _restart_mode() -> tuple[bool, str]:
     """v1.9.1: есть ли право перезапустить сервис. Проверяем БЕЗВРЕДНОЙ командой
     `systemctl is-active` (разрешена sudoers-правилом вместе с restart):
@@ -435,6 +472,8 @@ def pre_flight(db) -> dict:
     """v1.9.1: готовность к обновлению из приложения. Всё, что должно быть
     истинным ДО старта — иначе обновление не начинаем (никаких полу-состояний)."""
     can_restart, mode = _restart_mode()
+    reexec_ok = _reexec_allowed()  # v1.17.0: самоперезапуск без прав root
+    can_restart = can_restart or reexec_ok
     db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
     db_ok = os.path.exists(db_path)
     git_ok = _git_ready()          # v1.16.0: иначе apply сам восстановит репозиторий
@@ -449,7 +488,8 @@ def pre_flight(db) -> dict:
         github_err = str(e)[:200]
     return {
         "can_restart": can_restart,
-        "restart_mode": mode,
+        "restart_mode": mode or ("reexec" if reexec_ok else ""),
+        "reexec_ok": reexec_ok,
         "db_backup_ok": db_ok,
         "github_ok": github_ok,
         "github_error": github_err,
@@ -459,22 +499,32 @@ def pre_flight(db) -> dict:
 
 
 def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
-    """v1.8.1/v1.10.0: приложение само перезапускает свой сервис.
-    Цепочка: 1) sudoers NOPASSWD (ставит deploy.sh); 2) sudo -S с паролем,
-    переданным администратором ТОЛЬКО на время обновления (не сохраняется
-    и не попадает в логи); 3) plain systemctl (dev-окружение)."""
+    """v1.8.1/v1.17.0: приложение само перезапускается после обновления.
+    Цепочка: 1) sudoers NOPASSWD (ставит deploy.sh);
+    2) САМОПЕРЕЗАПУСК re-exec — замена собственного процесса (без прав
+    root; главный способ без sudoers-правила);
+    3) plain systemctl (dev); 4) sudo -S с паролем.
+    Примечание к паролю: sudo проверяет пароль СЛУЖЕБНОГО пользователя
+    приложения, а не администратора — поэтому пароль из терминала в
+    приложении не срабатывает; re-exec решает это без пароля вовсе."""
     rc, _o = _run(["sudo", "-n", "systemctl", "restart", "ymaster-check"], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен (sudoers) — новая версия уже работает"
+    if _reexec_allowed():
+        job.say("restart", 96, "Перезапуск без прав root (re-exec)…")
+        time.sleep(1.0)          # дать WS-кадру «сервер обновляется» уйти
+        if _self_reexec():
+            return True, "Перезапущено (re-exec)"   # процесс уже заменён
     if sudo_password:
         rc, out = _run(["sudo", "-S", "-p", "", "systemctl", "restart",
                         "ymaster-check"], timeout=60,
                        input_text=sudo_password + "\n")
         if rc == 0:
-            return True, "Сервис перезапущен (по паролю администратора)"
+            return True, "Сервис перезапущен (по паролю служебного пользователя)"
         if "incorrect password" in (out or "").lower():
-            return False, ("Пароль сервера отклонён sudo — обновление не "
-                           "применено целиком; файлы уже обновлены, данные целы")
+            job.say("restart", 96,
+                    "Пароль отклонён: приложение работает под другим "
+                    "пользователем — включён самоперезапуск…")
     rc, _o = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен — новая версия уже работает"
@@ -550,7 +600,7 @@ def _do_apply(target_version: str, repo: str, branch: str,
             "to": target_version,
             "at": datetime.utcnow().isoformat() + "Z",
             "backup": os.path.basename(backup) if backup else ""})
-        job.say("restart", 92, "Перезапуск сервиса…")
+        job.say("restart", 92, "Перезапуск сервиса (без прав root — re-exec)…")
         restarted, rmsg = _restart_service(sudo_password)
         needs_restart = not restarted
         job.say("restart", 95, rmsg)

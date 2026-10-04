@@ -437,3 +437,17 @@ def refresh_bot(db: Session = Depends(get_db), admin: User = Depends(require_adm
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Не удалось получить данные бота — проверьте токен")
     return {"ok": True, "bot_username": username}
+
+
+@router.get("/app/summary", summary="Краткие настройки для всех ролей")
+def app_summary(db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)):
+    """Информативные блоки настроек (v1.17.0): срок авансовых отчётов,
+    авто-проверка ФНС — видно бухгалтеру и сотруднику (только чтение)."""
+    from ..services import appsettings
+    return {
+        "advance_deadline_days": int(
+            appsettings.get_setting(db, "advance_deadline_days", "10") or 10),
+        "auto_verify": appsettings.get_setting(db, "auto_verify", "1") == "1",
+        "version": cfg.APP_VERSION,
+    }

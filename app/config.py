@@ -37,8 +37,12 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.16.1"
+    APP_VERSION: str = "1.17.0"
     DEFAULT_BRANCH: str = "arena/01a0caaa-1c-chek"   # ветка для обновлений из приложения
+    # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
+    # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
+    # управляет нестандартный супервизор
+    SELF_REEXEC: bool = True
     VENDOR: str = "ООО «Ямастер»"
     VENDOR_SITE: str = "https://ymaster.ru"
     VENDOR_EMAIL: str = "info@ymaster.ru"
