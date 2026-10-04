@@ -16,6 +16,9 @@ httpx>=0.27
 # JWT-токены
 PyJWT>=2.8
 
+# Шифрование секретов в БД (v1.15.0: Fernet для API-ключей Checko/ФНС)
+cryptography>=42.0
+
 # Загрузка файлов через формы
 python-multipart>=0.0.9
 

@@ -283,6 +283,9 @@ def refresh_card(company_id: str, admin: User = Depends(require_admin),
     comp.card_json = _json.dumps(result["card"], ensure_ascii=False)
     from ..models import utcnow as _utcnow
     comp.card_updated_at = _utcnow()
+    # v1.15.0: автозаполнение реквизитов из ЕГРЮЛ — ИНН и полное название
+    if not (comp.inn or "").strip() and result["card"].get("inn"):
+        comp.inn = result["card"]["inn"]
     # если название в системе — сокращённое, а ЕГРЮЛ вернул полное, предложим его
     db.commit()
     log_action(admin, "company_card_refreshed", "company", comp.id,

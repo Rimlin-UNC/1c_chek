@@ -50,7 +50,8 @@ def fetch_card(api_key: str, inn: str) -> dict:
     url = f"{BASE_URL}/company" if kind == "legal" else f"{BASE_URL}/entrepreneur"
     try:
         resp = httpx.get(url, params={"key": api_key, "inn": inn}, timeout=TIMEOUT)
-    except httpx.HTTPError:
+    except Exception:                  # v1.15.0: даже текст ошибки не должен
+        # содержать URL с ключом — отдаём только понятную формулировку
         raise CheckoError("Сервис Checko недоступен — попробуйте позже")
     if resp.status_code in (401, 403):
         raise CheckoError("Checko: ключ недействителен — проверьте API-ключ")
@@ -61,12 +62,22 @@ def fetch_card(api_key: str, inn: str) -> dict:
     if resp.status_code >= 400:
         raise CheckoError(f"Checko: ошибка сервиса (HTTP {resp.status_code})")
     data = resp.json()
+    card = _build_card(kind, data)
+    if not card["name_full"]:
+        raise CheckoError("Checko: компания найдена, но сервис не вернул наименование")
+    return {"card": card, "raw": data}
 
+
+def _build_card(kind: str, data: dict) -> dict:
+    """Чистая функция: ответ Checko → сводка карточки (все ключевые реквизиты
+    ЕГРЮЛ/ЕГРИП). Поля читаются защитно — структура ответа может расширяться."""
     if kind == "legal":
         comp = _first_dict(data, "Company")
         card = {
             "kind": "legal",
             "name_full": str(_first(comp, "name_full", "name", default="")),
+            "name_short": str(_first(comp, "name_short",
+                                     default=_first(comp, "name", default=""))),
             "inn": str(_first(comp, "inn", default="")),
             "kpp": str(_first(comp, "kpp", default="")),
             "ogrn": str(_first(comp, "ogrn", default="")),
@@ -77,11 +88,25 @@ def fetch_card(api_key: str, inn: str) -> dict:
             "status": _status_text(_first(comp, "status", default="")),
             "okved": _okved_text(comp),
         }
+        # --- v1.15.0: расширенные реквизиты ЕГРЮЛ ---
+        card["opf"] = str(_deep(comp, "opf", "full",
+                                default=_deep(comp, "opf", "name", default="")))
+        card["reg_date"] = str(_first(comp, "ogrn_date", "registration_date",
+                                      "reg_date", default="") or "")
+        card["capital"] = _capital_text(comp)
+        card["tax_office"] = str(_deep(comp, "tax_office", "name", default=""))
+        card["tax_office_code"] = str(_deep(comp, "tax_office", "code", default=""))
+        card["management_post"] = str(_deep(comp, "management", "post", default=""))
+        card["okved_extra"] = _okved_extra(comp)
+        card["email"] = str(_deep(comp, "email", "email",
+                                  default=_first_list_item(comp, "Emails", "email")))
+        card["phone"] = str(_first_list_item(comp, "Phones", "phone"))
     else:
         ip = _first_dict(data, "IndividualEntrepreneur", "Entrepreneur")
         card = {
             "kind": "individual",
             "name_full": str(_first(ip, "fio", "full_name", "name", default="")),
+            "name_short": "",
             "inn": str(_first(ip, "inn", default="")),
             "kpp": "",
             "ogrn": str(_first(ip, "ogrn", "ogrnip", default="")),
@@ -90,9 +115,44 @@ def fetch_card(api_key: str, inn: str) -> dict:
             "status": _status_text(_first(ip, "status", default="")),
             "okved": _okved_text(ip),
         }
-    if not card["name_full"]:
-        raise CheckoError("Checko: компания найдена, но сервис не вернул наименование")
-    return {"card": card, "raw": data}
+        card["opf"] = "Индивидуальный предприниматель"
+        card["reg_date"] = str(_first(ip, "ogrn_date", "registration_date",
+                                      "reg_date", default="") or "")
+        card["capital"] = ""
+        card["tax_office"] = str(_deep(ip, "tax_office", "name", default=""))
+        card["tax_office_code"] = str(_deep(ip, "tax_office", "code", default=""))
+        card["management_post"] = ""
+        card["okved_extra"] = _okved_extra(ip)
+        card["email"] = ""
+        card["phone"] = ""
+    return card
+
+
+def _capital_text(comp: dict) -> str:
+    cap = _first_dict(comp, "capital", "Capital")
+    s = _first(cap, "sum", "value", default=None)
+    if s in (None, ""):
+        return ""
+    try:
+        return f"{float(s):,.0f}".replace(",", " ") + " ₽"
+    except (TypeError, ValueError):
+        return str(s)
+
+
+def _first_list_item(d: dict, list_key: str, field: str) -> str:
+    lst = d.get(list_key)
+    if isinstance(lst, list) and lst and isinstance(lst[0], dict):
+        return str(lst[0].get(field) or "")
+    return ""
+
+
+def _okved_extra(d: dict) -> list[str]:
+    ov = _first_dict(d, "Okveds")
+    out = []
+    for item in (ov.get("additional") or [])[:5]:
+        if isinstance(item, dict) and item.get("code"):
+            out.append(f"{item.get('code')} — {item.get('name', '')}".strip(" —"))
+    return out
 
 
 def _first_dict(d: dict, *keys) -> dict:

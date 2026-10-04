@@ -11,17 +11,18 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, require_accountant, require_admin
+from ..auth import get_current_user, require_accountant, require_admin, verify_password
 from ..config import settings as cfg
 from ..database import get_db
 from ..models import AppSetting, User
 from ..schemas import (AppSettingsPatch, ExternalSettingsPatch,
                        ExternalTestRequest, FnsSettingsPatch, MappingSave,
                        OnecSettingsPatch)
-from ..services import appsettings, exporter
+from ..services import appsettings, exporter, secretbox
+from ..security import limiter
 from ..services.audit import log_action
 
 router = APIRouter(prefix="/api/v1/settings", tags=["Настройки"])
@@ -83,12 +84,22 @@ def mapping_catalog(user: User = Depends(get_current_user)):
 # --------------------------------------------------------------------------
 #  Настройки ФНС (только админ)
 # --------------------------------------------------------------------------
+# v1.15.0: эти ключи — секреты, в БД хранятся зашифрованными (secretbox):
+_SECRET_KEYS = {"checko_api_key", "fns_master_token", "proverkacheka_token",
+                "ofd_ru_token", "onec_api_token"}
+
+
 def _get_setting(db: Session, key: str, default: str = "") -> str:
     row = db.get(AppSetting, key)
-    return row.value if row and row.value != "" else default
+    val = row.value if row and row.value != "" else default
+    if key in _SECRET_KEYS and val:
+        return secretbox.unseal(val)     # легаси (открытые) читаются как есть
+    return val
 
 
 def _set_setting(db: Session, key: str, value: str) -> None:
+    if key in _SECRET_KEYS and value:
+        value = secretbox.seal(value)    # в БД уходит «enc:v1:…»
     row = db.get(AppSetting, key)
     if row is None:
         row = AppSetting(key=key, value=value)
@@ -290,17 +301,54 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
 def get_checko(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     key = _get_setting(db, "checko_api_key", "")
     return {"has_key": bool(key), "key_masked": _mask(key),
-            "hint": "Ключ из личного кабинета checko.ru (раздел API). "
-                    "Бесплатный тариф: 100 запросов в день."}
+            "encrypted": key.startswith("enc:") or not key,
+            "hint": "Ключ из личного кабинета checko.ru → вкладка API. "
+                    "Бесплатный тариф: 100 запросов в день, техлимит 32 запроса/сек.",
+            "storage": "ключ хранится зашифрованным (Fernet/AES + HMAC), "
+                       "показывается только вам по паролю"}
 
 
 @router.put("/checko", summary="Сохранить API-ключ Checko.ru (админ)")
 def put_checko(body: dict, db: Session = Depends(get_db),
                admin: User = Depends(require_admin)):
-    key = (body or {}).get("api_key", "").strip()
+    key = ((body or {}).get("api_key") or "").strip()
     if not key:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Укажите API-ключ Checko")
-    _set_setting(db, "checko_api_key", key)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Укажите API-ключ Checko")
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]{16,64}", key):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Формат ключа неверный: 16–64 символа, буквы/цифры. "
+                            "Скопируйте ключ из личного кабинета checko.ru целиком")
+    _set_setting(db, "checko_api_key", key)      # уйдёт в БД зашифрованным
     log_action(admin, "checko_key_saved", details={"tail": key[-4:]})
     return {"ok": True, "key_masked": _mask(key),
-            "message": "Ключ Checko сохранён — карточки компаний заполняются по ИНН"}
+            "message": "Ключ Checko сохранён (зашифрован) — карточки компаний "
+                       "заполняются из ЕГРЮЛ/ЕГРИП по ИНН"}
+
+
+class CheckoRevealBody(dict):
+    """body {password} — подтверждение паролем администратора."""
+
+
+@router.post("/checko/reveal",
+             summary="Показать ключ Checko (подтверждение паролем, аудит)")
+def reveal_checko(body: dict, request: Request,
+                  db: Session = Depends(get_db),
+                  admin: User = Depends(require_admin)):
+    # защита от подбора пароля: 5 попыток / 5 минут с одного IP
+    ip = request.client.host if request.client else "?"
+    if not limiter.allow(f"checko-reveal:{ip}", limit=5, window_s=300):
+        log_action(admin, "checko_key_reveal_blocked", details={"ip": ip})
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "Слишком много попыток — повторите через несколько минут")
+    password = (body or {}).get("password") or ""
+    if not verify_password(password, admin.password_hash):
+        log_action(admin, "checko_key_reveal_failed", details={"ip": ip})
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный пароль")
+    key = _get_setting(db, "checko_api_key", "")
+    if not key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ключ Checko ещё не задан")
+    log_action(admin, "checko_key_revealed", details={"ip": ip})
+    return {"api_key": key,
+            "warning": "Ключ показан один раз и записан в журнал аудита"}

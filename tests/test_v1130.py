@@ -98,10 +98,10 @@ class TestCardAndCheckoKey:
         r = client.get("/api/v1/settings/checko", headers=hdr)
         assert r.status_code == 200 and r.json()["has_key"] is False
         r = client.put("/api/v1/settings/checko",
-                       json={"api_key": "abc123def456"}, headers=hdr)
+                       json={"api_key": "abc123def456abc12345"}, headers=hdr)
         assert r.status_code == 200
-        r = client.get("/api/v1/settings/checko", headers=hdr).json()
-        assert r["has_key"] is True and "abc123def" not in (r["key_masked"] or "")
+        d = client.get("/api/v1/settings/checko", headers=hdr).json()
+        assert d["has_key"] is True and "abc123def456" not in (d["key_masked"] or "")
         # lookup-checko: некорректный ИНН — 422 до похода в сеть
         assert client.post("/api/v1/companies/lookup-checko",
                            json={"inn": "123"}, headers=hdr).status_code == 422

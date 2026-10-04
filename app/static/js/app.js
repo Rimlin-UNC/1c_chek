@@ -759,17 +759,31 @@ async function openCompanyCard(id) {
   try { d = await api.get('/api/v1/companies/' + id + '/card'); }
   catch (e) { return toast(e.message, 'err'); }
   const c = d.company;
-  const egryl = d.card && (d.card.name_full || d.card.ogrn) ? `
+  // v1.15.0: все ключевые реквизиты ЕГРЮЛ/ЕГРИП из Checko — в карточке
+  const k = d.card || {};
+  const egryl = (k.name_full || k.ogrn) ? `
     <div class="info-callout" style="margin:10px 0">
-      <b>${esc(d.card.name_full || '')}</b><br>
-      ${d.card.inn ? 'ИНН ' + esc(d.card.inn) : ''}${d.card.kpp ? ' · КПП ' + esc(d.card.kpp) : ''}
-      ${d.card.ogrn ? ' · ОГРН ' + esc(d.card.ogrn) : ''}${d.card.director ? '<br>Руководитель: ' + esc(d.card.director) : ''}
-      ${d.card.address ? '<br>' + esc(d.card.address) : ''}
-      ${d.card.okved ? '<br>ОКВЭД: ' + esc(d.card.okved) : ''}
-      ${d.card.status ? '<br>Статус: <b>' + esc(d.card.status) + '</b>' : ''}
+      ${k.kind === 'individual' ? '<span class="chip">ИП</span> ' : '<span class="chip">ЮЛ</span> '}
+      <b>${esc(k.name_full || '')}</b>
+      ${k.name_short && k.name_short !== k.name_full ? `<div class="form-hint">${esc(k.name_short)}</div>` : ''}
+      ${k.opf ? `<div class="form-hint">${esc(k.opf)}</div>` : ''}
+      <div style="margin-top:4px">
+        ${k.inn ? 'ИНН <b>' + esc(k.inn) + '</b>' : ''}${k.kpp ? ' · КПП ' + esc(k.kpp) : ''}
+        ${k.ogrn ? ' · ' + (k.kind === 'individual' ? 'ОГРНИП' : 'ОГРН') + ' ' + esc(k.ogrn) : ''}
+      </div>
+      ${k.reg_date ? `<div>Зарегистрирован(о): ${esc(k.reg_date)}</div>` : ''}
+      ${k.director ? `<div>Руководитель: ${esc(k.director)}${k.management_post ? ' (' + esc(k.management_post) + ')' : ''}</div>` : ''}
+      ${k.capital ? `<div>Уставный капитал: ${esc(k.capital)}</div>` : ''}
+      ${k.tax_office ? `<div>ИФНС: ${esc(k.tax_office)}${k.tax_office_code ? ' (код ' + esc(k.tax_office_code) + ')' : ''}</div>` : ''}
+      ${k.address ? `<div style="margin-top:2px">${esc(k.address)}</div>` : ''}
+      ${k.email || k.phone ? `<div>Контакты: ${[k.email, k.phone].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+      ${k.okved ? `<div style="margin-top:2px">ОКВЭД (основной): <b>${esc(k.okved)}</b></div>` : ''}
+      ${Array.isArray(k.okved_extra) && k.okved_extra.length
+        ? `<div class="form-hint">Доп. ОКВЭД: ${k.okved_extra.map(esc).join('; ')}</div>` : ''}
+      ${k.status ? `<div>Статус: <b>${esc(k.status)}</b></div>` : ''}
       ${d.card_updated_at ? `<div class="form-hint">обновлено ${fmtDate(d.card_updated_at)} (Checko.ru)</div>` : ''}
     </div>` : `
-    <div class="form-hint" style="margin:10px 0">Карточка ЕГРЮЛ не заполнена — укажите ИНН и нажмите «Обновить из Checko».</div>`;
+    <div class="form-hint" style="margin:10px 0">Карточка ЕГРЮЛ не заполнена — укажите ИНН и нажмите «Обновить из Checko» (ключ — в Настройках).</div>`;
   const { slot, close } = openModal(`
     <div class="modal-title">🗂 ${esc(c.name)}</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">
@@ -1663,6 +1677,16 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.15.0': [
+    { icon: '🔒', title: 'API-ключи под замком: шифрование в базе',
+      text: 'Ключи Checko, ФНС и внешних источников теперь хранятся зашифрованными (AES-CBC + HMAC, Fernet). Файл базы сам по себе ключей не раскрывает — нужен ключ сервера. Старые ключи перешифруются при первом сохранении.' },
+    { icon: '🗂', title: 'Форма ключа Checko в Настройках',
+      text: 'Админ добавляет ключ в Настройках → блок «ЕГРЮЛ/ЕГРИП — Checko.ru»: вставка, статус с маской, показ по паролю администратора с записью в журнал аудита (защита от подбора — 5 попыток за 5 минут).' },
+    { icon: '📋', title: 'Карточка предприятия — все реквизиты ЕГРЮЛ',
+      text: 'Из Checko теперь подтягиваются полное и краткое названия, ОПФ, дата регистрации, уставный капитал, ИФНС, руководитель и его должность, контакты, основной и дополнительные ОКВЭД, статус. Пустой ИНН компании заполняется автоматически.' },
+    { icon: '🧭', title: 'План уникальности продукта',
+      text: 'Составлен план docs/unique_features.md: что сделаем, чтобы «Ямастер Чек» стал №1 у бухгалтеров и коммерческих организаций — светофор контрагентов, партнёрский кабинет, Telegram-напоминания и другое.' },
+  ],
   '1.14.0': [
     { icon: '🧾', title: 'Собрать авансовый отчёт за минуту — теперь по всей компании',
       text: 'Диалог отчёта научился работать с периодом любой длины, всеми сотрудниками сразу и выбранными чеками. Один клик — и готовая сводная форма АО с подытогами по каждому подотчётнику, либо классический АО-1 по одному сотруднику.' },
@@ -3356,8 +3380,8 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null;
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); } }
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null;
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
 
@@ -3396,6 +3420,28 @@ async function viewSettings(container) {
           <input id="fns-appid" value="${esc(fns.client_app_id)}"></label>
         <button class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
         <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней (повторная проверка не расходует лимиты).</p>
+      </div>` : ''}
+
+      ${isAdmin() && fns ? `
+      <div class="glass card">
+        <div class="card-title">🗂 ЕГРЮЛ/ЕГРИП — Checko.ru <span class="form-hint">(v1.13+)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Ключ заполняет карточки компаний
+        реквизитами из ЕГРЮЛ/ЕГРИП по ИНН (полное название, ОГРН, КПП, адрес, руководитель,
+        уставный капитал, ОКВЭД, налоговый орган, статус). Возьмите ключ в личном кабинете
+        <a href="https://checko.ru/user/account/api" target="_blank" rel="noopener">checko.ru → API</a>
+        — бесплатный тариф: 100 запросов в сутки.</p>
+        <div class="info-callout" style="font-size:12.5px;margin-bottom:12px">🔒 Ключ хранится
+        <b>зашифрованным</b> (AES-CBC + HMAC, ключ сервера) — в базе и логах его нет.
+        Показывается только вам после подтверждения пароля; каждый показ — в журнале аудита.</div>
+        <label class="field" style="margin-bottom:10px"><span>API-ключ Checko
+          ${checkoSet && checkoSet.has_key ? '(задан: ' + esc(checkoSet.key_masked) + ')' : '(не задан)'}</span>
+          <input id="checko-key" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="вставьте ключ из личного кабинета"></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="checko-save">💾 Сохранить ключ</button>
+          <button class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
+        </div>
+        <p class="form-hint" id="checko-status" style="margin-top:10px">${esc(checkoSet && checkoSet.hint || '')}</p>
       </div>` : ''}
 
       ${isAdmin() && appSet ? `
@@ -3698,6 +3744,44 @@ async function viewSettings(container) {
     if (bb) bb.onclick = async () => {
       try { const { blob, filename } = await api.download('/api/v1/admin/backup'); downloadBlob(blob, filename); toast('Резервная копия скачана: ' + filename, 'ok'); }
       catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // v1.15.0: ключ Checko — сохранение и показ по паролю (секрет)
+  if (isAdmin() && checkoSet) {
+    const ck = $('#checko-key');
+    const cstat = $('#checko-status');
+    const cs = $('#checko-save');
+    if (cs) cs.onclick = async () => {
+      const val = (ck.value || '').trim();
+      if (!val) return toast('Вставьте API-ключ из личного кабинета checko.ru', 'warn');
+      cs.disabled = true;
+      try {
+        const r = await api.put('/api/v1/settings/checko', { api_key: val });
+        ck.value = '';
+        if (cstat) cstat.textContent = r.message;
+        toast(r.message, 'ok', '🔒');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+      cs.disabled = false;
+    };
+    const cr = $('#checko-reveal');
+    if (cr) cr.onclick = async () => {
+      const pwd = prompt('Подтвердите пароль администратора, чтобы показать ключ:');
+      if (!pwd) return;
+      cr.disabled = true;
+      try {
+        const r = await api.post('/api/v1/settings/checko/reveal', { password: pwd });
+        ck.type = 'text';
+        ck.value = r.api_key;
+        ck.readOnly = true;
+        toast('Ключ показан (записан в аудит). Скройте через 30 секунд автоматически', 'warn', '👁');
+        setTimeout(() => {
+          ck.value = ''; ck.type = 'password'; ck.readOnly = false;
+          if (cstat) cstat.textContent = 'Ключ скрыт. Повторите «Показать», если нужен снова.';
+        }, 30000);
+      } catch (e) { toast(e.message, 'err'); }
+      cr.disabled = false;
     };
   }
 
