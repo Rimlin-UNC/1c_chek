@@ -5,6 +5,8 @@
 # ООО «Ямастер» | ymaster.ru | info@ymaster.ru
 # ======================================================================
 import itertools
+import shutil
+import subprocess
 
 from tests.conftest import login
 
@@ -103,6 +105,26 @@ class TestCardAndCheckoKey:
         # lookup-checko: некорректный ИНН — 422 до похода в сеть
         assert client.post("/api/v1/companies/lookup-checko",
                            json={"inn": "123"}, headers=hdr).status_code == 422
+
+    def test_csv_by_company_admin_only(self, client):
+        hdr = login(client, "admin", "admin123")
+        comp = client.post("/api/v1/companies",
+                           json={"name": "ООО Кедр"}, headers=hdr).json()
+        r = client.post(f"/api/v1/receipts/export-csv?company_id={comp['id']}",
+                        headers=hdr)
+        assert r.status_code == 200, r.text
+        head = r.content.decode("utf-8-sig").splitlines()[0]
+        assert "Кто добавил" in head and "Компания" in head
+        # бухгалтер чужой компании — 403
+        inv = client.post("/api/v1/invites", json={
+            "role": "accountant", "company_id": comp["id"]}, headers=hdr).json()
+        reg = client.post("/api/v1/auth/register", json={
+            "token": inv["token"], "username": "kedr_acc",
+            "password": "parol123", "full_name": "Кира Кедрова"})
+        ha = {"Authorization": "Bearer " + reg.json()["access_token"]}
+        r = client.post(f"/api/v1/receipts/export-csv?company_id={comp['id']}",
+                        headers=ha)
+        assert r.status_code == 403
 
     def test_card_endpoint_forbidden_for_user(self, client):
         hdr = login(client, "admin", "admin123")
@@ -217,3 +239,20 @@ class TestVersion1130:
         assert "'1.13.0':" in js
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert "v1.13.0" in css
+
+
+class TestUiHarnessV1130:
+    def test_dom_harness_card_and_delete(self):
+        """Node DOM-песочница: карточка компании (ЕГРЮЛ) и диалог удаления
+        рендерятся и отправляют корректные запросы."""
+        if shutil.which("node") is None:
+            import pytest
+            pytest.skip("node недоступен")
+        from tests.test_v1121 import _build_bundle
+        open("/tmp/ymaster_ui_bundle_v1130.js", "w", encoding="utf-8").write(
+            _build_bundle())
+        r = subprocess.run(["node", "tests/ui_harness_v1130.js"],
+                           capture_output=True, text=True, timeout=120,
+                           cwd=".")
+        out = (r.stdout + r.stderr)
+        assert "HARNESS_OK" in out, out[-2000:]

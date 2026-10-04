@@ -855,7 +855,7 @@ def export_csv(body: VerifyRequest | None = None,
                user: User = Depends(require_accountant),
                db: Session = Depends(get_db)):
     query = scope_receipts(db.query(Receipt), user, company_id)  # v1.11.0/1.13.0
-    if not body.receipt_ids and company_id and user.role != ROLE_ADMIN:
+    if company_id and user.role != ROLE_ADMIN:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Выгрузка по компании доступна администратору")
     if body and body.receipt_ids:
