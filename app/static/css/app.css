@@ -928,3 +928,10 @@ tr.archived-row td { opacity: .55; }
   .wn-title { font-size: 13px; }
   .wn-text { font-size: 12px; }
 }
+
+/* v1.13.0: диалог удаления компании, карточка, ЕГРЮЛ-кнопка */
+.modal label > input[type="radio"],
+.modal label > input[type="checkbox"] { width: auto; accent-color: var(--primary); }
+#cp-inn { letter-spacing: .5px; }
+#cp-checko { white-space: nowrap; }
+.cc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }

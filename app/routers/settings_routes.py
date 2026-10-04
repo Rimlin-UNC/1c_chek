@@ -284,3 +284,23 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
         "message": message,
         "engine": engine.status(),
     }
+
+
+@router.get("/checko", summary="Настройки Checko.ru — карточки компаний по ИНН (админ)")
+def get_checko(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    key = _get_setting(db, "checko_api_key", "")
+    return {"has_key": bool(key), "key_masked": _mask(key),
+            "hint": "Ключ из личного кабинета checko.ru (раздел API). "
+                    "Бесплатный тариф: 100 запросов в день."}
+
+
+@router.put("/checko", summary="Сохранить API-ключ Checko.ru (админ)")
+def put_checko(body: dict, db: Session = Depends(get_db),
+               admin: User = Depends(require_admin)):
+    key = (body or {}).get("api_key", "").strip()
+    if not key:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Укажите API-ключ Checko")
+    _set_setting(db, "checko_api_key", key)
+    log_action(admin, "checko_key_saved", details={"tail": key[-4:]})
+    return {"ok": True, "key_masked": _mask(key),
+            "message": "Ключ Checko сохранён — карточки компаний заполняются по ИНН"}

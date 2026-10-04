@@ -12,17 +12,56 @@
 # ======================================================================
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, require_admin
 from ..database import get_db
-from ..models import Company, Receipt, User
-from ..schemas import CompanyCreate, CompanyPatch
+from ..models import Company, Invite, Receipt, User
+from ..schemas import (CheckoLookup, CompanyCreate, CompanyDeleteBody,
+                       CompanyPatch)
+from ..services import checko, appsettings
 from ..services.audit import log_action
+from ..services.companies_util import (SIMILAR_THRESHOLD, canonical_name,
+                                       inn_is_valid, inn_kind,
+                                       normalize_inn, similar_ratio)
 
 router = APIRouter(prefix="/api/v1/companies", tags=["Компании"])
+
+
+# --- v1.13.0: защита от дублей компаний (канон + ИНН) + похожесть -----------
+
+def _canonical_taken(db: Session, name: str, exclude_id: str | None = None) -> Company | None:
+    """Компания с тем же каноническим названием («ООО "Ямастер"» == «ООО «ЯМАСТЕР»»)."""
+    key = canonical_name(name)
+    for c in db.query(Company).all():
+        if c.id != exclude_id and canonical_name(c.name) == key:
+            return c
+    return None
+
+
+def _inn_taken(db: Session, inn: str, exclude_id: str | None = None) -> Company | None:
+    inn = normalize_inn(inn)
+    if not inn:
+        return None
+    for c in db.query(Company).all():
+        if c.id != exclude_id and normalize_inn(c.inn) == inn:
+            return c
+    return None
+
+
+def _similar_companies(db: Session, name: str, exclude_id: str | None = None,
+                       limit: int = 5) -> list[dict]:
+    out = []
+    for c in db.query(Company).all():
+        if c.id == exclude_id:
+            continue
+        ratio = similar_ratio(name, c.name)
+        if ratio >= SIMILAR_THRESHOLD:
+            out.append({"id": c.id, "name": c.name, "inn": c.inn,
+                        "ratio": round(ratio, 2)})
+    return sorted(out, key=lambda x: -x["ratio"])[:limit]
 
 
 def _stats(db: Session, company_ids: list[str]) -> dict[str, dict]:
@@ -82,11 +121,20 @@ def create_company(body: CompanyCreate, admin: User = Depends(require_admin),
     name = body.name.strip()
     if len(name) < 2:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Название компании слишком короткое")
-    # SQLite lower() не понимает кириллицу — сравниваем в Python (casefold)
-    name_cf = name.casefold()
-    if any(c.name.casefold() == name_cf for c in db.query(Company).all()):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Компания с таким названием уже есть")
-    comp = Company(name=name, inn=body.inn.strip(), note=body.note.strip())
+    # v1.13.0: защита от дублей — каноническое имя и ИНН
+    dup = _canonical_taken(db, name)
+    if dup:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Похожая компания уже есть: «{dup.name}» — это дубли")
+    inn = normalize_inn(body.inn)
+    if not inn_is_valid(inn):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "ИНН некорректен: 10 цифр для ООО или 12 для ИП")
+    dup_inn = _inn_taken(db, inn)
+    if dup_inn:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Компания с таким ИНН уже есть: «{dup_inn.name}»")
+    comp = Company(name=name, inn=inn, note=body.note.strip())
     db.add(comp)
     db.commit()
     db.refresh(comp)
@@ -115,7 +163,15 @@ def patch_company(company_id: str, body: CompanyPatch,
                                 "Компания с таким названием уже есть")
         comp.name = name
     if body.inn is not None:
-        comp.inn = body.inn.strip()
+        inn = normalize_inn(body.inn)
+        if not inn_is_valid(inn):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Некорректный ИНН (10 цифр для ООО, 12 для ИП)")
+        dup_inn = _inn_taken(db, inn, exclude_id=comp.id)
+        if dup_inn:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"Компания с таким ИНН уже есть: «{dup_inn.name}»")
+        comp.inn = inn
     if body.note is not None:
         comp.note = body.note.strip()
     if body.is_active is not None:
@@ -145,3 +201,162 @@ def company_users(company_id: str, admin: User = Depends(require_admin),
     rows = (db.query(User).filter(User.company_id == company_id)
             .order_by(User.role, User.username).all())
     return [u.to_dict() for u in rows]
+
+
+# --------------------------------------------------------------------------
+#  v1.13.0: карточка компании, Checko.ru, умное удаление
+# --------------------------------------------------------------------------
+@router.get("/similar", summary="Похожие компании по названию (администратор)")
+def similar_companies(name: str = Query(min_length=2, max_length=200),
+                      exclude_id: str | None = Query(None, max_length=36),
+                      admin: User = Depends(require_admin),
+                      db: Session = Depends(get_db)):
+    """Подсказка в диалоге создания: «похожая компания уже есть»."""
+    return _similar_companies(db, name, exclude_id)
+
+
+@router.post("/lookup-checko", summary="Предпросмотр карточки по ИНН из Checko (без сохранения)")
+def lookup_checko(body: CheckoLookup, admin: User = Depends(require_admin),
+                  db: Session = Depends(get_db)):
+    inn = normalize_inn(body.inn)
+    if not inn_is_valid(inn):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Некорректный ИНН (10 цифр для ООО, 12 для ИП)")
+    key = appsettings.get_setting(db, checko.SETTING_KEY, "")
+    try:
+        result = checko.fetch_card(key, inn)
+    except checko.CheckoError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    return result["card"]
+
+
+def _require_inn(comp: Company) -> str:
+    inn = normalize_inn(comp.inn)
+    if not inn:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "У компании не указан ИНН — заполните его и сохраните")
+    return inn
+
+
+@router.get("/{company_id}/card", summary="Карточка компании: статистика, сотрудники, ЕГРЮЛ (администратор)")
+def company_card(company_id: str, admin: User = Depends(require_admin),
+                 db: Session = Depends(get_db)):
+    comp = db.get(Company, company_id)
+    if not comp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+    stats = _stats(db, [comp.id]).get(comp.id, {})
+    team = (db.query(User).filter(User.company_id == comp.id)
+            .order_by(User.role, User.username).all())
+    import json as _json
+    try:
+        card = _json.loads(comp.card_json or "{}")
+    except ValueError:
+        card = {}
+    return {
+        "company": comp.to_dict(),
+        "receipts": stats.get("receipts", 0),
+        "receipts_sum": stats.get("sum", 0.0),
+        "last_activity": stats.get("last_activity"),
+        "team": [u.to_dict() for u in team],
+        "card": card,
+        "card_updated_at": (comp.card_updated_at.isoformat()
+                            if comp.card_updated_at else None),
+        "has_checko_key": bool(appsettings.get_setting(db, checko.SETTING_KEY, "")),
+        "other_companies": [{"id": c.id, "name": c.name, "is_active": c.is_active}
+                            for c in db.query(Company).all() if c.id != comp.id],
+    }
+
+
+@router.post("/{company_id}/refresh-card", summary="Обновить карточку из ЕГРЮЛ (Checko.ru, администратор)")
+def refresh_card(company_id: str, admin: User = Depends(require_admin),
+                 db: Session = Depends(get_db)):
+    comp = db.get(Company, company_id)
+    if not comp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+    inn = _require_inn(comp)
+    key = appsettings.get_setting(db, checko.SETTING_KEY, "")
+    try:
+        result = checko.fetch_card(key, inn)
+    except checko.CheckoError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    import json as _json
+    comp.card_json = _json.dumps(result["card"], ensure_ascii=False)
+    from ..models import utcnow as _utcnow
+    comp.card_updated_at = _utcnow()
+    # если название в системе — сокращённое, а ЕГРЮЛ вернул полное, предложим его
+    db.commit()
+    log_action(admin, "company_card_refreshed", "company", comp.id,
+               {"inn": inn, "name_full": result["card"]["name_full"]})
+    return {"card": result["card"],
+            "card_updated_at": comp.card_updated_at.isoformat(),
+            "name_full": result["card"]["name_full"], "company": comp.to_dict()}
+
+
+@router.post("/{company_id}/delete", summary="Удалить компанию с обработкой её данных (администратор)")
+def delete_company(company_id: str, body: CompanyDeleteBody,
+                   admin: User = Depends(require_admin),
+                   db: Session = Depends(get_db)):
+    """Удаление компании. Чеки НЕ теряются «молча»: mode="move" — переезд в
+    другую компанию (сотрудники по выбору), mode="wipe" — безвозвратное
+    удаление чеков компании; в обоих случаях приглашения компании удаляются,
+    сотрудники либо переезжают, либо открепляются (аккаунты сохраняются)."""
+    comp = db.get(Company, company_id)
+    if not comp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+    others = [c for c in db.query(Company).all() if c.id != comp.id]
+    if not others:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Это единственная компания — сначала создайте другую")
+    rc = db.query(func.count(Receipt.id)).filter(Receipt.company_id == comp.id).scalar() or 0
+    uc = db.query(func.count(User.id)).filter(User.company_id == comp.id).scalar() or 0
+
+    if body.mode == "move":
+        target = db.get(Company, body.target_company_id or "")
+        if not target or target.id == comp.id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Укажите компанию, в которую переносятся данные")
+        if not target.is_active:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Компания назначения заархивирована")
+        if rc:
+            (db.query(Receipt).filter(Receipt.company_id == comp.id)
+             .update({Receipt.company_id: target.id, Receipt.exported: False,
+                      Receipt.exported_at: None}, synchronize_session=False))
+        if body.move_users and uc:
+            (db.query(User).filter(User.company_id == comp.id)
+             .update({User.company_id: target.id}, synchronize_session=False))
+        (db.query(Invite).filter(Invite.company_id == comp.id)
+         .update({Invite.company_id: target.id}, synchronize_session=False))
+        name = comp.name
+        db.delete(comp)
+        db.commit()
+        log_action(admin, "company_deleted", details={
+            "company": name, "mode": "move", "receipts_moved": rc,
+            "users_moved": (uc if body.move_users else 0),
+            "target": target.name})
+        broadcast_company_change()
+        return {"ok": True, "mode": "move", "receipts_moved": rc,
+                "users_moved": (uc if body.move_users else 0),
+                "target": {"id": target.id, "name": target.name},
+                "message": f"Компания «{name}» удалена; чеков перенесено: {rc}"}
+    # mode == "wipe": безвозвратно удалить чеки компании
+    (db.query(Receipt).filter(Receipt.company_id == comp.id)
+     .delete(synchronize_session=False))
+    (db.query(Invite).filter(Invite.company_id == comp.id)
+     .delete(synchronize_session=False))
+    if body.move_users and uc:
+        (db.query(User).filter(User.company_id == comp.id)
+         .update({User.company_id: None}, synchronize_session=False))
+    name = comp.name
+    db.delete(comp)
+    db.commit()
+    log_action(admin, "company_deleted", details={
+        "company": name, "mode": "wipe", "receipts_deleted": rc})
+    broadcast_company_change()
+    return {"ok": True, "mode": "wipe", "receipts_deleted": rc,
+            "message": f"Компания «{name}» и её чеки ({rc}) удалены безвозвратно"}
+
+
+def broadcast_company_change() -> None:
+    from ..services.events import broadcast
+    broadcast("companies_changed", {})

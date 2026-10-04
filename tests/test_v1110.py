@@ -45,7 +45,7 @@ def _register(client, token, username):
 class TestCompaniesCrud:
     def test_create_list_rename_archive(self, client):
         hdr = login(client, "admin", "admin123")
-        c1 = _mk_company(client, hdr, 'ООО «Партнёр-СВ»', "7801234567")
+        c1 = _mk_company(client, hdr, 'ООО «Партнёр-СВ»', "7801234564")
         assert c1["name"] == 'ООО «Партнёр-СВ»' and c1["is_active"]
         # дубликат имени запрещён
         r = client.post("/api/v1/companies", json={"name": "ооо «партнёр-св»"},

@@ -94,6 +94,10 @@ def _ensure_schema() -> None:
         "invites": [
             ("company_id", "ALTER TABLE invites ADD COLUMN company_id VARCHAR(36) NULL"),
         ],
+        "companies": [
+            ("card_json", "ALTER TABLE companies ADD COLUMN card_json TEXT DEFAULT '{}'"),
+            ("card_updated_at", "ALTER TABLE companies ADD COLUMN card_updated_at DATETIME NULL"),
+        ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
         ],

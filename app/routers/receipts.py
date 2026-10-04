@@ -815,7 +815,7 @@ def verify_one(receipt_id: str, background: BackgroundTasks,
 def export_receipts(body: ExportRequest, user: User = Depends(require_accountant),
                     db: Session = Depends(get_db)):
     query = scope_receipts(db.query(Receipt), user)             # v1.11.0
-    if body.receipt_ids:
+    if body and body.receipt_ids:
         query = query.filter(Receipt.id.in_(body.receipt_ids))
     else:
         query = query.filter(Receipt.exported == False,  # noqa: E712
@@ -849,10 +849,16 @@ def export_receipts(body: ExportRequest, user: User = Depends(require_accountant
 
 
 @router.post("/export-csv", summary="Экспорт CSV для бухгалтерии (бухгалтер+)")
-def export_csv(body: VerifyRequest, user: User = Depends(require_accountant),
+def export_csv(body: VerifyRequest | None = None,
+               company_id: str | None = Query(None, max_length=36,
+                                              description="v1.13.0: все чеки компании (админ)"),
+               user: User = Depends(require_accountant),
                db: Session = Depends(get_db)):
-    query = scope_receipts(db.query(Receipt), user)             # v1.11.0
-    if body.receipt_ids:
+    query = scope_receipts(db.query(Receipt), user, company_id)  # v1.11.0/1.13.0
+    if not body.receipt_ids and company_id and user.role != ROLE_ADMIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Выгрузка по компании доступна администратору")
+    if body and body.receipt_ids:
         query = query.filter(Receipt.id.in_(body.receipt_ids))
     receipts = query.order_by(Receipt.receipt_date.desc()).limit(10000).all()
 

@@ -629,6 +629,7 @@ async function viewCompanies(container) {
       <td>${fmtInt(c.receipts)} на ${fmtSum(c.receipts_sum)}</td>
       <td>${c.last_activity ? fmtDate(c.last_activity) : '—'}</td>
       <td style="white-space:nowrap">
+        <button class="btn btn-sm cp-card" data-id="${c.id}" title="Карточка компании: ЕГРЮЛ, сотрудники, удаление">🗂</button>
         <button class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
         <button class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
         <button class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
@@ -652,17 +653,24 @@ async function viewCompanies(container) {
     const c = comps.find(x => x.id === b.dataset.id);
     inviteDialog(b.dataset.id, c ? c.name : '');
   });
+  $$('.cp-card').forEach(b => b.onclick = () => openCompanyCard(b.dataset.id));
   $$('.cp-edit').forEach(b => b.onclick = () => companyDialog(comps.find(x => x.id === b.dataset.id)));
 }
 
 function companyDialog(c = null) {
+  // v1.13.0: ИНН (с проверкой контрольных цифр), «Заполнить из Checko»,
+  // подсказка о похожих компаниях — дубли отсекаются до создания
   const { slot } = openModal(`
     <div class="modal-title">${c ? '✎ ' + esc(c.name) : '＋ Новая компания-клиент'}</div>
     <div class="form-grid">
-      <label class="field full"><span>Название (ООО «…», ИП …)</span>
+      <label class="field"><span>ИНН (10 цифр ООО / 12 цифр ИП)</span>
+        <div style="display:flex;gap:8px">
+          <input id="cp-inn" value="${esc(c?.inn || '')}" inputmode="numeric" placeholder="7801234564" style="flex:1;min-width:0">
+          <button class="btn btn-sm" id="cp-checko" type="button" title="Заполнить карточку из ЕГРЮЛ/ЕГРИП (Checko)">🔍 ЕГРЮЛ</button>
+        </div></label>
+      <label class="field"><span>Название (ООО «…», ИП …)</span>
         <input id="cp-name" value="${esc(c?.name || '')}" placeholder="ООО «Партнёр-СВ»"></label>
-      <label class="field"><span>ИНН (необязательно)</span>
-        <input id="cp-inn" value="${esc(c?.inn || '')}" placeholder="7801234567"></label>
+      <div class="full" id="cp-similar" style="display:none"></div>
       ${c ? `<label class="field"><span>Статус</span>
         <select id="cp-active"><option value="1" ${c.is_active ? 'selected' : ''}>Активна</option>
         <option value="0" ${!c.is_active ? 'selected' : ''}>Архив</option></select></label>` : ''}
@@ -674,25 +682,180 @@ function companyDialog(c = null) {
       <button class="btn btn-primary" id="cp-save">Сохранить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+
+  const nameInput = slot.querySelector('#cp-name');
+  const innInput = slot.querySelector('#cp-inn');
+  const simBox = slot.querySelector('#cp-similar');
+  let _simTimer = null;
+
+  async function checkSimilar() {
+    const name = nameInput.value.trim();
+    if (name.length < 3 || (c && name === c.name)) { simBox.style.display = 'none'; return; }
+    try {
+      const sims = await api.get('/api/v1/companies/similar?name=' + encodeURIComponent(name)
+        + (c ? '&exclude_id=' + c.id : ''));
+      if (!sims.length) { simBox.style.display = 'none'; return; }
+      simBox.innerHTML = `<div class="info-callout" style="margin:0">⚠ Похожая компания уже есть:
+        <b>${esc(sims[0].name)}</b>${sims[0].inn ? ' (ИНН ' + esc(sims[0].inn) + ')' : ''}.
+        Если это она — не создавайте дубль, работайте с существующей.</div>`;
+      simBox.style.display = 'block';
+    } catch (e) { simBox.style.display = 'none'; }
+  }
+  nameInput.addEventListener('input', () => {
+    clearTimeout(_simTimer);
+    _simTimer = setTimeout(checkSimilar, 500);
+  });
+
+  slot.querySelector('#cp-checko').onclick = async () => {
+    const inn = innInput.value.replace(/\D/g, '');
+    if (inn.length !== 10 && inn.length !== 12) return toast('ИНН: 10 цифр (ООО) или 12 (ИП)', 'warn');
+    const btn = slot.querySelector('#cp-checko');
+    btn.disabled = true; btn.textContent = '…ищу';
+    try {
+      const card = await api.post('/api/v1/companies/lookup-checko', { inn });
+      if (!nameInput.value.trim()) nameInput.value = card.name_full;
+      toast(`Найдено: ${card.name_full}${card.status ? ' · ' + card.status : ''}`,
+            'ok', '🗂 ЕГРЮЛ');
+    } catch (e) {
+      if (/ключ не задан/i.test(e.message)) {
+        const key = prompt('Укажите API-ключ Checko (checko.ru → личный кабинет → API):');
+        if (key) {
+          try { await api.put('/api/v1/settings/checko', { api_key: key.trim() });
+            toast('Ключ сохранён — повторите «ЕГРЮЛ»', 'ok', '🔑'); }
+          catch (e2) { toast(e2.message, 'err'); }
+        }
+      } else { toast(e.message, 'err'); }
+    }
+    btn.disabled = false; btn.textContent = '🔍 ЕГРЮЛ';
+  };
+
   slot.querySelector('#cp-save').onclick = async () => {
-    const name = slot.querySelector('#cp-name').value.trim();
+    const name = nameInput.value.trim();
     if (name.length < 2) return toast('Укажите название компании', 'err');
     try {
       if (c) {
         const active = slot.querySelector('#cp-active');
         await api.patch('/api/v1/companies/' + c.id, {
-          name, inn: slot.querySelector('#cp-inn').value.trim(),
+          name, inn: innInput.value.trim(),
           note: slot.querySelector('#cp-note').value.trim(),
           ...(active ? { is_active: active.value === '1' } : {}),
         });
       } else {
         await api.post('/api/v1/companies', {
-          name, inn: slot.querySelector('#cp-inn').value.trim(),
+          name, inn: innInput.value.trim(),
           note: slot.querySelector('#cp-note').value.trim(),
         });
       }
       $('#modal-root').classList.add('hidden');
       toast(c ? 'Компания обновлена' : 'Компания создана — теперь пригласите её бухгалтера', 'ok', '🏢');
+      route(true);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+// --- Карточка компании: ЕГРЮЛ (Checko), команда, CSV, умное удаление --------
+async function openCompanyCard(id) {
+  let d;
+  try { d = await api.get('/api/v1/companies/' + id + '/card'); }
+  catch (e) { return toast(e.message, 'err'); }
+  const c = d.company;
+  const egryl = d.card && (d.card.name_full || d.card.ogrn) ? `
+    <div class="info-callout" style="margin:10px 0">
+      <b>${esc(d.card.name_full || '')}</b><br>
+      ${d.card.inn ? 'ИНН ' + esc(d.card.inn) : ''}${d.card.kpp ? ' · КПП ' + esc(d.card.kpp) : ''}
+      ${d.card.ogrn ? ' · ОГРН ' + esc(d.card.ogrn) : ''}${d.card.director ? '<br>Руководитель: ' + esc(d.card.director) : ''}
+      ${d.card.address ? '<br>' + esc(d.card.address) : ''}
+      ${d.card.okved ? '<br>ОКВЭД: ' + esc(d.card.okved) : ''}
+      ${d.card.status ? '<br>Статус: <b>' + esc(d.card.status) + '</b>' : ''}
+      ${d.card_updated_at ? `<div class="form-hint">обновлено ${fmtDate(d.card_updated_at)} (Checko.ru)</div>` : ''}
+    </div>` : `
+    <div class="form-hint" style="margin:10px 0">Карточка ЕГРЮЛ не заполнена — укажите ИНН и нажмите «Обновить из Checko».</div>`;
+  const { slot, close } = openModal(`
+    <div class="modal-title">🗂 ${esc(c.name)}</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">
+      <div class="glass card" style="padding:8px;text-align:center"><div class="kpi-value" style="font-size:18px">${fmtInt(d.receipts)}</div><div class="form-hint">чеков</div></div>
+      <div class="glass card" style="padding:8px;text-align:center"><div class="kpi-value" style="font-size:18px">${fmtSum(d.receipts_sum)}</div><div class="form-hint">сумма, ₽</div></div>
+      <div class="glass card" style="padding:8px;text-align:center"><div class="kpi-value" style="font-size:18px">${d.team.length}</div><div class="form-hint">сотрудников</div></div>
+    </div>
+    <div class="form-hint">ИНН: ${esc(c.inn || 'не указан')} · ${c.is_active ? 'активна' : 'в архиве'}</div>
+    ${egryl}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+      <button class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
+      <button class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
+      <button class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
+      ${c.is_active ? '<button class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
+    </div>
+    <div class="modal-actions" style="justify-content:space-between">
+      <button class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
+      <button class="btn" data-close>Закрыть</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = close;
+  slot.querySelector('#cc-inn').onclick = () => { close(); companyDialog(c); };
+  slot.querySelector('#cc-archive').onclick = async () => {
+    try { await api.patch('/api/v1/companies/' + c.id, { is_active: false });
+      toast('Компания в архиве', 'ok', '📦'); close(); route(true); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  slot.querySelector('#cc-csv').onclick = async () => {
+    try {
+      const { blob, filename } = await api.download('/api/v1/receipts/export-csv?company_id=' + c.id);
+      downloadBlob(blob, filename);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  slot.querySelector('#cc-refresh').onclick = async () => {
+    if (!c.inn) { close(); return companyDialog(c); }
+    const btn = slot.querySelector('#cc-refresh');
+    btn.disabled = true; btn.textContent = '…запрашиваю Checko';
+    try { await api.post(`/api/v1/companies/${c.id}/refresh-card`, {});
+      toast('Карточка обновлена из ЕГРЮЛ', 'ok', '🗂'); close(); openCompanyCard(id); }
+    catch (e) {
+      btn.disabled = false; btn.textContent = '⟳ Обновить из Checko';
+      if (/ключ не задан/i.test(e.message)) {
+        const key = prompt('Укажите API-ключ Checko (checko.ru → личный кабинет → API):');
+        if (key) { try { await api.put('/api/v1/settings/checko', { api_key: key.trim() });
+          toast('Ключ сохранён — повторите', 'ok', '🔑'); } catch (e2) { toast(e2.message, 'err'); } }
+      } else { toast(e.message, 'err'); }
+    }
+  };
+  slot.querySelector('#cc-delete').onclick = () => { close(); openCompanyDelete(d); };
+}
+
+function openCompanyDelete(d) {
+  const c = d.company;
+  const others = d.other_companies.filter(x => x.is_active);
+  const { slot, close } = openModal(`
+    <div class="modal-title">🗑 Удаление компании «${esc(c.name)}»</div>
+    <div class="info-callout" style="margin-bottom:10px">Чеков: <b>${d.receipts}</b> ·
+      сотрудников: <b>${d.team.length}</b>. Что сделать с данными компании?</div>
+    <label style="display:block;margin:8px 0"><input type="radio" name="dl-mode" value="move" checked style="width:auto">
+      <b>Перенести в другую компанию</b> — чеки переедут целиком (флаг 1С сбросится)</label>
+    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px 26px">
+      <select id="dl-target" style="flex:1;min-width:0">${others.map(x =>
+        `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
+    <label style="display:block;margin:6px 0"><input type="checkbox" id="dl-users" checked style="width:auto">
+      сотрудники тоже перейдут в выбранную компанию</label>
+    <label style="display:block;margin:8px 0"><input type="radio" name="dl-mode" value="wipe" style="width:auto">
+      <b>Удалить чеки безвозвратно</b> — все ${d.receipts} чеков будут стёрты, сотрудники открепятся</label>
+    <div class="modal-actions" style="justify-content:space-between">
+      <button class="btn" data-close>Отмена</button>
+      <button class="btn btn-bad" id="dl-go">Удалить компанию</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = close;
+  slot.querySelector('#dl-go').onclick = async () => {
+    const mode = slot.querySelector('input[name="dl-mode"]:checked').value;
+    if (mode === 'wipe' && !confirm(`Удалить «${c.name}» и ${d.receipts} чеков БЕЗВОЗВРАТНО?`)) return;
+    try {
+      const payload = { mode };
+      if (mode === 'move') {
+        payload.target_company_id = slot.querySelector('#dl-target').value;
+        payload.move_users = slot.querySelector('#dl-users').checked;
+      } else {
+        payload.move_users = true;
+      }
+      const r = await api.post(`/api/v1/companies/${c.id}/delete`, payload);
+      $('#modal-root').classList.add('hidden');
+      toast(r.message, 'ok', '🗑');
+      if (state.companyFilter === c.id) { state.companyFilter = 'all'; try { localStorage.setItem('ymaster-company', 'all'); } catch (e) {} }
       route(true);
     } catch (e) { toast(e.message, 'err'); }
   };
@@ -1494,6 +1657,16 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.13.0': [
+    { icon: '🗑', title: 'Удаление компаний с переносом данных',
+      text: 'Компания-дубль или уехавший клиент? Теперь компанию можно удалить: чеки перенести в другую компанию (флаг «выгружено в 1С» сбросится — переезд = повторная выгрузка) либо стереть безвозвратно. Сотрудники переезжают вместе с чеками или открепляются — решаете вы.' },
+    { icon: '🛡', title: 'Защита от компаний-дублей',
+      text: '«ООО «Ямастер»», ООО "ямастер" и «ООО — ЯМАСТЕР» теперь распознаются как одна и та же компания: при создании система подсказывает о похожей. ИНН стал ключевым атрибутом — проверяются контрольные цифры, два разных ЮЛ с одним ИНН не сохранятся.' },
+    { icon: '🗂', title: 'Карточка компании из ЕГРЮЛ (Checko.ru)',
+      text: 'В карточке компании — полное название из ЕГРЮЛ, ОГРН, КПП, адрес, руководитель, ОКВЭД и статус. Кнопка «ЕГРЮЛ» по ИНН заполняет данные автоматически (сервис Checko, ключ вставляется один раз в Настройках; бесплатный тариф — 100 запросов в день).' },
+    { icon: '⬇', title: 'CSV всех чеков компании одной кнопкой',
+      text: 'Из карточки компании можно скачать CSV сразу по всем её чекам — не нужно ничего выбирать вручную.' },
+  ],
   '1.12.3': [
     ['👤 На чеках видно, кто добавил и для какой компании', 'в списке чеков, в карточке чека и в сводке выбранных чеков показывается автор (кто отсканировал/прислал) и компания; в CSV-выгрузке — новые колонки «Кто добавил» и «Компания».'],
     ['🎉 Окно «Что нового» — аккуратно на любом экране', 'исправлена вёрстка на телефоне: новости показываются карточками, без разъезжающейся таблицы.'],

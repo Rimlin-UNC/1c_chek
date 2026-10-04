@@ -224,3 +224,23 @@ class ReceiptMoveBody(BaseModel):
     company_id: str = Field(max_length=36)
     assignee: Optional[str] = Field(default=None, max_length=200,
                                     description="Переназначить подотчётное лицо")
+
+
+class CompanyDeleteBody(BaseModel):
+    """v1.13.0: удаление компании с обработкой её данных.
+
+    mode="move" — чеки (и при желании сотрудники) переезжают в target_company_id;
+    mode="wipe" — чеки компании удаляются безвозвратно, сотрудники открепляются."""
+    mode: Literal["move", "wipe"]
+    target_company_id: Optional[str] = Field(default=None, max_length=36)
+    move_users: bool = True
+
+
+class CheckoLookup(BaseModel):
+    """v1.13.0: предпросмотр карточки по ИНН через Checko (без сохранения)."""
+    inn: str = Field(min_length=10, max_length=12)
+
+
+class CheckoKeyBody(BaseModel):
+    """v1.13.0: сохранение API-ключа Checko (администратор)."""
+    api_key: str = Field(min_length=4, max_length=200)

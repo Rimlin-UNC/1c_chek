@@ -44,6 +44,9 @@ class Company(Base):
     inn: Mapped[str] = mapped_column(String(20), default="")     # ИНН организации/ИП
     note: Mapped[str] = mapped_column(String(500), default="")   # памятка (договор, контакт)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # v1.13.0: карточка компании — данные ЕГРЮЛ/ЕГРИП (JSON из Checko)
+    card_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    card_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     def to_dict(self) -> dict:
