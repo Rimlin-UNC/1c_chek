@@ -126,9 +126,10 @@ class TestYamasterStyle:
 class TestVersion1190:
     def test_versions_synced(self):
         import re
+        # синхронизация ?v= с APP_VERSION (актуальность пина — в тесте текущей
+        # версии, test_v1200; здесь только согласованность — v1.20.0)
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.19.0"
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()

@@ -1185,13 +1185,17 @@ async function viewDashboard(container) {
   viewDashboard._sig = dashSig;
 
   container.innerHTML = `
+    <div class="dash-toolbar">
+      <button class="btn btn-sm" id="btn-focus" title="Остаться только на задачах, требующих внимания">🎯 Умный фокус</button>
+      <span class="form-hint">затемняет всё, кроме задач, требующих внимания · выход — Esc</span>
+    </div>
     <div class="grid kpi-grid">
       ${kpiCard('kpi-total', 'Чеков в системе', 'всё время')}
       ${kpiCard('kpi-sum', 'Общая сумма', 'все чеки')}
       ${kpiCard('kpi-fns', 'Проверено ФНС', 'действительных')}
       ${kpiCard('kpi-export', 'Выгружено в 1С', 'ждут выгрузки')}
       ${isAccountant() ? `
-      ${kpiCard('kpi-attention', '⏳ Требуют внимания', 'не обработаны > 3 дней')}
+      ${kpiCard('kpi-attention', '⏳ Требуют внимания', 'не обработаны > 3 дней').replace('class="glass kpi"', 'class="glass kpi ym-focus-target"')}
       ${kpiCard('kpi-notified', '🔔 Уведомления', 'от сотрудников')}
       ${kpiCard('kpi-vat', 'НДС за месяц', 'сумма к учёту')}` : ''}
     </div>
@@ -1217,7 +1221,7 @@ async function viewDashboard(container) {
       </div>
     </div>
     ${isAccountant() ? `
-    <div class="glass card" style="margin-top:16px">
+    <div class="glass card ym-focus-target" id="card-assignee" style="margin-top:16px">
       <div class="card-title">👥 По подотчётным лицам <span class="spacer"></span>
         <span class="form-hint">кто сколько принёс (все чеки)</span>
         <button class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
@@ -1237,6 +1241,7 @@ async function viewDashboard(container) {
     <div id="demo-zone"></div>`;
 
   const stats = dashStats;
+  bindSmartFocus();
   animateNumber($('#kpi-total .kpi-value'), stats.total);
   animateNumber($('#kpi-sum .kpi-value'), stats.total_sum, fmtSum);
   if (isAccountant()) {
@@ -1247,10 +1252,17 @@ async function viewDashboard(container) {
     if (bs) bs.onclick = () => openStatementModal();
     const az = $('#dash-assignee');
     if (az) {
+      // v1.20.0: цветовая карта отчёта — тепловая карта по срокам
+      const heat = (a) => a.late > 0
+        ? `<span class="heat-chip heat-late">🔴 просрочка: ${a.late}</span>`
+        : (a.soon > 0
+          ? `<span class="heat-chip heat-soon">🟠 близко к сроку: ${a.soon}</span>`
+          : '<span class="heat-chip heat-ok">🟢 в срок</span>');
       az.innerHTML = (stats.by_assignee || []).length
-        ? `<table class="data" style="min-width:0"><thead><tr><th>Сотрудник</th><th>Чеков</th><th>Сумма</th></tr></thead><tbody>
-           ${(stats.by_assignee || []).map(a => `<tr><td>${esc(a.name)}</td><td>${a.count}</td><td class="cell-sum">${fmtSum(a.sum)}</td></tr>`).join('')}
-           </tbody></table>`
+        ? `<table class="data heat-table" style="min-width:0"><thead><tr><th>Сотрудник</th><th>Чеков</th><th>Сумма</th><th>Срок отчёта</th></tr></thead><tbody>
+           ${(stats.by_assignee || []).map(a => `<tr><td>${esc(a.name)}</td><td class="tnum">${a.count}</td><td class="cell-sum tnum">${fmtSum(a.sum)}</td><td>${heat(a)}</td></tr>`).join('')}
+           </tbody></table>
+           <p class="form-hint heat-legend">🟢 в срок · 🟠 до конца срока авансового отчёта осталось меньше 40% времени · 🔴 просрочка (п. 6.3 Указания ЦБ 3210-У)</p>`
         : '<p class="form-hint">Пока нет чеков с назначенным сотрудником</p>';
     }
   }
@@ -1317,6 +1329,110 @@ async function viewDashboard(container) {
   }
 }
 
+// ==========================================================================
+// v1.20.0: ОФОРМЛЕНИЕ — акцентный цвет, плотность, «Спокойный час»
+// (ТЗ «Ямастер» п.6: пользователь выбирает акцент и плотность; хранится
+// локально, применяется до отрисовки — без вспышки)
+// ==========================================================================
+const QUIET_KEY = 'ymaster-quiet-until';
+
+const quietActive = () => {
+  try { return Date.now() < (parseInt(localStorage.getItem(QUIET_KEY), 10) || 0); }
+  catch (e) { return false; }
+};
+
+function bindAppearance() {
+  // акцент
+  const row = $('#accent-row');
+  if (row && !row.dataset.bound) {
+    row.dataset.bound = '1';
+    row.querySelectorAll('.swatch').forEach(b => {
+      b.onclick = () => {
+        try { localStorage.setItem('ymaster-accent', b.dataset.accent); } catch (e) {}
+        applyAccent(b.dataset.accent);
+        renderAppearanceState();
+      };
+    });
+  }
+  // плотность
+  const seg = $('#density-seg');
+  if (seg && !seg.dataset.bound) {
+    seg.dataset.bound = '1';
+    seg.querySelectorAll('button').forEach(b => {
+      b.onclick = () => {
+        try { localStorage.setItem('ymaster-density', b.dataset.density); } catch (e) {}
+        applyDensity(b.dataset.density);
+        renderAppearanceState();
+      };
+    });
+  }
+  // спокойный час
+  const q = $('#btn-quiet');
+  if (q && !q.dataset.bound) {
+    q.dataset.bound = '1';
+    q.onclick = () => {
+      if (quietActive()) {
+        try { localStorage.removeItem(QUIET_KEY); } catch (e) {}
+        toast('Спокойный час отключён — уведомления снова показываются', 'info', 'Оформление');
+      } else {
+        const mins = parseInt(($('#quiet-dur') || {}).value || '60', 10);
+        try { localStorage.setItem(QUIET_KEY, String(Date.now() + mins * 60000)); } catch (e) {}
+        toast(`Спокойный час включён до ${new Date(Date.now() + mins * 60000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 'info', 'Оформление');
+      }
+      renderAppearanceState();
+    };
+  }
+  renderAppearanceState();
+}
+
+function applyAccent(v) {
+  if (v) document.documentElement.setAttribute('data-accent', v);
+  else document.documentElement.removeAttribute('data-accent');
+}
+
+function applyDensity(v) {
+  if (v) document.documentElement.setAttribute('data-density', v);
+  else document.documentElement.removeAttribute('data-density');
+}
+
+function renderAppearanceState() {
+  let acc = '', den = '';
+  try { acc = localStorage.getItem('ymaster-accent') || ''; den = localStorage.getItem('ymaster-density') || ''; } catch (e) {}
+  document.querySelectorAll('#accent-row .swatch').forEach(b =>
+    b.classList.toggle('active', (b.dataset.accent || '') === acc));
+  document.querySelectorAll('#density-seg button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.density || '') === den));
+  const q = $('#btn-quiet'), qs = $('#quiet-status');
+  if (q) {
+    if (quietActive()) {
+      q.textContent = '🔕 Выключить';
+      q.classList.add('btn-accent');
+      const until = parseInt(localStorage.getItem(QUIET_KEY), 10);
+      if (qs) qs.textContent = `Уведомления скрыты до ${new Date(until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+    } else {
+      q.textContent = '🔕 Включить';
+      q.classList.remove('btn-accent');
+      if (qs) qs.textContent = '';
+    }
+  }
+}
+
+// v1.20.0: «Умный фокус» — остаётся только текущая задача, остальное затемнено
+function bindSmartFocus() {
+  const btn = $('#btn-focus');
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  btn.onclick = () => setSmartFocus(!document.body.classList.contains('ym-focus'));
+}
+function setSmartFocus(on) {
+  document.body.classList.toggle('ym-focus', on);
+  const btn = $('#btn-focus');
+  if (btn) btn.classList.toggle('btn-accent', on);
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') setSmartFocus(false);
+});
+
 function kpiCard(id, label, sub) {
   return `<div class="glass kpi" id="${id}">
     <div class="kpi-label">${label}</div>
@@ -1324,7 +1440,23 @@ function kpiCard(id, label, sub) {
     <div class="kpi-sub">${sub}</div></div>`;
 }
 function emptyState(ico, text) {
-  return `<div class="empty-state"><span class="big-ico">${ico}</span>${text}</div>`;
+  // v1.20.0: иллюстрация пустого состояния — «комиксный» документ с
+  // галочкой и печатью (ТЗ «Ямастер» п.5.1/п.9.4), фирменные цвета
+  return `<div class="empty-state">
+    <span class="empty-illo" role="img" aria-label="${esc(ico)}">
+      <svg width="132" height="86" viewBox="0 0 132 86" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="30" y="6" width="62" height="74" rx="8" fill="#fff" stroke="#d8d3ea" stroke-width="2"/>
+        <rect x="40" y="20" width="42" height="5" rx="2.5" fill="#4B0082" opacity=".45"/>
+        <rect x="40" y="31" width="34" height="5" rx="2.5" fill="#4B0082" opacity=".25"/>
+        <rect x="40" y="42" width="38" height="5" rx="2.5" fill="#4B0082" opacity=".25"/>
+        <rect x="40" y="53" width="26" height="5" rx="2.5" fill="#4B0082" opacity=".25"/>
+        <circle cx="92" cy="60" r="17" fill="#FF7A00"/>
+        <path d="M84.5 60.5l5.5 5.5 10-11" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="38" cy="14" r="6" fill="#2E8B57"/>
+        <path d="M35.4 14l1.8 1.8 3.4-3.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+    </span>
+    ${text}</div>`;
 }
 function feedActionText(f) {
   // v1.19.0: сервер присылает готовую человеческую формулировку
@@ -1887,6 +2019,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.20.0': [
+    { icon: '🎯', title: 'Умный фокус и тепловая карта сроков',
+      text: 'Кнопка «Умный фокус» на дашборде затемняет всё, кроме задач, требующих внимания. Ведомость по подотчётникам стала цветовой картой: зелёный — в срок, оранжевый — до конца срока отчёта меньше 40% времени, красный — просрочка.' },
+    { icon: '🎨', title: 'Настройка оформления и «Спокойный час»',
+      text: 'В Настройках появился блок «Оформление»: акцентный цвет (оранжевый, индиго, зелень, голубой) и плотность интерфейса (просторная/компактная). Режим «Спокойный час» прячет некритичные уведомления на выбранный срок — ошибки показываются всегда. Пустые списки получили фирменные иллюстрации.' },
+  ],
   '1.19.0': [
     { icon: '📜', title: 'Журнал действий — человеческим языком',
       text: 'События теперь читаются как фразы, а не коды: «Мария Смирнова: отсканирован чек на 1 250,00 ₽», а детали каждого события — в кавычках: «ФД 55667, источник: фото». Записи сгруппированы по дням («Сегодня», «Вчера»), у каждого события — значок и цветовой смысл: зелёный — успех, красный — ошибка, оранжевый — внимание.' },
@@ -4005,6 +4143,33 @@ async function viewSettings(container) {
       </div>
 
       <div class="glass card">
+        <div class="card-title">🎨 Оформление <span class="form-hint">(v1.20.0 — стиль «Ямастер»)</span></div>
+        <label class="appearance-label">Акцентный цвет</label>
+        <div class="swatch-row" id="accent-row" role="radiogroup" aria-label="Акцентный цвет">
+          <button class="swatch" data-accent="" style="--sw:#ff7a00" title="Оранжевый (по умолчанию)" aria-label="Оранжевый"></button>
+          <button class="swatch" data-accent="indigo" style="--sw:#4b0082" title="Индиго" aria-label="Индиго"></button>
+          <button class="swatch" data-accent="sea" style="--sw:#2e8b57" title="Морская зелень" aria-label="Морская зелень"></button>
+          <button class="swatch" data-accent="sky" style="--sw:#5bc0de" title="Голубой" aria-label="Голубой"></button>
+        </div>
+        <label class="appearance-label">Плотность интерфейса</label>
+        <div class="segmented" id="density-seg">
+          <button data-density="">Просторный</button>
+          <button data-density="compact">Компактный</button>
+        </div>
+        <label class="appearance-label">🔕 Спокойный час</label>
+        <p class="form-hint" style="margin-bottom:8px">Некритичные уведомления скрыты; ошибки показываются всегда.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-sm" id="btn-quiet">Отключить</button>
+          <select id="quiet-dur" class="company-select" style="max-width:150px">
+            <option value="30">на 30 минут</option>
+            <option value="60" selected>на 1 час</option>
+            <option value="180">на 3 часа</option>
+          </select>
+        </div>
+        <div class="form-hint" id="quiet-status" style="margin-top:6px"></div>
+      </div>
+
+      <div class="glass card">
         <div class="card-title">📲 Приложение на устройстве <span class="form-hint">(v1.5.0)</span></div>
         <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
         полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
@@ -4245,6 +4410,7 @@ async function viewSettings(container) {
       b.onclick = () => copyCmd(b.dataset.cmd, b);
     });
   }
+  bindAppearance();                 // v1.20.0: акцент, плотность, тихий час
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();
 

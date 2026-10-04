@@ -90,8 +90,31 @@ def stats(days: int = Query(14, ge=7, le=90),
                  .filter(Receipt.assignee != "")
                  .group_by(Receipt.assignee)
                  .order_by(func.sum(Receipt.total_sum).desc()).limit(8).all())
-        by_assignee = [{"name": a, "count": int(c), "sum": round(float(s), 2)}
+        # v1.20.0: тепловая карта — сколько чеков просрочено / близко к сроку
+        # (срок авансового отчёта — настройка advance_deadline_days)
+        from ..services import appsettings
+        deadline_days = int(appsettings.get_setting(
+            db, "advance_deadline_days", "10") or 10)
+        now = dt.datetime.utcnow()
+        late_line = now - dt.timedelta(days=deadline_days)          # старше срока
+        soon_line = now - dt.timedelta(days=max(1, round(deadline_days * 0.6)))
+        _open = Receipt.status.in_(["new", "verifying"])
+        late_map = dict(scoped(
+            db.query(Receipt.assignee, func.count(Receipt.id))
+            .filter(Receipt.assignee != "", _open,
+                    Receipt.created_at < late_line)
+            .group_by(Receipt.assignee)).all())
+        soon_map = dict(scoped(
+            db.query(Receipt.assignee, func.count(Receipt.id))
+            .filter(Receipt.assignee != "", _open,
+                    Receipt.created_at >= soon_line,
+                    Receipt.created_at < late_line)
+            .group_by(Receipt.assignee)).all())
+        by_assignee = [{"name": a, "count": int(c), "sum": round(float(s), 2),
+                        "late": int(late_map.get(a, 0)),
+                        "soon": int(soon_map.get(a, 0))}
                        for a, c, s in arows]
+
 
     # v1.11.0: админу без фильтра — сводка по всем компаниям
     by_company = []

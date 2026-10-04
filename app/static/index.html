@@ -13,6 +13,11 @@
     try {
       var t = localStorage.getItem('ymaster-theme') || 'light';   /* v1.19.0: светлый — по умолчанию */
       document.documentElement.setAttribute('data-theme', t);
+      /* v1.20.0: акцент и плотность — до отрисовки, без «вспышки» */
+      var acc = localStorage.getItem('ymaster-accent');
+      if (acc) document.documentElement.setAttribute('data-accent', acc);
+      var den = localStorage.getItem('ymaster-density');
+      if (den) document.documentElement.setAttribute('data-density', den);
       if (t === 'light' || (t === 'auto' && matchMedia('(prefers-color-scheme: light)').matches)) {
         document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f5f5f5');
       }
@@ -29,7 +34,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.19.0">
+<link rel="stylesheet" href="/css/app.css?v=1.20.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -203,6 +208,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.19.0"></script>
+  <script type="module" src="/js/app.js?v=1.20.0"></script>
 </body>
 </html>

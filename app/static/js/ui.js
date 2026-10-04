@@ -5,6 +5,12 @@
 
 // --- Тосты -------------------------------------------------------------
 export function toast(message, kind = 'ok', title = '') {
+  // v1.20.0 «Спокойный час»: некритичные уведомления скрыты, ошибки — всегда
+  if (kind !== 'err') {
+    try {
+      if (Date.now() < (parseInt(localStorage.getItem('ymaster-quiet-until'), 10) || 0)) return;
+    } catch (e) { /* localStorage недоступен — показываем */ }
+  }
   const box = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
