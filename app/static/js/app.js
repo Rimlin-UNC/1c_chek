@@ -1327,6 +1327,8 @@ function emptyState(ico, text) {
   return `<div class="empty-state"><span class="big-ico">${ico}</span>${text}</div>`;
 }
 function feedActionText(f) {
+  // v1.19.0: сервер присылает готовую человеческую формулировку
+  if (f.human) return f.human + (f.comment ? ` «${f.comment}»` : '');
   const map = {
     receipt_created: 'отсканирован новый чек', receipt_duplicate: 'отсеян дубликат чека',
     login: 'вход в систему', login_failed: 'неудачная попытка входа',
@@ -1684,12 +1686,12 @@ function applyTheme(t) {
   const meta = document.querySelector('meta[name="theme-color"]');
   const dark = t === 'dark'
     || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  if (meta) meta.setAttribute('content', dark ? '#0b1020' : '#eef1f8');
+  if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#f5f5f5');
 }
 
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
   let cur = 'auto';
-  try { cur = localStorage.getItem('ymaster-theme') || 'auto'; } catch (e) {}
+  try { cur = localStorage.getItem('ymaster-theme') || 'light'; } catch (e) {}
   if (cur === 'auto') applyTheme('auto');   // перерисовать под новую системную тему
 });
 
@@ -1885,6 +1887,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.19.0': [
+    { icon: '📜', title: 'Журнал действий — человеческим языком',
+      text: 'События теперь читаются как фразы, а не коды: «Мария Смирнова: отсканирован чек на 1 250,00 ₽», а детали каждого события — в кавычках: «ФД 55667, источник: фото». Записи сгруппированы по дням («Сегодня», «Вчера»), у каждого события — значок и цветовой смысл: зелёный — успех, красный — ошибка, оранжевый — внимание.' },
+    { icon: '🎨', title: 'Фирменный стиль «Ямастер»',
+      text: 'Новая палитра: корпоративный оранжевый, индиго в заголовках, морская зелень успеха и терракота ошибок. Светлая тема теперь по умолчанию — глаза бухгалтеру важнее; тёмная осталась мягкой. Шрифт Inter с табличными цифрами (колонки сумм выровнены), коды и ИНН — JetBrains Mono, рукописные акценты заголовков.' },
+  ],
   '1.18.0': [
     { icon: '👁', title: 'Режим просмотра: приложение глазами сотрудника или бухгалтера',
       text: 'Нажмите на свою карточку в правом верхнем углу — появится меню переключения профилей. Выберите бухгалтера или сотрудника, и вы увидите приложение ровно так, как видит его он: свои разделы, свои настройки, свои права. Пароль не запрашивается, ваш административный сеанс не прерывается: вернуться можно кнопкой «Вернуться в администратора» вверху экрана в любой момент. Действия в режиме просмотра выполняются от имени выбранного пользователя — будьте внимательны.' },
@@ -3659,18 +3667,88 @@ async function copyCmd(txt, btn) {
 }
 
 // ==========================================================================
-//  ЭКРАН: Журнал
+//  ЭКРАН: Журнал (v1.19.0 — человеческий формат: события словами, детали
+//  в «кавычках», группировка по дням, табличные цифры времени)
 // ==========================================================================
+const AUDIT_KIND = {
+  login: ['ok', '🔑'], login_failed: ['bad', '🚫'], register: ['info', '👤'],
+  password_changed: ['info', '🔐'],
+  receipt_created: ['ok', '🧾'], receipt_duplicate: ['warn', '🧾'],
+  receipt_updated: ['info', '✏️'], receipt_deleted: ['bad', '🗑'],
+  verify_queued: ['info', '🛡'], receipts_exported: ['ok', '📤'],
+  receipts_exported_csv: ['info', '📤'], receipts_assigned: ['info', '👤'],
+  receipts_moved: ['info', '📦'], receipts_transferred: ['info', '📦'],
+  external_fetch: ['info', '🌐'],
+  invite_created: ['info', '✉️'], invite_qr: ['info', '🔢'],
+  invite_revoked: ['warn', '✉️'],
+  user_created: ['ok', '👤'], user_updated: ['info', '👤'],
+  user_role_changed: ['warn', '👤'], user_password_reset: ['warn', '🔑'],
+  user_archived: ['warn', '📦'], user_unarchived: ['ok', '📦'],
+  user_moved: ['info', '🏢'], admin_transferred: ['warn', '🛡'],
+  company_created: ['ok', '🏢'], company_updated: ['info', '🏢'],
+  company_deleted: ['bad', '🏢'], company_card_refreshed: ['info', '🏛'],
+  company_cards_bulk_refreshed: ['info', '🏛'],
+  impersonate_start: ['warn', '👁'], impersonate_stop: ['ok', '👁'],
+  fns_settings_updated: ['info', '⚙️'], onec_token_updated: ['info', '🔗'],
+  onec_pull: ['ok', '🔗'], onec_ack: ['ok', '🔗'],
+  mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],
+  external_settings_updated: ['info', '⚙️'],
+  telegram_settings_saved: ['info', '✈️'], demo_data_loaded: ['info', '🧪'],
+  checko_key_saved: ['info', '🔐'], checko_key_tested: ['info', '🔐'],
+  checko_key_revealed: ['warn', '🔐'], checko_key_reveal_blocked: ['bad', '🔐'],
+  checko_key_reveal_failed: ['bad', '🔐'],
+  backup_created: ['ok', '💾'], backup_downloaded: ['info', '💾'],
+  update_check: ['info', '🔄'], update_check_failed: ['bad', '🔄'],
+  update_apply: ['warn', '🔄'], update_repo_changed: ['info', '🔄'],
+};
+
+function auditDayLabel(ts) {
+  const d = new Date(ts), now = new Date();
+  const key = (x) => `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;
+  if (key(d) === key(now)) return 'Сегодня';
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (key(d) === key(y)) return 'Вчера';
+  return d.toLocaleDateString('ru-RU', {
+    day: 'numeric', month: 'long',
+    year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+  });
+}
+
 async function viewAudit(container) {
-  const rows = await api.get('/api/v1/dashboard/recent?limit=60');
+  let rows = [];
+  try { rows = await api.get('/api/v1/dashboard/recent?limit=60'); } catch {}
+  const fmtTime = (ts) =>
+    new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  // Группировка по дням: «Сегодня» / «Вчера» / «12 октября»
+  const groups = [];
+  rows.forEach(f => {
+    const lbl = auditDayLabel(f.created_at);
+    const g = groups.length ? groups[groups.length - 1] : null;
+    if (g && g.label === lbl) g.items.push(f);
+    else groups.push({ label: lbl, items: [f] });
+  });
   container.innerHTML = `
     <div class="glass card">
-      <div class="card-title">Журнал действий (последние 60 событий)</div>
-      ${rows.length ? rows.map(f => `
-        <div class="feed-item"><span class="feed-time">${fmtDate(f.created_at)}</span>
-        <span class="chip unknown mono">${esc(f.action)}</span>
-        <span class="feed-text">${esc(feedActionText(f))}</span></div>`).join('')
-      : emptyState('📜', 'Журнал пуст')}
+      <div class="card-title font-accent">Журнал действий</div>
+      <p class="form-hint" style="margin:-2px 0 14px">Последние 60 событий — что происходило,
+      обычными словами. Детали каждого события — в кавычках.</p>
+      ${groups.map(g => `
+        <div class="audit-day tnum">${esc(g.label)}</div>
+        ${g.items.map(f => {
+          const [kind, ico] = AUDIT_KIND[f.action] || ['', '📌'];
+          const who = f.username ? esc(f.username) : 'система';
+          const human = f.human || feedActionText(f);
+          return `
+          <div class="audit-row kind-${kind}">
+            <span class="audit-ico" aria-hidden="true">${ico}</span>
+            <div class="audit-main">
+              <div class="audit-text"><b>${who}</b> ${esc(human)}</div>
+              ${f.comment ? `<div class="audit-comment">«${esc(f.comment)}»</div>` : ''}
+            </div>
+            <span class="audit-time tnum">${fmtTime(f.created_at)}</span>
+          </div>`; }).join('')}
+      `).join('')}
+      ${rows.length ? '' : emptyState('📜', 'Журнал пуст')}
     </div>`;
 }
 
@@ -3989,7 +4067,7 @@ async function viewSettings(container) {
   const seg = $('#theme-seg');
   if (seg) {
     let cur = 'auto';
-    try { cur = localStorage.getItem('ymaster-theme') || 'auto'; } catch (e) {}
+    try { cur = localStorage.getItem('ymaster-theme') || 'light'; } catch (e) {}
     seg.querySelectorAll('button').forEach(b => {
       b.classList.toggle('on', b.dataset.t === cur);
       b.onclick = () => {

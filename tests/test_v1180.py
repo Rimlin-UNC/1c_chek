@@ -153,7 +153,5 @@ class TestImpersonateUI:
     def test_whatnew_and_version(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "'1.18.0':" in js
-        cfg = open("app/config.py", encoding="utf-8").read()
-        assert 'APP_VERSION: str = "1.18.0"' in cfg
-        idx = open("app/static/index.html", encoding="utf-8").read()
-        assert "app.js?v=1.18.0" in idx and "app.css?v=1.18.0" in idx
+        # актуальная версия и синхронизация ?v= проверяются в тесте текущей
+        # версии (test_v1190) — жёсткий пин здесь не нужен (v1.19.0)

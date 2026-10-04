@@ -135,7 +135,14 @@ def recent(limit: int = Query(15, ge=1, le=100),
         q = q.filter((AuditLog.company_id == user.company_id)
                      | (AuditLog.company_id.is_(None)))
     rows = q.limit(limit).all()
-    return [a.to_dict() for a in rows]
+    # v1.19.0: человекочитаемый формат + комментарий (клиент выводит в «»)
+    from ..services.audit_human import humanize_audit
+    out = []
+    for a in rows:
+        item = a.to_dict()
+        item["human"], item["comment"] = humanize_audit(a.action, a.details)
+        out.append(item)
+    return out
 
 
 @router.post("/demo-data", summary="Загрузить демонстрационные чеки (админ)")

@@ -1015,3 +1015,211 @@ tr.archived-row td { opacity: .55; }
   .viewas-bar { font-size: 13px; }
   .viewas-text { min-width: 0; flex-basis: 100%; }
 }
+
+/* ==========================================================================
+   v1.19.0 — СТИЛЬ «ЯМАСТЕР» (по дизайн-концепции ООО «Ямастер»)
+   Оранжевый #FF7A00 ≤10–15% площади · триада: индиго #4B0082,
+   морская зелень #2E8B57, терракота #D9534F · текст #333333,
+   информация #5BC0DE · светлый режим по умолчанию, тёмный — мягкий.
+   Шрифты: Inter (интерфейс, табличные цифры), JetBrains Mono (коды/ИНН),
+   Caveat (рукописные акценты заголовков). Уважение к цифре.
+   ========================================================================== */
+
+/* --- 1. Шрифтовые токены и индиго (действуют в обеих темах) --- */
+:root {
+  --font-main: "Inter", "Segoe UI", system-ui, -apple-system, Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  --font-num: "Inter", "Lato", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas,
+               "SF Mono", monospace;
+  --font-accent: "Caveat", "Segoe Script", cursive;
+  --indigo: #4B0082;        /* заголовки, акценты в отчётах (светлая тема) */
+  --indigo-soft: #b9a3d9;   /* индиго, приглушённый для тёмного фона */
+}
+
+/* --- 2. ТЁМНАЯ тема — мягкие тона (по умолчанию; не чёрная) --- */
+:root {
+  --bg: #1e1e1e;                       /* тёмно-серый, не чёрный */
+  --bg-soft: #242424;
+  --panel: rgba(255, 255, 255, 0.045);
+  --panel-strong: rgba(255, 255, 255, 0.08);
+  --border: rgba(224, 224, 224, 0.11);
+  --border-strong: rgba(224, 224, 224, 0.2);
+  --text: #e0e0e0;
+  --text-dim: #a9a9a9;
+  --text-faint: #7c7c7c;
+  --accent: #e06d00;                   /* приглушённый оранжевый #E06D00 */
+  --accent-2: #b9a3d9;
+  --grad: linear-gradient(135deg, #e06d00 0%, #c25f06 55%, #6d3fa8 160%);
+  --ok: #3cb371;                       /* мягкая зелень #3CB371 */
+  --warn: #d9a441;
+  --bad: #c94c4c;                      /* красный #C94C4C — не ядовитый */
+  --info: #5bc0de;
+  --shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.5);
+  --overlay-1: rgba(20, 20, 20, 0.78);
+  --overlay-2: rgba(20, 20, 20, 0.6);
+  --hover-bg: rgba(224, 224, 224, 0.1);
+  --hover-border: rgba(224, 109, 0, 0.6);
+  --scroll-thumb: rgba(224, 224, 224, 0.14);
+}
+
+/* --- 3. СВЕТЛАЯ тема — по умолчанию для бухгалтерии --- */
+html[data-theme="light"] {
+  --bg: #f5f5f5;                       /* нейтральный фон-подложка #F5F5F5 */
+  --bg-soft: #ececec;
+  --panel: #ffffff;                    /* рабочие области — белые карточки */
+  --panel-strong: #ffffff;
+  --border: rgba(51, 51, 51, 0.12);
+  --border-strong: rgba(51, 51, 51, 0.22);
+  --text: #333333;                     /* основной текст #333333 */
+  --text-dim: #5c5c5c;
+  --text-faint: #8a8a8a;
+  --accent: #ff7a00;                   /* корпоративный оранжевый #FF7A00 */
+  --accent-2: #4b0082;
+  --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
+  --ok: #2e8b57;                       /* морская зелень #2E8B57 — успех */
+  --warn: #b45309;
+  --bad: #d9534f;                      /* терракота #D9534F — ошибки */
+  --info: #2d8fa8;                     /* голубой #5BC0DE, читаемый как текст */
+  --shadow: 0 10px 34px -14px rgba(51, 51, 51, 0.28);
+  --overlay-1: rgba(245, 245, 245, 0.9);
+  --overlay-2: rgba(245, 245, 245, 0.72);
+  --hover-bg: rgba(51, 51, 51, 0.06);
+  --hover-border: rgba(255, 122, 0, 0.55);
+  --scroll-thumb: rgba(51, 51, 51, 0.22);
+}
+html[data-theme="light"] .bg-aurora {
+  background:
+    radial-gradient(1100px 640px at 88% -12%, rgba(255, 122, 0, .07), transparent 62%),
+    radial-gradient(900px 600px at -8% 108%, rgba(75, 0, 130, .05), transparent 60%),
+    var(--bg);
+}
+
+/* авто-режим: повторяем те же значения по системной настройке устройства */
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] {
+    --bg: #f5f5f5; --bg-soft: #ececec;
+    --panel: #ffffff; --panel-strong: #ffffff;
+    --border: rgba(51, 51, 51, 0.12); --border-strong: rgba(51, 51, 51, 0.22);
+    --text: #333333; --text-dim: #5c5c5c; --text-faint: #8a8a8a;
+    --accent: #ff7a00; --accent-2: #4b0082;
+    --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
+    --ok: #2e8b57; --warn: #b45309; --bad: #d9534f; --info: #2d8fa8;
+    --shadow: 0 10px 34px -14px rgba(51, 51, 51, 0.28);
+    --overlay-1: rgba(245, 245, 245, 0.9); --overlay-2: rgba(245, 245, 245, 0.72);
+    --hover-bg: rgba(51, 51, 51, 0.06);
+    --hover-border: rgba(255, 122, 0, 0.55);
+    --scroll-thumb: rgba(51, 51, 51, 0.22);
+  }
+  html[data-theme="auto"] .bg-aurora {
+    background:
+      radial-gradient(1100px 640px at 88% -12%, rgba(255, 122, 0, .07), transparent 62%),
+      radial-gradient(900px 600px at -8% 108%, rgba(75, 0, 130, .05), transparent 60%),
+      var(--bg);
+  }
+}
+
+/* --- 4. Типографика: размеры, интервалы, табличные цифры --- */
+body {
+  font-family: var(--font-main);
+  font-size: 15px;                     /* минимум 14 px — не экономить */
+  line-height: 1.5;                    /* 1.4–1.6 для основного текста */
+}
+table { font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
+table td, table th { line-height: 1.35; }
+.tnum, .feed-time, .audit-time, .audit-day, .rs-sub,
+.pm-sub, .form-hint, .cell-mono, .mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.form-hint, .pm-sub, .audit-time, .chip {
+  letter-spacing: 0.015em;             /* +0.01–0.02em для мелких размеров */
+}
+b, strong { font-weight: 600; }        /* итоговые суммы — жирнее без роста размера */
+.mono, .cell-mono, code, .rs-sub {
+  font-family: var(--font-mono);       /* коды, ИНН, ФД — одинаковая ширина */
+}
+html[data-theme="light"] h1,
+html[data-theme="light"] h2,
+html[data-theme="light"] h3,
+html[data-theme="light"] .card-title { color: var(--indigo); }
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] h1, html[data-theme="auto"] h2,
+  html[data-theme="auto"] h3, html[data-theme="auto"] .card-title {
+    color: var(--indigo);
+  }
+}
+.font-accent {                         /* рукописный акцент заголовков разделов */
+  font-family: var(--font-accent);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+#page-title { font-family: var(--font-accent); font-size: 26px; font-weight: 600; }
+
+/* --- 5. Кнопки: primary — тёмная, accent — оранжевая, ghost — серая --- */
+html[data-theme="light"] .btn-primary {
+  background: #333333; border-color: #333333; color: #ffffff;
+}
+html[data-theme="light"] .btn-primary:hover { background: #454545; }
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] .btn-primary {
+    background: #333333; border-color: #333333; color: #ffffff;
+  }
+  html[data-theme="auto"] .btn-primary:hover { background: #454545; }
+}
+.btn-accent {
+  background: var(--accent); border-color: var(--accent); color: #ffffff;
+}
+.btn-accent:hover { filter: brightness(1.07); }
+[data-theme="dark"] .btn-primary,
+html[data-theme="dark"] .btn-primary {
+  background: var(--accent); border-color: var(--accent); color: #1a1a1a;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] .btn-primary {
+    background: var(--accent); border-color: var(--accent); color: #1a1a1a;
+  }
+}
+
+/* --- 6. Журнал действий: человеческий формат (v1.19.0) --- */
+.audit-day {
+  font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-faint);
+  margin: 18px 0 6px; padding-bottom: 4px;
+  border-bottom: 1px dashed var(--border);
+}
+.audit-day:first-of-type { margin-top: 4px; }
+.audit-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 6px; border-radius: 10px;
+  border-left: 3px solid transparent;
+}
+.audit-row:hover { background: var(--hover-bg); }
+.audit-row.kind-ok { border-left-color: var(--ok); }
+.audit-row.kind-bad { border-left-color: var(--bad); }
+.audit-row.kind-warn { border-left-color: var(--accent); }
+.audit-row.kind-info { border-left-color: var(--info); }
+.audit-ico { flex: 0 0 24px; font-size: 15px; text-align: center; padding-top: 1px; }
+.audit-main { flex: 1; min-width: 0; }
+.audit-text { font-size: 14.5px; line-height: 1.45; overflow-wrap: anywhere; }
+html[data-theme="light"] .audit-text b { color: var(--indigo); }
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] .audit-text b { color: var(--indigo); }
+}
+.audit-comment {
+  font-size: 13px; color: var(--text-dim); font-style: italic;
+  margin-top: 2px; overflow-wrap: anywhere;
+}
+.audit-time { flex: 0 0 auto; font-size: 12.5px; color: var(--text-faint); padding-top: 3px; }
+@media (max-width: 640px) {
+  .audit-row { gap: 8px; padding: 7px 4px; }
+  .font-accent, #page-title { font-size: 23px; }
+}
+
+/* --- 7. Сдержанные микроанимации (мягкое «всплытие» карточек) --- */
+@media (prefers-reduced-motion: no-preference) {
+  .audit-row { animation: ym-rise .18s ease-out; }
+  @keyframes ym-rise { from { opacity: 0; transform: translateY(3px); } }
+}
