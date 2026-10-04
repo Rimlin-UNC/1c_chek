@@ -42,6 +42,7 @@ const VIEW_TITLES = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+const compName = (c) => (c && (c.display_name || c.short_name)) ? (c.display_name || c.short_name) : (c ? c.name : '');
 const isAccountant = () => state.me && (state.me.role === 'admin' || state.me.role === 'accountant');
 const isAdmin = () => state.me && state.me.role === 'admin';
 
@@ -652,7 +653,7 @@ async function initCompanyFilter() {
   catch (e) { return; }
   sel.innerHTML = '<option value="all">🏢 Все компании</option>' +
     state.companies.filter(c => c.is_active).map(c =>
-      `<option value="${c.id}" ${state.companyFilter === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+      `<option value="${c.id}" ${state.companyFilter === c.id ? 'selected' : ''}>${esc(compName(c))}</option>`).join('');
   sel.classList.remove('hidden');
   sel.onchange = () => {
     state.companyFilter = sel.value;
@@ -671,7 +672,8 @@ function companyChip(cid) {
   if (!isAdmin() || !cid) return '';
   const c = state.companies.find(x => x.id === cid);
   if (!c) return '';
-  return ` <span class="chip company-chip" title="Компания: ${esc(c.name)}">${esc(c.name)}</span>`;
+  // v1.22.0: сокращённое наименование из карточки, полное — в подсказке
+  return ` <span class="chip company-chip" title="Компания: ${esc(c.name)}">${esc(compName(c))}</span>`;
 }
 
 function scanCompanyId() {
@@ -777,7 +779,7 @@ async function viewCompanies(container) {
     </div>`;
   const rows = comps.map(c => `
     <tr data-id="${c.id}" class="${c.is_active ? '' : 'archived-row'}">
-      <td><b>${esc(c.name)}</b>${c.inn ? `<div class="form-hint">ИНН ${esc(c.inn)}</div>` : ''}
+      <td><b title="${esc(c.name)}">${esc(compName(c))}</b>${c.inn ? `<div class="form-hint">ИНН ${esc(c.inn)}</div>` : ''}
           ${c.note ? `<div class="form-hint">${esc(c.note)}</div>` : ''}</td>
       <td>${c.is_active ? '<span class="chip verified">активна</span>' : '<span class="chip unknown">архив</span>'}</td>
       <td>${c.accountants} бух. · ${c.users} сотр.</td>
@@ -975,7 +977,8 @@ async function openCompanyCard(id) {
     </div>` : `
     <div class="form-hint" style="margin:10px 0">Карточка ЕГРЮЛ не заполнена — укажите ИНН и нажмите «Обновить из Checko» (ключ — в Настройках).</div>`;
   const { slot, close } = openModal(`
-    <div class="modal-title">🗂 ${esc(c.name)}</div>
+    <div class="modal-title">🗂 ${esc(compName(c))}</div>
+    ${c.short_name && c.short_name !== c.name ? `<div class="form-hint" style="margin:-6px 0 4px">полное: ${esc(c.name)}</div>` : ''}
     ${riskBlock}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">
       <div class="glass card" style="padding:8px;text-align:center"><div class="kpi-value" style="font-size:18px">${fmtInt(d.receipts)}</div><div class="form-hint">чеков</div></div>
@@ -985,6 +988,7 @@ async function openCompanyCard(id) {
     <div class="form-hint">ИНН: ${esc(c.inn || 'не указан')} · ${c.is_active ? 'активна' : 'в архиве'}</div>
     ${egryl}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+      <button class="btn btn-sm btn-accent" id="cc-reg" title="Свежие данные реестра: сначала официальный сайт ФНС (PDF), затем Checko.ru">⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП</button>
       <button class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
       <button class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
       <button class="btn btn-sm" id="cc-ao">🧾 Авансовый отчёт</button>
@@ -1008,6 +1012,24 @@ async function openCompanyCard(id) {
       const { blob, filename } = await api.download('/api/v1/receipts/export-csv?company_id=' + c.id);
       downloadBlob(blob, filename);
     } catch (e) { toast(e.message, 'err'); }
+  };
+  // v1.22.0: скачивание свежих данных реестра (ФНС PDF → Checko HTML)
+  slot.querySelector('#cc-reg').onclick = async () => {
+    const btn = slot.querySelector('#cc-reg');
+    btn.disabled = true; btn.textContent = '…запрашиваю реестр';
+    try {
+      const { blob, filename } = await api.download(`/api/v1/companies/${c.id}/registry/download`, {});
+      downloadBlob(blob, filename);
+      const isPdf = /\.pdf$/i.test(filename || '');
+      toast(isPdf
+        ? 'Официальная выписка ФНС (PDF) скачана'
+        : 'Выписка сформирована по данным Checko.ru (HTML) — карточка в системе обновлена',
+        'ok', '⬇ Свежие данные');
+      btn.disabled = false; btn.textContent = '⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП';
+    } catch (e) {
+      btn.disabled = false; btn.textContent = '⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП';
+      toast(e.message || 'Реестр недоступен', 'err', '⬇ Свежие данные');
+    }
   };
   slot.querySelector('#cc-refresh').onclick = async () => {
     if (!c.inn) { close(); return companyDialog(c); }
@@ -1085,7 +1107,7 @@ function openMoveDialog() {
     <div class="form-grid">
       <label class="field full"><span>Компания назначения</span>
         <select id="mv-company">${active.map(c =>
-          `<option value="${c.id}" ${state.companyFilter === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+          `<option value="${c.id}" ${state.companyFilter === c.id ? 'selected' : ''}>${esc(compName(c))}</option>`).join('')}</select></label>
       <label class="field full"><span>Назначить подотчётное лицо (необязательно)</span>
         <input id="mv-assignee" placeholder="Иванов И.И. — оставить как есть, если пусто"></label>
     </div>
@@ -1236,7 +1258,7 @@ async function viewDashboard(container) {
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>Компания</th><th>Чеков</th><th>Сумма, ₽</th><th></th></tr></thead><tbody>
         ${dashStats.by_company.map(c => `<tr>
-          <td>${esc(c.name)}</td><td>${fmtInt(c.count)}</td><td>${fmtSum(c.sum)}</td>
+          <td title="${esc(c.name)}">${esc(compName(c))}</td><td>${fmtInt(c.count)}</td><td>${fmtSum(c.sum)}</td>
           <td><button class="btn btn-sm c-open" data-id="${c.id}">открыть пространство</button></td></tr>`).join('')}
       </tbody></table></div>
     </div>` : ''}
@@ -2153,6 +2175,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.22.0': [
+    { icon: '⬇', title: 'Свежие данные ЕГРЮЛ/ЕГРИП — скачивание из карточки компании',
+      text: 'В карточке компании появилась кнопка «Скачать свежие данные»: программа сначала запрашивает официальную выписку с сайта ФНС (egrul.nalog.ru, PDF), а если она недоступна с сервера — берёт свежую карточку из Checko.ru и формирует печатную выписку. Карточка компании в системе при этом обновляется.' },
+    { icon: '🏷', title: 'Сокращённые названия компаний',
+      text: 'Если у компании заполнена карточка ЕГРЮЛ/ЕГРИП, в списках и селекторах показывается сокращённое наименование (например «Ямастер» вместо ООО «Ямастер» и т. п.), полное — в подсказке и в карточке.' },
+  ],
   '1.21.0': [
     { icon: '📖', title: 'Инструкция по приложению — для каждой роли',
       text: 'В меню слева появилась кнопка «📖 Инструкция»: подробное руководство с картинками — своё для администратора, бухгалтера и сотрудника. Хранится на сервере и обновляется вместе с программой, поэтому всегда актуально. Администратор может почитать инструкцию любой роли.' },

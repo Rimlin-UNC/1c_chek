@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from ..models import Company, Invite, Receipt, User
 from ..schemas import (CheckoLookup, CompanyCreate, CompanyDeleteBody,
                        CompanyPatch)
 from ..services import checko, appsettings
+from ..services import registry
 from ..services.audit import log_action
 from ..services.companies_util import (SIMILAR_THRESHOLD, canonical_name,
                                        inn_is_valid, inn_kind,
@@ -286,6 +288,9 @@ def refresh_card(company_id: str, admin: User = Depends(require_admin),
     comp.card_json = _json.dumps(result["card"], ensure_ascii=False)
     from ..models import utcnow as _utcnow
     comp.card_updated_at = _utcnow()
+    # v1.22.0: сокращённое наименование из карточки — для списков и селекторов
+    if result["card"].get("name_short"):
+        comp.short_name = result["card"]["name_short"][:200]
     # v1.15.0: автозаполнение реквизитов из ЕГРЮЛ — ИНН и полное название
     if not (comp.inn or "").strip() and result["card"].get("inn"):
         comp.inn = result["card"]["inn"]
@@ -296,6 +301,60 @@ def refresh_card(company_id: str, admin: User = Depends(require_admin),
     return {"card": result["card"],
             "card_updated_at": comp.card_updated_at.isoformat(),
             "name_full": result["card"]["name_full"], "company": comp.to_dict()}
+
+
+@router.post("/{company_id}/registry/download",
+             summary="Скачать свежие данные ЕГРЮЛ/ЕГРИП (администратор)")
+def registry_download(company_id: str,
+                      admin: User = Depends(require_admin),
+                      db: Session = Depends(get_db)):
+    """Кнопка в карточке компании: свежие данные реестра одним файлом.
+    Источники: 1) официальный сервис ФНС egrul.nalog.ru (PDF-выписка);
+    2) Checko.ru API (обновляет карточку и формирует печатную выписку)."""
+    from ..services import registry as reg
+    comp = db.get(Company, company_id)
+    if not comp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Компания не найдена")
+    inn = (comp.inn or "").strip()
+    if not inn:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "У компании не указан ИНН — добавьте его и повторите")
+
+    # 1) официальный сервис ФНС — PDF-выписка
+    pdf = reg.fetch_fns_pdf(inn)
+    if pdf:
+        log_action(admin, "registry_downloaded", "company", comp.id,
+                   {"inn": inn, "source": "fns_egrul", "format": "pdf"})
+        fname = f"ЕГРЮЛ_{inn}_{__import__('datetime').date.today():%Y%m%d}.pdf"
+        return Response(pdf, media_type="application/pdf",
+                        headers={"Content-Disposition":
+                                 reg.content_disposition(fname)})
+
+    # 2) Checko: свежая карточка → печатная HTML-выписка (и обновление в системе)
+    key = appsettings.get_setting(db, checko.SETTING_KEY, "")
+    card_saved: dict = {}
+    try:
+        result = checko.fetch_card(key, inn)
+        card_saved = result["card"]
+        import json as _json
+        comp.card_json = _json.dumps(card_saved, ensure_ascii=False)
+        from ..models import utcnow as _utcnow
+        comp.card_updated_at = _utcnow()
+        if card_saved.get("name_short"):
+            comp.short_name = card_saved["name_short"][:200]   # v1.22.0
+        db.commit()
+    except checko.CheckoError as e:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Сервисы реестра недоступны с сервера. {e} "
+            "Проверьте интернет на сервере и ключ Checko в Настройках.")
+    log_action(admin, "registry_downloaded", "company", comp.id,
+               {"inn": inn, "source": "checko", "format": "html"})
+    html = reg.build_excerpt_html(card_saved, comp.name, inn)
+    fname = f"ЕГРЮЛ_{inn}_{__import__('datetime').date.today():%Y%m%d}.html"
+    return Response(html, media_type="text/html; charset=utf-8",
+                    headers={"Content-Disposition":
+                             reg.content_disposition(fname)})
 
 
 @router.post("/{company_id}/delete", summary="Удалить компанию с обработкой её данных (администратор)")
@@ -390,6 +449,8 @@ def bulk_refresh_cards(body: dict, admin: User = Depends(require_admin),
         try:
             result = _checko.fetch_card(key, c.inn.strip())
             c.card_json = _json.dumps(result["card"], ensure_ascii=False)
+            if result["card"].get("name_short"):
+                c.short_name = result["card"]["name_short"][:200]   # v1.22.0
             c.card_updated_at = _utcnow()
             ok_cnt += 1
         except _checko.CheckoError as e:

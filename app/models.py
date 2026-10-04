@@ -41,6 +41,10 @@ class Company(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    # v1.22.0: сокращённое наименование из карточки ЕГРЮЛ/ЕГРИП (НаимСокр) —
+    # показывается в списках и селекторах; полное — в карточке
+    short_name: Mapped[str] = mapped_column(String(200), default="",
+                                            server_default="")
     inn: Mapped[str] = mapped_column(String(20), default="")     # ИНН организации/ИП
     note: Mapped[str] = mapped_column(String(500), default="")   # памятка (договор, контакт)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -53,6 +57,8 @@ class Company(Base):
         return {
             "id": self.id,
             "name": self.name,
+            "short_name": self.short_name or "",
+            "display_name": self.short_name or self.name,   # v1.22.0: для списков
             "inn": self.inn,
             "note": self.note,
             "is_active": self.is_active,

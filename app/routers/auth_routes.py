@@ -129,9 +129,9 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
        token: str | None = Depends(raw_bearer_token)):
     d = user.to_dict()
-    # v1.11.0: название своей компании — для шапки интерфейса
-    d["company_name"] = (db.get(Company, user.company_id).name
-                         if user.company_id else None)
+    # v1.11.0: название своей компании; v1.22.0 — сокращённое из карточки
+    _comp = db.get(Company, user.company_id) if user.company_id else None
+    d["company_name"] = ((_comp.short_name or _comp.name) if _comp else None)
     d["is_platform_admin"] = (user.role == "admin")
     # v1.16.0: Telegram-привязка для личного кабинета настроек
     d["telegram_bound"] = bool(user.telegram_chat_id)

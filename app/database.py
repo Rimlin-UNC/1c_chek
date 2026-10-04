@@ -99,6 +99,8 @@ def _ensure_schema() -> None:
         "companies": [
             ("card_json", "ALTER TABLE companies ADD COLUMN card_json TEXT DEFAULT '{}'"),
             ("card_updated_at", "ALTER TABLE companies ADD COLUMN card_updated_at DATETIME NULL"),
+            # v1.22.0: сокращённое наименование из ЕГРЮЛ/ЕГРИП
+            ("short_name", "ALTER TABLE companies ADD COLUMN short_name VARCHAR(200) DEFAULT ''"),
         ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
@@ -178,8 +180,8 @@ def _backfill_companies(conn, existing_tables: set) -> None:
         "ORDER BY created_at LIMIT 1")).first()
     name = (row[0] if row and row[0] else "ООО «Ямастер»").strip()[:200]
     conn.execute(text(
-        "INSERT INTO companies (id, name, inn, note, is_active, created_at) "
-        "VALUES (:i, :n, '', 'Создана автоматически при обновлении до 1.11.0', 1, :t)"),
+        "INSERT INTO companies (id, name, short_name, inn, note, is_active, created_at) "   # v1.22.0: short_name
+        "VALUES (:i, :n, '', '', 'Создана автоматически при обновлении до 1.11.0', 1, :t)"),
         {"i": uid(), "n": name, "t": _utcnow()})
     cid = conn.execute(text("SELECT id FROM companies ORDER BY created_at LIMIT 1")).scalar()
     conn.execute(text("UPDATE users SET company_id = :c WHERE company_id IS NULL "
