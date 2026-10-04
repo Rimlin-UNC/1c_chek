@@ -84,29 +84,16 @@ def mapping_catalog(user: User = Depends(get_current_user)):
 # --------------------------------------------------------------------------
 #  Настройки ФНС (только админ)
 # --------------------------------------------------------------------------
-# v1.15.0: эти ключи — секреты, в БД хранятся зашифрованными (secretbox):
-_SECRET_KEYS = {"checko_api_key", "fns_master_token", "proverkacheka_token",
-                "ofd_ru_token", "onec_api_token"}
+# v1.16.0: шифрование секретов живёт в appsettings (единый источник) —
+# здесь только тонкие обёртки для совместимости.
 
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    row = db.get(AppSetting, key)
-    val = row.value if row and row.value != "" else default
-    if key in _SECRET_KEYS and val:
-        return secretbox.unseal(val)     # легаси (открытые) читаются как есть
-    return val
+    return appsettings.get_setting(db, key, default)
 
 
 def _set_setting(db: Session, key: str, value: str) -> None:
-    if key in _SECRET_KEYS and value:
-        value = secretbox.seal(value)    # в БД уходит «enc:v1:…»
-    row = db.get(AppSetting, key)
-    if row is None:
-        row = AppSetting(key=key, value=value)
-        db.add(row)
-    else:
-        row.value = value
-    db.commit()
+    appsettings.set_setting(db, key, value)
 
 
 def _mask(token: str) -> str:
@@ -352,3 +339,83 @@ def reveal_checko(body: dict, request: Request,
     log_action(admin, "checko_key_revealed", details={"ip": ip})
     return {"api_key": key,
             "warning": "Ключ показан один раз и записан в журнал аудита"}
+
+
+# --------------------------------------------------------------------------
+#  v1.16.0: Telegram-бот (токен — секрет, шифруется; worker с hot-restart)
+# --------------------------------------------------------------------------
+@router.get("/telegram", summary="Настройки Telegram-бота (админ)")
+def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import telegram_bot as tg
+    s = tg.bot_settings(db)
+    from ..services.appsettings import get_setting as _g
+    key = _mask(_g(db, tg.SETT_TOKEN, ""))
+    return {**s, "token_masked": key,
+            "bound_users": db.query(User).filter(
+                User.telegram_chat_id.isnot(None)).count(),
+            "hint": "Токен от @BotFather хранится зашифрованным. Сотрудники "
+                    "подключаются сами: Настройки → Telegram → код → /start КОД."}
+
+
+@router.put("/telegram", summary="Сохранить настройки Telegram-бота (админ)")
+def put_telegram(body: dict, db: Session = Depends(get_db),
+                 admin: User = Depends(require_admin)):
+    import re as _re
+    from ..services import telegram_bot as tg
+    from ..services.appsettings import set_setting as _s
+    token = ((body or {}).get("bot_token") or "").strip()
+    if token:
+        if not _re.fullmatch(r"\d{6,}:[A-Za-z0-9_\-]{30,}", token):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Токен бота неверный — скопируйте его целиком "
+                                "из @BotFather (вид: 123456789:AA…)")
+        _s(db, tg.SETT_TOKEN, token)                 # уйдёт зашифрованным
+        try:
+            tg.get_me(token)
+        except tg.TelegramError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+        tg.refresh_username(db)                      # кэш username бота
+    if "enabled" in (body or {}):
+        _s(db, tg.SETT, "1" if body["enabled"] else "0")
+    if "reminder_time" in (body or {}):
+        tme = (body["reminder_time"] or "").strip()
+        if tme:
+            m = _re.fullmatch(r"(\d{2}):(\d{2})", tme)
+            if not m or not (0 <= int(m.group(1)) < 24 and 0 <= int(m.group(2)) < 60):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    "Время напоминаний — в формате ЧЧ:ММ (например 18:00)")
+            _s(db, tg.SETT_TIME, tme)
+    if "reminder_text" in (body or {}):
+        _s(db, tg.SETT_TEXT, (body["reminder_text"] or "").strip()[:500])
+    started = tg.restart_worker()
+    log_action(admin, "telegram_settings_saved",
+               details={"enabled": bool((body or {}).get("enabled", False)),
+                        "worker": started})
+    return {"ok": True, "worker_running": started,
+            "message": ("Бот запущен — напоминания по расписанию"
+                        if started else
+                        "Сохранено. Бот включится, когда зададите токен и включите тумблер")}
+
+
+@router.post("/telegram/test", summary="Тестовое сообщение себе в Telegram (админ)")
+def test_telegram(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import telegram_bot as tg
+    if not admin.telegram_chat_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Сначала привяжите свой чат: блок «Telegram — личное» ниже")
+    try:
+        tg.send_message(tg.get_token(db), admin.telegram_chat_id,
+                        "🧪 Тест: уведомления «Ямастер Чек» работают!")
+    except tg.TelegramError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    return {"ok": True, "message": "Отправлено — проверьте Telegram"}
+
+
+@router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")
+def refresh_bot(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import telegram_bot as tg
+    username = tg.refresh_username(db)
+    if not username:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Не удалось получить данные бота — проверьте токен")
+    return {"ok": True, "bot_username": username}

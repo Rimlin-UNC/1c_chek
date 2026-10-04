@@ -90,6 +90,8 @@ def _ensure_schema() -> None:
              "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"),
             # --- v1.11.0: мультикомпанийность ---
             ("company_id", "ALTER TABLE users ADD COLUMN company_id VARCHAR(36) NULL"),
+            # --- v1.16.0: Telegram-уведомления ---
+            ("telegram_chat_id", "ALTER TABLE users ADD COLUMN telegram_chat_id VARCHAR(32) NULL"),
         ],
         "invites": [
             ("company_id", "ALTER TABLE invites ADD COLUMN company_id VARCHAR(36) NULL"),

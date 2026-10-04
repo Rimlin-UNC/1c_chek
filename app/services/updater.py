@@ -110,6 +110,47 @@ def _git(args: list[str], timeout: int = 180) -> tuple[int, str]:
     return _run(["git"] + args, timeout=timeout)
 
 
+def _git_ready() -> bool:
+    """v1.16.0: каталог приложения — рабочий git-репозиторий? Установки через
+    install.sh/rsync приходят БЕЗ .git — обновление из приложения на них
+    падало на «git fetch: not a git repository»."""
+    if not os.path.isdir(os.path.join(APP_DIR, ".git")):
+        return False
+    rc, _o = _git(["rev-parse", "--is-inside-work-tree"], timeout=15)
+    return rc == 0
+
+
+def _ensure_git_repo(repo: str, branch: str, remote_url: str | None = None) -> tuple[bool, str]:
+    """v1.16.0: самовосстановление репозитория — приложение чинит себя само.
+    Если .git отсутствует/сломан: git init + remote + fetch ветки. БД (.env,
+    data/) не затрагиваются. Возвращает (ок, сообщение)."""
+    if _git_ready():
+        # origin должен указывать на нужный репозиторий
+        rc, out = _git(["remote", "get-url", "origin"], timeout=15)
+        url = remote_url or f"https://github.com/{repo}.git"
+        if rc != 0 or _normalize_repo(out) != _normalize_repo(url):
+            _git(["remote", "remove", "origin"], timeout=15)
+            _git(["remote", "add", "origin", url], timeout=15)
+        return True, "git-репозиторий в порядке"
+    url = remote_url or f"https://github.com/{repo}.git"
+    _run(["git", "init", "-q"], timeout=30)
+    rc, out = _git(["remote", "add", "origin", url], timeout=15)
+    if rc != 0:
+        _git(["remote", "set-url", "origin", url], timeout=15)
+    fcode, ferr = _git(["fetch", "--depth=1", "origin", branch], timeout=300)
+    if fcode != 0:
+        return False, f"git fetch при восстановлении: {ferr[:200]}"
+    # reset --hard, а не checkout: в каталоге установки полно незатреканных
+    # файлов приложения (rsync-установка) — checkout откажется их перезаписать.
+    # reset --hard выравнивает файлы с GitHub; data/.env игнорируются git'ом
+    # и остаются нетронутыми.
+    rc, out = _git(["reset", "--hard", "FETCH_HEAD"], timeout=60)
+    if rc != 0:
+        return False, f"git reset при восстановлении: {out[:200]}"
+    _git(["checkout", "-q", "-B", branch], timeout=30)
+    return True, "git-репозиторий восстановлен автоматически (init + fetch)"
+
+
 def _local_commit() -> str:
     code, out = _git(["rev-parse", "--short", "HEAD"], timeout=20)
     return out if code == 0 else "unknown"
@@ -174,7 +215,7 @@ def _gh_api_raw(repo: str, branch: str, path: str) -> str:
         "User-Agent": "YmasterCheck-Updater",
         "Accept": "application/vnd.github.raw+json"})
     if resp.status_code != 200:
-        raise RuntimeError(f"HTTP {resp.status_code}")
+        raise FileNotFoundError(f"HTTP {resp.status_code}")   # 404 = нет файла
     return resp.text
 
 
@@ -182,7 +223,7 @@ def _gh_raw(repo: str, branch: str, path: str) -> str:
     url = RAW_BASE.format(repo=repo, branch=branch, path=path)
     resp = httpx.get(url, timeout=10, headers={"User-Agent": "YmasterCheck-Updater"})
     if resp.status_code != 200:
-        raise RuntimeError(f"HTTP {resp.status_code}")
+        raise FileNotFoundError(f"HTTP {resp.status_code}")
     return resp.text
 
 
@@ -214,6 +255,12 @@ def _fetch_remote_file(repo: str, branch: str, path: str) -> tuple[str, str]:
             return globals()[fname](repo, branch, path), name
         except Exception as e:                               # noqa: BLE001
             errors.append(f"{name}: {_short_err(e)}")
+    # v1.16.0: все каналы ответили «нет файла» → ветка не содержит приложение
+    if errors and all("404" in e for e in errors):
+        raise RuntimeError(
+            f"В ветке «{branch}» нет файла {path} — проверьте ветку обновлений "
+            "в настройках (должна быть ветка приложения, например "
+            f"{getattr(settings, 'DEFAULT_BRANCH', '')})")
     raise RuntimeError(
         "GitHub недоступен с сервера — перепробованы все каналы ("
         + "; ".join(errors) + "). Возможна блокировка провайдером: "
@@ -390,6 +437,7 @@ def pre_flight(db) -> dict:
     can_restart, mode = _restart_mode()
     db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
     db_ok = os.path.exists(db_path)
+    git_ok = _git_ready()          # v1.16.0: иначе apply сам восстановит репозиторий
     github_ok, github_err = False, ""
     try:
         from . import appsettings
@@ -405,6 +453,7 @@ def pre_flight(db) -> dict:
         "db_backup_ok": db_ok,
         "github_ok": github_ok,
         "github_error": github_err,
+        "git_ok": git_ok,
         "ready": can_restart and db_ok and github_ok,
     }
 
@@ -451,10 +500,20 @@ def _do_apply(target_version: str, repo: str, branch: str,
         if backup:
             job.say("backup", 15, f"Бэкап: {os.path.basename(backup)}")
 
+        job.say("fetch", 20, "Проверка git-репозитория…")
+        git_ok, git_msg = _ensure_git_repo(repo, branch)
+        job.say("fetch", 22, git_msg)
+        if not git_ok:
+            raise RuntimeError(git_msg)
+
         job.say("fetch", 25, "Получение изменений с GitHub (только дельта)…")
         rc, out = _git(["fetch", "origin", branch], timeout=300)
         if rc != 0:
-            raise RuntimeError(f"git fetch: {out}")
+            # второй шанс: восстановить репозиторий и повторить
+            _ensure_git_repo(repo, branch)
+            rc, out = _git(["fetch", "origin", branch], timeout=300)
+            if rc != 0:
+                raise RuntimeError(f"git fetch: {out}")
 
         job.say("checkout", 45, f"Обновление файлов до {target_version}…")
         rc, out = _git(["reset", "--hard", f"origin/{branch}"], timeout=60)

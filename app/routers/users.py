@@ -13,7 +13,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, hash_password, require_admin
+from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, get_current_user,
+                    hash_password, require_admin)
 from ..database import get_db
 from ..models import Company, User
 from ..schemas import UserCreate, UserPatch
@@ -151,3 +152,28 @@ def promote_admin(user_id: str, db: Session = Depends(get_db),
         "new_admin": target.to_dict(),
         "previous_admin": admin.to_dict(),
     }
+
+
+# --------------------------------------------------------------------------
+#  v1.16.0: Telegram-привязка личного чата
+# --------------------------------------------------------------------------
+@router.post("/me/telegram/bind", summary="Одноразовый код привязки Telegram")
+def telegram_bind_code(user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    from ..services import telegram_bot as tg
+    from fastapi import Request as _Req
+    code = tg.new_bind_code(db, user.id)
+    s = tg.bot_settings(db)
+    return {"code": code, "ttl": tg.BIND_TTL,
+            "bot_username": s.get("bot_username") or "",
+            "instruction": ("Откройте Telegram, найдите бота "
+                            f"@{s.get('bot_username') or '…'} и отправьте ему: "
+                            f"/start {code}")}
+
+
+@router.post("/me/telegram/unbind", summary="Отвязать Telegram-уведомления")
+def telegram_unbind(user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    user.telegram_chat_id = None
+    db.commit()
+    return {"ok": True, "message": "Telegram отвязан"}

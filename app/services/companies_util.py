@@ -83,3 +83,60 @@ def inn_kind(inn: str) -> str | None:
     if len(d) == 12:
         return "individual"
     return None
+
+
+# --------------------------------------------------------------------------
+#  v1.16.0: светофор контрагента — риск-оценка по данным ЕГРЮЛ (Checko)
+# --------------------------------------------------------------------------
+def _age_days(reg_date: str) -> int | None:
+    import datetime as _dt
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            d = _dt.datetime.strptime((reg_date or "").strip()[:10], fmt)
+            return (_dt.datetime.utcnow() - d).days
+        except ValueError:
+            continue
+    return None
+
+
+def _capital_value(capital: str) -> float | None:
+    """'50 000 ₽' → 50000.0."""
+    import re as _re
+    m = _re.search(r"([\d\s.,]+)", capital or "")
+    if not m:
+        return None
+    num = m.group(1).replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    try:
+        return float(num)
+    except ValueError:
+        return None
+
+
+def risk_assessment(card: dict | None, company_inn: str = "") -> dict:
+    """Светофор: green/yellow/red + понятные причины. 'none' — данных нет."""
+    if not card or not (card.get("name_full") or card.get("ogrn")):
+        level = "yellow" if not (company_inn or "").strip() else "none"
+        reasons = ["Данные ЕГРЮЛ не заполнены — нажмите «Обновить из Checko»"] \
+            if level == "yellow" else []
+        return {"level": level, "reasons": reasons}
+    reasons = []
+    status = (card.get("status") or "").lower()
+    if any(x in status for x in ("ликвидирован", "банкрот", "прекратил")):
+        return {"level": "red",
+                "reasons": [f"Статус в ЕГРЮЛ: {card.get('status')} — расходы по "
+                            "чекам такого контрагента под риском снятия"]}
+    if any(x in status for x in ("ликвидир", "реорганиз")):
+        reasons.append(f"Статус «{card.get('status')}» — идёт реорганизация/ликвидация")
+    age = _age_days(card.get("reg_date") or "")
+    if age is not None and age < 180:
+        reasons.append(f"Молодая компания ({age // 30} мес. с регистрации)")
+    cap = _capital_value(card.get("capital") or "")
+    if cap is not None and cap < 10000 and card.get("kind") != "individual":
+        reasons.append("Уставный капитал меньше 10 000 ₽")
+    if not (company_inn or "").strip():
+        reasons.append("ИНН не указан — риск-оценка неполная")
+    level = "red" if any("Статус" in r for r in reasons) else (
+        "yellow" if reasons else "green")
+    if level == "green":
+        reasons = ["Реквизиты ЕГРЮЛ в норме"]
+    return {"level": level, "reasons": reasons}

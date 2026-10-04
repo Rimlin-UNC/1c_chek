@@ -614,7 +614,9 @@ async function viewCompanies(container) {
   container.innerHTML = `
     <div class="glass card">
       <div class="card-title">🏢 Компании-клиенты <span class="spacer"></span>
-        <button class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button></div>
+        <button class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button>
+        <button class="btn btn-sm" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
+        <button class="btn btn-sm" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
       <p class="form-hint" style="margin-bottom:12px">Каждая компания (ООО, ИП) — изолированное пространство:
       свои сотрудники, свои чеки, своя отчётность. Сотрудники видят только свою компанию,
       вы видите всё и можете перемещать чеки между компаниями.</p>
@@ -642,6 +644,22 @@ async function viewCompanies(container) {
     : emptyState('🏢', 'Компаний пока нет — добавьте первую компанию-клиента');
 
   $('#cp-add').onclick = () => companyDialog();
+  // v1.16.0: партнёрский кабинет — массовые операции
+  const cbr = $('#cp-bulk-refresh');
+  if (cbr) cbr.onclick = async () => {
+    if (!confirm('Обновить карточки ЕГРЮЛ у компаний с ИНН?\n' +
+                 'Расходуется лимит Checko (100 запросов/день, до 40 за раз).')) return;
+    cbr.disabled = true; cbr.textContent = '…обновляю';
+    try {
+      const r = await api.post('/api/v1/companies/bulk-refresh', { limit: 40 });
+      toast(r.message, 'ok', '🗂');
+      if (r.errors && r.errors.length) console.warn('bulk-refresh errors:', r.errors);
+      load();
+    } catch (e) { toast(e.message, 'err'); }
+    cbr.disabled = false; cbr.textContent = '⟳ Обновить ЕГРЮЛ (все)';
+  };
+  const cao = $('#cp-ao-all');
+  if (cao) cao.onclick = () => openAO1Modal();
   $$('.cp-open').forEach(b => b.onclick = () => {
     state.companyFilter = b.dataset.id;
     try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (e) {}
@@ -761,6 +779,19 @@ async function openCompanyCard(id) {
   const c = d.company;
   // v1.15.0: все ключевые реквизиты ЕГРЮЛ/ЕГРИП из Checko — в карточке
   const k = d.card || {};
+  // v1.16.0: светофор контрагента
+  const RISK = {
+    green: { icon: '🟢', label: 'Риск не выявлен', color: 'var(--ok, #34d399)' },
+    yellow: { icon: '🟡', label: 'Требует внимания', color: '#fbbf24' },
+    red: { icon: '🔴', label: 'ВЫСОКИЙ РИСК', color: '#f87171' },
+    none: { icon: '⚪', label: 'Нет данных ЕГРЮЛ', color: 'var(--text-faint)' },
+  };
+  const rk = RISK[(d.risk && d.risk.level) || 'none'] || RISK.none;
+  const riskBlock = `<div class="info-callout" style="margin:8px 0;border-left:4px solid ${rk.color}">
+      <b>${rk.icon} ${rk.label}</b>
+      ${(d.risk && d.risk.reasons || []).length
+        ? '<div class="form-hint" style="margin-top:4px">' + d.risk.reasons.map(esc).join('<br>') + '</div>' : ''}
+    </div>`;
   const egryl = (k.name_full || k.ogrn) ? `
     <div class="info-callout" style="margin:10px 0">
       ${k.kind === 'individual' ? '<span class="chip">ИП</span> ' : '<span class="chip">ЮЛ</span> '}
@@ -786,6 +817,7 @@ async function openCompanyCard(id) {
     <div class="form-hint" style="margin:10px 0">Карточка ЕГРЮЛ не заполнена — укажите ИНН и нажмите «Обновить из Checko» (ключ — в Настройках).</div>`;
   const { slot, close } = openModal(`
     <div class="modal-title">🗂 ${esc(c.name)}</div>
+    ${riskBlock}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">
       <div class="glass card" style="padding:8px;text-align:center"><div class="kpi-value" style="font-size:18px">${fmtInt(d.receipts)}</div><div class="form-hint">чеков</div></div>
       <div class="glass card" style="padding:8px;text-align:center"><div class="kpi-value" style="font-size:18px">${fmtSum(d.receipts_sum)}</div><div class="form-hint">сумма, ₽</div></div>
@@ -1677,6 +1709,16 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.16.0': [
+    { icon: '🔄', title: 'Обновление из приложения — чинит себя само',
+      text: 'Найдена причина «обновление не работает»: при установке без git-репозитория применение всегда падало. Теперь приложение само восстанавливает репозиторий (init + fetch с GitHub), preflight честно показывает состояние, а ошибка «ветка не содержит приложения» больше не маскируется под недоступность GitHub.' },
+    { icon: '🔔', title: 'Telegram-бот: напоминания и уведомления',
+      text: 'Админ вставляет токен от @BotFather в Настройках (хранится зашифрованным). Каждый сотрудник подключается сам: Настройки → Telegram → код → /start КОД. Раз в день в заданное время — напоминание тем, у кого нет чеков за сегодня; уведомления о принятых чеках; /status — чеки дня.' },
+    { icon: '🚦', title: 'Светофор контрагента в карточке компании',
+      text: '🟢/🟡/🔴 по данным ЕГРЮЛ: ликвидация/банкротство — красный, молодая компания, малый капитал, ликвидация в процессе, нет ИНН — жёлтый с объяснением причин. Защита от расходов по проблемным контрагентам.' },
+    { icon: '🏢', title: 'Партнёрские операции для аутсорсеров',
+      text: 'Кнопки в списке компаний: «⟳ Обновить ЕГРЮЛ (все)» — массовая актуализация реквизитов клиентов с учётом лимита Checko, и «🧾 АО по всем» — сводный авансовый отчёт по всем компаниям за период.' },
+  ],
   '1.15.0': [
     { icon: '🔒', title: 'API-ключи под замком: шифрование в базе',
       text: 'Ключи Checko, ФНС и внешних источников теперь хранятся зашифрованными (AES-CBC + HMAC, Fernet). Файл базы сам по себе ключей не раскрывает — нужен ключ сервера. Старые ключи перешифруются при первом сохранении.' },
@@ -3380,8 +3422,9 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null;
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); } }
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, me = null;
+  try { me = await api.get('/api/v1/auth/me'); } catch {}
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
 
@@ -3442,6 +3485,52 @@ async function viewSettings(container) {
           <button class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
         </div>
         <p class="form-hint" id="checko-status" style="margin-top:10px">${esc(checkoSet && checkoSet.hint || '')}</p>
+      </div>` : ''}
+
+      ${isAdmin() && tgSet ? `
+      <div class="glass card">
+        <div class="card-title">🔔 Telegram-бот <span class="form-hint">(v1.16.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Напоминания сотрудникам «сдай чек за сегодня»
+        и уведомления о принятых чеках. Токен — у
+        <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> (/newbot),
+        вставьте один раз — хранится зашифрованным.</p>
+        <label class="field" style="margin-bottom:10px"><span>Токен бота
+          ${tgSet.has_token ? '(задан: ' + esc(tgSet.token_masked) + (tgSet.bot_username ? ', @' + esc(tgSet.bot_username) : '') + ')' : '(не задан)'}</span>
+          <input id="tg-token" type="password" autocomplete="off" placeholder="123456789:AA…"></label>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
+          <input type="checkbox" id="tg-enabled" ${tgSet.enabled ? 'checked' : ''} style="width:auto">
+          <span>Включить бота: напоминания в ${esc(tgSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
+        <div class="form-grid">
+          <label class="field"><span>Время напоминания (ЧЧ:ММ)</span>
+            <input id="tg-time" value="${esc(tgSet.reminder_time)}" placeholder="18:00"></label>
+          <label class="field"><span>Подключено сотрудников</span>
+            <input value="${tgSet.bound_users}" disabled></label>
+          <label class="field full"><span>Текст напоминания ({name} — имя сотрудника)</span>
+            <input id="tg-text" value="${esc(tgSet.reminder_text)}"></label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="tg-save">💾 Сохранить и запустить</button>
+          <button class="btn btn-sm" id="tg-test">🧪 Тест себе</button>
+          <button class="btn btn-sm" id="tg-refresh"> ⟳ Обновить данные бота</button>
+        </div>
+        <p class="form-hint" style="margin-top:10px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
+          статус воркера также виден после сохранения</p>
+      </div>` : ''}
+
+      ${me ? `
+      <div class="glass card">
+        <div class="card-title">🔔 Telegram — личное <span class="form-hint">(v1.16.0)</span></div>
+        ${me.telegram_bound
+          ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат привязан — уведомления приходят в Telegram.
+               Напоминание приходит, если за день ни одного чека.</div>
+             <button class="btn btn-sm btn-bad" id="tg-unbind">🔌 Отвязать</button>`
+          : `<p class="form-hint" style="margin-bottom:10px">Получайте уведомления о чеках и напоминания.
+             Нажмите «Получить код», затем в Telegram отправьте боту: <b>/start КОД</b>.</p>
+             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+               <button class="btn btn-primary btn-sm" id="tg-code">🔑 Получить код</button>
+               <span id="tg-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
+             </div>
+             <p class="form-hint" id="tg-code-hint" style="margin-top:8px"></p>`}
       </div>` : ''}
 
       ${isAdmin() && appSet ? `
@@ -3743,6 +3832,57 @@ async function viewSettings(container) {
     const bb = $('#btn-backup');
     if (bb) bb.onclick = async () => {
       try { const { blob, filename } = await api.download('/api/v1/admin/backup'); downloadBlob(blob, filename); toast('Резервная копия скачана: ' + filename, 'ok'); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // v1.16.0: Telegram — сохранение/тест/личная привязка
+  if (isAdmin() && tgSet) {
+    const tts = $('#tg-save');
+    if (tts) tts.onclick = async () => {
+      tts.disabled = true;
+      try {
+        const body = {
+          enabled: $('#tg-enabled').checked,
+          reminder_time: $('#tg-time').value.trim(),
+          reminder_text: $('#tg-text').value.trim(),
+        };
+        const tok = $('#tg-token').value.trim();
+        if (tok) body.bot_token = tok;
+        const r = await api.put('/api/v1/settings/telegram', body);
+        toast(r.message, r.worker_running ? 'ok' : 'warn', '🔔');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+      tts.disabled = false;
+    };
+    const ttt = $('#tg-test');
+    if (ttt) ttt.onclick = async () => {
+      try { const r = await api.post('/api/v1/settings/telegram/test', {});
+        toast(r.message, 'ok', '🔔'); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+    const tgr = $('#tg-refresh');
+    if (tgr) tgr.onclick = async () => {
+      try { const r = await api.post('/api/v1/settings/telegram/refresh-bot', {});
+        toast('Бот: @' + r.bot_username, 'ok', '🔔'); route(true); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+  }
+  if (me) {
+    const tc = $('#tg-code');
+    if (tc) tc.onclick = async () => {
+      try {
+        const r = await api.post('/api/v1/users/me/telegram/bind', {});
+        $('#tg-code-out').textContent = r.code;
+        $('#tg-code-hint').textContent = r.instruction + ' — код действует 15 минут.';
+        toast('Код получен — отправьте боту /start ' + r.code, 'ok', '🔔');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const tu = $('#tg-unbind');
+    if (tu) tu.onclick = async () => {
+      if (!confirm('Отвязать Telegram-уведомления?')) return;
+      try { const r = await api.post('/api/v1/users/me/telegram/unbind', {});
+        toast(r.message, 'ok'); route(true); }
       catch (e) { toast(e.message, 'err'); }
     };
   }

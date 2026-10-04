@@ -78,6 +78,8 @@ class User(Base):
         String(36), ForeignKey("companies.id"), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # v1.16.0: Telegram-уведомления (chat_id после привязки бота по коду)
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

@@ -25,7 +25,8 @@ from ..services import checko, appsettings
 from ..services.audit import log_action
 from ..services.companies_util import (SIMILAR_THRESHOLD, canonical_name,
                                        inn_is_valid, inn_kind,
-                                       normalize_inn, similar_ratio)
+                                       normalize_inn, risk_assessment,
+                                       similar_ratio)
 
 router = APIRouter(prefix="/api/v1/companies", tags=["Компании"])
 
@@ -262,6 +263,8 @@ def company_card(company_id: str, admin: User = Depends(require_admin),
         "card_updated_at": (comp.card_updated_at.isoformat()
                             if comp.card_updated_at else None),
         "has_checko_key": bool(appsettings.get_setting(db, checko.SETTING_KEY, "")),
+        "risk": risk_assessment(card if isinstance(card, dict) else None,
+                                comp.inn or ""),
         "other_companies": [{"id": c.id, "name": c.name, "is_active": c.is_active}
                             for c in db.query(Company).all() if c.id != comp.id],
     }
@@ -363,3 +366,39 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
 def broadcast_company_change() -> None:
     from ..services.events import broadcast
     broadcast("companies_changed", {})
+
+
+@router.post("/bulk-refresh", summary="Обновить карточки ЕГРЮЛ у компаний с ИНН (админ)")
+def bulk_refresh_cards(body: dict, admin: User = Depends(require_admin),
+                       db: Session = Depends(get_db)):
+    """Партнёрский сценарий (v1.16.0): раз в месяц актуализируем реквизиты всех
+    клиентов сразу. Лимит за раз — 40 (бесплатный тариф Checko: 100 запросов/день)."""
+    import time as _time
+    import json as _json
+    from ..models import utcnow as _utcnow
+    from ..services import checko as _checko
+    limit = min(int((body or {}).get("limit") or 40), 40)
+    key = appsettings.get_setting(db, checko.SETTING_KEY, "")
+    if not key:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Ключ Checko не задан — укажите его в настройках")
+    comps = (db.query(Company)
+             .filter(Company.is_active.is_(True), Company.inn.isnot(None),
+                     Company.inn != "").limit(limit).all())
+    ok_cnt, errors = 0, []
+    for c in comps:
+        try:
+            result = _checko.fetch_card(key, c.inn.strip())
+            c.card_json = _json.dumps(result["card"], ensure_ascii=False)
+            c.card_updated_at = _utcnow()
+            ok_cnt += 1
+        except _checko.CheckoError as e:
+            errors.append(f"{c.name} (ИНН {c.inn}): {e}")
+        _time.sleep(0.15)                                # бережём лимит и 32 r/s
+    db.commit()
+    log_action(admin, "company_cards_bulk_refreshed",
+               details={"ok": ok_cnt, "errors": len(errors)})
+    return {"ok": True, "updated": ok_cnt, "total_with_inn": len(comps),
+            "errors": errors[:10],
+            "message": f"Обновлено карточек: {ok_cnt} из {len(comps)}"
+                       + (f"; ошибок: {len(errors)}" if errors else "")}

@@ -116,6 +116,21 @@ def _maybe_auto_verify(background: BackgroundTasks, db: Session,
 # --------------------------------------------------------------------------
 #  POST /scan — приём строки QR
 # --------------------------------------------------------------------------
+def _notify_receipt_created(user, receipt) -> None:
+    """v1.16.0: Telegram-уведомление сотруднику о принятом чеке (не блокирует)."""
+    try:
+        from ..services import telegram_bot as tg
+        st_map = {"valid": "действителен", "invalid": "НЕ действителен",
+                  "not_found": "не найден в ФНС"}
+        status = st_map.get(receipt.fns_status, "проверяется…")
+        tg.notify_user(user.id, (
+            f"✅ Чек принят: {(receipt.total_sum or 0):.2f} ₽"
+            + (f", {receipt.merchant_name}" if receipt.merchant_name else "")
+            + f"\nСтатус: {status}"))
+    except Exception:                                    # noqa: BLE001
+        pass
+
+
 @router.post("/scan", summary="Приём сканирования: строка QR-кода чека")
 def scan(body: ScanRequest, background: BackgroundTasks,
          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -130,6 +145,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "sum": receipt.total_sum})
+        _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         auto = _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
@@ -182,6 +198,7 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "source": "image"})
+        _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         auto = _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
@@ -226,6 +243,7 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
                                        target_company_id(db, user, getattr(body, "company_id", None)))
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
+        _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов

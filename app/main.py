@@ -41,6 +41,13 @@ async def lifespan(app: FastAPI):
     daily_backup.start()
     from .seed import seed_if_needed
     seed_if_needed()
+    # v1.16.0: Telegram-воркер (long-poll + напоминания), если включён
+    try:
+        from .services import telegram_bot as tg
+        if tg.start_worker():
+            log.info("telegram worker auto-started")
+    except Exception:                                    # noqa: BLE001
+        log.exception("telegram worker start failed")
     log.info("%s v%s запущен. Разработчик: %s (%s)",
              settings.APP_NAME, settings.APP_VERSION,
              settings.VENDOR, settings.VENDOR_SITE)
