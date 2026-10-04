@@ -782,6 +782,7 @@ async function openCompanyCard(id) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
       <button class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
       <button class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
+      <button class="btn btn-sm" id="cc-ao">🧾 Авансовый отчёт</button>
       <button class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
       ${c.is_active ? '<button class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
     </div>
@@ -796,6 +797,7 @@ async function openCompanyCard(id) {
       toast('Компания в архиве', 'ok', '📦'); close(); route(true); }
     catch (e) { toast(e.message, 'err'); }
   };
+  slot.querySelector('#cc-ao').onclick = () => { close(); openAO1Modal({ companyId: c.id }); };
   slot.querySelector('#cc-csv').onclick = async () => {
     try {
       const { blob, filename } = await api.download('/api/v1/receipts/export-csv?company_id=' + c.id);
@@ -827,6 +829,7 @@ function openCompanyDelete(d) {
     <div class="modal-title">🗑 Удаление компании «${esc(c.name)}»</div>
     <div class="info-callout" style="margin-bottom:10px">Чеков: <b>${d.receipts}</b> ·
       сотрудников: <b>${d.team.length}</b>. Что сделать с данными компании?</div>
+    ${others.length ? `
     <label style="display:block;margin:8px 0"><input type="radio" name="dl-mode" value="move" checked style="width:auto">
       <b>Перенести в другую компанию</b> — чеки переедут целиком (флаг 1С сбросится)</label>
     <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px 26px">
@@ -835,7 +838,10 @@ function openCompanyDelete(d) {
     <label style="display:block;margin:6px 0"><input type="checkbox" id="dl-users" checked style="width:auto">
       сотрудники тоже перейдут в выбранную компанию</label>
     <label style="display:block;margin:8px 0"><input type="radio" name="dl-mode" value="wipe" style="width:auto">
-      <b>Удалить чеки безвозвратно</b> — все ${d.receipts} чеков будут стёрты, сотрудники открепятся</label>
+      <b>Удалить чеки безвозвратно</b> — все ${d.receipts} чеков будут стёрты, сотрудники открепятся</label>` : `
+    <label style="display:block;margin:8px 0"><input type="radio" name="dl-mode" value="wipe" checked style="width:auto">
+      <b>Удалить чеки безвозвратно</b> — все ${d.receipts} чеков будут стёрты, сотрудники открепятся
+      (других активных компаний нет — переносить некуда)</label>`}
     <div class="modal-actions" style="justify-content:space-between">
       <button class="btn" data-close>Отмена</button>
       <button class="btn btn-bad" id="dl-go">Удалить компанию</button>
@@ -1657,6 +1663,16 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.14.0': [
+    { icon: '🧾', title: 'Собрать авансовый отчёт за минуту — теперь по всей компании',
+      text: 'Диалог отчёта научился работать с периодом любой длины, всеми сотрудниками сразу и выбранными чеками. Один клик — и готовая сводная форма АО с подытогами по каждому подотчётнику, либо классический АО-1 по одному сотруднику.' },
+    { icon: '⬇', title: 'CSV авансового отчёта для Excel/1С',
+      text: 'Собранный отчёт скачивается одной кнопкой: дата, сотрудник, продавец, ИНН, статья, ФН/ФД/ФП, статус ФНС и сумма — с итоговой строкой. Excel-совместимый формат с кириллицей.' },
+    { icon: '🛡', title: 'Контроль качества отчёта',
+      text: 'Перед печатью система предупредит о чеках со статусом «Недействителен» в выборке и умеет отбирать только подтверждённые ФНС. Чеков больше 1000? Подскажет сузить период.' },
+    { icon: '🏢', title: 'Авансовый отчёт из карточки компании',
+      text: 'В карточке компании появилась кнопка «Авансовый отчёт» — период и компания подставляются сами.' },
+  ],
   '1.13.0': [
     { icon: '🗑', title: 'Удаление компаний с переносом данных',
       text: 'Компания-дубль или уехавший клиент? Теперь компанию можно удалить: чеки перенести в другую компанию (флаг «выгружено в 1С» сбросится — переезд = повторная выгрузка) либо стереть безвозвратно. Сотрудники переезжают вместе с чеками или открепляются — решаете вы.' },
@@ -2043,7 +2059,7 @@ async function viewReceipts(container) {
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
         <button class="btn btn-sm" id="btn-print-pdf">🖨 Печать PDF</button>
-        <button class="btn btn-sm" id="btn-ao1">🧾 Авансовый отчёт (АО-1)</button>
+        <button class="btn btn-sm" id="btn-ao1">🧾 Собрать авансовый отчёт</button>
         <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
       </div>` : `
@@ -2461,55 +2477,212 @@ async function printReceiptsPDF(ids) {
 // ==========================================================================
 const AO_DOC_NAMES = { 1: 'приход', 2: 'возврат прихода' };
 
-async function openAO1Modal() {
+async function openAO1Modal(opts = {}) {
+  // v1.14.0: «Собрать авансовый отчёт» — период любой, сотрудник или ВСЕ
+  // сотрудники компании, выбранные чеки, CSV и печать (АО-1 / сводная форма).
+  // opts: { companyId } — запуск из карточки компании (админ).
   const now = new Date();
   const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const mFrom = `${ym}-01`, mTo = `${ym}-${new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}`;
   const names = [...(viewReceipts._names || [])];
+  const isAdmin = state.me?.role === 'admin';
+  const selCnt = state.receiptsSelected.size;
+  const comps = (state.companies || []).filter(c => c.is_active);
+  const preset = opts.companyId || '';
+
   const { slot } = openModal(`
-    <div class="modal-title">🧾 Авансовый отчёт (АО-1) — шаблон</div>
-    <p class="form-hint" style="margin-bottom:10px">Поля шаблона можно править —
-    в форму попадут отредактированные значения. Чеки подставятся автоматически
-    по сотруднику и периоду.</p>
+    <div class="modal-title">🧾 Собрать авансовый отчёт</div>
+    <p class="form-hint" style="margin-bottom:10px">Чекы собираются автоматически:
+    выберите период и сотрудников — получите готовую форму АО с итогами,
+    проверкой статусов ФНС и выгрузкой в CSV/Excel.</p>
     <div class="form-grid">
       <label class="field"><span>Организация</span>
         <input id="ao-org" value="${esc(state.me?.organization || 'ООО «Ямастер»')}"></label>
       <label class="field"><span>Номер документа</span>
-        <input id="ao-num" value="АО-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(Math.floor(Math.random() * 90) + 10)}"></label>
+        <input id="ao-num" value="АО-${ym}-${String(Math.floor(Math.random() * 90) + 10)}"></label>
       <label class="field"><span>Дата составления</span>
         <input id="ao-date" type="date" value="${now.toISOString().slice(0, 10)}"></label>
-      <label class="field"><span>Подотчётное лицо (сотрудник)</span>
+      <label class="field"><span>Период: с</span>
+        <input id="ao-from" type="date" value="${mFrom}"></label>
+      <label class="field"><span>Период: по</span>
+        <input id="ao-to" type="date" value="${mTo}"></label>
+      ${isAdmin ? `<label class="field"><span>Компания</span>
+        <select id="ao-company"><option value="">— все компании —</option>
+          ${comps.map(c => `<option value="${c.id}" ${c.id === preset ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select></label>` : ''}
+      <label class="field"><span>Подотчётное лицо (пусто — все)</span>
         <input id="ao-assignee" list="ao-names" placeholder="Иванов Иван">
         <datalist id="ao-names">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
       <label class="field"><span>Должность подотчётного</span>
         <input id="ao-post" placeholder="менеджер"></label>
       <label class="field"><span>Назначение аванса</span>
         <input id="ao-purpose" value="На хозяйственные расходы"></label>
-      <label class="field"><span>Месяц отчёта</span>
-        <input id="ao-month" type="month" value="${ym}"></label>
       <label class="field"><span>Бухгалтер (ФИО для подписи)</span>
         <input id="ao-buh" value="${esc(state.me?.full_name || '')}"></label>
     </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 4px">
+      ${selCnt ? `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ao-onlysel" style="width:auto">
+        только выбранные чеки (${selCnt})</label>` : ''}
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ao-onlyvalid" style="width:auto">
+        только подтверждённые ФНС</label>
+    </div>
     <div class="modal-actions">
       <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="ao-make">🧾 Сформировать PDF</button>
+      <button class="btn btn-primary" id="ao-make">🧾 Собрать отчёт</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#ao-make').onclick = async (e) => {
     const btn = e.target;
-    const assignee = slot.querySelector('#ao-assignee').value.trim();
-    if (!assignee) return toast('Укажите подотчётное лицо', 'warn');
-    btn.disabled = true;
+    const dFrom = slot.querySelector('#ao-from').value;
+    const dTo = slot.querySelector('#ao-to').value;
+    if (!dFrom || !dTo) return toast('Укажите период: с … по …', 'warn');
+    btn.disabled = true; btn.textContent = '…собираю';
     try {
-      const mv = slot.querySelector('#ao-month').value || ym;
-      const [y, m] = mv.split('-').map(Number);
-      const from = `${y}-${String(m).padStart(2, '0')}-01`;
-      const to = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
-      const data = await api.get(`/api/v1/receipts?assignee=${encodeURIComponent(assignee)}&date_from=${from}&date_to=${to}&page_size=200`);
-      if (!data.items.length) { btn.disabled = false; return toast('За период чеков этого сотрудника нет', 'warn'); }
-      ao1Print(slot, data.items, { ...Object.fromEntries(['ao-org', 'ao-num', 'ao-date', 'ao-post', 'ao-purpose', 'ao-buh'].map(id => [id, slot.querySelector('#' + id).value])), assignee, month: mv });
-    } catch (err) { toast(err.message, 'err'); }
-    btn.disabled = false;
+      const body = {
+        date_from: dFrom, date_to: dTo,
+        assignee: slot.querySelector('#ao-assignee').value.trim() || null,
+        only_valid: slot.querySelector('#ao-onlyvalid').checked,
+      };
+      const cSel = slot.querySelector('#ao-company');
+      if (cSel && cSel.value) body.company_id = cSel.value;
+      if (slot.querySelector('#ao-onlysel')?.checked) body.receipt_ids = [...state.receiptsSelected];
+      const rep = await api.post('/api/v1/receipts/advance-report', body);
+      if (!rep.rows.length) {
+        btn.disabled = false; btn.textContent = '🧾 Собрать отчёт';
+        return toast('За период чеков нет — измените фильтры', 'warn');
+      }
+      aoShowPreview(slot, rep, {
+        'ao-org': slot.querySelector('#ao-org').value,
+        'ao-num': slot.querySelector('#ao-num').value,
+        'ao-date': slot.querySelector('#ao-date').value,
+        'ao-post': slot.querySelector('#ao-post').value,
+        'ao-purpose': slot.querySelector('#ao-purpose').value,
+        'ao-buh': slot.querySelector('#ao-buh').value,
+      });
+    } catch (err) {
+      toast(err.message, 'err');
+      btn.disabled = false; btn.textContent = '🧾 Собрать отчёт';
+    }
   };
+}
+
+// --- v1.14.0: предпросмотр собранного отчёта -------------------------------
+function aoShowPreview(slot, rep, meta) {
+  const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
+  const many = rep.by_assignee.length > 1 ||
+    (rep.by_assignee.length === 1 && rep.by_assignee[0].name === '—');
+  slot.innerHTML = `
+    <div class="modal-title">🧾 Отчёт собран — ${rep.total.count} чек(ов) на ${sum(rep.total.sum)} ₽</div>
+    ${rep.invalid_count ? `<div class="info-callout" style="margin-bottom:8px">⚠ В отчёте
+      <b>${rep.invalid_count}</b> чек(ов) со статусом «Недействителен» —
+      исключите их из учёта или перепроверьте.</div>` : ''}
+    ${rep.truncated ? `<div class="info-callout" style="margin-bottom:8px">⚠ Показаны первые
+      1000 чеков — сузьте период.</div>` : ''}
+    <div class="form-hint">Период: ${esc(rep.period.from)} — ${esc(rep.period.to)} ·
+      ${esc(rep.company ? rep.company.name : 'все компании')}</div>
+    <table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
+      <thead><tr style="text-align:left;color:var(--text-faint)">
+        <th style="padding:4px">Подотчётник</th><th>Чеков</th><th>Сумма, ₽</th></tr></thead>
+      <tbody>${rep.by_assignee.map(a => `<tr>
+        <td style="padding:4px">${esc(a.name)}</td><td>${a.count}</td>
+        <td>${sum(a.sum)}</td></tr>`).join('')}
+        <tr><td style="padding:4px"><b>ИТОГО</b></td><td><b>${rep.total.count}</b></td>
+        <td><b>${sum(rep.total.sum)}</b></td></tr></tbody>
+    </table>
+    <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
+      <button class="btn" id="ao-back">← Изменить параметры</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="ao-csv">⬇ CSV (Excel)</button>
+        <button class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
+      </div>
+    </div>`;
+  slot.querySelector('#ao-back').onclick = () => { $('#modal-root').classList.add('hidden'); openAO1Modal(); };
+  slot.querySelector('#ao-csv').onclick = () => aoCsvDownload(rep);
+  slot.querySelector('#ao-print').onclick = () => {
+    if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep.rows, { ...meta, assignee: rep.by_assignee[0].name, month: rep.period.from.slice(0, 7) });
+  };
+}
+
+// --- v1.14.0: CSV авансового отчёта (Excel-совместимый, с BOM) -------------
+function aoCsvDownload(rep) {
+  const sum = (x) => (Math.round(x * 100) / 100).toFixed(2).replace('.', ',');
+  const dt = (s) => s ? String(s).replace('T', ' ').slice(0, 16) : '';
+  const fnsNames = { valid: 'Действителен', invalid: 'Недействителен',
+                     not_found: 'Не найден', unknown: 'Не проверен' };
+  const ops = { 1: 'Приход', 2: 'Возврат' };
+  const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const lines = [['№', 'Дата и время', 'Подотчётник', 'Продавец', 'ИНН продавца',
+                  'Статья расходов', 'ФН', 'ФД', 'ФП', 'Операция', 'Статус ФНС', 'Сумма, ₽']
+                 .join(';')];
+  rep.rows.forEach((r, i) => {
+    lines.push([i + 1, q(dt(r.receipt_date)), q(r.assignee), q(r.merchant_name || 'Товары (по чеку)'),
+      q(r.merchant_inn), q(r.category || '—'), q(r.fn), q(r.fd), q(r.fp),
+      q(ops[r.operation] || ''), q(fnsNames[r.fns_status] || ''), sum(r.total_sum)].join(';'));
+  });
+  lines.push(['', '', '', '', '', '', '', '', '', '', 'ИТОГО', sum(rep.total.sum)].join(';'));
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(blob, `avansovy-otchet-${rep.period.from}_${rep.period.to}.csv`);
+  toast(`CSV отчёта скачан: ${rep.total.count} чек(ов)`, 'ok', '⬇');
+}
+
+// --- v1.14.0: сводная печать (несколько подотчётников) ----------------------
+function aoMultiPrint(rep, meta) {
+  const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
+  const ops = { 1: ' (возврат)' };
+  let rows = '';
+  let n = 0;
+  for (const a of rep.by_assignee) {
+    const group = rep.rows.filter(r => r.assignee === a.name);
+    for (const r of group) {
+      n++;
+      rows += `<tr>
+        <td class="ao-c">${n}</td>
+        <td class="ao-c">${fmtDate(r.receipt_date)}</td>
+        <td>${esc(r.assignee)}</td>
+        <td>${esc(r.merchant_name || 'Товары (по чеку)')}</td>
+        <td class="ao-c">${esc(r.category || '—')}</td>
+        <td class="ao-c">ФД ${esc(r.fd || '—')}${ops[r.operation] || ''}</td>
+        <td class="ao-r">${sum(r.total_sum)}</td></tr>`;
+    }
+    rows += `<tr class="ao-sub"><td colspan="6">Подытог — ${esc(a.name)}
+      (${a.count} чек.)</td><td class="ao-r">${sum(a.sum)}</td></tr>`;
+  }
+  let root = document.getElementById('print-root');
+  if (root) root.remove();
+  root = document.createElement('div');
+  root.id = 'print-root';
+  root.innerHTML = `
+    <div class="print-page ao-page">
+      <div class="ao-head">
+        <div class="ao-org"><b>${esc(meta['ao-org'] || '')}</b></div>
+        <div class="ao-docnum">Сводный авансовый отчёт · Приложение №&nbsp;${rep.total.count} · документов<br>
+          <b>${esc(meta['ao-num'] || '')}</b> от <b>${esc(meta['ao-date'] || '')}</b></div>
+      </div>
+      <h2 class="ao-title">АВАНСОВЫЙ ОТЧЁТ (сводный)</h2>
+      <table class="ao-meta">
+        <tr><td>Организация:</td><td><b>${esc(rep.company ? rep.company.name : '—')}</b></td>
+            <td>ИНН:</td><td>${esc(rep.company?.inn || '—')}</td></tr>
+        <tr><td>Период:</td><td colspan="3">${esc(rep.period.from)} — ${esc(rep.period.to)}</td></tr>
+        <tr><td>Назначение аванса:</td><td colspan="3">${esc(meta['ao-purpose'] || '')}</td></tr>
+      </table>
+      <table class="ao-table">
+        <thead><tr><th>№</th><th>Дата чека</th><th>Подотчётник</th>
+          <th>Наименование (продавец)</th><th>Статья</th><th>Документ</th><th>Сумма, ₽</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="6" class="ao-r"><b>ИТОГО</b></td>
+          <td class="ao-r"><b>${sum(rep.total.sum)}</b></td></tr></tfoot>
+      </table>
+      <p class="ao-note">Приложено кассовых чеков — <b>${rep.total.count}</b> шт. на сумму
+        <b>${sum(rep.total.sum)} ₽</b>. Подотчётных лиц: <b>${rep.by_assignee.length}</b>.</p>
+      <table class="ao-sign">
+        <tr><td>Проверил(а) бухгалтер</td><td class="ao-line">${esc(meta['ao-buh'] || '')}</td>
+            <td>Подпись</td><td class="ao-line"></td></tr>
+      </table>
+      <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>
+    </div>`;
+  document.body.appendChild(root);
+  toast(`Сводный АО: ${rep.total.count} чек(ов), ${rep.by_assignee.length} подотчётник(ов) — «Сохранить как PDF»`, 'ok', '🧾');
+  window.print();
 }
 
 function ao1Print(f, items, meta) {

@@ -39,7 +39,7 @@ from ..models import (Company, FnsLog, MappingSetting, Receipt,
                       ReceiptItem, User)
 from ..schemas import (AssignBulk, ExportRequest, FetchDetailsRequest,
                        ManualReceipt, ReceiptMoveBody, ReceiptPatch,
-                       ScanRequest, VerifyRequest)
+                       AdvanceReportBody, ScanRequest, VerifyRequest)
 from ..services import appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
@@ -846,6 +846,88 @@ def export_receipts(body: ExportRequest, user: User = Depends(require_accountant
     filename = f"ymaster-check-export-{now.strftime('%Y%m%d-%H%M')}.{ext}"
     return Response(content=content, media_type=f"{media}; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/advance-report", summary="Собрать авансовый отчёт за период (бухгалтер+)")
+def advance_report(body: AdvanceReportBody, user: User = Depends(require_accountant),
+                   db: Session = Depends(get_db)):
+    """v1.14.0: чеки периода → структура АО (строки, итоги, разрезы).
+
+    Изоляция пространства через scope_receipts: бухгалтер собирает отчёт
+    только по своей компании, админ — по любой или по всем сразу.
+    """
+    try:
+        d_from = dt.datetime.strptime(body.date_from, "%Y-%m-%d")
+        d_to = dt.datetime.strptime(body.date_to, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59)
+    except ValueError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Период укажите датами ГГГГ-ММ-ДД")
+    if d_from > d_to:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Дата начала позже даты окончания")
+
+    query = scope_receipts(db.query(Receipt), user, body.company_id)
+    if body.receipt_ids:
+        query = query.filter(Receipt.id.in_(body.receipt_ids[:1000]))
+    else:
+        query = query.filter(Receipt.receipt_date >= d_from,
+                             Receipt.receipt_date <= d_to)
+        if body.assignee:
+            query = query.filter(Receipt.assignee == body.assignee.strip())
+    if body.only_valid:
+        query = query.filter(Receipt.fns_status == "valid")
+    rows = query.order_by(Receipt.assignee, Receipt.receipt_date).limit(1000).all()
+
+    company = None
+    cid = body.company_id or user.company_id
+    if cid:
+        c = db.query(Company).get(cid)
+        if c:
+            company = {"id": c.id, "name": c.name, "inn": c.inn}
+    if company is None and rows:
+        cid = rows[0].company_id
+        if cid:
+            c = db.query(Company).get(cid)
+            if c:
+                company = {"id": c.id, "name": c.name, "inn": c.inn}
+
+    items = []
+    total_sum = 0.0
+    by_assignee = {}
+    by_category = {}
+    invalid_cnt = 0
+    for r in rows:
+        d = r.to_dict()
+        person = (d.get("assignee") or d.get("created_by_name") or "—").strip()
+        cat = (d.get("category") or "—").strip()
+        s = float(d.get("total_sum") or 0)
+        total_sum += s
+        a = by_assignee.setdefault(person, {"name": person, "sum": 0.0, "count": 0})
+        a["sum"] += s; a["count"] += 1
+        bcat = by_category.setdefault(cat, {"name": cat, "sum": 0.0, "count": 0})
+        bcat["sum"] += s; bcat["count"] += 1
+        if d.get("fns_status") == "invalid":
+            invalid_cnt += 1
+        items.append({
+            "id": d["id"], "receipt_date": d["receipt_date"],
+            "assignee": person, "merchant_name": d.get("merchant_name") or "",
+            "merchant_inn": d.get("merchant_inn") or "",
+            "fn": d.get("fn") or "", "fd": d.get("fd") or "", "fp": d.get("fp") or "",
+            "operation": d.get("operation"), "category": d.get("category") or "",
+            "total_sum": s, "fns_status": d.get("fns_status"),
+            "exported": d.get("exported"),
+        })
+    return {
+        "period": {"from": body.date_from, "to": body.date_to},
+        "company": company,
+        "rows": items,
+        "total": {"sum": round(total_sum, 2), "count": len(items)},
+        "by_assignee": sorted(by_assignee.values(), key=lambda x: -x["sum"]),
+        "by_category": sorted(by_category.values(), key=lambda x: -x["sum"]),
+        "invalid_count": invalid_cnt,
+        "truncated": len(items) >= 1000,
+    }
 
 
 @router.post("/export-csv", summary="Экспорт CSV для бухгалтерии (бухгалтер+)")

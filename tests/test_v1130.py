@@ -226,12 +226,16 @@ class TestCompanyDelete:
 
 class TestVersion1130:
     def test_versions_synced(self):
+        # версия берётся из config — тест проверяет синхронность всех точек
+        import re
+        cfg = open("app/config.py", encoding="utf-8").read()
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert "app.css?v=1.13.0" in idx and "app.js?v=1.13.0" in idx
+        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v1.13.0" in sw
+        assert f"ymaster-check-v{ver}" in sw
         from app.config import settings
-        assert settings.APP_VERSION == "1.13.0"
+        assert settings.APP_VERSION == ver
 
     def test_ui_has_new_views(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -249,9 +253,9 @@ class TestUiHarnessV1130:
             import pytest
             pytest.skip("node недоступен")
         from tests.test_v1121 import _build_bundle
-        open("/tmp/ymaster_ui_bundle_v1130.js", "w", encoding="utf-8").write(
+        open("/tmp/ymaster_ui_bundle.js", "w", encoding="utf-8").write(
             _build_bundle())
-        r = subprocess.run(["node", "tests/ui_harness_v1130.js"],
+        r = subprocess.run(["node", "tests/ui_harness.js"],
                            capture_output=True, text=True, timeout=120,
                            cwd=".")
         out = (r.stdout + r.stderr)

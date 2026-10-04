@@ -935,3 +935,10 @@ tr.archived-row td { opacity: .55; }
 #cp-inn { letter-spacing: .5px; }
 #cp-checko { white-space: nowrap; }
 .cc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* v1.14.0: сводный авансовый отчёт — строка подытога по сотруднику */
+.print-page .ao-sub td {
+  border-top: 1px dashed #999; font-style: italic; color: #444;
+  background: #f6f6f6;
+}
+.ao-preview { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }

@@ -67,6 +67,20 @@ class VerifyRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
+class AdvanceReportBody(BaseModel):
+    """v1.14.0: сборка авансового отчёта из чеков за период."""
+    company_id: Optional[str] = Field(default=None, max_length=36,
+                                      description="Компания (только админ)")
+    date_from: str = Field(min_length=10, max_length=10, description="ГГГГ-ММ-ДД")
+    date_to: str = Field(min_length=10, max_length=10, description="ГГГГ-ММ-ДД")
+    assignee: Optional[str] = Field(default=None, max_length=200,
+                                    description="Один сотрудник (пусто — все)")
+    receipt_ids: list[str] = Field(default_factory=list, max_length=1000,
+                                   description="Только выбранные чеки")
+    only_valid: bool = Field(default=False,
+                             description="Только чеки, подтверждённые ФНС")
+
+
 class ExportRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=1000)
     format: Literal["json", "xml"] = "json"
