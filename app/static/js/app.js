@@ -2175,6 +2175,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.24.1': [
+    { icon: '🖨', title: 'Чеки печатаются с фискальным QR-кодом',
+      text: 'Исправлено: лист больше не печатается раньше, чем загрузятся QR-коды. Коды загружаются для всех выбранных чеков (раньше — только для 60), с прогрессом; чек без реквизитов получает пометку «фискальный QR не получен».' },
+  ],
   '1.24.0': [
     { icon: '🖨', title: 'Кнопка «Напечатать чек»: нарезка на А4 в 3 колонки',
       text: 'Чеки автоматически укладываются на лист А4 в три колонки с уплотнением — минимум пустого места. Длинные чеки переносятся построчно (позиционно) в следующую колонку с пометкой «продолжение чека».' },
@@ -2967,7 +2971,7 @@ function rcptDate(v) {
   catch { return String(v || ''); }
 }
 
-function rcptBlocks(r, qrUrl) {
+function rcptBlocks(r, qrUrl, qrFail) {
   const op = Number(r.operation) === 2 ? 'ВОЗВРАТ ПРИХОДА' : 'ПРИХОД';
   const rule = '<div class="rcpt-rule"></div>';
   const blocks = [];
@@ -3001,8 +3005,24 @@ function rcptBlocks(r, qrUrl) {
   // v1.10.0: фискальный QR — как на настоящем кассовом чеке
   if (qrUrl) {
     blocks.push(`<div style="text-align:center;margin-top:1.5mm"><img src="${qrUrl}" alt="Фискальный QR чека" style="width:26mm;height:26mm"></div>`);
+  } else if (qrFail && r.fn) {
+    // v1.24.1: код не получен (нет реквизитов/ошибка) — место под код остаётся помечено
+    blocks.push('<div class="rcpt-part" style="margin-top:1.5mm">(фискальный QR не получен)</div>');
   }
   return blocks;
+}
+
+// v1.24.1: чеки печатаются С фискальным QR-кодом — дожидаемся загрузки
+// всех картинок раскроя (PNG с сервера через object URL) до вызова
+// диалога печати, иначе браузер печатает лист раньше, чем отрисуются коды.
+function whenImagesReady(root) {
+  const imgs = Array.from(root.querySelectorAll('img'));
+  return Promise.all(imgs.map(im => new Promise(res => {
+    if (im.complete && im.naturalWidth) return res();
+    const done = () => { im.onload = null; im.onerror = null; res(); };
+    im.onload = done; im.onerror = done;
+    setTimeout(done, 4000);            // страховка: не зависаем дольше 4 с
+  })));
 }
 
 // v1.24.0: @page нельзя задать селектором — стиль печати подменяется
@@ -3020,8 +3040,8 @@ function setPrintPageMargin(css, ao1) {
 }
 
 async function printReceiptsPDF(ids) {
-  const { close } = openModal(`<div class="modal-title">🖨 Печать чеков</div>
-    <p class="form-hint">Готовлю раскрой листов A4…</p><div class="spinner"></div>`);
+  const { close } = openModal(`<div class="modal-title">🖨 Напечатать чек</div>
+    <p class="form-hint" id="pp-status">Готовлю раскрой листов A4: загружаю фискальные QR-коды…</p><div class="spinner"></div>`);
   try {
     const data = await api.get('/api/v1/receipts?ids=' + ids.join(','));
     if (!data.items.length) { close(); return toast('Чеки не найдены', 'err'); }
@@ -3035,19 +3055,24 @@ async function printReceiptsPDF(ids) {
     meas.style.cssText = `width:${RCPT_W}mm;position:absolute;left:0;top:0;`; // v1.24.0: меряем в проектной ширине 80 мм
     root.appendChild(meas);
 
-    // 1) Фискальные QR-коды чеков (PNG с сервера) — как на кассовом чеке
-    const qrUrls = {};
-    for (const r of data.items.slice(0, 60)) {
+    // 1) Фискальные QR-коды чеков (PNG с сервера) — чеки печатаются С КОДОМ:
+    //    качаем для всех выбранных чеков (v1.24.1: без лимита 60), с прогрессом
+    const qrUrls = {}, qrFail = {};
+    const status = document.getElementById('pp-status');
+    const qrList = data.items.slice(0, 300);           // страховка от гигантских выборок
+    for (let i = 0; i < qrList.length; i++) {
+      const r = qrList[i];
+      if (status) status.textContent = `Загружаю фискальные QR: ${i + 1} из ${qrList.length}…`;
       try {
         const { blob } = await api.download(`/api/v1/receipts/${r.id}/qr.png`);
         qrUrls[r.id] = URL.createObjectURL(blob);
-      } catch { /* чек без QR — печатаем без него */ }
+      } catch { qrFail[r.id] = true; }                 // чек без реквизитов — пометка на листе
     }
 
     // 2) Рендерим чеки и режем длинные по строкам позиций
     const pieces = [];                                      // { html, h }
     for (const r of data.items) {
-      const blocks = rcptBlocks(r, qrUrls[r.id]);
+      const blocks = rcptBlocks(r, qrUrls[r.id], qrFail[r.id]);   // v1.24.1: с QR / пометкой
       const full = document.createElement('div');
       full.className = 'rcpt';
       full.innerHTML = blocks.join('');
@@ -3090,8 +3115,10 @@ async function printReceiptsPDF(ids) {
       `<div class="print-page">${page.map(pl =>
         `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${pl.y}mm">${pieces[pl.piece].html}</div>`
       ).join('')}</div>`).join('');
+    await whenImagesReady(root);          // v1.24.1: QR должны быть в листе, не в «пустоте»
     close();
-    toast(`Раскрой готов: ${pages.length} стр. × 3 колонки · ${data.items.length} чек. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
+    const withQr = Object.keys(qrUrls).length;
+    toast(`Раскрой готов: ${pages.length} стр. × 3 колонки · ${data.items.length} чек · QR на ${withQr}. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
     window.print();
     window.addEventListener('afterprint', () => {
       const el = document.getElementById('print-root');

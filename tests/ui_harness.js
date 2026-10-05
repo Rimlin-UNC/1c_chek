@@ -252,6 +252,8 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('Напечатать чек') &&
      !bundle.includes('Печать PDF (выбранные)'),
      'печать: кнопка «Напечатать чек»');
+  ok(bundle.includes('whenImagesReady') && bundle.includes('Фискальные QR'),
+     'v1.24.1: печать ждёт загрузки QR');
   // второй прогон — два сотрудника → сводная форма с подытогами
   root._cls['.modal-slot'].innerHTML = '';
   await sandbox.openAO1Modal();
