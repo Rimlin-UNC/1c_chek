@@ -106,6 +106,8 @@ def _ensure_schema() -> None:
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
         ],
         "receipts": [
+            # v1.23.0: полные данные чека получены из сервиса проверки
+            ("full_data", "ALTER TABLE receipts ADD COLUMN full_data BOOLEAN DEFAULT 0"),
             ("assignee",
              "ALTER TABLE receipts ADD COLUMN assignee VARCHAR(200) DEFAULT ''"),
             ("comment",

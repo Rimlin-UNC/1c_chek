@@ -264,6 +264,10 @@ def list_receipts(
     q: str | None = Query(None, description="Поиск по ФН/ФД/ФП/сотруднику"),
     ids: str | None = Query(None, description="CSV UUID — выборка конкретных чеков (печать/экспорт)"),
     assignee: str | None = Query(None, description="Фильтр по сотруднику"),
+    creator: str | None = Query(None, max_length=36,
+                                description="v1.23.0: кто добавил чек (id пользователя)"),
+    full_data: bool | None = Query(None,
+                                   description="v1.23.0: полные данные чека получены?"),
     category: str | None = Query(None, description="Статья расходов"),
     notified: bool | None = Query(None, description="Только с уведомлениями сотрудников"),
     attention: bool | None = Query(None, description="Требуют внимания: не обработан >3 дней"),
@@ -294,6 +298,10 @@ def list_receipts(
         query = query.filter(Receipt.exported == exported)
     if assignee:
         query = query.filter(Receipt.assignee.ilike(f"%{assignee.strip()}%"))
+    if creator:
+        query = query.filter(Receipt.created_by == creator.strip())      # v1.23.0
+    if full_data is not None:                                            # v1.23.0
+        query = query.filter(Receipt.full_data == full_data)
     if category:
         # Ищем по нормализованному полю: работает и с кириллицей в любом регистре
         query = query.filter(Receipt.category_lc.like(f"%{category.strip().casefold()}%"))
@@ -345,6 +353,38 @@ def list_receipts(
 # --------------------------------------------------------------------------
 #  Карточка / изменение / удаление
 # --------------------------------------------------------------------------
+@router.get("/creators", summary="Кто добавлял чеки (для выпадающего списка, бухгалтер+)")
+def list_creators(company_id: str | None = Query(None, max_length=36),
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """v1.23.0: сотрудники, которые ДОБАВЛЯЛИ чеки в выбранном пространстве —
+    выпадающий список «Кто добавил» в базе чеков (пустой список = никто)."""
+    query = scope_receipts(db.query(Receipt), user, company_id)
+    rows = (query.with_entities(Receipt.created_by,
+                                func.count(Receipt.id))
+            .filter(Receipt.created_by.isnot(None))
+            .group_by(Receipt.created_by).all())
+    ids = [uid for uid, _n in rows]
+    cnt = {uid: n for uid, n in rows}
+    users = db.query(User).filter(User.id.in_(ids)).all() if ids else []
+    by_id = {u.id: u for u in users}
+    # редкий случай: пользователь удалён — показываем «(удалён)»
+    out = []
+    for uid2 in ids:
+        u = by_id.get(uid2)
+        out.append({
+            "id": uid2,
+            "name": (u.full_name or u.username) if u else "(пользователь удалён)",
+            "username": u.username if u else "",
+            "role": u.role if u else "",
+            "count": int(cnt.get(uid2, 0)),
+        })
+    out.sort(key=lambda x: -x["count"])
+    return out
+
+
+
+
 @router.get("/{receipt_id}", summary="Чек с позициями")
 def get_receipt(receipt_id: str,
                 user: User = Depends(get_current_user),
@@ -567,6 +607,8 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
         receipt.fns_message = res.message
         db.commit()
         return
+    # v1.23.0: полные данные чека получены — список скрывает кнопку запроса
+    receipt.full_data = bool(res.found)
     human_edited = receipt.details_source == "manual_edit"
 
     def applyable(machine_val, human_val=None) -> bool:
@@ -904,15 +946,49 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
     company = None
     cid = body.company_id or user.company_id
     if cid:
-        c = db.query(Company).get(cid)
+        c = db.get(Company, cid)
         if c:
             company = {"id": c.id, "name": c.name, "inn": c.inn}
     if company is None and rows:
         cid = rows[0].company_id
         if cid:
-            c = db.query(Company).get(cid)
+            c = db.get(Company, cid)
             if c:
                 company = {"id": c.id, "name": c.name, "inn": c.inn}
+    # v1.23.0: реквизиты для формы АО-1 — из КАРТОЧКИ ПРЕДПРИЯТИЯ (ЕГРЮЛ/ЕГРИП),
+    # структура в стиле 1С (готовность к интеграции, см. docs/ao1-1c.md)
+    requisites = {}
+    if cid:
+        c = db.get(Company, cid)
+        if c:
+            import json as _json
+            try:
+                card = _json.loads(c.card_json or "{}")
+            except ValueError:
+                card = {}
+            requisites = {
+                "Организация": {
+                    "НаименованиеПолное": card.get("name_full") or c.name,
+                    "НаименованиеСокращенное": c.short_name or c.name,
+                    "ИНН": card.get("inn") or (c.inn or ""),
+                    "КПП": card.get("kpp") or "",
+                    "ОГРН": card.get("ogrn") or "",
+                    "ОКПО": card.get("okpo") or "",
+                    "Адрес": card.get("address") or "",
+                    "Телефон": card.get("phone") or "",
+                    "Руководитель": card.get("director") or "",
+                },
+            }
+    # подотчётное лицо: должность/табельный из учётной записи (по ФИО)
+    person = None
+    if body.assignee:
+        pu = (db.query(User)
+              .filter(or_(User.full_name == body.assignee.strip(),
+                          User.username == body.assignee.strip())).first())
+        if pu:
+            person = {"ФИО": pu.full_name or pu.username,
+                      "Должность": pu.post if hasattr(pu, "post") else "",
+                      "ТабельныйНомер": (pu.tabelny or "") if hasattr(pu, "tabelny") else ""}
 
     items = []
     total_sum = 0.0
@@ -921,11 +997,11 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
     invalid_cnt = 0
     for r in rows:
         d = r.to_dict()
-        person = (d.get("assignee") or d.get("created_by_name") or "—").strip()
+        pname = (d.get("assignee") or d.get("created_by_name") or "—").strip()
         cat = (d.get("category") or "—").strip()
         s = float(d.get("total_sum") or 0)
         total_sum += s
-        a = by_assignee.setdefault(person, {"name": person, "sum": 0.0, "count": 0})
+        a = by_assignee.setdefault(pname, {"name": pname, "sum": 0.0, "count": 0})
         a["sum"] += s; a["count"] += 1
         bcat = by_category.setdefault(cat, {"name": cat, "sum": 0.0, "count": 0})
         bcat["sum"] += s; bcat["count"] += 1
@@ -933,7 +1009,7 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
             invalid_cnt += 1
         items.append({
             "id": d["id"], "receipt_date": d["receipt_date"],
-            "assignee": person, "merchant_name": d.get("merchant_name") or "",
+            "assignee": pname, "merchant_name": d.get("merchant_name") or "",
             "merchant_inn": d.get("merchant_inn") or "",
             "fn": d.get("fn") or "", "fd": d.get("fd") or "", "fp": d.get("fp") or "",
             "operation": d.get("operation"), "category": d.get("category") or "",
@@ -943,6 +1019,8 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
     return {
         "period": {"from": body.date_from, "to": body.date_to},
         "company": company,
+        "requisites": requisites,     # v1.23.0: реквизиты из карточки (1С-стиль)
+        "person": person,             # v1.23.0: подотчётное лицо (1С-стиль)
         "rows": items,
         "total": {"sum": round(total_sum, 2), "count": len(items)},
         "by_assignee": sorted(by_assignee.values(), key=lambda x: -x["sum"]),

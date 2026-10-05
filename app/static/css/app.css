@@ -1388,3 +1388,53 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   .update-banner { animation: ub-in .25s ease-out; }
   @keyframes ub-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 }
+
+/* ==========================================================================
+   v1.23.0: ОФИЦИАЛЬНАЯ ФОРМА АО-1 (Постановление Госкомстата № 55,
+   ОКУД 0302001) — печать: лицевая + оборотная сторона. Шрифты и цифры —
+   по стилю «Ямастер» (табличные цифры, чёткие линии).
+   ========================================================================== */
+.ao1-page { position: relative; }
+.ao1-codes { width: 100%; border-collapse: collapse; font-size: 11px; color: #6b6b6b; }
+.ao1-codes td { border: 0; padding: 2px 4px; }
+.ao1-codes .ao1-org { width: 62%; border: 1px solid #bbb; padding: 6px 8px; font-size: 13px; color: #333; }
+.ao1-lbl { border: 1px solid #bbb; padding: 4px 8px; }
+.ao1-code { border: 1px solid #bbb; padding: 4px 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: #4B0082; }
+.ao1-nums { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12.5px; }
+.ao1-nums td { border: 1px solid #bbb; padding: 5px 8px; color: #333; }
+.ao1-approve { float: right; width: 34%; margin-top: 8px; font-size: 11.5px;
+  color: #333; line-height: 1.6; border: 1px dashed #bbb; padding: 8px 10px; }
+.ao1-title { text-align: center; font-size: 17px; margin: 14px 0 4px;
+  color: #333; letter-spacing: .04em; clear: none; }
+.ao1-meta, .ao1-calc { width: 100%; border-collapse: collapse; font-size: 12px;
+  margin-top: 10px; clear: both; }
+.ao1-meta td { border: 1px solid #999; padding: 5px 8px; color: #333; font-size: 13px; }
+.ao1-under { font-size: 9.5px; color: #8a8a8a; font-weight: 400; }
+.ao1-calc th { border: 1px solid #999; background: #f0f0f0; padding: 4px 6px;
+  font-size: 10.5px; font-weight: 600; }
+.ao1-calc td { border: 1px solid #999; padding: 4px 8px; color: #333;
+  font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.ao1-calc tr.ao1-total td { font-weight: 700; background: #fafafa; }
+.ao1-c, .ao1-r { text-align: center; }
+.ao1-r { text-align: right; white-space: nowrap; }
+.ao1-line { font-size: 12.5px; color: #333; margin: 8px 0 4px; }
+.ao1-signs { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+.ao1-signs td { border: 0; padding: 8px 6px 2px; color: #333; }
+.ao1-sigline { border-bottom: 1px solid #333; width: 130px; }
+.ao1-sig { font-size: 9.5px; color: #8a8a8a; }
+.ao1-receipt { border: 1px solid #333; padding: 8px 12px; margin-top: 12px;
+  font-size: 12px; color: #333; width: 70%; }
+.ao1-sigrow { margin-top: 8px; }
+.ao1-backtitle { text-align: center; font-size: 13px; color: #333;
+  margin: 0 0 10px; letter-spacing: .03em; }
+.ao1-back-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ao1-back-table th { border: 1px solid #999; background: #f0f0f0;
+  padding: 4px 6px; font-size: 10px; }
+.ao1-back-table td { border: 1px solid #999; padding: 4px 7px; color: #333;
+  font-variant-numeric: tabular-nums; }
+.ao1-back-table tfoot td { font-weight: 700; }
+@media print {
+  .ao1-page { page-break-after: always; }
+  .ao1-back { page-break-after: auto; }
+}

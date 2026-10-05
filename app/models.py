@@ -192,6 +192,10 @@ class Receipt(Base):
     comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
     # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
+    # v1.23.0: полные данные чека получены из сервиса проверки (позиции,
+    # магазин, наличные/безнал) — список показывает это, кнопка запроса скрыта
+    full_data: Mapped[bool] = mapped_column(Boolean, default=False,
+                                            server_default="0")
     merchant_name: Mapped[str] = mapped_column(String(500), default="")     # наименование магазина/ИП
     merchant_inn: Mapped[str] = mapped_column(String(20), default="")       # ИНН продавца
     merchant_address: Mapped[str] = mapped_column(String(500), default="")  # адрес места расчёта
@@ -223,6 +227,7 @@ class Receipt(Base):
             "total_sum": self.total_sum,
             "personal_sum": self.personal_sum or 0.0,
             "operation": self.operation,
+            "full_data": bool(self.full_data),
             "status": self.status,
             "fns_status": self.fns_status,
             "fns_checked_at": self.fns_checked_at.isoformat() if self.fns_checked_at else None,

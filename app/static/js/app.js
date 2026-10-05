@@ -2175,6 +2175,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.23.0': [
+    { icon: '🔎', title: 'База чеков: фильтры «Кто добавил» и «Данные чека»',
+      text: 'Новый выпадающий список «Кто добавил» — только те сотрудники, которые реально добавляли чеки в выбранной компании (с количеством). Фильтр «Данные чека» разделяет чеки, по которым полные данные уже получены, и те, что ещё ждут запроса. У чека с полученными данными кнопка запроса скрыта — осталось только изменение.' },
+    { icon: '🧾', title: 'Авансовый отчёт — официальная форма АО-1 как в 1С',
+      text: 'Форма приведена к унифицированной АО-1 (Постановление Госкомстата № 55, ОКУД 0302001): лицевая сторона с реквизитами организации из карточки предприятия, расчётом аванса и бухгалтерской записью, оборотная сторона с документами расходов, расписка и «Утверждаю». Реквизиты подставляются из карточки компании. Добавлена кнопка «JSON для 1С» — структура документа в стиле 1С для будущей интеграции.' },
+  ],
   '1.22.0': [
     { icon: '⬇', title: 'Свежие данные ЕГРЮЛ/ЕГРИП — скачивание из карточки компании',
       text: 'В карточке компании появилась кнопка «Скачать свежие данные»: программа сначала запрашивает официальную выписку с сайта ФНС (egrul.nalog.ru, PDF), а если она недоступна с сервера — берёт свежую карточку из Checko.ru и формирует печатную выписку. Карточка компании в системе при этом обновляется.' },
@@ -2621,6 +2627,12 @@ async function viewReceipts(container) {
             <option value="false">Ожидают выгрузки</option><option value="true">Выгружены</option></select></label>
         <label class="field"><span>Сотрудник</span>
           <input id="f-assignee" placeholder="Иванов"></label>
+        <label class="field"><span>Кто добавил</span>
+          <select id="f-creator"><option value="">все добавившие</option></select></label>
+        <label class="field"><span>Данные чека</span>
+          <select id="f-full"><option value="">все</option>
+            <option value="true">📥 полные данные получены</option>
+            <option value="false">⏳ ожидают данных</option></select></label>
         <label class="field"><span>Статья расходов</span>
           <input id="f-category" placeholder="Канцелярия" list="f-cats">
           <datalist id="f-cats">${(viewReceipts._cats || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
@@ -2657,6 +2669,7 @@ async function viewReceipts(container) {
 
   const filters = {
     q: '', status: '', fns_status: '', exported: '', assignee: '',
+    creator: '', full_data: '',
     category: '', notified: '', date_from: '', date_to: '', page: 1,
   };
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
@@ -2679,6 +2692,18 @@ async function viewReceipts(container) {
     const cats = new Set(viewReceipts._cats || []);
     data.items.forEach(x => { if (x.category) cats.add(x.category); });
     viewReceipts._cats = [...cats];
+    // v1.23.0: селектор «Кто добавил» — те, кто добавлял чеки этой компании
+    if (acc && !viewReceipts._creatorsLoaded) {
+      viewReceipts._creatorsLoaded = true;
+      api.get('/api/v1/receipts/creators' + (companyIdParam() ? '?company_id=' + companyIdParam() : ''))
+        .then(list => {
+          const sel = $('#f-creator');
+          if (!sel) return;
+          sel.innerHTML = '<option value="">все добавившие</option>' +
+            list.map(u => `<option value="${esc(u.id)}">${esc(u.name)} (${u.count})</option>`).join('');
+          sel.value = viewReceipts._creatorKeep || '';
+        }).catch(() => {});
+    }
     const el = $('#receipts-table');
     if (!data.items.length) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
@@ -2728,9 +2753,12 @@ async function viewReceipts(container) {
     const isOwner = r.created_by_id === state.me.id;
     const notifiedMark = r.notified ? ' <span title="Сотрудник уведомляет бухгалтерию">🔔</span>' : '';
     const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    // v1.23.0: полные данные получены → запрос не нужен, только изменение
     const actions = acc
       ? `<td style="white-space:nowrap">
-           <button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}" title="Получить полные данные чека из сервиса проверки">📥</button>
+           ${r.full_data
+             ? '<span class="form-hint" title="Полные данные чека получены из сервиса проверки">📥✓</span>'
+             : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}" title="Получить полные данные чека из сервиса проверки">📥</button>`}
            <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
          </td>`
       : (isOwner ? `<td><button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
@@ -2804,6 +2832,9 @@ async function viewReceipts(container) {
     if (acc) {
       filters.exported = $('#f-exp').value;
       filters.assignee = $('#f-assignee').value.trim();
+      filters.creator = $('#f-creator') ? $('#f-creator').value : '';
+      viewReceipts._creatorKeep = filters.creator;
+      filters.full_data = $('#f-full') ? $('#f-full').value : '';
       filters.category = $('#f-category') ? $('#f-category').value.trim() : '';
       filters.notified = $('#f-notified') ? $('#f-notified').value : '';
     }
@@ -3097,10 +3128,24 @@ async function openAO1Modal(opts = {}) {
         <datalist id="ao-names">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
       <label class="field"><span>Должность подотчётного</span>
         <input id="ao-post" placeholder="менеджер"></label>
+      <label class="field"><span>Структурное подразделение</span>
+        <input id="ao-dept" placeholder="администрация"></label>
       <label class="field"><span>Назначение аванса</span>
         <input id="ao-purpose" value="На хозяйственные расходы"></label>
+      <label class="field"><span>Получено из кассы, ₽</span>
+        <input id="ao-cash" type="number" min="0" step="0.01" value="0"></label>
+      <label class="field"><span>Получено на карту, ₽</span>
+        <input id="ao-card" type="number" min="0" step="0.01" value="0"></label>
+      <label class="field"><span>Счёт Дт (аванс)</span>
+        <input id="ao-dt" value="71.01"></label>
+      <label class="field"><span>Счёт Кт (выдача)</span>
+        <input id="ao-kt" value="50.01"></label>
+      <label class="field"><span>Счёт учёта расходов</span>
+        <input id="ao-acc" value="44.01"></label>
       <label class="field"><span>Бухгалтер (ФИО для подписи)</span>
         <input id="ao-buh" value="${esc(state.me?.full_name || '')}"></label>
+      <label class="field"><span>Руководитель (ФИО для «Утверждаю»)</span>
+        <input id="ao-head" placeholder="Иванов И.И."></label>
     </div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 4px">
       ${selCnt ? `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ao-onlysel" style="width:auto">
@@ -3140,6 +3185,13 @@ async function openAO1Modal(opts = {}) {
         'ao-post': slot.querySelector('#ao-post').value,
         'ao-purpose': slot.querySelector('#ao-purpose').value,
         'ao-buh': slot.querySelector('#ao-buh').value,
+        'ao-dept': slot.querySelector('#ao-dept') ? slot.querySelector('#ao-dept').value : '',
+        'ao-head': slot.querySelector('#ao-head') ? slot.querySelector('#ao-head').value : '',
+        'ao-cash': slot.querySelector('#ao-cash') ? slot.querySelector('#ao-cash').value || '0' : '0',
+        'ao-card': slot.querySelector('#ao-card') ? slot.querySelector('#ao-card').value || '0' : '0',
+        'ao-dt': slot.querySelector('#ao-dt') ? slot.querySelector('#ao-dt').value.trim() : '71.01',
+        'ao-kt': slot.querySelector('#ao-kt') ? slot.querySelector('#ao-kt').value.trim() : '50.01',
+        'ao-acc': slot.querySelector('#ao-acc') ? slot.querySelector('#ao-acc').value.trim() : '44.01',
       });
     } catch (err) {
       toast(err.message, 'err');
@@ -3150,6 +3202,7 @@ async function openAO1Modal(opts = {}) {
 
 // --- v1.14.0: предпросмотр собранного отчёта -------------------------------
 function aoShowPreview(slot, rep, meta) {
+  aoShowPreview._meta = meta;   // v1.23.0: поля формы для JSON
   const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
   const many = rep.by_assignee.length > 1 ||
     (rep.by_assignee.length === 1 && rep.by_assignee[0].name === '—');
@@ -3175,13 +3228,22 @@ function aoShowPreview(slot, rep, meta) {
       <button class="btn" id="ao-back">← Изменить параметры</button>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" id="ao-csv">⬇ CSV (Excel)</button>
+        <button class="btn" id="ao-json" title="Структура документа в стиле 1С — для интеграции">⬇ JSON для 1С</button>
         <button class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
       </div>
     </div>`;
   slot.querySelector('#ao-back').onclick = () => { $('#modal-root').classList.add('hidden'); openAO1Modal(); };
   slot.querySelector('#ao-csv').onclick = () => aoCsvDownload(rep);
+  // v1.23.0: JSON в стиле 1С (интеграция готова, поля «как в 1С»)
+  slot.querySelector('#ao-json').onclick = () => {
+    const meta2 = aoShowPreview._meta || {};
+    const j = ao1Json(rep, meta2, Number(meta2['ao-cash'] || 0), Number(meta2['ao-card'] || 0));
+    const blob = new Blob([JSON.stringify(j, null, 2)], { type: 'application/json;charset=utf-8' });
+    downloadBlob(blob, `avansovy-otchet-1c-${rep.period.from}_${rep.period.to}.json`);
+    toast('JSON для 1С скачан — структура готова к загрузке', 'ok', '⬇ 1С');
+  };
   slot.querySelector('#ao-print').onclick = () => {
-    if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep.rows, { ...meta, assignee: rep.by_assignee[0].name, month: rep.period.from.slice(0, 7) });
+    if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep, { ...meta, assignee: rep.by_assignee[0].name, month: rep.period.from.slice(0, 7) });
   };
 }
 
@@ -3267,58 +3329,185 @@ function aoMultiPrint(rep, meta) {
   window.print();
 }
 
-function ao1Print(f, items, meta) {
-  const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
+// ==========================================================================
+// v1.23.0: ПЕЧАТЬ АО-1 по унифицированной форме (Постановление Госкомстата
+// РФ от 01.08.2001 № 55, ОКУД 0302001): лицевая сторона (реквизиты
+// организации — из КАРТОЧКИ ПРЕДПРИЯТИЯ, расчёт аванса, бухгалтерская
+// запись, утверждение, расписка) + оборотная сторона (документы расходов).
+// Данные структурированы в стиле 1С — готово к интеграции (JSON для 1С).
+// ==========================================================================
+function ao1Money(n) { return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
+
+function ao1Json(rep, meta, cash, card) {
+  const total = rep.rows.reduce((a, r) => a + (r.total_sum || 0), 0);
+  const org = (rep.requisites && rep.requisites['Организация']) || {};
+  const spent = total;
+  const got = (Number(cash) || 0) + (Number(card) || 0);
+  const rest = Math.max(0, Math.round((got - spent) * 100) / 100);
+  const over = Math.max(0, Math.round((spent - got) * 100) / 100);
+  return {
+    АвансовыйОтчет: {
+      НомерДокумента: meta['ao-num'] || '',
+      ДатаДокумента: meta['ao-date'] || '',
+      ОтчетныйПериод: meta.month || (rep.period ? rep.period.from : ''),
+      Организация: {
+        НаименованиеПолное: org['НаименованиеПолное'] || meta['ao-org'] || '',
+        НаименованиеСокращенное: org['НаименованиеСокращенное'] || '',
+        ИНН: org['ИНН'] || '', КПП: org['КПП'] || '',
+        ОГРН: org['ОГРН'] || '', ОКПО: org['ОКПО'] || '',
+        Адрес: org['Адрес'] || '', Телефон: org['Телефон'] || '',
+        Руководитель: org['Руководитель'] || '',
+      },
+      СтруктурноеПодразделение: meta['ao-dept'] || '',
+      ПодотчетноеЛицо: rep.person || { ФИО: meta.assignee || '' },
+      НазначениеАванса: meta['ao-purpose'] || '',
+      Суммы: {
+        ПолученоИзКассы: ao1Money(cash), ПолученоНаКарту: ao1Money(card),
+        ИтогоПолучено: ao1Money(got), Израсходовано: ao1Money(spent),
+        Остаток: ao1Money(rest), Перерасход: ao1Money(over),
+        СчетДт: meta['ao-dt'] || '71.01', СчетКт: meta['ao-kt'] || '50.01',
+      },
+      Документы: rep.rows.map((r, i) => ({
+        НомерСтроки: i + 1,
+        ДатаДокумента: r.receipt_date ? String(r.receipt_date).slice(0, 10) : '',
+        НомерДокумента: 'ФД №' + (r.fd || '—'),
+        НаименованиеДокумента: 'Кассовый чек',
+        НаименованиеРасхода: (r.merchant_name || 'Товары (по чеку)') +
+          (r.category ? ' — ' + r.category : ''),
+        Продавец: r.merchant_name || '', ИННПродавца: r.merchant_inn || '',
+        ФН: r.fn || '', ФД: r.fd || '', ФП: r.fp || '',
+        Сумма: ao1Money(r.total_sum),
+        СтатьяРасходов: r.category || '',
+        СчетУчета: meta['ao-acc'] || '44.01',
+      })),
+      Итого: { Сумма: ao1Money(total), КоличествоДокументов: rep.rows.length,
+               Листов: Math.max(1, Math.ceil(rep.rows.length / 18)) },
+      ГлавныйБухгалтер: meta['ao-buh'] || '',
+      Руководитель: meta['ao-head'] || '',
+      Источник: 'Ямастер Чек v' + (state.appVersion || ''),
+    },
+  };
+}
+
+function ao1Print(f, rep, meta) {
+  const items = rep.rows;
+  const sum = ao1Money;
   const total = items.reduce((a, r) => a + (r.total_sum || 0), 0);
-  const rows = items.map((r, i) => `<tr>
-      <td class="ao-c">${i + 1}</td>
-      <td class="ao-c">${fmtDate(r.receipt_date)}</td>
-      <td class="ao-c">Чек ФД №${esc(r.fd || '—')}${AO_DOC_NAMES[r.operation] ? ' (' + AO_DOC_NAMES[r.operation] + ')' : ''}</td>
-      <td>${esc(r.merchant_name || 'Товары (по чеку)')}</td>
-      <td class="ao-c">${esc(r.category || '—')}</td>
-      <td class="ao-r">${sum(r.total_sum)}</td>
+  const cash = Number(meta['ao-cash'] || 0), card = Number(meta['ao-card'] || 0);
+  const got = cash + card;
+  const rest = Math.max(0, Math.round((got - total) * 100) / 100);
+  const over = Math.max(0, Math.round((total - got) * 100) / 100);
+  const org = (rep.requisites && rep.requisites['Организация']) || {};
+  const person = rep.person || {};
+  const fio = person['ФИО'] || meta.assignee || '—';
+  const dash = '—';
+  const dtRu = (s) => s ? fmtDate(s) : dash;
+  const rowsBack = items.map((r, i) => `<tr>
+      <td class="ao1-c">${i + 1}</td>
+      <td class="ao1-c">${dtRu(r.receipt_date)}</td>
+      <td class="ao1-c">ФД №${esc(r.fd || dash)}</td>
+      <td>Кассовый чек${r.merchant_name ? ': ' + esc(r.merchant_name) : ''}${r.category ? ' — ' + esc(r.category) : ''}</td>
+      <td class="ao1-r">${sum(r.total_sum)}</td>
+      <td class="ao1-c">${esc(meta['ao-acc'] || '44.01')}</td>
+      <td class="ao1-c">${esc(meta['ao-acc'] || '44.01')}</td>
     </tr>`).join('');
   let root = document.getElementById('print-root');
   if (root) root.remove();
   root = document.createElement('div');
   root.id = 'print-root';
   root.innerHTML = `
-    <div class="print-page ao-page">
-      <div class="ao-head">
-        <div class="ao-org"><b>${esc(meta['ao-org'] || '')}</b></div>
-        <div class="ao-docnum">Приложение №&nbsp;${items.length} · документов<br>
-          <b>${esc(meta['ao-num'] || '')}</b> от <b>${esc(meta['ao-date'] || '')}</b></div>
+    <div class="print-page ao1-page">
+      <table class="ao1-codes"><tr>
+        <td></td><td class="ao1-lbl">Форма по ОКУД</td><td class="ao1-code">0302001</td></tr>
+        <tr><td class="ao1-org"><b>${esc(org['НаименованиеПолное'] || meta['ao-org'] || '')}</b>
+              <div class="ao1-under">наименование организации</div></td>
+            <td class="ao1-lbl">по ОКПО</td><td class="ao1-code">${esc(org['ОКПО'] || dash)}</td></tr>
+      </table>
+      <table class="ao1-nums">
+        <tr><td class="ao1-cell">Структурное подразделение<br><b>${esc(meta['ao-dept'] || dash)}</b></td>
+            <td class="ao1-cell">Номер документа<br><b>${esc(meta['ao-num'] || dash)}</b></td>
+            <td class="ao1-cell">Дата составления<br><b>${esc(meta['ao-date'] || dash)}</b></td>
+            <td class="ao1-cell">Отчётный период<br><b>${esc(meta.month || '')}</b></td></tr>
+      </table>
+      <div class="ao1-approve">УТВЕРЖДАЮ<br>
+        Руководитель ${esc(org['Руководитель'] || meta['ao-head'] || '')}
+        <span class="ao1-sig">подпись</span>
+        <span class="ao1-sig">расшифровка подписи</span>
+        «___» ____________ 20___ г.</div>
+      <h2 class="ao1-title">АВАНСОВЫЙ ОТЧЁТ</h2>
+      <table class="ao1-meta">
+        <tr><td>Подотчётное лицо</td><td colspan="3"><b>${esc(fio)}</b>
+              <div class="ao1-under">фамилия, инициалы</div></td>
+            <td>Табельный номер</td><td>${esc(person['ТабельныйНомер'] || dash)}</td></tr>
+        <tr><td>Профессия (должность)</td><td colspan="3">${esc(person['Должность'] || meta['ao-post'] || dash)}</td>
+            <td>Подразделение</td><td>${esc(meta['ao-dept'] || dash)}</td></tr>
+        <tr><td>Назначение аванса</td><td colspan="5">${esc(meta['ao-purpose'] || '')}</td></tr>
+      </table>
+      <table class="ao1-calc">
+        <thead><tr><th rowspan="2">Наименование показателя</th><th rowspan="2">Сумма, руб. коп.</th>
+          <th colspan="4">Бухгалтерская запись</th></tr>
+          <tr><th>Дебет<br>счёт</th><th>сумма</th><th>Кредит<br>счёт</th><th>сумма</th></tr></thead>
+        <tbody>
+          <tr><td>Предыдущий аванс — остаток</td><td class="ao1-r">${dash}</td><td colspan="4" class="ao1-c">${dash}</td></tr>
+          <tr><td>Предыдущий аванс — перерасход</td><td class="ao1-r">${dash}</td><td colspan="4" class="ao1-c">${dash}</td></tr>
+          <tr><td>Получен аванс — 1. из кассы</td><td class="ao1-r">${sum(cash)}</td>
+              <td class="ao1-c">${esc(meta['ao-dt'] || '71.01')}</td><td class="ao1-r">${sum(cash)}</td>
+              <td class="ao1-c">${esc(meta['ao-kt'] || '50.01')}</td><td class="ao1-r">${sum(cash)}</td></tr>
+          <tr><td>&nbsp;&nbsp;&nbsp;2. на банковскую карту</td><td class="ao1-r">${sum(card)}</td>
+              <td class="ao1-c">${esc(meta['ao-dt'] || '71.01')}</td><td class="ao1-r">${sum(card)}</td>
+              <td class="ao1-c">51</td><td class="ao1-r">${sum(card)}</td></tr>
+          <tr class="ao1-total"><td>Итого получено</td><td class="ao1-r">${sum(got)}</td><td colspan="4"></td></tr>
+          <tr><td>Израсходовано</td><td class="ao1-r">${sum(total)}</td>
+              <td class="ao1-c">${esc(meta['ao-acc'] || '44.01')}</td><td class="ao1-r">${sum(total)}</td>
+              <td class="ao1-c">${esc(meta['ao-dt'] || '71.01')}</td><td class="ao1-r">${sum(total)}</td></tr>
+          <tr><td>Остаток</td><td class="ao1-r">${rest ? sum(rest) : dash}</td><td colspan="4" class="ao1-c">${rest ? '' : dash}</td></tr>
+          <tr><td>Перерасход</td><td class="ao1-r">${over ? sum(over) : dash}</td><td colspan="4" class="ao1-c">${over ? '' : dash}</td></tr>
+        </tbody>
+      </table>
+      <p class="ao1-line">Приложение <b>${items.length}</b> документов на
+        <b>${Math.max(1, Math.ceil(items.length / 18))}</b> лист(ах)</p>
+      <p class="ao1-line">Отчёт проверен. К утверждению в сумме
+        <b>${sum(total)}</b> руб. (${ruMoney(total)}).</p>
+      <table class="ao1-signs">
+        <tr><td>Главный бухгалтер</td><td class="ao1-sigline"></td><td class="ao1-sig">подпись</td>
+            <td class="ao1-sigline">${esc(meta['ao-buh'] || '')}</td><td class="ao1-sig">расшифровка</td></tr>
+        <tr><td>Бухгалтер (принял отчёт)</td><td class="ao1-sigline"></td><td class="ao1-sig">подпись</td>
+            <td class="ao1-sigline">${esc(meta['ao-buh'] || '')}</td><td class="ao1-sig">расшифровка</td></tr>
+      </table>
+      <p class="ao1-line">${rest ? `Остаток внесён в кассу в сумме <b>${sum(rest)}</b> руб.` :
+        (over ? `Перерасход выдан в сумме <b>${sum(over)}</b> руб.` : 'Остаток/перерасход отсутствуют.')}</p>
+      <div class="ao1-receipt">
+        <b>Расписка.</b> Принят к проверке от <b>${esc(fio)}</b> авансовый отчёт
+        № <b>${esc((meta['ao-num'] || dash).split('-').pop())}</b> от <b>${esc(meta['ao-date'] || dash)}</b>
+        на сумму <b>${sum(total)}</b> руб., документов — <b>${items.length}</b> на
+        <b>${Math.max(1, Math.ceil(items.length / 18))}</b> листах.
+        <div class="ao1-sigrow">Бухгалтер <span class="ao1-sigline"></span> подпись <span class="ao1-sigline"></span></div>
       </div>
-      <h2 class="ao-title">АВАНСОВЫЙ ОТЧЁТ № ${esc((meta['ao-num'] || '').split('-').pop())}</h2>
-      <table class="ao-meta">
-        <tr><td>Подотчётное лицо:</td><td><b>${esc(meta.assignee || '')}</b></td>
-            <td>Должность:</td><td>${esc(meta['ao-post'] || '—')}</td></tr>
-        <tr><td>Назначение аванса:</td><td colspan="3">${esc(meta['ao-purpose'] || '')}</td></tr>
-        <tr><td>Отчётный период:</td><td colspan="3">${esc(meta.month || '')}</td></tr>
+      <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')} · лицевая сторона</p>
+    </div>
+    <div class="print-page ao1-page ao1-back">
+      <h3 class="ao1-backtitle">Оборотная сторона формы № АО-1</h3>
+      <table class="ao1-back-table">
+        <thead><tr><th rowspan="2">№ п/п</th><th colspan="2">Документ, подтверждающий расходы</th>
+          <th rowspan="2">Наименование документа (расхода)</th>
+          <th rowspan="2">Сумма расхода, руб. коп.</th>
+          <th colspan="2">Дебет счёта, субсчёта</th></tr>
+          <tr><th>дата</th><th>номер</th><th>по отчёту</th><th>принята к учёту</th></tr></thead>
+        <tbody>${rowsBack}</tbody>
+        <tfoot><tr><td colspan="4" class="ao1-r"><b>ИТОГО</b></td>
+          <td class="ao1-r"><b>${sum(total)}</b></td><td colspan="2"></td></tr></tfoot>
       </table>
-      <table class="ao-table">
-        <thead><tr><th>№</th><th>Дата чека</th><th>Документ</th>
-          <th>Наименование (продавец)</th><th>Статья расходов</th><th>Сумма, ₽</th></tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr><td colspan="5" class="ao-r"><b>ИТОГО</b></td>
-          <td class="ao-r"><b>${sum(total)}</b></td></tr></tfoot>
+      <table class="ao1-signs" style="margin-top:26px">
+        <tr><td>Отчёт составил(а), подотчётное лицо</td><td class="ao1-sigline"></td>
+            <td class="ao1-sig">подпись</td><td class="ao1-sigline">${esc(fio)}</td><td class="ao1-sig">расшифровка</td></tr>
       </table>
-      <p class="ao-note">Приложено кассовых чеков — <b>${items.length}</b> шт. на сумму
-        <b>${sum(total)} ₽</b> (${ruMoney(total)}).</p>
-      <table class="ao-sign">
-        <tr><td>Отчёт составил(а), подотчётное лицо</td><td class="ao-line"></td>
-            <td>Подпись</td><td class="ao-line"></td></tr>
-        <tr><td>Проверил(а) бухгалтер</td><td class="ao-line">${esc(meta['ao-buh'] || '')}</td>
-            <td>Подпись</td><td class="ao-line"></td></tr>
-      </table>
-      <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>
+      <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · оборотная сторона</p>
     </div>`;
   document.body.appendChild(root);
-  toast(`АО-1: ${items.length} чек(а) на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
+  toast(`АО-1 (официальная форма): ${items.length} докум. на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
   window.print();
 }
 
-// сумма прописью (рубли; копейки цифрами) — для классической формы отчёта
 function ruMoney(n) {
   n = Math.round((Number(n) || 0) * 100) / 100;
   const rub = Math.floor(n), kop = Math.round((n - rub) * 100);
