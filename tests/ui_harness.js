@@ -241,6 +241,17 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   // печать (один сотрудник → АО-1)
   await aoSlot.querySelector('#ao-print').onclick();
   ok(true, 'ao: печать АО-1 без крэша');
+  // v1.24.0: официальный бланк — ФН/ФП в обороте и поля страницы 20/15/10/10
+  const prAO1 = document.getElementById('print-root');
+  ok(prAO1 && prAO1.innerHTML.includes('ФН '), 'ao1: ФН/ФП в оборотной таблице');
+  const aoPage = document.getElementById('ym-page-style');
+  ok(aoPage && aoPage.textContent.includes('margin: 10mm 15mm 10mm 20mm'),
+     'ao1: @page поля лево 20 / право 15 / верх 10 / низ 10 мм');
+  ok(bundle.includes("id=\"ao-rko\"") && bundle.includes("id=\"ao-pay\""),
+     'ao1: поля РКО и платёжного поручения в модалке');
+  ok(bundle.includes('Напечатать чек') &&
+     !bundle.includes('Печать PDF (выбранные)'),
+     'печать: кнопка «Напечатать чек»');
   // второй прогон — два сотрудника → сводная форма с подытогами
   root._cls['.modal-slot'].innerHTML = '';
   await sandbox.openAO1Modal();

@@ -13,7 +13,7 @@ import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, open
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
-import { packCut, splitBlocks, COL_H, COL_W, columnX } from './printpack.js'; // v1.7.0: печать PDF
+import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -2175,6 +2175,12 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.24.0': [
+    { icon: '🖨', title: 'Кнопка «Напечатать чек»: нарезка на А4 в 3 колонки',
+      text: 'Чеки автоматически укладываются на лист А4 в три колонки с уплотнением — минимум пустого места. Длинные чеки переносятся построчно (позиционно) в следующую колонку с пометкой «продолжение чека».' },
+    { icon: '🧾', title: 'АО-1: поля страницы и полнота для налоговой',
+      text: 'Поля страницы АО-1: левое 20 мм, правое 15 мм, верхнее 10 мм, нижнее 10 мм. В оборотной таблице — полные реквизиты чеков (дата, ФД, ФН/ФП) и суммы «по отчёту/принято к учёту». Добавлены поля РКО и платёжного поручения.' },
+  ],
   '1.23.0': [
     { icon: '🔎', title: 'База чеков: фильтры «Кто добавил» и «Данные чека»',
       text: 'Новый выпадающий список «Кто добавил» — только те сотрудники, которые реально добавляли чеки в выбранной компании (с количеством). Фильтр «Данные чека» разделяет чеки, по которым полные данные уже получены, и те, что ещё ждут запроса. У чека с полученными данными кнопка запроса скрыта — осталось только изменение.' },
@@ -2652,13 +2658,13 @@ async function viewReceipts(container) {
         <button class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
         <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
-        <button class="btn btn-sm" id="btn-print-pdf">🖨 Печать PDF</button>
+        <button class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек</button>
         <button class="btn btn-sm" id="btn-ao1">🧾 Собрать авансовый отчёт</button>
         <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
       </div>` : `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-        <button class="btn btn-sm" id="btn-print-pdf">🖨 Печать PDF (выбранные)</button>
+        <button class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек (выбранные)</button>
         <span class="form-hint" style="align-self:center" id="sel-info-user">не выбрано</span>
       </div>
       <p class="form-hint" style="margin-bottom:12px">Режим пользователя: видны только ваши чеки.
@@ -2999,6 +3005,20 @@ function rcptBlocks(r, qrUrl) {
   return blocks;
 }
 
+// v1.24.0: @page нельзя задать селектором — стиль печати подменяется
+// перед window.print(): чеки — поля 0 (раскрой сам позиционирует куски),
+// АО-1 — лево 20 мм, право 15 мм, верх 10 мм, низ 10 мм.
+function setPrintPageMargin(css, ao1) {
+  let el = document.getElementById('ym-page-style');
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'ym-page-style';
+    document.head.appendChild(el);
+  }
+  el.textContent = css;
+  document.body.classList.toggle('print-ao1', !!ao1);
+}
+
 async function printReceiptsPDF(ids) {
   const { close } = openModal(`<div class="modal-title">🖨 Печать чеков</div>
     <p class="form-hint">Готовлю раскрой листов A4…</p><div class="spinner"></div>`);
@@ -3012,7 +3032,7 @@ async function printReceiptsPDF(ids) {
     root.id = 'print-root';
     document.body.appendChild(root);
     const meas = document.createElement('div');
-    meas.style.cssText = `width:${COL_W}mm;position:absolute;left:0;top:0;`;
+    meas.style.cssText = `width:${RCPT_W}mm;position:absolute;left:0;top:0;`; // v1.24.0: меряем в проектной ширине 80 мм
     root.appendChild(meas);
 
     // 1) Фискальные QR-коды чеков (PNG с сервера) — как на кассовом чеке
@@ -3033,6 +3053,7 @@ async function printReceiptsPDF(ids) {
       full.innerHTML = blocks.join('');
       meas.appendChild(full);
       let hFull = full.getBoundingClientRect().height * MM;
+      hFull *= SCALE;                                   // v1.24.0: эффективная высота на листе
       if (hFull <= COL_H) {
         pieces.push({ html: full.outerHTML, h: hFull });
         meas.removeChild(full);
@@ -3040,7 +3061,7 @@ async function printReceiptsPDF(ids) {
       }
       // длинный: режем по блокам, части продолжаются в соседней колонке
       const nodes = [...full.children];
-      const hs = nodes.map(n => n.getBoundingClientRect().height * MM);
+      const hs = nodes.map(n => n.getBoundingClientRect().height * MM * SCALE); // v1.24.0: позиционная нарезка в масштабе листа
       meas.removeChild(full);
       const parts = splitBlocks(hs);
       for (let pi = 0; pi < parts.length; pi++) {
@@ -3061,6 +3082,7 @@ async function printReceiptsPDF(ids) {
     }
 
     // 2) Раскрой по страницам A4 (каждый кусок ЦЕЛИКОМ на странице)
+    setPrintPageMargin('@page { size: A4 portrait; margin: 0; }', false); // v1.24.0
     const pages = packCut(pieces.map(p => p.h));
 
     // 3) Собираем страницы печати
@@ -3069,7 +3091,7 @@ async function printReceiptsPDF(ids) {
         `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${pl.y}mm">${pieces[pl.piece].html}</div>`
       ).join('')}</div>`).join('');
     close();
-    toast(`Раскрой готов: ${pages.length} стр. · ${data.items.length} чек. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
+    toast(`Раскрой готов: ${pages.length} стр. × 3 колонки · ${data.items.length} чек. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
     window.print();
     window.addEventListener('afterprint', () => {
       const el = document.getElementById('print-root');
@@ -3136,6 +3158,10 @@ async function openAO1Modal(opts = {}) {
         <input id="ao-cash" type="number" min="0" step="0.01" value="0"></label>
       <label class="field"><span>Получено на карту, ₽</span>
         <input id="ao-card" type="number" min="0" step="0.01" value="0"></label>
+      <label class="field"><span>РКО (№ и дата, выдача из кассы)</span>
+        <input id="ao-rko" placeholder="№ 12 от 05.10.2026"></label>
+      <label class="field"><span>Платёжное поручение (№ и дата)</span>
+        <input id="ao-pay" placeholder="№ 45 от 05.10.2026"></label>
       <label class="field"><span>Счёт Дт (аванс)</span>
         <input id="ao-dt" value="71.01"></label>
       <label class="field"><span>Счёт Кт (выдача)</span>
@@ -3192,6 +3218,8 @@ async function openAO1Modal(opts = {}) {
         'ao-dt': slot.querySelector('#ao-dt') ? slot.querySelector('#ao-dt').value.trim() : '71.01',
         'ao-kt': slot.querySelector('#ao-kt') ? slot.querySelector('#ao-kt').value.trim() : '50.01',
         'ao-acc': slot.querySelector('#ao-acc') ? slot.querySelector('#ao-acc').value.trim() : '44.01',
+        'ao-rko': slot.querySelector('#ao-rko') ? slot.querySelector('#ao-rko').value.trim() : '',   // v1.24.0
+        'ao-pay': slot.querySelector('#ao-pay') ? slot.querySelector('#ao-pay').value.trim() : '',   // v1.24.0
       });
     } catch (err) {
       toast(err.message, 'err');
@@ -3366,6 +3394,8 @@ function ao1Json(rep, meta, cash, card) {
         ИтогоПолучено: ao1Money(got), Израсходовано: ao1Money(spent),
         Остаток: ao1Money(rest), Перерасход: ao1Money(over),
         СчетДт: meta['ao-dt'] || '71.01', СчетКт: meta['ao-kt'] || '50.01',
+        РКО: meta['ao-rko'] || '',                       // v1.24.0: № и дата РКО (выдача из кассы)
+        ПлатёжноеПоручение: meta['ao-pay'] || '',        // v1.24.0: № и дата п/п (зачисление на карту)
       },
       Документы: rep.rows.map((r, i) => ({
         НомерСтроки: i + 1,
@@ -3402,19 +3432,25 @@ function ao1Print(f, rep, meta) {
   const fio = person['ФИО'] || meta.assignee || '—';
   const dash = '—';
   const dtRu = (s) => s ? fmtDate(s) : dash;
+  // v1.24.0: оборот — по отчёту/принято к учёту = СУММЫ, дебет = счёт учёта;
+  // реквизиты чека полные (дата, ФД, ФН/ФП) — обязательны для налоговой
   const rowsBack = items.map((r, i) => `<tr>
       <td class="ao1-c">${i + 1}</td>
       <td class="ao1-c">${dtRu(r.receipt_date)}</td>
       <td class="ao1-c">ФД №${esc(r.fd || dash)}</td>
+      <td class="ao1-c">ФН ${esc(r.fn || dash)}<br>ФП ${esc(r.fp || dash)}</td>
       <td>Кассовый чек${r.merchant_name ? ': ' + esc(r.merchant_name) : ''}${r.category ? ' — ' + esc(r.category) : ''}</td>
       <td class="ao1-r">${sum(r.total_sum)}</td>
-      <td class="ao1-c">${esc(meta['ao-acc'] || '44.01')}</td>
+      <td class="ao1-r">${sum(r.total_sum)}</td>
+      <td class="ao1-r">${sum(r.total_sum)}</td>
       <td class="ao1-c">${esc(meta['ao-acc'] || '44.01')}</td>
     </tr>`).join('');
   let root = document.getElementById('print-root');
   if (root) root.remove();
   root = document.createElement('div');
   root.id = 'print-root';
+  // v1.24.0: поля страницы АО-1 — левое 20 мм, правое 15 мм, верх 10 мм, низ 10 мм
+  setPrintPageMargin('@page { size: A4 portrait; margin: 10mm 15mm 10mm 20mm; }', true);
   root.innerHTML = `
     <div class="print-page ao1-page">
       <table class="ao1-codes"><tr>
@@ -3450,10 +3486,10 @@ function ao1Print(f, rep, meta) {
         <tbody>
           <tr><td>Предыдущий аванс — остаток</td><td class="ao1-r">${dash}</td><td colspan="4" class="ao1-c">${dash}</td></tr>
           <tr><td>Предыдущий аванс — перерасход</td><td class="ao1-r">${dash}</td><td colspan="4" class="ao1-c">${dash}</td></tr>
-          <tr><td>Получен аванс — 1. из кассы</td><td class="ao1-r">${sum(cash)}</td>
+          <tr><td>Получен аванс — 1. из кассы${meta['ao-rko'] ? ` (РКО ${esc(meta['ao-rko'])})` : ''}</td><td class="ao1-r">${sum(cash)}</td>
               <td class="ao1-c">${esc(meta['ao-dt'] || '71.01')}</td><td class="ao1-r">${sum(cash)}</td>
               <td class="ao1-c">${esc(meta['ao-kt'] || '50.01')}</td><td class="ao1-r">${sum(cash)}</td></tr>
-          <tr><td>&nbsp;&nbsp;&nbsp;2. на банковскую карту</td><td class="ao1-r">${sum(card)}</td>
+          <tr><td>&nbsp;&nbsp;&nbsp;2. на банковскую карту${meta['ao-pay'] ? ` (п/п ${esc(meta['ao-pay'])})` : ''}</td><td class="ao1-r">${sum(card)}</td>
               <td class="ao1-c">${esc(meta['ao-dt'] || '71.01')}</td><td class="ao1-r">${sum(card)}</td>
               <td class="ao1-c">51</td><td class="ao1-r">${sum(card)}</td></tr>
           <tr class="ao1-total"><td>Итого получено</td><td class="ao1-r">${sum(got)}</td><td colspan="4"></td></tr>
@@ -3488,18 +3524,22 @@ function ao1Print(f, rep, meta) {
     <div class="print-page ao1-page ao1-back">
       <h3 class="ao1-backtitle">Оборотная сторона формы № АО-1</h3>
       <table class="ao1-back-table">
-        <thead><tr><th rowspan="2">№ п/п</th><th colspan="2">Документ, подтверждающий расходы</th>
+        <thead><tr><th rowspan="2">№ п/п</th><th colspan="3">Документ, подтверждающий расходы</th>
           <th rowspan="2">Наименование документа (расхода)</th>
-          <th rowspan="2">Сумма расхода, руб. коп.</th>
-          <th colspan="2">Дебет счёта, субсчёта</th></tr>
-          <tr><th>дата</th><th>номер</th><th>по отчёту</th><th>принята к учёту</th></tr></thead>
+          <th rowspan="2">Сумма по чеку, руб. коп.</th>
+          <th rowspan="2">По отчёту</th><th rowspan="2">Принято к учёту</th>
+          <th rowspan="2">Дебет счёта</th></tr>
+          <tr><th>дата</th><th>номер (ФД)</th><th>ФН / ФП</th></tr></thead>
         <tbody>${rowsBack}</tbody>
-        <tfoot><tr><td colspan="4" class="ao1-r"><b>ИТОГО</b></td>
-          <td class="ao1-r"><b>${sum(total)}</b></td><td colspan="2"></td></tr></tfoot>
+        <tfoot><tr><td colspan="5" class="ao1-r"><b>ИТОГО</b></td>
+          <td class="ao1-r"><b>${sum(total)}</b></td>
+          <td class="ao1-r"><b>${sum(total)}</b></td>
+          <td class="ao1-r"><b>${sum(total)}</b></td><td></td></tr></tfoot>
       </table>
       <table class="ao1-signs" style="margin-top:26px">
         <tr><td>Отчёт составил(а), подотчётное лицо</td><td class="ao1-sigline"></td>
             <td class="ao1-sig">подпись</td><td class="ao1-sigline">${esc(fio)}</td><td class="ao1-sig">расшифровка</td></tr>
+        <tr><td class="ao1-sig" colspan="5">Дата составления: <b>${esc(meta['ao-date'] || dash)}</b></td></tr>
       </table>
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · оборотная сторона</p>
     </div>`;
