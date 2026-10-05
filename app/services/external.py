@@ -46,6 +46,11 @@ COOLDOWN_MAX_SECONDS = 6 * 3600.0    # максимум 6 часов
 MAX_SAME_PROVIDER_RETRIES = 2
 
 PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"
+# v1.26.0: «Честный Знак» — мобильное API (как в приложении ГИС МТ).
+# Подход li0ard/nechestniy_znak (infoFromReceipt): один POST со строкой
+# QR — без токена и мастер-ключей. Тот же уровень удобства, что и
+# proverkacheka, но не тратит суточную квоту.
+CRPT_URL = "https://mobile.api.crpt.ru/mobile/check"
 OFDRU_URL = "https://ofd.ru/api/partner/v3/receipts/GetReceipt"   # ОФД-ру «QR Cash» (БД ФНС)
 
 
@@ -249,6 +254,36 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
 # ==========================================================================
 #  Отдельные провайдеры
 # ==========================================================================
+def fetch_crpt(qr_raw: str) -> tuple[bool, str, dict]:
+    """v1.26.0: «Честный Знак» (mobile.api.crpt.ru) — анонимная проверка.
+
+    POST /mobile/check  {"code": "<строка QR>", "codeType": "qr"}.
+    Токен не нужен; запрос выглядит как из официального приложения
+    (заголовки приложения — иначе API отвечает ошибкой).
+    Возвращает (успех_сети, сообщение, json_ответ).
+    """
+    headers = {
+        "content-type": "application/json",
+        "accept": "application/json",
+        "user-agent": ("Platform: iOS 17.2; AppVersion: 4.47.0; "
+                       "AppVersionCode: 7630; Device: iPhone 14 Pro;"),
+        "client": "iOS 17.2; AppVersion: 4.47.0; Device: iPhone 14 Pro;",
+    }
+    try:
+        resp = httpx.post(CRPT_URL, json={"code": qr_raw, "codeType": "qr"},
+                          headers=headers, timeout=REQUEST_TIMEOUT)
+    except httpx.HTTPError as e:
+        return False, f"Сеть: {e.__class__.__name__}", {}
+    if resp.status_code in (429, 403):
+        return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
+    if resp.status_code != 200:
+        return False, f"HTTP {resp.status_code}", {}
+    try:
+        return True, "OK", resp.json()
+    except ValueError:
+        return False, "Ответ не JSON", {}
+
+
 def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
     """
     proverkacheka.com: POST /api/v1/check/get (qrraw + token).
@@ -399,14 +434,18 @@ class ExternalFetchEngine:
     def provider_chain(self, db) -> list[str]:
         """Порядок провайдеров с учётом настроек и наличия токенов/URL."""
         cfg = self._settings(db)
+        # v1.26.0: proverkacheka переехал в конец — беречь квоту 12–14
+        # запросов в сутки; сначала официальное API и анонимный Честный Знак
         order = [p for p in (cfg.get("external_order") or
-                             "fns_api,proverkacheka,custom").split(",") if p]
+                             "fns_api,crpt,ofd_ru,custom,proverkacheka").split(",") if p]
         chain: list[str] = []
         for p in order:
             if p in chain:
                 continue                      # дедупликация порядка
             if p == "fns_api" and (cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN):
                 chain.append(p)
+            elif p == "crpt":
+                chain.append(p)               # v1.26.0: анонимный, токен не нужен
             elif p == "ofd_ru" and cfg.get("ofd_ru_token"):
                 chain.append(p)
             elif p == "proverkacheka" and cfg.get("proverkacheka_token"):
@@ -473,6 +512,8 @@ class ExternalFetchEngine:
                         if provider == "proverkacheka":
                             net_ok, msg, data = fetch_proverkacheka(
                                 qr_raw, cfg.get("proverkacheka_token", ""))
+                        elif provider == "crpt":                     # v1.26.0
+                            net_ok, msg, data = fetch_crpt(qr_raw)
                         elif provider.startswith("custom::"):
                             name = provider.split("::", 1)[1]
                             src = next((x for x in cfg["custom_sources"]
@@ -505,6 +546,13 @@ class ExternalFetchEngine:
 
                     if net_ok:
                         parsed = parse_receipt_payload(data, known_total)
+                        # v1.26.0: источник ответил, но данных ЧЕКА в ответе
+                        # нет (например, fns_api check без позиций) — это не
+                        # заполнение: пробуем следующий источник, а не
+                        # возвращаем «пустое» заполнение
+                        if not parsed.found and provider != "mock":
+                            errors.append(f"{provider}: {parsed.message}")
+                            break                       # к следующему источнику
                         parsed.source = provider
                         if provider == "mock":
                             parsed.found = False

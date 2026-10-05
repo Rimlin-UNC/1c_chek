@@ -616,10 +616,10 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
         receipt.fns_message = res.message
         db.commit()
         return
-    # v1.23.0/v1.25.2: полные данные чека получены — список скрывает кнопку
-    # запроса. Флаг только повышается: поздняя авто-загрузка не «понизит»
-    # уже полную полноту (защита от гонки с проверкой ФНС)
-    receipt.full_data = bool(receipt.full_data or res.found)
+    # v1.23.0/v1.25.2/v1.26.0: «полные данные» = получены ПОЗИЦИИ чека
+    # (ответ источника без позиций — это проверка, а не заполнение).
+    # Флаг только повышается: поздняя загрузка не «понизит» полноту.
+    receipt.full_data = bool(receipt.full_data or (res.found and res.items))
     human_edited = receipt.details_source == "manual_edit"
 
     def applyable(machine_val, human_val=None) -> bool:
@@ -759,6 +759,7 @@ def external_status(user: User = Depends(require_accountant),
         "engine": external_engine.status(),
         "configured": {
             "fns_api": bool(cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN),
+            "crpt": True,                        # v1.26.0: анонимный, без токена
             "proverkacheka": bool(cfg.get("proverkacheka_token")),
             "custom": bool(cfg.get("external_custom_url")),
         },

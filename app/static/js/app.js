@@ -2131,6 +2131,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.26.0': [
+    { icon: '🔌', title: 'Заполнение чеков: новый источник «Честный Знак»',
+      text: 'Добавлен анонимный источник данных (мобильное API ГИС МТ) — без токена и квот, работает так же просто, как proverkacheka: один запрос со строкой QR. Теперь цепочка: API ФНС → Честный Знак → ОФД-ру → свои шлюзы → proverkacheka (последним, чтобы беречь квоту 12–14 запросов в сутки). Источник, ответивший без позиций чека, пропускается.' },
+  ],
   '1.25.2': [
     { icon: '📥', title: 'Полные данные: без повторных запросов',
       text: 'Чек, проверенный ФНС и содержащий позиции, теперь считается «с полными данными» — кнопка запроса у него не показывается (только «изменить»). Повторный запрос возможен только если чек действительно не получил данные полностью; массовый запрос пропускает уже полные чеки и сообщает, сколько пропущено.' },
@@ -4490,8 +4494,10 @@ async function viewSettings(container) {
       <div class="glass card">
         <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.2.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции) система получает
-        из источников по порядку. Между запросами — случайная пауза 2–7 секунд,
-        при блокировке источник временно «остывает» и включается следующий — банов не будет.</p>
+        из источников по порядку: <b>API ФНС</b> (мастер-токен) → <b>Честный Знак</b> (анонимно, без токена) →
+        <b>ОФД-ру</b> → <b>свои шлюзы</b> → <b>proverkacheka</b> (последним — беречь квоту 12–14 запросов в сутки).
+        Между запросами — случайная пауза 2–7 секунд, при блокировке источник временно «остывает» и включается
+        следующий — банов не будет. Источник, ответивший без позиций чека, пропускается — запрос уходит дальше.</p>
         <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
           ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
           <input id="ext-pke" type="password" placeholder="токен API"></label>
@@ -4502,8 +4508,9 @@ async function viewSettings(container) {
           <textarea id="ext-custom-urls" rows="3" placeholder="проверкачека | https://…/api/check">${esc((ext ? ext.external_custom_urls : []) .map(u => (u.name || 'custom') + ' | ' + u.url).join('\n'))}</textarea>
           <small class="form-hint">Контракт: POST {qrraw} → JSON с items + totalSum. Подойдёт любой ваш шлюз к сервисам проверки.</small></label>
         <label class="field" style="margin-bottom:10px"><span>Порядок источников</span>
-          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,ofd_ru,proverkacheka,custom')}">
-          <small class="form-hint">fns_api — API ФНС (токен в карточке «Проверка чеков»), ofd_ru — ОФД-ру, proverkacheka, custom — свои</small></label>
+          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,crpt,ofd_ru,custom,proverkacheka')}">
+          <small class="form-hint">fns_api — API ФНС (токен в карточке «Проверка чеков»), crpt — Честный Знак (анонимно, без токена),
+          ofd_ru — ОФД-ру, proverkacheka — по токену (квота 12–14/сутки, ставьте последним), custom — свои</small></label>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>

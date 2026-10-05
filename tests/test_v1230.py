@@ -32,12 +32,18 @@ class TestFullDataFlag:
         assert s.status_code == 200, s.text
         rid = s.json()["receipt"]["id"]
         # имитируем успешную загрузку полных данных
+        from app.services.external import ExternalItem
         class R:
             ok = True; found = True; source = "fns_api"; message = "Данные получены"
-            date_time = None; total_sum = None; operation = None
+            date_time = None; total_sum = 800.0; operation = 1
             merchant_name = "ООО Магнит-Тест"; merchant_inn = "7704001236"
             merchant_address = "г. Москва"; cashier = ""; cash_sum = None
-            ecash_sum = None; items = []; raw = {}
+            ecash_sum = None
+            # v1.26.0: «полные данные» = есть позиции (проверка без позиций —
+            # не заполнение)
+            items = [ExternalItem(name="Молоко", quantity=1, price=80,
+                                  total=80, vat_rate="none", vat_sum=0)]
+            raw = {}
         monkeypatch.setattr(ex.engine, "fetch",
                             lambda db, *a, **k: R())
         adm = login(client, "admin", "admin123")
