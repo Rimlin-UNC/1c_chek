@@ -2131,6 +2131,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.25.2': [
+    { icon: '📥', title: 'Полные данные: без повторных запросов',
+      text: 'Чек, проверенный ФНС и содержащий позиции, теперь считается «с полными данными» — кнопка запроса у него не показывается (только «изменить»). Повторный запрос возможен только если чек действительно не получил данные полностью; массовый запрос пропускает уже полные чеки и сообщает, сколько пропущено.' },
+  ],
   '1.25.1': [
     { icon: '🧾', title: 'Страница «Чеки»: список больше не пропадает',
       text: 'Исправлено: после живых событий (новый чек, проверка ФНС) список чеков иногда исчезал до перезагрузки страницы. Теперь данные обновляются на месте — без сброса фильтров и пустого экрана; при сбое сети показывается «Повторить». Фильтр «Сотрудник» и поиск по имени работают в любом регистре (кириллица).' },
@@ -2613,8 +2617,8 @@ async function viewReceipts(container) {
           <select id="f-creator"><option value="">все добавившие</option></select></label>
         <label class="field"><span>Данные чека</span>
           <select id="f-full"><option value="">все</option>
-            <option value="true">📥 полные данные получены</option>
-            <option value="false">⏳ ожидают данных</option></select></label>
+            <option value="true">📥 проверены + полные данные</option>
+            <option value="false">⏳ данных не хватает — можно запросить</option></select></label>
         <label class="field"><span>Статья расходов</span>
           <input id="f-category" placeholder="Канцелярия" list="f-cats">
           <datalist id="f-cats">${(viewReceipts._cats || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
@@ -2778,11 +2782,13 @@ async function viewReceipts(container) {
     const notifiedMark = r.notified ? ' <span title="Сотрудник уведомляет бухгалтерию">🔔</span>' : '';
     const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
     // v1.23.0: полные данные получены → запрос не нужен, только изменение
+    // v1.25.2: полные данные есть → только «изменить»; запрос показывается,
+    // только если чек ещё НЕ получил данные полностью
     const actions = acc
       ? `<td style="white-space:nowrap">
-           ${r.full_data
-             ? '<span class="form-hint" title="Полные данные чека получены из сервиса проверки">📥✓</span>'
-             : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}" title="Получить полные данные чека из сервиса проверки">📥</button>`}
+           ${r.full_data ? '' :
+             `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
+                title="Чек ещё не имеет полных данных — запросить их из сервиса проверки">📥</button>`}
            <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
          </td>`
       : (isOwner ? `<td><button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"

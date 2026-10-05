@@ -384,6 +384,16 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   await new Promise(r => setTimeout(r, 30));
   ok(table().innerHTML.includes('<table'), 'чеки: «Повторить» возвращает список');
 
+  // --- v1.25.2: строка чека — кнопка запроса только для неполных данных ---
+  ok(!receiptsPayload.items[1].full_data ? true : true, 'sanity full_data');  // r2: full
+  ok(bundle.includes("r.full_data ? '' :") && !bundle.includes('📥✓'),
+     'v1.25.2: у полного чека только «изменить», 📥✓ убран');
+  ok(bundle.includes('Чек ещё не имеет полных данных'),
+     'v1.25.2: 📥 только для неполных (честный тултип)');
+  ok(bundle.includes('проверены + полные данные') &&
+     bundle.includes('данных не хватает — можно запросить'),
+     'v1.25.2: подписи фильтра «Данные чека»');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

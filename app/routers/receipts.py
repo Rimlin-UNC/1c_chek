@@ -616,8 +616,10 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
         receipt.fns_message = res.message
         db.commit()
         return
-    # v1.23.0: полные данные чека получены — список скрывает кнопку запроса
-    receipt.full_data = bool(res.found)
+    # v1.23.0/v1.25.2: полные данные чека получены — список скрывает кнопку
+    # запроса. Флаг только повышается: поздняя авто-загрузка не «понизит»
+    # уже полную полноту (защита от гонки с проверкой ФНС)
+    receipt.full_data = bool(receipt.full_data or res.found)
     human_edited = receipt.details_source == "manual_edit"
 
     def applyable(machine_val, human_val=None) -> bool:
@@ -680,6 +682,8 @@ def _run_external_fetch(receipt_ids: list[str]) -> None:
             receipt = db.get(Receipt, rid)
             if receipt is None:
                 continue
+            if receipt.full_data:                    # v1.25.2: уже полные — пропускаем
+                continue
             res = external_engine.fetch(
                 db, receipt.qr_data, receipt.fn, receipt.fd, receipt.fp,
                 receipt.total_sum, receipt.receipt_date)
@@ -692,7 +696,8 @@ def _run_external_fetch(receipt_ids: list[str]) -> None:
 
 def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt) -> bool:
     """Автозагрузка деталей после скана (настройка external_auto, по умолч. вкл)."""
-    if appsettings.get_setting(db, "external_auto", "1") == "1" and receipt.status == "new":
+    if (appsettings.get_setting(db, "external_auto", "1") == "1"
+            and receipt.status == "new" and not receipt.full_data):   # v1.25.2
         background.add_task(_run_external_fetch, [receipt.id])
         return True
     return False
@@ -706,6 +711,10 @@ def fetch_details_one(receipt_id: str, background: BackgroundTasks,
     receipt = db.get(Receipt, receipt_id)
     if not receipt or not can_view_receipt(user, receipt):      # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    # v1.25.2: повторный запрос не нужен — данные уже полные
+    if receipt.full_data:
+        return {"ok": True, "queued": False, "skipped": True,
+                "message": "Полные данные уже получены — повторный запрос не требуется"}
     background.add_task(_run_external_fetch, [receipt.id])
     log_action(user, "external_fetch", "receipt", receipt.id, {"queued": 1})
     return {"ok": True, "queued": True,
@@ -723,11 +732,21 @@ def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
     ids = [i for i in dict.fromkeys(body.receipt_ids) if i in visible]
     if not ids:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
+    # v1.25.2: чеки с полными данными не запрашиваем повторно
+    full_ids = {r.id for r in db.query(Receipt).filter(
+        Receipt.id.in_(ids), Receipt.full_data.is_(True)).all()}
+    ids = [i for i in ids if i not in full_ids]
+    skipped = len(full_ids)
+    if not ids:
+        return {"ok": True, "queued": 0, "skipped": skipped,
+                "message": f"Все выбранные чеки ({skipped}) уже имеют полные "
+                           f"данные — повторный запрос не требуется"}
     background.add_task(_run_external_fetch, ids)
-    log_action(user, "external_fetch", details={"queued": len(ids)})
-    return {"ok": True, "queued": len(ids),
+    log_action(user, "external_fetch", details={"queued": len(ids), "skipped": skipped})
+    tail = (f" Пропущены без запроса: {skipped} — данные уже полные." if skipped else "")
+    return {"ok": True, "queued": len(ids), "skipped": skipped,
             "message": f"В очереди чеков: {len(ids)}. Источники опрашиваются "
-                       f"по очереди с паузами 2–7 с — блокировок не будет"}
+                       f"по очереди с паузами 2–7 с — блокировок не будет.{tail}"}
 
 
 @router.get("/external/status",
@@ -808,6 +827,14 @@ def _verify_one_sync(receipt_id: str) -> None:
                     vat_sum=float(it.get("vat_sum", 0) or 0),
                     position=i,
                 ))
+        # v1.25.2: единый источник истины — проверенный ФНС чек, у которого
+        # есть позиции, считается «с полными данными»: повторный запрос не
+        # нужен, фильтр «Данные чека → полные» его показывает.
+        # Локальная items (не relationship): сессия кэширует коллекцию, а
+        # позиции добавлены выше по FK (autoflush выключен).
+        if result.status == "valid" and (items or receipt.items):
+            receipt.full_data = True
+
         raw = json.loads(receipt.raw_data or "{}")
         raw["fns"] = result.raw
         receipt.raw_data = json.dumps(raw, ensure_ascii=False)

@@ -71,6 +71,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
     _backfill_assignee_lc()
+    _backfill_full_data()
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
     # ошибка уходит в журнал, приложение стартует на прежней схеме.
@@ -164,6 +165,33 @@ def _ensure_schema() -> None:
                 conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
                              {"lc": (cat or "").casefold(), "i": rid})
 
+
+
+def _backfill_full_data() -> None:
+    """v1.25.2: проверенные ФНС чеки с позициями = «полные данные».
+
+    До этого флага проверка (valid) не заполняла full_data — такие чеки
+    попадали под повторный запрос. Чиним один раз при старте.
+    """
+    from . import models
+    db = SessionLocal()
+    try:
+        R, I = models.Receipt, models.ReceiptItem
+        has_items = (db.query(I.receipt_id).filter(I.receipt_id == R.id).exists())
+        n = (db.query(R)
+             .filter(R.full_data.is_(False),
+                     R.fns_status == "valid",
+                     has_items)
+             .update({R.full_data: True}, synchronize_session=False))
+        db.commit()
+        if n:
+            logging.getLogger("ymaster").info(
+                "Проверенные чеки с позициями помечены как полные данные: %s", n)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _backfill_assignee_lc() -> None:

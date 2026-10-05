@@ -83,8 +83,10 @@ class TestFullDataFlag:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert 'id="f-creator"' in js and 'id="f-full"' in js
         assert "/api/v1/receipts/creators" in js
-        # у чека с полными данными кнопка запроса скрыта
-        assert "${r.full_data" in js and "📥✓" in js
+        # v1.25.2: у чека с полными данными кнопки запроса нет вовсе —
+        # только «изменить»; 📥 остаётся для чеков без полных данных
+        assert "r.full_data ? '' :" in js
+        assert "📥✓" not in js
 
 
 class TestAO1Official:
