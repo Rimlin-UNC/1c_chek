@@ -74,10 +74,16 @@ class TestCrptSource:
         assert chain[-1] == "mock"
 
     def test_default_order_keeps_proverkacheka_last(self):
+        # v1.27.0: в дефолт добавлен fns_app («Приложение ФНС»); инвариант
+        # прежний — proverkacheka остаётся ПОСЛЕДНИМ платным источником.
+        # Точный состав строки дефолта пинует тест ТЕКУЩЕЙ версии (test_v1270).
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "fns_api,crpt,ofd_ru,custom,proverkacheka" in js
         src = open("app/services/external.py", encoding="utf-8").read()
-        assert '"fns_api,crpt,ofd_ru,custom,proverkacheka"' in src
+        m = re.search(r'"(fns_api[^"]+)"', src)
+        assert m, "дефолтный порядок не найден в external.py"
+        parts = [p.strip() for p in m.group(1).split(",") if p.strip()]
+        assert parts[-1] == "proverkacheka"
+        assert "crpt" in parts
         # Честный Знак описан в настройках
         assert "Честный Знак" in js
 

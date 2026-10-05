@@ -211,10 +211,15 @@ def get_external(db: Session = Depends(get_db), user: User = Depends(require_adm
         "has_proverkacheka_token": bool(_get_setting(db, "proverkacheka_token", "")),
         "ofd_ru_token_masked": _mask(_get_setting(db, "ofd_ru_token", "")),
         "has_ofd_ru_token": bool(_get_setting(db, "ofd_ru_token", "")),
+        "fns_app_inn": _get_setting(db, "fns_app_inn", ""),                       # v1.27.0
+        "has_fns_app_login": bool(_get_setting(db, "fns_app_inn", "")
+                                  and _get_setting(db, "fns_app_password", "")),
+        "fns_app_secret_masked": _mask(_get_setting(db, "fns_app_secret", "")),
+        "has_fns_app_secret": bool(_get_setting(db, "fns_app_secret", "")),
         "external_custom_url": _get_setting(db, "external_custom_url", ""),
         "external_custom_urls": [u for u in urls if isinstance(u, dict)],
         "external_order": _get_setting(db, "external_order",
-                                       "fns_api,ofd_ru,proverkacheka,custom"),
+                                       "fns_api,fns_app,crpt,ofd_ru,custom,proverkacheka"),
         "external_auto": _get_setting(db, "external_auto", "1") == "1",
         "engine": engine.status(),
     }
@@ -229,6 +234,13 @@ def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
         _set_setting(db, "proverkacheka_token", body.proverkacheka_token.strip())
     if body.ofd_ru_token is not None and "•" not in body.ofd_ru_token:
         _set_setting(db, "ofd_ru_token", body.ofd_ru_token.strip())
+    # v1.27.0: «Приложение ФНС» (полный чек по ИНН+паролю ЛК)
+    if body.fns_app_inn is not None:
+        _set_setting(db, "fns_app_inn", body.fns_app_inn.strip())
+    if body.fns_app_password is not None and "•" not in body.fns_app_password:
+        _set_setting(db, "fns_app_password", body.fns_app_password.strip())
+    if body.fns_app_secret is not None and "•" not in body.fns_app_secret:
+        _set_setting(db, "fns_app_secret", body.fns_app_secret.strip())
     if body.external_custom_urls is not None:
         cleaned = [{"name": c.name.strip()[:60], "url": c.url.strip()[:500]}
                    for c in body.external_custom_urls]

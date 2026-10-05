@@ -2131,6 +2131,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.27.0': [
+    { icon: '🔌', title: 'Коннекторы чеков: GetTicket ФНС и «Приложение ФНС»',
+      text: 'Два новых способа получать ПОЛНЫЕ чеки с позициями. 1) Официальное API ФНС теперь не только проверяет чек, но и запрашивает его целиком (GetTicket) — достаточно Мастер-токена. 2) Новый источник «Приложение ФНС»: данные берутся как в мобильном приложении «Проверка чеков» — нужен ИНН и пароль личного кабинета ФНС, токены и квоты не нужны. Цепочка: API ФНС → Приложение ФНС → Честный Знак → ОФД-ру → свои → proverkacheka (последним).' },
+  ],
   '1.26.2': [
     { icon: '🧾', title: 'Новая иконка приложения: чек с QR в стиле «мягкий 3D»',
       text: 'Иконка приложения снова про главное — белый чек с настоящим QR-кодом, глянцевой оранжевой галочкой «проверено» и адресом chek.ymaster.ru, теперь в современном тактильном 3D-стиле. Логотип-смайлик «всё сошлось» остался фирменным знаком: в интерфейсе, на бланках и в документах.' },
@@ -4502,10 +4506,15 @@ async function viewSettings(container) {
       <div class="glass card">
         <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.2.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции) система получает
-        из источников по порядку: <b>API ФНС</b> (мастер-токен) → <b>Честный Знак</b> (анонимно, без токена) →
-        <b>ОФД-ру</b> → <b>свои шлюзы</b> → <b>proverkacheka</b> (последним — беречь квоту 12–14 запросов в сутки).
+        из источников по порядку: <b>API ФНС</b> (мастер-токен, GetTicket) → <b>Приложение ФНС</b> (ИНН + пароль ЛК,
+        полный чек) → <b>Честный Знак</b> (анонимно, без токена) → <b>ОФД-ру</b> → <b>свои шлюзы</b> →
+        <b>proverkacheka</b> (последним — беречь квоту 12–14 запросов в сутки).
         Между запросами — случайная пауза 2–7 секунд, при блокировке источник временно «остывает» и включается
         следующий — банов не будет. Источник, ответивший без позиций чека, пропускается — запрос уходит дальше.</p>
+        <label class="field" style="margin-bottom:10px"><span>Приложение ФНС «Проверка чеков» — ИНН и пароль ЛК ФНС
+          ${ext && ext.has_fns_app_login ? '(вход настроен' + (ext.fns_app_inn ? ': ' + esc(ext.fns_app_inn) : '') + ')' : '(не задан — логин по ИНН в приложении ФНС; отдаёт ПОЛНЫЙ чек с позициями)'}</span>
+          <input id="ext-fns-inn" placeholder="ИНН (логин ЛК ФНС)" value="${esc(ext && ext.fns_app_inn || '')}" style="margin-bottom:6px">
+          <input id="ext-fns-pass" type="password" placeholder="пароль ЛК ФНС (пусто — не менять)"></label>
         <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
           ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
           <input id="ext-pke" type="password" placeholder="токен API"></label>
@@ -4516,9 +4525,9 @@ async function viewSettings(container) {
           <textarea id="ext-custom-urls" rows="3" placeholder="проверкачека | https://…/api/check">${esc((ext ? ext.external_custom_urls : []) .map(u => (u.name || 'custom') + ' | ' + u.url).join('\n'))}</textarea>
           <small class="form-hint">Контракт: POST {qrraw} → JSON с items + totalSum. Подойдёт любой ваш шлюз к сервисам проверки.</small></label>
         <label class="field" style="margin-bottom:10px"><span>Порядок источников</span>
-          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,crpt,ofd_ru,custom,proverkacheka')}">
-          <small class="form-hint">fns_api — API ФНС (токен в карточке «Проверка чеков»), crpt — Честный Знак (анонимно, без токена),
-          ofd_ru — ОФД-ру, proverkacheka — по токену (квота 12–14/сутки, ставьте последним), custom — свои</small></label>
+          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,fns_app,crpt,ofd_ru,custom,proverkacheka')}">
+          <small class="form-hint">fns_api — API ФНС (токен в карточке «Проверка чеков»), fns_app — приложение ФНС (ИНН+пароль ЛК),
+          crpt — Честный Знак (анонимно, без токена), ofd_ru — ОФД-ру, proverkacheka — по токену (квота 12–14/сутки, ставьте последним), custom — свои</small></label>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>
@@ -4986,6 +4995,8 @@ async function viewSettings(container) {
           })
           .filter(u => u.url);
         await api.put('/api/v1/settings/external', {
+          fns_app_inn: $('#ext-fns-inn').value.trim() || undefined,
+          fns_app_password: $('#ext-fns-pass').value.trim() || undefined,
           proverkacheka_token: $('#ext-pke').value.trim() || undefined,
           ofd_ru_token: $('#ext-ofd').value.trim() || undefined,
           external_custom_urls: urls,

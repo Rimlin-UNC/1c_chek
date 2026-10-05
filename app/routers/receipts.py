@@ -759,6 +759,7 @@ def external_status(user: User = Depends(require_accountant),
         "engine": external_engine.status(),
         "configured": {
             "fns_api": bool(cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN),
+            "fns_app": bool(cfg.get("fns_app_inn") and cfg.get("fns_app_password")),
             "crpt": True,                        # v1.26.0: анонимный, без токена
             "proverkacheka": bool(cfg.get("proverkacheka_token")),
             "custom": bool(cfg.get("external_custom_url")),

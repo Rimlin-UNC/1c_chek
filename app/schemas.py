@@ -192,6 +192,9 @@ class ExternalSettingsPatch(BaseModel):
     fns_master_token: Optional[str] = Field(default=None, max_length=500)
     proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
     ofd_ru_token: Optional[str] = Field(default=None, max_length=500)  # tokenSecret ofd.ru
+    fns_app_inn: Optional[str] = Field(default=None, max_length=20)      # v1.27.0: ИНН ЛК ФНС
+    fns_app_password: Optional[str] = Field(default=None, max_length=200)  # v1.27.0: пароль ЛК
+    fns_app_secret: Optional[str] = Field(default=None, max_length=200)  # v1.27.0: clientSecret (своя)
     external_custom_url: Optional[str] = Field(default=None, max_length=500)  # legacy
     external_custom_urls: Optional[list[CustomSource]] = Field(default=None, max_length=10)
     external_order: Optional[str] = Field(default=None, max_length=100)
