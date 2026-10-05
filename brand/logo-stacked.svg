@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 700" width="640" height="700">
+  <!-- Ямастер Чек — вертикальный логотип. Разработчик и владелец идеи: ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+  <defs>
+    <linearGradient id="ymTileV" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.5" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(120,24) scale(0.78)">
+    <rect width="512" height="512" rx="115" fill="url(#ymTileV)"/>
+    <path d="M170 118h172a14 14 0 0 1 14 14v198l-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22V132a14 14 0 0 1 14-14z" fill="#FFFFFF"/>
+    <g fill="#0E2A47">
+      <path fill-rule="evenodd" d="M185 180h46v46h-46zM197 192h22v22h-22zM202 197h12v12h-12z"/>
+      <path fill-rule="evenodd" d="M281 180h46v46h-46zM293 192h22v22h-22zM298 197h12v12h-12z"/>
+    </g>
+    <path d="M203 254q53 56 106 0" stroke="#FF7A00" stroke-width="26" stroke-linecap="round" fill="none"/>
+    <circle cx="352" cy="130" r="46" fill="#FF7A00" stroke="#FFFFFF" stroke-width="10"/>
+    <path d="M330 130l16 17 30-34" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <text x="320" y="560" text-anchor="middle" font-family="'Segoe UI','Inter',Arial,sans-serif" font-size="78" font-weight="800" fill="#0E2A47">Ямастер Чек</text>
+  <text x="320" y="628" text-anchor="middle" font-family="'Segoe UI','Inter',Arial,sans-serif" font-size="40" font-weight="600" fill="#FF7A00" letter-spacing="0.5">chek.ymaster.ru</text>
+</svg>

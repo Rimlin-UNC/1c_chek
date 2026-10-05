@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Ямастер Чек — белая версия для тёмных фонов. ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+  <rect x="7" y="7" width="498" height="498" rx="108" fill="none" stroke="#FFFFFF" stroke-width="14"/>
+  <!-- чек: только контур -->
+  <path d="M170 118h172a14 14 0 0 1 14 14v198l-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22V132a14 14 0 0 1 14-14z"
+        fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linejoin="round"/>
+  <!-- глаза-QR -->
+  <g fill="#FFFFFF">
+    <path fill-rule="evenodd" d="M185 180h46v46h-46zM197 192h22v22h-22zM202 197h12v12h-12z"/>
+    <path fill-rule="evenodd" d="M281 180h46v46h-46zM293 192h22v22h-22zM298 197h12v12h-12z"/>
+  </g>
+  <!-- улыбка -->
+  <path d="M203 254q53 56 106 0" stroke="#FFFFFF" stroke-width="26" stroke-linecap="round" fill="none"/>
+  <!-- бейдж «проверено» -->
+  <circle cx="352" cy="130" r="46" fill="none" stroke="#FFFFFF" stroke-width="10"/>
+  <path d="M330 130l16 17 30-34" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
