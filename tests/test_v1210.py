@@ -118,13 +118,15 @@ class TestCollapsibleSettings:
 class TestContrast:
     def test_light_theme_tokens(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert css.count("--text-faint: #6b6b6b") >= 2     # light + auto@light
+        # v1.25.0: одна светлая тема — токены объявлены один раз в :root
+        assert "--text-faint: #6b6b6b" in css
         assert "--info: #237a90" in css
 
     def test_dark_theme_tokens(self):
+        # v1.25.0: тёмная тема удалена
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert "--text-faint: #949494" in css
-        assert "--bad: #d4635f" in css
+        assert "--text-faint: #949494" not in css
+        assert "--bad: #d4635f" not in css
 
     def test_accent_button_dark_text(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()

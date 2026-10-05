@@ -7,23 +7,8 @@
   Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
 -->
 <meta charset="UTF-8">
-<script>
-  /* v1.7.0: тема применяется до отрисовки — без «вспышки» неправильной темы */
-  (function () {
-    try {
-      var t = localStorage.getItem('ymaster-theme') || 'light';   /* v1.19.0: светлый — по умолчанию */
-      document.documentElement.setAttribute('data-theme', t);
-      /* v1.20.0: акцент и плотность — до отрисовки, без «вспышки» */
-      var acc = localStorage.getItem('ymaster-accent');
-      if (acc) document.documentElement.setAttribute('data-accent', acc);
-      var den = localStorage.getItem('ymaster-density');
-      if (den) document.documentElement.setAttribute('data-density', den);
-      if (t === 'light' || (t === 'auto' && matchMedia('(prefers-color-scheme: light)').matches)) {
-        document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f5f5f5');
-      }
-    } catch (e) {}
-  })();
-</script>
+<!-- v1.25.0: тема одна — светлая («Ямастер»), переключатель и предустановка
+     до отрисовки больше не нужны: цвет meta theme-color статичный -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f5">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -34,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.24.1">
+<link rel="stylesheet" href="/css/app.css?v=1.25.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -210,6 +195,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.24.1"></script>
+  <script type="module" src="/js/app.js?v=1.25.0"></script>
 </body>
 </html>

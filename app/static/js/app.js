@@ -96,7 +96,7 @@ function showSplash(show) {
   if (!el) {
     el = document.createElement('div');
     el.id = 'boot-splash';
-    el.style.cssText = 'position:fixed;inset:0;z-index:300;background:#0b1020;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;color:#9aa3bd;font-size:14px';
+    el.style.cssText = 'position:fixed;inset:0;z-index:300;background:#f5f5f5;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;color:#5c5c5c;font-size:14px';   // v1.25.0: светлый
     el.innerHTML = '<img src="/img/logo.svg" width="52" height="52" alt=""><b>Ямастер Чек</b><span class="spinner"></span>';
     document.body.appendChild(el);
   }
@@ -1414,42 +1414,19 @@ const quietActive = () => {
 };
 
 function bindAppearance() {
-  // акцент
-  const row = $('#accent-row');
-  if (row && !row.dataset.bound) {
-    row.dataset.bound = '1';
-    row.querySelectorAll('.swatch').forEach(b => {
-      b.onclick = () => {
-        try { localStorage.setItem('ymaster-accent', b.dataset.accent); } catch (e) {}
-        applyAccent(b.dataset.accent);
-        renderAppearanceState();
-      };
-    });
-  }
-  // плотность
-  const seg = $('#density-seg');
-  if (seg && !seg.dataset.bound) {
-    seg.dataset.bound = '1';
-    seg.querySelectorAll('button').forEach(b => {
-      b.onclick = () => {
-        try { localStorage.setItem('ymaster-density', b.dataset.density); } catch (e) {}
-        applyDensity(b.dataset.density);
-        renderAppearanceState();
-      };
-    });
-  }
-  // спокойный час
+  // v1.25.0: акцент и плотность удалены — стиль фиксированный (светлый «Ямастер»);
+  // остался только «Спокойный час» (управление уведомлениями, не оформление)
   const q = $('#btn-quiet');
   if (q && !q.dataset.bound) {
     q.dataset.bound = '1';
     q.onclick = () => {
       if (quietActive()) {
         try { localStorage.removeItem(QUIET_KEY); } catch (e) {}
-        toast('Спокойный час отключён — уведомления снова показываются', 'info', 'Оформление');
+        toast('Спокойный час отключён — уведомления снова показываются', 'info', 'Уведомления');
       } else {
         const mins = parseInt(($('#quiet-dur') || {}).value || '60', 10);
         try { localStorage.setItem(QUIET_KEY, String(Date.now() + mins * 60000)); } catch (e) {}
-        toast(`Спокойный час включён до ${new Date(Date.now() + mins * 60000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 'info', 'Оформление');
+        toast(`Спокойный час включён до ${new Date(Date.now() + mins * 60000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, 'info', 'Уведомления');
       }
       renderAppearanceState();
     };
@@ -1457,23 +1434,8 @@ function bindAppearance() {
   renderAppearanceState();
 }
 
-function applyAccent(v) {
-  if (v) document.documentElement.setAttribute('data-accent', v);
-  else document.documentElement.removeAttribute('data-accent');
-}
-
-function applyDensity(v) {
-  if (v) document.documentElement.setAttribute('data-density', v);
-  else document.documentElement.removeAttribute('data-density');
-}
-
 function renderAppearanceState() {
-  let acc = '', den = '';
-  try { acc = localStorage.getItem('ymaster-accent') || ''; den = localStorage.getItem('ymaster-density') || ''; } catch (e) {}
-  document.querySelectorAll('#accent-row .swatch').forEach(b =>
-    b.classList.toggle('active', (b.dataset.accent || '') === acc));
-  document.querySelectorAll('#density-seg button').forEach(b =>
-    b.classList.toggle('active', (b.dataset.density || '') === den));
+  // v1.25.0: только статус «Спокойного часа»
   const q = $('#btn-quiet'), qs = $('#quiet-status');
   if (q) {
     if (quietActive()) {
@@ -1965,23 +1927,8 @@ function openNotifyDialog(r, onSaved) {
 // ==========================================================================
 //  v1.2.0: Блок «Что нового» — показывается один раз на каждую версию
 // ==========================================================================
-// ==========================================================================
-//  v1.7.0: Темы — светлая / тёмная / авто («как на устройстве»)
-// ==========================================================================
-function applyTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
-  try { localStorage.setItem('ymaster-theme', t); } catch (e) {}
-  const meta = document.querySelector('meta[name="theme-color"]');
-  const dark = t === 'dark'
-    || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#f5f5f5');
-}
-
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
-  let cur = 'auto';
-  try { cur = localStorage.getItem('ymaster-theme') || 'light'; } catch (e) {}
-  if (cur === 'auto') applyTheme('auto');   // перерисовать под новую системную тему
-});
+// v1.25.0: темы удалены — единственная светлая задана в CSS (:root),
+// переключатель из Настроек убран, «вспышки» неправильной темы нет.
 
 // ==========================================================================
 //  v1.5.0: Установка приложения на устройство (PWA: Android/iOS/десктоп)
@@ -2175,6 +2122,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.25.0': [
+    { icon: '☀️', title: 'Единая светлая тема — всё читается',
+      text: 'Переключатели оформления убраны: приложение всегда в светлом стиле «Ямастер» — белые карточки, текст #333, фирменный оранжевый дозированно. Исправлена читаемость карточки чека, уведомлений и всплывающих подсказок (было тёмное окно с тёмным шрифтом). В настройках остался только «Спокойный час».' },
+  ],
   '1.24.1': [
     { icon: '🖨', title: 'Чеки печатаются с фискальным QR-кодом',
       text: 'Исправлено: лист больше не печатается раньше, чем загрузятся QR-коды. Коды загружаются для всех выбранных чеков (раньше — только для 60), с прогрессом; чек без реквизитов получает пометку «фискальный QR не получен».' },
@@ -4561,17 +4512,6 @@ async function viewSettings(container) {
           <code class="inline">docs/INTEGRATION_1C.md</code>.</div>
       </div>` : ''}
 
-      <div class="glass card">
-        <div class="card-title">🎨 Оформление <span class="form-hint">(v1.7.0)</span></div>
-        <div class="seg" id="theme-seg">
-          <button data-t="auto" type="button">🌓 Как на устройстве</button>
-          <button data-t="light" type="button">☀️ Светлая</button>
-          <button data-t="dark" type="button">🌙 Тёмная</button>
-        </div>
-        <p class="form-hint" style="margin-top:8px">«Как на устройстве» — тема меняется вместе с
-        настройкой системы/телефона автоматически.</p>
-      </div>
-
       ${!isAdmin() && me ? `
       <div class="glass card">
         <div class="card-title">${state.me.role === 'accountant' ? '🏢 Ваша компания' : '👤 Мои чеки'} <span class="form-hint">(v1.17.0)</span></div>
@@ -4599,21 +4539,9 @@ async function viewSettings(container) {
       </div>
 
       <div class="glass card">
-        <div class="card-title">🎨 Оформление <span class="form-hint">(v1.20.0 — стиль «Ямастер»)</span></div>
-        <label class="appearance-label">Акцентный цвет</label>
-        <div class="swatch-row" id="accent-row" role="radiogroup" aria-label="Акцентный цвет">
-          <button class="swatch" data-accent="" style="--sw:#ff7a00" title="Оранжевый (по умолчанию)" aria-label="Оранжевый"></button>
-          <button class="swatch" data-accent="indigo" style="--sw:#4b0082" title="Индиго" aria-label="Индиго"></button>
-          <button class="swatch" data-accent="sea" style="--sw:#2e8b57" title="Морская зелень" aria-label="Морская зелень"></button>
-          <button class="swatch" data-accent="sky" style="--sw:#5bc0de" title="Голубой" aria-label="Голубой"></button>
-        </div>
-        <label class="appearance-label">Плотность интерфейса</label>
-        <div class="segmented" id="density-seg">
-          <button data-density="">Просторный</button>
-          <button data-density="compact">Компактный</button>
-        </div>
-        <label class="appearance-label">🔕 Спокойный час</label>
-        <p class="form-hint" style="margin-bottom:8px">Некритичные уведомления скрыты; ошибки показываются всегда.</p>
+        <div class="card-title">🔕 Уведомления</div>
+        <p class="form-hint" style="margin-bottom:8px">«Спокойный час» прячет некритичные
+        уведомления на выбранный срок; ошибки показываются всегда.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <button class="btn btn-sm" id="btn-quiet">Отключить</button>
           <select id="quiet-dur" class="company-select" style="max-width:150px">
@@ -4683,21 +4611,6 @@ async function viewSettings(container) {
         — согласно лицензии проекта.</p>
       </div>
     </div>`;
-
-  // v1.7.0: переключатель тем
-  const seg = $('#theme-seg');
-  if (seg) {
-    let cur = 'auto';
-    try { cur = localStorage.getItem('ymaster-theme') || 'light'; } catch (e) {}
-    seg.querySelectorAll('button').forEach(b => {
-      b.classList.toggle('on', b.dataset.t === cur);
-      b.onclick = () => {
-        applyTheme(b.dataset.t);
-        seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-        toast(b.dataset.t === 'auto' ? 'Тема следует за устройством' : b.dataset.t === 'light' ? 'Светлая тема' : 'Тёмная тема', 'ok', '🎨');
-      };
-    });
-  }
 
   // PWA-кнопка в настройках (все роли)
   const bp = $('#btn-pwa');
@@ -4867,7 +4780,7 @@ async function viewSettings(container) {
     });
   }
   makeSettingsCollapsible(container);   // v1.21.0: сворачиваемые блоки
-  bindAppearance();                 // v1.20.0: акцент, плотность, тихий час
+  bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();
 

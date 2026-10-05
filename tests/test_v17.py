@@ -49,13 +49,13 @@ class TestReceiptsIds:
 
 class TestThemesAndPrint:
     def test_theme_files(self):
+        # v1.25.0: тема одна — светлая (переключатель удалён)
         h = open("app/static/index.html", encoding="utf-8").read()
-        assert "ymaster-theme" in h and "data-theme" in h
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert 'html[data-theme="light"]' in css
-        assert "prefers-color-scheme: light" in css
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "applyTheme" in js and "ymaster-theme" in js
+        assert "color-scheme: light" in css
+        assert "--bg: #f5f5f5" in css and "--text: #333333" in css
+        assert "data-theme" not in h and "applyTheme" not in js
 
     def test_print_pack_files(self):
         assert os.path.exists("app/static/js/printpack.js")

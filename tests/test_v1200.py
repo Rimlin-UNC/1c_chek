@@ -81,26 +81,29 @@ class TestSmartFocus:
 
 
 class TestAppearance:
+    # v1.25.0: карточка «Оформление» удалена (тема одна — светлая);
+    # «Спокойный час» сохранён в карточке «Уведомления»
     def test_settings_card(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        for needle in ("🎨 Оформление", "accent-row", "density-seg",
-                       "btn-quiet", "quiet-dur", "bindAppearance",
-                       "applyAccent", "applyDensity", "renderAppearanceState",
+        for needle in ("🔕 Уведомления", "btn-quiet", "quiet-dur",
+                       "bindAppearance", "renderAppearanceState",
                        "Спокойный час"):
             assert needle in js, needle
+        for gone in ("🎨 Оформление", "accent-row", "density-seg",
+                     "applyAccent", "applyDensity"):
+            assert gone not in js, gone
 
     def test_early_apply_no_flash(self):
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert "ymaster-accent" in idx and "ymaster-density" in idx
-        assert "data-accent" in idx
+        assert "ymaster-accent" not in idx and "ymaster-density" not in idx
 
     def test_css_accent_and_density(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert 'html[data-accent="indigo"]' in css
-        assert 'html[data-accent="sea"]' in css
-        assert 'html[data-accent="sky"]' in css
-        assert 'html[data-density="compact"]' in css
-        assert ".swatch" in css and ".appearance-label" in css
+        assert 'html[data-accent' not in css
+        assert 'html[data-density' not in css
+        # свотчи удалены, легенда графика не тронута
+        assert ".swatch-row" not in css
+        assert ".legend .swatch" in css
 
     def test_quiet_hours_in_toast(self):
         u = open("app/static/js/ui.js", encoding="utf-8").read()

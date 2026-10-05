@@ -81,11 +81,14 @@ class TestAuditUI:
 class TestYamasterStyle:
     def test_palette_tokens(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        for needle in ("#ff7a00", "#4b0082", "#2e8b57", "#d9534f", "#5bc0de",
+        # v1.25.0: тёмные токены (#1e1e1e, #e06d00, #e0e0e0, #3cb371, #c94c4c)
+        # удалены вместе с тёмной темой — остались светлые «Ямастер»
+        for needle in ("#ff7a00", "#4b0082", "#2e8b57", "#d9534f",
                        "#333333", "#f5f5f5",
-                       "#1e1e1e", "#e06d00", "#e0e0e0", "#3cb371", "#c94c4c",
                        "--indigo", "--font-mono", "--font-accent"):
             assert needle in css.lower() or needle in css, needle
+        for gone in ("#1e1e1e", "#e06d00", "#e0e0e0", "#3cb371", "#c94c4c"):
+            assert gone not in css.lower(), gone
 
     def test_typography(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
@@ -110,11 +113,10 @@ class TestYamasterStyle:
         assert "Inter" in idx and "JetBrains+Mono" in idx and "Caveat" in idx
 
     def test_light_theme_default(self):
-        idx = open("app/static/index.html", encoding="utf-8").read()
-        assert "|| 'light'" in idx
-        js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert js.count("|| 'light'") >= 2
-        assert "#1e1e1e" in js and "#f5f5f5" in js
+        # v1.25.0: светлая — единственная (переключателей нет)
+        css = open("app/static/css/app.css", encoding="utf-8").read()
+        assert "--bg: #f5f5f5" in css and "--accent: #ff7a00" in css
+        assert "#1e1e1e" not in open("app/static/js/app.js", encoding="utf-8").read()
 
     def test_styleguide_doc_exists(self):
         md = open("docs/styleguide.md", encoding="utf-8").read()
