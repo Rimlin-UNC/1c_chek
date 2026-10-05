@@ -80,6 +80,7 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         created_by=user.id if user else None,
         company_id=company_id,                     # v1.11.0: пространство клиента
         assignee=auto_assignee,
+        assignee_lc=auto_assignee.casefold()[:200],   # v1.25.1
         raw_data=receipts_json(parsed),
         status="new",
     )
@@ -297,7 +298,10 @@ def list_receipts(
     if exported is not None:
         query = query.filter(Receipt.exported == exported)
     if assignee:
-        query = query.filter(Receipt.assignee.ilike(f"%{assignee.strip()}%"))
+        # v1.25.1: кириллица в любом регистре (lower() в SQLite её не меняет)
+        like = f"%{assignee.strip()}%"
+        query = query.filter(or_(Receipt.assignee.ilike(like),
+                                 Receipt.assignee_lc.like(like.casefold())))
     if creator:
         query = query.filter(Receipt.created_by == creator.strip())      # v1.23.0
     if full_data is not None:                                            # v1.23.0
@@ -313,9 +317,11 @@ def list_receipts(
                              Receipt.created_at < cutoff)
     if q:
         like = f"%{q.strip()}%"
+        # v1.25.1: сотрудник — в любом регистре (lc-колонка для кириллицы)
         query = query.filter(or_(Receipt.fn.like(like), Receipt.fd.like(like),
                                  Receipt.fp.like(like), Receipt.qr_data.like(like),
-                                 Receipt.assignee.like(like)))
+                                 Receipt.assignee.ilike(like),
+                                 Receipt.assignee_lc.like(like.casefold())))
     if date_from:
         try:
             d = dt.datetime.strptime(date_from, "%Y-%m-%d")
@@ -498,6 +504,7 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
                 changed["fields"].append(f)
         if body.assignee is not None:
             receipt.assignee = body.assignee.strip()[:200]
+            receipt.assignee_lc = receipt.assignee.casefold()[:200]   # v1.25.1
             changed["fields"].append("assignee")
         if body.comment is not None:
             receipt.comment = body.comment.strip()[:2000]
@@ -538,7 +545,8 @@ def bulk_assign(body: AssignBulk, user: User = Depends(require_accountant),
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Не выбраны чеки")
     updated = (scope_receipts(db.query(Receipt), user)          # v1.11.0
                .filter(Receipt.id.in_(body.receipt_ids))
-               .update({Receipt.assignee: body.assignee.strip()[:200]},
+               .update({Receipt.assignee: body.assignee.strip()[:200],
+                        Receipt.assignee_lc: body.assignee.strip().casefold()[:200]},   # v1.25.1
                        synchronize_session=False))
     db.commit()
     log_action(user, "receipts_assigned", details={"count": updated,
@@ -576,6 +584,7 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
         r.exported_at = None
         if body.assignee is not None:
             r.assignee = body.assignee.strip()[:200]
+            r.assignee_lc = r.assignee.casefold()[:200]   # v1.25.1
         moved_ids.append(r.id)
         moved += 1
     db.commit()

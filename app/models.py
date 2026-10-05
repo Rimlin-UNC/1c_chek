@@ -187,6 +187,9 @@ class Receipt(Base):
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     # Для бухгалтерии: подотчётное лицо (сотрудник) и комментарий
     assignee: Mapped[str] = mapped_column(String(200), default="")
+    # v1.25.1: нормализованный сотрудник (casefold) — регистронезависимый фильтр
+    # и поиск по кириллице (lower()/ilike в SQLite не работает с кириллицей)
+    assignee_lc: Mapped[str] = mapped_column(String(200), server_default="", default="")
     # v1.8.0: личные покупки в чеке (не для учёта) — к учёту = total_sum - personal_sum
     personal_sum: Mapped[float] = mapped_column(Float, default=0.0)
     comment: Mapped[str] = mapped_column(Text, default="")

@@ -548,7 +548,16 @@ function scheduleRouteRefresh(ms = 1200) {
   if (_routeRefreshTimer) return;
   _routeRefreshTimer = setTimeout(() => {
     _routeRefreshTimer = null;
-    if (!document.hidden && state.me) route(true);
+    if (!document.hidden && state.me) {
+      // v1.25.1: «Чеки» обновляем НА МЕСТЕ (viewReceipts._refresh) — перестроение
+      // вида route() затирало применённые фильтры и оставляло скелетон вместо
+      // списка, если данные не изменились (список «пропадал» до F5)
+      if (state.view === 'receipts' && typeof viewReceipts._refresh === 'function') {
+        viewReceipts._refresh();
+      } else {
+        route(true);
+      }
+    }
   }, ms);
 }
 
@@ -2122,6 +2131,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.25.1': [
+    { icon: '🧾', title: 'Страница «Чеки»: список больше не пропадает',
+      text: 'Исправлено: после живых событий (новый чек, проверка ФНС) список чеков иногда исчезал до перезагрузки страницы. Теперь данные обновляются на месте — без сброса фильтров и пустого экрана; при сбое сети показывается «Повторить». Фильтр «Сотрудник» и поиск по имени работают в любом регистре (кириллица).' },
+  ],
   '1.25.0': [
     { icon: '☀️', title: 'Единая светлая тема — всё читается',
       text: 'Переключатели оформления убраны: приложение всегда в светлом стиле «Ямастер» — белые карточки, текст #333, фирменный оранжевый дозированно. Исправлена читаемость карточки чека, уведомлений и всплывающих подсказок (было тёмное окно с тёмным шрифтом). В настройках остался только «Спокойный час».' },
@@ -2560,6 +2573,14 @@ function advanceBadge(r) {
   return `<span class="dl-badge ok" title="В пределах срока сдачи">сдать до ${dueStr}</span>`;
 }
 
+// v1.25.1: заполнить селектор «Кто добавил» из списка (общий для вида)
+function fillCreators(sel, list, keepValue) {
+  if (!sel) return;
+  sel.innerHTML = '<option value="">все добавившие</option>' +
+    (list || []).map(u => `<option value="${esc(u.id)}">${esc(u.name)} (${u.count})</option>`).join('');
+  sel.value = keepValue || '';
+}
+
 async function viewReceipts(container) {
   const acc = isAccountant();
   // v1.8.0: срок сдачи авансового отчёта (настройка приказа руководителя)
@@ -2628,22 +2649,39 @@ async function viewReceipts(container) {
       <div class="pagination" id="receipts-pager"></div>
     </div>`;
 
-  const filters = {
+  viewReceipts._mounted = false;   // v1.25.1: список пока не отрисован
+  // v1.25.1: применённые фильтры переживают перестроение вида (WS/навигация)
+  const filters = Object.assign({
     q: '', status: '', fns_status: '', exported: '', assignee: '',
     creator: '', full_data: '',
     category: '', notified: '', date_from: '', date_to: '', page: 1,
-  };
+  }, viewReceipts._filters || {});
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
+  // вернуть значения в поля формы — чтобы видно было, что фильтр применён
+  [['#f-q', 'q'], ['#f-status', 'status'], ['#f-fns', 'fns_status'],
+   ['#f-exp', 'exported'], ['#f-assignee', 'assignee'], ['#f-creator', 'creator'],
+   ['#f-full', 'full_data'], ['#f-category', 'category'],
+   ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to']]
+    .forEach(([sel, key]) => {
+      const el = $(sel);
+      if (el && filters[key]) el.value = filters[key];
+    });
 
   async function load() {
+    try {
     const p = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => { if (v !== '' && v != null) p.set(k, v); });
     if (companyIdParam()) p.set('company_id', companyIdParam());   // v1.11.0
     const data = await api.get('/api/v1/receipts?' + p.toString());
+    if (!Array.isArray(data.items)) data.items = [];   // v1.25.1: страховка формы ответа
     pageInfo = data;
-    // v1.8.0: данные не изменились → не перерисовываем (без мерцания)
+    // v1.8.0: данные не изменились → не перерисовываем (без мерцания).
+    // v1.25.1: НО если после перестроения вида список ещё не отрисован
+    // (скелетон) — рисуем обязательно: раньше список «пропадал» до F5
     const rcptSig = JSON.stringify(data);
-    if (viewReceipts._sig === rcptSig) { updateSelInfo(); return; }
+    if (viewReceipts._sig === rcptSig && viewReceipts._mounted) {
+      updateSelInfo(); return;
+    }
     viewReceipts._sig = rcptSig;
     viewReceipts._rows = data.items;
     // datalist имён сотрудников — из текущих строк + ранее введённые
@@ -2653,19 +2691,31 @@ async function viewReceipts(container) {
     const cats = new Set(viewReceipts._cats || []);
     data.items.forEach(x => { if (x.category) cats.add(x.category); });
     viewReceipts._cats = [...cats];
-    // v1.23.0: селектор «Кто добавил» — те, кто добавлял чеки этой компании
-    if (acc && !viewReceipts._creatorsLoaded) {
-      viewReceipts._creatorsLoaded = true;
-      api.get('/api/v1/receipts/creators' + (companyIdParam() ? '?company_id=' + companyIdParam() : ''))
-        .then(list => {
-          const sel = $('#f-creator');
-          if (!sel) return;
-          sel.innerHTML = '<option value="">все добавившие</option>' +
-            list.map(u => `<option value="${esc(u.id)}">${esc(u.name)} (${u.count})</option>`).join('');
-          sel.value = viewReceipts._creatorKeep || '';
-        }).catch(() => {});
+    // v1.23.0/v1.25.1: селектор «Кто добавил» — кэшируется, восстанавливается
+    // после перестроения вида, сбрасывается при смене компании
+    if (acc) {
+      const cCompany = companyIdParam() || '';
+      if (viewReceipts._creatorsCompany !== cCompany) {
+        viewReceipts._creatorsCompany = cCompany;
+        viewReceipts._creatorsLoaded = false;
+        viewReceipts._creators = null;
+      }
+      const selC = $('#f-creator');
+      if (selC && selC.options.length <= 1 && (viewReceipts._creators || []).length) {
+        fillCreators(selC, viewReceipts._creators, viewReceipts._creatorKeep || '');
+      }
+      if (!viewReceipts._creatorsLoaded) {
+        viewReceipts._creatorsLoaded = true;
+        api.get('/api/v1/receipts/creators' + (companyIdParam() ? '?company_id=' + companyIdParam() : ''))
+          .then(list => {
+            viewReceipts._creators = Array.isArray(list) ? list : [];
+            const sel = $('#f-creator');
+            if (sel) fillCreators(sel, viewReceipts._creators, viewReceipts._creatorKeep || '');
+          }).catch(() => { viewReceipts._creatorsLoaded = false; });
+      }
     }
     const el = $('#receipts-table');
+    viewReceipts._mounted = true;    // v1.25.1: список отрисован — мерцание отключаем
     if (!data.items.length) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
     } else {
@@ -2704,10 +2754,23 @@ async function viewReceipts(container) {
       <span>Стр. ${data.page} из ${pages} · всего ${fmtInt(data.total)} на ${fmtSum(data.total_sum)}</span>
       <button class="btn btn-sm" id="pg-prev" ${data.page <= 1 ? 'disabled' : ''}>←</button>
       <button class="btn btn-sm" id="pg-next" ${data.page >= pages ? 'disabled' : ''}>→</button>`;
-    $('#pg-prev').onclick = () => { filters.page--; load(); };
-    $('#pg-next').onclick = () => { filters.page++; load(); };
+    $('#pg-prev').onclick = () => { filters.page--; viewReceipts._filters = { ...filters }; load(); };
+    $('#pg-next').onclick = () => { filters.page++; viewReceipts._filters = { ...filters }; load(); };
     updateSelInfo();
+    } catch (e) {
+      // v1.25.1: ошибка загрузки — внятное состояние с кнопкой «Повторить»
+      // вместо вечного скелетона («пропавший» список)
+      viewReceipts._mounted = false;   // списка на экране больше нет
+      const el = $('#receipts-table');
+      if (el) el.innerHTML = `<div class="empty-state"><span class="big-ico">📡</span>
+        <b>Не удалось загрузить чеки</b>
+        <span class="form-hint">${esc(e.message || 'нет связи с сервером')}</span>
+        <button class="btn btn-primary" id="rc-retry" style="margin-top:10px">Повторить</button></div>`;
+      const rb = $('#rc-retry');
+      if (rb) rb.onclick = () => load();
+    }
   }
+  viewReceipts._refresh = load;   // v1.25.1: живое обновление списка без route()
 
   function receiptRow(r) {
     const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
@@ -2802,6 +2865,7 @@ async function viewReceipts(container) {
     filters.date_from = $('#f-from').value;
     filters.date_to = $('#f-to').value;
     filters.page = 1;
+    viewReceipts._filters = { ...filters };   // v1.25.1: переживают перестроение вида
     load();
   };
   $('#f-q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-filter').click(); });

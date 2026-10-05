@@ -9,10 +9,12 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, or_
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import settings
+
+import logging
 
 import uuid as _uuid
 from datetime import datetime as _dt, timezone as _tz
@@ -68,6 +70,7 @@ def init_db() -> None:
     from . import models  # noqa: F401 — регистрируем модели
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
+    _backfill_assignee_lc()
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
     # ошибка уходит в журнал, приложение стартует на прежней схеме.
@@ -108,6 +111,8 @@ def _ensure_schema() -> None:
         "receipts": [
             # v1.23.0: полные данные чека получены из сервиса проверки
             ("full_data", "ALTER TABLE receipts ADD COLUMN full_data BOOLEAN DEFAULT 0"),
+            # v1.25.1: сотрудник в нижнем регистре (кириллица в фильтрах/поиске)
+            ("assignee_lc", "ALTER TABLE receipts ADD COLUMN assignee_lc VARCHAR(200) DEFAULT ''"),
             ("assignee",
              "ALTER TABLE receipts ADD COLUMN assignee VARCHAR(200) DEFAULT ''"),
             ("comment",
@@ -159,6 +164,32 @@ def _ensure_schema() -> None:
                 conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
                              {"lc": (cat or "").casefold(), "i": rid})
 
+
+
+def _backfill_assignee_lc() -> None:
+    """v1.25.1: одноразовое заполнение assignee_lc (casefold) для старых чеков.
+
+    lower() в SQLite не приводит регистр кириллицы, поэтому нормализуем в
+    Python: фильтр «Сотрудник» и поиск по имени работают в любом регистре.
+    """
+    from . import models
+    db = SessionLocal()
+    try:
+        R = models.Receipt
+        rows = (db.query(R)
+                .filter(or_(R.assignee_lc.is_(None), R.assignee_lc == ""))
+                .filter(R.assignee.isnot(None), R.assignee != "")
+                .all())
+        for r in rows:
+            r.assignee_lc = (r.assignee or "").strip().casefold()[:200]
+        db.commit()
+        if rows:
+            logging.getLogger("ymaster").info("Назначено assignee_lc: %s чек(ов)", len(rows))
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 def _backfill_companies(conn, existing_tables: set) -> None:
     """v1.11.0: перевод существующих данных на мультикомпанийность.

@@ -17,6 +17,7 @@ class El {
     this.tagName = tag; this.children = []; this.dataset = {};
     this.style = {}; this._html = ''; this.textContent = ''; this.disabled = false;
     this.value = ''; this.checked = false; this._id = '';
+    this.options = [];   // v1.25.1: у <select> в живом DOM options есть всегда
     this.classList = {
       _s: new Set(),
       add: (...c) => c.forEach(x => this.classList._s.add(x)),
@@ -52,17 +53,19 @@ class El {
 
 const root = new El();
 const _byId = {};
+const _docQ = {};   // v1.25.1: стабильные селекторы
 const document = {
   getElementById: (id) => (_byId[id] = _byId[id] || (id === 'modal-root' ? root : new El())),
   createElement: (t) => new El(t),
-  querySelector: () => new El(),
+  // v1.25.1: стабильные El на селектор — как живой DOM (нужно для теста «Чеков»)
+  querySelector: (sel) => (_docQ[sel] = _docQ[sel] || new El()),
   querySelectorAll: () => [],
   addEventListener: () => {},
   body: new El('body'),
   documentElement: new El('html'),
 };
 
-const storage = {};
+const storage = { ymaster_check_token: 'harness-token' };   // v1.25.1: boot загрузит /auth/me
 const apiLog = [];
 const toasts = [];
 
@@ -88,6 +91,7 @@ const sandbox = {
   URL: { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} },
   Blob: function (parts, opts) { this.parts = parts; this.opts = opts; },
   console, Date, Math, JSON, Promise, Object, Array, String, Number, Boolean,
+  URLSearchParams,   // v1.25.1: нужен load() страницы «Чеки»
   RegExp, Error, TypeError, Map, Set, parseInt, parseFloat, isNaN, encodeURIComponent,
   decodeURIComponent, structuredClone: (x) => JSON.parse(JSON.stringify(x)),
   AbortController: class { constructor() { this.signal = {}; } abort() {} },
@@ -147,11 +151,51 @@ const advancePayloads = [
 ];
 let advanceIdx = 0;
 
+// v1.25.1: данные страницы «Чеки» и переключатель сбоя API
+let receiptsFail = false;
+const receiptsPayload = {
+  total: 2, total_sum: 350.5, page: 1, page_size: 50,
+  items: [
+    { id: 'r1', receipt_date: '2026-10-05T12:00', total_sum: 100.0, fn: '9999078902001299',
+      fd: '11', fp: '111', operation: 1, status: 'new', fns_status: 'unknown',
+      exported: false, notified: false, full_data: false, assignee: 'Иван Отчётный',
+      created_by_id: 'u2', created_by_name: 'Иванов И.', category: 'Хозрасходы' },
+    { id: 'r2', receipt_date: '2026-10-06T13:00', total_sum: 250.5, fn: '9999078902001307',
+      fd: '12', fp: '222', operation: 1, status: 'verified', fns_status: 'valid',
+      exported: true, notified: true, full_data: true, assignee: 'Пётр Готовый',
+      created_by_id: 'u3', created_by_name: 'Петров П.', category: 'Топливо' },
+  ],
+};
+const creatorsPayload = [
+  { id: 'u2', name: 'Иванов И.', count: 1 },
+  { id: 'u3', name: 'Петров П.', count: 1 },
+];
+
 sandbox.fetch = async (url, opts) => {
   apiLog.push({ url: String(url), method: (opts && opts.method) || 'GET',
                 body: opts && opts.body ? JSON.parse(opts.body) : null });
-  let payload = {};
-  if (String(url).includes('/card')) payload = cardPayload;
+  // v1.25.1: бухгалтер на «Чеках»
+  let specialPayload = false;
+  if (String(url).includes('/auth/me')) {
+    specialPayload = true;
+    payload = { id: 'u1', username: 'acc', role: 'accountant', full_name: 'Бух Бухгалтер' };
+  }
+  if (String(url).includes('/receipts/creators')) {
+    specialPayload = true;
+    payload = creatorsPayload;
+  }
+  if (String(url).includes('/receipts?')) {
+    specialPayload = true;
+    payload = receiptsFail ? { detail: 'сервер недоступен' } : receiptsPayload;
+    if (receiptsFail) {                     // v1.25.1: настоящий сбой (ok:false, без ретраев)
+      const j = JSON.stringify(payload);
+      return { ok: false, status: 400,
+               json: async () => JSON.parse(j), text: async () => j,
+               headers: { get: () => 'application/json' } };
+    }
+  }
+  if (!specialPayload) payload = {};
+  if (String(url).includes('/card')) { specialPayload = true; payload = cardPayload; }
   if (String(url).includes('/stats'))
     payload = { total: 0, by_fns: {}, by_day: [], by_company: {}, by_source: {},
                 by_user: {}, by_status: {}, valid: 0, invalid: 0 };
@@ -271,6 +315,74 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   // CSV
   await aoSlot.querySelector('#ao-csv').onclick();
   ok(true, 'ao: CSV без крэша');
+
+  // ================================================================
+  // v1.25.1: СТРАНИЦА «ЧЕКИ» — фильтры и аномалия «пропавшего списка»
+  // ================================================================
+  const rc = new El();                                  // контейнер вида
+  const table = () => (_docQ['#receipts-table'] = _docQ['#receipts-table'] || new El());
+  const wipeDom = () => {                               // симуляция перестроения:
+    rc.innerHTML = '<div class="skeleton"></div>';      // контейнер переписан шаблоном
+    table().innerHTML = '<div class="skeleton"></div>'; // таблица исчезла
+  };
+
+  // 1) первое открытие: список рисуется
+  wipeDom();
+  await sandbox.viewReceipts(rc);
+  await new Promise(r => setTimeout(r, 40));
+  ok(table().innerHTML.includes('<table'), 'чеки: список отрисован при открытии');
+  ok(table().innerHTML.includes('ФД'), 'чеки: колонки на месте');
+
+  // 2) ГЛАВНАЯ РЕГРЕССИЯ: WS-перестроение с теми же данными — список НЕ пропадает
+  const apiCallsBefore = apiLog.filter(x => String(x.url).includes('/receipts?')).length;
+  wipeDom();
+  await sandbox.viewReceipts(rc);
+  await new Promise(r => setTimeout(r, 40));
+  ok(table().innerHTML.includes('<table'),
+     'чеки: повторное открытие с теми же данными — список на месте (без F5)');
+
+  // 3) фильтр применяется и ПЕРЕЖИВАЕТ перестроение вида
+  _docQ['#f-q'].value = '61001';
+  await _docQ['#btn-filter'].onclick();
+  await new Promise(r => setTimeout(r, 30));
+  const qUrl = [...apiLog].reverse().find(x => String(x.url).includes('/receipts?'));
+  ok(qUrl && String(qUrl.url).includes('q=61001'), 'чеки: «Найти» передаёт q в API');
+  wipeDom();
+  await sandbox.viewReceipts(rc);
+  await new Promise(r => setTimeout(r, 40));
+  ok(_docQ['#f-q'].value === '61001', 'чеки: фильтр восстановлен после перестроения');
+  const qUrl2 = [...apiLog].reverse().find(x => String(x.url).includes('/receipts?'));
+  ok(qUrl2 && String(qUrl2.url).includes('q=61001'),
+     'чеки: восстановленный фильтр ушёл в запрос');
+  ok(table().innerHTML.includes('<table'), 'чеки: список отрисован с фильтром');
+
+  // 4) живое обновление _refresh() — на месте, без route()
+  const refreshIsFn = typeof sandbox.viewReceipts._refresh === 'function';
+  ok(refreshIsFn, 'чеки: живое обновление _refresh доступно');
+  if (refreshIsFn) {
+    await sandbox.viewReceipts._refresh();
+    ok(table().innerHTML.includes('<table'), 'чеки: _refresh не гасит список');
+  }
+
+  // 5) селектор «Кто добавил»: заполнен и восстановлен из кэша
+  ok(_docQ['#f-creator'].innerHTML.includes('Иванов И.'),
+     'чеки: селектор создателей заполнен');
+  _docQ['#f-creator'].innerHTML = '<option value="">все добавившие</option>';
+  wipeDom();
+  await sandbox.viewReceipts(rc);
+  await new Promise(r => setTimeout(r, 40));
+  ok(_docQ['#f-creator'].innerHTML.includes('Иванов И.'),
+     'чеки: создатели восстановлены из кэша после перестроения');
+
+  // 6) сбой API → внятная ошибка с «Повторить», восстановление без F5
+  receiptsFail = true;
+  await sandbox.viewReceipts._refresh();
+  await new Promise(r => setTimeout(r, 30));
+  ok(table().innerHTML.includes('Повторить'), 'чеки: ошибка загрузки видна пользователю');
+  receiptsFail = false;
+  await _docQ['#rc-retry'].onclick();
+  await new Promise(r => setTimeout(r, 30));
+  ok(table().innerHTML.includes('<table'), 'чеки: «Повторить» возвращает список');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
