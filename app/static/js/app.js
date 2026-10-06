@@ -1799,8 +1799,15 @@ function openEditReceipt(r, onSaved) {
         <input id="er-assignee" value="${esc(r.assignee || '')}" list="er-names">
         <datalist id="er-names">${[...(viewReceipts._names || [])].map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
       <label class="field"><span>Статья расходов</span>
-        <input id="er-category" value="${esc(r.category || '')}" list="er-cats" placeholder="Канцелярия, ГСМ, Хозтовары…">
-        <datalist id="er-cats">${[...(viewReceipts._cats || [])].map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+        <select id="er-cat-pick" ${r.exported && !isAdminUser ? 'disabled' : ''}>
+          <option value="">— не указана —</option>
+          ${(viewReceipts._catsTop || []).slice(0, 19).map(c =>
+            `<option value="${esc(c.name)}" ${r.category === c.name ? 'selected' : ''}>${esc(c.name)} (${c.count})</option>`).join('')}
+          <option value="__custom__">Своя…</option>
+        </select>
+        <input id="er-category" maxlength="100" style="display:none"
+          placeholder="своя статья — до 100 символов" value="${esc(r.category || '')}">
+        <span class="form-hint" id="er-cat-hint"></span></label>
       <label class="field"><span>Комментарий</span>
         <input id="er-comment" value="${esc(r.comment || '')}"></label>
     </div>
@@ -1842,6 +1849,31 @@ function openEditReceipt(r, onSaved) {
     row.querySelector('.it-del').onclick = () => row.remove();
     return row;
   };
+  // v1.28.0: статья расходов — выбор из частых или «Своя…» (≤100, счётчик)
+  const catPick = slot.querySelector('#er-cat-pick');
+  const catInput = slot.querySelector('#er-category');
+  const catHint = slot.querySelector('#er-cat-hint');
+  const catCounter = () => {
+    const len = [...catInput.value].length;
+    catHint.textContent = catPick.value === '__custom__'
+      ? `введено ${len} из 100 · осталось ${Math.max(0, 100 - len)}` : '';
+  };
+  if (catPick.value !== '__custom__' && r.category) catInput.value = '';
+  if (r.category && !(viewReceipts._catsTop || []).slice(0, 19).some(c => c.name === r.category)) {
+    catPick.value = '__custom__';                 // своя статья из сохранённых
+  }
+  const catSync = () => {
+    const custom = catPick.value === '__custom__';
+    catInput.style.display = custom ? '' : 'none';
+    if (custom) { catCounter(); } else { catHint.textContent = ''; }
+  };
+  catPick.onchange = () => {
+    catSync();
+    if (catPick.value === '__custom__') { catInput.focus(); catCounter(); }
+  };
+  catInput.addEventListener('input', catCounter);
+  catSync();
+
   // v1.8.0: живой пересчёт «к учёту» при вводе личной суммы
   const personalEl = slot.querySelector('#er-personal'), workHint = slot.querySelector('#er-work-hint');
   if (personalEl && workHint) {
@@ -1876,7 +1908,10 @@ function openEditReceipt(r, onSaved) {
   slot.querySelector('#er-save').onclick = async () => {
     const body = {
       merchant_name: slot.querySelector('#er-shop').value.trim(),
-      category: slot.querySelector('#er-category').value.trim(),
+      // v1.28.0: статья из списка или своя (до 100 символов)
+      category: catPick.value === '__custom__'
+        ? catInput.value.trim().slice(0, 100)
+        : catPick.value,
       merchant_inn: slot.querySelector('#er-inn').value.trim(),
       merchant_address: slot.querySelector('#er-addr').value.trim(),
       cashier: slot.querySelector('#er-cashier').value.trim(),
@@ -2131,6 +2166,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.28.0': [
+    { icon: '🗂', title: 'Чеки: удобнее фильтры и статьи расходов',
+      text: 'Фильтр «Сотрудник» убран — кто добавил и так видно («Кто добавил»). «Статья расходов» в фильтрах стала выпадающим списком статей, которые реально встречаются в работе (до 20). При заполнении чека — выбор из самых частых статей плюс «Своя…»: своя статья до 100 символов со счётчиком «введено X из 100 · осталось Y». Исправлено: повторные клики по чеку больше не открывают новые окна — двойной клик закрывает карточку, а открытый чек подсвечивается в списке.' },
+  ],
   '1.27.0': [
     { icon: '🔌', title: 'Коннекторы чеков: GetTicket ФНС и «Приложение ФНС»',
       text: 'Два новых способа получать ПОЛНЫЕ чеки с позициями. 1) Официальное API ФНС теперь не только проверяет чек, но и запрашивает его целиком (GetTicket) — достаточно Мастер-токена. 2) Новый источник «Приложение ФНС»: данные берутся как в мобильном приложении «Проверка чеков» — нужен ИНН и пароль личного кабинета ФНС, токены и квоты не нужны. Цепочка: API ФНС → Приложение ФНС → Честный Знак → ОФД-ру → свои → proverkacheka (последним).' },
@@ -2601,6 +2640,19 @@ function fillCreators(sel, list, keepValue) {
   sel.value = keepValue || '';
 }
 
+// v1.28.0: заполнить селект «Статья расходов» используемыми статьями
+function fillCats(sel, cats, keepValue) {
+  if (!sel) return;
+  sel.innerHTML = `<option value="">все статьи</option>` +
+    (cats || []).map(c => `<option value="${esc(c.name)}">${esc(c.name)} (${c.count})</option>`).join('');
+  if (keepValue && !(cats || []).some(c => c.name === keepValue)) {
+    const o = document.createElement('option');
+    o.value = keepValue; o.textContent = keepValue;
+    sel.appendChild(o);
+  }
+  sel.value = keepValue || '';
+}
+
 async function viewReceipts(container) {
   const acc = isAccountant();
   // v1.8.0: срок сдачи авансового отчёта (настройка приказа руководителя)
@@ -2627,8 +2679,6 @@ async function viewReceipts(container) {
         <label class="field"><span>Выгрузка в 1С</span>
           <select id="f-exp"><option value="">все</option>
             <option value="false">Ожидают выгрузки</option><option value="true">Выгружены</option></select></label>
-        <label class="field"><span>Сотрудник</span>
-          <input id="f-assignee" placeholder="Иванов"></label>
         <label class="field"><span>Кто добавил</span>
           <select id="f-creator"><option value="">все добавившие</option></select></label>
         <label class="field"><span>Данные чека</span>
@@ -2636,8 +2686,7 @@ async function viewReceipts(container) {
             <option value="true">📥 проверены + полные данные</option>
             <option value="false">⏳ данных не хватает — можно запросить</option></select></label>
         <label class="field"><span>Статья расходов</span>
-          <input id="f-category" placeholder="Канцелярия" list="f-cats">
-          <datalist id="f-cats">${(viewReceipts._cats || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+          <select id="f-category"><option value="">все статьи</option></select></label>
         <label class="field"><span>Уведомления 🔔</span>
           <select id="f-notified"><option value="">все</option>
             <option value="true">только уведомления</option></select></label>` : ''}
@@ -2676,10 +2725,11 @@ async function viewReceipts(container) {
     creator: '', full_data: '',
     category: '', notified: '', date_from: '', date_to: '', page: 1,
   }, viewReceipts._filters || {});
+  filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
   // вернуть значения в поля формы — чтобы видно было, что фильтр применён
   [['#f-q', 'q'], ['#f-status', 'status'], ['#f-fns', 'fns_status'],
-   ['#f-exp', 'exported'], ['#f-assignee', 'assignee'], ['#f-creator', 'creator'],
+   ['#f-exp', 'exported'], ['#f-creator', 'creator'],
    ['#f-full', 'full_data'], ['#f-category', 'category'],
    ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to']]
     .forEach(([sel, key]) => {
@@ -2733,6 +2783,26 @@ async function viewReceipts(container) {
             if (sel) fillCreators(sel, viewReceipts._creators, viewReceipts._creatorKeep || '');
           }).catch(() => { viewReceipts._creatorsLoaded = false; });
       }
+      // v1.28.0: статьи расходов — топ используемых (кэш по компании)
+      const catsCompany = companyIdParam() || '';
+      if (viewReceipts._catsCompany !== catsCompany) {
+        viewReceipts._catsCompany = catsCompany;
+        viewReceipts._catsLoaded = false;
+        viewReceipts._catsTop = null;
+      }
+      const selCats = $('#f-category');
+      if (selCats && selCats.options.length <= 1 && (viewReceipts._catsTop || []).length) {
+        fillCats(selCats, viewReceipts._catsTop, viewReceipts._catKeep || '');
+      }
+      if (!viewReceipts._catsLoaded) {
+        viewReceipts._catsLoaded = true;
+        api.get('/api/v1/receipts/categories' + (companyIdParam() ? '?company_id=' + companyIdParam() : ''))
+          .then(list => {
+            viewReceipts._catsTop = Array.isArray(list) ? list : [];
+            const sel = $('#f-category');
+            if (sel) fillCats(sel, viewReceipts._catsTop, viewReceipts._catKeep || '');
+          }).catch(() => { viewReceipts._catsLoaded = false; });
+      }
     }
     const el = $('#receipts-table');
     viewReceipts._mounted = true;    // v1.25.1: список отрисован — мерцание отключаем
@@ -2751,6 +2821,11 @@ async function viewReceipts(container) {
           receiptDrawer(tr.dataset.id);
         };
       });
+      // v1.28.0: открытая карточка чека — подсветка строки восстанавливается
+      if (receiptDrawer._openId) {
+        const openTr = el.querySelector(`tr[data-id="${receiptDrawer._openId}"]`);
+        if (openTr) openTr.classList.add('row-open');
+      }
       $$('input.row-sel', el).forEach(cb => {
         cb.onchange = () => {
           cb.checked ? state.receiptsSelected.add(cb.dataset.id) : state.receiptsSelected.delete(cb.dataset.id);
@@ -2877,11 +2952,12 @@ async function viewReceipts(container) {
     filters.fns_status = $('#f-fns').value;
     if (acc) {
       filters.exported = $('#f-exp').value;
-      filters.assignee = $('#f-assignee').value.trim();
       filters.creator = $('#f-creator') ? $('#f-creator').value : '';
       viewReceipts._creatorKeep = filters.creator;
       filters.full_data = $('#f-full') ? $('#f-full').value : '';
-      filters.category = $('#f-category') ? $('#f-category').value.trim() : '';
+      // v1.28.0: «Статья расходов» — выпадающий список используемых статей
+      filters.category = $('#f-category') ? $('#f-category').value : '';
+      viewReceipts._catKeep = filters.category;
       filters.notified = $('#f-notified') ? $('#f-notified').value : '';
     }
     filters.date_from = $('#f-from').value;
@@ -3719,6 +3795,17 @@ function downloadBlob(blob, filename) {
 
 // --- Drawer: карточка чека --------------------------------------------------
 async function receiptDrawer(id) {
+  // v1.28.0: один чек — одна карточка. Повторные клики по тому же чеку
+  // НЕ открывают вторую карточку; двойной клик — закрывает; строка
+  // открытого чека подсвечивается в списке.
+  const nowTs = Date.now();
+  const lastClick = receiptDrawer._lastClick || { id: '', ts: 0 };
+  receiptDrawer._lastClick = { id, ts: nowTs };
+  if (receiptDrawer._openId === id && receiptDrawer._close) {
+    if (lastClick.id === id && nowTs - lastClick.ts < 500) receiptDrawer._close();
+    return;                                   // уже открыто — не плодим окна
+  }
+  if (receiptDrawer._close) receiptDrawer._close();   // открыта другая — заменим
   const r = await api.get('/api/v1/receipts/' + id);
   const acc = isAccountant();
   const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
@@ -3767,7 +3854,20 @@ async function receiptDrawer(id) {
     </div>`;
   document.body.appendChild(drawer);
   requestAnimationFrame(() => drawer.classList.add('open'));
-  const close = () => { drawer.classList.remove('open'); setTimeout(() => drawer.remove(), 300); };
+  const openRow = document.querySelector(`#receipts-table tr[data-id="${id}"]`);
+  if (openRow) openRow.classList.add('row-open');
+  const close = () => {
+    drawer.classList.remove('open');
+    setTimeout(() => drawer.remove(), 300);
+    if (receiptDrawer._openId === id) {
+      receiptDrawer._openId = null;
+      receiptDrawer._close = null;
+      document.querySelectorAll('#receipts-table tr.row-open')
+        .forEach(tr => tr.classList.remove('row-open'));
+    }
+  };
+  receiptDrawer._openId = id;
+  receiptDrawer._close = close;
   drawer.querySelector('.modal-close').onclick = close;
   drawer.querySelector('.qr-box').onclick = () => {
     navigator.clipboard && navigator.clipboard.writeText(r.qr_data);

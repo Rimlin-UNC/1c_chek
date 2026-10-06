@@ -391,6 +391,24 @@ def list_creators(company_id: str | None = Query(None, max_length=36),
 
 
 
+@router.get("/categories", summary="Статьи расходов, используемые в чеках (для списков)")
+def list_categories(company_id: str | None = Query(None, max_length=36),
+                    limit: int = Query(20, ge=1, le=20),
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """v1.28.0: топ статей расходов, указанных сотрудниками в чеках
+    (name + count, по убыванию частоты) — выпадающий список в фильтре
+    «Статья расходов» и при заполнении чека (не более 20 позиций)."""
+    query = scope_receipts(db.query(Receipt), user, company_id)
+    rows = (query.with_entities(Receipt.category, func.count(Receipt.id))
+            .filter(Receipt.category.isnot(None), Receipt.category != "")
+            .group_by(Receipt.category)
+            .order_by(func.count(Receipt.id).desc())
+            .limit(limit).all())
+    return [{"name": (c or "").strip(), "count": int(n)}
+            for c, n in rows if (c or "").strip()]
+
+
 @router.get("/{receipt_id}", summary="Чек с позициями")
 def get_receipt(receipt_id: str,
                 user: User = Depends(get_current_user),

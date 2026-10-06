@@ -313,6 +313,8 @@ table.data td { padding: 11px 14px; border-bottom: 1px solid rgba(51,51,51,.08);
 table.data tbody tr { transition: background var(--speed); cursor: pointer; }
 table.data tbody tr:hover { background: rgba(255,122,0,.07); }        /* v1.25.0: оранжевая наводка */
 table.data tbody tr.selected { background: rgba(255,122,0,.14); }
+table.data tbody tr.row-open { background: rgba(255,122,0,.12);
+  box-shadow: inset 3px 0 0 var(--accent, #FF7A00); }   /* v1.28.0: открытый чек */
 .cell-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; color: var(--text-dim); }
 .cell-sum { font-weight: 750; font-variant-numeric: tabular-nums; }
 .cell-date { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
