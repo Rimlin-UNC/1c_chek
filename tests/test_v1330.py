@@ -20,7 +20,8 @@ from app.database import SessionLocal, engine
 from app.pool import ingest as pool
 from app.pool.geo import (enrich_receipt, industry_name, match_industry,
                           normalize_item_name, region_name, resolve_region)
-from app.pool.models import (PoolConsent, PoolFingerprint, PoolItem,
+from app.pool.models import (PoolReferral,
+                             PoolConsent, PoolFingerprint, PoolItem,
                              PoolIpLog, PoolPoint, PoolReceipt, PoolSignal,
                              PoolToken, PoolUser, ensure_pool_schema)
 from app.services.external import ExternalItem, ExternalResult
@@ -91,6 +92,7 @@ def _wipe(db):
             db.query(PoolIpLog).delete(synchronize_session=False)
             db.query(PoolFingerprint).delete(synchronize_session=False)
             db.query(PoolToken).delete(synchronize_session=False)
+            db.query(PoolReferral).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
             db.query(PoolUser).filter(
                 (PoolUser.vid.isnot(None)) | (PoolUser.email != "")).delete(

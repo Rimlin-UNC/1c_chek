@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from . import antifraud, ingest
+from . import antifraud, ingest, referral
 
 router = APIRouter(prefix="/api/v1/public/pool", tags=["pool-public"])
 
@@ -256,3 +256,20 @@ def pool_receipt(receipt_id: str, request: Request, response: Response,
     if r is None:
         raise HTTPException(404, "Чек не найден")
     return _receipt_public(r)
+
+
+@router.get("/ref/{code}", summary="Чек-Пул: информация о коде приглашения")
+def ref_info(code: str, db: Session = Depends(get_db)):
+    """Для лендинга /r/КОД: жив ли код (без персональных данных)."""
+    if not ingest.pool_enabled(db):
+        return {"valid": False, "label": ""}
+    owner = referral.owner_of_code(db, code)
+    if owner is None:
+        return {"valid": False, "label": ""}
+    email = (owner.email or "").strip()
+    if email:
+        name, _, domain = email.partition("@")
+        label = (name[:1] + "***@" + domain) if len(name) > 1 else email
+    else:
+        label = "участник Чек-Пула"
+    return {"valid": True, "label": label}

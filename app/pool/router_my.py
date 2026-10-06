@@ -18,8 +18,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import accounts, ingest, mailer
-from .models import PoolItem, PoolReceipt
+from . import accounts, ingest, mailer, referral
+from .models import PoolItem, PoolPoint, PoolReceipt, PoolReferral, PoolUser
 
 router = APIRouter(prefix="/api/v1/pool-my", tags=["pool-my"])
 
@@ -207,3 +207,47 @@ def delete_account(body: DeleteBody, db: Session = Depends(get_db),
     accounts.delete_account(db, user)
     db.commit()
     return {"ok": True, "message": "Аккаунт удалён: e-mail и пароль стёрты, баллы сгорели; сданные чеки остались в пуле обезличенными"}
+
+
+@router.get("/referrals", summary="Чек-Пул: приглашения — код, статистика, список")
+def referrals(db: Session = Depends(get_db),
+              user=Depends(accounts.require_pool_user)):
+    if not ingest.pool_enabled(db):
+        raise HTTPException(403, "Приём чеков выключен — приглашения недоступны")
+    code = referral.get_or_create_code(db, user)
+    rows = (db.query(PoolReferral, PoolUser)
+            .join(PoolUser, PoolUser.id == PoolReferral.referred_id)
+            .filter(PoolReferral.referrer_id == user.id)
+            .order_by(PoolReferral.created_at.desc()).limit(100).all())
+    items = []
+    earned_total = 0
+    for ref, ru in rows:
+        bonuses = (db.query(PoolPoint)
+                   .filter(PoolPoint.user_id == user.id,
+                           PoolPoint.ref_id == ref.id,
+                           PoolPoint.reason.like("R_%")).all())
+        got = sum(b.delta for b in bonuses)
+        earned_total += got
+        email = (ru.email or "").strip()
+        if email:
+            name, _, domain = email.partition("@")
+            label = (name[:1] + "***@" + domain) if len(name) > 1 else email
+        else:
+            label = f"гость {(ru.vid or ru.id)[:8]}"
+        items.append({
+            "label": label,
+            "at": ref.created_at.isoformat() if ref.created_at else None,
+            "email_verified": bool(ru.email_verified),
+            "receipts_verified": (db.query(PoolReceipt)
+                                  .filter_by(pool_user_id=ru.id,
+                                             status="verified").count()),
+            "earned": got,
+            "risk": ru.risk_score,
+            "quarantined": bool(ru.quarantined_at),
+        })
+    return {"code": code,
+            "link": f"{mailer.base_url(db)}/#/r/{code}" if code else "",
+            "invited": len(items), "earned_total": earned_total,
+            "limit": referral.REFERRAL_LIMIT,
+            "next_bonus": referral.hint_for(db, user),
+            "items": items}

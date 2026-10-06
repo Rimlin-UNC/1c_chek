@@ -99,7 +99,28 @@ async function boot() {
   if (pm) { poolConsume('magic', pm[1]); return; }        // ссылка из письма
   const pv = location.hash.match(/^#\/pool-verify\/(.+)$/);
   if (pv) { poolConsume('verify', pv[1]); return; }       // подтверждение e-mail
+  const rr = location.hash.match(/^#\/r\/([A-Za-z0-9-]{3,16})$/);
+  if (rr) { poolRefSave(rr[1]); return; }                 // v1.35.0: приглашение
   showLogin();
+}
+
+// v1.35.0: код приглашения — храним 30 дней, при регистрации уйдёт на сервер
+function poolRefGet() {
+  try {
+    const v = JSON.parse(localStorage.getItem('ymaster-pool-ref') || 'null');
+    if (v && Date.now() - v.at < 30 * 24 * 3600 * 1000) return v.code;
+    localStorage.removeItem('ymaster-pool-ref');
+  } catch (e) { /* нет доступа к хранилищу */ }
+  return '';
+}
+
+function poolRefSave(code) {
+  try {
+    localStorage.setItem('ymaster-pool-ref', JSON.stringify({ code, at: Date.now() }));
+  } catch (e) { /* нет доступа к хранилищу */ }
+  history.replaceState(null, '', location.pathname + '#/public');
+  showPublicScreen();
+  toast('Код приглашения применён', 'ok', '🎁');
 }
 
 // Экран «Подключение…» — исключает мигание карточки входа при проверке токена
@@ -159,6 +180,7 @@ function poolStatusChip(st) {
 
 function publicFormHTML() {
   return `
+  <div id="pub-ref" class="info-callout hidden" style="margin-bottom:8px"></div>
   <div id="pub-info" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
   <label class="field"><span>Строка QR или ссылка из приложения «Проверка чеков ФНС»</span>
     <textarea id="pub-qr" rows="3" placeholder="t=20260905T1430&s=1250.00&fn=...&i=...&fp=...&n=1"></textarea></label>
@@ -278,6 +300,20 @@ function bindPoolForm(root) {
     e.preventDefault();
     show('pub-offerta-text', $p('pub-offerta-text').classList.contains('hidden'));
   };
+
+  // v1.35.0: баннер «вас пригласили» — код из ссылки #/r/КОД
+  const refCode = poolRefGet();
+  if (refCode) {
+    api.get('/api/v1/public/pool/ref/' + encodeURIComponent(refCode)).then((ri) => {
+      if (!ri.valid) return;
+      const el = $p('pub-ref');
+      if (el) {
+        el.classList.remove('hidden');
+        el.innerHTML = `🎁 Вас пригласил(а) <b>${esc(ri.label)}</b>. Сдавайте чеки,
+          регистрируйтесь в кабинете — пригласивший получит баллы за ваши первые шаги.`;
+      }
+    }).catch(() => {});
+  }
 
   (async () => {
     try {
@@ -399,6 +435,7 @@ function poolAuthHTML() {
     <button class="btn btn-primary btn-block" type="submit">Войти в кабинет</button>
   </form>
   <form id="pf-reg" class="hidden">
+    <div id="p-ref-hint" class="info-callout hidden" style="margin-bottom:8px"></div>
     <label class="field"><span>E-mail</span><input id="pr-email" type="email" required autocomplete="email"></label>
     <label class="field"><span>Придумайте пароль (мин. 8 символов)</span><input id="pr-pass" type="password" required minlength="8" autocomplete="new-password"></label>
     <p class="form-hint" style="margin:4px 0 8px">Чеки, сданные в этом браузере без регистрации, присоединятся к кабинету.</p>
@@ -421,6 +458,9 @@ function poolDashHTML() {
     <label class="field"><span>Сегодня сдано</span><input id="pool-today" value="—" disabled></label>
   </div>
   <div id="pool-receipts"></div>
+  <div class="card-title" style="margin-top:14px">🎁 Приглашайте — баллы вам и друзьям
+    <span class="form-hint">(v1.35.0)</span></div>
+  <div id="pool-invite" class="form-hint" style="margin:6px 0">Загружаем…</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
     <button class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
     <button class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
@@ -562,6 +602,15 @@ function poolPrintList(root) {
 }
 
 function bindPoolAuth(root) {
+  const refCode = poolRefGet();
+  if (refCode) {
+    const hint = root.querySelector('#p-ref-hint');
+    if (hint) {
+      hint.classList.remove('hidden');
+      hint.innerHTML = `🎁 Применён код приглашения <b>${esc(refCode)}</b> —
+        чеки этого браузера присоединятся к вашему новому кабинету.`;
+    }
+  }
   const tab = (id) => {
     ['login', 'reg', 'magic'].forEach(k => {
       const f = root.querySelector('#pf-' + k);
@@ -592,8 +641,10 @@ function bindPoolAuth(root) {
   if (rf) rf.onsubmit = async (e) => {
     e.preventDefault();
     try {
-      const r = await poolApi('POST', '/api/v1/pool-auth/register',
-        { email: root.querySelector('#pr-email').value.trim(), password: root.querySelector('#pr-pass').value });
+      const r = await poolApi('POST', '/api/v1/pool-auth/register', {
+        email: root.querySelector('#pr-email').value.trim(),
+        password: root.querySelector('#pr-pass').value,
+        ref_code: poolRefGet() });
       pSet(r.token);
       toast(r.merged_receipts ? `Кабинет создан — перенесено чеков: ${r.merged_receipts}`
         : 'Кабинет создан', 'ok', 'Чек-Пул');
@@ -612,9 +663,48 @@ function bindPoolAuth(root) {
   };
 }
 
+function poolLoadInvite(root) {
+  poolApi('GET', '/api/v1/pool-my/referrals').then((d) => {
+    const box = root.querySelector('#pool-invite');
+    if (!box) return;
+    box.innerHTML = `
+    <div class="form-hint" style="margin-bottom:4px">Ваш код: <b>${esc(d.code)}</b> ·
+      приглашено: <b>${d.invited}</b> из ${d.limit} ·
+      принесло баллов: <b>${fmtInt(d.earned_total)}</b>
+      ${d.next_bonus && d.next_bonus.code
+        ? ` · ближайший бонус +${d.next_bonus.points} за ${d.next_bonus.need_receipts}-й
+           чек приглашённого (сейчас ${d.next_bonus.have_receipts})` : ''}</div>
+    <p class="form-hint" style="margin:4px 0">Бонусы начисляются не сразу, а за реальные
+      шаги приглашённого: подтверждение почты (+5), 1-й чек от 100 ₽ (+20),
+      5-й (+50), 20-й (+150) и 50-й (+500) — с задержками против накрутки;
+      плюс 5% с чеков приглашённого — до 200 баллов в месяц.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
+      <input id="pool-inv-link" value="${esc(d.link)}" readonly style="max-width:330px">
+      <button class="btn btn-sm" id="pool-inv-copy">📋 Копировать ссылку</button>
+    </div>
+    ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
+      <thead><tr><th>Дата</th><th>Кто</th><th>Чеков</th><th>Баллов принес</th></tr></thead>
+      <tbody>${d.items.map((x) => `<tr>
+        <td class="num">${esc((x.at || '').slice(0, 10))}</td>
+        <td>${esc(x.label)}</td>
+        <td class="num">${x.receipts_verified}</td>
+        <td class="num">${x.earned ? '+' + x.earned : '—'}</td></tr>`).join('')}</tbody>
+    </table></div>` : ''}`;
+    const cb = root.querySelector('#pool-inv-copy');
+    if (cb) cb.onclick = () => {
+      try { navigator.clipboard.writeText(d.link); toast('Ссылка скопирована', 'ok', '🎁'); }
+      catch (e) { toast('Скопируйте ссылку вручную', 'warn', '🎁'); }
+    };
+  }).catch(() => {
+    const box = root.querySelector('#pool-invite');
+    if (box) box.innerHTML = '<span class="form-hint">Приглашения доступны, когда включён приём чеков.</span>';
+  });
+}
+
 function bindPoolDashboard(root) {
   poolLoadSummary(root);
   poolLoadReceipts(root, 1);
+  poolLoadInvite(root);
   const csv = root.querySelector('#pool-csv');
   if (csv) csv.onclick = poolDownloadCsv;
   const pr = root.querySelector('#pool-print');
@@ -2146,8 +2236,10 @@ function bindShell() {
   }, { passive: true });
   window.addEventListener('hashchange', () => {
     if (location.hash.startsWith('#/register')) return;
-    // v1.32.0: magic/verify-ссылки обрабатываются при загрузке страницы
-    if (location.hash.startsWith('#/pool-magic/') || location.hash.startsWith('#/pool-verify/')) return;
+    // v1.32.0/v1.35.0: служебные ссылки обрабатываются при загрузке страницы
+    if (location.hash.startsWith('#/pool-magic/')
+        || location.hash.startsWith('#/pool-verify/')
+        || location.hash.match(/^#\/r\//)) return;
     closeSidebar();                       // v1.10.1: перешли в другой раздел — меню закрыто
     // v1.31.0: гость открыл «Сдать чек» с экрана входа — показываем без shell
     if (location.hash.startsWith('#/public') && !getToken()) { showPublicScreen(); return; }
@@ -3121,6 +3213,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.35.0': [
+    { icon: '🎁', title: 'Чек-Пул: приглашайте друзей — баллы за их первые шаги',
+      text: 'У каждого кабинета появился код приглашения (YM-XXXXXX) и ссылка вида chek.ymaster.ru/#/r/КОД — вкладка «Приглашайте» в кабинете. Баллы начисляются не за регистрацию, а за реальные шаги приглашённого, причём с задержкой против накрутки: подтверждение почты +5, первый чек от 100 ₽ +20, пятый +50, двадцатый +150, пятидесятый +500; плюс 5% с проверенных чеков приглашённого — но не больше 200 баллов в месяц. Лимит — 50 приглашённых на человека, один уровень. Накрутка «сам себя пригласил» бессмысленна: общие устройства и подсети, мгновенные чеки и петли ловит антифрод из Этапа 5 — по таким парам выплаты приостанавливаются до разбора.' },
+  ],
   '1.34.0': [
     { icon: '🛡', title: 'Чек-Пул: антифрод из пяти слоёв — карантин вместо банов',
       text: 'Пул защищён от накрутки, как в концепции: устройство (один браузер на несколько аккаунтов), сеть (кластеры подсетей и адреса датацентров), поведение (мгновенная отправка форм, ровные интервалы чеков, поток больше 20 в час), связи между участниками и бизнес-правила (одинаковые суммы подряд). Каждое совпадение — сигнал с весом; риск ≥ 71 включает карантин: чеки сохраняются, но баллы приостанавливаются до разбора. В новом разделе админа «Чек-Пул: антифрод» — лента сигналов, карточка участника (устройства, IP, связи), массовый разбор, снятие карантина и аннулирование баллов. Честные участники не помечаются: пороги с отступом, разобранные как ложные сигналы снижают риск.' },
@@ -5574,7 +5670,7 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 5 · v1.34.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 6 · v1.35.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
         мы проверяем чек по официальным источникам и начисляем балл; компании

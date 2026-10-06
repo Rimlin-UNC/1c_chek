@@ -20,7 +20,8 @@ import pytest
 
 from app.database import SessionLocal, engine
 from app.pool import antifraud
-from app.pool.models import (PoolConsent, PoolFingerprint, PoolItem, PoolIpLog,
+from app.pool.models import (PoolReferral,
+                             PoolConsent, PoolFingerprint, PoolItem, PoolIpLog,
                              PoolPoint, PoolReceipt, PoolSignal, PoolToken,
                              PoolUser, ensure_pool_schema)
 
@@ -68,6 +69,7 @@ def _wipe(db):
             db.query(PoolIpLog).delete(synchronize_session=False)
             db.query(PoolFingerprint).delete(synchronize_session=False)
             db.query(PoolToken).delete(synchronize_session=False)
+            db.query(PoolReferral).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
             db.query(PoolUser).filter(
                 (PoolUser.vid.isnot(None)) | (PoolUser.email != "")).delete(
@@ -476,7 +478,8 @@ class TestVersion1340:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.34.0"
+        # Пин конкретной версии перенесён в tests/test_v1350.py (тест текущей версии)
+        # v1.34.0: assert ver == "1.34.0"
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()

@@ -17,7 +17,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import accounts, antifraud, ingest, mailer
+from . import accounts, antifraud, ingest, mailer, referral
 
 router = APIRouter(prefix="/api/v1/pool-auth", tags=["pool-auth"])
 
@@ -45,6 +45,7 @@ def _ip(request: Request) -> str:
 class AuthBody(BaseModel):
     email: str
     password: str
+    ref_code: str = ""                 # v1.35.0: код приглашения (необязателен)
 
 
 class MagicBody(BaseModel):
@@ -76,6 +77,8 @@ def register(body: AuthBody, request: Request, response: Response,
     moved = accounts.merge_guest_into_account(
         db, user, accounts.vid_from_cookie(request))
     antifraud.after_auth(db, user, request, "register")   # v1.34.0: слои 1–2
+    # v1.35.0: реферальная привязка (после журнала IP — для проверки подсети)
+    linked = referral.attribute(db, user, body.ref_code or "", request)
     db.commit()
     if moved and mailer.smtp_configured(db):
         # приветственное письмо не критично: сбой не мешает регистрации
@@ -84,7 +87,7 @@ def register(body: AuthBody, request: Request, response: Response,
                          f"Перенесено чеков из гостевого режима: {moved}.\n\n"
                          "ООО «Ямастер» · https://ymaster.ru")
     return {"token": accounts.issue_pool_token(user.id), "user": _user_payload(user),
-            "merged_receipts": moved}
+            "merged_receipts": moved, "referred": linked}
 
 
 @router.post("/login", summary="Чек-Пул: вход по e-mail и паролю")
@@ -140,5 +143,7 @@ def verify_email(body: TokenBody, db: Session = Depends(get_db)):
     if err:
         raise HTTPException(400, err)
     user.email_verified = True
+    # v1.35.0: реферальный бонус за подтверждение (с задержкой ≥ 24 ч)
+    referral.on_email_verified(db, user)
     db.commit()
     return {"ok": True, "email": user.email, "message": "E-mail подтверждён"}

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — модели «Чек-Пула» (v1.30.0 Этап 1 … v1.34.0 антифрод).
+# Ямастер Чек — модели «Чек-Пула» (v1.30 Этап 1 … v1.35 рефералы).
 # Только НОВЫЕ таблицы (pool_*); существующие таблицы ядра не изменяются.
 # Миграции — только добавляющие (ensure_pool_schema: новые таблицы +
 # добавление колонок), продакшн-база никогда не требует разрушающих ALTER.
@@ -163,7 +163,8 @@ def ensure_pool_schema(engine) -> None:
     Base.metadata.create_all(bind=engine, tables=[
         PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
         PoolPoint.__table__, PoolConsent.__table__, PoolToken.__table__,
-        PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__])
+        PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__,
+        PoolReferral.__table__])
     insp = sqlalchemy.inspect(engine)
     cols = {c["name"] for c in insp.get_columns("pool_users")}
     add_cols = (
@@ -264,3 +265,23 @@ class PoolSignal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     resolved_by: Mapped[str] = mapped_column(String(64), default="")  # username админа
+
+
+# --------------------------------------------------------------------------
+# v1.35.0: реферальная связь (один уровень, план разд. 2). UNIQUE по
+# referred_id — у участника может быть только один пригласивший.
+# --------------------------------------------------------------------------
+class PoolReferral(Base):
+    __tablename__ = "pool_referrals"
+    __table_args__ = (
+        Index("idx_pool_ref_referrer", "referrer_id"),
+        UniqueConstraint("referred_id", name="uq_pool_ref_referred"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    referrer_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("pool_users.id"))
+    referred_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("pool_users.id"))
+    code_used: Mapped[str] = mapped_column(String(16), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

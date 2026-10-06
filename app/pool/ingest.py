@@ -202,6 +202,12 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         else:
             points = POINTS_PER_RECEIPT
             add_points(db, user, points, "receipt", receipt.id)
+        # v1.35.0: реферальные бонусы пригласившему (пороги + lifetime 5%)
+        try:
+            from . import referral
+            referral.on_verified_receipt(db, user, receipt)
+        except Exception:                                 # noqa: BLE001
+            pass
     receipt.points_awarded = points
     if fast:  # v1.31.0: антифрод-минимум — слишком быстрая отправка формы
         receipt.status_message = (receipt.status_message +
