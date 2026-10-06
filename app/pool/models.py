@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — модели «Чек-Пула» (v1.30.0, v1.31.0 — веб-приём).
+# Ямастер Чек — модели «Чек-Пула» (v1.30.0 Этап 1 … v1.34.0 антифрод).
 # Только НОВЫЕ таблицы (pool_*); существующие таблицы ядра не изменяются.
 # Миграции — только добавляющие (ensure_pool_schema: новые таблицы +
 # добавление колонок), продакшн-база никогда не требует разрушающих ALTER.
@@ -51,6 +51,11 @@ class PoolUser(Base):
     referral_code: Mapped[str] = mapped_column(String(12), default="")  # этап 6
     trust_level: Mapped[int] = mapped_column(Integer, default=0)      # 0 новый…
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # v1.34.0: антифрод — risk_score 0–100 (сумма весов сигналов);
+    # карантин вместо бана: с risk ≥ 71 новые баллы не начисляются,
+    # разбор — в панели антифрода; чеки при этом сохраняются в пул.
+    risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    quarantined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
@@ -145,6 +150,7 @@ class PoolConsent(Base):
     offerta_version: Mapped[str] = mapped_column(String(16), default="")
     ip_hash: Mapped[str] = mapped_column(String(32), default="")   # sha256[:16]
     user_agent_hash: Mapped[str] = mapped_column(String(32), default="")
+    visitor_hash: Mapped[str] = mapped_column(String(32), default="")  # v1.34.0
     form_ms: Mapped[int] = mapped_column(Integer, default=0)
     accepted_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
@@ -156,7 +162,8 @@ def ensure_pool_schema(engine) -> None:
     import sqlalchemy
     Base.metadata.create_all(bind=engine, tables=[
         PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
-        PoolPoint.__table__, PoolConsent.__table__, PoolToken.__table__])
+        PoolPoint.__table__, PoolConsent.__table__, PoolToken.__table__,
+        PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__])
     insp = sqlalchemy.inspect(engine)
     cols = {c["name"] for c in insp.get_columns("pool_users")}
     add_cols = (
@@ -165,7 +172,17 @@ def ensure_pool_schema(engine) -> None:
          "ALTER TABLE pool_users ADD COLUMN password_hash VARCHAR(256) DEFAULT ''"),
         ("email_verified",
          "ALTER TABLE pool_users ADD COLUMN email_verified BOOLEAN DEFAULT 0"),
+        ("risk_score",
+         "ALTER TABLE pool_users ADD COLUMN risk_score INTEGER DEFAULT 0"),
+        ("quarantined_at",
+         "ALTER TABLE pool_users ADD COLUMN quarantined_at TIMESTAMP NULL"),
     )
+    cons_cols = {c["name"] for c in insp.get_columns("pool_consents")}
+    if "visitor_hash" not in cons_cols:
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE pool_consents ADD COLUMN visitor_hash VARCHAR(32)"
+                " DEFAULT ''"))
     with engine.begin() as conn:
         for name, ddl in add_cols:
             if name not in cols:
@@ -189,3 +206,61 @@ class PoolToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------
+# v1.34.0: антифрод. Слой 1 (Device): связь участника с обезличенным
+# отпечатком устройства (X-Visitor-Id); хэшируем сразу — 152-ФЗ.
+# --------------------------------------------------------------------------
+class PoolFingerprint(Base):
+    __tablename__ = "pool_fingerprints"
+    __table_args__ = (
+        Index("idx_pool_fp_visitor", "visitor_hash"),
+        Index("idx_pool_fp_user", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("pool_users.id"))
+    visitor_hash: Mapped[str] = mapped_column(String(64), default="")
+    ua_hash: Mapped[str] = mapped_column(String(32), default="")
+    seen_count: Mapped[int] = mapped_column(Integer, default=1)
+    first_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    last_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# Слой 2 (Network): журнал сетей участников (ip, /24) — для кластеров.
+class PoolIpLog(Base):
+    __tablename__ = "pool_ip_log"
+    __table_args__ = (
+        Index("idx_pool_ip_user", "user_id"),
+        Index("idx_pool_ip24", "ip24"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("pool_users.id"))
+    ip: Mapped[str] = mapped_column(String(45), default="")
+    ip24: Mapped[str] = mapped_column(String(18), default="")   # a.b.c
+    ua_hash: Mapped[str] = mapped_column(String(32), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="receipt")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# Журнал сигналов: что заметили, насколько это плохо, как разобрали.
+class PoolSignal(Base):
+    __tablename__ = "pool_signals"
+    __table_args__ = (
+        Index("idx_pool_sig_user", "user_id"),
+        Index("idx_pool_sig_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("pool_users.id"))
+    receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    code: Mapped[str] = mapped_column(String(32), default="")     # MULTI_ACCOUNT_DEVICE…
+    severity: Mapped[int] = mapped_column(Integer, default=2)     # 1..5
+    points: Mapped[int] = mapped_column(Integer, default=0)       # вклад в risk_score
+    details: Mapped[str] = mapped_column(Text, default="")        # json мелочей
+    status: Mapped[str] = mapped_column(String(16), default="new")  # new|reviewing|false_positive|confirmed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_by: Mapped[str] = mapped_column(String(64), default="")  # username админа

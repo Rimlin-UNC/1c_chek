@@ -19,7 +19,8 @@ import pytest
 
 from app.database import SessionLocal, engine
 from app.pool import accounts, ingest as pool
-from app.pool.models import (PoolConsent, PoolItem, PoolPoint, PoolReceipt,
+from app.pool.models import (PoolConsent, PoolFingerprint, PoolItem,
+                             PoolIpLog, PoolPoint, PoolReceipt, PoolSignal,
                              PoolToken, PoolUser, ensure_pool_schema)
 from app.services.external import ExternalItem, ExternalResult
 
@@ -82,6 +83,9 @@ def _wipe(db):
             if ids:
                 db.query(PoolPoint).filter(PoolPoint.user_id.in_(ids)).delete(
                     synchronize_session=False)
+            db.query(PoolSignal).delete(synchronize_session=False)
+            db.query(PoolIpLog).delete(synchronize_session=False)
+            db.query(PoolFingerprint).delete(synchronize_session=False)
             db.query(PoolToken).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
             db.query(PoolUser).filter(

@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from . import ingest
+from . import antifraud, ingest
 
 router = APIRouter(prefix="/api/v1/public/pool", tags=["pool-public"])
 
@@ -72,6 +72,10 @@ def _user_by_vid(db: Session, vid: str):
 
 def _hash_ip(ip: str) -> str:
     return hashlib.sha256(f"pool:{ip}".encode()).hexdigest()[:16]
+
+
+def _client_ip(request: Request) -> str:
+    return antifraud.request_ip(request)
 
 
 # --- IP-лимитер ------------------------------------------------------------
@@ -162,7 +166,7 @@ def pool_check(body: CheckBody, request: Request, response: Response,
     from .models import PoolConsent
 
     vid = _get_or_issue_vid(request, response)
-    ip = (request.client.host if request.client else "")
+    ip = _client_ip(request)
 
     # honeypot: боты заполняют скрытое поле — тихо «соглашаемся» и выбрасываем
     if (body.hp or "").strip():
@@ -194,6 +198,9 @@ def pool_check(body: CheckBody, request: Request, response: Response,
         ).hexdigest()[:16],
         user_id=(_account.id if _account is not None else None),
         form_ms=max(0, int(body.form_ms or 0)))
+    _vh = antifraud.visitor_hash(request)
+    if _vh:
+        consent.visitor_hash = _vh          # v1.34.0: отпечаток (хэш)
     db.add(consent)
 
     user = _account or _user_by_vid(db, vid)
@@ -208,14 +215,26 @@ def pool_check(body: CheckBody, request: Request, response: Response,
     user_id = user.id
     db_params = None                          # сессия потока создаст сама
 
+    _client_ip_str = ip
+    _form_ms = max(0, int(body.form_ms or 0))
+
     def _bg():
         from ..database import SessionLocal
+        from . import antifraud
         from .models import PoolUser
         s = SessionLocal()
         try:
             u = s.get(PoolUser, user_id)
             if u is not None:
-                ingest.ingest_parsed(s, qr_raw, parsed, "web", u, fast=fast)
+                res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
+                                           fast=fast)
+                # v1.34.0: сигналы поведения/правил после приёма чека
+                if isinstance(res, dict) and res.get("receipt_id"):
+                    antifraud.after_receipt(s, u, res["receipt_id"], None,
+                                            form_ms=_form_ms)
+                s.commit()          # сигналы антифрода не должны пропасть
+        except Exception:                                 # noqa: BLE001
+            pass
         finally:
             s.close()
 

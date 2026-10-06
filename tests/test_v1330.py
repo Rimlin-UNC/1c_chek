@@ -20,7 +20,8 @@ from app.database import SessionLocal, engine
 from app.pool import ingest as pool
 from app.pool.geo import (enrich_receipt, industry_name, match_industry,
                           normalize_item_name, region_name, resolve_region)
-from app.pool.models import (PoolConsent, PoolItem, PoolPoint, PoolReceipt,
+from app.pool.models import (PoolConsent, PoolFingerprint, PoolItem,
+                             PoolIpLog, PoolPoint, PoolReceipt, PoolSignal,
                              PoolToken, PoolUser, ensure_pool_schema)
 from app.services.external import ExternalItem, ExternalResult
 
@@ -86,6 +87,9 @@ def _wipe(db):
             if ids:
                 db.query(PoolPoint).filter(PoolPoint.user_id.in_(ids)).delete(
                     synchronize_session=False)
+            db.query(PoolSignal).delete(synchronize_session=False)
+            db.query(PoolIpLog).delete(synchronize_session=False)
+            db.query(PoolFingerprint).delete(synchronize_session=False)
             db.query(PoolToken).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
             db.query(PoolUser).filter(
@@ -427,7 +431,8 @@ class TestVersion1330:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.33.0"
+        # Пин конкретной версии перенесён в tests/test_v1340.py (тест текущей версии)
+        # v1.33.0: assert ver == "1.33.0"
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()

@@ -17,7 +17,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import accounts, ingest, mailer
+from . import accounts, antifraud, ingest, mailer
 
 router = APIRouter(prefix="/api/v1/pool-auth", tags=["pool-auth"])
 
@@ -75,6 +75,7 @@ def register(body: AuthBody, request: Request, response: Response,
         raise HTTPException(422, err)
     moved = accounts.merge_guest_into_account(
         db, user, accounts.vid_from_cookie(request))
+    antifraud.after_auth(db, user, request, "register")   # v1.34.0: слои 1–2
     db.commit()
     if moved and mailer.smtp_configured(db):
         # приветственное письмо не критично: сбой не мешает регистрации
@@ -96,6 +97,7 @@ def login(body: AuthBody, request: Request, response: Response,
         raise HTTPException(401, "Неверный e-mail или пароль")
     moved = accounts.merge_guest_into_account(
         db, user, accounts.vid_from_cookie(request))
+    antifraud.after_auth(db, user, request, "login")      # v1.34.0: слои 1–2
     db.commit()
     return {"token": accounts.issue_pool_token(user.id), "user": _user_payload(user),
             "merged_receipts": moved}
@@ -127,6 +129,7 @@ def magic_consume(body: TokenBody, request: Request, response: Response,
         raise HTTPException(400, err)
     accounts.merge_guest_into_account(
         db, user, accounts.vid_from_cookie(request))
+    antifraud.after_auth(db, user, request, "login")      # v1.34.0: слои 1–2
     db.commit()
     return {"token": accounts.issue_pool_token(user.id), "user": _user_payload(user)}
 

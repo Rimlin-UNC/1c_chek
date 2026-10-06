@@ -229,10 +229,12 @@ app.include_router(manual_routes.router)
 from .pool import router_admin as pool_admin  # v1.30.0: Чек-Пул (Этап 1)
 from .pool import router_public               # v1.31.0: приём чеков с сайта
 from .pool import router_auth as pool_auth    # v1.32.0: кабинет — регистрация/вход
+from .pool import router_fraud as pool_fraud  # v1.34.0: антифрод — панель админа
 from .pool import router_my as pool_my        # v1.32.0: кабинет участника
 app.include_router(pool_admin.router)
 app.include_router(router_public.router)   # v1.31.0: /api/v1/public/pool/*
 app.include_router(pool_auth.router)       # v1.32.0: /api/v1/pool-auth/*
+app.include_router(pool_fraud.router)      # v1.34.0: /api/v1/pool-fraud/*
 app.include_router(pool_my.router)         # v1.32.0: /api/v1/pool-my/*
 
 

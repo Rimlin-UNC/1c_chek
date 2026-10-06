@@ -31,7 +31,10 @@ OFFERTA_VERSION = "2026-10"     # v1.31.0: редакция оферты для 
 OFFERTA_SHORT = (
     "Отправляя чек, вы подтверждаете, что он ваш, и передаёте его фискальные "
     "данные (ФН, ФД, ФП, ИНН продавца, сумма, состав) в открытую базу "
-    "«Ямастер Чек-Пул». Персональные данные третьих лиц в базу не попадают."
+    "«Ямастер Чек-Пул». Персональные данные третьих лиц в базу не попадают. "
+    "Для защиты от накрутки мы храним обезличенные технические признаки "
+    "устройства и сети — они не позволяют установить личность и удаляются "
+    "не позже чем через год."
 )
 
 
@@ -192,8 +195,13 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
 
     points = 0
     if receipt.status == "verified":
-        points = POINTS_PER_RECEIPT
-        add_points(db, user, points, "receipt", receipt.id)
+        # v1.34.0: карантин вместо бана — чек в пуле, баллы приостановлены
+        if getattr(user, "quarantined_at", None):
+            receipt.status_message = (receipt.status_message +
+                " · баллы приостановлены до разбора (карантин антифрода)")[:500]
+        else:
+            points = POINTS_PER_RECEIPT
+            add_points(db, user, points, "receipt", receipt.id)
     receipt.points_awarded = points
     if fast:  # v1.31.0: антифрод-минимум — слишком быстрая отправка формы
         receipt.status_message = (receipt.status_message +

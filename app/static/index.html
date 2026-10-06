@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.33.0">
+<link rel="stylesheet" href="/css/app.css?v=1.34.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -163,6 +163,9 @@
         <a href="#/pooladmin" data-view="pooladmin" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="settings"></span>Чек-Пул: модерация
         </a>
+        <a href="#/fraud" data-view="fraud" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="scan"></span>Чек-Пул: антифрод
+        </a>
         <a href="#/receipts" data-view="receipts" class="nav-item">
           <span class="nav-icon" data-icon="list"></span>Чеки
           <span class="nav-badge" id="nav-receipts-badge">0</span>
@@ -245,6 +248,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.33.0"></script>
+  <script type="module" src="/js/app.js?v=1.34.0"></script>
 </body>
 </html>

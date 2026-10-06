@@ -40,6 +40,7 @@ const VIEW_TITLES = {
   public: 'Сдать чек в Чек-Пул',       // v1.31.0: доступно и гостям
   my: 'Мой Чек-Пул',                   // v1.32.0: кабинет участника пула
   pooladmin: 'Чек-Пул: модерация',     // v1.33.0: панель админа
+  fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -335,8 +336,32 @@ const pGet = () => { try { return localStorage.getItem(POOL_TK) || ''; } catch (
 const pSet = (t) => { try { localStorage.setItem(POOL_TK, t); } catch (e) {} };
 const pClear = () => { try { localStorage.removeItem(POOL_TK); } catch (e) {} };
 
+// v1.34.0: обезличенный отпечаток устройства (антифрод, слой Device).
+// Считается локально из технических признаков браузера, персональные
+// данные не собираются; на сервере хранится только хэш ≤ 12 месяцев.
+function poolFp() {
+  try {
+    let fp = localStorage.getItem('ymaster-pool-fp');
+    if (fp) return fp;
+    const parts = [
+      navigator.userAgent, navigator.language,
+      (navigator.languages || []).join(','), screen.width + 'x' + screen.height,
+      screen.colorDepth, Intl.DateTimeFormat().resolvedOptions().timeZone,
+      String(navigator.hardwareConcurrency || 0),
+    ];
+    let h = 0;
+    const str = parts.join('|');
+    for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) >>> 0; }
+    fp = 'fp' + h.toString(36) + str.length.toString(36);
+    localStorage.setItem('ymaster-pool-fp', fp);
+    return fp;
+  } catch (e) { return ''; }
+}
+
 async function poolApi(method, path, body) {
   const headers = { 'Content-Type': 'application/json' };
+  const fp = poolFp();
+  if (fp) headers['X-Visitor-Id'] = fp;      // v1.34.0: антифрод (хэш на сервере)
   if (pGet()) headers.Authorization = 'Bearer ' + pGet();
   const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
@@ -878,6 +903,179 @@ async function viewPoolAdmin(container) {
   poolAdmLoadTable();
 }
 
+
+// --------------------------------------------------------------------------
+//  v1.34.0: ПАНЕЛЬ АНТИФРОДА (#/fraud, только админ) — 5 слоёв.
+//  Лента сигналов по severity, карточка участника (устройства, IP, связи),
+//  разбор (ложное/подтверждено), карантин и аннулирование баллов.
+// --------------------------------------------------------------------------
+const fraud = { status: 'new', minSev: 0, page: 1 };
+
+function fraudSevChip(sev) {
+  const cls = sev >= 4 ? 'failed' : (sev === 3 ? 'new' : '');
+  return `<span class="chip ${cls}"><span class="dot"></span>S${sev}</span>`;
+}
+
+function fraudShell() {
+  return `
+  <div class="glass card">
+    <div class="card-title">🛡 Чек-Пул: антифрод <span class="form-hint">(Этап 5 · v1.34.0)</span></div>
+    <div id="fraud-stats" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <select id="fraud-status">
+        <option value="new">Новые</option>
+        <option value="reviewing">На разборе</option>
+        <option value="false_positive">Ложные</option>
+        <option value="confirmed">Подтверждённые</option>
+        <option value="">Все</option>
+      </select>
+      <select id="fraud-sev">
+        <option value="0">Любая важность</option>
+        <option value="3">S3+ (серьёзные)</option>
+        <option value="4">S4+ (критичные)</option>
+      </select>
+      <button class="btn btn-sm" id="fraud-bulk-fp" disabled>Ложное срабатывание (выбранные)</button>
+      <button class="btn btn-sm" id="fraud-bulk-confirm" disabled>Подтвердить (выбранные)</button>
+      <button class="btn btn-sm" id="fraud-purge" title="152-ФЗ: техданные храним ≤ 12 месяцев">🧹 Чистка техданных &gt; года</button>
+    </div>
+    <div id="fraud-table"></div>
+  </div>`;
+}
+
+async function fraudLoadStats() {
+  try {
+    const d = await api.get('/api/v1/pool-fraud/summary');
+    const box = $('#fraud-stats');
+    if (!box) return;
+    const codes = Object.entries(d.by_code).map(([k, v]) => `${k}: <b>${v}</b>`).join(' · ');
+    box.innerHTML = `Новых сигналов: <b>${fmtInt(d.new_signals)}</b> ·
+      в карантине участников: <b>${fmtInt(d.quarantined)}</b>
+      (порог risk ≥ ${d.quarantine_threshold})${codes ? '<br>' + codes : ''}`;
+  } catch (e) { /* не критично */ }
+}
+
+async function fraudLoadTable() {
+  const box = $('#fraud-table');
+  if (!box) return;
+  const p = new URLSearchParams();
+  if (fraud.status) p.set('status', fraud.status);
+  if (fraud.minSev) p.set('min_severity', fraud.minSev);
+  p.set('page', fraud.page);
+  p.set('page_size', 30);
+  try {
+    const d = await api.get('/api/v1/pool-fraud/signals?' + p.toString());
+    box.innerHTML = `
+    <div class="table-wrap"><table style="width:100%">
+      <thead><tr><th></th><th>Когда</th><th>Сигнал</th><th>Участник</th><th>Детали</th><th>Статус</th><th>Разбор</th></tr></thead>
+      <tbody>${d.items.length ? d.items.map(x => `<tr>
+        <td><input type="checkbox" class="fraud-sel" data-id="${x.id}" style="width:auto"></td>
+        <td class="num">${esc((x.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+        <td>${fraudSevChip(x.severity)} <b>${esc(x.code)}</b>
+          <div class="form-hint">+${x.points} к риску</div></td>
+        <td><a href="#" class="fraud-user" data-uid="${x.user.id}">${esc(x.user.label)}</a>
+          ${x.user.quarantined ? '<div class="form-hint">в карантине</div>' : ''}</td>
+        <td class="form-hint" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.details || '—')}</td>
+        <td>${esc(x.status)}${x.resolved_by ? '<div class="form-hint">' + esc(x.resolved_by) + '</div>' : ''}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm fraud-fp" data-id="${x.id}" title="Ложное срабатывание">🙂</button>
+          <button class="btn btn-sm fraud-conf" data-id="${x.id}" title="Подтвердить">⚠️</button>
+        </td></tr>`).join('')
+      : '<tr><td colspan="7" class="form-hint">Сигналов нет — честные участники не помечаются.</td></tr>'}</tbody>
+    </table></div>
+    ${d.total > d.page_size ? `<div class="form-hint" style="margin-top:6px">Показано ${d.items.length} из ${fmtInt(d.total)} — уточните фильтры.</div>` : ''}`;
+    const upd = () => {
+      const n = box.querySelectorAll('.fraud-sel:checked').length;
+      $('#fraud-bulk-fp').disabled = !n;
+      $('#fraud-bulk-confirm').disabled = !n;
+    };
+    box.querySelectorAll('.fraud-sel').forEach(c => { c.onchange = upd; });
+    box.querySelectorAll('.fraud-fp').forEach(b => { b.onclick = () => fraudResolve([b.dataset.id], 'false_positive'); });
+    box.querySelectorAll('.fraud-conf').forEach(b => { b.onclick = () => fraudResolve([b.dataset.id], 'confirmed'); });
+    box.querySelectorAll('.fraud-user').forEach(a => { a.onclick = (e) => { e.preventDefault(); fraudUserCard(a.dataset.uid); }; });
+  } catch (e) { box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`; }
+}
+
+async function fraudResolve(ids, status) {
+  try {
+    if (ids.length === 1) {
+      await api.post(`/api/v1/pool-fraud/signal/${ids[0]}/resolve`, { status });
+    } else {
+      await api.post('/api/v1/pool-fraud/signal/resolve-bulk', { ids, status });
+    }
+    toast(status === 'false_positive' ? 'Помечено как ложное срабатывание'
+      : 'Подтверждено — риск пересчитан', 'ok', '🛡');
+    fraudLoadStats();
+    fraudLoadTable();
+  } catch (e) { toast(e.message, 'err', '🛡'); }
+}
+
+async function fraudUserCard(uid) {
+  try {
+    const d = await api.get(`/api/v1/pool-fraud/user/${uid}`);
+    const u = d.user;
+    const { slot } = openModal(`
+      <div class="modal-title">🛡 Участник: ${esc(u.email || ('гость ' + (u.vid || '').slice(0, 8)))}</div>
+      <div class="form-hint" style="margin-bottom:8px">
+        Риск <b>${u.risk_score}</b>/100 ${u.quarantined ? '· <b>в карантине</b>' : ''} ·
+        баллов <b>${fmtInt(u.points)}</b> · доверие <b>${u.trust_level}</b> ·
+        связей: <b>${d.related_users.length}</b></div>
+      ${d.related_users.length ? `<p class="form-hint">Связан по устройствам/подсетям с:
+        ${d.related_users.map(x => esc(x.label)).join(', ')}</p>` : ''}
+      ${d.devices.length ? `<div class="form-hint">Устройства: ${d.devices.map(x => esc(x.visitor) + '×' + x.seen).join(', ')}</div>` : ''}
+      ${d.ips.length ? `<div class="form-hint">IP: ${d.ips.map(x => esc(x.ip)).join(', ')}</div>` : ''}
+      ${d.signals.length ? `<div class="table-wrap"><table style="width:100%;margin-top:8px">
+        <thead><tr><th>Сигнал</th><th>Риск</th><th>Статус</th></tr></thead>
+        <tbody>${d.signals.map(x => `<tr><td>${esc(x.code)}</td><td class="num">+${x.points}</td><td>${esc(x.status)}</td></tr>`).join('')}</tbody>
+      </table></div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        ${u.quarantined ? '<button class="btn btn-sm btn-primary" id="fu-release">Снять карантин</button>' : ''}
+        ${u.points > 0 ? '<button class="btn btn-sm" id="fu-annul" style="color:#b3261e">Аннулировать баллы</button>' : ''}
+        <button class="btn btn-sm" id="fu-trust1">Доверие: 1</button>
+        <button class="btn btn-sm" id="fu-trust0">Доверие: 0</button>
+      </div>`);
+    const rel = slot.querySelector('#fu-release');
+    if (rel) rel.onclick = async () => {
+      try { toast((await api.post(`/api/v1/pool-fraud/user/${uid}/action`, { action: 'release' })).message, 'ok', '🛡'); fraudLoadStats(); }
+      catch (e) { toast(e.message, 'err', '🛡'); }
+    };
+    const an = slot.querySelector('#fu-annul');
+    if (an) an.onclick = async () => {
+      try { toast((await api.post(`/api/v1/pool-fraud/user/${uid}/action`, { action: 'annul_points' })).message, 'warn', '🛡'); }
+      catch (e) { toast(e.message, 'err', '🛡'); }
+    };
+    const setTrust = (v) => async () => {
+      try { toast((await api.post(`/api/v1/pool-fraud/user/${uid}/action`, { action: 'set_trust', value: v })).message, 'ok', '🛡'); }
+      catch (e) { toast(e.message, 'err', '🛡'); }
+    };
+    const t1 = slot.querySelector('#fu-trust1');
+    if (t1) t1.onclick = setTrust(1);
+    const t0 = slot.querySelector('#fu-trust0');
+    if (t0) t0.onclick = setTrust(0);
+  } catch (e) { toast(e.message, 'err', '🛡'); }
+}
+
+async function viewFraud(container) {
+  container.innerHTML = fraudShell();
+  $('#fraud-status').value = fraud.status;
+  $('#fraud-status').onchange = (e) => { fraud.status = e.target.value; fraud.page = 1; fraudLoadTable(); };
+  $('#fraud-sev').value = String(fraud.minSev);
+  $('#fraud-sev').onchange = (e) => { fraud.minSev = parseInt(e.target.value, 10) || 0; fraud.page = 1; fraudLoadTable(); };
+  $('#fraud-bulk-fp').onclick = () => {
+    const ids = [...container.querySelectorAll('.fraud-sel:checked')].map(c => c.dataset.id);
+    if (ids.length) fraudResolve(ids, 'false_positive');
+  };
+  $('#fraud-bulk-confirm').onclick = () => {
+    const ids = [...container.querySelectorAll('.fraud-sel:checked')].map(c => c.dataset.id);
+    if (ids.length) fraudResolve(ids, 'confirmed');
+  };
+  $('#fraud-purge').onclick = async () => {
+    try { toast((await api.post('/api/v1/pool-fraud/purge', {})).message, 'ok', '🧹'); }
+    catch (e) { toast(e.message, 'err', '🧹'); }
+  };
+  fraudLoadStats();
+  fraudLoadTable();
+}
+
 // --------------------------------------------------------------------------
 //  Регистрация по приглашению
 // --------------------------------------------------------------------------
@@ -1385,6 +1583,7 @@ function route(silent = false) {
     export: isAccountant(), mapping: isAccountant(),
     users: isAdmin(), audit: isAdmin(), companies: isAdmin(),
     pooladmin: isAdmin(),                // v1.33.0: модерация пула
+    fraud: isAdmin(),                    // v1.34.0: антифрод
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
 
@@ -1395,6 +1594,7 @@ function route(silent = false) {
     public: viewPublic,                   // v1.31.0: приём чека в пул
     my: viewPoolAccount,                  // v1.32.0: кабинет участника пула
     pooladmin: viewPoolAdmin,             // v1.33.0: гео/отрасли + модерация
+    fraud: viewFraud,                     // v1.34.0: сигналы, карантин
   };
   (renderers[view] || viewDashboard)(container);
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
@@ -2921,6 +3121,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.34.0': [
+    { icon: '🛡', title: 'Чек-Пул: антифрод из пяти слоёв — карантин вместо банов',
+      text: 'Пул защищён от накрутки, как в концепции: устройство (один браузер на несколько аккаунтов), сеть (кластеры подсетей и адреса датацентров), поведение (мгновенная отправка форм, ровные интервалы чеков, поток больше 20 в час), связи между участниками и бизнес-правила (одинаковые суммы подряд). Каждое совпадение — сигнал с весом; риск ≥ 71 включает карантин: чеки сохраняются, но баллы приостанавливаются до разбора. В новом разделе админа «Чек-Пул: антифрод» — лента сигналов, карточка участника (устройства, IP, связи), массовый разбор, снятие карантина и аннулирование баллов. Честные участники не помечаются: пороги с отступом, разобранные как ложные сигналы снижают риск.' },
+  ],
   '1.33.0': [
     { icon: '🗺', title: 'Чек-Пул: регионы, отрасли и панель модерации',
       text: 'Каждый чек пула теперь размечается автоматически: регион и город — из адреса места расчёта (если адреса нет — по ИНН продавца через ЕГРЮЛ), отрасль — по сети (Пятёрочка, Аптека 36,6, Лукойл и ещё 50 сетей) или по составу покупок. В Настройках появился раздел «Чек-Пул: модерация»: чеки с ручной проверкой принимаются или отклоняются в два клика (при принятии участнику начисляется балл), есть поиск по ФН/ИНН/магазину, фильтры «без региона/отрасли», ручная разметка, дообогащение старых чеков и выгрузка CSV для Excel. Покрытие видно сразу: цель — 70% чеков с регионом и 60% с отраслью.' },
@@ -5370,7 +5574,7 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 4 · v1.33.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 5 · v1.34.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
         мы проверяем чек по официальным источникам и начисляем балл; компании
@@ -5378,7 +5582,8 @@ async function viewSettings(container) {
         не меняется; приём выключен по умолчанию.
         ${poolSet.enabled ? '<b>Приём включён — форма на сайте принимает чеки (бот — резервный канал).</b>' : 'Приём сейчас выключен.'}
         <a href="#/public">Открыть страницу приёма →</a>
-        <a href="#/pooladmin" style="margin-left:12px">Панель модерации и разметки →</a></p>
+        <a href="#/pooladmin" style="margin-left:12px">Панель модерации и разметки →</a>
+        <a href="#/fraud" style="margin-left:12px">Антифрод →</a></p>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="pool-enabled" ${poolSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Принимать чеки в пул (форма на сайте; бот — резервный канал)</span></label>
