@@ -71,6 +71,12 @@ def init_db() -> None:
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
+    try:  # v1.31.0: добавляющая миграция пула (vid у pool_users + pool_consents)
+        from .pool.models import ensure_pool_schema
+        ensure_pool_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт

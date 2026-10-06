@@ -38,7 +38,8 @@ def pool_settings(body: dict, db: Session = Depends(get_db),
     appsettings.set_setting(db, "pool_enabled", "1" if enabled else "0")
     log_action(admin, "pool_settings_saved", details={"enabled": enabled})
     return {"ok": True, "enabled": enabled,
-            "message": ("Приём чеков в пул включён — бот принимает QR"
+            "message": ("Приём чеков включён — форма на сайте принимает чеки"
+                        " (бот — резервный канал)"
                         if enabled else "Приём чеков в пул выключен")}
 
 

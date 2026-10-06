@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — модели «Чек-Пула» (v1.30.0).
+# Ямастер Чек — модели «Чек-Пула» (v1.30.0, v1.31.0 — веб-приём).
 # Только НОВЫЕ таблицы (pool_*); существующие таблицы ядра не изменяются.
+# Миграции — только добавляющие (ensure_pool_schema: новые таблицы +
+# добавление колонок), продакшн-база никогда не требует разрушающих ALTER.
 # ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
 # ======================================================================
 from __future__ import annotations
@@ -34,6 +36,10 @@ class PoolUser(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
     tg_user_id: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
+    # v1.31.0: анонимный идентификатор гостя сайта (подписанная cookie
+    # pool_vid). Чеки гостя копятся до регистрации; на Этапе 3 история
+    # присоединяется к аккаунту.
+    vid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     tg_username: Mapped[str] = mapped_column(String(64), default="")
     email: Mapped[str] = mapped_column(String(256), default="")       # опционально
     points: Mapped[int] = mapped_column(Integer, default=0)
@@ -117,3 +123,38 @@ class PoolPoint(Base):
     reason: Mapped[str] = mapped_column(String(64), default="receipt")
     ref_id: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------
+# v1.31.0: журнал согласий с офертой (152-ФЗ). Факт согласия фиксируется
+# ДО приёма чека: кто (vid), какая редакция оферты, когда, хэш IP.
+# --------------------------------------------------------------------------
+class PoolConsent(Base):
+    __tablename__ = "pool_consents"
+    __table_args__ = (Index("idx_pool_consents_vid", "vid"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    vid: Mapped[str] = mapped_column(String(64), default="")
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("pool_users.id"), nullable=True)
+    offerta_version: Mapped[str] = mapped_column(String(16), default="")
+    ip_hash: Mapped[str] = mapped_column(String(32), default="")   # sha256[:16]
+    user_agent_hash: Mapped[str] = mapped_column(String(32), default="")
+    form_ms: Mapped[int] = mapped_column(Integer, default=0)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+def ensure_pool_schema(engine) -> None:
+    """Добавляющая миграция пула (v1.31.0): новые таблицы создаёт create_all,
+    для уже существующей pool_users добавляет колонку vid (если её нет).
+    Никогда не изменяет и не удаляет существующие колонки."""
+    import sqlalchemy
+    Base.metadata.create_all(bind=engine, tables=[
+        PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
+        PoolPoint.__table__, PoolConsent.__table__])
+    insp = sqlalchemy.inspect(engine)
+    cols = {c["name"] for c in insp.get_columns("pool_users")}
+    if "vid" not in cols:
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE pool_users ADD COLUMN vid VARCHAR(64)"))

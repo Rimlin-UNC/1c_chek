@@ -37,6 +37,7 @@ const VIEW_TITLES = {
   dashboard: 'Дашборд', scan: 'Сканирование чеков', receipts: 'База чеков',
   export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи и приглашения',
   audit: 'Журнал действий', settings: 'Настройки', companies: 'Компании',
+  public: 'Сдать чек в Чек-Пул',       // v1.31.0: доступно и гостям
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -87,6 +88,8 @@ async function boot() {
     clearToken();
   }
   showSplash(false);
+  // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
+  if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
   showLogin();
 }
 
@@ -131,6 +134,186 @@ function showLogin() {
       btn.textContent = 'Войти в систему';
     }
   };
+}
+
+// --------------------------------------------------------------------------
+//  v1.31.0: ПУБЛИЧНАЯ СТРАНИЦА «СДАТЬ ЧЕК В ЧЕК-ПУЛ» (гость — без входа).
+//  Одна форма для двух режимов: гостевой экран (#/public без токена) и
+//  раздел приложения. Антифрод-минимум: honeypot + тайминг + лимиты сервера.
+// --------------------------------------------------------------------------
+function poolStatusChip(st) {
+  if (st === 'verified') return '<span class="chip exported"><span class="dot"></span>Принят в пул</span>';
+  if (st === 'pending') return '<span class="chip new"><span class="dot"></span>На ручной проверке</span>';
+  if (st === 'rejected') return '<span class="chip failed"><span class="dot"></span>Не принят</span>';
+  return '<span class="chip"><span class="dot"></span>' + esc(st) + '</span>';
+}
+
+function publicFormHTML() {
+  return `
+  <div id="pub-info" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+  <label class="field"><span>Строка QR или ссылка из приложения «Проверка чеков ФНС»</span>
+    <textarea id="pub-qr" rows="3" placeholder="t=20260905T1430&s=1250.00&fn=...&i=...&fp=...&n=1"></textarea></label>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+    <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
+      <input id="pub-photo" type="file" accept="image/*" capture="environment" class="hidden"></label>
+  </div>
+  <div id="pub-photo-hint" class="form-hint hidden" style="margin:4px 0 8px"></div>
+  <input id="pub-hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true"
+         style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
+  <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin:10px 0">
+    <input type="checkbox" id="pub-offerta" style="width:auto;margin-top:3px">
+    <span style="font-size:13.5px">Согласен с офертой (<a href="#" id="pub-offerta-link">текст</a>) —
+    чек мой, передаю его фискальные данные в открытую базу</span></label>
+  <div id="pub-offerta-text" class="info-callout hidden" style="font-size:13px;margin-bottom:10px"></div>
+  <button class="btn btn-primary btn-block" id="pub-submit">Отправить чек — получить балл</button>
+  <div id="pub-msg" class="form-error hidden" style="margin-top:8px"></div>
+  <div id="pub-status" class="hidden" style="margin-top:12px"></div>
+  <div id="pub-mine" style="margin-top:14px"></div>`;
+}
+
+function bindPoolForm(root) {
+  const t0 = Date.now();
+  const $p = (id) => root.querySelector('#' + id);
+  const show = (id, on) => { const el = $p(id); if (el) el.classList.toggle('hidden', !on); };
+
+  const loadMine = async () => {
+    try {
+      const my = await api.get('/api/v1/public/pool/my');
+      const mine = $p('pub-mine');
+      if (mine) {
+        mine.innerHTML = `
+        <div class="form-hint" style="margin-bottom:6px">Ваши баллы: <b>${fmtInt(my.points)}</b> ·
+          сегодня чеков: ${my.today} из ${my.daily_limit}</div>
+        ${my.receipts.length ? `<div class="table-wrap"><table style="width:100%">
+          <thead><tr><th>Когда</th><th>Магазин</th><th>Сумма</th><th>Статус</th><th>Баллы</th></tr></thead>
+          <tbody>${my.receipts.map(r => `<tr>
+            <td class="num">${esc((r.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+            <td>${esc(r.merchant_name || '—')}</td>
+            <td class="num">${fmtSum(r.total_sum)}</td>
+            <td>${poolStatusChip(r.status)}</td>
+            <td class="num">${r.points ? '+' + r.points : '—'}</td></tr>`).join('')}</tbody>
+        </table></div>` : ''}`;
+      }
+      return my;
+    } catch (e) { return null; }
+  };
+
+  const photo = $p('pub-photo');
+  if (photo) photo.onchange = async () => {
+    const f = photo.files && photo.files[0];
+    if (!f) return;
+    const hint = $p('pub-photo-hint');
+    show('pub-photo-hint', true);
+    if (hint) hint.textContent = 'Ищу QR на фото…';
+    try {
+      const { raws, valid } = await decodeImageFile(f);
+      if (!raws.length) { if (hint) hint.textContent = 'QR на фото не найден — попробуйте крупнее и чётче'; return; }
+      $p('pub-qr').value = raws[0];
+      const p = valid[0];
+      if (hint) hint.textContent = 'QR распознан: ФН ' + p.fn + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
+    } catch (e) { if (hint) hint.textContent = e.message || 'Не удалось прочитать фото'; }
+    photo.value = '';
+  };
+
+  const pollStatus = (fn) => {
+    const box = $p('pub-status');
+    show('pub-status', true);
+    box.innerHTML = '<div class="chip new"><span class="dot"></span>Чек принят — проверяем по официальным источникам…</div>';
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries += 1;
+      const my = await loadMine();
+      const row = my && my.receipts.find(r => r.fn === fn);
+      if (row) {
+        clearInterval(timer);
+        const extra = row.status === 'verified'
+          ? `Балл начислен — всего у вас <b>${fmtInt(my.points)}</b>.`
+          : (row.status === 'pending'
+              ? 'Чек на ручной проверке — это не ошибка, администратор посмотрит его вручную.'
+              : esc(row.message || 'Источник не нашёл чек — проверьте строку QR.'));
+        box.innerHTML = `<div class="info-callout">${poolStatusChip(row.status)}
+          <div style="margin-top:6px">${extra}</div></div>`;
+      } else if (tries > 30) {
+        clearInterval(timer);
+        box.innerHTML = '<div class="info-callout">Проверка занимает больше минуты — статус появится в списке ниже.</div>';
+      }
+    }, 2000);
+  };
+
+  const submit = $p('pub-submit');
+  if (submit) submit.onclick = async () => {
+    const msg = $p('pub-msg');
+    msg.classList.add('hidden');
+    submit.disabled = true;
+    try {
+      const res = await api.post('/api/v1/public/pool/check', {
+        qr_text: $p('pub-qr').value,
+        offerta: !!$p('pub-offerta').checked,
+        hp: $p('pub-hp').value,
+        form_ms: Date.now() - t0,
+      });
+      if (!res.ok || !res.accepted) {
+        msg.textContent = res.message || 'Не получилось отправить чек';
+        msg.classList.remove('hidden');
+        return;
+      }
+      pollStatus(res.fn);
+    } catch (e) {
+      msg.textContent = e.message || 'Ошибка сети';
+      msg.classList.remove('hidden');
+    } finally { submit.disabled = false; }
+  };
+
+  const olink = $p('pub-offerta-link');
+  if (olink) olink.onclick = (e) => {
+    e.preventDefault();
+    show('pub-offerta-text', $p('pub-offerta-text').classList.contains('hidden'));
+  };
+
+  (async () => {
+    try {
+      const info = await api.get('/api/v1/public/pool/info');
+      if (!info.enabled) {
+        root.innerHTML = '<div class="info-callout">Приём чеков сейчас выключен — загляните позже.</div>';
+        return;
+      }
+      const box = $p('pub-info');
+      if (box) box.innerHTML = `В пуле уже <b>${fmtInt(info.receipts_total)}</b> чеков, из них проверено
+        <b>${fmtInt(info.verified)}</b>. 1 чек = ${info.points_per_receipt} балл ·
+        лимит ${info.daily_limit} чеков/сутки.`;
+      const ot = $p('pub-offerta-text');
+      if (ot) ot.textContent = info.offerta;
+    } catch (e) { /* сеть могла мигнуть — форма остаётся */ }
+    await loadMine();
+  })();
+}
+
+function showPublicScreen() {
+  $('#register-screen').classList.add('hidden');
+  $('#login-screen').classList.add('hidden');
+  $('#app-shell').classList.add('hidden');
+  const root = $('#public-root');
+  root.innerHTML = publicFormHTML();
+  const back = document.getElementById('public-to-login');
+  if (back) back.onclick = (e) => {
+    e.preventDefault();
+    history.replaceState(null, '', location.pathname);
+    showLogin();
+  };
+  bindPoolForm(root);
+}
+
+// v1.31.0: тот же приём — разделом приложения (для вошедших сотрудников)
+async function viewPublic(container) {
+  container.innerHTML = `
+  <div class="glass card" style="max-width:760px">
+    <div class="card-title">🧾 Сдать чек в Чек-Пул <span class="form-hint">(Этап 2 · v1.31.0)</span></div>
+    <p class="form-hint" style="margin-bottom:10px">Чек попадает в открытую базу «Ямастер Чек-Пул»:
+    проверяем по официальным источникам (ФНС → Честный Знак, без квот) и начисляем балл.
+    Это не влияет на корпоративные чеки компании.</p>
+    ${publicFormHTML()}
+  </div>`;
+  bindPoolForm(container);
 }
 
 // --------------------------------------------------------------------------
@@ -646,6 +829,7 @@ function route(silent = false) {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
     export: viewExport, mapping: viewMapping, users: viewUsers,
     audit: viewAudit, settings: viewSettings, companies: viewCompanies,
+    public: viewPublic,                   // v1.31.0: приём чека в пул
   };
   (renderers[view] || viewDashboard)(container);
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
@@ -1198,6 +1382,8 @@ function bindShell() {
   window.addEventListener('hashchange', () => {
     if (location.hash.startsWith('#/register')) return;
     closeSidebar();                       // v1.10.1: перешли в другой раздел — меню закрыто
+    // v1.31.0: гость открыл «Сдать чек» с экрана входа — показываем без shell
+    if (location.hash.startsWith('#/public') && !getToken()) { showPublicScreen(); return; }
     route();
   });
 }
@@ -2166,6 +2352,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.31.0': [
+    { icon: '🧾', title: 'Сдать чек в Чек-Пул — прямо на сайте',
+      text: 'Приём чеков в открытую базу переехал на сайт — Telegram больше не нужен. На странице «Сдать чек» любой человек вставляет строку QR (или ссылку из приложения ФНС) либо фотографирует QR-код — камера телефона, распознавание прямо в браузере. Регистрация не нужна: баллы копятся в браузере, а «Мои чеки» показывают статус проверки. Согласие с офертой фиксируется в журнале; от ботов — скрытая ловушка и лимит отправок.' },
+  ],
   '1.30.0': [
     { icon: '🧩', title: 'Чек-Пул: этап 1 — приём чеков через бота',
       text: 'Начали строить открытую базу чеков (концепция docs/plan.md). Администратор включает приём в Настройках → «🧩 Чек-Пул». Любой человек пересылает боту строку QR — система проверяет чек по официальным источникам (ФНС GetTicket → Честный Знак, без квот), сохраняет позиции и начисляет балл. Дубли баллов не приносят; аномальные суммы (свыше 500 000 ₽) уходят на ручную проверку; лимит 50 чеков/сутки с человека. Ядро приложения не затронуто.' },
@@ -4603,15 +4793,17 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 1 · v1.30.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 2 · v1.31.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
-        пересылает боту строку QR — мы проверяем чек по официальным источникам
-        и начисляем балл; компании смогут подбирать чеки для отчётов (следующие
-        этапы). Ядро приложения не меняется; приём выключен по умолчанию.
-        ${poolSet.enabled ? '<b>Бот принимает чеки.</b>' : 'Приём сейчас выключен.'}</p>
+        сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
+        мы проверяем чек по официальным источникам и начисляем балл; компании
+        смогут подбирать чеки для отчётов (следующие этапы). Ядро приложения
+        не меняется; приём выключен по умолчанию.
+        ${poolSet.enabled ? '<b>Приём включён — форма на сайте принимает чеки (бот — резервный канал).</b>' : 'Приём сейчас выключен.'}
+        <a href="#/public">Открыть страницу приёма →</a></p>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="pool-enabled" ${poolSet.enabled ? 'checked' : ''} style="width:auto">
-          <span>Принимать чеки в пул (Telegram-бот, строка QR)</span></label>
+          <span>Принимать чеки в пул (форма на сайте; бот — резервный канал)</span></label>
         <div class="form-grid">
           <label class="field"><span>Чеков в пуле</span><input value="${poolSet.receipts_total}" disabled></label>
           <label class="field"><span>Проверены (с баллами)</span><input value="${poolSet.verified}" disabled></label>

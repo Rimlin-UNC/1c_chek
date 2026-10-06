@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — пайплайн приёма чека в пул (v1.30.0, Этап 1).
+# Ямастер Чек — пайплайн приёма чека в пул (v1.30.0 Этап 1, v1.31.0 веб).
 # QR → парсер ядра → дедуп (БД) → лимиты → движок источников → статус.
+#
+# Канал-агностично: ingest_receipt() — синхронный путь (бот, тесты);
+# precheck_ingest() + ingest_parsed() — быстрый ответ + фоновая проверка
+# (публичная форма сайта, v1.31.0: «чек принят — проверяем» ≤ 5 с).
 #
 # Статусы: verified (в пуле, +1 балл) · pending (ручная проверка:
 # аномальная сумма или нет данных) · rejected (источник не нашёл чек).
@@ -22,6 +26,7 @@ SETT_ENABLED = "pool_enabled"
 DAILY_LIMIT = 50                # чеков в сутки на пользователя (антифрод, слой 5)
 ANOMALY_SUM = 500_000.0         # сумма-аномалия → ручная проверка (план, разд. 4)
 POINTS_PER_RECEIPT = 1          # 1 чек = 1 балл (план, разд. 2)
+OFFERTA_VERSION = "2026-10"     # v1.31.0: редакция оферты для журнала согласий
 
 OFFERTA_SHORT = (
     "Отправляя чек, вы подтверждаете, что он ваш, и передаёте его фискальные "
@@ -71,41 +76,50 @@ def _fetch_details(db: Session, qr_raw: str, fn: str, fd: str, fp: str,
     return engine.fetch(db, qr_raw, fn, fd, fp, total_rub, date_time)
 
 
-def ingest_receipt(db: Session, qr_raw: str, source: str, user) -> dict:
-    """Полный приём одного чека в пул. Возвращает машиночитаемый результат
-    для ответа боту/форме: result, message, points, user_points."""
-    from .models import PoolItem, PoolReceipt
+def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
+    """Быстрые проверки ДО обращения к источникам (v1.31.0): включённость,
+    разбор QR, дедуп, суточный лимит. Возвращает (parsed, None) либо
+    (None, result_dict) — машиночитаемый отказ. Не пишет в БД."""
+    from .models import PoolReceipt
     from ..models import utcnow
 
     if not pool_enabled(db):
-        return {"result": "disabled", "message": "Пул выключен",
-                "points": 0, "user_points": user.points if user else 0}
-
+        return None, {"result": "disabled", "message": "Пул выключен",
+                      "points": 0, "user_points": user.points if user else 0}
     # 1) разбор QR (парсер ядра: key=value и URL-форматы)
     try:
         parsed = parse_qr(qr_raw)
     except QRParseError as e:
-        return {"result": "bad_qr", "message": f"Не похоже на чек: {e}",
-                "points": 0, "user_points": user.points}
-
+        return None, {"result": "bad_qr", "message": f"Не похоже на чек: {e}",
+                      "points": 0, "user_points": user.points if user else 0}
     # 2) дедупликация: UNIQUE (fn, fd, fp) — на уровне БД + быстрая проверка
     dup = (db.query(PoolReceipt)
            .filter(PoolReceipt.fn == parsed.fn, PoolReceipt.fd == parsed.fd,
                    PoolReceipt.fp == parsed.fp).first())
     if dup is not None:
-        return {"result": "duplicate",
-                "message": "Этот чек уже в пуле — спасибо, что проверили!",
-                "points": 0, "user_points": user.points}
+        return None, {"result": "duplicate",
+                      "message": "Этот чек уже в пуле — спасибо, что проверили!",
+                      "points": 0, "user_points": user.points if user else 0}
+    # 3) лимит на пользователя в сутки (антифрод, минимум; user может
+    #    отсутствовать в претесте «а парсится ли строка вообще»)
+    if user is not None:
+        day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = (db.query(PoolReceipt)
+                 .filter(PoolReceipt.pool_user_id == user.id,
+                         PoolReceipt.created_at >= day_start).count())
+        if today >= DAILY_LIMIT:
+            return None, {"result": "flood",
+                          "message": f"Лимит: не больше {DAILY_LIMIT} чеков в сутки",
+                          "points": 0, "user_points": user.points}
+    return parsed, None
 
-    # 3) лимит на пользователя в сутки (антифрод, минимум)
-    day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    today = (db.query(PoolReceipt)
-             .filter(PoolReceipt.pool_user_id == user.id,
-                     PoolReceipt.created_at >= day_start).count())
-    if today >= DAILY_LIMIT:
-        return {"result": "flood",
-                "message": f"Лимит: не больше {DAILY_LIMIT} чеков в сутки",
-                "points": 0, "user_points": user.points}
+
+def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
+                  fast: bool = False) -> dict:
+    """Движок источников → строки в БД → статус и баллы. Фоновая часть
+    веб-приёма (v1.31.0); вызывается и синхронно из ingest_receipt."""
+    from .models import PoolItem, PoolReceipt
+    from ..models import utcnow
 
     # 4) данные чека из движка источников (ФНС GetTicket → ЧЗ → …)
     try:
@@ -171,10 +185,22 @@ def ingest_receipt(db: Session, qr_raw: str, source: str, user) -> dict:
         points = POINTS_PER_RECEIPT
         add_points(db, user, points, "receipt", receipt.id)
     receipt.points_awarded = points
+    if fast:  # v1.31.0: антифрод-минимум — слишком быстрая отправка формы
+        receipt.status_message = (receipt.status_message +
+                                  " · сигнал: быстрая отправка формы")[:500]
     db.commit()
     return {"result": receipt.status, "message": receipt.status_message,
             "points": points, "user_points": user.points,
             "receipt_id": receipt.id}
+
+
+def ingest_receipt(db: Session, qr_raw: str, source: str, user) -> dict:
+    """Полный синхронный приём одного чека в пул (бот, тесты).
+    Возвращает машиночитаемый результат: result, message, points, user_points."""
+    parsed, err = precheck_ingest(db, qr_raw, user)
+    if err:
+        return err
+    return ingest_parsed(db, qr_raw, parsed, source, user)
 
 
 def overview(db: Session) -> dict:

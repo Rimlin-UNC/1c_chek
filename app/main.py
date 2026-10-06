@@ -227,7 +227,9 @@ app.include_router(admin.router)
 from .routers import manual as manual_routes  # v1.21.0: инструкция
 app.include_router(manual_routes.router)
 from .pool import router_admin as pool_admin  # v1.30.0: Чек-Пул (Этап 1)
+from .pool import router_public               # v1.31.0: приём чеков с сайта
 app.include_router(pool_admin.router)
+app.include_router(router_public.router)   # v1.31.0: /api/v1/public/pool/*
 
 
 # --------------------------------------------------------------------------
