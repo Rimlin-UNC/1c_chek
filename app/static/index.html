@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.31.0">
+<link rel="stylesheet" href="/css/app.css?v=1.32.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -115,6 +115,26 @@
     </div>
   </div>
 
+  <!-- v1.32.0: кабинет участника «Чек-Пула» (доступен без входа в программу) -->
+  <div id="pool-account-screen" class="login-screen hidden">
+    <div class="login-card glass" style="max-width:660px;width:100%">
+      <div class="login-logo">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <h1 style="font-size:24px">Кабинет <span class="grad-text">Чек-Пула</span></h1>
+        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Баллы, мои чеки и профиль участника открытой базы.</p>
+      </div>
+      <div id="pool-account-root"></div>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" id="pool-to-public" style="font-size:13.5px;margin-right:18px">🧾 Сдать чек</a>
+        <a href="#" id="pool-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      </div>
+      <div class="login-footer">
+        ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a>
+      </div>
+    </div>
+  </div>
+
   <!-- Основная оболочка -->
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
@@ -136,6 +156,9 @@
         </a>
         <a href="#/public" data-view="public" class="nav-item">
           <span class="nav-icon" data-icon="scan"></span>Сдать чек в пул
+        </a>
+        <a href="#/my" data-view="my" class="nav-item">
+          <span class="nav-icon" data-icon="list"></span>Мой Чек-Пул
         </a>
         <a href="#/receipts" data-view="receipts" class="nav-item">
           <span class="nav-icon" data-icon="list"></span>Чеки
@@ -219,6 +242,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.31.0"></script>
+  <script type="module" src="/js/app.js?v=1.32.0"></script>
 </body>
 </html>

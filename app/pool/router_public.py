@@ -120,14 +120,28 @@ def pool_info(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/my", summary="Чек-Пул: баланс и последние чеки гостя (по cookie)")
+def _request_pool_account(db: Session, request: Request):
+    """Авторизованный участник кабинета (JWT typ=pool) или None. Гость с
+    неприсоединённой историей приливается к аккаунту на месте (v1.32.0)."""
+    from . import accounts
+    auth = (request.headers.get("authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    account = accounts.pool_user_from_token(db, auth[7:].strip())
+    if account is not None:
+        accounts.merge_guest_into_account(
+            db, account, accounts.vid_from_cookie(request))
+    return account
+
+
+@router.get("/my", summary="Чек-Пул: баланс и последние чеки (гость или кабинет)")
 def pool_my(request: Request, response: Response,
             db: Session = Depends(get_db)):
     from ..models import utcnow
     from .models import PoolReceipt
 
     vid = _get_or_issue_vid(request, response)
-    user = _user_by_vid(db, vid)
+    user = _request_pool_account(db, request) or _user_by_vid(db, vid)
     day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     rows = (db.query(PoolReceipt)
             .filter(PoolReceipt.pool_user_id == user.id)
@@ -171,14 +185,18 @@ def pool_check(body: CheckBody, request: Request, response: Response,
                 "message": "Вставьте строку QR или сфотографируйте код"}
 
     # факт согласия с офертой — до приёма чека (152-ФЗ)
-    db.add(PoolConsent(vid=vid, offerta_version=ingest.OFFERTA_VERSION,
-                       ip_hash=_hash_ip(ip),
-                       user_agent_hash=hashlib.sha256(
-                           (request.headers.get("user-agent") or "").encode()
-                       ).hexdigest()[:16],
-                       form_ms=max(0, int(body.form_ms or 0))))
+    _account = _request_pool_account(db, request)
+    consent = PoolConsent(
+        vid=vid, offerta_version=ingest.OFFERTA_VERSION,
+        ip_hash=_hash_ip(ip),
+        user_agent_hash=hashlib.sha256(
+            (request.headers.get("user-agent") or "").encode()
+        ).hexdigest()[:16],
+        user_id=(_account.id if _account is not None else None),
+        form_ms=max(0, int(body.form_ms or 0)))
+    db.add(consent)
 
-    user = _user_by_vid(db, vid)
+    user = _account or _user_by_vid(db, vid)
     parsed, err = ingest.precheck_ingest(db, qr_raw, user)
     db.commit()
     if err:                                  # bad_qr / duplicate / flood / disabled

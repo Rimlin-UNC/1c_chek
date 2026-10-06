@@ -68,3 +68,52 @@ def pool_receipts(status: str = Query("", max_length=16),
             "created_at": r.created_at.isoformat() if r.created_at else None,
         } for r in rows],
     }
+
+
+# --------------------------------------------------------------------------
+# v1.32.0: SMTP для писем кабинета (подтверждение e-mail, magic link)
+# и адрес сайта для ссылок. Пароль — шифруемый секрет (appsettings).
+# --------------------------------------------------------------------------
+@router.get("/smtp", summary="Чек-Пул: настройки почты (админ)")
+def get_smtp(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import appsettings
+    from .mailer import SET_BASE_URL, SET_SMTP_FROM, SET_SMTP_HOST, SET_SMTP_PORT, SET_SMTP_TLS, SET_SMTP_USER
+    g = appsettings.get_setting
+    return {
+        "host": g(db, SET_SMTP_HOST), "port": g(db, SET_SMTP_PORT, "587"),
+        "user": g(db, SET_SMTP_USER), "has_password": bool(g(db, "smtp_pass")),
+        "sender": g(db, SET_SMTP_FROM), "tls": g(db, SET_SMTP_TLS, "1") == "1",
+        "base_url": g(db, SET_BASE_URL),
+        "configured": bool(g(db, SET_SMTP_HOST).strip()),
+    }
+
+
+@router.put("/smtp", summary="Чек-Пул: сохранить настройки почты (админ)")
+def put_smtp(body: dict, db: Session = Depends(get_db),
+             admin: User = Depends(require_admin)):
+    from ..services import appsettings
+    from ..services.audit import log_action
+    from .mailer import SET_BASE_URL, SET_SMTP_FROM, SET_SMTP_HOST, SET_SMTP_PORT, SET_SMTP_TLS, SET_SMTP_USER
+    b = body or {}
+    appsettings.set_setting(db, SET_SMTP_HOST, (b.get("host") or "").strip())
+    appsettings.set_setting(db, SET_SMTP_PORT, str(int(b.get("port") or 587)))
+    appsettings.set_setting(db, SET_SMTP_USER, (b.get("user") or "").strip())
+    if b.get("password") not in (None, ""):       # "" — не менять
+        appsettings.set_setting(db, "smtp_pass", b["password"])
+    appsettings.set_setting(db, SET_SMTP_FROM, (b.get("sender") or "").strip())
+    appsettings.set_setting(db, SET_SMTP_TLS, "1" if b.get("tls") else "0")
+    appsettings.set_setting(db, SET_BASE_URL, (b.get("base_url") or "").strip())
+    log_action(admin, "pool_smtp_saved", details={"configured": bool((b.get("host") or "").strip())})
+    return {"ok": True, "message": "Настройки почты сохранены"}
+
+
+@router.post("/smtp-test", summary="Чек-Пул: тестовое письмо (админ)")
+def smtp_test(body: dict, db: Session = Depends(get_db),
+              admin: User = Depends(require_admin)):
+    from ..services.audit import log_action
+    from .mailer import send_mail
+    to = ((body or {}).get("email") or "").strip()
+    ok, err = send_mail(db, to, "Ямастер Чек-Пул: тестовое письмо",
+                        "SMTP настроен верно — письма кабинета будут доходить.\n\nООО «Ямастер»")
+    log_action(admin, "pool_smtp_test", details={"ok": ok})
+    return {"ok": ok, "message": ("Письмо отправлено" if ok else f"Не отправлено: {err}")}

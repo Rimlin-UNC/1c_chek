@@ -42,6 +42,11 @@ class PoolUser(Base):
     vid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     tg_username: Mapped[str] = mapped_column(String(64), default="")
     email: Mapped[str] = mapped_column(String(256), default="")       # опционально
+    # v1.32.0: кабинет участника — вход по e-mail+пароль (контур пула, ядро
+    # пользователей компании не затрагивается); подтверждение e-mail — для
+    # рефералов/вывода (следующие этапы).
+    password_hash: Mapped[str] = mapped_column(String(256), default="")
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     points: Mapped[int] = mapped_column(Integer, default=0)
     referral_code: Mapped[str] = mapped_column(String(12), default="")  # этап 6
     trust_level: Mapped[int] = mapped_column(Integer, default=0)      # 0 новый…
@@ -151,10 +156,36 @@ def ensure_pool_schema(engine) -> None:
     import sqlalchemy
     Base.metadata.create_all(bind=engine, tables=[
         PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
-        PoolPoint.__table__, PoolConsent.__table__])
+        PoolPoint.__table__, PoolConsent.__table__, PoolToken.__table__])
     insp = sqlalchemy.inspect(engine)
     cols = {c["name"] for c in insp.get_columns("pool_users")}
-    if "vid" not in cols:
-        with engine.begin() as conn:
-            conn.execute(sqlalchemy.text(
-                "ALTER TABLE pool_users ADD COLUMN vid VARCHAR(64)"))
+    add_cols = (
+        ("vid", "ALTER TABLE pool_users ADD COLUMN vid VARCHAR(64)"),
+        ("password_hash",
+         "ALTER TABLE pool_users ADD COLUMN password_hash VARCHAR(256) DEFAULT ''"),
+        ("email_verified",
+         "ALTER TABLE pool_users ADD COLUMN email_verified BOOLEAN DEFAULT 0"),
+    )
+    with engine.begin() as conn:
+        for name, ddl in add_cols:
+            if name not in cols:
+                conn.execute(sqlalchemy.text(ddl))
+
+
+# --------------------------------------------------------------------------
+# v1.32.0: одноразовые токены кабинета — magic link (вход по ссылке из
+# письма) и подтверждение e-mail. В БД хранится только SHA-256 хэш токена.
+# --------------------------------------------------------------------------
+class PoolToken(Base):
+    __tablename__ = "pool_tokens"
+    __table_args__ = (Index("idx_pool_tokens_hash", "token_hash"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    token_hash: Mapped[str] = mapped_column(String(64), default="")
+    purpose: Mapped[str] = mapped_column(String(16), default="login")  # login|verify
+    email: Mapped[str] = mapped_column(String(256), default="")
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("pool_users.id"), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

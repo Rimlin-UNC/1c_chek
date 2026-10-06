@@ -38,6 +38,7 @@ const VIEW_TITLES = {
   export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи и приглашения',
   audit: 'Журнал действий', settings: 'Настройки', companies: 'Компании',
   public: 'Сдать чек в Чек-Пул',       // v1.31.0: доступно и гостям
+  my: 'Мой Чек-Пул',                   // v1.32.0: кабинет участника пула
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -90,6 +91,12 @@ async function boot() {
   showSplash(false);
   // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
   if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
+  // v1.32.0: кабинет «Чек-Пула» — тоже доступен без входа в программу
+  if (location.hash.startsWith('#/my')) { showPoolScreen(); return; }
+  const pm = location.hash.match(/^#\/pool-magic\/(.+)$/);
+  if (pm) { poolConsume('magic', pm[1]); return; }        // ссылка из письма
+  const pv = location.hash.match(/^#\/pool-verify\/(.+)$/);
+  if (pv) { poolConsume('verify', pv[1]); return; }       // подтверждение e-mail
   showLogin();
 }
 
@@ -178,7 +185,7 @@ function bindPoolForm(root) {
 
   const loadMine = async () => {
     try {
-      const my = await api.get('/api/v1/public/pool/my');
+      const my = await poolApi('GET', '/api/v1/public/pool/my');
       const mine = $p('pub-mine');
       if (mine) {
         mine.innerHTML = `
@@ -246,7 +253,7 @@ function bindPoolForm(root) {
     msg.classList.add('hidden');
     submit.disabled = true;
     try {
-      const res = await api.post('/api/v1/public/pool/check', {
+      const res = await poolApi('POST', '/api/v1/public/pool/check', {
         qr_text: $p('pub-qr').value,
         offerta: !!$p('pub-offerta').checked,
         hp: $p('pub-hp').value,
@@ -314,6 +321,352 @@ async function viewPublic(container) {
     ${publicFormHTML()}
   </div>`;
   bindPoolForm(container);
+}
+
+// --------------------------------------------------------------------------
+//  v1.32.0: КАБИНЕТ УЧАСТНИКА «ЧЕК-ПУЛА» (Этап 3).
+//  Отдельный контур от рабочей программы: свой токен (typ=pool), свой вход.
+//  Гостевая история (cookie vid) при регистрации/входе присоединяется
+//  к аккаунту. Доступен как публичный экран (#/my), так и раздел приложения.
+// --------------------------------------------------------------------------
+const POOL_TK = 'ymaster-pool-token';
+const pGet = () => { try { return localStorage.getItem(POOL_TK) || ''; } catch (e) { return ''; } };
+const pSet = (t) => { try { localStorage.setItem(POOL_TK, t); } catch (e) {} };
+const pClear = () => { try { localStorage.removeItem(POOL_TK); } catch (e) {} };
+
+async function poolApi(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (pGet()) headers.Authorization = 'Bearer ' + pGet();
+  const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* пустой ответ */ }
+  if (!r.ok) {
+    const err = new Error((data && (data.detail || data.message)) || 'Ошибка');
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
+
+// magic-ссылка / подтверждение e-mail из письма
+async function poolConsume(kind, raw) {
+  history.replaceState(null, '', location.pathname);
+  try {
+    const r = await poolApi('POST', kind === 'magic'
+      ? '/api/v1/pool-auth/magic/consume' : '/api/v1/pool-auth/verify', { token: raw });
+    if (kind === 'magic' && r.token) { pSet(r.token); toast('Вход выполнен', 'ok', 'Чек-Пул'); }
+    else toast(r.message || 'Готово', 'ok', 'Чек-Пул');
+  } catch (e) { toast(e.message || 'Ссылка недействительна', 'err', 'Чек-Пул'); }
+  showPoolScreen();
+}
+
+function poolAuthHTML() {
+  return `
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn btn-sm btn-primary" id="ptab-login">Вход</button>
+    <button class="btn btn-sm" id="ptab-reg">Регистрация</button>
+    <button class="btn btn-sm" id="ptab-magic">Вход по ссылке</button>
+  </div>
+  <form id="pf-login">
+    <label class="field"><span>E-mail</span><input id="pl-email" type="email" required autocomplete="email"></label>
+    <label class="field"><span>Пароль</span><input id="pl-pass" type="password" required autocomplete="current-password"></label>
+    <button class="btn btn-primary btn-block" type="submit">Войти в кабинет</button>
+  </form>
+  <form id="pf-reg" class="hidden">
+    <label class="field"><span>E-mail</span><input id="pr-email" type="email" required autocomplete="email"></label>
+    <label class="field"><span>Придумайте пароль (мин. 8 символов)</span><input id="pr-pass" type="password" required minlength="8" autocomplete="new-password"></label>
+    <p class="form-hint" style="margin:4px 0 8px">Чеки, сданные в этом браузере без регистрации, присоединятся к кабинету.</p>
+    <button class="btn btn-primary btn-block" type="submit">Создать кабинет</button>
+  </form>
+  <form id="pf-magic" class="hidden">
+    <label class="field"><span>E-mail</span><input id="pm-email" type="email" required></label>
+    <p class="form-hint" style="margin:4px 0 8px">Пришлём одноразовую ссылку для входа (если администратор настроил почту).</p>
+    <button class="btn btn-primary btn-block" type="submit">Прислать ссылку</button>
+  </form>
+  <div id="pool-auth-msg" class="form-error hidden" style="margin-top:8px"></div>`;
+}
+
+function poolDashHTML() {
+  return `
+  <div id="pool-summary" class="form-hint">Загружаем…</div>
+  <div class="form-grid" style="margin:10px 0">
+    <label class="field"><span>Баллы</span><input id="pool-pts" value="—" disabled></label>
+    <label class="field"><span>Мои чеки</span><input id="pool-cnt" value="—" disabled></label>
+    <label class="field"><span>Сегодня сдано</span><input id="pool-today" value="—" disabled></label>
+  </div>
+  <div id="pool-receipts"></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+    <button class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
+    <button class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
+  </div>
+  <div class="card-title" style="margin-top:14px">Профиль</div>
+  <div class="form-grid" style="margin:8px 0">
+    <label class="field"><span>Старый пароль</span><input id="pool-oldp" type="password" autocomplete="current-password"></label>
+    <label class="field"><span>Новый пароль (мин. 8 символов)</span><input id="pool-newp" type="password" autocomplete="new-password"></label>
+  </div>
+  <button class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
+  <div class="form-grid" style="margin:8px 0">
+    <label class="field"><span>Новый e-mail</span><input id="pool-newemail" type="email"></label>
+  </div>
+  <button class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
+  <div style="display:flex;gap:8px;margin-top:16px">
+    <button class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
+    <button class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
+  </div>
+  <div id="pool-msg" class="form-error hidden" style="margin-top:8px"></div>`;
+}
+
+function poolShowErr(root, id, msg) {
+  const el = root.querySelector(id);
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+}
+
+async function poolLoadSummary(root) {
+  try {
+    const d = await poolApi('GET', '/api/v1/pool-my/summary');
+    const box = root.querySelector('#pool-summary');
+    if (box) box.innerHTML = `Кабинет: <b>${esc(d.email)}</b>
+      ${d.email_verified ? '<span class="chip exported"><span class="dot"></span>e-mail подтверждён</span>'
+      : `<span class="chip new"><span class="dot"></span>e-mail не подтверждён</span>
+         <a href="#" id="pool-resend-verify">Подтвердить</a>`}`;
+    const rv = root.querySelector('#pool-resend-verify');
+    if (rv) rv.onclick = async (e) => {
+      e.preventDefault();
+      try { toast((await poolApi('POST', '/api/v1/pool-my/resend-verification')).message, 'ok', 'Чек-Пул'); }
+      catch (err) { toast(err.message, 'err', 'Чек-Пул'); }
+    };
+    const pts = root.querySelector('#pool-pts');
+    if (pts) pts.value = fmtInt(d.points);
+    const cnt = root.querySelector('#pool-cnt');
+    if (cnt) cnt.value = fmtInt(d.receipts_total);
+    const today = root.querySelector('#pool-today');
+    if (today) today.value = d.today + ' из ' + d.daily_limit;
+    return d;
+  } catch (e) {
+    if (e.status === 401) { pClear(); root.innerHTML = poolAuthHTML(); bindPoolAuth(root); }
+    return null;
+  }
+}
+
+async function poolLoadReceipts(root, page) {
+  try {
+    const d = await poolApi('GET', `/api/v1/pool-my/receipts?page=${page}&page_size=10`);
+    const box = root.querySelector('#pool-receipts');
+    if (!box) return;
+    const pages = Math.max(1, Math.ceil(d.total / d.page_size));
+    box.innerHTML = `<div class="card-title" style="font-size:15px">Мои чеки
+        <span class="form-hint">(всего ${fmtInt(d.total)})</span></div>
+      ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
+      <thead><tr><th>Сдан</th><th>Магазин</th><th>Сумма</th><th>Статус</th><th>Баллы</th></tr></thead>
+      <tbody>${d.items.map(r => `<tr data-rid="${r.id}" style="cursor:pointer">
+        <td class="num">${esc((r.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+        <td>${esc(r.merchant_name || '—')}</td>
+        <td class="num">${fmtSum(r.total_sum)}</td>
+        <td>${poolStatusChip(r.status)}</td>
+        <td class="num">${r.points ? '+' + r.points : '—'}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="form-hint">Пока пусто — сдайте первый чек на странице «Сдать чек».</p>'}
+      ${pages > 1 ? `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button class="btn btn-sm" id="pool-prev" ${page <= 1 ? 'disabled' : ''}>← Назад</button>
+        <span class="form-hint">стр. ${page} из ${pages}</span>
+        <button class="btn btn-sm" id="pool-next" ${page >= pages ? 'disabled' : ''}>Вперёд →</button></div>` : ''}`;
+    box.querySelectorAll('tr[data-rid]').forEach(tr => {
+      tr.onclick = () => poolShowReceipt(tr.dataset.rid);
+    });
+    const pv = box.querySelector('#pool-prev');
+    if (pv) pv.onclick = () => poolLoadReceipts(root, page - 1);
+    const nx = box.querySelector('#pool-next');
+    if (nx) nx.onclick = () => poolLoadReceipts(root, page + 1);
+  } catch (e) { /* 401 обработан в сводке */ }
+}
+
+async function poolShowReceipt(id) {
+  try {
+    const r = await poolApi('GET', '/api/v1/pool-my/receipt/' + id);
+    const rows = (r.items || []).map(i => `<tr>
+      <td>${esc(i.name)}</td><td class="num">${i.quantity}</td>
+      <td class="num">${fmtSum(i.price)}</td><td class="num">${fmtSum(i.total)}</td></tr>`).join('');
+    const { slot } = openModal(`
+      <div class="modal-title">${esc(r.merchant_name || 'Чек')} · ${fmtSum(r.total_sum)}</div>
+      <div class="form-hint" style="margin-bottom:8px">${poolStatusChip(r.status)}
+        ${r.receipt_date ? ' · ' + esc(r.receipt_date.slice(0, 16).replace('T', ' ')) : ''}
+        ${r.fn ? ' · ФН ' + esc(r.fn) : ''}
+        ${r.merchant_address ? '<br>' + esc(r.merchant_address) : ''}</div>
+      ${rows ? `<div class="table-wrap"><table style="width:100%">
+        <thead><tr><th>Позиция</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`
+        : '<p class="form-hint">Позиции появятся после проверки официальными источниками.</p>'}`);
+    return slot;
+  } catch (e) { toast(e.message, 'err', 'Чек-Пул'); }
+}
+
+function poolDownloadCsv() {
+  fetch('/api/v1/pool-my/export.csv', { headers: { Authorization: 'Bearer ' + pGet() } })
+    .then(r => { if (!r.ok) throw new Error('Не удалось выгрузить'); return r.blob(); })
+    .then(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'chek-pool-moi-cheki.csv';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    })
+    .catch(e => toast(e.message, 'err', 'Чек-Пул'));
+}
+
+function poolPrintList(root) {
+  poolApi('GET', '/api/v1/pool-my/receipts?page=1&page_size=100').then(d => {
+    const rows = d.items.map(r => `<tr><td>${esc((r.receipt_date || r.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+      <td>${esc(r.merchant_name || '—')}</td><td>${esc(r.fn)}</td>
+      <td class="num">${fmtSum(r.total_sum)}</td><td>${esc(r.status)}</td>
+      <td class="num">${r.points || 0}</td></tr>`).join('');
+    const w = window.open('', '_blank', 'width=820,height=900');
+    if (!w) { toast('Разрешите всплывающие окна — и снова нажмите «Печать»', 'warn', 'Чек-Пул'); return; }
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Чек-Пул — мои чеки</title>' +
+      '<style>body{font:14px/1.45 -apple-system,"Segoe UI",Arial,sans-serif;color:#222}' +
+      'h1{font-size:18px}table{border-collapse:collapse;width:100%}' +
+      'th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:13px}' +
+      'th{background:#f5f5f5}.num{text-align:right;font-variant-numeric:tabular-nums}</style></head><body>' +
+      '<h1>Ямастер Чек-Пул — мои чеки</h1>' +
+      '<table><thead><tr><th>Дата</th><th>Магазин</th><th>ФН</th><th>Сумма</th><th>Статус</th><th>Баллы</th></tr></thead>' +
+      `<tbody>${rows}</tbody></table><p style="font-size:12px;color:#777">ООО «Ямастер» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>` +
+      '</body></html>');
+    w.document.close();
+    w.focus();
+    w.print();
+  }).catch(e => toast(e.message, 'err', 'Чек-Пул'));
+}
+
+function bindPoolAuth(root) {
+  const tab = (id) => {
+    ['login', 'reg', 'magic'].forEach(k => {
+      const f = root.querySelector('#pf-' + k);
+      if (f) f.classList.toggle('hidden', k !== id);
+      const b = root.querySelector('#ptab-' + k);
+      if (b) b.classList.toggle('btn-primary', k === id);
+    });
+    const msg = root.querySelector('#pool-auth-msg');
+    if (msg) msg.classList.add('hidden');
+  };
+  ['login', 'reg', 'magic'].forEach(k => {
+    const b = root.querySelector('#ptab-' + k);
+    if (b) b.onclick = () => tab(k);
+  });
+  const lf = root.querySelector('#pf-login');
+  if (lf) lf.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await poolApi('POST', '/api/v1/pool-auth/login',
+        { email: root.querySelector('#pl-email').value.trim(), password: root.querySelector('#pl-pass').value });
+      pSet(r.token);
+      toast('Добро пожаловать!', 'ok', 'Чек-Пул');
+      root.innerHTML = poolDashHTML();
+      bindPoolDashboard(root);
+    } catch (err) { poolShowErr(root, '#pool-auth-msg', err.message); }
+  };
+  const rf = root.querySelector('#pf-reg');
+  if (rf) rf.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await poolApi('POST', '/api/v1/pool-auth/register',
+        { email: root.querySelector('#pr-email').value.trim(), password: root.querySelector('#pr-pass').value });
+      pSet(r.token);
+      toast(r.merged_receipts ? `Кабинет создан — перенесено чеков: ${r.merged_receipts}`
+        : 'Кабинет создан', 'ok', 'Чек-Пул');
+      root.innerHTML = poolDashHTML();
+      bindPoolDashboard(root);
+    } catch (err) { poolShowErr(root, '#pool-auth-msg', err.message); }
+  };
+  const mf = root.querySelector('#pf-magic');
+  if (mf) mf.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await poolApi('POST', '/api/v1/pool-auth/magic',
+        { email: root.querySelector('#pm-email').value.trim() });
+      toast(r.message, 'ok', 'Чек-Пул');
+    } catch (err) { poolShowErr(root, '#pool-auth-msg', err.message); }
+  };
+}
+
+function bindPoolDashboard(root) {
+  poolLoadSummary(root);
+  poolLoadReceipts(root, 1);
+  const csv = root.querySelector('#pool-csv');
+  if (csv) csv.onclick = poolDownloadCsv;
+  const pr = root.querySelector('#pool-print');
+  if (pr) pr.onclick = () => poolPrintList(root);
+  const ps = root.querySelector('#pool-pass-save');
+  if (ps) ps.onclick = async () => {
+    try {
+      const r = await poolApi('POST', '/api/v1/pool-my/password', {
+        old_password: root.querySelector('#pool-oldp').value,
+        new_password: root.querySelector('#pool-newp').value });
+      toast(r.message, 'ok', 'Чек-Пул');
+      root.querySelector('#pool-oldp').value = '';
+      root.querySelector('#pool-newp').value = '';
+    } catch (e) { toast(e.message, 'err', 'Чек-Пул'); }
+  };
+  const es = root.querySelector('#pool-email-save');
+  if (es) es.onclick = async () => {
+    try {
+      const r = await poolApi('POST', '/api/v1/pool-my/email', {
+        password: root.querySelector('#pool-oldp').value,
+        email: root.querySelector('#pool-newemail').value.trim() });
+      toast(r.message, 'ok', 'Чек-Пул');
+      poolLoadSummary(root);
+    } catch (e) { toast(e.message, 'err', 'Чек-Пул'); }
+  };
+  const lo = root.querySelector('#pool-logout');
+  if (lo) lo.onclick = () => { pClear(); root.innerHTML = poolAuthHTML(); bindPoolAuth(root); };
+  const del = root.querySelector('#pool-delete');
+  if (del) del.onclick = () => {
+    const { slot } = openModal(`
+      <div class="modal-title">Удаление аккаунта Чек-Пула</div>
+      <p class="form-hint">E-mail и пароль будут стёрты, баллы — сгорят.
+      Сданные чеки останутся в открытой базе обезличенными (это согласовано офертой).</p>
+      <label class="field"><span>Пароль для подтверждения</span><input id="pool-del-pass" type="password"></label>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-sm" data-close>Отмена</button>
+        <button class="btn btn-sm" id="pool-del-go" style="color:#b3261e">Удалить навсегда</button>
+      </div>`);
+    slot.querySelector('#pool-del-go').onclick = async () => {
+      try {
+        const r = await poolApi('POST', '/api/v1/pool-my/delete',
+          { password: slot.querySelector('#pool-del-pass').value });
+        pClear();
+        toast(r.message, 'ok', 'Чек-Пул');
+        root.innerHTML = poolAuthHTML();
+        bindPoolAuth(root);
+      } catch (e) { toast(e.message, 'err', 'Чек-Пул'); }
+    };
+  };
+}
+
+function bindPoolAccount(root) {
+  if (pGet()) { bindPoolDashboard(root); } else { bindPoolAuth(root); }
+}
+
+function showPoolScreen() {
+  $('#register-screen').classList.add('hidden');
+  $('#login-screen').classList.add('hidden');
+  $('#app-shell').classList.add('hidden');
+  const root = $('#pool-account-root');
+  root.innerHTML = pGet() ? poolDashHTML() : poolAuthHTML();
+  const back = document.getElementById('pool-to-login');
+  if (back) back.onclick = (e) => { e.preventDefault(); history.replaceState(null, '', location.pathname); showLogin(); };
+  const pub = document.getElementById('pool-to-public');
+  if (pub) pub.onclick = (e) => { e.preventDefault(); history.replaceState(null, '', location.pathname + '#/public'); showPublicScreen(); };
+  bindPoolAccount(root);
+}
+
+// Кабинет внутри программы (пункт меню «Мой Чек-Пул»)
+async function viewPoolAccount(container) {
+  container.innerHTML = `
+  <div class="glass card" style="max-width:760px">
+    <div class="card-title">👤 Мой Чек-Пул <span class="form-hint">(Этап 3 · v1.32.0)</span></div>
+    <p class="form-hint" style="margin-bottom:10px">Кабинет участника открытой базы — отдельный от рабочей
+    программы: пароли и доступы не смешиваются. Здесь видны только чеки, сданные в пул.</p>
+    ${pGet() ? poolDashHTML() : poolAuthHTML()}
+  </div>`;
+  bindPoolAccount(container);
 }
 
 // --------------------------------------------------------------------------
@@ -830,6 +1183,7 @@ function route(silent = false) {
     export: viewExport, mapping: viewMapping, users: viewUsers,
     audit: viewAudit, settings: viewSettings, companies: viewCompanies,
     public: viewPublic,                   // v1.31.0: приём чека в пул
+    my: viewPoolAccount,                  // v1.32.0: кабинет участника пула
   };
   (renderers[view] || viewDashboard)(container);
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
@@ -1381,9 +1735,13 @@ function bindShell() {
   }, { passive: true });
   window.addEventListener('hashchange', () => {
     if (location.hash.startsWith('#/register')) return;
+    // v1.32.0: magic/verify-ссылки обрабатываются при загрузке страницы
+    if (location.hash.startsWith('#/pool-magic/') || location.hash.startsWith('#/pool-verify/')) return;
     closeSidebar();                       // v1.10.1: перешли в другой раздел — меню закрыто
     // v1.31.0: гость открыл «Сдать чек» с экрана входа — показываем без shell
     if (location.hash.startsWith('#/public') && !getToken()) { showPublicScreen(); return; }
+    // v1.32.0: кабинет пула доступен и без входа в программу
+    if (location.hash.startsWith('#/my') && !getToken()) { showPoolScreen(); return; }
     route();
   });
 }
@@ -2352,6 +2710,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.32.0': [
+    { icon: '👤', title: 'Кабинет Чек-Пула: регистрация и «сдал чек — забрал чек»',
+      text: 'Сдавать чеки по-прежнему можно без регистрации, но теперь у участника есть кабинет: e-mail + пароль либо одноразовая ссылка входа (если администратор настроил почту в Настройках → Чек-Пул). Чеки, сданные без регистрации в этом браузере, автоматически присоединяются к кабинету — ничего не теряется. В кабинете: баланс, «Мои чеки» со статусами и составом (позиции), выгрузка CSV для Excel, печать/PDF, смена пароля и e-mail, удаление аккаунта — персональные данные стираются, баллы сгорают, чеки остаются в пуле обезличенно. Кабинет отдельный от рабочей программы: вход сотрудников компаний не меняется.' },
+  ],
   '1.31.0': [
     { icon: '🧾', title: 'Сдать чек в Чек-Пул — прямо на сайте',
       text: 'Приём чеков в открытую базу переехал на сайт — Telegram больше не нужен. На странице «Сдать чек» любой человек вставляет строку QR (или ссылку из приложения ФНС) либо фотографирует QR-код — камера телефона, распознавание прямо в браузере. Регистрация не нужна: баллы копятся в браузере, а «Мои чеки» показывают статус проверки. Согласие с офертой фиксируется в журнале; от ботов — скрытая ловушка и лимит отправок.' },
@@ -4685,9 +5047,9 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, me = null;
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null;
   try { me = await api.get('/api/v1/auth/me'); } catch {}
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); } }
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
   let appSum = null, sysInfo = null;
@@ -4816,6 +5178,26 @@ async function viewSettings(container) {
           лимит ${poolSet.daily_limit} чеков/сутки с человека · дубль баллов не приносит.</p>
         <button class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
         <p class="form-hint" style="margin-top:8px">📜 ${esc(poolSet.offerta)}</p>
+        ${smtpSet ? `
+        <div class="card-title" style="margin-top:14px;font-size:15px">✉️ Почта кабинета <span class="form-hint">(v1.32.0: подтверждение e-mail, вход по ссылке)</span></div>
+        <div class="form-grid">
+          <label class="field"><span>SMTP-хост</span><input id="pool-smtp-host" value="${esc(smtpSet.host)}" placeholder="smtp.yandex.ru"></label>
+          <label class="field"><span>Порт</span><input id="pool-smtp-port" value="${esc(smtpSet.port)}"></label>
+          <label class="field"><span>Логин</span><input id="pool-smtp-user" value="${esc(smtpSet.user)}"></label>
+          <label class="field"><span>Пароль</span><input id="pool-smtp-pass" type="password" placeholder="${smtpSet.has_password ? 'задан — пусто = не менять' : 'пароль SMTP'}"></label>
+          <label class="field"><span>Письмо «от кого»</span><input id="pool-smtp-from" value="${esc(smtpSet.sender)}"></label>
+          <label class="field"><span>Адрес сайта (для ссылок)</span><input id="pool-smtp-base" value="${esc(smtpSet.base_url)}" placeholder="https://chek.ymaster.ru"></label>
+        </div>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0">
+          <input type="checkbox" id="pool-smtp-tls" ${smtpSet.tls ? 'checked' : ''} style="width:auto">
+          <span>STARTTLS (обычно включён)</span></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-primary btn-sm" id="pool-smtp-save">💾 Сохранить почту</button>
+          <input id="pool-smtp-test-email" type="email" placeholder="куда прислать тест" style="max-width:230px">
+          <button class="btn btn-sm" id="pool-smtp-test">✉️ Тест письма</button>
+        </div>
+        ${smtpSet.configured ? '<p class="form-hint" style="margin-top:6px">Почта настроена — вход по ссылке и подтверждение e-mail работают.</p>'
+          : '<p class="form-hint" style="margin-top:6px">Без SMTP кабинет работает по паролю: вход по ссылке и письма подтверждения отключены.</p>'}` : ''}
       </div>` : ''}
 
       ${me ? `
@@ -5222,6 +5604,40 @@ async function viewSettings(container) {
         route(true);
       } catch (e) { toast(e.message, 'err'); }
       psv.disabled = false;
+    };
+  }
+
+  // v1.32.0: SMTP кабинета Чек-Пула — сохранение и тест письма
+  if (isAdmin() && poolSet && smtpSet) {
+    const pss = $('#pool-smtp-save');
+    if (pss) pss.onclick = async () => {
+      pss.disabled = true;
+      try {
+        const body = {
+          host: $('#pool-smtp-host').value.trim(),
+          port: parseInt($('#pool-smtp-port').value, 10) || 587,
+          user: $('#pool-smtp-user').value.trim(),
+          sender: $('#pool-smtp-from').value.trim(),
+          base_url: $('#pool-smtp-base').value.trim(),
+          tls: $('#pool-smtp-tls').checked,
+        };
+        const pw = $('#pool-smtp-pass').value;
+        if (pw) body.password = pw;
+        const r = await api.put('/api/v1/pool-admin/smtp', body);
+        toast(r.message, 'ok', '✉️');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+      pss.disabled = false;
+    };
+    const pst = $('#pool-smtp-test');
+    if (pst) pst.onclick = async () => {
+      pst.disabled = true;
+      try {
+        const r = await api.post('/api/v1/pool-admin/smtp-test',
+                                 { email: $('#pool-smtp-test-email').value.trim() });
+        toast(r.message, r.ok ? 'ok' : 'err', '✉️');
+      } catch (e) { toast(e.message, 'err'); }
+      pst.disabled = false;
     };
   }
 
