@@ -31,8 +31,11 @@ def pool_overview(db: Session = Depends(get_db), admin: User = Depends(require_a
     from ..services import appsettings
     from . import ingest
     from . import engage
+    from .router_api import DEFAULT_QUOTA, DEFAULT_RATE, api_enabled
     from .router_company import PICK_LIMIT_DEFAULT, PICK_LIMIT_KEY, pick_limit
     from ..services import appsettings
+    from .models import PoolApiCall, PoolApiKey
+    m_start = _utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     return {
         "enabled": ingest.pool_enabled(db),
         "offerta": ingest.OFFERTA_SHORT,
@@ -42,8 +45,22 @@ def pool_overview(db: Session = Depends(get_db), admin: User = Depends(require_a
         # v1.37.0: квота «Подбора из пула» на компанию
         "pick_monthly_limit": int(appsettings.get_setting(
             db, PICK_LIMIT_KEY, str(PICK_LIMIT_DEFAULT))),
+        # v1.39.0: платное API для внешних клиентов
+        "api_enabled": api_enabled(db),
+        "api_keys_total": db.query(PoolApiKey).count(),
+        "api_keys_active": db.query(PoolApiKey)
+            .filter(PoolApiKey.active.is_(True)).count(),
+        "api_calls_month": db.query(PoolApiCall)
+            .filter(PoolApiCall.created_at >= m_start).count(),
+        "api_defaults": {"rate_per_hour": DEFAULT_RATE,
+                         "monthly_quota": DEFAULT_QUOTA},
         **ingest.overview(db),
     }
+
+
+def _utcnow():
+    from datetime import datetime as _dt
+    return _dt.utcnow()
 
 
 @router.put("/settings", summary="Чек-Пул: включить/выключить приём чеков (админ)")
@@ -63,13 +80,21 @@ def pool_settings(body: dict, db: Session = Depends(get_db),
             raise HTTPException(422, "Лимит подбора — целое число, 0 = выключен")
         appsettings.set_setting(db, "pool_pick_monthly_limit", str(v))
         pick_limit_msg = f" · квота подбора: {v} чеков/мес на компанию"
+    # v1.39.0: платное API для внешних клиентов (вкл/выкл)
+    api_msg = ""
+    api_on = (body or {}).get("api_enabled")
+    if api_on is not None:
+        from .router_api import API_ENABLED_KEY
+        appsettings.set_setting(db, API_ENABLED_KEY, "1" if api_on else "0")
+        api_msg = (" · API включён" if api_on else " · API выключен")
     log_action(admin, "pool_settings_saved",
-               details={"enabled": enabled, "pick_limit": pl})
+               details={"enabled": enabled, "pick_limit": pl,
+                        "api_enabled": api_on})
     return {"ok": True, "enabled": enabled,
             "message": ("Приём чеков включён — форма на сайте принимает чеки"
                         " (бот — резервный канал)"
                         if enabled else "Приём чеков в пул выключен")
-            + pick_limit_msg}
+            + pick_limit_msg + api_msg}
 
 
 @router.get("/receipts", summary="Чек-Пул: список чеков с поиском (админ)")
@@ -167,7 +192,8 @@ def pool_moderate(rid: str, body: dict, db: Session = Depends(get_db),
         pts = _award_points_for(db, r)
         r.status_message = ("Одобрено модератором"
                             + (f": {comment}" if comment else ""))
-        log_action(admin, "pool_receipt_approved",
+        db.commit()                    # аудит отдельной сессией: коммитим
+        log_action(admin, "pool_receipt_approved",   # ДО записи в журнал
                    details={"receipt_id": rid, "points": pts})
     elif action == "reject":
         if r.status not in ("pending", "verified"):
@@ -175,6 +201,7 @@ def pool_moderate(rid: str, body: dict, db: Session = Depends(get_db),
         r.status = "rejected"
         r.status_message = ("Отклонено модератором"
                             + (f": {comment}" if comment else ""))
+        db.commit()
         log_action(admin, "pool_receipt_rejected", details={"receipt_id": rid})
     else:
         raise HTTPException(422, "action: approve или reject")
@@ -207,10 +234,10 @@ def pool_patch_receipt(rid: str, body: dict, db: Session = Depends(get_db),
         if ind and industry_name(ind) == "":
             raise HTTPException(422, "Неизвестная отрасль")
         r.industry = ind
+    db.commit()
     log_action(admin, "pool_receipt_marked",
                details={"receipt_id": rid, "region": r.region_code,
                         "industry": r.industry})
-    db.commit()
     return {"ok": True, "id": r.id, "region_code": r.region_code,
             "city": r.city, "industry": r.industry,
             "geo_accuracy": r.geo_accuracy}
@@ -343,3 +370,71 @@ def smtp_test(body: dict, db: Session = Depends(get_db),
                         "SMTP настроен верно — письма кабинета будут доходить.\n\nООО «Ямастер»")
     log_action(admin, "pool_smtp_test", details={"ok": ok})
     return {"ok": ok, "message": ("Письмо отправлено" if ok else f"Не отправлено: {err}")}
+
+
+# --------------------------------------------------------------------------
+# v1.39.0: платное API — ключи партнёров (хэш в БД, полный ключ виден
+# один раз), лимиты по тарифу, счётчики вызовов. Выдача/отзыв — в аудите.
+# --------------------------------------------------------------------------
+@router.get("/api-keys", summary="Чек-Пул: ключи платного API (админ)")
+def api_keys_list(db: Session = Depends(get_db),
+                  admin: User = Depends(require_admin)):
+    from .models import PoolApiCall, PoolApiKey
+    m_start = _utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    items = []
+    for k in (db.query(PoolApiKey)
+              .order_by(PoolApiKey.created_at.desc()).limit(200).all()):
+        used_month = (db.query(PoolApiCall)
+                      .filter(PoolApiCall.key_id == k.id,
+                              PoolApiCall.created_at >= m_start).count())
+        items.append({
+            "id": k.id, "name": k.name, "prefix": k.prefix, "active": k.active,
+            "rate_per_hour": k.rate_per_hour, "monthly_quota": k.monthly_quota,
+            "used_month": used_month,
+            "last_used_at": (k.last_used_at.strftime("%d.%m.%Y %H:%M")
+                             if k.last_used_at else "—"),
+            "created_at": (k.created_at.strftime("%d.%m.%Y")
+                           if k.created_at else ""),
+        })
+    return {"items": items}
+
+
+@router.post("/api-keys", summary="Чек-Пул: выдать ключ API (админ)")
+def api_keys_create(body: dict, db: Session = Depends(get_db),
+                    admin: User = Depends(require_admin)):
+    from ..services.audit import log_action
+    from .router_api import DEFAULT_QUOTA, DEFAULT_RATE, generate_key
+    name = ((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(422, "Укажите название партнёра")
+    rate = (body or {}).get("rate_per_hour") or DEFAULT_RATE
+    quota = (body or {}).get("monthly_quota") or DEFAULT_QUOTA
+    try:
+        rate, quota = max(1, int(rate)), max(1, int(quota))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "Лимиты — целые числа")
+    rec, raw = generate_key(db, name, created_by=admin.id,
+                            rate_per_hour=rate, monthly_quota=quota)
+    db.commit()                    # до аудита: вторая сессия ждёт блокировку
+    log_action(admin, "pool_api_key_created",
+               details={"name": name, "prefix": rec.prefix,
+                        "rate_per_hour": rate, "monthly_quota": quota})
+    return {"ok": True, "id": rec.id, "key": raw, "prefix": rec.prefix,
+            "message": "Ключ выдан. Покажите его партнёру сейчас — "
+                       "полностью он больше не виден (в БД только хэш)"}
+
+
+@router.post("/api-keys/{kid}/revoke",
+             summary="Чек-Пул: отозвать ключ API (админ)")
+def api_keys_revoke(kid: str, db: Session = Depends(get_db),
+                    admin: User = Depends(require_admin)):
+    from ..services.audit import log_action
+    from .models import PoolApiKey
+    k = db.get(PoolApiKey, kid)
+    if k is None:
+        raise HTTPException(404, "Ключ не найден")
+    k.active = False
+    db.commit()
+    log_action(admin, "pool_api_key_revoked",
+               details={"name": k.name, "prefix": k.prefix})
+    return {"ok": True, "message": f"Ключ {k.prefix} отозван"}

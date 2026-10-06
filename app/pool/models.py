@@ -167,7 +167,8 @@ def ensure_pool_schema(engine) -> None:
         PoolPoint.__table__, PoolConsent.__table__, PoolToken.__table__,
         PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__,
         PoolReferral.__table__, PoolAchievement.__table__,
-        PoolWithdrawal.__table__])
+        PoolWithdrawal.__table__, PoolApiKey.__table__,
+        PoolApiCall.__table__])
     insp = sqlalchemy.inspect(engine)
     # v1.37.0: колонки подбора для уже существующей pool_receipts
     rcols = {c["name"] for c in insp.get_columns("pool_receipts")}
@@ -336,4 +337,37 @@ class PoolWithdrawal(Base):
     phone_hash: Mapped[str] = mapped_column(String(64), default="")
     status: Mapped[str] = mapped_column(String(16), default="pending")
     sms_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------
+# v1.39.0 «Платное API для внешних клиентов»: ключи партнёров и журнал
+# вызовов. В БД только sha256 ключа (показывается один раз при выдаче);
+# лимиты — по тарифу (запросов/час и /мес). Принцип plan.md: не продаём
+# чеки — продаём доступ к АНОНИМНЫМ АГРЕГАТАМ и фильтрам.
+# --------------------------------------------------------------------------
+class PoolApiKey(Base):
+    __tablename__ = "pool_api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    prefix: Mapped[str] = mapped_column(String(16), default="")   # «apk_ab12…»
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    rate_per_hour: Mapped[int] = mapped_column(Integer, default=60)
+    monthly_quota: Mapped[int] = mapped_column(Integer, default=5000)
+    created_by: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PoolApiCall(Base):
+    """Один вызов API (path без query — минимизация техданных)."""
+    __tablename__ = "pool_api_calls"
+    __table_args__ = (Index("idx_pool_api_key_time", "key_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    key_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("pool_api_keys.id"))
+    path: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

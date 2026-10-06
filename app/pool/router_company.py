@@ -291,9 +291,9 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
         r.assigned_company_id = comp.id
         r.assigned_at = now
         r.assigned_by = user.id
+    db.commit()
     log_action(user, "pool_pick_assign",
                details={"company": comp.name, "count": len(rows)})
-    db.commit()
     return {"ok": True, "assigned": len(rows), "used": used + len(rows),
             "left": max(0, limit - used - len(rows)),
             "message": f"Привязано чеков: {len(rows)}. Выгрузка — во вкладке "
@@ -316,9 +316,9 @@ def unassign(body: IdsBody, company_id: str = "",
         r.assigned_company_id = None
         r.assigned_at = None
         r.assigned_by = ""
+    db.commit()
     log_action(user, "pool_pick_unassign",
                details={"company": comp.name, "count": len(rows)})
-    db.commit()
     return {"ok": True, "unassigned": len(rows),
             "message": f"Возвращено в общий пул: {len(rows)} "
                        "(квота месяца восстанавливается)"}
@@ -392,6 +392,7 @@ def export_csv(date_from: str = "", date_to: str = "",
             r.merchant_name or "", r.merchant_inn or "",
             f"{r.total_sum:.2f}".replace(".", ","),
             r.city or "", names.get(r.id, "")])
+    db.commit()                    # чтение не пишет; фиксируем на всякий случай
     log_action(user, "pool_pick_export_csv",
                details={"company": comp.name, "count": len(rows)})
     content = "\ufeff" + buf.getvalue()

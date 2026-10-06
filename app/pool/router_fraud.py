@@ -210,11 +210,15 @@ def user_action(uid: str, body: dict, db: Session = Depends(get_db),
 @router.post("/purge", summary="Антифрод: чистка техданных старше года (152-ФЗ)")
 def purge(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from ..services.audit import log_action
+    from .router_api import purge_calls
     res = antifraud.purge_tech_data(db)
-    log_action(admin, "pool_fraud_purge", details=res)
+    res["api_calls"] = purge_calls(db)       # v1.39.0: журнал API ≤ 90 дней
+    db.commit()                              # аудит отдельной сессией —
+    log_action(admin, "pool_fraud_purge", details=res)   # коммитим заранее
     return {"ok": True, **res,
             "message": f"Удалено: сетей {res['ip_log']}, устройств "
-                       f"{res['fingerprints']}, закрытых сигналов {res['signals']}"}
+                       f"{res['fingerprints']}, закрытых сигналов {res['signals']}"
+                       f", вызовов API {res['api_calls']}"}
 
 
 # --------------------------------------------------------------------------

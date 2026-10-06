@@ -1057,6 +1057,62 @@ async function viewPoolPick(container) {
   ({ search: poolPkLoadSearch, mine: poolPkLoadMine, auto: poolPkLoadAuto, staff: poolPkLoadStaff })[poolPk.tab]();
 }
 
+async function poolApiKeysLoad() {
+  const box = $('#pool-api-box');
+  if (!box) return;
+  try {
+    const d = await api.get('/api/v1/pool-admin/api-keys');
+    box.innerHTML = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
+        <label class="field" style="max-width:240px"><span>Партнёр</span><input id="pool-api-name" placeholder="ООО «Аналитика»"></label>
+        <label class="field" style="max-width:110px"><span>Запросов/час</span><input id="pool-api-rate" type="number" min="1" value="60"></label>
+        <label class="field" style="max-width:110px"><span>Квота/мес</span><input id="pool-api-quota" type="number" min="1" value="5000"></label>
+        <button class="btn btn-sm btn-primary" id="pool-api-create">🔑 Выдать ключ</button>
+      </div>
+      <div id="pool-api-newkey"></div>
+      ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
+        <thead><tr><th>Партнёр</th><th>Ключ</th><th>Лимит</th><th>За месяц</th><th>Использован</th><th></th></tr></thead>
+        <tbody>${d.items.map((k) => `<tr>
+          <td>${esc(k.name)}</td>
+          <td class="form-hint">${esc(k.prefix)}</td>
+          <td class="num">${k.rate_per_hour}/ч · ${fmtInt(k.monthly_quota)}/мес</td>
+          <td class="num">${fmtInt(k.used_month)}</td>
+          <td class="num form-hint">${esc(k.last_used_at)}</td>
+          <td>${k.active
+            ? `<button class="btn btn-sm" data-revoke="${k.id}">Отозвать</button>`
+            : '<span class="chip failed"><span class="dot"></span>отозван</span>'}</td></tr>`).join('')}
+        </tbody></table></div>`
+        : '<div class="form-hint">Ключей пока нет — выдайте первый партнёру.</div>'}`;
+    $('#pool-api-create').onclick = async () => {
+      try {
+        const r = await api.post('/api/v1/pool-admin/api-keys', {
+          name: $('#pool-api-name').value.trim(),
+          rate_per_hour: parseInt($('#pool-api-rate').value, 10) || 60,
+          monthly_quota: parseInt($('#pool-api-quota').value, 10) || 5000 });
+        $('#pool-api-newkey').innerHTML = `
+          <div class="info-callout" style="margin-bottom:8px">🔑 Ключ партнёру (покажите сейчас — полностью он больше не виден):<br>
+            <input value="${esc(r.key)}" readonly style="max-width:420px;margin-top:4px">
+            <button class="btn btn-sm" id="pool-api-copy">📋 Копировать</button></div>`;
+        $('#pool-api-copy').onclick = () => {
+          try { navigator.clipboard.writeText(r.key); toast('Ключ скопирован', 'ok', '🔑'); }
+          catch (e) { toast('Скопируйте вручную', 'warn', '🔑'); }
+        };
+        toast(r.message, 'ok', '🔑');
+        void poolApiKeysLoad();
+      } catch (e) { toast(e.message, 'warn', '🔑'); }
+    };
+    box.querySelectorAll('[data-revoke]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          const r = await api.post('/api/v1/pool-admin/api-keys/' + b.dataset.revoke + '/revoke', {});
+          toast(r.message, 'warn', '🔑');
+          void poolApiKeysLoad();
+        } catch (e) { toast(e.message, 'err', '🔑'); }
+      };
+    });
+  } catch (e) { box.innerHTML = `<span class="form-hint">${esc(e.message)}</span>`; }
+}
+
 function bindPoolDashboard(root) {
 
   poolLoadSummary(root);
@@ -3696,6 +3752,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.39.0': [
+    { icon: '🔌', title: 'Чек-Пул: платное API для внешних клиентов',
+      text: 'Открыт программный доступ к Чек-Пулу — по принципу «продаём доступ к фильтрам, а не чеки». Партнёр получает ключ (виден один раз, в базе только хэш) и лимиты по тарифу (по умолчанию 60 запросов/час и 5 000/мес, настраиваются при выдаче). Наружу уходят только анонимные агрегаты: сводка пула, чеки по регионам и отраслям, топ продавцов (публичные реквизиты), «сколько чеков под фильтрами» и суммы-агрегаты — сырые чеки, участники и персональные данные не отдаются никогда. API включается администратором и по умолчанию выключен; каждый вызов учитывается в журнале (хранение ≤ 90 дней по 152-ФЗ), выдача и отзыв ключей — в журнале действий.' },
+  ],
   '1.38.0': [
     { icon: '🕸', title: 'Чек-Пул: граф связей антифрода и партнёрский кэшбэк с QR',
       text: 'Рост по плану. В панели антифрода появился граф связей: участники, объединённые общим устройством, подсетью или реферальной парой, рисуются кластерами — «фермы аккаунтов» видны сразу; нажатие на участника открывает его карточку. Запущен партнёрский кэшбэк: магазины-партнёры ставят у кассы QR со ссылкой на страницу сдачи чека, участник сдаёт чек партнёра и получает баллы — процент от суммы чека (до 100 за чек), после верификации; в карантине антифрода кэшбэк приостанавливается. Список партнёров и печатные QR — на новой странице «Партнёры и кэшбэк». ML-классификатор позиций — по плану после накопления корпуса (5–10 тыс. позиций); платное API партнёров — в следующем выпуске.' },
@@ -6165,7 +6225,7 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 9 · v1.38.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 9.1 · v1.39.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
         мы проверяем чек по официальным источникам и начисляем балл; компании
@@ -6192,6 +6252,17 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin:8px 0">1 чек = ${poolSet.points_per_receipt} балл ·
           лимит ${poolSet.daily_limit} чеков/сутки с человека · дубль баллов не приносит.</p>
         <button class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
+        <div class="card-title" style="margin-top:16px;font-size:15px">🔌 Платное API для внешних клиентов
+          <span class="form-hint">(v1.39.0: анонимные агрегаты — не «продажа чеков»)</span></div>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0">
+          <input type="checkbox" id="pool-api-enabled" ${poolSet.api_enabled ? 'checked' : ''} style="width:auto">
+          <span>Включить API (ключи партнёров, лимиты по тарифу)</span></label>
+        <p class="form-hint" style="margin:2px 0 8px">Наружу уходят только счётчики и агрегаты по регионам/отраслям/
+          продавцам и фильтрам; сырые чеки и участники — никогда. Вызовов за месяц:
+          <b>${fmtInt(poolSet.api_calls_month || 0)}</b> · ключей: <b>${fmtInt(poolSet.api_keys_active || 0)}</b>
+          активных из ${poolSet.api_keys_total || 0} · лимиты по умолчанию:
+          ${poolSet.api_defaults ? poolSet.api_defaults.rate_per_hour + '/час · ' + poolSet.api_defaults.monthly_quota + '/мес' : '—'}.</p>
+        <div id="pool-api-box"></div>
         <p class="form-hint" style="margin-top:8px">📜 ${esc(poolSet.offerta)}</p>
         ${smtpSet ? `
         <div class="card-title" style="margin-top:14px;font-size:15px">✉️ Почта кабинета <span class="form-hint">(v1.32.0: подтверждение e-mail, вход по ссылке)</span></div>
@@ -6621,6 +6692,17 @@ async function viewSettings(container) {
       } catch (e) { toast(e.message, 'err'); }
       psv.disabled = false;
     };
+    // v1.39.0: платное API — переключатель и ключи
+    const aps = $('#pool-api-enabled');
+    if (aps) aps.onchange = async () => {
+      try {
+        const r = await api.put('/api/v1/pool-admin/settings',
+                                { enabled: $('#pool-enabled').checked,
+                                  api_enabled: aps.checked });
+        toast(aps.checked ? 'API включён' : 'API выключен', aps.checked ? 'ok' : 'warn', '🔌');
+      } catch (e) { toast(e.message, 'err'); aps.checked = !aps.checked; }
+    };
+    poolApiKeysLoad();
   }
 
   // v1.32.0: SMTP кабинета Чек-Пула — сохранение и тест письма
