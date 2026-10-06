@@ -68,6 +68,7 @@ def get_db():
 def init_db() -> None:
     """Создание таблиц при первом запуске + лёгкая миграция новых колонок."""
     from . import models  # noqa: F401 — регистрируем модели
+    from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
     _backfill_assignee_lc()

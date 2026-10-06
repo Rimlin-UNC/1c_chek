@@ -2166,6 +2166,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.30.0': [
+    { icon: '🧩', title: 'Чек-Пул: этап 1 — приём чеков через бота',
+      text: 'Начали строить открытую базу чеков (концепция docs/plan.md). Администратор включает приём в Настройках → «🧩 Чек-Пул». Любой человек пересылает боту строку QR — система проверяет чек по официальным источникам (ФНС GetTicket → Честный Знак, без квот), сохраняет позиции и начисляет балл. Дубли баллов не приносят; аномальные суммы (свыше 500 000 ₽) уходят на ручную проверку; лимит 50 чеков/сутки с человека. Ядро приложения не затронуто.' },
+  ],
   '1.29.0': [
     { icon: '☎️', title: 'Telegram-бот: работает даже там, где Telegram заблокирован',
       text: 'Разобрались, почему бот молчал после добавления токена: во многих сетях РФ api.telegram.org блокируется — сервер просто не мог достучаться. Теперь в Настройках → Telegram есть прокси (socks5/https) и кнопка «🔍 Диагностика», которая показывает, доступен ли Telegram напрямую и через прокси. Воркер стал надёжнее: новый токен/прокси подхватывает сам, без перезапуска и конфликтов.' },
@@ -4491,9 +4495,9 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, me = null;
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, me = null;
   try { me = await api.get('/api/v1/auth/me'); } catch {}
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); } }
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); } }
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
   let appSum = null, sysInfo = null;
@@ -4595,6 +4599,31 @@ async function viewSettings(container) {
         <p class="form-hint" id="tg-diag-out" style="margin-top:10px"></p>
         <p class="form-hint" style="margin-top:6px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
           статус воркера также виден после сохранения</p>
+      </div>` : ''}
+
+      ${isAdmin() && poolSet ? `
+      <div class="glass card">
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 1 · v1.30.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
+        пересылает боту строку QR — мы проверяем чек по официальным источникам
+        и начисляем балл; компании смогут подбирать чеки для отчётов (следующие
+        этапы). Ядро приложения не меняется; приём выключен по умолчанию.
+        ${poolSet.enabled ? '<b>Бот принимает чеки.</b>' : 'Приём сейчас выключен.'}</p>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
+          <input type="checkbox" id="pool-enabled" ${poolSet.enabled ? 'checked' : ''} style="width:auto">
+          <span>Принимать чеки в пул (Telegram-бот, строка QR)</span></label>
+        <div class="form-grid">
+          <label class="field"><span>Чеков в пуле</span><input value="${poolSet.receipts_total}" disabled></label>
+          <label class="field"><span>Проверены (с баллами)</span><input value="${poolSet.verified}" disabled></label>
+          <label class="field"><span>На ручной проверке</span><input value="${poolSet.pending}" disabled></label>
+          <label class="field"><span>Отклонены</span><input value="${poolSet.rejected}" disabled></label>
+          <label class="field"><span>Участников</span><input value="${poolSet.users_total}" disabled></label>
+          <label class="field"><span>Баллов начислено</span><input value="${poolSet.points_total}" disabled></label>
+        </div>
+        <p class="form-hint" style="margin:8px 0">1 чек = ${poolSet.points_per_receipt} балл ·
+          лимит ${poolSet.daily_limit} чеков/сутки с человека · дубль баллов не приносит.</p>
+        <button class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
+        <p class="form-hint" style="margin-top:8px">📜 ${esc(poolSet.offerta)}</p>
       </div>` : ''}
 
       ${me ? `
@@ -4988,6 +5017,21 @@ async function viewSettings(container) {
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();
+
+  // v1.30.0: Чек-Пул — включение приёма чеков
+  if (isAdmin() && poolSet) {
+    const psv = $('#pool-save');
+    if (psv) psv.onclick = async () => {
+      psv.disabled = true;
+      try {
+        const r = await api.put('/api/v1/pool-admin/settings',
+                                { enabled: $('#pool-enabled').checked });
+        toast(r.message, r.enabled ? 'ok' : 'warn', '🧩');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+      psv.disabled = false;
+    };
+  }
 
   // v1.16.0: Telegram — сохранение/тест/личная привязка
   if (isAdmin() && tgSet) {

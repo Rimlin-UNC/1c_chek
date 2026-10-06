@@ -32,6 +32,8 @@ SETT = "telegram_enabled"
 SETT_TOKEN = "telegram_bot_token"
 SETT_PROXY = "telegram_proxy"            # v1.29.0: socks5://… или http://…
 PROXY_SCHEMES = ("socks5://", "socks5h://", "http://", "https://")
+# v1.30.0: «Чек-Пул» — бот принимает строки QR от любого человека
+_QR_HINT_RE = re.compile(r"fn=\d{8,}", re.IGNORECASE)
 SETT_TIME = "telegram_reminder_time"     # "HH:MM"
 SETT_TEXT = "telegram_reminder_text"
 DEFAULT_REMIND_TIME = "18:00"
@@ -182,13 +184,49 @@ def handle_update(db: Session, upd: dict) -> None:
 
     from ..models import User
     text_low = text.lower()
+
+    # --- v1.30.0: «Чек-Пул» — строка QR от любого человека ---
+    if _QR_HINT_RE.search(text) or text_low.startswith("/qr"):
+        frm = msg.get("from") or {}
+        reply = process_pool_message(db, chat_id,
+                                     str(frm.get("id") or "") or None,
+                                     str(frm.get("username") or ""),
+                                     text)
+        if reply:
+            _send(reply)
+        return
+    if msg.get("photo") and not text:
+        # QR с фото на Этапе 1 не расшифровываем — честная подсказка
+        from ..pool import ingest as _pool
+        if _pool.pool_enabled(db):
+            _send("📸 Фото пока не разбираю — пришлите QR строкой текстом: "
+                  "в приложении ФНС откройте чек → «Поделиться» → скопируйте "
+                  "строку и отправьте сюда.")
+        return
+    if text_low.startswith("/balance"):
+        frm = msg.get("from") or {}
+        bal = _pool_balance_text(db, str(frm.get("id") or "") or None, chat_id)
+        if bal:
+            _send(bal)
+        return
     if text_low.startswith("/start"):
         code = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
         uid = consume_bind_code(code)
         if not uid:
+            from ..pool import ingest as _pool
+            if not code and _pool.pool_enabled(db):
+                _send(
+                    "👋 Это бот «Ямастер Чек».\n\n"
+                    "🎁 Пришлите строку QR чека (текстом) — проверим по "
+                    "официальным источникам и начислим балл.\n"
+                    f"📜 {ingest_offerta()}\n\n"
+                    "Сотрудники компаний: код привязки — в Настройках "
+                    "приложения (Настройки → Telegram → «Получить код»), "
+                    "затем /start КОД.")
+                return
             _send(
-                         "❌ Код не найден или устарел. Откройте «Ямастер Чек» → "
-                         "Настройки → Telegram и получите новый код.")
+                "❌ Код не найден или устарел. Откройте «Ямастер Чек» → "
+                "Настройки → Telegram и получите новый код.")
             return
         user = db.get(User, uid)
         if not user or not user.is_active:
@@ -220,8 +258,82 @@ def handle_update(db: Session, upd: dict) -> None:
     _send(
                  "🤖 Бот «Ямастер Чек».\nКоманды:\n"
                  "/status — мои чеки за сегодня\n"
+                 "/balance — баллы «Чек-Пула»\n"
+                 "Чек в пул: пришлите строку QR текстом.\n"
                  "/unbind — отвязать уведомления\n"
                  "Привязка: Настройки → Telegram → код → /start КОД")
+
+
+# --------------------------------------------------------------------------
+#  v1.30.0: «Чек-Пул» — приём чеков через бота
+# --------------------------------------------------------------------------
+def ingest_offerta() -> str:
+    """Краткая оферта пула для приветствия бота (v1.30.0)."""
+    from ..pool import ingest as pool
+    return pool.OFFERTA_SHORT
+
+
+def process_pool_message(db: Session, chat_id: str, from_id: str | None,
+                         from_username: str, text: str) -> str | None:
+    """Сообщение похоже на QR чека? Принять в пул и вернуть текст ответа.
+
+    Синхронное ядро: handle_update вызывает его в фоновом потоке (бот
+    отвечает мгновенно, ingest может идти сколько угодно долго)."""
+    from ..pool import ingest as pool
+    if not _QR_HINT_RE.search(text or ""):
+        return None
+    if not pool.pool_enabled(db):
+        return "ℹ Приём чеков в «Чек-Пул» сейчас выключен. Попробуйте позже."
+    user = pool.get_or_create_user(db, tg_user_id=from_id or chat_id,
+                                   tg_username=from_username)
+    if user.is_blocked:
+        return "⛔ Приём чеков от этого аккаунта остановлен."
+    res = pool.ingest_receipt(db, text.strip(), "telegram_bot", user)
+    kind = res.get("result")
+    icon = {"verified": "✅", "pending": "⏳", "rejected": "❌",
+            "duplicate": "ℹ️", "flood": "🚦", "bad_qr": "🤔",
+            "disabled": "ℹ"}.get(kind, "•")
+    msg = f"{icon} {res.get('message', '')}"
+    if kind == "verified":
+        msg += (f"\n🎁 Баллов за чек: +{res.get('points', 0)} · "
+                f"всего: {res.get('user_points', 0)}")
+    if kind == "pending":
+        msg += "\nЧек сохранён и ждёт проверки оператора — баллы начислим после подтверждения."
+    if kind == "bad_qr":
+        msg += ("\nПерешлите строку QR из приложения ФНС («Поделиться» → "
+                "скопировать) — она вида t=…&s=…&fn=…&i=…&fp=…&n=…")
+    return msg
+
+
+def _pool_process_async(chat_id: str, from_id: str | None,
+                        from_username: str, text: str) -> None:
+    """ingest в фоне: ответ уходит в Telegram по готовности (не блокируя пуллинг)."""
+    def _run() -> None:
+        db = _db_session()
+        try:
+            _proxy = get_proxy(db)
+            reply = process_pool_message(db, chat_id, from_id, from_username, text)
+            if reply:
+                send_message(get_token(db), chat_id, reply, proxy=_proxy)
+        except Exception as e:                               # noqa: BLE001
+            log.warning("pool ingest %s: %s", chat_id, e)
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, daemon=True, name="ymaster-pool-ingest").start()
+
+
+def _pool_balance_text(db: Session, from_id: str | None, chat_id: str) -> str | None:
+    """Баланс баллов пула (/balance)."""
+    from ..pool import ingest as pool
+    from ..pool.models import PoolUser
+    user = None
+    if from_id:
+        user = db.query(PoolUser).filter(PoolUser.tg_user_id == str(from_id)).first()
+    if user is None:
+        return ("У вас пока нет чеков в «Чек-Пуле». Пришлите строку QR — "
+                "за каждый проверенный чек начисляем балл.")
+    return f"🎁 Ваш баланс: {user.points or 0} балл(ов). Пришлите следующий QR чека."
 
 
 # --------------------------------------------------------------------------

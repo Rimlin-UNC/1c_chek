@@ -226,6 +226,8 @@ app.include_router(onec.router)
 app.include_router(admin.router)
 from .routers import manual as manual_routes  # v1.21.0: инструкция
 app.include_router(manual_routes.router)
+from .pool import router_admin as pool_admin  # v1.30.0: Чек-Пул (Этап 1)
+app.include_router(pool_admin.router)
 
 
 # --------------------------------------------------------------------------
