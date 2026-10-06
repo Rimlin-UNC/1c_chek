@@ -143,6 +143,7 @@ function showLogin() {
   $('#register-screen').classList.add('hidden');
   $('#login-screen').classList.remove('hidden');
   $('#app-shell').classList.add('hidden');
+  waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   const form = $('#login-form');
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -158,6 +159,7 @@ function showLogin() {
       setToken(r.access_token);
       state.me = r.user;
       enterApp();
+      maybeOfferPasskey(r.user);            // v1.43.0: предложение включить
     } catch (err) {
       const el = $('#login-error');
       el.textContent = err.message || 'Ошибка входа';
@@ -167,6 +169,179 @@ function showLogin() {
       btn.textContent = 'Войти в систему';
     }
   };
+}
+
+// ==========================================================================
+//  v1.43.0: БЫСТРЫЙ ВХОД (WebAuthn / passkey) — отпечаток пальца, лицо
+//  или PIN устройства вместо пароля. Биометрия не покидает устройство:
+//  сервер хранит только публичный ключ. Ключ привязан к устройству,
+//  устройств может быть несколько (Настройки → «Быстрый вход»).
+// ==========================================================================
+const WA_B64 = {
+  enc(buf) {
+    const b = new Uint8Array(buf);
+    let s = '';
+    for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+  dec(str) {
+    const s = str.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = '='.repeat((4 - (s.length % 4)) % 4);
+    const bin = atob(s + pad);
+    const b = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return b.buffer;
+  },
+};
+
+async function waPlatformAvailable() {
+  try {
+    if (!window.PublicKeyCredential || !navigator.credentials) return false;
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch (e) { return false; }
+}
+
+// Проверка поддержки: показать кнопку на экране входа
+async function waInitLoginScreen() {
+  const wrap = $('#login-passkey-wrap');
+  if (!wrap) return;
+  const ok = await waPlatformAvailable();
+  wrap.classList.toggle('hidden', !ok);
+  if (ok) $('#login-passkey').onclick = async () => {
+    const btn = $('#login-passkey');
+    btn.disabled = true;
+    btn.textContent = 'Подтвердите себя на устройстве…';
+    try {
+      const r = await waLoginCore('');
+      setToken(r.access_token);
+      state.me = r.user;
+      enterApp();
+    } catch (e) {
+      const el = $('#login-error');
+      el.textContent = e.waCancelled
+        ? 'Вход отменён — подтвердите отпечаток/лицо или введите пароль'
+        : (e.message || 'Не удалось войти по ключу устройства');
+      el.classList.remove('hidden');
+    }
+    btn.disabled = false;
+    btn.textContent = '🔑 Войти по отпечатку пальца / Face ID';
+  };
+}
+
+async function waLoginCore(username) {
+  const opts = await api.post('/api/v1/auth/passkey/login/options',
+    { username: username || null });
+  const get = {
+    challenge: WA_B64.dec(opts.challenge),
+    rpId: opts.rpId,
+    timeout: opts.timeout || 60000,
+    userVerification: opts.userVerification || 'required',
+  };
+  if (opts.allowCredentials && opts.allowCredentials.length) {
+    get.allowCredentials = opts.allowCredentials.map(c => ({
+      type: c.type || 'public-key', id: WA_B64.dec(c.id),
+    }));
+  }
+  let assertion;
+  try {
+    assertion = await navigator.credentials.get({ publicKey: get });
+  } catch (e) {
+    const err = new Error('Отменено на устройстве');
+    err.waCancelled = true;
+    throw err;
+  }
+  return api.post('/api/v1/auth/passkey/login/verify', {
+    id: assertion.id,
+    rawId: WA_B64.enc(assertion.rawId),
+    type: assertion.type,
+    response: {
+      challenge_hex: opts.challenge_hex,
+      authenticatorData: WA_B64.enc(assertion.response.authenticatorData),
+      clientDataJSON: WA_B64.enc(assertion.response.clientDataJSON),
+      signature: WA_B64.enc(assertion.response.signature),
+      userHandle: assertion.response.userHandle
+        ? WA_B64.enc(assertion.response.userHandle) : null,
+    },
+  });
+}
+
+async function waRegisterCore(label) {
+  const opts = await api.post('/api/v1/auth/passkey/register/options', {});
+  let cred;
+  const create = {
+    challenge: WA_B64.dec(opts.challenge),
+    rp: opts.rp,
+    user: {
+      id: WA_B64.dec(opts.user.id),
+      name: opts.user.name,
+      displayName: opts.user.displayName || opts.user.name,
+    },
+    pubKeyCredParams: opts.pubKeyCredParams,
+    timeout: opts.timeout || 60000,
+    authenticatorSelection: opts.authenticatorSelection || undefined,
+    excludeCredentials: (opts.excludeCredentials || []).map(c => ({
+      type: c.type || 'public-key', id: WA_B64.dec(c.id),
+    })),
+  };
+  try {
+    cred = await navigator.credentials.create({ publicKey: create });
+  } catch (e) {
+    const err = new Error('Не удалось создать ключ — устройство отклонило запрос');
+    err.waCancelled = true;
+    throw err;
+  }
+  return api.post('/api/v1/auth/passkey/register/verify', {
+    id: cred.id,
+    rawId: WA_B64.enc(cred.rawId),
+    type: cred.type,
+    label: label || '',
+    response: {
+      challenge_hex: opts.challenge_hex,
+      attestationObject: WA_B64.enc(cred.response.attestationObject),
+      clientDataJSON: WA_B64.enc(cred.response.clientDataJSON),
+    },
+  });
+}
+
+// Предложение после первого входа по паролю (один раз, «Не сейчас» — пауза)
+async function maybeOfferPasskey(user) {
+  try {
+    if (!user || !user.id) return;
+    if (user.must_change_password) return;          // сначала смена пароля
+    if (!await waPlatformAvailable()) return;
+    const made = localStorage.getItem('ymaster-wa-made-' + user.id);
+    const skip = localStorage.getItem('ymaster-wa-skip-' + user.id);
+    if (made) return;
+    if (skip && (Date.now() - Number(skip)) < 30 * 24 * 3600 * 1000) return;
+    const { slot, close } = openModal(
+      `<div class="modal-title">🔑 Быстрый вход на этом устройстве</div>
+       <p class="modal-text">Включить вход по <b>отпечатку пальца</b>, распознаванию
+       <b>лица</b> или PIN этого устройства? Пароль больше не понадобится —
+       устройство само подтвердит вас. Биометрия не отправляется на сервер.</p>
+       <div class="modal-actions">
+         <button class="btn" id="wa-skip">Не сейчас</button>
+         <button class="btn btn-primary" id="wa-go">Включить</button>
+       </div>`);
+    $('#wa-skip', slot).onclick = () => {
+      try { localStorage.setItem('ymaster-wa-skip-' + user.id, String(Date.now())); }
+      catch (e) {}
+      close();
+    };
+    $('#wa-go', slot).onclick = async () => {
+      try {
+        const r = await waRegisterCore('');
+        try { localStorage.setItem('ymaster-wa-made-' + user.id, '1'); }
+        catch (e) {}
+        close();
+        toast(r.message, 'ok', 'Быстрый вход');
+      } catch (e) {
+        close();
+        toast(e.waCancelled ? 'Ключ не создан — устройство отменило запрос'
+                            : (e.message || 'Не удалось включить'),
+              'err', 'Быстрый вход');
+      }
+    };
+  } catch (e) { /* предложение не критично */ }
 }
 
 // --------------------------------------------------------------------------
@@ -3927,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.43.0': [
+    { icon: '🔑', title: 'Вход по отпечатку пальца и лицу — без пароля',
+      text: 'После первого входа приложение предложит привязать это устройство: дальше вход — одним касанием отпечатка или взгляда в камеру (Windows Hello, Touch ID, Android Biometric; вместо биометрии устройство может попросить PIN — это тоже нормально). Биометрия не покидает устройство: на сервере хранится только цифровой ключ, поэтому способ безопасен и с точки зрения 152-ФЗ. Устройств может быть несколько — список в Настройках → «Быстрый вход», любое можно отвязать. На устройствах без сканера всё остаётся как было.' },
+  ],
   '1.42.0': [
     { icon: '🔐', title: 'Иерархия ролей укреплена: меню переключения — только у администратора',
       text: 'Меню профиля в шапке теперь есть только у администратора: бухгалтер и сотрудник видят свою карточку без переключателя ролей, участники Чек-Пула — свой кабинет. В режиме просмотра администратор действует строго с правами выбранной роли: может всё, что может она, и ничего сверх её полномочий — так сохраняется иерархия. В разделе «Пользователи» добавлена памятка по иерархии ролей.' },
@@ -6325,6 +6504,12 @@ async function viewSettings(container) {
 
   container.innerHTML = `
     <div class="settings-grid">
+      <div class="glass card" id="wa-card">
+        <div class="card-title">🔑 Быстрый вход
+          <span class="form-hint">отпечаток / лицо / PIN устройства</span></div>
+        <div id="wa-list" class="form-hint" style="margin:6px 0">Загружаем…</div>
+        <div id="wa-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+      </div>
       ${isAdmin() && appSet ? `
       <div class="glass card">
         <div class="card-title">Общие</div>
@@ -7144,6 +7329,53 @@ async function viewSettings(container) {
       $('#p-old').value = $('#p-new').value = '';
     } catch (e) { toast(e.message, 'err'); }
   };
+  waBindSettingsCard();               // v1.43.0: карточка «Быстрый вход» (все роли)
+}
+
+// v1.43.0: карточка «Быстрый вход» в настройках — список устройств,
+// привязка текущего и отвязка. Доступна всем ролям.
+async function waBindSettingsCard() {
+  const list = $('#wa-list'), actions = $('#wa-actions');
+  if (!list || !actions) return;
+  if (!await waPlatformAvailable()) {
+    list.innerHTML = 'Это устройство не поддерживает вход по отпечатку или лицу ' +
+      '(нужен телефон/ноутбук со сканером: Windows Hello, Touch ID, Android Biometric). ' +
+      'Вход по паролю работает как раньше.';
+    return;
+  }
+  let items = [];
+  try { items = (await api.get('/api/v1/auth/passkeys')).items; }
+  catch (e) { list.textContent = e.message || 'Не удалось загрузить'; return; }
+  list.innerHTML = items.length ? items.map(k =>
+    `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#eef0f4)">
+       <span aria-hidden="true">🔑</span>
+       <div style="flex:1"><b>${esc(k.label)}</b>
+         <div class="form-hint">привязано: ${fmtDate(k.created_at)}${k.last_used_at ? ' · последний вход: ' + fmtDate(k.last_used_at) : ''}</div></div>
+       <button class="btn btn-sm btn-bad" data-wa="${esc(k.id)}" data-name="${esc(k.label)}">Отвязать</button>
+     </div>`).join('')
+    : 'Привяжите это устройство — и входить можно будет по отпечатку/лицу, без пароля.';
+  actions.innerHTML = '<button class="btn btn-sm btn-primary" id="wa-add">+ Привязать это устройство</button>';
+  $('#wa-add').onclick = async () => {
+    const name = prompt('Название устройства (например, «Телефон Марии»)', '') || '';
+    try {
+      const r = await waRegisterCore(name);
+      toast(r.message, 'ok', 'Быстрый вход');
+      waBindSettingsCard();
+    } catch (e) {
+      toast(e.waCancelled ? 'Устройство отменило запрос — попробуйте ещё раз'
+                          : (e.message || 'Не удалось привязать'), 'err', 'Быстрый вход');
+    }
+  };
+  list.querySelectorAll('[data-wa]').forEach(b => {
+    b.onclick = async () => {
+      if (!confirm('Отвязать «' + b.dataset.name + '»? Вход по нему станет невозможен.')) return;
+      try {
+        const r = await api.del('/api/v1/auth/passkeys/' + b.dataset.wa);
+        toast(r.message, 'ok', 'Быстрый вход');
+        waBindSettingsCard();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  });
 }
 
 // --------------------------------------------------------------------------

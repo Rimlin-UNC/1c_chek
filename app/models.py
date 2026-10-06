@@ -379,3 +379,43 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
+
+
+# --------------------------------------------------------------------------
+#  v1.43.0: Быстрый вход (WebAuthn / passkey) — отпечаток пальца, лицо
+#  или PIN устройства. Биометрия НЕ хранится на сервере: остаётся в
+#  защищённом чипе устройства; у нас только публичный ключ ключа-пароля.
+# --------------------------------------------------------------------------
+class WebauthnCredential(Base):
+    """Зарегистрированный ключ устройства (passkey)."""
+    __tablename__ = "webauthn_credentials"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+        # id = base64url(credential_id) — уникален по спецификации WebAuthn
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), index=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(100), default="Устройство")
+    public_key: Mapped[str] = mapped_column(Text, default="")   # b64url COSE
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    transports: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "label": self.label,
+            "created_at": (self.created_at.isoformat()
+                           if self.created_at else None),
+            "last_used_at": (self.last_used_at.isoformat()
+                             if self.last_used_at else None),
+        }
+
+
+class WebauthnChallenge(Base):
+    """Одноразовый challenge церемонии (регистрация/вход), 3 минуты."""
+    __tablename__ = "webauthn_challenges"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    challenge: Mapped[str] = mapped_column(String(80), default="")  # b64url
+    purpose: Mapped[str] = mapped_column(String(16), default="auth")  # auth|register
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

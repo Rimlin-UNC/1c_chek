@@ -157,6 +157,18 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "impersonate_stop":
         return "выход из режима просмотра", \
             f"возвращён профиль „{d.get('target', '—')}“"
+    if action == "passkey_added":
+        return "привязано устройство быстрого входа", \
+            f"«{d.get('label', '—')}» (отпечаток / лицо / PIN)"
+    if action == "passkey_removed":
+        return "отвязано устройство быстрого входа", \
+            f"«{d.get('label', '—')}»"
+    if action == "login_passkey":
+        return "вход по отпечатку / лицу устройства", \
+            f"«{d.get('label', '—')}», IP {d.get('ip', '—')}"
+    if action == "login_passkey_failed":
+        return "неудачный вход по ключу устройства", \
+            f"{d.get('reason', '—')}, IP {d.get('ip', '—')}"
     if action == "impersonate_pool_start":
         return "включён просмотр кабинета участника Чек-Пула", \
             f"глазами „{d.get('email') or d.get('participant_id', '—')}“"

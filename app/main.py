@@ -22,7 +22,7 @@ from .config import settings
 from .security import rate_limit_middleware, security_headers_middleware
 from .database import init_db
 from .routers import (admin, auth_routes, companies, dashboard, invites, onec, receipts,
-                      settings_routes, users)
+                      settings_routes, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
 logging.basicConfig(
@@ -216,6 +216,7 @@ def about():
 #  API-роутеры
 # --------------------------------------------------------------------------
 app.include_router(auth_routes.router)
+app.include_router(webauthn.router)   # v1.43.0: быстрый вход (passkey)
 app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)

@@ -41,3 +41,4 @@ pillow>=10.0
 
 # Для production-варианта с PostgreSQL (раскомментируйте):
 # psycopg2-binary>=2.9
+webauthn>=2.6,<4
