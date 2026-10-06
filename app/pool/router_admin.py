@@ -438,3 +438,81 @@ def api_keys_revoke(kid: str, db: Session = Depends(get_db),
     log_action(admin, "pool_api_key_revoked",
                details={"name": k.name, "prefix": k.prefix})
     return {"ok": True, "message": f"Ключ {k.prefix} отозван"}
+
+
+# --------------------------------------------------------------------------
+#  v1.41.0: ПРОСМОТР КАБИНЕТА УЧАСТНИКА (только администратор).
+#  Полная картина ролей системы: администратор / бухгалтер / сотрудник
+#  (ядро) и участник Чек-Пула (отдельный контур, самостоятельная
+#  регистрация). Администратору выдаётся pool-JWT участника: ядро-логин
+#  админа сохраняется, кабинет пула подхватывает токен участника — видно
+#  ровно то, что видит он. Цепочки исключены: pool-токен не проходит
+#  ядро (typ≠pool), админ-эндпоинты пула проверяют require_admin.
+#  Включение и выход — в журнале действий ядра.
+# --------------------------------------------------------------------------
+@router.post("/impersonate-pool/stop",
+             summary="Чек-Пул: выйти из просмотра кабинета участника (админ)")
+def impersonate_pool_stop(body: dict, admin: User = Depends(require_admin)):
+    from ..services.audit import log_action
+    pid = str((body or {}).get("participant_id") or "")
+    log_action(admin, "impersonate_pool_stop",
+               details={"participant_id": pid})
+    return {"ok": True,
+            "message": "Просмотр кабинета участника завершён"}
+
+
+@router.get("/participants",
+            summary="Чек-Пул: список участников (админ, для режима просмотра)")
+def participants(q: str = "", limit: int = Query(50, ge=1, le=200),
+                 db: Session = Depends(get_db),
+                 admin: User = Depends(require_admin)):
+    from sqlalchemy import func
+    from .models import PoolReceipt, PoolUser
+    rows = (db.query(PoolUser)
+              .order_by(PoolUser.created_at.desc())
+              .limit(500).all())
+    ql = (q or "").strip().lower()          # кириллица: сравнение в Python
+    items = []
+    for u in rows:
+        email = u.email or ""
+        nick = u.tg_username or ""
+        if ql and ql not in email.lower() and ql not in nick.lower():
+            continue
+        rcpt = db.query(func.count(PoolReceipt.id)).filter(
+            PoolReceipt.pool_user_id == u.id).scalar() or 0
+        items.append({
+            "id": u.id, "email": email,
+            "email_verified": bool(u.email_verified),
+            "nickname": nick,
+            "points": int(u.points or 0), "receipts": int(rcpt),
+            "is_blocked": bool(u.is_blocked),
+            "risk_score": int(u.risk_score or 0),
+            "created_at": (u.created_at.isoformat() if u.created_at else None),
+        })
+        if len(items) >= limit:
+            break
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/impersonate-pool/{pid}",
+             summary="Чек-Пул: посмотреть кабинет глазами участника (админ)")
+def impersonate_pool_start(pid: str, db: Session = Depends(get_db),
+                           admin: User = Depends(require_admin)):
+    from ..services.audit import log_action
+    from .accounts import issue_pool_token
+    from .models import PoolUser
+    u = db.get(PoolUser, pid)
+    if u is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Участник не найден")
+    if u.is_blocked:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Участник заблокирован — кабинет недоступен")
+    db.commit()                    # аудит отдельной сессией — коммитим заранее
+    log_action(admin, "impersonate_pool_start",
+               details={"participant_id": u.id, "email": u.email})
+    return {"ok": True,
+            "pool_token": issue_pool_token(u.id),
+            "user": {"id": u.id, "email": u.email, "points": int(u.points or 0)},
+            "act": {"sub": admin.id, "username": admin.username},
+            "message": ("Режим просмотра: кабинет участника "
+                        + (u.email or u.id))}

@@ -41,6 +41,7 @@ const VIEW_TITLES = {
   partners: 'Партнёры и кэшбэк',       // v1.38.0: партнёрская программа
   my: 'Мой Чек-Пул',                   // v1.32.0: кабинет участника пула
   pooladmin: 'Чек-Пул: модерация',     // v1.33.0: панель админа
+  poolpeople: 'Чек-Пул: участники',    // v1.41.0: список + просмотр кабинета
   fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
   poolpick: 'Чек-Пул: подбор для компании', // v1.37.0: бухгалтер
 };
@@ -1357,6 +1358,51 @@ function poolAdmMarkDialog(id) {
   };
 }
 
+// v1.41.0: УЧАСТНИКИ ЧЕК-ПУЛА (только админ) — полный список + вход в
+// кабинет глазами участника (кнопка «👁», только у активных).
+async function viewPoolPeople(container) {
+  container.innerHTML = `
+    <div class="info-callout">Участник Чек-Пула — отдельная роль: человек
+    сам регистрируется в кабинете и сдаёт чеки за баллы. Кнопка «👁» открывает
+    его кабинет <b>глазами участника</b>; включение и выход — в журнале действий.
+    Ядро-логин администратора при этом не прерывается.</div>
+    <div class="glass card">
+      <div class="card-title">Участники <span class="spacer"></span>
+        <input id="pp-q" placeholder="Поиск по e-mail" style="max-width:240px" value=""></div>
+      <div class="table-wrap"><table class="data"><thead><tr>
+        <th>E-mail</th><th>Статус</th><th>Чеков</th><th>Баллов</th><th>Риск</th><th>В пуле с</th><th></th>
+      </tr></thead><tbody id="pp-rows"><tr style="cursor:default"><td colspan="7"><span class="spinner"></span></td></tr></tbody></table></div>
+    </div>`;
+  const load = async () => {
+    const qv = $('#pp-q').value.trim();
+    const rows = $('#pp-rows');
+    try {
+      const d = await api.get('/api/v1/pool-admin/participants?limit=200'
+        + (qv ? '&q=' + encodeURIComponent(qv) : ''));
+      rows.innerHTML = d.items.length ? d.items.map(u => `<tr data-id="${esc(u.id)}" style="cursor:default">
+          <td><b>${esc(u.email || '—')}</b>${u.nickname ? `<div class="form-hint">${esc(u.nickname)}</div>` : ''}${u.email_verified ? '' : ' <span class="chip unknown mono">e-mail не подтверждён</span>'}</td>
+          <td>${u.is_blocked
+            ? '<span class="chip failed"><span class="dot"></span>заблокирован</span>'
+            : '<span class="chip verified"><span class="dot"></span>активен</span>'}</td>
+          <td class="cell-num">${fmtInt(u.receipts)}</td>
+          <td class="cell-num">${fmtInt(u.points)}</td>
+          <td class="cell-num">${fmtInt(u.risk_score)}</td>
+          <td class="cell-date">${fmtDate(u.created_at)}</td>
+          <td>${u.is_blocked ? '—' : `<button class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(u.email || u.nickname || u.id)}" title="Открыть кабинет глазами участника">👁</button>`}</td>
+        </tr>`).join('')
+        : `<tr style="cursor:default"><td colspan="7">${emptyState('🧩', 'Участников не найдено')}</td></tr>`;
+      rows.querySelectorAll('.pp-view').forEach(b => {
+        b.onclick = () => startViewAsPool(b.dataset.id, b.dataset.name);
+      });
+    } catch (e) {
+      rows.innerHTML = `<tr style="cursor:default"><td colspan="7">${esc(e.message || 'Не удалось загрузить')}</td></tr>`;
+    }
+  };
+  let ppdeb = 0;
+  $('#pp-q').oninput = () => { clearTimeout(ppdeb); ppdeb = setTimeout(load, 300); };
+  await load();
+}
+
 async function viewPoolAdmin(container) {
   container.innerHTML = poolAdmShell();
   if (!poolAdm.dicts) {
@@ -1826,12 +1872,28 @@ function logout() {
 // ==========================================================================
 const VIEWAS_TOK = 'ymaster_viewas_master_token';   // админ-токен на время просмотра
 const VIEWAS_NAME = 'ymaster_viewas_admin_name';    // имя администратора для полосы
+// v1.41.0: просмотр кабинета участника Чек-Пула (ядро-логин админа не меняется)
+const VIEWAS_POOL = 'ymaster_viewas_pool';            // {id, name} участника
+const VIEWAS_POOL_PREV = 'ymaster_viewas_pool_prev';  // прежний токен кабинета
 
 const isViewingAs = () => !!(state.me && state.me.viewing_as);
+
+const isViewingPool = () => {
+  try { return !!sessionStorage.getItem(VIEWAS_POOL); } catch (e) { return false; }
+};
+function viewAsPoolInfo() {
+  try { return JSON.parse(sessionStorage.getItem(VIEWAS_POOL) || 'null'); }
+  catch (e) { return null; }
+}
+function viewAsPoolForget() {
+  try { sessionStorage.removeItem(VIEWAS_POOL); } catch (e) {}
+  try { sessionStorage.removeItem(VIEWAS_POOL_PREV); } catch (e) {}
+}
 
 function viewAsForget() {
   try { sessionStorage.removeItem(VIEWAS_TOK); } catch (e) {}
   try { sessionStorage.removeItem(VIEWAS_NAME); } catch (e) {}
+  viewAsPoolForget();
 }
 
 // Полоса возврата под шапкой + скрытие «Выйти» в режиме просмотра
@@ -1840,8 +1902,17 @@ function applyViewAsMode() {
   const chip = $('#user-chip');
   if (!bar || !chip) return;
   const viewing = isViewingAs();
-  bar.classList.toggle('hidden', !viewing);
-  $('#btn-logout').classList.toggle('hidden', viewing);
+  const poolV = isViewingPool();
+  bar.classList.toggle('hidden', !viewing && !poolV);
+  $('#btn-logout').classList.toggle('hidden', viewing || poolV);
+  if (poolV) {
+    const info = viewAsPoolInfo();
+    $('#viewas-text').innerHTML =
+      `Вы смотрите <b>кабинет Чек-Пула</b> глазами участника ` +
+      `<b>${esc((info && info.name) || '')}</b> ` +
+      `<span class="viewas-role">(участник пула)</span>`;
+    $('#btn-viewas-back').onclick = stopViewAsPool;
+  }
   if (viewing) {
     const nm = state.me.full_name || state.me.username;
     $('#viewas-text').innerHTML =
@@ -1912,6 +1983,43 @@ async function renderPersonaMenu(m) {
       b.onclick = () => startViewAs(
         b.dataset.uid, b.querySelector('.pm-name').textContent);
     });
+    // v1.41.0: третья персона — участник Чек-Пула (кабинет глазами участника)
+    if (isAdmin()) {
+      const box = document.createElement('div');
+      box.innerHTML =
+        `<div class="pm-head">Участники Чек-Пула <span class="pm-hint">кабинет участника</span></div>
+         <div class="pm-body" id="pm-pool"><div class="pm-none"><span class="spinner"></span></div></div>`;
+      m.appendChild(box);
+      const pb = box.querySelector('#pm-pool');
+      try {
+        const ppl = await api.get('/api/v1/pool-admin/participants?limit=6');
+        const prow = (u) =>
+          `<button class="pm-item" data-pid="${esc(u.id)}" role="menuitem">
+             <span class="pm-dot ${u.is_blocked ? '' : 'acc'}"></span>
+             <span class="pm-name">${esc(u.email || u.nickname || u.id)}</span>
+             <span class="pm-sub">${fmtInt(u.points)} баллов · ${fmtInt(u.receipts)} чеков${u.is_blocked ? ' · заблокирован' : ''}</span>
+           </button>`;
+        pb.innerHTML =
+          (ppl.items.length
+            ? ppl.items.map(prow).join('')
+            : '<div class="pm-none">участников пока нет</div>') +
+          `<button class="pm-item" id="pm-people-all" role="menuitem">
+             <span class="pm-name">Все участники →</span>
+             <span class="pm-sub">раздел «Чек-Пул: участники»</span></button>`;
+        pb.querySelectorAll('.pm-item[data-pid]').forEach(b => {
+          b.onclick = () => startViewAsPool(
+            b.dataset.pid, b.querySelector('.pm-name').textContent);
+        });
+        const all = pb.querySelector('#pm-people-all');
+        if (all) all.onclick = () => {
+          closePersonaMenu();
+          if (location.hash === '#/poolpeople') route(true);
+          else location.hash = '#/poolpeople';
+        };
+      } catch (e) {
+        pb.innerHTML = `<div class="pm-none">${esc(e.message || 'Список недоступен')}</div>`;
+      }
+    }
   } catch (e) {
     m.querySelector('.pm-body').innerHTML =
       `<div class="pm-none">${esc(e.message || 'Не удалось загрузить список')}</div>`;
@@ -1962,6 +2070,54 @@ async function stopViewAs() {
     setToken(saved);
   }
   location.reload();
+}
+
+// v1.41.0: просмотр кабинета участника Чек-Пула глазами самого участника.
+// Ядро-логин администратора сохраняется; кабинету выдаётся его pool-токен.
+async function startViewAsPool(pid, name) {
+  closePersonaMenu();
+  const { slot, close } = openModal(
+    `<div class="modal-title">👁 Режим просмотра · Чек-Пул</div>
+     <p class="modal-text">Открыть <b>кабинет участника</b> глазами <b>${esc(name)}</b>?<br>
+     Вы увидите его чеки, баллы и настройки пула ровно так, как видит их он.
+     Действия будут выполняться от его имени. Возврат — кнопка
+     «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
+     <div class="modal-actions">
+       <button class="btn" id="pv-cancel">Отмена</button>
+       <button class="btn btn-primary" id="pv-go">Открыть кабинет</button>
+     </div>`);
+  $('#pv-cancel', slot).onclick = close;
+  $('#pv-go', slot).onclick = async () => {
+    try {
+      const r = await api.post(`/api/v1/pool-admin/impersonate-pool/${pid}`);
+      try {
+        sessionStorage.setItem(VIEWAS_POOL_PREV, pGet());
+        sessionStorage.setItem(VIEWAS_POOL, JSON.stringify({ id: pid, name }));
+      } catch (e) {}
+      pSet(r.pool_token);
+      close();
+      if (location.hash === '#/my') route(true); else location.hash = '#/my';
+      applyViewAsMode();
+      toast(r.message, 'ok', 'Режим просмотра');
+    } catch (e) {
+      toast(e.message || 'Не удалось открыть кабинет', 'err', 'Режим просмотра');
+    }
+  };
+}
+
+async function stopViewAsPool() {
+  const info = viewAsPoolInfo();
+  try {
+    if (info) await api.post('/api/v1/pool-admin/impersonate-pool/stop',
+                             { participant_id: info.id });
+  } catch (e) { /* выходим из просмотра в любом случае */ }
+  let prev = '';
+  try { prev = sessionStorage.getItem(VIEWAS_POOL_PREV) || ''; } catch (e) {}
+  viewAsPoolForget();
+  if (prev) pSet(prev); else pClear();
+  if (location.hash === '#/dashboard') route(true); else location.hash = '#/dashboard';
+  applyViewAsMode();
+  toast('Вы вернулись в профиль администратора', 'ok', 'Режим просмотра');
 }
 
 // Обязательная смена временного пароля (первый вход администратора / после сброса)
@@ -2209,6 +2365,7 @@ function route(silent = false) {
     export: isAccountant(), mapping: isAccountant(),
     users: isAdmin(), audit: isAdmin(), companies: isAdmin(),
     pooladmin: isAdmin(),                // v1.33.0: модерация пула
+    poolpeople: isAdmin(),               // v1.41.0: участники + просмотр
     fraud: isAdmin(),                    // v1.34.0: антифрод
     poolpick: isAccountant(),            // v1.37.0: подбор для компании
   };
@@ -2222,6 +2379,7 @@ function route(silent = false) {
     partners: viewPartners,               // v1.38.0: партнёры и кэшбэк
     my: viewPoolAccount,                  // v1.32.0: кабинет участника пула
     pooladmin: viewPoolAdmin,             // v1.33.0: гео/отрасли + модерация
+    poolpeople: viewPoolPeople,           // v1.41.0: участники + просмотр кабинета
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
   };
@@ -3752,6 +3910,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.41.0': [
+    { icon: '🧩', title: 'Чек-Пул: просмотр глазами участника + раздел «Участники»',
+      text: 'Полная картина ролей: теперь администратор может открыть кабинет Чек-Пула глазами самого участника — тем же способом, что и профили бухгалтера и сотрудника. Новый раздел «Чек-Пул: участники» показывает список (чеки, баллы, риск, статус) с поиском и кнопкой «👁» у каждого активного участника; участники появились и в меню профиля в шапке. Ядро-логин администратора не прерывается, пароль не требуется, включение и выход — в журнале действий. Кабинеты заблокированных участников не открываются.' },
+  ],
   '1.40.0': [
     { icon: '👁', title: 'Режим просмотра — кнопка в списке пользователей',
       text: 'Включать просмотр глазами сотрудника стало проще: кнопка «👁» появилась в разделе «Пользователи» — в строке каждого активного бухгалтера и сотрудника. Работает так же, как меню в шапке: без пароля, с жёлтой полосой возврата и записью в журнал действий. Сам режим просмотра появился раньше (v1.18.0) и не изменился.' },

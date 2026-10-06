@@ -133,7 +133,7 @@ class TestImpersonateUI:
     def test_frontend_safety_details(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
         # «Выйти» скрыто в режиме просмотра; подтверждение перед входом
-        assert "$('#btn-logout').classList.toggle('hidden', viewing)" in js
+        assert "$('#btn-logout').classList.toggle('hidden', viewing || poolV)" in js
         assert "impersonate/${uid}" in js
         # окно смены пароля не блокирует режим просмотра
         assert "must_change_password && !isViewingAs()" in js

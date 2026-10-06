@@ -157,6 +157,12 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "impersonate_stop":
         return "выход из режима просмотра", \
             f"возвращён профиль „{d.get('target', '—')}“"
+    if action == "impersonate_pool_start":
+        return "включён просмотр кабинета участника Чек-Пула", \
+            f"глазами „{d.get('email') or d.get('participant_id', '—')}“"
+    if action == "impersonate_pool_stop":
+        return "выход из просмотра кабинета участника", \
+            f"участник: {d.get('participant_id') or '—'}"
 
     # --- интеграции и настройки ---------------------------------------------
     if action == "fns_settings_updated":
