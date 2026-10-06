@@ -136,32 +136,56 @@ ok "Postfix и OpenDKIM перезапущены"
 
 # 5) DNS-записи --------------------------------------------------------
 echo "5) Готовлю DNS-записи…"
-# DKIM-значение одной строкой (из opendkim-genkey mail.txt)
+apt-get install -y -qq dnsutils >/dev/null 2>&1 || true   # dig для проверок
+# >>DKIM_EXTRACT (конвейер проверяется тестом tests/test_v1441.py)
+# opendkim-genkey пишет: mail._domainkey IN TXT ( "v=…; " "p=…" ) ; ----- DKIM key …
+# Извлекаем ЧИСТОЕ значение: без имён, кавычек, скобок и хвостового комментария.
 DKIM_VALUE="$(tr '\n' ' ' < "${DKIM_DIR}/mail.txt" \
-  | sed 's/[[:space:]]\+/ /g; s/"//g; s/  / /g' \
-  | sed 's/^[^v]*v=DKIM1/v=DKIM1/' | sed 's/[[:space:]]*$//')"
+  | grep -o 'v=DKIM1;[^)]*' \
+  | tr -d '"' \
+  | sed 's/  */ /g; s/ $//')"
+# <<DKIM_EXTRACT
+if [ -z "${DKIM_VALUE}" ] || [[ "${DKIM_VALUE}" != v=DKIM1* ]]; then
+  warn "не удалось извлечь DKIM из ${DKIM_DIR}/mail.txt — перенесите значение"
+  warn "руками из этого файла (только v=DKIM1; … p=…, без кавычек и скобок)"
+fi
+# разбивка по 240 символов для старых BIND-панелей (обычно не требуется)
+DKIM_SPLIT="$(printf '%s' "${DKIM_VALUE}" | fold -w 240 \
+  | sed 's/^/"&/; s/$/&"/' | tr '\n' ' ' | sed 's/ $//')"
 
+DNS_NOTE="Важно: значения ниже вставляйте БЕЗ кавычек — панель DNS добавляет их сама. Если в значение попадёт кавычка или скобка, opendkim-testkey верёт ошибку «syntax error in key data (ASCII 0x22…)»."
 cat > "${DNS_FILE}" <<EOF
 === DNS-записи для почты chek@${MAIL_DOMAIN} (Ямастер Чек) ===
-Добавьте у держателя DNS зоны ymaster.ru (записи ДЛЯ ПОДДОМЕНА ${MAIL_DOMAIN}):
+Добавьте у держателя DNS зоны ymaster.ru (записи ДЛЯ ПОДДОМЕНА ${MAIL_DOMAIN}).
+${DNS_NOTE}
 
-1) SPF (TXT, имя: ${MAIL_DOMAIN}):
-   "v=spf1 a ip4:${SERVER_IP} ~all"
+1) SPF (TXT, имя: ${MAIL_DOMAIN}, значение):
+   v=spf1 a ip4:${SERVER_IP} ~all
 
-2) DKIM (TXT, имя: mail._domainkey.${MAIL_DOMAIN}):
-   "${DKIM_VALUE}"
+2) DKIM (TXT, имя: mail._domainkey.${MAIL_DOMAIN}, значение ЦЕЛИКОМ):
+   ${DKIM_VALUE}
+   (Если панель требует разбивку на части по 255 символов — ставьте
+    части в кавычках друг за другом: ${DKIM_SPLIT})
 
-3) DMARC (TXT, имя: _dmarc.${MAIL_DOMAIN}):
-   "v=DMARC1; p=quarantine; rua=mailto:info@ymaster.ru; adkim=s; aspf=s"
+3) DMARC (TXT, имя: _dmarc.${MAIL_DOMAIN}, значение):
+   v=DMARC1; p=quarantine; rua=mailto:info@ymaster.ru; adkim=s; aspf=s
 
 4) MX (необязательно — только если хотите ПРИНИМАТЬ письма на
    ${FROM_ADDR}; для отправки MX не нужен):
    ${MAIL_DOMAIN}.  IN  MX  10  ${MAIL_DOMAIN}.
 
-После добавления записей проверка (на сервере):
+После добавления записей проверка (на сервере, 5–30 минут на DNS):
    dig +short TXT ${MAIL_DOMAIN}
    dig +short TXT mail._domainkey.${MAIL_DOMAIN}
-   opendkim-testkey -d ${MAIL_DOMAIN} -s mail -vvv   # ждём «key OK»
+   opendkim-testkey -d ${MAIL_DOMAIN} -s mail -vvv
+
+   opendkim-testkey говорит:
+   «key OK» — всё готово;
+   «syntax error in key data (ASCII 0x22 …)» — в значение записи
+     попала кавычка (0x22 = ") или скобка/комментарий:
+     исправьте TXT-запись — значение из п.2 выше, без кавычек;
+   «no key for signature» — запись ещё не видна: подождите DNS
+     или проверьте имя (mail._domainkey.${MAIL_DOMAIN}).
 
 Значения в «Почтовый центр» приложения (Настройки):
    SMTP-сервер: 127.0.0.1, порт: 25, логин и пароль — ПУСТО,

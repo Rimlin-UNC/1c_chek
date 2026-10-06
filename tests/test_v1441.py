@@ -70,3 +70,37 @@ class TestVersion1441:
         assert r.returncode == 0, r.stderr.decode()
         r2 = subprocess.run(["bash", "-n", "deploy.sh"], capture_output=True)
         assert r2.returncode == 0, r2.stderr.decode()
+
+    def test_dkim_extraction_real_format(self, tmp_path):
+        """Конвейер из скрипта на НАСТОЯЩЕМ формате opendkim-genkey
+        (скобки, кавычки, перевод строк, хвостовой комментарий) даёт
+        чистое значение — регресс бага «) ; ----- DKIM key …»."""
+        import subprocess
+        raw = (
+            "; ----- DKIM key mail for chek.ymaster.ru\n"
+            "mail._domainkey\tIN\tTXT\t( \"v=DKIM1; h=sha256; k=rsa; \"\n"
+            "  \"p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1sjJx7gq/B/d5V77uL5Jii0PFHQD9g"
+            "GQovT+zV1/A/93wOwyfd2HsSVrIa2QoLTDDoYPVVrkGyv5U4mEKx/Tr8BgS/LGSxCosFDgLIJue25C7v"
+            "p1TBiShZcUe/SO6cvPg39d4zp409Sp0iJ/dIRU2JceWN+zlR1RzANY6YHt4tx2IuHXgqFnNIjaBP0va7"
+            "41P7OYTZ8oo+p4UVVpBn2+hJjuA1T5g7YH+aBTxLLJ6dkJrUblWpJ/37mKa4sdIOwhwE6+UyhYZJxdHf"
+            "hFbwXxC6KHxCIV+HSY7Uu+XvEfXrTusMvKjZFUb5D6VfejmbBUYq8jXUZFnfvDr2rr7pIipQIDAQAB"
+            "\" )  ; ----- DKIM key mail for chek.ymaster.ru\n")
+        d = tmp_path / "keys"
+        d.mkdir()
+        (d / "mail.txt").write_text(raw, encoding="utf-8")
+        s = open("setup-mail.sh", encoding="utf-8").read()
+        a = s.find("# >>DKIM_EXTRACT")
+        b = s.find("<<DKIM_EXTRACT")
+        assert 0 < a < b, "маркеры >>DKIM_EXTRACT не найдены"
+        snippet = "\n".join(l for l in s[a:b].splitlines()
+                            if not l.strip().startswith("#"))
+        script = 'DKIM_DIR="' + str(d) + '"\n' + snippet + \
+            '\nprintf \'%s\' "$DKIM_VALUE"\n'
+        r = subprocess.run(["bash", "-c", script],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        val = r.stdout.strip()
+        assert val.startswith("v=DKIM1; h=sha256; k=rsa; p=MIIB"), val[:60]
+        assert val.endswith("QIDAQAB"), val[-40:]
+        assert ")" not in val and '"' not in val
+        assert "DKIM key mail" not in val and "  " not in val
