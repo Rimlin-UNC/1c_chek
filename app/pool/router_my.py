@@ -215,6 +215,7 @@ def referrals(db: Session = Depends(get_db),
     if not ingest.pool_enabled(db):
         raise HTTPException(403, "Приём чеков выключен — приглашения недоступны")
     code = referral.get_or_create_code(db, user)
+    db.commit()   # код создаётся лениво — без commit он не переживёт запрос
     rows = (db.query(PoolReferral, PoolUser)
             .join(PoolUser, PoolUser.id == PoolReferral.referred_id)
             .filter(PoolReferral.referrer_id == user.id)

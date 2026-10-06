@@ -503,6 +503,18 @@ class TestReferralsApi:
         assert d["items"][0]["label"].startswith("а***") or "***" in d["items"][0]["label"]
         assert "next_bonus" in d
 
+    def test_code_created_by_endpoint_persists(self):
+        """Регрессия v1.35.0: код, созданный лениво в /referrals, должен
+        пережить запрос (иначе /ref/{code} и привязка его не находят)."""
+        c = _client()
+        owner = _reg(c, "api-per@x.ru")
+        H = {"Authorization": f"Bearer {owner['token']}"}
+        code = c.get("/api/v1/pool-my/referrals", headers=H).json()["code"]
+        assert re.fullmatch(r"YM-[A-Z2-9]{6}", code)
+        assert c.get(f"/api/v1/public/pool/ref/{code}").json()["valid"] is True
+        newbie = _reg(c, "api-per-n@x.ru", headers={"ref_code": code})
+        assert newbie["referred"] is True
+
     def test_referrals_require_auth(self):
         c = _client()
         assert c.get("/api/v1/pool-my/referrals").status_code == 401
