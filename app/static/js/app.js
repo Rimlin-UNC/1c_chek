@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.44.1': [
+    { icon: '⚙️', title: 'Почта на своём сервере — одна команда',
+      text: 'На сервере: sudo bash deploy.sh --setup-mail — скрипт сам установит Postfix и DKIM-подпись, создаст ящик chek@chek.ymaster.ru и выдаст готовые DNS-записи (SPF, DKIM, DMARC) файлом /root/mail-dns-records.txt. Почтовый сервер слушает только 127.0.0.1 — снаружи нет открытых портов и паролей. Останется добавить записи в DNS и указать 127.0.0.1:25 в Почтовом центре.' },
+  ],
   '1.44.0': [
     { icon: '✉📬', title: 'Почтовый центр: свой ящик, шаблоны и бот рассылок',
       text: 'Новый блок в Настройках: ящик отправителя на своём сервере (например, chek@chek.ymaster.ru) с паролем (хранится зашифрованным), имя отправителя и тексты писем — приветствие и подпись. Бот рассылок сам пишет по расписанию (день недели и время) или по условию: напомнит подтвердить e-mail, вернёт участника, который давно не сдавал чеки, отправит сводку по списку адресов. Письма — красивые (HTML), с отпиской в один клик, журнал отправок хранится 90 дней.' },
@@ -6548,8 +6552,11 @@ async function viewSettings(container) {
           <input id="mc-testto" placeholder="куда отправить тест" style="max-width:230px">
           <button class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
         </div>
-        <div class="form-hint" style="margin:4px 0 10px">Для доставляемости добавьте в DNS домена
-          SPF и DKIM своего почтового сервера: <code>v=spf1 mx ~all</code> и подпись DKIM.</div>
+        <div class="form-hint" style="margin:4px 0 10px">Готовый сценарий на сервере:
+          <code>sudo bash deploy.sh --setup-mail</code> — сам поставит Postfix и DKIM
+          (только 127.0.0.1, без открытых портов) и выдаст записи для DNS
+          (файл <code>/root/mail-dns-records.txt</code>). Здесь тогда укажите
+          127.0.0.1:25 без логина. Инструкция: docs/knowledge/mail_setup.md.</div>
 
         <div class="card-title" style="margin-top:14px">🤖 Бот рассылок
           <span class="spacer"></span>

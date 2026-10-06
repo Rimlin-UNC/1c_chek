@@ -9,6 +9,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
 #   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
+#   sudo bash deploy.sh --setup-mail             # настройка почты (Postfix+DKIM,
+#                                                #   DNS-записи в /root/mail-dns-records.txt)
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
 #                                                #   в /etc/ymaster-check/deploy.conf
 #                                                #   и применяются автоматически)
@@ -37,6 +39,7 @@ SSL_DOMAIN=""
 UPDATE=0
 DIAGNOSE=0
 FIXSSL=0
+SETUP_MAIL=0
 WITH_NGINX=1
 CERTBOT_BIN="$(command -v certbot || echo /snap/bin/certbot)"
 CONF_DIR="/etc/ymaster-check"
@@ -46,6 +49,7 @@ for arg in "$@"; do
   case "$arg" in
     --update) UPDATE=1 ;;
     --diagnose) DIAGNOSE=1 ;;
+    --setup-mail) SETUP_MAIL=1 ;;
     --fix-ssl) FIXSSL=1 ;;
     --no-nginx) WITH_NGINX=0 ;;
     --with-ssl=*) OPT_SSL="${arg#*=}"; WITH_NGINX=1 ;;
@@ -58,6 +62,21 @@ for arg in "$@"; do
     *) echo "Неизвестный аргумент: $arg"; exit 1 ;;
   esac
 done
+
+# ----------------------------------------------------------------------
+#  Режим «настроить почтовый сервис» (Postfix + DKIM + DNS-подсказки).
+#  Работает и на чистом сервере (скачает скрипт), и при уже склонированном
+#  репозитории (запустит из /opt/ymaster-check).
+# ----------------------------------------------------------------------
+if [ "${SETUP_MAIL:-0}" = "1" ]; then
+  if [ -f "$APP_DIR/setup-mail.sh" ]; then
+    exec bash "$APP_DIR/setup-mail.sh"
+  fi
+  RAW="${REPO_URL%.git}/raw/${BRANCH}/setup-mail.sh"
+  echo "Скачиваю setup-mail.sh из ${RAW}…"
+  curl -fsSL "$RAW" -o /tmp/ymaster-setup-mail.sh
+  exec bash /tmp/ymaster-setup-mail.sh
+fi
 
 # v1.6.1: параметры предыдущего запуска (домен, SSL, ветка) сохраняются в
 # /etc/ymaster-check/deploy.conf и автоматически применяются при --update.
