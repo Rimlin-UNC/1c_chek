@@ -327,16 +327,11 @@ class TestCallLog:
 
 class TestVersion1390:
     def test_versions_synced(self):
-        import re
+        # пин 1.39.0 перенесён в tests/test_v1400.py (версия ушла вперёд)
         cfg = open("app/config.py", encoding="utf-8").read()
-        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.39.0"
-        idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
+        assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
-        mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert f'"version": "{ver}"' in mf
+        assert "ymaster-check-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

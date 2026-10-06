@@ -3752,6 +3752,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.40.0': [
+    { icon: '👁', title: 'Режим просмотра — кнопка в списке пользователей',
+      text: 'Включать просмотр глазами сотрудника стало проще: кнопка «👁» появилась в разделе «Пользователи» — в строке каждого активного бухгалтера и сотрудника. Работает так же, как меню в шапке: без пароля, с жёлтой полосой возврата и записью в журнал действий. Сам режим просмотра появился раньше (v1.18.0) и не изменился.' },
+  ],
   '1.39.0': [
     { icon: '🔌', title: 'Чек-Пул: платное API для внешних клиентов',
       text: 'Открыт программный доступ к Чек-Пулу — по принципу «продаём доступ к фильтрам, а не чеки». Партнёр получает ключ (виден один раз, в базе только хэш) и лимиты по тарифу (по умолчанию 60 запросов/час и 5 000/мес, настраиваются при выдаче). Наружу уходят только анонимные агрегаты: сводка пула, чеки по регионам и отраслям, топ продавцов (публичные реквизиты), «сколько чеков под фильтрами» и суммы-агрегаты — сырые чеки, участники и персональные данные не отдаются никогда. API включается администратором и по умолчанию выключен; каждый вызов учитывается в журнале (хранение ≤ 90 дней по 152-ФЗ), выдача и отзыв ключей — в журнале действий.' },
@@ -5774,6 +5778,7 @@ async function viewUsers(container) {
             ${u.role === 'accountant' && u.is_active ? `<button class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
             ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
             ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-view" data-id="${u.id}" data-name="${esc(u.full_name || u.username)}" title="Посмотреть приложение глазами сотрудника (режим просмотра)">👁</button>` : ''}
             ${!u.is_active ? `<button class="btn btn-sm u-unarchive" data-id="${u.id}" data-name="${esc(u.username)}" title="Восстановить из архива">♻</button>` : ''}
             <button class="btn btn-sm u-edit" title="Изменить данные">✎</button>
           </td></tr>`).join('')}
@@ -5856,6 +5861,9 @@ async function viewUsers(container) {
       route(true);
     } catch (e) { toast(e.message, 'err'); }
   });
+  // v1.40.0: режим просмотра прямо из списка пользователей
+  $$('.u-view').forEach(btn => btn.onclick = () =>
+    startViewAs(btn.dataset.id, btn.dataset.name));
   $$('.u-unarchive').forEach(btn => btn.onclick = async () => {
     try { const r = await api.post(`/api/v1/admin/users/${btn.dataset.id}/unarchive`); toast(r.message, 'ok'); route(true); }
     catch (e) { toast(e.message, 'err'); }
