@@ -213,6 +213,8 @@ def purge(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from .router_api import purge_calls
     res = antifraud.purge_tech_data(db)
     res["api_calls"] = purge_calls(db)       # v1.39.0: журнал API ≤ 90 дней
+    from ..services.mail_center import purge_log
+    res["mail_log"] = purge_log(db)          # v1.44.0: журнал писем ≤ 90 дней
     db.commit()                              # аудит отдельной сессией —
     log_action(admin, "pool_fraud_purge", details=res)   # коммитим заранее
     return {"ok": True, **res,

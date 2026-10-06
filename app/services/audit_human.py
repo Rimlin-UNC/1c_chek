@@ -169,6 +169,24 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "login_passkey_failed":
         return "неудачный вход по ключу устройства", \
             f"{d.get('reason', '—')}, IP {d.get('ip', '—')}"
+    if action == "mail_center_saved":
+        return "изменены настройки почтового центра", \
+            f"SMTP: {'задан' if d.get('smtp') else 'без изменений'}, бот: " + \
+            ("включён" if d.get("bot") else "выключен" if d.get("bot") is False else "без изменений")
+    if action == "mail_center_test":
+        return "отправлено тестовое письмо", \
+            "успешно" if d.get("ok") else "не удалось"
+    if action == "mail_rule_created":
+        return "создано правило рассылки", f"«{d.get('name', '—')}»"
+    if action == "mail_rule_updated":
+        return "изменено правило рассылки", f"«{d.get('name', '—')}»"
+    if action == "mail_rule_deleted":
+        return "удалено правило рассылки", f"«{d.get('name', '—')}»"
+    if action == "mail_rule_ran":
+        return "запущена рассылка вручную", \
+            f"«{d.get('name', '—')}»: отправлено {d.get('sent', 0)}"
+    if action == "mail_log_cleared":
+        return "очищен журнал отправок", f"записей: {d.get('count', 0)}"
     if action == "impersonate_pool_start":
         return "включён просмотр кабинета участника Чек-Пула", \
             f"глазами „{d.get('email') or d.get('participant_id', '—')}“"

@@ -21,8 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .security import rate_limit_middleware, security_headers_middleware
 from .database import init_db
-from .routers import (admin, auth_routes, companies, dashboard, invites, onec, receipts,
-                      settings_routes, users, webauthn)
+from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, onec,
+                      receipts, settings_routes, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
 logging.basicConfig(
@@ -48,6 +48,25 @@ async def lifespan(app: FastAPI):
             log.info("telegram worker auto-started")
     except Exception:                                    # noqa: BLE001
         log.exception("telegram worker start failed")
+
+    # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
+    async def _mail_bot_loop() -> None:
+        import asyncio as _aio
+        while True:
+            await _aio.sleep(60)
+            try:
+                from .database import SessionLocal
+                from .services import mail_center
+                db = SessionLocal()
+                try:
+                    mail_center.tick(db)
+                finally:
+                    db.close()
+            except Exception:                            # noqa: BLE001
+                log.exception("mail bot tick failed")
+
+    import asyncio as _asyncio
+    _asyncio.get_running_loop().create_task(_mail_bot_loop())
     log.info("%s v%s запущен. Разработчик: %s (%s)",
              settings.APP_NAME, settings.APP_VERSION,
              settings.VENDOR, settings.VENDOR_SITE)
@@ -217,6 +236,8 @@ def about():
 # --------------------------------------------------------------------------
 app.include_router(auth_routes.router)
 app.include_router(webauthn.router)   # v1.43.0: быстрый вход (passkey)
+app.include_router(mail_admin.router)  # v1.44.0: почтовый центр
+app.include_router(mail_admin.public_router)   # v1.44.0: отписка (публично)
 app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)

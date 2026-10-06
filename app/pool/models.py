@@ -168,7 +168,7 @@ def ensure_pool_schema(engine) -> None:
         PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__,
         PoolReferral.__table__, PoolAchievement.__table__,
         PoolWithdrawal.__table__, PoolApiKey.__table__,
-        PoolApiCall.__table__])
+        PoolApiCall.__table__, MailRule.__table__, MailLog.__table__])
     insp = sqlalchemy.inspect(engine)
     # v1.37.0: колонки подбора для уже существующей pool_receipts
     rcols = {c["name"] for c in insp.get_columns("pool_receipts")}
@@ -371,3 +371,67 @@ class PoolApiCall(Base):
         String(36), ForeignKey("pool_api_keys.id"))
     path: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------
+#  v1.44.0: ПОЧТОВЫЙ ЦЕНТР — правила автоматических рассылок («бот»)
+#  и журнал отправок. Журнал чистится через 90 дней (152-ФЗ: e-mail — ПДн).
+# --------------------------------------------------------------------------
+class MailRule(Base):
+    """Правило рассылки: по расписанию (день+время) или по условию (N дней)."""
+    __tablename__ = "mail_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # schedule: 'daily' | 'mon'...'sun'; condition: запуск при проверке условия
+    trigger: Mapped[str] = mapped_column(String(16), default="schedule")
+    schedule: Mapped[str] = mapped_column(String(16), default="daily")
+    hh_mm: Mapped[str] = mapped_column(String(5), default="09:00")
+    # аудитория: pool_unverified | pool_inactive | pool_all | custom
+    condition_key: Mapped[str] = mapped_column(String(24), default="pool_inactive")
+    cond_days: Mapped[int] = mapped_column(Integer, default=14)
+    recipients: Mapped[str] = mapped_column(Text, default="")   # csv для custom
+    subject: Mapped[str] = mapped_column(String(200), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_result: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name, "enabled": bool(self.enabled),
+            "trigger": self.trigger, "schedule": self.schedule,
+            "hh_mm": self.hh_mm, "condition_key": self.condition_key,
+            "cond_days": int(self.cond_days or 0),
+            "recipients": self.recipients, "subject": self.subject,
+            "body": self.body,
+            "last_run_at": (self.last_run_at.isoformat()
+                            if self.last_run_at else None),
+            "last_result": self.last_result,
+            "created_at": (self.created_at.isoformat()
+                           if self.created_at else None),
+        }
+
+
+class MailLog(Base):
+    """Каждое отправленное/отклонённое письмо (хранение ≤ 90 дней)."""
+    __tablename__ = "mail_log"
+    __table_args__ = (Index("idx_mail_log_created", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    rule_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    to_email: Mapped[str] = mapped_column(String(256), default="")
+    subject: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(12), default="sent")  # sent|error|skipped
+    error: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "rule_id": self.rule_id, "to_email": self.to_email,
+            "subject": self.subject, "status": self.status,
+            "error": self.error,
+            "created_at": (self.created_at.isoformat()
+                           if self.created_at else None),
+        }

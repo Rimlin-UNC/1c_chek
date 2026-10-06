@@ -54,18 +54,25 @@ def base_url(db: Session) -> str:
             or "https://chek.ymaster.ru").rstrip("/")
 
 
-def send_mail(db: Session, to_email: str, subject: str, body: str) -> tuple[bool, str]:
+def send_mail(db: Session, to_email: str, subject: str, body: str,
+              html: str | None = None, from_name: str = "") -> tuple[bool, str]:
     """Отправка письма. Возвращает (ok, сообщение об ошибке). Никогда не
-    поднимает исключений — сбой почты не должен ломать приём чеков."""
+    поднимает исключений — сбой почты не должен ломать приём чеков.
+    v1.44.0: html (многочастёвое письмо с красивой версией) и имя отправителя."""
     cfg = smtp_config(db)
     if cfg is None:
         return False, "SMTP не настроен"
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
-        msg["From"] = cfg["sender"]
+        sender = cfg["sender"]
+        if from_name:
+            sender = f"{from_name} <{cfg['sender']}>"
+        msg["From"] = sender
         msg["To"] = to_email
         msg.set_content(body)
+        if html:
+            msg.add_alternative(html, subtype="html")
         with smtplib.SMTP(cfg["host"], cfg["port"], timeout=12) as smtp:
             if cfg["tls"]:
                 smtp.starttls()

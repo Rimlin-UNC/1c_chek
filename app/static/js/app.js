@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.44.0': [
+    { icon: '✉📬', title: 'Почтовый центр: свой ящик, шаблоны и бот рассылок',
+      text: 'Новый блок в Настройках: ящик отправителя на своём сервере (например, chek@chek.ymaster.ru) с паролем (хранится зашифрованным), имя отправителя и тексты писем — приветствие и подпись. Бот рассылок сам пишет по расписанию (день недели и время) или по условию: напомнит подтвердить e-mail, вернёт участника, который давно не сдавал чеки, отправит сводку по списку адресов. Письма — красивые (HTML), с отпиской в один клик, журнал отправок хранится 90 дней.' },
+  ],
   '1.43.0': [
     { icon: '🔑', title: 'Вход по отпечатку пальца и лицу — без пароля',
       text: 'После первого входа приложение предложит привязать это устройство: дальше вход — одним касанием отпечатка или взгляда в камеру (Windows Hello, Touch ID, Android Biometric; вместо биометрии устройство может попросить PIN — это тоже нормально). Биометрия не покидает устройство: на сервере хранится только цифровой ключ, поэтому способ безопасен и с точки зрения 152-ФЗ. Устройств может быть несколько — список в Настройках → «Быстрый вход», любое можно отвязать. На устройствах без сканера всё остаётся как было.' },
@@ -6510,6 +6514,54 @@ async function viewSettings(container) {
         <div id="wa-list" class="form-hint" style="margin:6px 0">Загружаем…</div>
         <div id="wa-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
       </div>
+      ${isAdmin() ? `
+      <div class="glass card" id="mail-card" style="grid-column:1/-1">
+        <div class="card-title">✉📬 Почтовый центр
+          <span class="form-hint">письма кабинета · бот рассылок (v1.44.0)</span></div>
+        <div class="form-grid" style="margin:8px 0">
+          <label class="field"><span>SMTP-сервер</span>
+            <input id="mc-host" placeholder="mail.chek.ymaster.ru" value=""></label>
+          <label class="field"><span>Порт</span>
+            <input id="mc-port" type="number" value="587" style="max-width:110px"></label>
+          <label class="field"><span>Логин ящика</span>
+            <input id="mc-user" placeholder="chek@chek.ymaster.ru" value=""></label>
+          <label class="field"><span>Пароль ящика</span>
+            <input id="mc-pass" type="password" placeholder="задан — оставьте пустым"></label>
+          <label class="field"><span>Ящик отправителя (From)</span>
+            <input id="mc-sender" placeholder="chek@chek.ymaster.ru" value=""></label>
+          <label class="field"><span>Имя отправителя</span>
+            <input id="mc-fromname" placeholder="Чек-Пул Ямастер" value=""></label>
+          <label class="field"><span>Адрес сайта для ссылок в письмах</span>
+            <input id="mc-baseurl" placeholder="https://chek.ymaster.ru" value=""></label>
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="mc-tls" style="width:auto">
+            <span>STARTTLS (обычно включён)</span></label>
+        </div>
+        <div class="form-grid" style="margin:8px 0">
+          <label class="field"><span>Приветствие (переменная {name})</span>
+            <input id="mc-greeting" value=""></label>
+          <label class="field"><span>Подпись в конце письма</span>
+            <input id="mc-signature" value=""></label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+          <button class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
+          <input id="mc-testto" placeholder="куда отправить тест" style="max-width:230px">
+          <button class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
+        </div>
+        <div class="form-hint" style="margin:4px 0 10px">Для доставляемости добавьте в DNS домена
+          SPF и DKIM своего почтового сервера: <code>v=spf1 mx ~all</code> и подпись DKIM.</div>
+
+        <div class="card-title" style="margin-top:14px">🤖 Бот рассылок
+          <span class="spacer"></span>
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="mc-bot" style="width:auto">
+            <span>включён</span></label></div>
+        <div id="mc-rules" class="form-hint" style="margin:6px 0">Загружаем…</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+          <button class="btn btn-sm" id="mc-newrule">+ Новое правило</button>
+        </div>
+        <div id="mc-log" style="margin-top:8px"></div>
+      </div>` : ''}
       ${isAdmin() && appSet ? `
       <div class="glass card">
         <div class="card-title">Общие</div>
@@ -7330,6 +7382,190 @@ async function viewSettings(container) {
     } catch (e) { toast(e.message, 'err'); }
   };
   waBindSettingsCard();               // v1.43.0: карточка «Быстрый вход» (все роли)
+  bindMailCenter();                   // v1.44.0: почтовый центр (админ)
+}
+
+// v1.44.0: Почтовый центр — SMTP/шаблоны + бот рассылок + журнал.
+async function bindMailCenter() {
+  const $m = (id) => document.getElementById(id);
+  if (!$m('mail-card')) return;
+  let cfg = null, rules = [];
+  const DAY_TITLES = { daily: 'ежедневно', mon: 'понедельник', tue: 'вторник',
+    wed: 'среда', thu: 'четверг', fri: 'пятница', sat: 'суббота', sun: 'воскресенье' };
+  const AUD = {
+    pool_unverified: 'без подтверждённого e-mail',
+    pool_inactive: 'не сдавали чеки N дней',
+    pool_all: 'все с подтверждённым e-mail',
+    custom: 'список адресов' };
+  try { cfg = await api.get('/api/v1/mail-admin/config'); }
+  catch (e) { $m('mc-rules').textContent = e.message || 'Ошибка загрузки'; return; }
+  $m('mc-host').value = cfg.host || '';
+  $m('mc-port').value = cfg.port || 587;
+  $m('mc-user').value = cfg.user || '';
+  $m('mc-sender').value = cfg.sender || '';
+  $m('mc-fromname').value = cfg.from_name || '';
+  $m('mc-baseurl').value = cfg.base_url || '';
+  $m('mc-tls').checked = !!cfg.tls;
+  $m('mc-greeting').value = cfg.greeting || '';
+  $m('mc-signature').value = cfg.signature || '';
+  $m('mc-bot').checked = !!cfg.bot_on;
+  $m('mc-pass').placeholder = cfg.has_password ? 'задан — оставьте пустым' : 'пароль ящика';
+
+  $m('mc-save').onclick = async () => {
+    try {
+      const r = await api.put('/api/v1/mail-admin/config', {
+        host: $m('mc-host').value.trim(), port: Number($m('mc-port').value) || 587,
+        user: $m('mc-user').value.trim(),
+        password: $m('mc-pass').value || '',
+        sender: $m('mc-sender').value.trim(),
+        tls: $m('mc-tls').checked,
+        base_url: $m('mc-baseurl').value.trim(),
+        from_name: $m('mc-fromname').value.trim(),
+        greeting: $m('mc-greeting').value.trim(),
+        signature: $m('mc-signature').value.trim(),
+        bot_on: $m('mc-bot').checked,
+      });
+      $m('mc-pass').value = '';
+      toast(r.message, 'ok', 'Почтовый центр');
+    } catch (e) { toast(e.message, 'err', 'Почтовый центр'); }
+  };
+  $m('mc-test').onclick = async () => {
+    const to = $m('mc-testto').value.trim();
+    if (!to.includes('@')) { toast('Укажите адрес для теста', 'err'); return; }
+    try {
+      const r = await api.post('/api/v1/mail-admin/test', { email: to });
+      toast(r.message, r.ok ? 'ok' : 'err', 'Тестовое письмо');
+    } catch (e) { toast(e.message, 'err'); }
+  };
+
+  const loadRules = async () => {
+    try { rules = (await api.get('/api/v1/mail-admin/rules')).items; }
+    catch (e) { $m('mc-rules').textContent = e.message; return; }
+    const box = $m('mc-rules');
+    if (!rules.length) {
+      box.innerHTML = 'Правил нет. Создайте: например, «Напомнить подтвердить e-mail» ' +
+        '(условие, аудитория «без подтверждённого e-mail», 3 дня) — бот сам напишет каждому.';
+    } else {
+      box.innerHTML = rules.map(r => `
+        <div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line,#eef0f4)">
+          <input type="checkbox" data-rr="${r.id}" ${r.enabled ? 'checked' : ''} style="width:auto" title="включено">
+          <div style="flex:1"><b>${esc(r.name)}</b>
+            <div class="form-hint">${r.trigger === 'schedule'
+              ? (DAY_TITLES[r.schedule] || r.schedule) + ' в ' + esc(r.hh_mm)
+              : 'условие: ' + esc(AUD[r.condition_key] || r.condition_key) + ' (' + r.cond_days + ' дн.), после ' + esc(r.hh_mm)}
+            · ${esc(r.subject)}${r.last_result ? ' · ' + esc(r.last_result) : ''}</div></div>
+          <button class="btn btn-sm" data-run="${r.id}" title="Запустить сейчас">▶</button>
+          <button class="btn btn-sm btn-bad" data-del="${r.id}" title="Удалить">✕</button>
+        </div>`).join('');
+      box.querySelectorAll('[data-rr]').forEach(c => c.onchange = async () => {
+        try { await api.patch('/api/v1/mail-admin/rules/' + c.dataset.rr,
+          { enabled: c.checked }); toast('Сохранено', 'ok'); }
+        catch (e) { toast(e.message, 'err'); }
+      });
+      box.querySelectorAll('[data-run]').forEach(b => b.onclick = async () => {
+        try {
+          const r = await api.post(`/api/v1/mail-admin/rules/${b.dataset.run}/run`, {});
+          toast(r.message, 'ok', 'Рассылка');
+          loadRules(); loadLog();
+        } catch (e) { toast(e.message, 'err'); }
+      });
+      box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+        if (!confirm('Удалить правило?')) return;
+        try { await api.del('/api/v1/mail-admin/rules/' + b.dataset.del);
+          toast('Удалено', 'ok'); loadRules(); }
+        catch (e) { toast(e.message, 'err'); }
+      });
+    }
+  };
+
+  $m('mc-newrule').onclick = () => {
+    const { slot, close } = openModal(`
+      <div class="modal-title">🤖 Новое правило рассылки</div>
+      <div class="form-grid" style="margin-top:8px">
+        <label class="field"><span>Название</span>
+          <input id="nr-name" placeholder="Возвращение участника"></label>
+        <label class="field"><span>Тип</span>
+          <select id="nr-trigger">
+            <option value="schedule">По расписанию (день и время)</option>
+            <option value="condition">По условию (раз в сутки)</option>
+          </select></label>
+        <div id="nr-sched-wrap">
+          <label class="field"><span>День</span>
+            <select id="nr-schedule"><option value="daily">Ежедневно</option>
+              ${Object.keys(DAY_TITLES).filter(k => k !== 'daily').map(k =>
+                `<option value="${k}">${DAY_TITLES[k]}</option>`).join('')}
+            </select></label>
+        </div>
+        <div id="nr-cond-wrap" style="display:none">
+          <label class="field"><span>Аудитория</span>
+            <select id="nr-aud">
+              ${Object.entries(AUD).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+            </select></label>
+          <label class="field"><span>Дней (порог условия)</span>
+            <input id="nr-days" type="number" value="14" min="1" max="365"></label>
+        </div>
+        <label class="field"><span>Время ( HH:MM)</span>
+          <input id="nr-time" value="09:00" placeholder="09:00"></label>
+        <label class="field"><span>Тема письма</span>
+          <input id="nr-subject" placeholder="Мы вас ждём в Чек-Пуле"></label>
+        <label class="field"><span>Текст ({name}, {days}, {points}, {count}, {stats}, {link})</span>
+          <textarea id="nr-body" rows="4" placeholder="Вы не сдавали чеки {days} дней. Вернитесь — баллы ждут: {link}"></textarea></label>
+        <label class="field" id="nr-rcpt-wrap" style="display:none"><span>Адреса через запятую</span>
+          <input id="nr-rcpt" placeholder="dir@company.ru"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="nr-cancel">Отмена</button>
+        <button class="btn btn-primary" id="nr-ok">Создать</button>
+      </div>`);
+    const trig = slot.querySelector('#nr-trigger');
+    trig.onchange = () => {
+      slot.querySelector('#nr-sched-wrap').style.display = trig.value === 'schedule' ? '' : 'none';
+      slot.querySelector('#nr-cond-wrap').style.display = trig.value === 'condition' ? '' : 'none';
+      slot.querySelector('#nr-rcpt-wrap').style.display =
+        (trig.value === 'condition' && slot.querySelector('#nr-aud').value === 'custom') ? '' : 'none';
+    };
+    slot.querySelector('#nr-aud').onchange = () => trig.onchange();
+    slot.querySelector('#nr-cancel').onclick = close;
+    slot.querySelector('#nr-ok').onclick = async () => {
+      try {
+        const r = await api.post('/api/v1/mail-admin/rules', {
+          name: slot.querySelector('#nr-name').value.trim(),
+          trigger: trig.value,
+          schedule: slot.querySelector('#nr-schedule').value,
+          hh_mm: slot.querySelector('#nr-time').value.trim() || '09:00',
+          condition_key: slot.querySelector('#nr-aud').value,
+          cond_days: Number(slot.querySelector('#nr-days').value) || 14,
+          recipients: slot.querySelector('#nr-rcpt').value.trim(),
+          subject: slot.querySelector('#nr-subject').value.trim(),
+          body: slot.querySelector('#nr-body').value.trim(),
+        });
+        toast(r.message, 'ok', 'Бот рассылок');
+        close(); loadRules();
+      } catch (e) { toast(e.message, 'err', 'Бот рассылок'); }
+    };
+  };
+
+  const loadLog = async () => {
+    try {
+      const d = await api.get('/api/v1/mail-admin/log?limit=12');
+      const st = (s) => s === 'sent' ? '<span class="chip exported"><span class="dot"></span>отправлено</span>'
+        : (s === 'error' ? '<span class="chip failed"><span class="dot"></span>ошибка</span>'
+          : '<span class="chip unknown"><span class="dot"></span>пропущено</span>');
+      document.getElementById('mc-log').innerHTML = d.items.length ? `
+        <div class="card-title" style="margin-top:10px">Журнал отправок
+          <span class="form-hint">хранение 90 дней (152-ФЗ)</span></div>
+        <div class="table-wrap"><table class="data"><thead><tr>
+          <th>Когда</th><th>Кому</th><th>Тема</th><th>Статус</th></tr></thead><tbody>
+          ${d.items.map((l, i) => `<tr style="cursor:default">
+            <td class="cell-date">${fmtDate(l.created_at)}</td>
+            <td>${esc(d.masked[i] || l.to_email)}</td>
+            <td>${esc(l.subject || '—')}</td>
+            <td>${st(l.status)}${l.error ? `<div class="form-hint">${esc(l.error)}</div>` : ''}</td>
+          </tr>`).join('')}</tbody></table></div>`
+        : '';
+    } catch (e) { /* журнал не критичен */ }
+  };
+  loadRules(); loadLog();
 }
 
 // v1.43.0: карточка «Быстрый вход» в настройках — список устройств,
