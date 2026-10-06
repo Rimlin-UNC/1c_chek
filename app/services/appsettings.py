@@ -15,6 +15,7 @@ from ..models import AppSetting
 SECRET_KEYS = frozenset({
     "checko_api_key", "fns_master_token", "proverkacheka_token",
     "ofd_ru_token", "onec_api_token", "telegram_bot_token",
+    "telegram_proxy",                                # v1.29.0: socks5://user:pass@…
 })
 
 

@@ -2166,6 +2166,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.29.0': [
+    { icon: '☎️', title: 'Telegram-бот: работает даже там, где Telegram заблокирован',
+      text: 'Разобрались, почему бот молчал после добавления токена: во многих сетях РФ api.telegram.org блокируется — сервер просто не мог достучаться. Теперь в Настройках → Telegram есть прокси (socks5/https) и кнопка «🔍 Диагностика», которая показывает, доступен ли Telegram напрямую и через прокси. Воркер стал надёжнее: новый токен/прокси подхватывает сам, без перезапуска и конфликтов.' },
+  ],
   '1.28.0': [
     { icon: '🗂', title: 'Чеки: удобнее фильтры и статьи расходов',
       text: 'Фильтр «Сотрудник» убран — кто добавил и так видно («Кто добавил»). «Статья расходов» в фильтрах стала выпадающим списком статей, которые реально встречаются в работе (до 20). При заполнении чека — выбор из самых частых статей плюс «Своя…»: своя статья до 100 символов со счётчиком «введено X из 100 · осталось Y». Исправлено: повторные клики по чеку больше не открывают новые окна — двойной клик закрывает карточку, а открытый чек подсвечивается в списке.' },
@@ -4562,10 +4566,15 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin-bottom:10px">Напоминания сотрудникам «сдай чек за сегодня»
         и уведомления о принятых чеках. Токен — у
         <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> (/newbot),
-        вставьте один раз — хранится зашифрованным.</p>
+        вставьте один раз — хранится зашифрованным. Если бот молчит —
+        <b>сначала «🔍 Диагностика»</b>: во многих сетях РФ api.telegram.org
+        заблокирован, тогда поможет прокси ниже.</p>
         <label class="field" style="margin-bottom:10px"><span>Токен бота
           ${tgSet.has_token ? '(задан: ' + esc(tgSet.token_masked) + (tgSet.bot_username ? ', @' + esc(tgSet.bot_username) : '') + ')' : '(не задан)'}</span>
           <input id="tg-token" type="password" autocomplete="off" placeholder="123456789:AA…"></label>
+        <label class="field" style="margin-bottom:10px"><span>Прокси для Telegram
+          ${tgSet.proxy_configured ? '(задан: ' + esc(tgSet.proxy_masked || '•••') + ')' : '(не задан — нужен, если api.telegram.org недоступен с сервера)'}</span>
+          <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="tg-enabled" ${tgSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Включить бота: напоминания в ${esc(tgSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
@@ -4579,10 +4588,12 @@ async function viewSettings(container) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" id="tg-save">💾 Сохранить и запустить</button>
+          <button class="btn btn-sm" id="tg-diag">🔍 Диагностика</button>
           <button class="btn btn-sm" id="tg-test">🧪 Тест себе</button>
           <button class="btn btn-sm" id="tg-refresh"> ⟳ Обновить данные бота</button>
         </div>
-        <p class="form-hint" style="margin-top:10px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
+        <p class="form-hint" id="tg-diag-out" style="margin-top:10px"></p>
+        <p class="form-hint" style="margin-top:6px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
           статус воркера также виден после сохранения</p>
       </div>` : ''}
 
@@ -4991,11 +5002,26 @@ async function viewSettings(container) {
         };
         const tok = $('#tg-token').value.trim();
         if (tok) body.bot_token = tok;
+        const prx = $('#tg-proxy').value.trim();          // v1.29.0
+        if (prx) body.proxy = prx;
         const r = await api.put('/api/v1/settings/telegram', body);
         toast(r.message, r.worker_running ? 'ok' : 'warn', '🔔');
         route(true);
       } catch (e) { toast(e.message, 'err'); }
       tts.disabled = false;
+    };
+    const tgd = $('#tg-diag');                            // v1.29.0
+    if (tgd) tgd.onclick = async () => {
+      const out = $('#tg-diag-out');
+      out.textContent = 'Проверяю путь до api.telegram.org…';
+      try {
+        const r = await api.post('/api/v1/settings/telegram/diagnose', {});
+        const mark = r.verdict === 'ok' ? '✅' : '❌';
+        out.innerHTML = `${mark} ${esc(r.message)}<br>` +
+          `<span class="form-hint">напрямую: ${r.direct.ok ? 'доступен' : 'блокируется' +
+            (r.direct.error ? ' (' + esc(r.direct.error) + ')' : '')}` +
+          ` · через прокси: ${r.proxy.ok ? 'доступен' : 'не задан/не работает'}</span>`;
+      } catch (e) { out.textContent = 'Ошибка: ' + e.message; }
     };
     const ttt = $('#tg-test');
     if (ttt) ttt.onclick = async () => {

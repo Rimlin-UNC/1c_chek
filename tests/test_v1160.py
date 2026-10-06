@@ -88,6 +88,9 @@ class TestTelegramSettings:
             try:
                 row = s.get(AppSetting, "telegram_bot_token")
                 assert row.value.startswith("enc:v1:")
+                # v1.29.0: не оставляем токен в общей тестовой БД
+                s.delete(row)
+                s.commit()
             finally:
                 s.close()
         # время в неправильном формате
@@ -138,7 +141,8 @@ class TestTelegramLogic:
         sent = []
         from app.services import telegram_bot as tg
         monkeypatch.setattr(tg, "send_message",
-                            lambda token, chat_id, text: sent.append((chat_id, text)) or True)
+                            lambda token, chat_id, text, proxy="":
+                            sent.append((chat_id, text)) or True)   # v1.29.0: +proxy
         monkeypatch.setattr(tg, "get_token", lambda db: "fake-token")
         s = SessionLocal()
         try:

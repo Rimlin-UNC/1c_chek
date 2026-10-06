@@ -37,7 +37,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.28.0"
+    APP_VERSION: str = "1.29.0"
     DEFAULT_BRANCH: str = "arena/01a0caaa-1c-chek"   # ветка для обновлений из приложения
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
     # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
@@ -65,6 +65,8 @@ class Settings:
     FNS_PROVIDER: str = _env("FNS_PROVIDER", "mock")
     FNS_API_BASE: str = _env("FNS_API_BASE", "https://openapi.nalog.ru:8090")
     FNS_MASTER_TOKEN: str = _env("FNS_MASTER_TOKEN", "")
+    # v1.29.0: прокси для Telegram-бота (api.telegram.org часто заблокирован)
+    TELEGRAM_PROXY: str = _env("TELEGRAM_PROXY", "")
     FNS_CLIENT_APP_ID: str = _env("FNS_CLIENT_APP_ID", "YMASTER-CHECK")
     FNS_CACHE_TTL_DAYS: int = int(_env("FNS_CACHE_TTL_DAYS", "30"))
     FNS_TIMEOUT_SECONDS: int = int(_env("FNS_TIMEOUT_SECONDS", "15"))

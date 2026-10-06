@@ -380,11 +380,15 @@ def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_ad
     s = tg.bot_settings(db)
     from ..services.appsettings import get_setting as _g
     key = _mask(_g(db, tg.SETT_TOKEN, ""))
+    proxy_masked = _mask(_g(db, tg.SETT_PROXY, ""))
     return {**s, "token_masked": key,
+            "proxy_masked": proxy_masked,
             "bound_users": db.query(User).filter(
                 User.telegram_chat_id.isnot(None)).count(),
-            "hint": "Токен от @BotFather хранится зашифрованным. Сотрудники "
-                    "подключаются сами: Настройки → Telegram → код → /start КОД."}
+            "hint": "Токен от @BotFather хранится зашифрованным. Если сервер "
+                    "не видит api.telegram.org (частая блокировка в РФ) — "
+                    "укажите прокси. Сотрудники подключаются сами: "
+                    "Настройки → Telegram → код → /start КОД."}
 
 
 @router.put("/telegram", summary="Сохранить настройки Telegram-бота (админ)")
@@ -393,6 +397,18 @@ def put_telegram(body: dict, db: Session = Depends(get_db),
     import re as _re
     from ..services import telegram_bot as tg
     from ..services.appsettings import set_setting as _s
+    # v1.29.0: прокси сохраняем ДО проверки токена — проверка пойдёт через него.
+    # Пусто = не менять; "-" = убрать прокси.
+    if "proxy" in (body or {}):
+        proxy = ((body.get("proxy")) or "").strip()
+        if proxy == "-":
+            _s(db, tg.SETT_PROXY, "")
+        elif proxy:
+            if not proxy.lower().startswith(tg.PROXY_SCHEMES):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    "Прокси должен начинаться с socks5:// или http:// "
+                                    "(например socks5://логин:пароль@хост:порт)")
+            _s(db, tg.SETT_PROXY, proxy)             # уйдёт зашифрованным (секрет)
     token = ((body or {}).get("bot_token") or "").strip()
     if token:
         if not _re.fullmatch(r"\d{6,}:[A-Za-z0-9_\-]{30,}", token):
@@ -401,7 +417,7 @@ def put_telegram(body: dict, db: Session = Depends(get_db),
                                 "из @BotFather (вид: 123456789:AA…)")
         _s(db, tg.SETT_TOKEN, token)                 # уйдёт зашифрованным
         try:
-            tg.get_me(token)
+            tg.get_me(token, proxy=tg.get_proxy(db))
         except tg.TelegramError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
         tg.refresh_username(db)                      # кэш username бота
@@ -439,6 +455,12 @@ def test_telegram(db: Session = Depends(get_db), admin: User = Depends(require_a
     except tg.TelegramError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
     return {"ok": True, "message": "Отправлено — проверьте Telegram"}
+
+
+@router.post("/telegram/diagnose", summary="Диагностика доступа к Telegram (админ)")
+def diagnose_telegram(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import telegram_bot as tg
+    return tg.diagnose(db)
 
 
 @router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")
