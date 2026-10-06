@@ -39,6 +39,7 @@ const VIEW_TITLES = {
   audit: 'Журнал действий', settings: 'Настройки', companies: 'Компании',
   public: 'Сдать чек в Чек-Пул',       // v1.31.0: доступно и гостям
   my: 'Мой Чек-Пул',                   // v1.32.0: кабинет участника пула
+  pooladmin: 'Чек-Пул: модерация',     // v1.33.0: панель админа
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -669,6 +670,214 @@ async function viewPoolAccount(container) {
   bindPoolAccount(container);
 }
 
+
+// --------------------------------------------------------------------------
+//  v1.33.0: ПАНЕЛЬ МОДЕРАЦИИ «ЧЕК-ПУЛА» (#/pooladmin, только админ).
+//  Гео/отрасли: покрытие, дообогащение, ручная разметка; модерация в 2 клика;
+//  поиск по ФН/ИНН/магазину; выгрузка CSV. Стиль ядра: таблицы, без капса.
+// --------------------------------------------------------------------------
+const poolAdm = { q: '', status: '', missingGeo: false, missingInd: false, page: 1, dicts: null };
+
+function poolAdmChip(ok, text) {
+  return ok ? '<span class="chip exported"><span class="dot"></span>' + text + '</span>'
+            : '<span class="chip failed"><span class="dot"></span>' + text + '</span>';
+}
+
+function poolAdmShell() {
+  return `
+  <div class="glass card">
+    <div class="card-title">🧩 Чек-Пул: гео, отрасли и модерация <span class="form-hint">(Этап 4 · v1.33.0)</span></div>
+    <div id="pooladm-stats" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <input id="pooladm-q" placeholder="Поиск: ФН, ИНН или магазин" style="max-width:280px" value="${esc(poolAdm.q)}">
+      <select id="pooladm-status">
+        <option value="">Все статусы</option>
+        <option value="pending">На ручной проверке</option>
+        <option value="verified">Принятые</option>
+        <option value="rejected">Не принятые</option>
+      </select>
+      <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="pooladm-mgeo" style="width:auto"> Без региона</label>
+      <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="pooladm-mind" style="width:auto"> Без отрасли</label>
+      <button class="btn btn-sm" id="pooladm-enrich">🪄 Разметить недостающее</button>
+      <button class="btn btn-sm" id="pooladm-csv">⬇️ CSV</button>
+    </div>
+    <div id="pooladm-table"></div>
+  </div>`;
+}
+
+async function poolAdmLoadStats() {
+  try {
+    const d = await api.get('/api/v1/pool-admin/overview');
+    const box = $('#pooladm-stats');
+    if (!box) return;
+    box.innerHTML = `
+      <b>${fmtInt(d.receipts_total)}</b> чеков · принято <b>${fmtInt(d.verified)}</b> ·
+      на проверке <b>${fmtInt(d.pending)}</b> · не принято <b>${fmtInt(d.rejected)}</b> ·
+      участников <b>${fmtInt(d.users_total)}</b> · баллов <b>${fmtInt(d.points_total)}</b><br>
+      Покрытие регионом ${poolAdmChip(d.geo_coverage >= 70, '≥70%: ' + d.geo_coverage + '%')}
+      отраслью ${poolAdmChip(d.industry_coverage >= 60, '≥60%: ' + d.industry_coverage + '%')}`;
+  } catch (e) { /* не критично для таблицы */ }
+}
+
+async function poolAdmLoadTable() {
+  const box = $('#pooladm-table');
+  if (!box) return;
+  const params = new URLSearchParams();
+  if (poolAdm.q) params.set('q', poolAdm.q);
+  if (poolAdm.status) params.set('status', poolAdm.status);
+  if (poolAdm.missingGeo) params.set('missing_geo', '1');
+  if (poolAdm.missingInd) params.set('missing_industry', '1');
+  params.set('page', poolAdm.page);
+  params.set('page_size', 20);
+  try {
+    const d = await api.get('/api/v1/pool-admin/receipts?' + params.toString());
+    const rn = (code) => { const x = (poolAdm.dicts || { regions: [] }).regions.find(r => r.code === code); return x ? x.name : (code || '—'); };
+    const inm = (code) => { const x = (poolAdm.dicts || { industries: [] }).industries.find(i => i.code === code); return x ? x.name : (code || '—'); };
+    box.innerHTML = `
+    <div class="table-wrap"><table style="width:100%">
+      <thead><tr><th>Сдан</th><th>Магазин</th><th>Сумма</th><th>ФН</th>
+      <th>Регион</th><th>Отрасль</th><th>Статус</th><th>Действия</th></tr></thead>
+      <tbody>${d.items.length ? d.items.map(r => `<tr>
+        <td class="num">${esc((r.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+        <td>${esc(r.merchant_name || '—')}<div class="form-hint">ИНН ${esc(r.merchant_inn || '—')}</div></td>
+        <td class="num">${fmtSum(r.total_sum)}</td>
+        <td class="num">${esc(r.fn || '—')}</td>
+        <td>${r.region_code ? esc(rn(r.region_code)) + (r.city ? ' · ' + esc(r.city) : '')
+             : '<span class="form-hint">— разметить</span>'}</td>
+        <td>${r.industry ? esc(inm(r.industry)) : '<span class="form-hint">—</span>'}</td>
+        <td>${poolStatusChip(r.status)}</td>
+        <td style="white-space:nowrap">
+          ${r.status === 'pending' ? `<button class="btn btn-sm pooladm-ok" data-id="${r.id}" title="Одобрить">✅</button>
+             <button class="btn btn-sm pooladm-no" data-id="${r.id}" title="Отклонить">❌</button>` : ''}
+          <button class="btn btn-sm pooladm-edit" data-id="${r.id}" title="Разметить вручную">✏️</button>
+        </td></tr>`).join('')
+      : '<tr><td colspan="8" class="form-hint">Ничего не найдено по фильтрам.</td></tr>'}</tbody>
+    </table></div>
+    ${d.total > d.page_size ? `<div class="form-hint" style="margin-top:6px">Показано ${d.items.length} из ${fmtInt(d.total)} — уточните фильтры.</div>` : ''}`;
+    box.querySelectorAll('.pooladm-ok').forEach(b => { b.onclick = () => poolAdmModerate(b.dataset.id, 'approve', ''); });
+    box.querySelectorAll('.pooladm-no').forEach(b => { b.onclick = () => poolAdmRejectDialog(b.dataset.id); });
+    box.querySelectorAll('.pooladm-edit').forEach(b => { b.onclick = () => poolAdmMarkDialog(b.dataset.id); });
+  } catch (e) { box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`; }
+}
+
+async function poolAdmModerate(id, action, comment) {
+  try {
+    const r = await api.post(`/api/v1/pool-admin/receipt/${id}/moderate`,
+                             { action, comment });
+    toast(action === 'approve'
+      ? `Чек принят в пул${r.points_awarded ? ' — начислен балл участнику' : ''}`
+      : 'Чек отклонён', action === 'approve' ? 'ok' : 'warn', '🧩');
+    poolAdmLoadStats();
+    poolAdmLoadTable();
+  } catch (e) { toast(e.message, 'err', '🧩'); }
+}
+
+function poolAdmRejectDialog(id) {
+  const { slot } = openModal(`
+    <div class="modal-title">Отклонить чек?</div>
+    <label class="field"><span>Причина (необязательно)</span>
+      <input id="pooladm-reject-comment" placeholder="например: данные не подтвердились"></label>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-sm" data-close>Отмена</button>
+      <button class="btn btn-sm" id="pooladm-reject-go" style="color:#b3261e">Отклонить</button>
+    </div>`);
+  slot.querySelector('#pooladm-reject-go').onclick = () => {
+    poolAdmModerate(id, 'reject', slot.querySelector('#pooladm-reject-comment').value);
+    slot._dc && slot._dc.click ? slot._dc.click() : null;
+  };
+}
+
+function poolAdmMarkDialog(id) {
+  if (!poolAdm.dicts) return;
+  const opts = (list, cur) => list.map(x =>
+    `<option value="${x.code}" ${x.code === cur ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const { slot } = openModal(`
+    <div class="modal-title">Ручная разметка чека</div>
+    <label class="field"><span>Регион</span>
+      <select id="pooladm-ed-region"><option value="">— не задан —</option>
+        ${opts(poolAdm.dicts.regions, '')}</select></label>
+    <label class="field"><span>Город (необязательно)</span><input id="pooladm-ed-city"></label>
+    <label class="field"><span>Отрасль</span>
+      <select id="pooladm-ed-industry"><option value="">— не задана —</option>
+        ${opts(poolAdm.dicts.industries, '')}</select></label>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-sm" data-close>Отмена</button>
+      <button class="btn btn-sm btn-primary" id="pooladm-ed-save">Сохранить</button>
+    </div>`);
+  api.get(`/api/v1/pool-admin/receipts?page=1&page_size=200`).then(d => {
+    const r = d.items.find(x => x.id === id);
+    if (!r) return;
+    const rs = slot.querySelector('#pooladm-ed-region');
+    if (r.region_code) rs.value = r.region_code;
+    const city = slot.querySelector('#pooladm-ed-city');
+    if (city) city.value = r.city || '';
+    const ins = slot.querySelector('#pooladm-ed-industry');
+    if (r.industry) ins.value = r.industry;
+  }).catch(() => {});
+  slot.querySelector('#pooladm-ed-save').onclick = async () => {
+    try {
+      await api.patch(`/api/v1/pool-admin/receipt/${id}`, {
+        region_code: slot.querySelector('#pooladm-ed-region').value,
+        city: slot.querySelector('#pooladm-ed-city').value,
+        industry: slot.querySelector('#pooladm-ed-industry').value });
+      toast('Разметка сохранена', 'ok', '🧩');
+      slot._dc && slot._dc.click ? slot._dc.click() : null;
+      poolAdmLoadStats();
+      poolAdmLoadTable();
+    } catch (e) { toast(e.message, 'err', '🧩'); }
+  };
+}
+
+async function viewPoolAdmin(container) {
+  container.innerHTML = poolAdmShell();
+  if (!poolAdm.dicts) {
+    try { poolAdm.dicts = await api.get('/api/v1/pool-admin/dicts'); } catch (e) {}
+  }
+  const q = $('#pooladm-q');
+  let deb = 0;
+  q.oninput = () => {
+    clearTimeout(deb);
+    deb = setTimeout(() => { poolAdm.q = q.value.trim(); poolAdm.page = 1; poolAdmLoadTable(); }, 350);
+  };
+  $('#pooladm-status').value = poolAdm.status;
+  $('#pooladm-status').onchange = (e) => { poolAdm.status = e.target.value; poolAdm.page = 1; poolAdmLoadTable(); };
+  $('#pooladm-mgeo').checked = poolAdm.missingGeo;
+  $('#pooladm-mgeo').onchange = (e) => { poolAdm.missingGeo = e.target.checked; poolAdm.page = 1; poolAdmLoadTable(); };
+  $('#pooladm-mind').checked = poolAdm.missingInd;
+  $('#pooladm-mind').onchange = (e) => { poolAdm.missingInd = e.target.checked; poolAdm.page = 1; poolAdmLoadTable(); };
+  $('#pooladm-enrich').onclick = async () => {
+    const b = $('#pooladm-enrich');
+    b.disabled = true;
+    try {
+      const r = await api.post('/api/v1/pool-admin/enrich-missing', {});
+      toast(r.message, 'ok', '🪄');
+      poolAdmLoadStats();
+      poolAdmLoadTable();
+    } catch (e) { toast(e.message, 'err', '🪄'); }
+    b.disabled = false;
+  };
+  $('#pooladm-csv').onclick = () => {
+    const p = new URLSearchParams();
+    if (poolAdm.q) p.set('q', poolAdm.q);
+    if (poolAdm.status) p.set('status', poolAdm.status);
+    if (poolAdm.missingGeo) p.set('missing_geo', '1');
+    if (poolAdm.missingInd) p.set('missing_industry', '1');
+    fetch('/api/v1/pool-admin/export.csv?' + p.toString(),
+          { headers: { Authorization: 'Bearer ' + getToken() } })
+      .then(r => { if (!r.ok) throw new Error('Не удалось выгрузить'); return r.blob(); })
+      .then(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'chek-pool-admin.csv';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      })
+      .catch(e => toast(e.message, 'err', '🧩'));
+  };
+  poolAdmLoadStats();
+  poolAdmLoadTable();
+}
+
 // --------------------------------------------------------------------------
 //  Регистрация по приглашению
 // --------------------------------------------------------------------------
@@ -1175,6 +1384,7 @@ function route(silent = false) {
   const guard = {
     export: isAccountant(), mapping: isAccountant(),
     users: isAdmin(), audit: isAdmin(), companies: isAdmin(),
+    pooladmin: isAdmin(),                // v1.33.0: модерация пула
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
 
@@ -1184,6 +1394,7 @@ function route(silent = false) {
     audit: viewAudit, settings: viewSettings, companies: viewCompanies,
     public: viewPublic,                   // v1.31.0: приём чека в пул
     my: viewPoolAccount,                  // v1.32.0: кабинет участника пула
+    pooladmin: viewPoolAdmin,             // v1.33.0: гео/отрасли + модерация
   };
   (renderers[view] || viewDashboard)(container);
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
@@ -2710,6 +2921,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.33.0': [
+    { icon: '🗺', title: 'Чек-Пул: регионы, отрасли и панель модерации',
+      text: 'Каждый чек пула теперь размечается автоматически: регион и город — из адреса места расчёта (если адреса нет — по ИНН продавца через ЕГРЮЛ), отрасль — по сети (Пятёрочка, Аптека 36,6, Лукойл и ещё 50 сетей) или по составу покупок. В Настройках появился раздел «Чек-Пул: модерация»: чеки с ручной проверкой принимаются или отклоняются в два клика (при принятии участнику начисляется балл), есть поиск по ФН/ИНН/магазину, фильтры «без региона/отрасли», ручная разметка, дообогащение старых чеков и выгрузка CSV для Excel. Покрытие видно сразу: цель — 70% чеков с регионом и 60% с отраслью.' },
+  ],
   '1.32.0': [
     { icon: '👤', title: 'Кабинет Чек-Пула: регистрация и «сдал чек — забрал чек»',
       text: 'Сдавать чеки по-прежнему можно без регистрации, но теперь у участника есть кабинет: e-mail + пароль либо одноразовая ссылка входа (если администратор настроил почту в Настройках → Чек-Пул). Чеки, сданные без регистрации в этом браузере, автоматически присоединяются к кабинету — ничего не теряется. В кабинете: баланс, «Мои чеки» со статусами и составом (позиции), выгрузка CSV для Excel, печать/PDF, смена пароля и e-mail, удаление аккаунта — персональные данные стираются, баллы сгорают, чеки остаются в пуле обезличенно. Кабинет отдельный от рабочей программы: вход сотрудников компаний не меняется.' },
@@ -5155,14 +5370,15 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 2 · v1.31.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 4 · v1.33.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
         мы проверяем чек по официальным источникам и начисляем балл; компании
         смогут подбирать чеки для отчётов (следующие этапы). Ядро приложения
         не меняется; приём выключен по умолчанию.
         ${poolSet.enabled ? '<b>Приём включён — форма на сайте принимает чеки (бот — резервный канал).</b>' : 'Приём сейчас выключен.'}
-        <a href="#/public">Открыть страницу приёма →</a></p>
+        <a href="#/public">Открыть страницу приёма →</a>
+        <a href="#/pooladmin" style="margin-left:12px">Панель модерации и разметки →</a></p>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="pool-enabled" ${poolSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Принимать чеки в пул (форма на сайте; бот — резервный канал)</span></label>

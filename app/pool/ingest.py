@@ -155,11 +155,21 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
     db.add(receipt)
     db.flush()                       # id чека нужен для позиций (FK)
 
+    # v1.33.0: гео (адрес → регион; fallback ИНН → Checko) и отрасль
+    # (сеть/ключевые слова позиций) — офлайн-справочники, разметка
+    # никогда не ломает приём
+    try:
+        from .geo import enrich_receipt
+        enrich_receipt(db, receipt, items=list(ext.items) if has_data else None)
+    except Exception:                                     # noqa: BLE001
+        pass
+
     if has_data:
         receipt.full_data = True
+        from .geo import normalize_item_name
         for it in ext.items:
             db.add(PoolItem(
-                receipt_id=receipt.id, name=(it.name or "")[:500],
+                receipt_id=receipt.id, name=normalize_item_name(it.name)[:500],
                 quantity=it.quantity or 1, price=it.price or 0,
                 total=it.total or 0, vat_rate=str(it.vat_rate or "none"),
                 vat_sum=it.vat_sum or 0))
@@ -208,12 +218,30 @@ def overview(db: Session) -> dict:
     from sqlalchemy import func
     from .models import PoolPoint, PoolReceipt, PoolUser
     q = db.query(PoolReceipt)
+    total = q.count()
+    # v1.33.0: покрытие — доля среди чеков, у которых есть данные продавца
+    # (адрес или ИНН): чек без данных геокодировать невозможно в принципе
+    base = q.filter((PoolReceipt.merchant_address != "")
+                    | (PoolReceipt.merchant_inn != "")).count()
+    with_region = q.filter(
+        (PoolReceipt.region_code != "")
+        & ((PoolReceipt.merchant_address != "")
+           | (PoolReceipt.merchant_inn != ""))).count()
+    with_industry = q.filter(
+        (PoolReceipt.industry != "")
+        & ((PoolReceipt.merchant_address != "")
+           | (PoolReceipt.merchant_inn != ""))).count()
+    pct = lambda n: round(100 * n / base) if base else 0
     return {
-        "receipts_total": q.count(),
+        "receipts_total": total,
         "verified": q.filter(PoolReceipt.status == "verified").count(),
         "pending": q.filter(PoolReceipt.status == "pending").count(),
         "rejected": q.filter(PoolReceipt.status == "rejected").count(),
         "users_total": db.query(PoolUser).count(),
         "points_total": db.query(
             func.coalesce(func.sum(PoolPoint.delta), 0)).scalar(),
+        # покрытие (цели этапа 4 — ≥70% регион, ≥60% отрасль)
+        "with_region": with_region, "with_industry": with_industry,
+        "geo_coverage": pct(with_region),
+        "industry_coverage": pct(with_industry),
     }
