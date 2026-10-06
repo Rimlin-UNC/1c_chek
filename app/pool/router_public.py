@@ -21,7 +21,7 @@ import uuid
 from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -96,6 +96,7 @@ class CheckBody(BaseModel):
     offerta: bool = False
     hp: str = ""                # honeypot: человек это поле не видит и не заполняет
     form_ms: int = 0            # время заполнения формы (антифрод-минимум)
+    employee_email: str = Field("", max_length=200)   # v1.37.0: сценарий C
 
 
 def _receipt_public(r) -> dict:
@@ -210,6 +211,16 @@ def pool_check(body: CheckBody, request: Request, response: Response,
         return {"ok": True, "accepted": False, **err}
 
     fast = bool(body.form_ms) and body.form_ms < HONEYPOT_MS
+
+    # v1.37.0 (сценарий C): e-mail сотрудника компании — в аккаунт пула.
+    # Когда он будет подтверждён в кабинете, новые чеки будут уходить
+    # компании сотрудника, минуя общий пул.
+    emp = (body.employee_email or "").strip().lower()
+    if emp and "@" in emp and not (user.email or "").strip():
+        from .models import PoolUser as _PU
+        exists = db.query(_PU).filter(_PU.email == emp).first()
+        if exists is None or exists.id == user.id:
+            user.email = emp
 
     # проверка источников — в фоне: ответ форме отдаём сразу (≤ 5 с)
     user_id = user.id

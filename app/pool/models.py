@@ -100,8 +100,10 @@ class PoolReceipt(Base):
     full_data: Mapped[bool] = mapped_column(Boolean, default=False)
     points_awarded: Mapped[int] = mapped_column(Integer, default=0)
     raw: Mapped[str] = mapped_column(Text, default="")
-    # привязка к компании (Этап 5)
+    # привязка к компании (Этап 5; v1.37.0 — «Подбор из пула» и сценарий C)
     assigned_company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    assigned_by: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -167,6 +169,18 @@ def ensure_pool_schema(engine) -> None:
         PoolReferral.__table__, PoolAchievement.__table__,
         PoolWithdrawal.__table__])
     insp = sqlalchemy.inspect(engine)
+    # v1.37.0: колонки подбора для уже существующей pool_receipts
+    rcols = {c["name"] for c in insp.get_columns("pool_receipts")}
+    r_add = (
+        ("assigned_at",
+         "ALTER TABLE pool_receipts ADD COLUMN assigned_at DATETIME"),
+        ("assigned_by",
+         "ALTER TABLE pool_receipts ADD COLUMN assigned_by VARCHAR(36) DEFAULT ''"),
+    )
+    for name, ddl in r_add:
+        if name not in rcols:
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(ddl))
     cols = {c["name"] for c in insp.get_columns("pool_users")}
     add_cols = (
         ("vid", "ALTER TABLE pool_users ADD COLUMN vid VARCHAR(64)"),

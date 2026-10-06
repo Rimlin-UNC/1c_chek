@@ -218,6 +218,13 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
             engage.on_verified_receipt(db, user, receipt)
         except Exception:                                 # noqa: BLE001
             pass
+        # v1.37.0: сценарий C — чек с подтверждённым e-mail сотрудника
+        # компании уходит компании, минуя общий пул (баллы не трогаем)
+        try:
+            from .router_company import assign_employee_receipt
+            assign_employee_receipt(db, user, receipt)
+        except Exception:                                 # noqa: BLE001
+            pass
     receipt.points_awarded = points
     if fast:  # v1.31.0: антифрод-минимум — слишком быстрая отправка формы
         receipt.status_message = (receipt.status_message +

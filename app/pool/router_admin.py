@@ -31,12 +31,17 @@ def pool_overview(db: Session = Depends(get_db), admin: User = Depends(require_a
     from ..services import appsettings
     from . import ingest
     from . import engage
+    from .router_company import PICK_LIMIT_DEFAULT, PICK_LIMIT_KEY, pick_limit
+    from ..services import appsettings
     return {
         "enabled": ingest.pool_enabled(db),
         "offerta": ingest.OFFERTA_SHORT,
         "daily_limit": ingest.DAILY_LIMIT,
         "points_per_receipt": ingest.POINTS_PER_RECEIPT,
         "withdrawals": engage.admin_counts(db),   # v1.36.0: заявки на вывод
+        # v1.37.0: квота «Подбора из пула» на компанию
+        "pick_monthly_limit": int(appsettings.get_setting(
+            db, PICK_LIMIT_KEY, str(PICK_LIMIT_DEFAULT))),
         **ingest.overview(db),
     }
 
@@ -48,11 +53,23 @@ def pool_settings(body: dict, db: Session = Depends(get_db),
     from ..services.audit import log_action
     enabled = bool((body or {}).get("enabled"))
     appsettings.set_setting(db, "pool_enabled", "1" if enabled else "0")
-    log_action(admin, "pool_settings_saved", details={"enabled": enabled})
+    # v1.37.0: месячная квота «Подбора из пула» на компанию (0 — выключен)
+    pick_limit_msg = ""
+    pl = (body or {}).get("pick_limit")
+    if pl is not None:
+        try:
+            v = max(0, int(pl))
+        except (TypeError, ValueError):
+            raise HTTPException(422, "Лимит подбора — целое число, 0 = выключен")
+        appsettings.set_setting(db, "pool_pick_monthly_limit", str(v))
+        pick_limit_msg = f" · квота подбора: {v} чеков/мес на компанию"
+    log_action(admin, "pool_settings_saved",
+               details={"enabled": enabled, "pick_limit": pl})
     return {"ok": True, "enabled": enabled,
             "message": ("Приём чеков включён — форма на сайте принимает чеки"
                         " (бот — резервный канал)"
-                        if enabled else "Приём чеков в пул выключен")}
+                        if enabled else "Приём чеков в пул выключен")
+            + pick_limit_msg}
 
 
 @router.get("/receipts", summary="Чек-Пул: список чеков с поиском (админ)")
