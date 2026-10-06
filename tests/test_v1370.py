@@ -368,16 +368,12 @@ class TestExportCsv:
 
 class TestVersion1370:
     def test_versions_synced(self):
-        import re
+        # пин 1.37.0 перенесён в tests/test_v1380.py (версия ушла вперёд);
+        # структурные проверки пинов остаются в текущей версии
         cfg = open("app/config.py", encoding="utf-8").read()
-        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.37.0"
-        idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
+        assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
-        mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert f'"version": "{ver}"' in mf
+        assert "ymaster-check-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -395,7 +391,7 @@ class TestVersion1370:
         assert "/api/v1/pool-company/export.csv" in js
         assert "pool-company/employees" in js
         assert "pub-emp" in js and "employee_email" in js
-        assert "(Этап 8 · v1.37.0)" in js
+        # метку «(Этап 8 · v1.37.0)» сменила «(Этап 9 · v1.38.0)» — пин в v1380
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert 'data-view="poolpick"' in idx
 

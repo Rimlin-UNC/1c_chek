@@ -17,7 +17,8 @@ from ..auth import require_admin
 from ..database import get_db
 from ..models import User
 from . import antifraud
-from .models import PoolFingerprint, PoolIpLog, PoolSignal, PoolUser
+from .models import (PoolFingerprint, PoolIpLog, PoolReferral, PoolSignal,
+                     PoolUser)
 
 router = APIRouter(prefix="/api/v1/pool-fraud", tags=["pool-fraud"])
 
@@ -214,3 +215,90 @@ def purge(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     return {"ok": True, **res,
             "message": f"Удалено: сетей {res['ip_log']}, устройств "
                        f"{res['fingerprints']}, закрытых сигналов {res['signals']}"}
+
+
+# --------------------------------------------------------------------------
+# v1.38.0: граф-аналитика связей — кластеры участников, объединённые
+# устройством (visitor_hash), подсетью /24 и реферальными парами.
+# Служит для визуальной оценки «ферм»: несколько узлов с общими рёбрами.
+# --------------------------------------------------------------------------
+def _clusters(nodes: list[str], edges: list[tuple[str, str]]) -> list[set[str]]:
+    parent = {n: n for n in nodes}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in edges:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    out: dict[str, set[str]] = {}
+    for n in nodes:
+        out.setdefault(find(n), set()).add(n)
+    return sorted(out.values(), key=lambda s: (-len(s), sorted(s)[0]))
+
+
+@router.get("/graph", summary="Антифрод: граф связей участников (админ)")
+def graph(days: int = Query(30, ge=1, le=365),
+          max_nodes: int = Query(60, ge=4, le=200),
+          db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from datetime import datetime, timedelta
+    since = datetime.utcnow() - timedelta(days=days)
+
+    users = {u.id: u for u in db.query(PoolUser).all()}
+    if not users:
+        return {"nodes": [], "edges": [], "clusters": 0, "days": days}
+
+    edges: list[tuple[str, str, str]] = []
+    # устройство: общий visitor_hash
+    rows = (db.query(PoolFingerprint.user_id, PoolFingerprint.visitor_hash)
+            .filter(PoolFingerprint.visitor_hash != "").all())
+    by_vh: dict[str, list[str]] = {}
+    for uid, vh in rows:
+        if uid in users:
+            by_vh.setdefault(vh, []).append(uid)
+    for vh, uids in by_vh.items():
+        uids = sorted(set(uids))
+        for i in range(len(uids) - 1):
+            edges.append((uids[i], uids[i + 1], "device"))
+    # подсеть /24: общая сеть за окно (ip24 — a.b.c, индексированное)
+    rows = (db.query(PoolIpLog.user_id, PoolIpLog.ip24)
+            .filter(PoolIpLog.created_at >= since,
+                    PoolIpLog.ip24 != "").all())
+    by_sub: dict[str, list[str]] = {}
+    for uid, ip24 in rows:
+        if uid in users:
+            by_sub.setdefault(ip24, []).append(uid)
+    for sub, uids in by_sub.items():
+        uids = sorted(set(uids))
+        if len(uids) >= 2:
+            for i in range(len(uids) - 1):
+                edges.append((uids[i], uids[i + 1], "subnet"))
+    # реферальные пары
+    for ref in db.query(PoolReferral).all():
+        if ref.referrer_id in users and ref.referred_id in users:
+            edges.append((ref.referrer_id, ref.referred_id, "referral"))
+
+    e_simple = [(a, b) for a, b, _ in edges]
+    groups = [g for g in _clusters(list(users), e_simple) if len(g) >= 2]
+    picked: set[str] = set()
+    for g in groups:
+        if len(picked) + len(g) > max_nodes and picked:
+            break
+        picked |= g
+    kept = [(a, b, k) for a, b, k in edges
+            if a in picked and b in picked]
+    nodes = []
+    for uid in picked:
+        u = users[uid]
+        nodes.append({"id": uid,
+                      "label": (u.email or
+                                f"гость {(u.vid or uid)[:8]}")[:40],
+                      "risk": u.risk_score or 0,
+                      "quarantined": bool(u.quarantined_at)})
+    return {"nodes": nodes,
+            "edges": [{"a": a, "b": b, "kind": k} for a, b, k in kept],
+            "clusters": len(groups), "days": days}

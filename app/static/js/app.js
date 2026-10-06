@@ -38,6 +38,7 @@ const VIEW_TITLES = {
   export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи и приглашения',
   audit: 'Журнал действий', settings: 'Настройки', companies: 'Компании',
   public: 'Сдать чек в Чек-Пул',       // v1.31.0: доступно и гостям
+  partners: 'Партнёры и кэшбэк',       // v1.38.0: партнёрская программа
   my: 'Мой Чек-Пул',                   // v1.32.0: кабинет участника пула
   pooladmin: 'Чек-Пул: модерация',     // v1.33.0: панель админа
   fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
@@ -1384,7 +1385,9 @@ function fraudShell() {
       <button class="btn btn-sm" id="fraud-bulk-fp" disabled>Ложное срабатывание (выбранные)</button>
       <button class="btn btn-sm" id="fraud-bulk-confirm" disabled>Подтвердить (выбранные)</button>
       <button class="btn btn-sm" id="fraud-purge" title="152-ФЗ: техданные храним ≤ 12 месяцев">🧹 Чистка техданных &gt; года</button>
+      <button class="btn btn-sm" id="fraud-graph-btn">🕸 Граф связей</button>
     </div>
+    <div id="fraud-graph" class="hidden" style="margin-bottom:10px"></div>
     <div id="fraud-table"></div>
   </div>`;
 }
@@ -1501,6 +1504,60 @@ async function fraudUserCard(uid) {
   } catch (e) { toast(e.message, 'err', '🛡'); }
 }
 
+// --------------------------------------------------------------------------
+//  v1.38.0: ПАРТНЁРЫ И КЭШБЭК (#/partners) — партнёрский канал из плана.
+//  Список партнёров, кэшбэк баллами за их чеки, QR «на кассе» (SVG).
+// --------------------------------------------------------------------------
+async function viewPartners(container) {
+  container.innerHTML = `
+  <div class="glass card">
+    <div class="card-title">🤝 Партнёры и кэшбэк <span class="form-hint">(Этап 9 · v1.38.0)</span></div>
+    <div id="partners-body" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+    <div id="partners-table"></div>
+  </div>`;
+  try {
+    const d = await api.get('/api/v1/public/pool/partners');
+    const box = $('#partners-body');
+    if (box) box.innerHTML = `${esc(d.note)} · баллы зачисляются после верификации чека,
+      в карантине антифрода кэшбэк приостанавливается.`;
+    const rows = d.items.map((p) => `
+      <tr>
+        <td>${esc(p.name)}</td><td>${esc(p.city || '—')}</td>
+        <td class="num"><b>${p.pct}%</b></td>
+        <td class="num">${fmtInt(d.cap)}</td>
+        <td><img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(p.code)}"
+             alt="QR партнёра ${esc(p.name)}" width="88" height="88"
+             style="border:1px solid #e3e3e3;border-radius:6px;background:#fff"></td>
+        <td><button class="btn btn-sm" data-code="${esc(p.code)}" data-name="${esc(p.name)}">🖨 Печать QR</button></td>
+      </tr>`).join('');
+    $('#partners-table').innerHTML = `
+      <div class="form-hint" style="margin-bottom:6px">QR ведёт на страницу «Сдать чек» — участник сдаёт чек партнёра
+        и получает кэшбэк баллами. QR печатается партнёром и ставится у кассы.</div>
+      <div class="table-wrap"><table style="width:100%">
+        <thead><tr><th>Партнёр</th><th>Город</th><th>Кэшбэк</th><th>Кап, баллов/чек</th><th>QR на кассу</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6">Партнёры скоро появятся</td></tr>'}</tbody></table></div>`;
+    $$('#partners-table button[data-code]').forEach((b) => {
+      b.onclick = () => {
+        const w = window.open('', '_blank');
+        if (!w) return;
+        w.document.write(`<html><head><title>QR — ${esc(b.dataset.name)}</title></head>
+          <body style="font-family:Arial,sans-serif;text-align:center;padding:40px">
+          <h2>${esc(b.dataset.name)}</h2>
+          <p>Сдайте чек в «Чек-Пул» — получите кэшбэк баллами</p>
+          <img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(b.dataset.code)}" width="320" height="320">
+          <p style="color:#777;font-size:12px">ООО «Ямастер» · ymaster.ru</p>
+          </body></html>`);
+        w.document.close();
+        w.focus();
+        w.print();
+      };
+    });
+  } catch (e) {
+    const box = $('#partners-body');
+    if (box) box.innerHTML = `Не удалось загрузить партнёров: ${esc(e.message)}`;
+  }
+}
+
 async function viewFraud(container) {
   container.innerHTML = fraudShell();
   $('#fraud-status').value = fraud.status;
@@ -1519,8 +1576,74 @@ async function viewFraud(container) {
     try { toast((await api.post('/api/v1/pool-fraud/purge', {})).message, 'ok', '🧹'); }
     catch (e) { toast(e.message, 'err', '🧹'); }
   };
+  $('#fraud-graph-btn').onclick = () => {
+    const box = $('#fraud-graph');
+    if (box.classList.contains('hidden')) { box.classList.remove('hidden'); fraudLoadGraph(box); }
+    else box.classList.add('hidden');
+  };
   fraudLoadStats();
   fraudLoadTable();
+}
+
+// v1.38.0: граф связей — SVG-кластеры участников (устройство/подсеть/реферал)
+const FRAUD_EDGE_COLORS = { device: '#c0392b', subnet: '#e5770f', referral: '#2471a3' };
+
+async function fraudLoadGraph(box) {
+  box.innerHTML = '<div class="form-hint">Строим граф…</div>';
+  try {
+    const d = await api.get('/api/v1/pool-fraud/graph?days=30&max_nodes=60');
+    if (!d.nodes.length) {
+      box.innerHTML = '<div class="info-callout">Связанных групп не найдено — признаки общих устройств, подсетей и реферальных пар за 30 дней отсутствуют.</div>';
+      return;
+    }
+    // раскладка: кластеры сеткой, участники — по окружности центра кластера
+    const ids = d.nodes.map((n) => n.id);
+    const pos = {};
+    const edges = d.edges.map((e) => ({ ...e }));
+    // кластеры уже приходят связные; раскладываем по компонентам
+    const adj = {}; ids.forEach((i) => adj[i] = []);
+    edges.forEach((e) => { adj[e.a].push(e.b); adj[e.b].push(e.a); });
+    const seen = new Set(); const comps = [];
+    ids.forEach((s) => { if (seen.has(s)) return;
+      const q = [s]; const comp = []; seen.add(s);
+      while (q.length) { const v = q.pop(); comp.push(v);
+        adj[v].forEach((w) => { if (!seen.has(w)) { seen.add(w); q.push(w); } }); }
+      comps.push(comp); });
+    comps.sort((a, b) => b.length - a.length);
+    const perRow = 3, cellW = 300, cellH = 260;
+    const rows = Math.ceil(comps.length / perRow);
+    const W = Math.min(perRow, comps.length) * cellW, H = rows * cellH;
+    comps.forEach((comp, ci) => {
+      const cx = (ci % perRow) * cellW + cellW / 2;
+      const cy = Math.floor(ci / perRow) * cellH + cellH / 2;
+      const R = Math.min(cellW, cellH) / 2 - 46;
+      comp.forEach((uid, i) => {
+        const a = (2 * Math.PI * i) / comp.length - Math.PI / 2;
+        pos[uid] = [cx + R * Math.cos(a), cy + R * Math.sin(a)];
+      });
+    });
+    const byId = {}; d.nodes.forEach((n) => byId[n.id] = n);
+    const lines = edges.map((e) => {
+      const [x1, y1] = pos[e.a], [x2, y2] = pos[e.b];
+      const c = FRAUD_EDGE_COLORS[e.kind] || '#999';
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${c}" stroke-width="1.6" stroke-opacity="0.75"><title>${e.kind === 'device' ? 'общее устройство' : e.kind === 'subnet' ? 'общая подсеть /24' : 'реферальная пара'}</title></line>`;
+    }).join('');
+    const dots = d.nodes.map((n) => {
+      const [x, y] = pos[n.id];
+      const fill = n.quarantined ? '#c0392b' : n.risk >= 40 ? '#e5770f' : '#4a7f4a';
+      return `<g class="fraud-node" data-uid="${n.id}" style="cursor:pointer">
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" fill="${fill}" stroke="#fff" stroke-width="1.5"><title>${esc(n.label)} · риск ${n.risk}${n.quarantined ? ' · карантин' : ''}</title></circle>
+        <text x="${x.toFixed(1)}" y="${(y + 24).toFixed(1)}" text-anchor="middle" font-size="10" fill="#555">${esc(n.label.slice(0, 16))}</text></g>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="info-callout" style="margin-bottom:6px">Группы участников за ${d.days} дн. Цвет точки: красный — карантин, оранжевый — риск ≥ 40, зелёный — норма.
+        Рёбра: <span style="color:#c0392b">■</span> общее устройство · <span style="color:#e5770f">■</span> общая подсеть · <span style="color:#2471a3">■</span> реферальная пара.
+        Нажмите на участника — карточка. Групп: <b>${comps.length}</b>.</div>
+      <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="${Math.min(W, 900)}" height="${H * Math.min(W, 900) / W}" style="background:#fafafa;border:1px solid #e3e3e3;border-radius:8px">${lines}${dots}</svg></div>`;
+    box.querySelectorAll('.fraud-node').forEach((g) => {
+      g.onclick = () => fraudUserCard(g.dataset.uid);
+    });
+  } catch (e) { box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`; }
 }
 
 // --------------------------------------------------------------------------
@@ -2040,6 +2163,7 @@ function route(silent = false) {
     export: viewExport, mapping: viewMapping, users: viewUsers,
     audit: viewAudit, settings: viewSettings, companies: viewCompanies,
     public: viewPublic,                   // v1.31.0: приём чека в пул
+    partners: viewPartners,               // v1.38.0: партнёры и кэшбэк
     my: viewPoolAccount,                  // v1.32.0: кабинет участника пула
     pooladmin: viewPoolAdmin,             // v1.33.0: гео/отрасли + модерация
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
@@ -3572,6 +3696,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.38.0': [
+    { icon: '🕸', title: 'Чек-Пул: граф связей антифрода и партнёрский кэшбэк с QR',
+      text: 'Рост по плану. В панели антифрода появился граф связей: участники, объединённые общим устройством, подсетью или реферальной парой, рисуются кластерами — «фермы аккаунтов» видны сразу; нажатие на участника открывает его карточку. Запущен партнёрский кэшбэк: магазины-партнёры ставят у кассы QR со ссылкой на страницу сдачи чека, участник сдаёт чек партнёра и получает баллы — процент от суммы чека (до 100 за чек), после верификации; в карантине антифрода кэшбэк приостанавливается. Список партнёров и печатные QR — на новой странице «Партнёры и кэшбэк». ML-классификатор позиций — по плану после накопления корпуса (5–10 тыс. позиций); платное API партнёров — в следующем выпуске.' },
+  ],
   '1.37.0': [
     { icon: '🏢', title: 'Чек-Пул: подбор чеков для компаний — отчёт из открытой базы',
       text: 'У бухгалтера появился раздел «Подбор из пула»: фильтры по периоду, региону, городу, отрасли, ИНН, сумме и названию магазина или товару; привязка чеков к компании одним нажатием и выгрузка CSV для АО-1 и Excel. Авто-подбор собирает набор чеков под сумму отчёта с точностью ±5%. Привязанный чек чужим компаниям не виден, а участник сохраняет свои баллы. Квота на компанию — 100 чеков в месяц (настраивается администратором; тариф — подписка 5 000 ₽/мес или 50 ₽/чек — решается при запуске). «Свои» сотрудники: если логин сотрудника — корпоративный e-mail и он подтверждён в кабинете пула, его чеки уходят компании автоматически, минуя общий пул.' },
@@ -6037,7 +6165,7 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 8 · v1.37.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 9 · v1.38.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
         мы проверяем чек по официальным источникам и начисляем балл; компании

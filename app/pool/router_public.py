@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from . import antifraud, engage, ingest, referral
+from . import antifraud, engage, ingest, partners, referral
 
 router = APIRouter(prefix="/api/v1/public/pool", tags=["pool-public"])
 
@@ -299,3 +299,31 @@ def public_leaderboard(city: str = Query("", max_length=128),
         data["entries"] = [e for e in data["entries"]
                            if e["city"].lower() == want]
     return data
+
+
+# --------------------------------------------------------------------------
+# v1.38.0: партнёрская программа — список и QR «на кассе» (кэшбэк-канал)
+# --------------------------------------------------------------------------
+@router.get("/partners", summary="Чек-Пул: партнёры и кэшбэк")
+def partners_list():
+    return {"items": partners.list_all(),
+            "cap": partners.CASHBACK_CAP,
+            "note": "Сдайте чек партнёра — получите кэшбэк баллами "
+                    "(процент от суммы чека, до 100 баллов за чек)"}
+
+
+@router.get("/partners/qr.svg", summary="Чек-Пул: QR «на кассе» (SVG)")
+def partner_qr(code: str = Query("", max_length=32),
+               db: Session = Depends(get_db)):
+    p = partners.find_by_code(code)
+    if p is None:
+        raise HTTPException(404, "Партнёр не найден")
+    from . import mailer
+    link = f"{mailer.base_url(db)}/#/pub"
+    try:
+        svg = partners.qr_svg(link)
+    except ValueError:
+        raise HTTPException(422, "Не удалось построить QR")
+    from fastapi import Response
+    return Response(content=svg, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
