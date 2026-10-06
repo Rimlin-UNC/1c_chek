@@ -164,7 +164,8 @@ def ensure_pool_schema(engine) -> None:
         PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
         PoolPoint.__table__, PoolConsent.__table__, PoolToken.__table__,
         PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__,
-        PoolReferral.__table__])
+        PoolReferral.__table__, PoolAchievement.__table__,
+        PoolWithdrawal.__table__])
     insp = sqlalchemy.inspect(engine)
     cols = {c["name"] for c in insp.get_columns("pool_users")}
     add_cols = (
@@ -284,4 +285,41 @@ class PoolReferral(Base):
     referred_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("pool_users.id"))
     code_used: Mapped[str] = mapped_column(String(16), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------
+# v1.36.0 «Вовлечение»: ачивки («50 чеков», «3 отрасли», «первый чек
+# региона»). UNIQUE (user_id, code) — каждая ачивка выдаётся один раз.
+# --------------------------------------------------------------------------
+class PoolAchievement(Base):
+    __tablename__ = "pool_achievements"
+    __table_args__ = (
+        Index("idx_pool_ach_user", "user_id"),
+        UniqueConstraint("user_id", "code", name="uq_pool_ach_user_code"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("pool_users.id"))
+    code: Mapped[str] = mapped_column(String(32), default="")
+    awarded_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------
+# v1.36.0: заявка на вывод баллов. Телефон храним ТОЛЬКО хэшем
+# (sha256) — 152-ФЗ; SMS-подтверждение первого вывода — код в
+# pool_tokens (purpose="sms"), шлюз подключается отдельным решением.
+# --------------------------------------------------------------------------
+class PoolWithdrawal(Base):
+    __tablename__ = "pool_withdrawals"
+    __table_args__ = (Index("idx_pool_wd_user", "user_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("pool_users.id"))
+    points: Mapped[int] = mapped_column(Integer, default=0)
+    phone_hash: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    sms_required: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

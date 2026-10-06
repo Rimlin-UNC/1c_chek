@@ -18,7 +18,8 @@ import pytest
 
 from app.database import engine
 from app.pool import ingest as pool
-from app.pool.models import (PoolReferral,
+from app.pool.models import (PoolAchievement, PoolReferral,
+                             PoolWithdrawal,
                              PoolConsent, PoolItem, PoolPoint, PoolReceipt,
                              PoolUser, ensure_pool_schema)
 from app.services.external import ExternalItem, ExternalResult
@@ -80,6 +81,8 @@ def _wipe(db):
                 db.query(PoolPoint).filter(
                     PoolPoint.user_id.in_(vid_ids)).delete(
                     synchronize_session=False)
+            db.query(PoolAchievement).delete(synchronize_session=False)
+            db.query(PoolWithdrawal).delete(synchronize_session=False)
             db.query(PoolReferral).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
             db.query(PoolUser).filter(PoolUser.vid.isnot(None)).delete(

@@ -20,13 +20,13 @@ import time
 import uuid
 from collections import deque
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from . import antifraud, ingest, referral
+from . import antifraud, engage, ingest, referral
 
 router = APIRouter(prefix="/api/v1/public/pool", tags=["pool-public"])
 
@@ -273,3 +273,18 @@ def ref_info(code: str, db: Session = Depends(get_db)):
     else:
         label = "участник Чек-Пула"
     return {"valid": True, "label": label}
+
+
+@router.get("/leaderboard", summary="Чек-Пул: лидерборд месяца (публично)")
+def public_leaderboard(city: str = Query("", max_length=128),
+                       db: Session = Depends(get_db)):
+    """Топ-10 месяца + стендинг регионов. Только маски и числа (152-ФЗ)."""
+    if not ingest.pool_enabled(db):
+        return {"month": "", "entries": [], "regions": [],
+                "participants": 0, "me": None}
+    data = engage.leaderboard(db, user=None)
+    want = (city or "").strip().lower()
+    if want:
+        data["entries"] = [e for e in data["entries"]
+                           if e["city"].lower() == want]
+    return data

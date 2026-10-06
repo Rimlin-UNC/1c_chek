@@ -30,11 +30,13 @@ def _or_like(column, s: str):
 def pool_overview(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from ..services import appsettings
     from . import ingest
+    from . import engage
     return {
         "enabled": ingest.pool_enabled(db),
         "offerta": ingest.OFFERTA_SHORT,
         "daily_limit": ingest.DAILY_LIMIT,
         "points_per_receipt": ingest.POINTS_PER_RECEIPT,
+        "withdrawals": engage.admin_counts(db),   # v1.36.0: заявки на вывод
         **ingest.overview(db),
     }
 

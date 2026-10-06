@@ -198,6 +198,7 @@ function publicFormHTML() {
   <div id="pub-offerta-text" class="info-callout hidden" style="font-size:13px;margin-bottom:10px"></div>
   <button class="btn btn-primary btn-block" id="pub-submit">Отправить чек — получить балл</button>
   <div id="pub-msg" class="form-error hidden" style="margin-top:8px"></div>
+  <div id="pub-leaders" style="margin-top:14px"></div>
   <div id="pub-status" class="hidden" style="margin-top:12px"></div>
   <div id="pub-mine" style="margin-top:14px"></div>`;
 }
@@ -328,6 +329,7 @@ function bindPoolForm(root) {
         лимит ${info.daily_limit} чеков/сутки.`;
       const ot = $p('pub-offerta-text');
       if (ot) ot.textContent = info.offerta;
+      poolLoadLeadersPub(root);          // v1.36.0: лидерборд месяца
     } catch (e) { /* сеть могла мигнуть — форма остаётся */ }
     await loadMine();
   })();
@@ -461,6 +463,9 @@ function poolDashHTML() {
   <div class="card-title" style="margin-top:14px">🎁 Приглашайте — баллы вам и друзьям
     <span class="form-hint">(v1.35.0)</span></div>
   <div id="pool-invite" class="form-hint" style="margin:6px 0">Загружаем…</div>
+  <div class="card-title" style="margin-top:14px">🏆 Ачивки, лидерборд и вывод баллов
+    <span class="form-hint">(Этап 7 · v1.36.0)</span></div>
+  <div id="pool-engage" class="form-hint" style="margin:6px 0">Загружаем…</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
     <button class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
     <button class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
@@ -701,10 +706,83 @@ function poolLoadInvite(root) {
   });
 }
 
+function poolLeadersHTML(d, me) {
+  const rows = (d.entries || []).map((e, i) => `<tr>
+    <td class="num">${i + 1}</td>
+    <td>${esc(e.label)}${me && me.rank === i + 1 ? ' — <b>вы</b>' : ''}</td>
+    <td>${esc(e.city || '—')}</td>
+    <td class="num">${e.receipts}</td></tr>`).join('');
+  const regions = (d.regions || [])
+    .map((r, i) => `${i + 1}. ${esc(r.name)} (${r.receipts})`).join(' · ');
+  return `
+  <div class="card-title" style="margin-top:12px;font-size:15px">🏆 Лидерборд месяца
+    <span class="form-hint">${esc(d.month || '')} · участников: ${d.participants || 0}</span></div>
+  <div class="table-wrap"><table style="width:100%">
+    <thead><tr><th>#</th><th>Участник</th><th>Город</th><th>Чеков за месяц</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4">Пока пусто — сдайте чек и станьте первым</td></tr>'}</tbody></table></div>
+  ${me ? `<div class="form-hint" style="margin-top:4px">Ваше место: <b>${me.rank}</b> (${me.receipts} чеков за месяц)` +
+    (me.city ? ` · город «${esc(me.city)}»: ${me.city_rank}-е из ${me.city_participants}` : '') + `</div>` : ''}
+  ${regions ? `<div class="form-hint" style="margin-top:4px">Регионы месяца: ${regions}</div>` : ''}`;
+}
+
+function poolLoadLeadersPub(root) {
+  api.get('/api/v1/public/pool/leaderboard').then((d) => {
+    const box = root.querySelector('#pub-leaders');
+    if (!box || !(d.entries || []).length) return;
+    box.innerHTML = poolLeadersHTML(d, null);
+  }).catch(() => {});
+}
+
+function poolLoadEngage(root) {
+  Promise.all([
+    poolApi('GET', '/api/v1/pool-my/achievements'),
+    poolApi('GET', '/api/v1/pool-my/leaders'),
+    poolApi('GET', '/api/v1/pool-my/withdraw'),
+  ]).then(([ach, lead, wd]) => {
+    const box = root.querySelector('#pool-engage');
+    if (!box) return;
+    const chips = ach.items.map((a) => a.earned
+      ? `<span class="chip exported"><span class="dot"></span>🏅 ${esc(a.name)}</span>`
+      : `<span class="chip"><span class="dot"></span>${esc(a.name)} · ${a.progress}/${a.goal}</span>`).join(' ');
+    const pct = Math.min(100, Math.round(100 * (wd.points || 0) / (wd.goal || 1)));
+    box.innerHTML = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px">${chips}</div>
+      <div class="form-hint" style="margin:2px 0">🎯 Цель вывода: <b>${fmtInt(wd.points)}</b> из
+        <b>${fmtInt(wd.goal)}</b> баллов · минимум заявки — ${wd.min}.</div>
+      <div style="background:#e8e8e8;border-radius:6px;height:10px;max-width:360px;overflow:hidden;margin:6px 0">
+        <div style="background:#e5770f;height:100%;width:${pct}%"></div></div>
+      ${wd.active ? `<div class="form-hint">Активная заявка на ${fmtInt(wd.active.points)} баллов —
+        статус «${wd.active.status === 'pending_sms' ? 'ожидает SMS-подтверждение' : 'принята'}».
+        ${wd.active.sms_required ? 'Первый вывод подтверждается по SMS: код придёт, когда подключим шлюз.' : ''}</div>` : ''}
+      ${wd.can_withdraw ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
+        <input id="pool-wd-pts" type="number" min="${wd.min}" max="${wd.points}" value="${wd.min}" style="max-width:110px" aria-label="Сколько баллов вывести">
+        <input id="pool-wd-phone" placeholder="+7 900 000-00-00" style="max-width:190px" autocomplete="tel" aria-label="Телефон для выплаты">
+        <button class="btn btn-sm" id="pool-wd-send">Вывести баллы</button></div>
+        <div class="form-hint">Телефон нужен только для выплаты и хранится только хэшем.</div>` : ''}
+      ${poolLeadersHTML(lead, lead.me)}
+      ${wd.history.length ? `<div class="form-hint" style="margin-top:6px">Заявки: ${wd.history.map((h) =>
+        `${esc((h.at || '').slice(0, 10))} — ${fmtInt(h.points)} б. (${h.status === 'pending_sms' ? 'ждёт SMS' : h.status === 'pending' ? 'принята' : esc(h.status)})`).join(' · ')}</div>` : ''}`;
+    const send = root.querySelector('#pool-wd-send');
+    if (send) send.onclick = async () => {
+      try {
+        const r = await poolApi('POST', '/api/v1/pool-my/withdraw', {
+          points: parseInt(root.querySelector('#pool-wd-pts').value, 10) || 0,
+          phone: root.querySelector('#pool-wd-phone').value.trim() });
+        toast(r.message || 'Заявка принята', 'ok', '🏆');
+        poolLoadEngage(root);
+      } catch (err) { toast(err.message, 'warn', '🏆'); }
+    };
+  }).catch(() => {
+    const box = root.querySelector('#pool-engage');
+    if (box) box.innerHTML = '<span class="form-hint">Ачивки и вывод доступны, когда включён приём чеков.</span>';
+  });
+}
+
 function bindPoolDashboard(root) {
   poolLoadSummary(root);
   poolLoadReceipts(root, 1);
   poolLoadInvite(root);
+  poolLoadEngage(root);              // v1.36.0: ачивки, лидерборд, вывод
   const csv = root.querySelector('#pool-csv');
   if (csv) csv.onclick = poolDownloadCsv;
   const pr = root.querySelector('#pool-print');
@@ -3213,6 +3291,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.36.0': [
+    { icon: '🏆', title: 'Чек-Пул: ачивки, лидерборд месяца и вывод баллов',
+      text: 'Вовлечение по плану: за реальные чеки — ачивки «50 чеков», «3 отрасли» и «первый чек региона» (вы первопроходец — ваш чек первый из своего региона). В кабинете и публично на странице «Сдать чек» — лидерборд месяца: топ-10 участников и гонка регионов («ваш город на N-м месте»); видны только маскированные имена, город и число чеков, никаких телефонов и адресов. Добавилась цель вывода с прогресс-баром и заявка на вывод прямо в кабинете: минимум 100 баллов; телефон запрашивается только на этом шаге и хранится только хэшем; первый вывод проходит SMS-подтверждение — код заработает, когда подключим шлюз.' },
+  ],
   '1.35.0': [
     { icon: '🎁', title: 'Чек-Пул: приглашайте друзей — баллы за их первые шаги',
       text: 'У каждого кабинета появился код приглашения (YM-XXXXXX) и ссылка вида chek.ymaster.ru/#/r/КОД — вкладка «Приглашайте» в кабинете. Баллы начисляются не за регистрацию, а за реальные шаги приглашённого, причём с задержкой против накрутки: подтверждение почты +5, первый чек от 100 ₽ +20, пятый +50, двадцатый +150, пятидесятый +500; плюс 5% с проверенных чеков приглашённого — но не больше 200 баллов в месяц. Лимит — 50 приглашённых на человека, один уровень. Накрутка «сам себя пригласил» бессмысленна: общие устройства и подсети, мгновенные чеки и петли ловит антифрод из Этапа 5 — по таким парам выплаты приостанавливаются до разбора.' },
@@ -5670,7 +5752,7 @@ async function viewSettings(container) {
 
       ${isAdmin() && poolSet ? `
       <div class="glass card">
-        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 6 · v1.35.0)</span></div>
+        <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 7 · v1.36.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
         мы проверяем чек по официальным источникам и начисляем балл; компании

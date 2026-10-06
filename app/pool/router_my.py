@@ -18,8 +18,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import accounts, ingest, mailer, referral
-from .models import PoolItem, PoolPoint, PoolReceipt, PoolReferral, PoolUser
+from . import accounts, engage, ingest, mailer, referral
+from .models import (PoolItem, PoolPoint, PoolReceipt, PoolReferral,
+                     PoolUser)
 
 router = APIRouter(prefix="/api/v1/pool-my", tags=["pool-my"])
 
@@ -36,6 +37,15 @@ class EmailBody(BaseModel):
 
 class DeleteBody(BaseModel):
     password: str
+
+
+class WithdrawBody(BaseModel):
+    points: int
+    phone: str
+
+
+class ConfirmBody(BaseModel):
+    code: str
 
 
 @router.get("/summary", summary="Чек-Пул: сводка кабинета")
@@ -252,3 +262,57 @@ def referrals(db: Session = Depends(get_db),
             "limit": referral.REFERRAL_LIMIT,
             "next_bonus": referral.hint_for(db, user),
             "items": items}
+
+
+# --------------------------------------------------------------------------
+# v1.36.0 «Вовлечение»: ачивки, лидерборд месяца, вывод баллов
+# --------------------------------------------------------------------------
+@router.get("/achievements", summary="Чек-Пул: ачивки участника")
+def my_achievements(db: Session = Depends(get_db),
+                    user: PoolUser = Depends(accounts.require_pool_user)):
+    if not ingest.pool_enabled(db):
+        raise HTTPException(403, "Приём чеков выключен")
+    engage.evaluate(db, user)               # догоняем задним числом
+    db.commit()
+    return {"items": engage.achievements_payload(db, user)}
+
+
+@router.get("/leaders", summary="Чек-Пул: лидерборд месяца с моим местом")
+def my_leaders(db: Session = Depends(get_db),
+               user: PoolUser = Depends(accounts.require_pool_user)):
+    if not ingest.pool_enabled(db):
+        raise HTTPException(403, "Приём чеков выключен")
+    return engage.leaderboard(db, user=user)
+
+
+@router.get("/withdraw", summary="Чек-Пул: цель и заявки на вывод")
+def withdraw_status(db: Session = Depends(get_db),
+                    user: PoolUser = Depends(accounts.require_pool_user)):
+    if not ingest.pool_enabled(db):
+        raise HTTPException(403, "Приём чеков выключен")
+    return engage.status_for(db, user)
+
+
+@router.post("/withdraw", summary="Чек-Пул: заявка на вывод баллов")
+def withdraw_request(body: WithdrawBody, db: Session = Depends(get_db),
+                     user: PoolUser = Depends(accounts.require_pool_user)):
+    if not ingest.pool_enabled(db):
+        raise HTTPException(403, "Приём чеков выключен")
+    ok, payload = engage.request_withdrawal(db, user, body.points, body.phone)
+    if not ok:
+        raise HTTPException(409 if "уже есть" in payload.get("error", "")
+                            else 422, payload["error"])
+    db.commit()
+    return {"ok": True, **payload}
+
+
+@router.post("/withdraw/confirm", summary="Чек-Пул: SMS-подтверждение вывода")
+def withdraw_confirm(body: ConfirmBody, db: Session = Depends(get_db),
+                     user: PoolUser = Depends(accounts.require_pool_user)):
+    if not ingest.pool_enabled(db):
+        raise HTTPException(403, "Приём чеков выключен")
+    ok, msg = engage.confirm_withdrawal(db, user, body.code)
+    if not ok:
+        raise HTTPException(400, msg)
+    db.commit()
+    return {"ok": True, "message": msg}

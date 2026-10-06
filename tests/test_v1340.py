@@ -20,7 +20,8 @@ import pytest
 
 from app.database import SessionLocal, engine
 from app.pool import antifraud
-from app.pool.models import (PoolReferral,
+from app.pool.models import (PoolAchievement, PoolReferral,
+                             PoolWithdrawal,
                              PoolConsent, PoolFingerprint, PoolItem, PoolIpLog,
                              PoolPoint, PoolReceipt, PoolSignal, PoolToken,
                              PoolUser, ensure_pool_schema)
@@ -69,6 +70,8 @@ def _wipe(db):
             db.query(PoolIpLog).delete(synchronize_session=False)
             db.query(PoolFingerprint).delete(synchronize_session=False)
             db.query(PoolToken).delete(synchronize_session=False)
+            db.query(PoolAchievement).delete(synchronize_session=False)
+            db.query(PoolWithdrawal).delete(synchronize_session=False)
             db.query(PoolReferral).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
             db.query(PoolUser).filter(

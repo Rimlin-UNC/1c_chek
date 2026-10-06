@@ -84,9 +84,41 @@ def _cities_by_region():
     return [(c, str(code)) for c, code in _load("cities").items()]
 
 
-def _extract_city(address: str) -> str:
-    m = re.search(r"\bг(?:ор|ород)?\s+([а-яa-z][а-яa-z\-]{2,30})", address)
-    return m.group(1).capitalize() if m else ""
+_SMALL = {"на", "в", "по", "де", "и", "при"}
+
+
+def _pretty(name: str) -> str:
+    """«санкт-петербург» → «Санкт-Петербург», «ростов-на-дону» →
+    «Ростов-на-Дону» (частицы — строчными)."""
+    out: list[str] = []
+    first = True
+    for part in re.split(r"([ \-])", name or ""):
+        if part in (" ", "-"):
+            out.append(part)
+            continue
+        if first or part not in _SMALL:
+            part = part[:1].upper() + part[1:]
+        out.append(part)
+        first = False
+    return "".join(out)
+
+
+def _extract_city(raw: str) -> str:
+    """Город из адреса. Работаем с ОРИГИНАЛЬНОЙ строкой: дефисы и
+    регистр важны («г Санкт-Петербург» → «Санкт-Петербург», а не
+    «Санкт» — нормализация превращает дефис в пробел)."""
+    m = re.search(
+        r"г(?:ор|ород)?[.\s]+([A-Za-zА-ЯЁа-яё][\w\- ]{1,39}?)"
+        r"(?=\s*,|\s+(?:ул|улица|проспект|просп|пр-кт|пр-т|пр|шоссе|ш|наб|"
+        r"бул|пер|мкр|р-н|район|тер|с|п|д)\b|[.;]|$)",
+        raw or "", flags=re.IGNORECASE)
+    cand = (m.group(1).strip(" ,.;-") if m else "")
+    if not cand:
+        return ""
+    for city in _load("cities"):                 # каноничное имя справочника
+        if _norm(city) == _norm(cand):
+            return _pretty(city)
+    return _pretty(cand)
 
 
 def resolve_region(address: str) -> tuple[str, str, str]:
@@ -94,6 +126,7 @@ def resolve_region(address: str) -> tuple[str, str, str]:
     «ул. Тверская» не должна давать Тверскую область: сначала ищем в части
     адреса ДО уличных ключевых слов, затем города по всей строке."""
     a = _norm(address)
+    raw = address or ""
     if not a.strip():
         return "", "", ""
     # часть адреса до улицы: регион и город почти всегда там
@@ -101,18 +134,18 @@ def resolve_region(address: str) -> tuple[str, str, str]:
         r"\s(?:ул|улица|проспект|пр|пр-кт|пр-т|шоссе|ш|наб|бул|пер|мкр)\s", a)[0]
     for alias, code in _region_aliases():
         if _norm(alias) in prefix:
-            return code, _extract_city(a), "address"
+            return code, _extract_city(raw), "address"
     for city, code in sorted(_cities_by_region(), key=lambda x: -len(x[0])):
         if _norm(city) in prefix:
-            return code, _extract_city(a) or city.capitalize(), "address"
+            return code, _extract_city(raw) or _pretty(city), "address"
     # город может стоять после улицы
     for city, code in sorted(_cities_by_region(), key=lambda x: -len(x[0])):
         if _norm(city) in a:
-            return code, _extract_city(a) or city.capitalize(), "address"
+            return code, _extract_city(raw) or _pretty(city), "address"
     # полное название региона (с суффиксом) по всей строке — надёжный случай
     for r in regions():
         if _norm(r["name"]) in a:
-            return r["code"], _extract_city(a), "address"
+            return r["code"], _extract_city(raw), "address"
     return "", "", ""
 
 

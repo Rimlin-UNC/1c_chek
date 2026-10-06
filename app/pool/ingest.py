@@ -202,10 +202,20 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         else:
             points = POINTS_PER_RECEIPT
             add_points(db, user, points, "receipt", receipt.id)
+        # v1.36.0: flush ДО хуков — ядро с autoflush=False иначе видит чек
+        # со старым статусом (бонусы и ачивки запаздывают на один чек)
+        db.flush()
         # v1.35.0: реферальные бонусы пригласившему (пороги + lifetime 5%)
         try:
             from . import referral
             referral.on_verified_receipt(db, user, receipt)
+        except Exception:                                 # noqa: BLE001
+            pass
+        # v1.36.0: ачивки вовлечения («50 чеков», «3 отрасли», «первый
+        # чек региона») — разметка не ломает приём
+        try:
+            from . import engage
+            engage.on_verified_receipt(db, user, receipt)
         except Exception:                                 # noqa: BLE001
             pass
     receipt.points_awarded = points

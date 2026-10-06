@@ -19,9 +19,10 @@ import pytest
 
 from app.database import SessionLocal, engine
 from app.pool import antifraud, referral
-from app.pool.models import (PoolConsent, PoolFingerprint, PoolItem, PoolIpLog,
-                             PoolPoint, PoolReceipt, PoolReferral, PoolSignal,
-                             PoolToken, PoolUser, ensure_pool_schema)
+from app.pool.models import (PoolAchievement, PoolConsent, PoolFingerprint,
+                             PoolItem, PoolIpLog, PoolPoint, PoolReceipt,
+                             PoolReferral, PoolSignal, PoolToken, PoolUser,
+                             PoolWithdrawal, ensure_pool_schema)
 from app.services.external import ExternalItem, ExternalResult
 
 ensure_pool_schema(engine)
@@ -60,6 +61,8 @@ def _wipe(db):
                 db.query(PoolFingerprint).filter(
                     PoolFingerprint.user_id.in_(ids)).delete(
                     synchronize_session=False)
+            db.query(PoolAchievement).delete(synchronize_session=False)
+            db.query(PoolWithdrawal).delete(synchronize_session=False)
             db.query(PoolReferral).delete(synchronize_session=False)
             db.query(PoolSignal).delete(synchronize_session=False)
             db.query(PoolIpLog).delete(synchronize_session=False)
@@ -522,15 +525,12 @@ class TestReferralsApi:
 
 class TestVersion1350:
     def test_versions_synced(self):
+        # пин 1.35.0 перенесён в tests/test_v1360.py (версия ушла вперёд);
+        # структурные проверки стилей пинов остаются в текущей версии
         cfg = open("app/config.py", encoding="utf-8").read()
-        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.35.0"
-        idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
+        assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
-        mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert f'"version": "{ver}"' in mf
+        assert "ymaster-check-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -546,7 +546,7 @@ class TestVersion1350:
         assert "pool-invite" in js and "/api/v1/pool-my/referrals" in js
         assert "ref_code: poolRefGet()" in js
         assert "pub-ref" in js and "p-ref-hint" in js
-        assert "(Этап 6 · v1.35.0)" in js
+        # метку «(Этап 6 · v1.35.0)» сменила «(Этап 7 · v1.36.0)» — пин в v1360
 
     def test_core_and_model(self):
         assert "pool_" not in open("app/models.py", encoding="utf-8").read()
