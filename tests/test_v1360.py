@@ -263,6 +263,23 @@ class TestAchievements:
         db.close()
         assert new == []
 
+    def test_region_first_multi_region_once(self):
+        """Регрессия v1.36.0: участник первый сразу в ДВУХ регионах —
+        REGION_FIRST выдаётся один раз, без IntegrityError."""
+        c = _client()
+        me = _reg(c, "ach-multi@x.ru")
+        db = _db()
+        u = _user(db, me["user"]["id"])
+        _vreceipt(db, u, region="66", city="Екатеринбург", industry="food")
+        _vreceipt(db, u, region="39", city="Калининград", industry="fuel")
+        new = engage.evaluate(db, u)
+        db.commit()
+        rows = (db.query(PoolAchievement)
+                .filter_by(user_id=u.id, code="REGION_FIRST").all())
+        db.close()
+        assert new == ["REGION_FIRST"]
+        assert len(rows) == 1, "ачивка должна быть одна"
+
     def test_achievements_endpoint_and_progress(self):
         c = _client()
         me = _reg(c, "ach-api@x.ru")

@@ -81,13 +81,18 @@ def label_for(user: PoolUser) -> str:
 
 
 # --- ачивки -----------------------------------------------------------------
-def _award(db: Session, user: PoolUser, code: str, new: list[str]) -> None:
+def _award(db: Session, user: PoolUser, code: str, new: list[str],
+           seen: set[str]) -> None:
+    """Выдать ачивку один раз. seen — выданные в этом вызове: ядро с
+    autoflush=False не видит только что добавленные строки запросом."""
+    if code in seen:
+        return
     exists = (db.query(PoolAchievement)
               .filter_by(user_id=user.id, code=code).first())
     if exists is None:
         db.add(PoolAchievement(user_id=user.id, code=code))
-        if code not in new:
-            new.append(code)
+        seen.add(code)
+        new.append(code)
 
 
 def evaluate(db: Session, user: PoolUser) -> list[str]:
@@ -95,17 +100,19 @@ def evaluate(db: Session, user: PoolUser) -> list[str]:
     Идемпотентно: безопасно вызывать на каждом верифицированном чеке
     и при чтении кабинета (догоняет задним числом)."""
     new: list[str] = []
+    seen: set[str] = set()
     vr = (db.query(PoolReceipt)
           .filter(PoolReceipt.pool_user_id == user.id,
                   PoolReceipt.status == "verified").all())
     n = len(vr)
     if n >= ACHIEVEMENTS["RECEIPTS_50"]["goal"]:
-        _award(db, user, "RECEIPTS_50", new)
+        _award(db, user, "RECEIPTS_50", new, seen)
     industries = {r.industry for r in vr if (r.industry or "").strip()}
     if len(industries) >= ACHIEVEMENTS["INDUSTRIES_3"]["goal"]:
-        _award(db, user, "INDUSTRIES_3", new)
+        _award(db, user, "INDUSTRIES_3", new, seen)
     # «первый чек региона»: самый ранний верифицированный чек региона —
-    # наш (по времени верификации, при равенстве — по времени создания)
+    # наш (по времени верификации, при равенстве — по времени создания).
+    # Участник может быть первым сразу в нескольких регионах — дедуп в seen.
     regions = {r.region_code for r in vr if (r.region_code or "").strip()}
     for code in regions:
         first = (db.query(PoolReceipt)
@@ -117,7 +124,7 @@ def evaluate(db: Session, user: PoolUser) -> list[str]:
                            PoolReceipt.created_at, PoolReceipt.id)
                  .first())
         if first is not None and first.pool_user_id == user.id:
-            _award(db, user, "REGION_FIRST", new)
+            _award(db, user, "REGION_FIRST", new, seen)
     return new
 
 
