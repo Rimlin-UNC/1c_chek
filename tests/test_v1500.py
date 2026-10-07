@@ -14,7 +14,7 @@ class TestVersion1500:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.50.0"
+        # точный пин 1.50.0 перенесён в tests/test_v1510.py (версия ушла вперёд)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.49.0" not in idx
@@ -167,7 +167,8 @@ class TestStatusEndpointAndUI:
         r = client.get("/api/v1/admin/update/status", headers=adm)
         assert r.status_code == 200
         body = r.json()
-        assert body["current_version"] == "1.50.0"
+        from app.config import settings as _s
+        assert body["current_version"] == _s.APP_VERSION   # динамический пин
         assert "phases" in body["job"]
         assert isinstance(body["history"], list)
 

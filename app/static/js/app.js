@@ -357,6 +357,47 @@ function poolStatusChip(st) {
   return '<span class="chip"><span class="dot"></span>' + esc(st) + '</span>';
 }
 
+// ==========================================================================
+//  v1.51.0: живая камера там, где сдаётся чек — тот же модуль scanner.js,
+//  что в разделе «Сканирование»: распознавание в браузере, антисбливание.
+// ==========================================================================
+function openPoolCameraScan(onText) {
+  let cam = null;
+  const { slot, close } = openModal(`
+    <div class="modal-title">📸 Сканирование QR-кода чека</div>
+    <div class="camera-viewport" style="max-width:440px">
+      <video id="poolcam-video" playsinline muted></video>
+      <div class="scan-frame" id="poolcam-frame" style="display:none"><span class="corner"></span></div>
+      <div class="scan-line" id="poolcam-line" style="display:none"></div>
+      <div class="camera-overlay" id="poolcam-overlay">
+        <span class="big-ico">📷</span>
+        <div>Наведите камеру на QR-код чека.<br>Код распознаётся автоматически.</div>
+        <button class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
+      </div>
+    </div>
+    <p class="form-hint" style="margin-top:8px">Совет: QR с экрана другого телефона тоже сканируется.
+    Чужой QR-код (не чек) игнорируется — ждём реквизиты 54-ФЗ.</p>`,
+    { onClose: () => { if (cam) { cam.stop(); cam = null; } } });
+  const start = slot.querySelector('#poolcam-start');
+  if (start) start.onclick = async () => {
+    const video = slot.querySelector('#poolcam-video');
+    try {
+      cam = new CameraScanner(video, (text) => {
+        const p = parseQrClient(text);
+        if (!p) return;                       // не чековый QR — ждём дальше
+        if (cam) { cam.stop(); cam = null; }
+        close();
+        onText(text, p);
+      });
+      await cam.start();
+      slot.querySelector('#poolcam-overlay').classList.add('hidden');
+      slot.querySelector('#poolcam-frame').style.display = '';
+      slot.querySelector('#poolcam-line').style.display = '';
+      toast('Камера включена — наведите на QR-код чека', 'info', '📸');
+    } catch (e) { toast(e.message, 'err', 'Камера недоступна'); }
+  };
+}
+
 function publicFormHTML() {
   return `
   <div id="pub-ref" class="info-callout hidden" style="margin-bottom:8px"></div>
@@ -368,8 +409,11 @@ function publicFormHTML() {
   <div class="form-hint" style="margin:2px 0 8px">Подтвердите e-mail в кабинете — чеки автоматически будут уходить
     вашей компании, минуя общий пул.</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+    <button class="btn btn-sm btn-primary" id="pub-cam"
+            title="Живое сканирование камерой — как в разделе «Сканирование»">📸 Сканировать камерой</button>
     <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
       <input id="pub-photo" type="file" accept="image/*" capture="environment" class="hidden"></label>
+    <span class="form-hint" style="align-self:center">фото чека можно просто перетащить на форму</span>
   </div>
   <div id="pub-photo-hint" class="form-hint hidden" style="margin:4px 0 8px"></div>
   <input id="pub-hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true"
@@ -386,7 +430,7 @@ function publicFormHTML() {
   <div id="pub-mine" style="margin-top:14px"></div>`;
 }
 
-function bindPoolForm(root) {
+function bindPoolForm(root, opts) {
   const t0 = Date.now();
   const $p = (id) => root.querySelector('#' + id);
   const show = (id, on) => { const el = $p(id); if (el) el.classList.toggle('hidden', !on); };
@@ -413,10 +457,9 @@ function bindPoolForm(root) {
     } catch (e) { return null; }
   };
 
-  const photo = $p('pub-photo');
-  if (photo) photo.onchange = async () => {
-    const f = photo.files && photo.files[0];
-    if (!f) return;
+  // v1.51.0: единый скан-механизм (фото / перетаскивание / камера) во всех
+  // местах сдачи чека — распознавание то же, что в разделе «Сканирование»
+  const decodeToQr = async (f) => {
     const hint = $p('pub-photo-hint');
     show('pub-photo-hint', true);
     if (hint) hint.textContent = 'Ищу QR на фото…';
@@ -427,8 +470,31 @@ function bindPoolForm(root) {
       const p = valid[0];
       if (hint) hint.textContent = 'QR распознан: ФН ' + p.fn + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
     } catch (e) { if (hint) hint.textContent = e.message || 'Не удалось прочитать фото'; }
+  };
+  const photo = $p('pub-photo');
+  if (photo) photo.onchange = async () => {
+    const f = photo.files && photo.files[0];
+    if (!f) return;
+    await decodeToQr(f);
     photo.value = '';
   };
+  // фото можно перетащить прямо на форму
+  root.addEventListener('dragover', (e) => e.preventDefault());
+  root.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const fs = [...((e.dataTransfer && e.dataTransfer.files) || [])]
+      .filter((f) => /^image\//.test(f.type));
+    if (fs.length) decodeToQr(fs[0]);
+  });
+  // живая камера — тот же модуль scanner.js, что в разделе «Сканирование»
+  const camBtn = $p('pub-cam');
+  if (camBtn) camBtn.onclick = () => openPoolCameraScan((text, p) => {
+    $p('pub-qr').value = text;
+    const hint = $p('pub-photo-hint');
+    show('pub-photo-hint', true);
+    if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + p.fn
+      + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
+  });
 
   const pollStatus = (fn) => {
     const box = $p('pub-status');
@@ -441,6 +507,10 @@ function bindPoolForm(root) {
       const row = my && my.receipts.find(r => r.fn === fn);
       if (row) {
         clearInterval(timer);
+        // v1.51.0: кабинет обновляет сводку, когда чек дошёл до проверки
+        if (opts && typeof opts.onDone === 'function') {
+          try { opts.onDone(row); } catch (e) { /* не мешаем показу статуса */ }
+        }
         const extra = row.status === 'verified'
           ? `Балл начислен — всего у вас <b>${fmtInt(my.points)}</b>.`
           : (row.status === 'pending'
@@ -637,6 +707,11 @@ function poolAuthHTML() {
 
 function poolDashHTML() {
   return `
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+    <button class="btn btn-primary btn-sm" id="pool-submit-open"
+            title="Камера, фото или строка QR — как на странице «Сдать чек»">📸 Сдать чек сканером</button>
+    <span class="form-hint">камера, фото или вставка строки — баллы зачисляются автоматически</span>
+  </div>
   <div id="pool-summary" class="form-hint">Загружаем…</div>
   <div class="form-grid" style="margin:10px 0">
     <label class="field"><span>Баллы</span><input id="pool-pts" value="—" disabled></label>
@@ -1291,6 +1366,26 @@ async function poolApiKeysLoad() {
 }
 
 function bindPoolDashboard(root) {
+
+  // v1.51.0: сдать чек прямо из кабинета — та же форма и тот же сканер
+  // (камера / фото / перетаскивание / строка), что на странице «Сдать чек»
+  const pso = root.querySelector('#pool-submit-open');
+  if (pso) pso.onclick = () => {
+    const { slot, close } = openModal(`
+      <div class="modal-title">🧾 Сдать чек в Чек-Пул</div>
+      <div id="pool-submit-form"></div>`);
+    const box = slot.querySelector('#pool-submit-form');
+    box.innerHTML = publicFormHTML();
+    const leaders = box.querySelector('#pub-leaders');
+    if (leaders) leaders.remove();          // в кабинете лидерборд не нужен
+    const mine = box.querySelector('#pub-mine');
+    if (mine) mine.remove();                // «мои чеки» — прямо в кабинете
+    bindPoolForm(box, { onDone: () => {
+      poolLoadSummary(root); poolLoadReceipts(root, 1);
+      toast('Чек принят — статус виден в кабинете', 'ok', '🧾 Чек-Пул');
+      setTimeout(close, 2500);
+    } });
+  };
 
   poolLoadSummary(root);
   poolLoadReceipts(root, 1);
@@ -4199,6 +4294,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.51.0': [
+    { icon: '📸', title: 'Сканер чека — везде, где сдаётся чек',
+      text: 'Тот же отлаженный сканер, что в разделе «Сканирование», теперь на странице «Сдать чек» и в кабинете «Мой Чек-Пул»: живая камера (распознаёт автоматически и игнорирует чужие QR-коды), фото и перетаскивание снимка на форму. Участникам пула больше не нужно никуда переходить — сдать чек можно прямо из кабинета.' },
+  ],
   '1.50.0': [
     { icon: '🔄', title: 'Обновление: видно каждый шаг',
       text: 'Процесс обновления стал пошаговым: резервная копия, загрузка (сколько килобайт и за сколько времени), установка файлов, проверка целостности, перезапуск. В конце — отчёт: какая версия установилась и какие блоки программы обновились (версия блока: старая → новая). Сообщение об успехе приходит одно — когда новая версия уже точно работает.' },
