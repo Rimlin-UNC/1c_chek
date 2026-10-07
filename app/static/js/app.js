@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.47.0': [
+    { icon: '🗄', title: 'Архивные копии: день, неделя, месяц',
+      text: 'Программа теперь сама ведёт архив: каждый день — дневная копия, каждый понедельник — недельная, 1-го числа — месячный архив. В копии вся база (чеки, пользователи, компании), каждая копия проверяется на целостность, у каждой видно, сколько в ней данных. Архивная история не переписывается обновлениями. Исправлена причина, по которой старые копии могли терять последние данные.' },
+  ],
   '1.46.1': [
     { icon: '🛟', title: 'Откат рабочих версий — кнопки на месте',
       text: 'В блоке «Последние рабочие версии» появилась кнопка «Откатиться» у каждой прошлой версии, кнопка обновления списка и откат к произвольному коммиту — даже если версии ещё нет в реестре. Добавлены пояснения во всех состояниях и полный пробег по всем блокам программы.' },
@@ -6929,7 +6933,16 @@ async function viewSettings(container) {
         перед каждым обновлением (5) и архив месяца (12 месяцев) — каталог data/backups на сервере.
         Данные не затрагиваются ни обновлениями, ни git.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <select id="bk-kind" style="max-width:250px">
+            <option value="manual">Ручная — хранятся 10</option>
+            <option value="daily">Дневная — хранятся 7</option>
+            <option value="weekly">Недельная — хранятся 2</option>
+            <option value="archive">Месячный архив — хранятся 12</option>
+          </select>
           <button class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
+          <p class="form-hint" style="margin:8px 0 0">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
+          1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
+          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.</p>
           <button class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
         </div>
         <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
@@ -6982,13 +6995,21 @@ async function viewSettings(container) {
     const renderBackups = (items) => {
       const el = $('#bk-list');
       if (!el) return;
-      const kindNames = { daily: 'ежедневная', preupdate: 'перед обновлением',
-                          manual: 'вручную', archive: 'архив месяца' };
+      const kindNames = { daily: 'ежедневная (7)', weekly: 'недельная (2)',
+                          preupdate: 'перед обновлением (5)',
+                          manual: 'вручную (10)',
+                          archive: 'месячный архив (12)' };
+      const rowsText = (b) => (b.rows
+        ? `<span class="cell-mono" style="font-size:11.5px">${b.rows.receipts ?? '—'} чек. · ` +
+          `${b.rows.users ?? '—'} польз. · ${b.rows.companies ?? '—'} комп.</span>` +
+          (b.copy_version ? ` <span class="chip exported"><span class="dot"></span>v${esc(b.copy_version)}</span>` : '')
+        : '<span class="form-hint">—</span>');
       el.innerHTML = items.length
-        ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>Размер</th><th></th></tr></thead><tbody>
+        ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th></th></tr></thead><tbody>
            ${items.slice(0, 12).map(b => `<tr style="cursor:default">
              <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
              <td>${kindNames[b.kind] || b.kind}</td>
+             <td>${rowsText(b)}</td>
              <td>${b.size_kb} КБ</td>
              <td style="white-space:nowrap">
                <button class="btn btn-sm" data-restore="${esc(b.name)}"
@@ -7021,7 +7042,12 @@ async function viewSettings(container) {
     const bcr = $('#btn-bk-create');
     if (bcr) bcr.onclick = async () => {
       bcr.disabled = true;
-      try { const r = await api.post('/api/v1/admin/backups'); toast(r.message, 'ok', '💾'); renderBackups(r.items); }
+      try {
+        const kindSel = $('#bk-kind');
+        const r = await api.post('/api/v1/admin/backups',
+                                 { kind: kindSel ? kindSel.value : 'manual' });
+        toast(r.message, 'ok', '💾'); renderBackups(r.items);
+      }
       catch (e) { toast(e.message, 'err'); }
       bcr.disabled = false;
     };

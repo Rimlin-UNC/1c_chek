@@ -9,13 +9,15 @@
 # ======================================================================
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from datetime import datetime
 
 from ..config import settings
 
-RETENTION = {"daily": 7, "preupdate": 5, "manual": 10, "archive": 12}
+RETENTION = {"daily": 7, "weekly": 2, "preupdate": 5, "manual": 10,
+             "archive": 12}
 
 
 def _app_dir() -> str:
@@ -36,12 +38,67 @@ def backups_dir() -> str:
     return d
 
 
+def _verify_copy(path: str) -> bool:
+    """v1.47.0: каждая копия проверяется (PRAGMA quick_check) — на диск
+    и в список попадают только целые, разворачиваемые снимки."""
+    import sqlite3
+    try:
+        con = sqlite3.connect(path)
+        try:
+            row = con.execute("PRAGMA quick_check").fetchone()
+        finally:
+            con.close()
+    except sqlite3.DatabaseError:
+        return False
+    return bool(row) and row[0] == "ok"
+
+
+def _snapshot_rows(path: str) -> dict:
+    """v1.47.0: состав снимка — количества строк, прочитанные ИЗ САМОЙ
+    КОПИИ (не из живой базы): манифест не может разойтись с данными."""
+    import sqlite3
+    con = sqlite3.connect(path)
+    try:
+        tables = {r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        rows = {}
+        for t, label in (("receipts", "receipts"), ("users", "users"),
+                         ("companies", "companies")):
+            if t in tables:
+                rows[label] = con.execute(
+                    f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608
+        return rows
+    finally:
+        con.close()
+
+
+def _manifest_write(name: str, entry: dict) -> None:
+    p = os.path.join(backups_dir(), "manifest.json")
+    try:
+        data = json.loads(open(p, encoding="utf-8").read()) \
+            if os.path.exists(p) else {}
+    except (OSError, ValueError):
+        data = {}
+    data[name] = entry
+    alive = {f for f in os.listdir(backups_dir())
+             if f.startswith("db-") and f.endswith(".db")}
+    data = {k: v for k, v in data.items() if k in alive}
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, p)
+
+
 def create_backup(kind: str = "manual") -> str | None:
-    """Создать копию БД. kind: manual | daily | preupdate | archive.
+    """Создать копию БД. kind: manual | daily | weekly | preupdate | archive.
     v1.46.0: база работает в WAL-режиме — простое копирование файла могло
     давать копию БЕЗ последних данных (они жили в db-wal). Теперь снимок
     делается через SQLite Backup API — консистентный при работающем приложении;
-    при недоступности API — прежнее копирование файла (лучше, чем ничего)."""
+    при недоступности API — прежнее копирование файла (лучше, чем ничего).
+    v1.47.0: копия проверяется (quick_check) и получает запись в манифесте
+    с составом (чеки/пользователи/компании — из самого снимка); сбойная
+    копия на диск не остаётся. Недельные и месячные копии обновления не
+    трогают: чистка выполняется строго по своему типу."""
     import sqlite3
     src = _db_path()
     if not os.path.exists(src):
@@ -66,6 +123,17 @@ def create_backup(kind: str = "manual") -> str | None:
             scon.close()
     except sqlite3.Error:
         shutil.copy2(src, dest)          # запасной путь — как в v1.5.0
+    if not _verify_copy(dest):
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return None
+    _manifest_write(os.path.basename(dest), {
+        "version": settings.APP_VERSION,
+        "created": datetime.utcnow().isoformat() + "Z",
+        "rows": _snapshot_rows(dest),
+    })
     _cleanup(kind)
     return dest
 
@@ -81,8 +149,18 @@ def _cleanup(kind: str) -> None:
             pass
 
 
+def _manifest_read() -> dict:
+    p = os.path.join(backups_dir(), "manifest.json")
+    try:
+        data = json.loads(open(p, encoding="utf-8").read())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def list_backups() -> list[dict]:
     d = backups_dir()
+    manifest = _manifest_read()
     items = []
     for f in os.listdir(d):
         if not (f.startswith("db-") and f.endswith(".db")):
@@ -94,9 +172,12 @@ def list_backups() -> list[dict]:
             mtime = datetime.fromtimestamp(os.path.getmtime(p))
         except OSError:
             continue
+        entry = manifest.get(f) or {}
         items.append({"name": f, "kind": kind,
                       "size_kb": round(os.path.getsize(p) / 1024, 1),
-                      "created_at": mtime.isoformat() + "Z"})
+                      "created_at": mtime.isoformat() + "Z",
+                      "rows": entry.get("rows"),
+                      "copy_version": entry.get("version")})
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items
 
@@ -161,17 +242,33 @@ def backup_path(name: str) -> str | None:
 
 
 class DailyBackupGuard:
-    """Ежедневная копия: фоновый поток раз в час проверяет «копия за сегодня?»."""
+    """Расписание копий (v1.47.0, схема «дед-отец-сын»):
+    • каждый день — дневная копия (хранятся 7);
+    • каждый понедельник — недельная (хранятся 2);
+    • 1-го числа — месячный архив (хранятся 12).
+    Архивная история НЕ переписывается обновлениями: копия перед
+    обновлением создаётся отдельным типом (preupdate), чистка выполняется
+    только среди копий своего типа. Фоновый поток проверяет раз в час."""
 
     def __init__(self) -> None:
         self._last_date = ""
         self._running = False
 
+    @staticmethod
+    def pick_kinds(d: datetime) -> list:
+        kinds = ["daily"]
+        if d.weekday() == 0:                  # понедельник
+            kinds.append("weekly")
+        if d.day == 1:                        # первый день месяца
+            kinds.append("archive")
+        return kinds
+
     def tick(self) -> None:
-        today = datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
         if today != self._last_date:
-            create_backup("daily")
-            create_backup("archive")
+            for k in self.pick_kinds(now):
+                create_backup(k)
             self._last_date = today
 
     def start(self) -> None:

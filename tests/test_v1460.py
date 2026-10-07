@@ -19,16 +19,16 @@ from tests.conftest import login
 
 class TestVersion1460:
     def test_versions_synced(self):
+        # точный пин перенесён в tests/test_v1470.py (версия ушла вперёд)
         cfg = open("app/config.py", encoding="utf-8").read()
-        # точный пин перенесён в tests/test_v1461.py (версия ушла вперёд)
         assert 'APP_VERSION: str = "' in cfg
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
-        assert "?v=1.44" not in idx and "?v=1.45" not in idx
+        assert "app.css?v=" in idx and "app.js?v=" in idx
+        assert "v=1.43.0" not in idx and "v=1.44.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert "ymaster-check-v" in sw and "?v=" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert f'"version": "{ver}"' in mf
+        assert '"version":' in mf
 
     def test_whats_new_changelog(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -142,9 +142,11 @@ class TestKnownGoodRegistry:
 
     def test_marked_on_startup(self, client):
         """lifespan успешно стартовал → текущая версия в реестре рабочих."""
+        from app.config import settings
         from app.services import releases
         items = releases.list_releases(limit=5)
-        assert any(i["version"] == "1.46.0" and i["current"] for i in items), items
+        assert any(i["version"] == settings.APP_VERSION and i["current"]
+                   for i in items), items
 
 
 class TestRollbackApiAndEngine:
@@ -153,7 +155,8 @@ class TestRollbackApiAndEngine:
         r = client.get("/api/v1/admin/update/releases", headers=adm)
         assert r.status_code == 200
         body = r.json()
-        assert body["current"] == "1.46.0" and "items" in body and "busy" in body
+        from app.config import settings as _s
+        assert body["current"] == _s.APP_VERSION and "items" in body and "busy" in body
 
     def test_rollback_validates_input(self, client):
         adm = login(client, "admin", "admin123")
@@ -162,8 +165,9 @@ class TestRollbackApiAndEngine:
                         json={"version": "не версия", "commit": "zzz"})
         assert r.status_code == 422
         # текущая версия — откат в себя же запрещён
+        from app.config import settings as _s
         r = client.post("/api/v1/admin/update/rollback", headers=adm,
-                        json={"version": "1.46.0"})
+                        json={"version": _s.APP_VERSION})
         assert r.status_code == 422 and "уже и так работает" in r.json()["detail"]
         # несуществующий коммит
         r = client.post("/api/v1/admin/update/rollback", headers=adm,

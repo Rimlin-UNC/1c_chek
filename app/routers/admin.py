@@ -218,12 +218,21 @@ def backups_list(user: User = Depends(require_admin)):
 
 
 @router.post("/backups", summary="Создать резервную копию сейчас (админ)")
-def backups_create(user: User = Depends(require_admin)):
+def backups_create(body: dict | None = None,
+                   user: User = Depends(require_admin)):
+    """v1.47.0: тип копии выбирается админом — ручная (10 хранятся),
+    дневная (7), недельная (2) или месячный архив (12). Недельные и
+    месячные копии образуют архивную историю, которую не трогают
+    обновления."""
     from ..services.backups import create_backup, list_backups
-    path = create_backup("manual")
+    kind = ((body or {}).get("kind") or "manual").strip()
+    if kind not in ("manual", "daily", "weekly", "archive"):
+        raise HTTPException(422, "Тип копии: manual, daily, weekly или archive")
+    path = create_backup(kind)
     if not path:
-        raise HTTPException(500, "Не удалось создать копию")
-    log_action(user, "backup_created", details={"file": os.path.basename(path)})
+        raise HTTPException(500, "Не удалось создать копию (см. журнал сервера)")
+    log_action(user, "backup_created",
+               details={"file": os.path.basename(path), "kind": kind})
     return {"ok": True, "message": "Копия создана", "items": list_backups()}
 
 
