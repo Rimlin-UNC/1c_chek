@@ -176,6 +176,9 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "mail_center_test":
         return "отправлено тестовое письмо", \
             "успешно" if d.get("ok") else "не удалось"
+    if action == "mail_password_reset":
+        return "сброшен сохранённый пароль почтового ящика", \
+            "введите новый после смены у провайдера"
     if action == "mail_rule_created":
         return "создано правило рассылки", f"«{d.get('name', '—')}»"
     if action == "mail_rule_updated":

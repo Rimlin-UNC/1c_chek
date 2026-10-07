@@ -11,6 +11,8 @@
 #   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
 #   sudo bash deploy.sh --setup-mail             # настройка почты (Postfix+DKIM,
 #                                                #   DNS-записи в /root/mail-dns-records.txt)
+#   sudo bash deploy.sh --remove-mail            # удалить самохостингованную почту
+#                                                #   (переезд на Timeweb, всё в архив)
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
 #                                                #   в /etc/ymaster-check/deploy.conf
 #                                                #   и применяются автоматически)
@@ -40,6 +42,7 @@ UPDATE=0
 DIAGNOSE=0
 FIXSSL=0
 SETUP_MAIL=0
+REMOVE_MAIL=0
 WITH_NGINX=1
 CERTBOT_BIN="$(command -v certbot || echo /snap/bin/certbot)"
 CONF_DIR="/etc/ymaster-check"
@@ -50,6 +53,7 @@ for arg in "$@"; do
     --update) UPDATE=1 ;;
     --diagnose) DIAGNOSE=1 ;;
     --setup-mail) SETUP_MAIL=1 ;;
+    --remove-mail) REMOVE_MAIL=1 ;;
     --fix-ssl) FIXSSL=1 ;;
     --no-nginx) WITH_NGINX=0 ;;
     --with-ssl=*) OPT_SSL="${arg#*=}"; WITH_NGINX=1 ;;
@@ -76,6 +80,15 @@ if [ "${SETUP_MAIL:-0}" = "1" ]; then
   echo "Скачиваю setup-mail.sh из ${RAW}…"
   curl -fsSL "$RAW" -o /tmp/ymaster-setup-mail.sh
   exec bash /tmp/ymaster-setup-mail.sh
+fi
+if [ "${REMOVE_MAIL:-0}" = "1" ]; then
+  if [ -f "$APP_DIR/remove-mail.sh" ]; then
+    exec bash "$APP_DIR/remove-mail.sh"
+  fi
+  RAW="${REPO_URL%.git}/raw/${BRANCH}/remove-mail.sh"
+  echo "Скачиваю remove-mail.sh из ${RAW}…"
+  curl -fsSL "$RAW" -o /tmp/ymaster-remove-mail.sh
+  exec bash /tmp/ymaster-remove-mail.sh
 fi
 
 # v1.6.1: параметры предыдущего запуска (домен, SSL, ветка) сохраняются в

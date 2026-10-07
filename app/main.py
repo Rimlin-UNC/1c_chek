@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -274,13 +276,157 @@ STATIC_DIR = BASE_DIR / "app" / "static"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
+# --------------------------------------------------------------------------
+#  v1.45.0: SEO — серверные мета-теги, JSON-LD, robots.txt и sitemap.xml.
+#  Поисковики видят полный текст главной даже без исполнения JS.
+# --------------------------------------------------------------------------
+SEO_TITLE = ("Проверить чек онлайн по QR-коду — проверка кассового чека "
+             "ФНС | Ямастер Чек")
+SEO_DESC = ("Проверить чек онлайн бесплатно: наведите камеру телефона на "
+            "QR-код кассового чека — мгновенно узнаете, что чек настоящий, "
+            "и получите бонусы в программе Чек-Пул. Проверка чека по QR-коду "
+            "без регистрации, 152-ФЗ.")
+SEO_KW = ("проверить чек, проверить чек онлайн, проверка чека по qr коду, "
+          "проверка кассового чека, чек фнс проверить, пробить чек, "
+          "чек-пул бонусы")
+
+SEO_LANDING_HTML = """
+<section class="seo-landing" id="seo-landing">
+  <h1>Проверить чек онлайн по QR-коду — бесплатно и без регистрации</h1>
+  <p>Наведите камеру телефона на QR-код кассового чека — «Ямастер Чек»
+  мгновенно проверит чек и покажет результат. Настоящий чек попадает в
+  Чек-Пул, а вам начисляются бонусные баллы.</p>
+  <h2>Как проверить кассовый чек по QR-коду</h2>
+  <ol>
+    <li>Нажмите «Проверить чек» — приложение само считает QR-код с чека.</li>
+    <li>Мы сверяем фискальные признаки (ФН, ФД, ФП) чека по официальным
+    источникам ФНС.</li>
+    <li>Сразу видите результат: чек настоящий или нет. За каждый
+    настоящий чек — баллы Чек-Пула.</li>
+  </ol>
+  <h2>Что даёт регистрация в Чек-Пуле</h2>
+  <p>Бонусные баллы за чеки, история всех ваших чеков, подарки партнёров
+  и кэшбэк, участие в рейтинге месяца. Регистрация бесплатная — по
+  e-mail, без банковских карт.</p>
+  <h2>Безопасно ли это</h2>
+  <p>Мы не просим банковские данные. Хранятся только фискальные
+  реквизиты чека, как того требует 152-ФЗ. Проверка чека анонимна —
+  аккаунт нужен только для бонусов.</p>
+  <h2>Частые вопросы о проверке чеков</h2>
+  <p><b>Это бесплатно?</b> Да, проверка чека онлайн полностью бесплатна.<br>
+  <b>Чек покупателя — это законно?</b> Да: вы проверяете свой чек и
+  добровольно передаёте его фискальные данные в открытую базу Чек-Пула.<br>
+  <b>Подойдёт ли бумажный чек?</b> Да, у любого кассового чека есть
+  QR-код; электронный чек можно вставить строкой вручную.<br>
+  <b>Что если чек не находится?</b> Чек не пробит по кассе или реквизиты
+  повреждены: попросите у продавца корректный чек.</p>
+  <p>«Ямастер Чек» — сервис ООО «Ямастер» (ymaster.ru): проверка чеков
+  для покупателей и сдача чеков в бухгалтерию для компаний.</p>
+</section>"""
+
+
+def _seo_inject(html: str) -> str:
+    if "seo-injected" in html:
+        return html
+    json_ld = json.dumps({
+        "@context": "https://schema.org",
+        "@graph": [
+            {"@type": "WebApplication", "name": "Ямастер Чек",
+             "applicationCategory": "FinanceApplication",
+             "operatingSystem": "Web",
+             "url": "https://chek.ymaster.ru/",
+             "description": SEO_DESC,
+             "offers": {"@type": "Offer", "price": "0",
+                        "priceCurrency": "RUB"},
+             "publisher": {"@type": "Organization",
+                           "name": "ООО «Ямастер»",
+                           "url": "https://ymaster.ru"}},
+            {"@type": "FAQPage", "mainEntity": [
+                {"@type": "Question", "name": "Это бесплатно?",
+                 "acceptedAnswer": {"@type": "Answer", "text":
+                     "Да, проверка чека онлайн полностью бесплатна."}},
+                {"@type": "Question",
+                 "name": "Как проверить кассовый чек по QR-коду?",
+                 "acceptedAnswer": {"@type": "Answer", "text":
+                     "Наведите камеру телефона на QR-код чека — сервис "
+                     "сверит фискальные признаки и покажет результат сразу."}},
+                {"@type": "Question",
+                 "name": "Что даёт регистрация в Чек-Пуле?",
+                 "acceptedAnswer": {"@type": "Answer", "text":
+                     "Бонусные баллы за чеки, история чеков, подарки "
+                     "партнёров и кэшбэк, рейтинг месяца."}},
+                {"@type": "Question", "name": "Что если чек не находится?",
+                 "acceptedAnswer": {"@type": "Answer", "text":
+                     "Чек не пробит по кассе или реквизиты повреждены — "
+                     "попросите у продавца корректный чек."}}]},
+            {"@type": "HowTo", "name": "Как проверить чек онлайн по QR-коду",
+             "step": [
+                 {"@type": "HowToStep", "name": "Открыть камеру",
+                  "text": "Нажмите «Проверить чек» и разрешите доступ к камере."},
+                 {"@type": "HowToStep", "name": "Навести на QR-код",
+                  "text": "Наведите камеру на QR-код кассового чека."},
+                 {"@type": "HowToStep", "name": "Получить результат",
+                  "text": "Сервис проверит чек по фискальным данным и покажет результат."}]},
+        ]}, ensure_ascii=False)
+    head = ('<meta name="keywords" content="' + SEO_KW + '">\n'
+            '<link rel="canonical" href="https://chek.ymaster.ru/">\n'
+            '<meta property="og:type" content="website">\n'
+            '<meta property="og:site_name" content="Ямастер Чек">\n'
+            '<meta property="og:title" content="' + SEO_TITLE + '">\n'
+            '<meta property="og:description" content="' + SEO_DESC + '">\n'
+            '<meta property="og:url" content="https://chek.ymaster.ru/">\n'
+            '<meta property="og:image" '
+            'content="https://chek.ymaster.ru/img/manual/scan.jpg">\n'
+            '<meta property="og:locale" content="ru_RU">\n'
+            '<meta name="twitter:card" content="summary_large_image">\n'
+            '<meta name="twitter:title" content="' + SEO_TITLE + '">\n'
+            '<meta name="twitter:description" content="' + SEO_DESC + '">\n'
+            '<script type="application/ld+json">' + json_ld + '</script>\n')
+    html = re.sub(r"<title>.*?</title>",
+                  "<title>" + SEO_TITLE + "</title>", html, count=1,
+                  flags=re.S)
+    html = re.sub(r'<meta name="description" content="[^"]*">',
+                  '<meta name="description" content="' + SEO_DESC + '">',
+                  html, count=1)
+    html = html.replace("</head>", head + "</head>", 1)
+    # пререндер: поисковик видит текст даже без JS; SPA убирает блок
+    html = html.replace("<body>",
+                        '<body><!-- seo-injected -->' + SEO_LANDING_HTML, 1)
+    return html
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(
+        "User-agent: *\nAllow: /\n"
+        "Disallow: /api/\n"
+        "Sitemap: https://chek.ymaster.ru/sitemap.xml\n")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    from fastapi.responses import Response
+    body = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            '<url><loc>https://chek.ymaster.ru/</loc>'
+            '<changefreq>daily</changefreq><priority>1.0</priority></url>\n'
+            '<url><loc>https://chek.ymaster.ru/#/my</loc>'
+            '<changefreq>weekly</changefreq><priority>0.5</priority></url>\n'
+            '<url><loc>https://chek.ymaster.ru/#/partners</loc>'
+            '<changefreq>weekly</changefreq><priority>0.6</priority></url>\n'
+            '</urlset>')
+    return Response(content=body, media_type="application/xml")
+
+
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(full_path: str):
-    """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
+    """SPA-fallback: всё, что не API, отдаёт веб-клиент (с SEO-блоком)."""
     if full_path.startswith(("api/", "onec/", "ws/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     # Прямые файлы (manifest, sw, иконки)
     candidate = STATIC_DIR / full_path
     if full_path and candidate.is_file():
         return FileResponse(candidate)
-    return FileResponse(STATIC_DIR / "index.html")
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_seo_inject((STATIC_DIR / "index.html").read_text(encoding="utf-8")))

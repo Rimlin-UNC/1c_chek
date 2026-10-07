@@ -1248,3 +1248,14 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   }
   body.print-ao1 .print-piece { width: auto; transform: none; }
 }
+
+/* v1.45.0: SEO-пререндер главной (виден без JS — краулерам и старым браузерам) */
+.seo-landing {
+  max-width: 720px; margin: 0 auto; padding: 28px 18px 48px;
+  color: var(--text, #1c2333); line-height: 1.6; font-size: 16px;
+}
+.seo-landing h1 { font-size: 26px; line-height: 1.25; margin: 0 0 12px; }
+.seo-landing h2 { font-size: 20px; margin: 22px 0 8px; }
+.seo-landing ol { padding-left: 22px; margin: 8px 0; }
+.seo-landing li { margin: 6px 0; }
+.seo-landing a { color: var(--brand, #4753d8); }

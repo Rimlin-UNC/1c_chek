@@ -73,8 +73,14 @@ def send_mail(db: Session, to_email: str, subject: str, body: str,
         msg.set_content(body)
         if html:
             msg.add_alternative(html, subtype="html")
-        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=12) as smtp:
-            if cfg["tls"]:
+        # v1.45.0: порт 465 — SSL с первого байта (Timeweb, Яндекс),
+        # 587/25 — STARTTLS (если включён)
+        if cfg["port"] == 465:
+            smtp = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=12)
+        else:
+            smtp = smtplib.SMTP(cfg["host"], cfg["port"], timeout=12)
+        with smtp:
+            if cfg["port"] != 465 and cfg["tls"]:
                 smtp.starttls()
             if cfg["user"]:
                 smtp.login(cfg["user"], cfg["password"])

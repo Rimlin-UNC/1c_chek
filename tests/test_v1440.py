@@ -213,12 +213,15 @@ class TestMailBot:
             "subject": "Подтвердите e-mail", "body": "Здравствуйте, {name}!"})
         assert r.status_code == 200
         # тик «днём» → правило выполняется
-        res = mail_center.tick(db, now=dt.datetime(2026, 10, 6, 12, 0))
+        # (v1.45.0: now от utcnow — tick хранит last_run_at по utcnow,
+        #  жёсткая дата ломала тест при смене календарного дня)
+        _now = dt.datetime.utcnow()
+        res = mail_center.tick(db, now=_now)
         assert any(x["rule"] == "Подтвердите e-mail" and x["sent"] == 1
                    for x in res["ran"]), res
         assert len(SENT) == 1
         # повторный тик в тот же день → не выполняется
-        res2 = mail_center.tick(db, now=dt.datetime(2026, 10, 6, 12, 30))
+        res2 = mail_center.tick(db, now=_now + dt.timedelta(minutes=30))
         assert res2["ran"] == []
         assert len(SENT) == 1
         # бот выключен → тик ничего не делает

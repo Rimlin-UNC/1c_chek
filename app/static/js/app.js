@@ -94,6 +94,11 @@ async function boot() {
     clearToken();
   }
   showSplash(false);
+  // v1.45.0: SEO-пререндер (для поисковиков) убираем — дальше наш UI
+  const seo = document.getElementById('seo-landing');
+  if (seo) seo.remove();
+  // v1.45.0: гость без хеша и без токена → гостевой лендинг «проверить чек»
+  if (!location.hash || location.hash === '#/') { showPublicScreen(); return; }
   // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
   if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
   // v1.32.0: кабинет «Чек-Пула» — тоже доступен без входа в программу
@@ -447,6 +452,17 @@ function bindPoolForm(root) {
               : esc(row.message || 'Источник не нашёл чек — проверьте строку QR.'));
         box.innerHTML = `<div class="info-callout">${poolStatusChip(row.status)}
           <div style="margin-top:6px">${extra}</div></div>`;
+        // v1.45.0: хвалим и зовём регистрироваться (гостевой лендинг)
+        const praise = document.getElementById('pub-praise');
+        if (praise && row.status === 'verified') {
+          praise.classList.remove('hidden');
+          praise.innerHTML = `<div class="glass card" style="border:2px solid var(--ok,#2f9e6e)">
+            <div class="card-title">👏 Отлично, чек настоящий!</div>
+            <p class="form-hint" style="margin:0 0 8px">Спасибо, что проверили: магазину меньше
+            места для обмана, а вам — баллы. Создайте кабинет, чтобы копить баллы
+            за все будущие чеки и обменять их на подарки партнёров.</p>
+            <a class="btn btn-primary btn-sm" href="#/my">Забрать баллы — создать кабинет</a></div>`;
+        }
       } else if (tries > 30) {
         clearInterval(timer);
         box.innerHTML = '<div class="info-callout">Проверка занимает больше минуты — статус появится в списке ниже.</div>';
@@ -523,7 +539,56 @@ function showPublicScreen() {
   $('#login-screen').classList.add('hidden');
   $('#app-shell').classList.add('hidden');
   const root = $('#public-root');
-  root.innerHTML = publicFormHTML();
+  // v1.45.0: гостевой лендинг «Проверить чек онлайн» — сценарий в три шага,
+  // похвала за проверку, приглашение зарегистрироваться ради бонусов.
+  root.innerHTML = `
+  <div class="glass" style="max-width:860px;margin:0 auto;padding:26px 22px">
+    <div style="text-align:center;margin-bottom:14px">
+      <h1 style="font-size:24px;line-height:1.25;margin:0 0 6px">Проверить чек онлайн
+        <span class="grad-text">за 10 секунд</span></h1>
+      <p style="color:var(--text-dim);font-size:14.5px;margin:0">
+        Наведите камеру на QR-код кассового чека — проверим по официальным
+        источникам и начислим <b>бонусные баллы</b>. Бесплатно и без регистрации.</p>
+    </div>
+    <img src="/img/manual/landing-hero.jpg" alt="Как проверить чек по QR-коду камерой телефона"
+         style="width:100%;max-width:560px;display:block;margin:0 auto 16px;border-radius:14px"
+         loading="eager">
+    <div class="form-grid" style="grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+      <div class="glass" style="padding:12px;border-radius:12px">
+        <div style="font-size:20px">📷</div><b style="font-size:13.5px">1. Наведите камеру</b>
+        <div class="form-hint">на QR-код чека — обычной камерой телефона</div></div>
+      <div class="glass" style="padding:12px;border-radius:12px">
+        <div style="font-size:20px">✅</div><b style="font-size:13.5px">2. Проверим чек</b>
+        <div class="form-hint">сверим ФН, ФД и ФП по источникам ФНС</div></div>
+      <div class="glass" style="padding:12px;border-radius:12px">
+        <div style="font-size:20px">🎁</div><b style="font-size:13.5px">3. Получите баллы</b>
+        <div class="form-hint">настоящий чек = баллы Чек-Пула</div></div>
+    </div>
+    <div class="glass card" style="margin-bottom:14px">
+      <div class="card-title">🧾 Проверить чек <span class="form-hint">шаг 1 — камера или строка QR</span></div>
+      ${publicFormHTML()}
+    </div>
+    <div id="pub-praise" class="hidden" style="margin-bottom:14px"></div>
+    <div class="glass card">
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <img src="/img/manual/landing-bonus.jpg" alt="Бонусные баллы за чеки в Чек-Пуле"
+             style="width:180px;border-radius:12px" loading="lazy">
+        <div style="flex:1;min-width:240px">
+          <div class="card-title" style="margin-bottom:4px">🎉 Чек настоящий? Это только начало!</div>
+          <p class="form-hint" style="margin:0 0 8px">Зарегистрируйтесь — и за каждый чек будут
+          начисляться баллы: подарки партнёров, кэшбэк, рейтинг месяца.
+          Ваш чек уже в базе — регистрация присоединит его к вашему кабинету.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn btn-primary btn-sm" href="#/my">Создать кабинет — забрать баллы</a>
+            <a class="btn btn-sm" href="#/partners">Партнёры и кэшбэк →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:12px">
+      <a href="#" id="public-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+    </div>
+  </div>`;
   const back = document.getElementById('public-to-login');
   if (back) back.onclick = (e) => {
     e.preventDefault();
@@ -4102,6 +4167,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.45.0': [
+    { icon: '🔎', title: 'Новая главная страница: проверить чек онлайн',
+      text: 'Гость сразу попадает на понятный экран: навёл камеру на QR-код чека — узнал, что чек настоящий, получил похвалу и баллы. Страница рассказывает, как работает проверка чеков, что даёт регистрация и почему это безопасно (152-ФЗ). Для поисковиков добавлены заголовок, описание и разметка «частые вопросы» — сервис стал видимым по запросам «проверить чек онлайн». Почта системы переехала на Timeweb (chek@ymaster.ru), в Почтовом центре — кнопка «Заполнить для Timeweb» и сброс пароля ящика.' },
+  ],
   '1.44.1': [
     { icon: '⚙️', title: 'Почта на своём сервере — одна команда',
       text: 'На сервере: sudo bash deploy.sh --setup-mail — скрипт сам установит Postfix и DKIM-подпись, создаст ящик chek@chek.ymaster.ru и выдаст готовые DNS-записи (SPF, DKIM, DMARC) файлом /root/mail-dns-records.txt. Почтовый сервер слушает только 127.0.0.1 — снаружи нет открытых портов и паролей. Останется добавить записи в DNS и указать 127.0.0.1:25 в Почтовом центре.' },
@@ -6549,8 +6618,10 @@ async function viewSettings(container) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
           <button class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
+          <button class="btn btn-sm" id="mc-timeweb" title="Заполнить поля под почту Timeweb">Заполнить для Timeweb</button>
           <input id="mc-testto" placeholder="куда отправить тест" style="max-width:230px">
           <button class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
+          <button class="btn btn-sm btn-bad" id="mc-resetpass" title="После смены пароля в панели провайдера">Сбросить пароль ящика</button>
         </div>
         <div class="form-hint" style="margin:4px 0 10px">Готовый сценарий на сервере:
           <code>sudo bash deploy.sh --setup-mail</code> — сам поставит Postfix и DKIM
@@ -7442,6 +7513,26 @@ async function bindMailCenter() {
     try {
       const r = await api.post('/api/v1/mail-admin/test', { email: to });
       toast(r.message, r.ok ? 'ok' : 'err', 'Тестовое письмо');
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  // v1.45.0: пресет Timeweb (smtp.timeweb.ru:465 SSL) — чек@ymaster.ru
+  $m('mc-timeweb').onclick = () => {
+    $m('mc-host').value = 'smtp.timeweb.ru';
+    $m('mc-port').value = 465;
+    $m('mc-user').value = 'chek@ymaster.ru';
+    $m('mc-sender').value = 'chek@ymaster.ru';
+    $m('mc-tls').checked = false;            // 465 = SSL с первого байта
+    toast('Поля заполнены под Timeweb: введите пароль ящика и сохраните',
+          'ok', 'Почта Timeweb');
+  };
+  // v1.45.0: сброс сохранённого пароля ящика (сменили у провайдера)
+  $m('mc-resetpass').onclick = async () => {
+    if (!confirm('Сбросить сохранённый пароль ящика? Используйте после смены пароля в панели провайдера (mail.timeweb.com).')) return;
+    try {
+      const r = await api.del('/api/v1/mail-admin/config/password');
+      $m('mc-pass').value = '';
+      $m('mc-pass').placeholder = 'введите новый пароль ящика';
+      toast(r.message, 'ok', 'Почтовый центр');
     } catch (e) { toast(e.message, 'err'); }
   };
 
