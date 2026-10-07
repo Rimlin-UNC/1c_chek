@@ -56,9 +56,10 @@ def _repo_branch(db: Session) -> tuple[str, str]:
 
 @router.get("/update/check", summary="Проверить наличие обновлений (админ)")
 def update_check(db: Session = Depends(get_db),
-                 user: User = Depends(require_admin)):
+                 user: User = Depends(require_admin),
+                 force: bool = False):
     try:
-        result = check_update(db)
+        result = check_update(db, force=force)   # force=1 — мимо кэша (кнопка «Проверить»)
     except Exception as e:                                   # noqa: BLE001
         # v1.6.0: отдаём 200 с ok:false — клиент всегда получает понятную причину
         log_action(user, "update_check_failed", details={"error": str(e)[:200]})
@@ -172,8 +173,11 @@ def update_rollback(body: dict, db: Session = Depends(get_db),
 
 @router.get("/update/status", summary="Статус/журнал обновления (админ)")
 def update_status(user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    from ..services.updater import _history, load_last_update
-    return {"job": update_job.public(), "history": _history(db)[:20],
+    from ..services.updater import _history, job_status, load_last_update
+    # v1.50.0: единый статус (память живого задания или диск после рестарта)
+    # + current_version — UI подтверждает успех только по реальной версии
+    return {"job": job_status(), "current_version": settings.APP_VERSION,
+            "history": _history(db)[:20],
             "last_success": load_last_update()}
 
 

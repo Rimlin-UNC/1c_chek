@@ -63,16 +63,67 @@ class UpdateJob:
         self.from_version = settings.APP_VERSION
         self.to_version = ""
         self.started_at = 0.0
+        # v1.50.0: фазы, время, объём загрузки — всё видно в отчёте
+        self.finished_at = 0.0
+        self.elapsed_s = 0
+        self.downloaded_bytes = 0
+        self.backup_file = ""
+        self.blocks_changed: list[dict] = []
+        self.phases: dict = {}
+        self._last_flush = 0.0
         self._lock = threading.Lock()
 
+    def _phase_enter(self, phase: str, message: str, now: float) -> None:
+        """v1.50.0: предыдущая активная фаза → done, новая → active."""
+        prev = self.phases.get(self.step) if self.step else None
+        if isinstance(prev, dict) and prev.get("status") == "active":
+            prev["status"] = "done"
+            prev["finished_at"] = now
+        self.phases[phase] = {"status": "active", "started_at": now,
+                              "message": message}
+
     def say(self, step: str, progress: int | None = None, message: str = "") -> None:
+        flush = False
         with self._lock:
+            phase = PHASE_ALIAS.get(step, step)
+            if phase in PHASE_ORDER and phase != self.step:
+                self._phase_enter(phase, message, time.time())
+            elif phase in self.phases and message:
+                self.phases[phase]["message"] = message
             self.step = step
             if progress is not None:
                 self.progress = max(self.progress, min(100, progress))
             if message:
                 stamp = datetime.now().strftime("%H:%M:%S")
                 self.log.append(f"[{stamp}] {message}")
+            now = time.time()
+            if now - self._last_flush >= 1.0:
+                self._last_flush = now
+                flush = True
+        if flush:
+            _state_write()   # v1.50.0: состояние переживает рестарт
+
+    def note_failure(self) -> None:
+        """v1.50.0: текущая фаза помечается как упавшая (для отчёта)."""
+        with self._lock:
+            cur = self.phases.get(self.step)
+            if isinstance(cur, dict) and cur.get("status") == "active":
+                cur["status"] = "failed"
+                cur["finished_at"] = time.time()
+        _state_write()
+
+    def prepare(self, action: str = "update", to_version: str = "") -> None:
+        """v1.50.0: атомарная подготовка задания (под лока́ в start_apply)."""
+        self.reset()
+        self.action = action
+        self.running = True
+        self.to_version = to_version
+        self.started_at = time.time()
+        self.phases = {"prepare": {"status": "done",
+                                   "started_at": self.started_at,
+                                   "finished_at": self.started_at,
+                                   "message": "Запуск"}}
+        self.step = "prepare"
 
     def public(self) -> dict:
         with self._lock:
@@ -84,10 +135,124 @@ class UpdateJob:
                 "success": self.success, "needs_restart": self.needs_restart,
                 "rolled_back": self.rolled_back,
                 "from_version": self.from_version, "to_version": self.to_version,
+                # v1.50.0: информативный статус
+                "started_at": self.started_at, "finished_at": self.finished_at,
+                "elapsed_s": self.elapsed_s,
+                "downloaded_bytes": self.downloaded_bytes,
+                "backup_file": self.backup_file,
+                "blocks_changed": self.blocks_changed,
+                "phases": self.phases,
             }
 
 
 job = UpdateJob()
+
+# ==========================================================================
+#  v1.50.0: единый авторитетный статус обновления
+#  Фазы строго по порядку; состояние пишется на диск (data/update_state.json)
+#  и переживает рестарт — UI отображает его, а не придумывает своё.
+# ==========================================================================
+PHASE_ORDER = ["prepare", "backup", "fetch", "download", "install", "deps",
+               "verify", "restart", "done"]
+PHASE_ALIAS = {"checkout": "install", "rollback": "install", "error": ""}
+STATE_FLUSH_S = 1.0          # троттлинг записи на диск (не грузим сервер)
+
+
+def update_state_path() -> str:
+    return os.path.join(APP_DIR, "data", "update_state.json")
+
+
+def _state_write() -> None:
+    """Атомарно сохранить текущее состояние обновления на диск."""
+    try:
+        path = update_state_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = job.public()
+        data["saved_at"] = datetime.utcnow().isoformat() + "Z"
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass                                    # не критично
+
+
+def load_update_state() -> dict | None:
+    try:
+        with open(update_state_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def job_status() -> dict:
+    """Единственная точка статуса: живое задание → из памяти, иначе —
+    последнее сохранённое состояние (после рестарта процесс новый)."""
+    if job.running or job.finished:
+        return job.public()
+    st = load_update_state() or {}
+    return st if st.get("finished") or st.get("error") else job.public()
+
+
+def read_blocks(path: str) -> dict:
+    """Реестр блоков из файла (ast, без импорта — файл может быть любым)."""
+    import ast
+    tree = ast.parse(open(path, encoding="utf-8").read())
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "BLOCKS":
+            return {str(k): str(v) for k, v in ast.literal_eval(node.value).items()}
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "BLOCKS":
+            return {str(k): str(v) for k, v in ast.literal_eval(node.value).items()}
+    return {}
+
+
+def diff_blocks(old: dict, new: dict) -> list[dict]:
+    """Что изменилось: блок добавился или сменил версию (старая → новая)."""
+    out = []
+    for name, ver in new.items():
+        was = old.get(name)
+        if was != ver:
+            out.append({"name": name, "from": was or "", "to": ver})
+    return out
+
+
+def _parse_fetch_progress(line: str) -> tuple[int | None, int | None]:
+    """git fetch --progress: «Receiving objects:  45% (123/273), 55.00 KiB».
+    Возвращает (процент|None, байт|None)."""
+    m = re.search(r"Receiving objects:\s+(\d+)%", line)
+    pct = int(m.group(1)) if m else None
+    m2 = re.search(r"([\d.]+)\s+(KiB|MiB)", line)
+    nbytes = None
+    if m2:
+        val = float(m2.group(1))
+        nbytes = int(val * 1024 * (1024 if m2.group(2) == "MiB" else 1))
+    return pct, nbytes
+
+
+def _git_fetch_progress(branch: str) -> tuple[int, str, int]:
+    """git fetch с живым прогрессом загрузки (байты — в job.downloaded_bytes).
+    Прогресс пишется в job с троттлингом — лишней нагрузки на диск нет."""
+    cmd = ["git", "fetch", "--progress", "origin", branch]
+    total = 0
+    try:
+        p = subprocess.Popen(cmd, cwd=APP_DIR, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        assert p.stderr is not None
+        for line in p.stderr:
+            pct, nbytes = _parse_fetch_progress(line)
+            if nbytes:
+                total = max(total, nbytes)
+                if pct is not None:
+                    job.say("download", 25 + pct // 5,
+                            f"Загрузка изменений: {nbytes // 1024} КБ ({pct}%)")
+        rc = p.wait(timeout=300)
+        out = (p.stderr.read() if p.stderr else "") or ""
+        return rc, out.strip()[-2000:], total
+    except subprocess.TimeoutExpired:
+        p.kill()                                # type: ignore[union-attr]
+        return 124, "timeout: git fetch", total
+    except FileNotFoundError:
+        return 127, "не найдено: git", total
 
 
 # ==========================================================================
@@ -312,7 +477,14 @@ def _append_history(db, entry: dict) -> None:
 # ==========================================================================
 #  Проверка обновлений
 # ==========================================================================
-def check_update(db) -> dict:
+_check_cache: dict = {}
+CHECK_TTL_S = 120     # v1.50.0: кэш проверки — меньше запросов к GitHub
+
+
+def check_update(db, force: bool = False) -> dict:
+    now = time.time()
+    if not force and _check_cache and now - _check_cache.get("at", 0) < CHECK_TTL_S:
+        return _check_cache["result"]
     from . import appsettings
     repo = _normalize_repo(appsettings.get_setting(db, "repo_url", "")) or _guess_repo()
     branch = appsettings.get_setting(db, "repo_branch", "") or settings.DEFAULT_BRANCH
@@ -336,6 +508,8 @@ def check_update(db) -> dict:
         "action": "check", "current": settings.APP_VERSION,
         "remote": remote["version"], "available": available,
         "at": remote["checked_at"]})
+    _check_cache.clear()
+    _check_cache.update({"at": now, "result": result})
     return result
 
 
@@ -538,13 +712,16 @@ def _do_apply(target_version: str, repo: str, branch: str,
               sudo_password: str | None = None) -> None:
     """Основной конвейер обновления (выполняется в фоновом потоке)."""
     try:
-        job.reset()
-        job.running = True
-        job.to_version = target_version
-        job.started_at = time.time()
+        # v1.50.0: задание подготовлено в start_apply (под лока́)
         job.old_commit = _local_commit()
         old_commit = job.old_commit
         req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+        # v1.50.0: версии блоков ДО обновления — из работающего кода
+        try:
+            from .blocks import BLOCKS as _blocks_before
+            blocks_before = dict(_blocks_before)
+        except Exception:                                    # noqa: BLE001
+            blocks_before = {}
 
         # v1.46.0: запускающий код прямо сейчас работает — фиксируем его
         # как «последнюю рабочую версию» ДО любых изменений
@@ -558,7 +735,8 @@ def _do_apply(target_version: str, repo: str, branch: str,
         from .backups import create_backup
         backup = create_backup("preupdate")
         if backup:
-            job.say("backup", 15, f"Бэкап: {os.path.basename(backup)}")
+            job.backup_file = os.path.basename(backup)
+            job.say("backup", 15, f"Бэкап: {job.backup_file}")
 
         job.say("fetch", 20, "Проверка git-репозитория…")
         git_ok, git_msg = _ensure_git_repo(repo, branch)
@@ -567,13 +745,17 @@ def _do_apply(target_version: str, repo: str, branch: str,
             raise RuntimeError(git_msg)
 
         job.say("fetch", 25, "Получение изменений с GitHub (только дельта)…")
-        rc, out = _git(["fetch", "origin", branch], timeout=300)
+        rc, out, nbytes = _git_fetch_progress(branch)
         if rc != 0:
             # второй шанс: восстановить репозиторий и повторить
             _ensure_git_repo(repo, branch)
-            rc, out = _git(["fetch", "origin", branch], timeout=300)
-            if rc != 0:
-                raise RuntimeError(f"git fetch: {out}")
+            job.say("download", 30, "Повторная загрузка изменений…")
+            rc, out, nbytes = _git_fetch_progress(branch)
+        if rc != 0:
+            raise RuntimeError(f"git fetch: {out}")
+        job.downloaded_bytes = nbytes
+        job.say("download", 40, (f"Загружено изменений: {nbytes // 1024} КБ"
+                                 if nbytes else "Загрузка изменений завершена"))
 
         job.say("checkout", 45, f"Обновление файлов до {target_version}…")
         rc, out = _git(["reset", "--hard", f"origin/{branch}"], timeout=60)
@@ -583,6 +765,19 @@ def _do_apply(target_version: str, repo: str, branch: str,
         rc, out = _git(["clean", "-fd", "-e", "data", "-e", ".env",
                         "-e", "venv", "-e", "*.db"], timeout=60)
         job.say("checkout", 55, "Лишние/удалённые файлы вычищены")
+
+        # v1.50.0: какие блоки изменились (версия блока: старая → новая)
+        try:
+            blocks_after = read_blocks(
+                os.path.join(APP_DIR, "app", "services", "blocks.py"))
+            job.blocks_changed = diff_blocks(blocks_before, blocks_after)
+            if job.blocks_changed:
+                names = ", ".join(
+                    f"{b['name']} v{b['from']}→v{b['to']}"
+                    for b in job.blocks_changed)
+                job.say("install", 58, "Изменённые блоки: " + names)
+        except Exception:                                    # noqa: BLE001
+            pass
 
         new_req = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
         if new_req != req_hash_before:
@@ -620,6 +815,9 @@ def _do_apply(target_version: str, repo: str, branch: str,
         job.finished = True
         job.progress = 100
         job.say("done", 100, f"Готово: v{settings.APP_VERSION} → v{target_version}")
+        job.finished_at = time.time()
+        job.elapsed_s = max(1, int(job.finished_at - job.started_at))
+        _state_write()
 
         from ..database import SessionLocal
         db = SessionLocal()
@@ -631,13 +829,19 @@ def _do_apply(target_version: str, repo: str, branch: str,
                 # v1.8.0: backup может быть None (например, БД ещё не создана) —
                 # обновление всё равно успешно, не роняем запись истории
                 "backup": os.path.basename(backup) if backup else "",
-                "at": datetime.utcnow().isoformat() + "Z", "ok": True})
+                "at": datetime.utcnow().isoformat() + "Z", "ok": True,
+                "duration_s": int(time.time() - job.started_at),
+                "downloaded_bytes": job.downloaded_bytes,
+                "blocks": job.blocks_changed})
         finally:
             db.close()
     except Exception as e:                                   # noqa: BLE001
         job.error = str(e)
         job.finished = True
         job.say("error", None, f"ОШИБКА: {e}")
+        job.note_failure()
+        job.finished_at = time.time()
+        job.elapsed_s = max(1, int(job.finished_at - job.started_at))
         # Автоматический откат на предыдущий коммит — система продолжает работать
         if job.old_commit and job.old_commit != "unknown":
             rc, out = _git(["reset", "--hard", job.old_commit], timeout=60)
@@ -659,10 +863,15 @@ def _do_apply(target_version: str, repo: str, branch: str,
         job.running = False
 
 
+_apply_lock = threading.Lock()      # v1.50.0: двойной запуск невозможен
+
+
 def start_apply(target_version: str, repo: str, branch: str,
                 sudo_password: str | None = None) -> None:
-    if job.running:
-        raise RuntimeError("Обновление уже выполняется")
+    with _apply_lock:
+        if job.running:
+            raise RuntimeError("Обновление уже выполняется")
+        job.prepare("update", to_version=target_version)
     t = threading.Thread(target=_do_apply,
                          args=(target_version, repo, branch, sudo_password),
                          daemon=True, name="ymaster-updater")
@@ -682,11 +891,7 @@ def _commit_exists(commit: str) -> bool:
 
 def _do_rollback(target_version: str, commit: str) -> None:
     try:
-        job.reset()
-        job.action = "rollback"
-        job.running = True
-        job.started_at = time.time()
-        job.to_version = target_version
+        job.prepare("rollback", to_version=target_version)   # v1.50.0
         job.old_commit = _local_commit()
         old_commit = job.old_commit
         req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
@@ -769,8 +974,10 @@ def _do_rollback(target_version: str, commit: str) -> None:
 
 
 def start_rollback(target_version: str, commit: str) -> None:
-    if job.running:
-        raise RuntimeError("Обновление/откат уже выполняется")
+    with _apply_lock:                    # v1.50.0: двойной запуск невозможен
+        if job.running:
+            raise RuntimeError("Обновление/откат уже выполняется")
+        job.prepare("rollback", to_version=target_version)
     t = threading.Thread(target=_do_rollback, args=(target_version, commit),
                          daemon=True, name="ymaster-rollback")
     t.start()

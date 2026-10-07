@@ -26,6 +26,7 @@ const state = {
   })(),
   ws: null,
   wsOk: false,
+  updModalOpen: false,           // v1.50.0: открыто окно обновления — баннер не дублируем
   camera: null,
   view: 'dashboard',
   routeParam: '',
@@ -4054,54 +4055,153 @@ function showUpdateDialog(checkInfo) {
   };
 }
 
+// v1.50.0: пошаговое обновление — фазы, время, килобайты, ОДИН итог.
+// Единственный источник правды — /update/status (сервер); UI только отображает.
+const UPD_PHASES = [
+  ['prepare', 'Подготовка'], ['backup', 'Резервная копия базы'],
+  ['fetch', 'Связь с GitHub'], ['download', 'Загрузка изменений'],
+  ['install', 'Установка файлов'], ['deps', 'Зависимости'],
+  ['verify', 'Проверка целостности'], ['restart', 'Перезапуск'],
+  ['done', 'Готово'],
+];
+
+function updFmtKB(bytes) {
+  if (!bytes || bytes < 1024) return bytes ? bytes + ' Б' : '—';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
+  return (bytes / 1024 / 1024).toFixed(1) + ' МБ';
+}
+
+function updFmtDur(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return s + ' с';
+  return Math.floor(s / 60) + ' мин ' + (s % 60) + ' с';
+}
+
 function openUpdateProgress() {
+  state.updModalOpen = true;
   const { slot, close } = openModal(`
     <div class="modal-title">🔄 Обновление системы</div>
     <div class="progress-outer"><div class="progress-inner" id="upd-bar" style="width:5%"></div></div>
+    <div id="upd-phases" style="margin:10px 0;font-size:13.5px"></div>
     <p class="form-hint" id="upd-step">Запуск…</p>
-    <pre class="codeblock" id="upd-log" style="max-height:240px;font-size:11.5px"></pre>
-    <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`, { onClose: () => clearInterval(state.updTimer) });
+    <p class="form-hint" id="upd-metrics"><span id="upd-elapsed"></span> <span id="upd-bytes"></span></p>
+    <pre class="codeblock" id="upd-log" style="max-height:180px;font-size:11.5px"></pre>
+    <div id="upd-summary" class="hidden" style="margin:10px 0"></div>
+    <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`,
+    { onClose: () => { state.updModalOpen = false; clearInterval(state.updTimer); clearInterval(updTick); } });
+  let finalShown = false;           // v1.50.0: ровно одно финальное уведомление
+  let waitingSince = 0;             // с момента «сервис перезапускается»
+  const t0 = Date.now();
+  const updTick = setInterval(() => {
+    const el = slot.querySelector('#upd-elapsed');
+    if (el && !el.dataset.done)
+      el.textContent = '⏱ прошло: ' + updFmtDur((Date.now() - t0) / 1000);
+  }, 1000);
+  const phaseRows = (st) => {
+    const ph = st.phases || {};
+    return UPD_PHASES.map(([key, title]) => {
+      const p = ph[key];
+      if (!p) return `<div class="form-hint" style="opacity:.45">○ ${title}</div>`;
+      const dur = p.finished_at && p.started_at
+        ? Math.max(1, Math.round(p.finished_at - p.started_at)) : 0;
+      const dtxt = dur ? ` · ${dur} с` : '';
+      if (p.status === 'done') return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
+      if (p.status === 'failed') return `<div class="form-error">✗ ${title}${dtxt}</div>`;
+      return `<div style="color:var(--brand)">● ${title}…</div>`;
+    }).join('');
+  };
+  const finishUp = (st) => {
+    clearInterval(state.updTimer); clearInterval(updTick);
+    state.updModalOpen = false;
+    const bar = slot.querySelector('#upd-bar');
+    if (bar) bar.style.width = st.success ? '100%' : Math.max(5, st.progress || 0) + '%';
+    const el = slot.querySelector('#upd-elapsed');
+    if (el) { el.dataset.done = '1'; el.textContent = '⏱ заняло: ' + updFmtDur(st.elapsed_s); }
+    const stepEl = slot.querySelector('#upd-step');
+    if (stepEl) stepEl.textContent = st.success
+      ? (st.needs_restart ? 'Файлы обновлены — нужен перезапуск сервиса'
+                          : `Обновление установлено: работает v${st.to_version}`)
+      : 'Обновление не удалось — система возвращена к прежней версии';
+    // итоговый отчёт: что установилось
+    const sum = slot.querySelector('#upd-summary');
+    if (sum) {
+      const rows = ['<dl class="kv" style="font-size:13px">'];
+      rows.push(`<dt>Версия</dt><dd>v${esc(st.from_version || '')} → <b>v${esc(st.to_version || '')}</b></dd>`);
+      rows.push(st.blocks_changed && st.blocks_changed.length
+        ? `<dt>Блоки</dt><dd>${st.blocks_changed.map(b =>
+            `${esc(b.name)}: v${esc(b.from || '—')} → v${esc(b.to)}`).join('<br>')}</dd>`
+        : '<dt>Блоки</dt><dd>структурных изменений нет</dd>');
+      if (st.downloaded_bytes) rows.push(`<dt>Загружено</dt><dd>${updFmtKB(st.downloaded_bytes)}</dd>`);
+      rows.push(`<dt>Время</dt><dd>${updFmtDur(st.elapsed_s)}</dd>`);
+      if (st.backup_file) rows.push(`<dt>Резервная копия</dt><dd>${esc(st.backup_file)}</dd>`);
+      rows.push('</dl>');
+      if (st.rolled_back) rows.push('<div class="info-callout" style="margin-top:8px">При обновлении произошёл сбой — система автоматически вернулась к прежней версии. Данные целы, можно пробовать ещё раз.</div>');
+      if (st.error && !st.success) rows.push(`<p class="form-error">${esc(st.error)}</p>`);
+      sum.innerHTML = rows.join('');
+      sum.classList.remove('hidden');
+    }
+    // ОДНО финальное уведомление — только теперь, когда известно главное
+    if (st.success && !st.needs_restart) {
+      try { sessionStorage.setItem('ymaster-updated', '1'); } catch (e) {}
+      toast(`Готово: работает v${st.to_version}`, 'ok', '🔄 Обновление');
+    } else if (st.success) {
+      toast('Файлы обновлены. Перезапустите сервис: sudo systemctl restart ymaster-check', 'warn', '🔄 Обновление');
+    } else if (st.rolled_back) {
+      toast('Сбой при обновлении — система откатилась на прежнюю версию, данные целы', 'warn', '🔄 Обновление');
+    } else {
+      toast(st.error || 'Обновление не удалось', 'err', '🔄 Обновление');
+    }
+    const log = slot.querySelector('#upd-log');
+    if (log) log.textContent = (st.log || []).join('\n');
+    const btn = slot.querySelector('#upd-done');
+    if (btn) {
+      btn.classList.remove('hidden');
+      btn.onclick = () => { close(); if (st.success && !st.needs_restart) location.reload(); };
+    }
+  };
   clearInterval(state.updTimer);
   state.updTimer = setInterval(async () => {
     let resp;
     try { resp = await api.get('/api/v1/admin/update/status'); }
     catch { return; }
-    let st = resp.job;
-    // v1.8.1: после рестарта процесс новый, in-memory job пуст — успех
-    // читаем из сохранённого маркера (свежий < 10 минут)
-    const last = resp.last_success;
-    if (!st.running && !st.finished && last && last.to
-        && Date.now() - new Date(last.at).getTime() < 10 * 60 * 1000) {
-      clearInterval(state.updTimer);
-      const bar = slot.querySelector('#upd-bar');
-      if (bar) bar.style.width = '100%';
-      const stepEl = slot.querySelector('#upd-step');
-      if (stepEl) stepEl.textContent = `Обновление до v${last.to} установлено — сервис перезапущен`;
-      const btn = slot.querySelector('#upd-done');
-      if (btn) { btn.classList.remove('hidden'); btn.onclick = () => { close(); location.reload(); }; }
-      toast(`Готово: v${last.to} — страница будет перезагружена`, 'ok', '🔄');
-      return;
-    }
+    const st = resp.job || {};
+    st.current_version = resp.current_version || '';
     const bar = slot.querySelector('#upd-bar');
-    if (bar) bar.style.width = Math.max(5, st.progress) + '%';
+    if (bar) bar.style.width = Math.max(5, st.progress || 0) + '%';
+    const ph = slot.querySelector('#upd-phases');
+    if (ph) ph.innerHTML = phaseRows(st);
     const stepEl = slot.querySelector('#upd-step');
-    if (stepEl) stepEl.textContent = st.running ? (st.step || '…') : (st.success ? 'Обновление завершено' : (st.error ? 'Ошибка: ' + st.error : ''));
+    const curPhase = st.step && st.phases ? st.phases[st.step] : null;
+    if (stepEl && st.running) stepEl.textContent = (curPhase && curPhase.message) || st.step || '…';
+    const bytes = slot.querySelector('#upd-bytes');
+    if (bytes && st.downloaded_bytes)
+      bytes.textContent = `· ⬇ загружено: ${updFmtKB(st.downloaded_bytes)}`;
     const log = slot.querySelector('#upd-log');
     if (log) log.textContent = (st.log || []).join('\n');
-    if (st.finished) {
-      clearInterval(state.updTimer);
-      const btn = slot.querySelector('#upd-done');
-      if (btn) btn.classList.remove('hidden');
-      btn.onclick = () => { close(); if (st.success) location.reload(); };
-      if (st.success) toast(st.needs_restart
-        ? 'Обновление установлено. Перезапустите сервис (systemctl restart ymaster-check) — в облаке Timeweb это делает панель'
-        : 'Обновление установлено и применено!', 'ok', 'v' + st.to_version);
-      if (st.rolled_back) toast('Произошёл сбой — система автоматически откатилась на прежнюю версию. Данные целы.', 'warn', 'Безопасность');
+    if (!st.finished) return;
+    // v1.50.0: успех считается только когда НОВЫЙ процесс реально работает
+    const confirmed = !!(st.to_version && st.current_version === st.to_version);
+    if (st.success && !st.needs_restart && !confirmed) {
+      if (!waitingSince) waitingSince = Date.now();
+      const stepEl2 = slot.querySelector('#upd-step');
+      if (stepEl2) stepEl2.textContent = 'Установлено — сервис перезапускается…';
+      if (Date.now() - waitingSince > 180000) {   // рестарт так и не случился
+        st.needs_restart = true;
+        finishUp(st);
+      }
+      return;
     }
-  }, 1500);
+    if (finalShown) return;
+    finalShown = true;
+    finishUp(st);
+  }, 2000);
 }
 
 const WHATS_NEW = {
+  '1.50.0': [
+    { icon: '🔄', title: 'Обновление: видно каждый шаг',
+      text: 'Процесс обновления стал пошаговым: резервная копия, загрузка (сколько килобайт и за сколько времени), установка файлов, проверка целостности, перезапуск. В конце — отчёт: какая версия установилась и какие блоки программы обновились (версия блока: старая → новая). Сообщение об успехе приходит одно — когда новая версия уже точно работает.' },
+  ],
   '1.49.0': [
     { icon: '⬆', title: 'Копию можно вернуть обратно',
       text: 'Скачанную раньше резервную копию теперь можно загрузить в программу: кнопка «⬆ Загрузить копию» в разделе «Резервные копии». Файл проверяется на целостность и попадает в список — если что-то пошло не так, восстановление в пару кликов.' },
@@ -6353,6 +6453,7 @@ async function viewUsers(container) {
 // v1.21.0: БАННЕР «ПРОГРАММА ОБНОВИЛАСЬ НА СЕРВЕРЕ» — перезагрузка по кнопке
 // ==========================================================================
 function showUpdateBanner(newVer) {
+  if (state.updModalOpen) return;   // v1.50.0: в окне обновления всё видно
   let b = document.getElementById('update-banner');
   if (b) {      // уже показан — обновляем версию
     const span = b.querySelector('.ub-ver');
@@ -7324,7 +7425,7 @@ async function viewSettings(container) {
       }).catch(() => { const el = $('#upd-ready'); if (el) el.textContent = ''; });
       setUpdState('checking');
       try {
-        const r = await api.get('/api/v1/admin/update/check', { retries: 1 });
+        const r = await api.get('/api/v1/admin/update/check?force=1', { retries: 1 });
         const ch = $('#upd-checked');
         if (r.ok === false) {                    // v1.6.0: структурированный ответ
           state.githubUnreachable = true;
@@ -7932,6 +8033,10 @@ function registerServiceWorker() {
         if (!nw) return;
         nw.addEventListener('statechange', () => {
           if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            // v1.50.0: после обновления из окна — там уже всё сообщено, не дублируем
+            let justUpdated = false;
+            try { justUpdated = sessionStorage.getItem('ymaster-updated') === '1'; } catch (e) {}
+            if (justUpdated) { try { sessionStorage.removeItem('ymaster-updated'); } catch (e) {} return; }
             toast('Обновление загружено — нажмите, чтобы перезагрузить страницу',
                   'info', '🔄');
             document.querySelector('.toast:last-child')?.addEventListener('click',
