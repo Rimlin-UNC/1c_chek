@@ -38,10 +38,18 @@ def _path() -> str:
 
 
 def _read() -> list[dict]:
+    """v1.46.1: дедупликация по ВЕРСИИ — одна запись = одна версия."""
     try:
         with open(_path(), encoding="utf-8") as f:
             items = json.load(f)
-        return items if isinstance(items, list) else []
+        if not isinstance(items, list):
+            return []
+        by_version: dict[str, dict] = {}
+        for it in items:
+            v = str(it.get("version") or "")
+            if v:
+                by_version[v] = it
+        return list(by_version.values())
     except (OSError, ValueError):
         return []
 

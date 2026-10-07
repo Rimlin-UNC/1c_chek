@@ -20,8 +20,8 @@ from tests.conftest import login
 class TestVersion1460:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
-        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.46.0"
+        # точный пин перенесён в tests/test_v1461.py (версия ушла вперёд)
+        assert 'APP_VERSION: str = "' in cfg
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.44" not in idx and "?v=1.45" not in idx

@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.46.1': [
+    { icon: '🛟', title: 'Откат рабочих версий — кнопки на месте',
+      text: 'В блоке «Последние рабочие версии» появилась кнопка «Откатиться» у каждой прошлой версии, кнопка обновления списка и откат к произвольному коммиту — даже если версии ещё нет в реестре. Добавлены пояснения во всех состояниях и полный пробег по всем блокам программы.' },
+  ],
   '1.46.0': [
     { icon: '🛟', title: 'Восстановление базы и откат к рабочим версиям',
       text: 'Резервные копии теперь можно вернуть в программу прямо из настроек — одной кнопкой, со страховой копией и проверкой целостности. Появился блок «Последние рабочие версии»: программа запоминает три последние версии, на которых работала, и к любой можно откатиться, если обновление оказалось проблемным — из приложения или командой sudo bash rollback.sh с сервера, даже если программа не запускается.' },
@@ -6844,6 +6848,16 @@ async function viewSettings(container) {
         файлы возвращаются, приложение перезапускается. Если приложение вообще не запускается —
         на сервере: <span class="cell-mono">sudo bash rollback.sh</span></p>
         <div id="rel-list"><p class="form-hint">Загружаем…</p></div>
+        <details style="margin-top:10px">
+          <summary class="form-hint" style="cursor:pointer">Откат к произвольному коммиту — если нужной версии нет в списке</summary>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <input id="rb-commit" class="cell-mono" placeholder="хеш коммита, например 3944e7e"
+                   style="max-width:300px" autocomplete="off">
+            <button class="btn btn-sm" id="rb-commit-go">↩ Откатиться к коммиту</button>
+          </div>
+          <p class="form-hint" style="margin-top:6px">Хеш виден в журнале версий на GitHub
+          («история» файла) или на сервере: <span class="cell-mono">git -C /opt/ymaster-check log --oneline -10</span></p>
+        </details>
       </div>` : ''}
 
       ${isAdmin() && onec ? `
@@ -7020,36 +7034,88 @@ async function viewSettings(container) {
     let relPoll = null;
     const relBox = $('#rel-list');
     const relStop = () => { if (relPoll) { clearInterval(relPoll); relPoll = null; } };
+    let relItems = [];
+    const others = () => relItems.filter(v => !v.current);
+    const relConfirm = (title, lines) =>
+      confirm(title + '\n\n' + lines.join('\n'));
+
     const relRender = (items) => {
       if (!relBox) return;
-      if (!items.length) {
-        relBox.innerHTML = '<p class="form-hint">Рабочие версии появятся, ' +
-          'когда программа успешно проработает после старта или обновления.</p>';
-        return;
+      relItems = items || [];
+      const cur = relItems.find(v => v.current);
+      const head =
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+        `<span class="form-hint">Сейчас работает: <b>v${esc(cur ? cur.version : '…')}</b> · ` +
+        `в реестре ${relItems.length} из 3</span>` +
+        '<button class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
+      if (!relItems.length) {
+        relBox.innerHTML = head +
+          '<p class="form-hint">Реестр пока пуст. Записи появляются автоматически: ' +
+          'после каждого успешного старта программы и перед каждым обновлением. ' +
+          'Как только вы обновитесь, предыдущая версия появится здесь и её можно ' +
+          'будет откатить одной кнопкой. Пока можно откатиться к коммиту вручную (ниже).</p>';
+      } else if (!others().length) {
+        relBox.innerHTML = head +
+          '<p class="form-hint">В реестре пока только текущая версия. Предыдущие рабочие ' +
+          'версии появятся здесь после обновлений — и к ним можно будет откатиться кнопкой. ' +
+          'Срочно нужен откат сейчас — воспользуйтесь откатом к коммиту (ниже) либо на сервере: ' +
+          '<span class="cell-mono">sudo bash rollback.sh</span></p>';
+      } else {
+        relBox.innerHTML = head +
+          '<table class="data" style="min-width:0"><thead>' +
+          '<tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th></th></tr></thead><tbody>' +
+          relItems.map(v => `<tr>
+            <td><b>v${esc(v.version)}</b>${v.current
+              ? ' <span class="chip exported"><span class="dot"></span>работает сейчас</span>'
+              : (v.note ? `<div class="form-hint">${esc(v.note)}</div>` : '')}</td>
+            <td class="cell-mono" style="font-size:11.5px">${esc(v.commit_short)}</td>
+            <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
+            <td>${v.current
+              ? '<span class="form-hint">—</span>'
+              : `<button class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
+          </tr>`).join('') + '</tbody></table>';
       }
-      relBox.innerHTML = '<table class="data" style="min-width:0"><thead>' +
-        '<tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th></th></tr></thead><tbody>' +
-        items.map(v => `<tr>
-          <td><b>v${esc(v.version)}</b>${v.current ? ' <span class="chip exported"><span class="dot"></span>работает сейчас</span>' : ''}</td>
-          <td class="cell-mono" style="font-size:11.5px">${esc(v.commit_short)}</td>
-          <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
-          <td>${v.current ? '' : `<button class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
-        </tr>`).join('') + '</tbody></table>';
+      // откат к версии из реестра
       relBox.querySelectorAll('button[data-rb]').forEach(btn => {
         btn.onclick = async () => {
           const [ver, commit] = btn.getAttribute('data-rb').split('|');
-          if (!confirm(`Откатиться к рабочей версии v${ver}?\n\n` +
-              'Файлы программы вернутся к проверенной версии, база данных НЕ трогается.\n' +
-              'Перед откатом автоматически создаётся копия базы.\n' +
-              'Приложение перезапустится — все будут отключены на ~10 секунд.')) return;
+          if (!relConfirm(`Откатиться к рабочей версии v${ver}?`, [
+              '• Файлы программы вернутся к проверенной версии.',
+              '• База данных НЕ трогается; перед откатом — копия базы.',
+              '• Приложение перезапустится (~10 секунд).'])) return;
           btn.disabled = true;
           try {
-            const r = await api.post('/api/v1/admin/update/rollback', { version: ver, commit });
+            const r = await api.post('/api/v1/admin/update/rollback',
+                                     { version: ver, commit });
             toast(r.message, 'ok', '↩ Откат');
             relWatch();
           } catch (e) { toast(e.message, 'err', 'Откат'); btn.disabled = false; }
         };
       });
+      // обновить список
+      const rf = document.getElementById('rel-refresh');
+      if (rf) rf.onclick = () => { rf.disabled = true; relLoad().then(() => { rf.disabled = false; }); };
+      // откат к произвольному коммиту
+      const go = document.getElementById('rb-commit-go');
+      const inp = document.getElementById('rb-commit');
+      if (go && inp) go.onclick = async () => {
+        const c = inp.value.trim();
+        if (!/^[0-9a-f]{7,40}$/.test(c)) {
+          toast('Хеш коммита: 7–40 символов 0–9 a–f', 'err', '↩ Откат');
+          return;
+        }
+        if (!relConfirm(`Откатиться к коммиту ${c.slice(0, 8)}?`, [
+            '• Коммит должен быть рабочей версией программы.',
+            '• База данных НЕ трогается; перед откатом — копия базы.',
+            '• Приложение перезапустится (~10 секунд).'])) return;
+        go.disabled = true;
+        try {
+          const r = await api.post('/api/v1/admin/update/rollback',
+                                   { version: 'коммит ' + c.slice(0, 8), commit: c });
+          toast(r.message, 'ok', '↩ Откат');
+          relWatch();
+        } catch (e) { toast(e.message, 'err', 'Откат'); go.disabled = false; }
+      };
     };
     const relLoad = async () => {
       try {
