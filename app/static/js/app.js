@@ -94,22 +94,34 @@ async function boot() {
     clearToken();
   }
   showSplash(false);
-  // v1.45.0: SEO-пререндер (для поисковиков) убираем — дальше наш UI
+  // v1.45.1: маршрутизация под страховкой — при любой ошибке рендера гость
+  // получает рабочий экран входа, а не пустую страницу. SEO-пререндер
+  // убирает только та функция, что успешно отрисовала UI (hideSeo).
+  try {
+    // v1.45.0: гость без хеша и без токена → приветственная страница
+    if (!location.hash || location.hash === '#/') { showPublicScreen(); return; }
+    // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
+    if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
+    // v1.32.0: кабинет «Чек-Пула» — тоже доступен без входа в программу
+    if (location.hash.startsWith('#/my')) { showPoolScreen(); return; }
+    const pm = location.hash.match(/^#\/pool-magic\/(.+)$/);
+    if (pm) { poolConsume('magic', pm[1]); return; }        // ссылка из письма
+    const pv = location.hash.match(/^#\/pool-verify\/(.+)$/);
+    if (pv) { poolConsume('verify', pv[1]); return; }       // подтверждение e-mail
+    const rr = location.hash.match(/^#\/r\/([A-Za-z0-9-]{3,16})$/);
+    if (rr) { poolRefSave(rr[1]); return; }                 // v1.35.0: приглашение
+    showLogin();
+  } catch (e) {
+    try { console.error('boot:', e); } catch (_e) { /* без консоли */ }
+    showLogin();
+  }
+}
+
+// v1.45.1: SEO-пререндер (для поисковиков) удаляет та функция, которая
+// успешно отрисовала UI; если рендер упал — страница остаётся с текстом.
+function hideSeo() {
   const seo = document.getElementById('seo-landing');
   if (seo) seo.remove();
-  // v1.45.0: гость без хеша и без токена → гостевой лендинг «проверить чек»
-  if (!location.hash || location.hash === '#/') { showPublicScreen(); return; }
-  // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
-  if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
-  // v1.32.0: кабинет «Чек-Пула» — тоже доступен без входа в программу
-  if (location.hash.startsWith('#/my')) { showPoolScreen(); return; }
-  const pm = location.hash.match(/^#\/pool-magic\/(.+)$/);
-  if (pm) { poolConsume('magic', pm[1]); return; }        // ссылка из письма
-  const pv = location.hash.match(/^#\/pool-verify\/(.+)$/);
-  if (pv) { poolConsume('verify', pv[1]); return; }       // подтверждение e-mail
-  const rr = location.hash.match(/^#\/r\/([A-Za-z0-9-]{3,16})$/);
-  if (rr) { poolRefSave(rr[1]); return; }                 // v1.35.0: приглашение
-  showLogin();
 }
 
 // v1.35.0: код приглашения — храним 30 дней, при регистрации уйдёт на сервер
@@ -174,6 +186,7 @@ function showLogin() {
       btn.textContent = 'Войти в систему';
     }
   };
+  hideSeo();
 }
 
 // ==========================================================================
@@ -539,63 +552,112 @@ function showPublicScreen() {
   $('#login-screen').classList.add('hidden');
   $('#app-shell').classList.add('hidden');
   const root = $('#public-root');
-  // v1.45.0: гостевой лендинг «Проверить чек онлайн» — сценарий в три шага,
-  // похвала за проверку, приглашение зарегистрироваться ради бонусов.
+  // v1.45.1: приветственная главная — hero с иллюстрацией, живой стат базы,
+  // три шага, форма проверки с похвалой, бонус-блок, вход/регистрация в
+  // кабинет, FAQ и футер. Картинки с подстраховкой: не загрузился файл —
+  // блок мягко скрывается (onerror), вёрстка не ломается.
   root.innerHTML = `
-  <div class="glass" style="max-width:860px;margin:0 auto;padding:26px 22px">
-    <div style="text-align:center;margin-bottom:14px">
-      <h1 style="font-size:24px;line-height:1.25;margin:0 0 6px">Проверить чек онлайн
-        <span class="grad-text">за 10 секунд</span></h1>
-      <p style="color:var(--text-dim);font-size:14.5px;margin:0">
-        Наведите камеру на QR-код кассового чека — проверим по официальным
-        источникам и начислим <b>бонусные баллы</b>. Бесплатно и без регистрации.</p>
-    </div>
-    <img src="/img/manual/landing-hero.jpg" alt="Как проверить чек по QR-коду камерой телефона"
-         style="width:100%;max-width:560px;display:block;margin:0 auto 16px;border-radius:14px"
-         loading="eager">
-    <div class="form-grid" style="grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
-      <div class="glass" style="padding:12px;border-radius:12px">
-        <div style="font-size:20px">📷</div><b style="font-size:13.5px">1. Наведите камеру</b>
-        <div class="form-hint">на QR-код чека — обычной камерой телефона</div></div>
-      <div class="glass" style="padding:12px;border-radius:12px">
-        <div style="font-size:20px">✅</div><b style="font-size:13.5px">2. Проверим чек</b>
-        <div class="form-hint">сверим ФН, ФД и ФП по источникам ФНС</div></div>
-      <div class="glass" style="padding:12px;border-radius:12px">
-        <div style="font-size:20px">🎁</div><b style="font-size:13.5px">3. Получите баллы</b>
-        <div class="form-hint">настоящий чек = баллы Чек-Пула</div></div>
-    </div>
-    <div class="glass card" style="margin-bottom:14px">
-      <div class="card-title">🧾 Проверить чек <span class="form-hint">шаг 1 — камера или строка QR</span></div>
-      ${publicFormHTML()}
-    </div>
-    <div id="pub-praise" class="hidden" style="margin-bottom:14px"></div>
-    <div class="glass card">
-      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-        <img src="/img/manual/landing-bonus.jpg" alt="Бонусные баллы за чеки в Чек-Пуле"
-             style="width:180px;border-radius:12px" loading="lazy">
-        <div style="flex:1;min-width:240px">
-          <div class="card-title" style="margin-bottom:4px">🎉 Чек настоящий? Это только начало!</div>
-          <p class="form-hint" style="margin:0 0 8px">Зарегистрируйтесь — и за каждый чек будут
-          начисляться баллы: подарки партнёров, кэшбэк, рейтинг месяца.
-          Ваш чек уже в базе — регистрация присоединит его к вашему кабинету.</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <a class="btn btn-primary btn-sm" href="#/my">Создать кабинет — забрать баллы</a>
-            <a class="btn btn-sm" href="#/partners">Партнёры и кэшбэк →</a>
-          </div>
+  <div class="land">
+    <header class="land-top">
+      <div class="land-brand"><img src="/img/logo.svg" alt="" width="28" height="28">Ямастер&nbsp;<span class="grad-text">Чек</span></div>
+      <nav class="land-nav">
+        <a href="#" class="btn btn-sm" data-scroll="#land-check">Проверить чек</a>
+        <a href="#" class="btn btn-sm btn-primary" data-scroll="#land-auth">Войти</a>
+      </nav>
+    </header>
+
+    <section class="land-hero">
+      <div>
+        <span class="chip new"><span class="dot"></span>Бесплатно · без регистрации · 152-ФЗ</span>
+        <h1>Проверить чек онлайн <span class="grad-text">за 10 секунд</span></h1>
+        <p class="land-lead">Наведите камеру телефона на QR-код кассового чека — сверим
+        фискальные реквизиты по официальным источникам и начислим <b>бонусные баллы</b>.</p>
+        <div id="land-stat" class="land-stat">Открываем базу…</div>
+        <div class="land-cta">
+          <a href="#" class="btn btn-primary" data-scroll="#land-check">Проверить свой чек</a>
+          <a href="#" class="btn" data-scroll="#land-auth">Создать кабинет</a>
         </div>
       </div>
-    </div>
-    <div style="text-align:center;margin-top:12px">
-      <a href="#" id="public-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
-    </div>
+      <figure class="land-hero-img">
+        <img src="/img/manual/landing-hero.jpg" width="520" height="400" loading="eager"
+             alt="Наведите камеру телефона на QR-код кассового чека"
+             onerror="this.parentElement.classList.add('hidden')">
+      </figure>
+    </section>
+
+    <section class="land-steps">
+      <div class="glass land-step"><div class="ic">📷</div><b>1. Наведите камеру</b>
+        <p class="form-hint">на QR-код чека — обычной камерой телефона, ничего ставить не нужно</p></div>
+      <div class="glass land-step"><div class="ic">✅</div><b>2. Проверим чек</b>
+        <p class="form-hint">сверим ФН, ФД и ФП по официальным источникам — результат через несколько секунд</p></div>
+      <div class="glass land-step"><div class="ic">🎁</div><b>3. Получите баллы</b>
+        <p class="form-hint">настоящий чек приносит баллы Чек-Пула — обменяйте их на подарки партнёров</p></div>
+    </section>
+
+    <section id="land-check" class="glass land-card">
+      <div class="card-title">🧾 Проверить чек <span class="form-hint">камера или строка QR</span></div>
+      ${publicFormHTML()}
+      <div id="pub-praise" class="hidden" style="margin-top:14px"></div>
+    </section>
+
+    <section class="glass land-bonus">
+      <img src="/img/manual/landing-bonus.jpg" width="200" height="200" loading="lazy"
+           alt="Бонусные баллы и подарки партнёров Чек-Пула"
+           onerror="this.classList.add('hidden')">
+      <div>
+        <div class="card-title" style="margin-bottom:4px">🎉 Чек настоящий? Это только начало</div>
+        <p class="form-hint" style="margin:0 0 10px">Зарегистрируйтесь — и за каждый чек будут начисляться
+        баллы: подарки партнёров, кэшбэк и рейтинг месяца. Чек, проверенный здесь,
+        присоединится к вашему кабинету автоматически.</p>
+        <div class="land-cta">
+          <a href="#" class="btn btn-primary" data-scroll="#land-auth">Создать кабинет — забрать баллы</a>
+          <a class="btn" href="#/partners">Партнёры и кэшбэк →</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="land-auth" class="glass land-card">
+      <div class="card-title">👤 Кабинет участника <span class="form-hint">вход · регистрация · ссылка по e-mail</span></div>
+      ${poolAuthHTML()}
+      <div style="margin-top:10px"><a href="#" id="land-to-app" style="font-size:13.5px">Сотрудник компании? Войти в рабочую программу →</a></div>
+    </section>
+
+    <section class="land-faq">
+      <div class="card-title" style="margin-bottom:8px">❓ Частые вопросы</div>
+      <details><summary>Это бесплатно?</summary><p>Да, проверка чека полностью бесплатна и без регистрации. Кабинет нужен только для бонусов.</p></details>
+      <details><summary>Это законно?</summary><p>Да: вы проверяете свой чек и добровольно передаёте его фискальные данные в открытую базу Чек-Пула. Сервис работает в рамках 152-ФЗ о персональных данных.</p></details>
+      <details><summary>Подойдёт ли бумажный чек?</summary><p>Да, у любого кассового чека есть QR-код. Электронный чек можно вставить строкой вручную.</p></details>
+      <details><summary>Чек не находится — что делать?</summary><p>Возможно, касса не пробила чек или реквизиты повреждены. Попросите у продавца корректный чек и попробуйте снова.</p></details>
+    </section>
+
+    <footer class="land-foot">© ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a>
+      · info@ymaster.ru · Из чека хранятся только фискальные реквизиты (152-ФЗ)</footer>
   </div>`;
-  const back = document.getElementById('public-to-login');
-  if (back) back.onclick = (e) => {
+
+  // плавный скролл по якорям — hash SPA не трогаем
+  root.querySelectorAll('a[data-scroll]').forEach(a => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      const t = document.querySelector(a.getAttribute('data-scroll'));
+      if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  });
+  const toApp = document.getElementById('land-to-app');
+  if (toApp) toApp.onclick = (e) => {
     e.preventDefault();
     history.replaceState(null, '', location.pathname);
     showLogin();
   };
-  bindPoolForm(root);
+  // живой стат базы — не критичен при сбое сети
+  api.get('/api/v1/public/pool/info').then((info) => {
+    if (!info || !info.enabled) return;
+    const box = document.getElementById('land-stat');
+    if (box) box.innerHTML = `В базе уже <b>${fmtInt(info.receipts_total)}</b> чеков ·
+      проверено <b>${fmtInt(info.verified)}</b> · 1 чек = ${info.points_per_receipt} балл`;
+  }).catch(() => {});
+  bindPoolForm(root);        // форма проверки + похвала после успеха
+  bindPoolAccount(root);     // кабинет: вход/регистрация (или дашборд, если токен уже есть)
+  hideSeo();                 // v1.45.1: пререндер убираем только после успешного рендера
 }
 
 // v1.31.0: тот же приём — разделом приложения (для вошедших сотрудников)
@@ -1426,6 +1488,7 @@ function showPoolScreen() {
   const pub = document.getElementById('pool-to-public');
   if (pub) pub.onclick = (e) => { e.preventDefault(); history.replaceState(null, '', location.pathname + '#/public'); showPublicScreen(); };
   bindPoolAccount(root);
+  hideSeo();
 }
 
 // Кабинет внутри программы (пункт меню «Мой Чек-Пул»)
@@ -2044,6 +2107,7 @@ async function showRegister(token) {
       btn.textContent = 'Создать аккаунт';
     }
   };
+  hideSeo();
 }
 
 // --------------------------------------------------------------------------
@@ -4167,6 +4231,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.45.1': [
+    { icon: '🏠', title: 'Новая приветственная страница',
+      text: 'Вход и регистрация — прямо на главной: вкладки «Вход», «Регистрация» и «Вход по ссылке». Живая статистика базы чеков, ответы на частые вопросы, аккуратные иллюстрации. Исправили редкий сбой, из-за которого после обновления страница могла не запуститься и остаться без картинок.' },
+  ],
   '1.45.0': [
     { icon: '🔎', title: 'Новая главная страница: проверить чек онлайн',
       text: 'Гость сразу попадает на понятный экран: навёл камеру на QR-код чека — узнал, что чек настоящий, получил похвалу и баллы. Страница рассказывает, как работает проверка чеков, что даёт регистрация и почему это безопасно (152-ФЗ). Для поисковиков добавлены заголовок, описание и разметка «частые вопросы» — сервис стал видимым по запросам «проверить чек онлайн». Почта системы переехала на Timeweb (chek@ymaster.ru), в Почтовом центре — кнопка «Заполнить для Timeweb» и сброс пароля ящика.' },

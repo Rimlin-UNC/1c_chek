@@ -1259,3 +1259,45 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
 .seo-landing ol { padding-left: 22px; margin: 8px 0; }
 .seo-landing li { margin: 6px 0; }
 .seo-landing a { color: var(--brand, #4753d8); }
+
+/* v1.45.1: приветственная главная (гостевой лендинг) */
+.land { max-width: 1080px; margin: 0 auto; padding: 0 16px 44px; }
+.land-top { display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 2px; gap: 10px; flex-wrap: wrap; }
+.land-brand { display: flex; gap: 8px; align-items: center;
+  font-weight: 800; font-size: 18px; letter-spacing: .2px; }
+.land-brand img { border-radius: 7px; }
+.land-nav { display: flex; gap: 8px; }
+.land-hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 28px;
+  align-items: center; padding: 20px 0 10px; }
+.land-hero h1 { font-size: 34px; line-height: 1.15; margin: 12px 0; }
+.land-lead { font-size: 16.5px; color: var(--text-dim); line-height: 1.55; margin: 0 0 12px; }
+.land-cta { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 6px; }
+.land-cta .btn { padding: 12px 22px; font-size: 15.5px; }
+.land-stat { font-size: 14px; color: var(--text-dim); margin-top: 4px; }
+.land-stat b { font-variant-numeric: tabular-nums; color: var(--text); }
+.land-hero-img { margin: 0; }
+.land-hero-img img { width: 100%; height: auto; display: block;
+  border-radius: 18px; box-shadow: var(--shadow); border: 1px solid var(--border); }
+.land-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+.land-step { padding: 16px; border-radius: 14px; }
+.land-step .ic { font-size: 24px; }
+.land-step b { display: block; margin: 6px 0 4px; font-size: 15px; }
+.land-step .form-hint { margin: 0; }
+.land-card { padding: 20px; border-radius: 16px; margin: 14px 0; scroll-margin-top: 16px; }
+.land-bonus { display: flex; gap: 18px; align-items: center; padding: 18px;
+  border-radius: 16px; margin: 14px 0; flex-wrap: wrap; }
+.land-bonus img { width: 200px; height: auto; border-radius: 14px;
+  border: 1px solid var(--border); flex: 0 0 auto; }
+.land-bonus > div { flex: 1; min-width: 260px; }
+.land-faq details { border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 14px; margin: 8px 0; background: rgba(255, 255, 255, .55); }
+.land-faq summary { cursor: pointer; font-weight: 600; font-size: 14.5px; }
+.land-faq p { margin: 8px 0 2px; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
+.land-foot { text-align: center; color: var(--text-dim); font-size: 13px; padding: 22px 0 4px; }
+.land-foot a { color: inherit; }
+@media (max-width: 860px) {
+  .land-hero { grid-template-columns: 1fr; gap: 16px; }
+  .land-hero h1 { font-size: 27px; }
+  .land-steps { grid-template-columns: 1fr; }
+}
