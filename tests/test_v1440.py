@@ -57,11 +57,16 @@ def _mk_admin_hdr(client):
 
 class TestVersion1440:
     def test_versions_synced(self):
-        # пин 1.44.0 перенесён в tests/test_v1441.py (версия ушла вперёд)
         cfg = open("app/config.py", encoding="utf-8").read()
-        assert 'APP_VERSION: str = "' in cfg
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
+        assert ver == "1.44.0"
+        idx = open("app/static/index.html", encoding="utf-8").read()
+        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
+        assert "v=1.43.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
+        assert f'"version": "{ver}"' in mf
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -213,8 +218,8 @@ class TestMailBot:
             "subject": "Подтвердите e-mail", "body": "Здравствуйте, {name}!"})
         assert r.status_code == 200
         # тик «днём» → правило выполняется
-        # (v1.45.0: now от utcnow — tick хранит last_run_at по utcnow,
-        #  жёсткая дата ломала тест при смене календарного дня)
+        # (фикс хрупкости: tick хранит last_run_at по utcnow — жёсткая дата
+        #  ломала тест при смене календарного дня)
         _now = dt.datetime.utcnow()
         res = mail_center.tick(db, now=_now)
         assert any(x["rule"] == "Подтвердите e-mail" and x["sent"] == 1

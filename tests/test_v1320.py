@@ -426,9 +426,7 @@ class TestMailerAndAdmin:
         raw_val = db.get(appsettings.AppSetting, "smtp_pass")
         assert raw_val is not None and raw_val.value.startswith("enc:")
         db.close()
-        # v1.45.0: порт 465 уходит через SMTP_SSL — мокаем оба пути
-        with patch("app.pool.mailer.smtplib.SMTP") as m, \
-             patch("app.pool.mailer.smtplib.SMTP_SSL", m):
+        with patch("app.pool.mailer.smtplib.SMTP") as m:
             m.return_value.__enter__ = lambda s: m.return_value
             rt = c.post("/api/v1/pool-admin/smtp-test", headers=H,
                         json={"email": "admin@test.ru"})

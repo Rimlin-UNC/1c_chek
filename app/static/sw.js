@@ -5,27 +5,22 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.45.3';
+const CACHE = 'ymaster-check-v1.44.0';
 // v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
 // SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.45.3', '/js/app.js?v=1.45.3',   // v1.12.2: как в index.html
+  '/css/app.css?v=1.44.0', '/js/app.js?v=1.44.0',   // v1.12.2: как в index.html
   '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
   '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
   '/img/manual/hero.jpg', '/img/manual/scan.jpg',
   '/img/manual/report.jpg', '/img/manual/update.jpg',   // v1.21.0: инструкция
-  '/img/manual/landing-hero.jpg', '/img/manual/landing-bonus.jpg',   // v1.45.1: главная
 ];
 
 self.addEventListener('install', (e) => {
-  // v1.45.1: установка поштучно и устойчиво — один битый/недоступный ассет
-  // больше не валил весь install (addAll падал целиком, SW не обновлялся)
-  e.waitUntil(caches.open(CACHE).then(c =>
-    Promise.all(ASSETS.map(u => c.add(u).catch(() => {})))
-  ).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

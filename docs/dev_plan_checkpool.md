@@ -356,16 +356,6 @@ passkey_removed, login_passkey(+failed).
 публичная ссылка, suppression-список), суточный антиспам-лимит на
 адрес, SPF/DKIM-подсказка, аудит mail_* событий.
 
-### Дополнение — v1.44.1 «Почтовый сервис на своём сервере» — ✅ ВЫПОЛНЕН (v1.44.1, 2026-10-06)
-setup-mail.sh + deploy.sh --setup-mail: Postfix только-отправка
-(loopback-only, снаружи портов нет), OpenDKIM RSA 2048, получатель
-chek (chek@chek.ymaster.ru), готовые DNS-записи в
-/root/mail-dns-records.txt (SPF ip4 94.183.236.179, DKIM, DMARC
-rua info@ymaster.ru), самопроверки (postfix check, локальная
-доставка, проба 25-го порта). Инструкция docs/knowledge/mail_setup.md:
-DNS-таблица, значения Почтового центра 127.0.0.1:25 без логина,
-приём писем (aliases), smarthost при блокировке 25-го порта.
-
 ---
 
 ## 4. Монетизация (из plan.md, раздел 10)

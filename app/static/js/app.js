@@ -94,34 +94,17 @@ async function boot() {
     clearToken();
   }
   showSplash(false);
-  // v1.45.1: маршрутизация под страховкой — при любой ошибке рендера гость
-  // получает рабочий экран входа, а не пустую страницу. SEO-пререндер
-  // убирает только та функция, что успешно отрисовала UI (hideSeo).
-  try {
-    // v1.45.0: гость без хеша и без токена → приветственная страница
-    if (!location.hash || location.hash === '#/') { showPublicScreen(); return; }
-    // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
-    if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
-    // v1.32.0: кабинет «Чек-Пула» — тоже доступен без входа в программу
-    if (location.hash.startsWith('#/my')) { showPoolScreen(); return; }
-    const pm = location.hash.match(/^#\/pool-magic\/(.+)$/);
-    if (pm) { poolConsume('magic', pm[1]); return; }        // ссылка из письма
-    const pv = location.hash.match(/^#\/pool-verify\/(.+)$/);
-    if (pv) { poolConsume('verify', pv[1]); return; }       // подтверждение e-mail
-    const rr = location.hash.match(/^#\/r\/([A-Za-z0-9-]{3,16})$/);
-    if (rr) { poolRefSave(rr[1]); return; }                 // v1.35.0: приглашение
-    showLogin();
-  } catch (e) {
-    try { console.error('boot:', e); } catch (_e) { /* без консоли */ }
-    showLogin();
-  }
-}
-
-// v1.45.1: SEO-пререндер (для поисковиков) удаляет та функция, которая
-// успешно отрисовала UI; если рендер упал — страница остаётся с текстом.
-function hideSeo() {
-  const seo = document.getElementById('seo-landing');
-  if (seo) seo.remove();
+  // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
+  if (location.hash.startsWith('#/public')) { showPublicScreen(); return; }
+  // v1.32.0: кабинет «Чек-Пула» — тоже доступен без входа в программу
+  if (location.hash.startsWith('#/my')) { showPoolScreen(); return; }
+  const pm = location.hash.match(/^#\/pool-magic\/(.+)$/);
+  if (pm) { poolConsume('magic', pm[1]); return; }        // ссылка из письма
+  const pv = location.hash.match(/^#\/pool-verify\/(.+)$/);
+  if (pv) { poolConsume('verify', pv[1]); return; }       // подтверждение e-mail
+  const rr = location.hash.match(/^#\/r\/([A-Za-z0-9-]{3,16})$/);
+  if (rr) { poolRefSave(rr[1]); return; }                 // v1.35.0: приглашение
+  showLogin();
 }
 
 // v1.35.0: код приглашения — храним 30 дней, при регистрации уйдёт на сервер
@@ -186,7 +169,6 @@ function showLogin() {
       btn.textContent = 'Войти в систему';
     }
   };
-  hideSeo();
 }
 
 // ==========================================================================
@@ -465,17 +447,6 @@ function bindPoolForm(root) {
               : esc(row.message || 'Источник не нашёл чек — проверьте строку QR.'));
         box.innerHTML = `<div class="info-callout">${poolStatusChip(row.status)}
           <div style="margin-top:6px">${extra}</div></div>`;
-        // v1.45.0: хвалим и зовём регистрироваться (гостевой лендинг)
-        const praise = document.getElementById('pub-praise');
-        if (praise && row.status === 'verified') {
-          praise.classList.remove('hidden');
-          praise.innerHTML = `<div class="glass card" style="border:2px solid var(--ok,#2f9e6e)">
-            <div class="card-title">👏 Отлично, чек настоящий!</div>
-            <p class="form-hint" style="margin:0 0 8px">Спасибо, что проверили: магазину меньше
-            места для обмана, а вам — баллы. Создайте кабинет, чтобы копить баллы
-            за все будущие чеки и обменять их на подарки партнёров.</p>
-            <a class="btn btn-primary btn-sm" href="#/my">Забрать баллы — создать кабинет</a></div>`;
-        }
       } else if (tries > 30) {
         clearInterval(timer);
         box.innerHTML = '<div class="info-callout">Проверка занимает больше минуты — статус появится в списке ниже.</div>';
@@ -532,10 +503,7 @@ function bindPoolForm(root) {
     try {
       const info = await api.get('/api/v1/public/pool/info');
       if (!info.enabled) {
-        // v1.45.3: заменяем только карточку проверки чека, а не всю страницу —
-        // лендинг (hero, шаги, кабинет, FAQ) остаётся работать
-        const card = root.querySelector('#land-check') || root;
-        card.innerHTML = '<div class="info-callout">Приём чеков сейчас выключен — загляните позже.</div>';
+        root.innerHTML = '<div class="info-callout">Приём чеков сейчас выключен — загляните позже.</div>';
         return;
       }
       const box = $p('pub-info');
@@ -550,159 +518,19 @@ function bindPoolForm(root) {
   })();
 }
 
-// v1.45.2: богатая главная — вынесена в чистый строитель строк, чтобы её
-// можно было безопасно заменить запасным вариантом при любой ошибке.
-function landHeroHTML() {
-  return `
-  <div class="land">
-    <header class="land-top">
-      <div class="land-brand"><img src="/img/logo.svg" alt="" width="28" height="28">Ямастер&nbsp;<span class="grad-text">Чек</span></div>
-      <nav class="land-nav">
-        <a href="#" class="btn btn-sm" data-scroll="#land-check">Проверить чек</a>
-        <a href="#" class="btn btn-sm btn-primary" data-scroll="#land-auth">Войти</a>
-      </nav>
-    </header>
-
-    <section class="land-hero">
-      <div>
-        <span class="chip new"><span class="dot"></span>Бесплатно · без регистрации · 152-ФЗ</span>
-        <h1>Проверить чек онлайн <span class="grad-text">за 10 секунд</span></h1>
-        <p class="land-lead">Наведите камеру телефона на QR-код кассового чека — сверим
-        фискальные реквизиты по официальным источникам и начислим <b>бонусные баллы</b>.</p>
-        <div id="land-stat" class="land-stat">Открываем базу…</div>
-        <div class="land-cta">
-          <a href="#" class="btn btn-primary" data-scroll="#land-check">Проверить свой чек</a>
-          <a href="#" class="btn" data-scroll="#land-auth">Создать кабинет</a>
-        </div>
-      </div>
-      <figure class="land-hero-img">
-        <img src="/img/manual/landing-hero.jpg" width="520" height="400" loading="eager"
-             alt="Наведите камеру телефона на QR-код кассового чека"
-             onerror="this.parentElement.classList.add('hidden')">
-      </figure>
-    </section>
-
-    <section class="land-steps">
-      <div class="glass land-step"><div class="ic">📷</div><b>1. Наведите камеру</b>
-        <p class="form-hint">на QR-код чека — обычной камерой телефона, ничего ставить не нужно</p></div>
-      <div class="glass land-step"><div class="ic">✅</div><b>2. Проверим чек</b>
-        <p class="form-hint">сверим ФН, ФД и ФП по официальным источникам — результат через несколько секунд</p></div>
-      <div class="glass land-step"><div class="ic">🎁</div><b>3. Получите баллы</b>
-        <p class="form-hint">настоящий чек приносит баллы Чек-Пула — обменяйте их на подарки партнёров</p></div>
-    </section>
-
-    <section id="land-check" class="glass land-card">
-      <div class="card-title">🧾 Проверить чек <span class="form-hint">камера или строка QR</span></div>
-      ${publicFormHTML()}
-      <div id="pub-praise" class="hidden" style="margin-top:14px"></div>
-    </section>
-
-    <section class="glass land-bonus">
-      <img src="/img/manual/landing-bonus.jpg" width="200" height="200" loading="lazy"
-           alt="Бонусные баллы и подарки партнёров Чек-Пула"
-           onerror="this.classList.add('hidden')">
-      <div>
-        <div class="card-title" style="margin-bottom:4px">🎉 Чек настоящий? Это только начало</div>
-        <p class="form-hint" style="margin:0 0 10px">Зарегистрируйтесь — и за каждый чек будут начисляться
-        баллы: подарки партнёров, кэшбэк и рейтинг месяца. Чек, проверенный здесь,
-        присоединится к вашему кабинету автоматически.</p>
-        <div class="land-cta">
-          <a href="#" class="btn btn-primary" data-scroll="#land-auth">Создать кабинет — забрать баллы</a>
-          <a class="btn" href="#/partners">Партнёры и кэшбэк →</a>
-        </div>
-      </div>
-    </section>
-
-    <section id="land-auth" class="glass land-card">
-      <div class="card-title">👤 Кабинет участника <span class="form-hint">вход · регистрация · ссылка по e-mail</span></div>
-      ${poolAuthHTML()}
-      <div style="margin-top:10px"><a href="#" id="land-to-app" style="font-size:13.5px">Сотрудник компании? Войти в рабочую программу →</a></div>
-    </section>
-
-    <section class="land-faq">
-      <div class="card-title" style="margin-bottom:8px">❓ Частые вопросы</div>
-      <details><summary>Это бесплатно?</summary><p>Да, проверка чека полностью бесплатна и без регистрации. Кабинет нужен только для бонусов.</p></details>
-      <details><summary>Это законно?</summary><p>Да: вы проверяете свой чек и добровольно передаёте его фискальные данные в открытую базу Чек-Пула. Сервис работает в рамках 152-ФЗ о персональных данных.</p></details>
-      <details><summary>Подойдёт ли бумажный чек?</summary><p>Да, у любого кассового чека есть QR-код. Электронный чек можно вставить строкой вручную.</p></details>
-      <details><summary>Чек не находится — что делать?</summary><p>Возможно, касса не пробила чек или реквизиты повреждены. Попросите у продавца корректный чек и попробуйте снова.</p></details>
-    </section>
-
-    <footer class="land-foot">© ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a>
-      · info@ymaster.ru · Из чека хранятся только фискальные реквизиты (152-ФЗ)</footer>
-  </div>`;
-}
-
-// v1.45.2: запасная упрощённая главная — та же суть, минимум оформления
-function landSimpleHTML() {
-  return `
-  <div style="max-width:760px;margin:0 auto">
-    <div class="glass card">
-      <div class="card-title">🧾 Проверить чек онлайн</div>
-      <p class="form-hint">Наведите камеру на QR-код кассового чека — проверим по официальным
-      источникам и начислим бонусные баллы. Бесплатно и без регистрации.</p>
-      ${publicFormHTML()}
-      <div id="pub-praise" class="hidden" style="margin-top:12px"></div>
-    </div>
-    <div class="glass card" style="margin-top:14px">
-      <div class="card-title">👤 Кабинет участника</div>
-      <p class="form-hint">Баллы за чеки, подарки партнёров и кэшбэк.</p>
-      ${poolAuthHTML()}
-      <div style="margin-top:10px"><a href="#" id="land-to-app" style="font-size:13.5px">Сотрудник компании? Войти в рабочую программу →</a></div>
-    </div>
-  </div>`;
-}
-
 function showPublicScreen() {
   $('#register-screen').classList.add('hidden');
   $('#login-screen').classList.add('hidden');
   $('#app-shell').classList.add('hidden');
   const root = $('#public-root');
-  // v1.45.2: слоистый рендер — богатая главная → упрощённая → чистая форма.
-  // Любая ошибка больше не способна оставить гостя без страницы.
-  let rich = true;
-  try {
-    root.innerHTML = landHeroHTML();
-  } catch (e) {
-    rich = false;
-    try { console.error('[landing] богатая версия не отрисовалась:', e); } catch (_e) {}
-    try {
-      root.innerHTML = landSimpleHTML() +
-        '<div class="form-hint" style="text-align:center;opacity:.7">Облегчённая версия страницы</div>';
-    } catch (e2) {
-      try { console.error('[landing] простая версия не отрисовалась:', e2); } catch (_e) {}
-      root.innerHTML = '<div class="glass card" style="max-width:760px;margin:0 auto">' +
-        publicFormHTML() + '</div>';
-    }
-  }
-
-  // плавный скролл по якорям — hash SPA не трогаем (только у богатой версии)
-  if (rich) root.querySelectorAll('a[data-scroll]').forEach(a => {
-    a.onclick = (e) => {
-      e.preventDefault();
-      const t = document.querySelector(a.getAttribute('data-scroll'));
-      if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    };
-  });
-  const toApp = document.getElementById('land-to-app');
-  if (toApp) toApp.onclick = (e) => {
+  root.innerHTML = publicFormHTML();
+  const back = document.getElementById('public-to-login');
+  if (back) back.onclick = (e) => {
     e.preventDefault();
     history.replaceState(null, '', location.pathname);
     showLogin();
   };
-  // живой стат базы — не критичен при сбое сети (только у богатой версии)
-  if (rich) {
-    try {
-      api.get('/api/v1/public/pool/info').then((info) => {
-        if (!info || !info.enabled) return;
-        const box = document.getElementById('land-stat');
-        if (box) box.innerHTML = `В базе уже <b>${fmtInt(info.receipts_total)}</b> чеков ·
-          проверено <b>${fmtInt(info.verified)}</b> · 1 чек = ${info.points_per_receipt} балл`;
-      }).catch(() => {});
-    } catch (e) { try { console.error('[landing] стат базы:', e); } catch (_e) {} }
-  }
-  try { bindPoolForm(root); } catch (e) { try { console.error('[landing] форма:', e); } catch (_e) {} }
-  try { bindPoolAccount(root); } catch (e) { try { console.error('[landing] кабинет:', e); } catch (_e) {} }
-  hideSeo();                 // v1.45.1: пререндер убираем только после успешного рендера
+  bindPoolForm(root);
 }
 
 // v1.31.0: тот же приём — разделом приложения (для вошедших сотрудников)
@@ -1533,7 +1361,6 @@ function showPoolScreen() {
   const pub = document.getElementById('pool-to-public');
   if (pub) pub.onclick = (e) => { e.preventDefault(); history.replaceState(null, '', location.pathname + '#/public'); showPublicScreen(); };
   bindPoolAccount(root);
-  hideSeo();
 }
 
 // Кабинет внутри программы (пункт меню «Мой Чек-Пул»)
@@ -2152,7 +1979,6 @@ async function showRegister(token) {
       btn.textContent = 'Создать аккаунт';
     }
   };
-  hideSeo();
 }
 
 // --------------------------------------------------------------------------
@@ -4276,26 +4102,6 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
-  '1.45.3': [
-    { icon: '✅', title: 'Главная страница работает при любом состоянии пула',
-      text: 'Исправили причину, из-за которой приветственная страница могла показывать только надпись «Приём чеков выключен». Теперь страница остаётся полноценной всегда, а приём чеков включён по умолчанию — новый сервер принимает чеки сразу после установки.' },
-  ],
-  '1.45.2': [
-    { icon: '🛡', title: 'Главная страница стала надёжнее',
-      text: 'Если оформление страницы не смогло открыться (редкий сбой), теперь автоматически показывается упрощённая версия — проверка чека, баллы и вход доступны всегда. Браузер больше не держит устаревшую копию страницы после обновлений сервиса.' },
-  ],
-  '1.45.1': [
-    { icon: '🏠', title: 'Новая приветственная страница',
-      text: 'Вход и регистрация — прямо на главной: вкладки «Вход», «Регистрация» и «Вход по ссылке». Живая статистика базы чеков, ответы на частые вопросы, аккуратные иллюстрации. Исправили редкий сбой, из-за которого после обновления страница могла не запуститься и остаться без картинок.' },
-  ],
-  '1.45.0': [
-    { icon: '🔎', title: 'Новая главная страница: проверить чек онлайн',
-      text: 'Гость сразу попадает на понятный экран: навёл камеру на QR-код чека — узнал, что чек настоящий, получил похвалу и баллы. Страница рассказывает, как работает проверка чеков, что даёт регистрация и почему это безопасно (152-ФЗ). Для поисковиков добавлены заголовок, описание и разметка «частые вопросы» — сервис стал видимым по запросам «проверить чек онлайн». Почта системы переехала на Timeweb (chek@ymaster.ru), в Почтовом центре — кнопка «Заполнить для Timeweb» и сброс пароля ящика.' },
-  ],
-  '1.44.1': [
-    { icon: '⚙️', title: 'Почта на своём сервере — одна команда',
-      text: 'На сервере: sudo bash deploy.sh --setup-mail — скрипт сам установит Postfix и DKIM-подпись, создаст ящик chek@chek.ymaster.ru и выдаст готовые DNS-записи (SPF, DKIM, DMARC) файлом /root/mail-dns-records.txt. Почтовый сервер слушает только 127.0.0.1 — снаружи нет открытых портов и паролей. Останется добавить записи в DNS и указать 127.0.0.1:25 в Почтовом центре.' },
-  ],
   '1.44.0': [
     { icon: '✉📬', title: 'Почтовый центр: свой ящик, шаблоны и бот рассылок',
       text: 'Новый блок в Настройках: ящик отправителя на своём сервере (например, chek@chek.ymaster.ru) с паролем (хранится зашифрованным), имя отправителя и тексты писем — приветствие и подпись. Бот рассылок сам пишет по расписанию (день недели и время) или по условию: напомнит подтвердить e-mail, вернёт участника, который давно не сдавал чеки, отправит сводку по списку адресов. Письма — красивые (HTML), с отпиской в один клик, журнал отправок хранится 90 дней.' },
@@ -6739,16 +6545,11 @@ async function viewSettings(container) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
           <button class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
-          <button class="btn btn-sm" id="mc-timeweb" title="Заполнить поля под почту Timeweb">Заполнить для Timeweb</button>
           <input id="mc-testto" placeholder="куда отправить тест" style="max-width:230px">
           <button class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
-          <button class="btn btn-sm btn-bad" id="mc-resetpass" title="После смены пароля в панели провайдера">Сбросить пароль ящика</button>
         </div>
-        <div class="form-hint" style="margin:4px 0 10px">Готовый сценарий на сервере:
-          <code>sudo bash deploy.sh --setup-mail</code> — сам поставит Postfix и DKIM
-          (только 127.0.0.1, без открытых портов) и выдаст записи для DNS
-          (файл <code>/root/mail-dns-records.txt</code>). Здесь тогда укажите
-          127.0.0.1:25 без логина. Инструкция: docs/knowledge/mail_setup.md.</div>
+        <div class="form-hint" style="margin:4px 0 10px">Для доставляемости добавьте в DNS домена
+          SPF и DKIM своего почтового сервера: <code>v=spf1 mx ~all</code> и подпись DKIM.</div>
 
         <div class="card-title" style="margin-top:14px">🤖 Бот рассылок
           <span class="spacer"></span>
@@ -7634,26 +7435,6 @@ async function bindMailCenter() {
     try {
       const r = await api.post('/api/v1/mail-admin/test', { email: to });
       toast(r.message, r.ok ? 'ok' : 'err', 'Тестовое письмо');
-    } catch (e) { toast(e.message, 'err'); }
-  };
-  // v1.45.0: пресет Timeweb (smtp.timeweb.ru:465 SSL) — чек@ymaster.ru
-  $m('mc-timeweb').onclick = () => {
-    $m('mc-host').value = 'smtp.timeweb.ru';
-    $m('mc-port').value = 465;
-    $m('mc-user').value = 'chek@ymaster.ru';
-    $m('mc-sender').value = 'chek@ymaster.ru';
-    $m('mc-tls').checked = false;            // 465 = SSL с первого байта
-    toast('Поля заполнены под Timeweb: введите пароль ящика и сохраните',
-          'ok', 'Почта Timeweb');
-  };
-  // v1.45.0: сброс сохранённого пароля ящика (сменили у провайдера)
-  $m('mc-resetpass').onclick = async () => {
-    if (!confirm('Сбросить сохранённый пароль ящика? Используйте после смены пароля в панели провайдера (mail.timeweb.com).')) return;
-    try {
-      const r = await api.del('/api/v1/mail-admin/config/password');
-      $m('mc-pass').value = '';
-      $m('mc-pass').placeholder = 'введите новый пароль ящика';
-      toast(r.message, 'ok', 'Почтовый центр');
     } catch (e) { toast(e.message, 'err'); }
   };
 

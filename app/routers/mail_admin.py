@@ -120,23 +120,6 @@ def put_config(body: ConfigBody, db: Session = Depends(get_db),
     return {"ok": True, "message": "Настройки почты сохранены"}
 
 
-@router.delete("/config/password",
-               summary="Почтовый центр: сбросить сохранённый пароль ящика (админ)")
-def reset_mail_password(db: Session = Depends(get_db),
-                        admin: User = Depends(require_admin)):
-    """После смены пароля в панели провайдера (Timeweb) сохранённый
-    пароль сбрасывается — в форме появится пустое поле."""
-    from ..pool import mailer
-    had = bool(appsettings.get_setting(db, "smtp_pass", ""))
-    if had:
-        appsettings.set_setting(db, "smtp_pass", "")
-    db.commit()                          # аудит отдельной сессии — заранее
-    log_action(admin, "mail_password_reset", details={"had": had})
-    return {"ok": True,
-            "message": ("Пароль сброшен — введите новый и сохраните"
-                        if had else "Сохранённого пароля не было")}
-
-
 @router.post("/test", summary="Почтовый центр: тестовое письмо (админ)")
 def test_mail(body: dict, db: Session = Depends(get_db),
               admin: User = Depends(require_admin)):
