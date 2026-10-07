@@ -40,7 +40,10 @@ OFFERTA_SHORT = (
 
 def pool_enabled(db: Session) -> bool:
     from ..services import appsettings
-    return appsettings.get_setting(db, SETT_ENABLED, "0") == "1"
+    # v1.45.3: приём чеков включён по умолчанию — установка, где настройку
+    # ни разу не меняли, получает рабочий Чек-Пул сразу; явное «выключено»
+    # в базе по-прежнему приоритетно
+    return appsettings.get_setting(db, SETT_ENABLED, "1") == "1"
 
 
 def get_or_create_user(db: Session, tg_user_id: str | None = None,
