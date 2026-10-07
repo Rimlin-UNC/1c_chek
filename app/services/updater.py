@@ -71,6 +71,9 @@ class UpdateJob:
         self.blocks_changed: list[dict] = []
         self.phases: dict = {}
         self._last_flush = 0.0
+        self.changed_count = 0
+        self.restart_required = True     # до анализа — безопасное «да»
+        self.last_activity = 0.0
         self._lock = threading.Lock()
 
     def _phase_enter(self, phase: str, message: str, now: float) -> None:
@@ -97,6 +100,7 @@ class UpdateJob:
                 stamp = datetime.now().strftime("%H:%M:%S")
                 self.log.append(f"[{stamp}] {message}")
             now = time.time()
+            self.last_activity = now          # v1.53.0: пульс активности
             if now - self._last_flush >= 1.0:
                 self._last_flush = now
                 flush = True
@@ -142,6 +146,10 @@ class UpdateJob:
                 "backup_file": self.backup_file,
                 "blocks_changed": self.blocks_changed,
                 "phases": self.phases,
+                # v1.53.0: решение о перезагрузке и признаки живого процесса
+                "restart_required": bool(self.restart_required),
+                "changed_count": self.changed_count,
+                "last_activity": self.last_activity,
             }
 
 
@@ -284,6 +292,69 @@ def _git_fetch_progress(branch: str) -> tuple[int, str, int]:
         if p is not None and p.stderr:
             try:
                 p.stderr.close()
+            except OSError:
+                pass
+
+
+_DOC_FILE = re.compile(r"^(docs?/|\.github/|[^/]*\.md$|license|code_of_conduct|security\b)",
+                       re.I)
+
+
+def _needs_restart(changed: list[str]) -> bool:
+    """v1.53.0: нужен ли перезапуск сервиса после обновления.
+    Менялся код, зависимости или скрипты развёртывания — да.
+    Менялась только документация (md, картинки репозитория, метаданные
+    GitHub) — нет: программа обновляет данные и продолжает работу."""
+    if not changed:
+        return True                       # неизвестно — перезапускаем (безопасно)
+    return any(not _DOC_FILE.match(f) for f in changed)
+
+
+def _changed_files(old_commit: str, target_ref: str) -> list[str]:
+    """Список файлов между текущим коммитом и целью обновления."""
+    rc, out = _git(["diff", "--name-only", f"{old_commit}..{target_ref}"],
+                   timeout=60)
+    if rc != 0:
+        return []
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+def _run_stream(cmd: list[str], phase: str, base: int, span: int,
+                timeout: int = 900, label: str = "") -> tuple[int, str]:
+    """v1.53.0: запуск команды с живым журналом (установка зависимостей) —
+    строки команды транслируются в статус обновления с троттлингом,
+    онлайн видно, что происходит. Возвращает (rc, хвост вывода)."""
+    tail: list[str] = []
+    last_say = 0.0
+    n = 0
+    p = subprocess.Popen(cmd, cwd=APP_DIR, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, errors="ignore")
+    deadline = time.time() + timeout
+    try:
+        assert p.stdout is not None
+        for line in p.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            tail.append(line[-160:])
+            n += 1
+            now = time.time()
+            if now - last_say >= 1.0:
+                last_say = now
+                frac = min(0.9, n / 40.0)
+                job.say(phase, base + int(span * frac),
+                        (label + " " if label else "") + line[-110:])
+            if time.time() > deadline:
+                p.kill()
+                return 124, " | ".join(tail[-6:])
+        rc = p.wait(timeout=30)
+        return rc, " | ".join(tail[-6:])
+    except Exception as e:                       # noqa: BLE001
+        return 1, f"{e.__class__.__name__}: {e}"
+    finally:
+        if p.stdout:
+            try:
+                p.stdout.close()
             except OSError:
                 pass
 
@@ -790,6 +861,15 @@ def _do_apply(target_version: str, repo: str, branch: str,
         job.say("download", 40, (f"Загружено изменений: {nbytes // 1024} КБ"
                                  if nbytes else "Загрузка изменений завершена"))
 
+        # v1.53.0: что изменилось — нужен ли перезапуск сервиса
+        changed = _changed_files(old_commit, f"origin/{branch}")
+        job.changed_count = len(changed)
+        job.restart_required = _needs_restart(changed)
+        job.say("install", 43, f"Изменённых файлов: {job.changed_count} — "
+                + ("перезапуск потребуется"
+                   if job.restart_required else
+                   "только документация, перезапуск не потребуется"))
+
         job.say("checkout", 45, f"Обновление файлов до {target_version}…")
         rc, out = _git(["reset", "--hard", f"origin/{branch}"], timeout=60)
         if rc != 0:
@@ -814,8 +894,11 @@ def _do_apply(target_version: str, repo: str, branch: str,
 
         new_req = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
         if new_req != req_hash_before:
-            job.say("deps", 65, "Зависимости изменились — установка…")
-            rc, out = _run(_pip_cmd(), timeout=900)
+            job.say("deps", 65, "Зависимости изменились — установка (ход в журнале)…")
+            pip_cmd = [a for a in _pip_cmd() if a != "--quiet"] \
+                + ["--progress-bar", "off"]
+            rc, out = _run_stream(pip_cmd, "deps", 58, 14, timeout=900,
+                                  label="pip:")
             if rc != 0:
                 raise RuntimeError(f"pip: {out}")
         else:
@@ -864,19 +947,28 @@ def _do_apply(target_version: str, repo: str, branch: str,
                 "at": datetime.utcnow().isoformat() + "Z", "ok": True,
                 "duration_s": job.elapsed_s,
                 "downloaded_bytes": job.downloaded_bytes,
-                "blocks": job.blocks_changed})
+                "blocks": job.blocks_changed,
+                "restart_planned": job.restart_required})
         finally:
             db.close()
         _state_write()
 
-        job.say("restart", 92, "Перезапуск сервиса (без прав root — re-exec)…")
-        restarted, rmsg = _restart_service(sudo_password)
-        if not restarted:
-            # управление вернулось — рестарт недоступен, просим вручную
-            job.needs_restart = True
-            job.say("restart", 95, rmsg)
+        if job.restart_required:
+            job.say("restart", 92, "Перезапуск сервиса (самоперезапуск без пароля)…")
             _state_write()
-        # при успешном рестарте процесс заменён — код ниже не выполняется
+            restarted, rmsg = _restart_service(sudo_password)
+            if not restarted:
+                # управление вернулось — рестарт недоступен, просим вручную
+                job.needs_restart = True
+                job.say("restart", 95, rmsg)
+                _state_write()
+            # при успешном рестарте процесс заменён — код ниже не выполняется
+        else:
+            # v1.53.0: менялась только документация — код не менялся,
+            # перезапуск не нужен: данные обновлены, работа продолжается
+            job.needs_restart = False
+            job.say("restart", 96, "Перезапуск не потребовался — программа продолжает работу")
+            _state_write()
     except Exception as e:                                   # noqa: BLE001
         job.error = str(e)
         job.finished = True
@@ -955,8 +1047,11 @@ def _do_rollback(target_version: str, commit: str) -> None:
 
         new_req = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
         if new_req != req_hash_before:
-            job.say("deps", 55, "Зависимости изменились — установка…")
-            rc, out = _run(_pip_cmd(), timeout=900)
+            job.say("deps", 55, "Зависимости изменились — установка (ход в журнале)…")
+            pip_cmd = [a for a in _pip_cmd() if a != "--quiet"] \
+                + ["--progress-bar", "off"]
+            rc, out = _run_stream(pip_cmd, "deps", 50, 12, timeout=900,
+                                  label="pip:")
             if rc != 0:
                 raise RuntimeError(f"pip: {out}")
         else:

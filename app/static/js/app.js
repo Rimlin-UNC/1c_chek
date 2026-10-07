@@ -33,6 +33,15 @@ const state = {
   routeParam: '',
   receiptsSelected: new Set(),
   recents: JSON.parse(localStorage.getItem('ymaster_recents') || '[]'),
+  // v1.53.0: версия интерфейса этой страницы — по ней решаем,
+  // нужна ли перезагрузка после обновления
+  bootVersion: (function () {
+    try {
+      const s = document.querySelector('script[src*="app.js?v="]');
+      const m = s && s.src.match(/app\.js\?v=([0-9.]+)/);
+      return m ? m[1] : '';
+    } catch (e) { return ''; }
+  })(),
 };
 
 const VIEW_TITLES = {
@@ -4232,6 +4241,7 @@ function openUpdateProgress() {
   state.updModalOpen = true;
   const { slot, close } = openModal(`
     <div class="modal-title">🔄 Обновление системы</div>
+    <style>@keyframes upd-pulse{0%,100%{opacity:1}50%{opacity:.3}}.upd-active{animation:upd-pulse 1.2s infinite}</style>
     <div class="progress-outer"><div class="progress-inner" id="upd-bar" style="width:5%"></div></div>
     <div id="upd-phases" style="margin:10px 0;font-size:13.5px"></div>
     <p class="form-hint" id="upd-step">Запуск…</p>
@@ -4262,12 +4272,18 @@ function openUpdateProgress() {
       if (p.status === 'failed') return `<div class="form-error">✗ ${title}${dtxt}</div>`;
       // после успеха активных фаз не бывает: рестарт мог не успеть закрыться
       if (st.success) return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
-      return `<div style="color:var(--brand)">● ${title}…</div>`;
+      const live = p.started_at
+        ? ` · ${Math.max(1, Math.round((Date.now() - p.started_at * 1000) / 1000))} с` : '';
+      return `<div style="color:var(--brand)"><span class="upd-active">●</span> ${title}${dtxt}${live}…</div>`;
     }).join('');
   };
   const finishUp = (st) => {
     clearInterval(state.updTimer); clearInterval(updTick);
     state.updModalOpen = false;
+    // v1.53.0: перезагрузка страницы нужна, только если сменилась версия
+    // интерфейса; пустой bootVersion — перезагружаемся (безопасно)
+    const needsReload = !!(st.current_version
+                            && (!state.bootVersion || st.current_version !== state.bootVersion));
     const bar = slot.querySelector('#upd-bar');
     if (bar) bar.style.width = st.success ? '100%' : Math.max(5, st.progress || 0) + '%';
     const el = slot.querySelector('#upd-elapsed');
@@ -4289,6 +4305,10 @@ function openUpdateProgress() {
       if (st.downloaded_bytes) rows.push(`<dt>Загружено</dt><dd>${updFmtKB(st.downloaded_bytes)}</dd>`);
       rows.push(`<dt>Время</dt><dd>${updFmtDur(st.elapsed_s)}</dd>`);
       if (st.backup_file) rows.push(`<dt>Резервная копия</dt><dd>${esc(st.backup_file)}</dd>`);
+      if (typeof st.changed_count === 'number')
+        rows.push(`<dt>Изменено файлов</dt><dd>${st.changed_count}</dd>`);
+      rows.push(`<dt>Перезагрузка</dt><dd>${needsReload
+        ? 'выполнится автоматически' : 'не потребовалась — программа продолжила работу'}</dd>`);
       rows.push('</dl>');
       if (st.rolled_back) rows.push('<div class="info-callout" style="margin-top:8px">При обновлении произошёл сбой — система автоматически вернулась к прежней версии. Данные целы, можно пробовать ещё раз.</div>');
       if (st.error && !st.success) rows.push(`<p class="form-error">${esc(st.error)}</p>`);
@@ -4296,9 +4316,19 @@ function openUpdateProgress() {
       sum.classList.remove('hidden');
     }
     // ОДНО финальное уведомление — только теперь, когда известно главное
-    if (st.success && !st.needs_restart) {
+    if (st.success && !st.needs_restart && needsReload) {
+      // v1.53.0: интерфейс сменился — программа перезагружается САМА
       try { sessionStorage.setItem('ymaster-updated', '1'); } catch (e) {}
-      toast(`Готово: работает v${st.to_version}`, 'ok', '🔄 Обновление');
+      if (stepEl) stepEl.textContent = `Обновление установлено: работает v${st.to_version} — обновляю интерфейс…`;
+      toast(`Готово: работает v${st.to_version} — страница перезагрузится сама`, 'ok', '🔄 Обновление');
+      setTimeout(() => location.reload(), 1800);
+    } else if (st.success && !st.needs_restart) {
+      // версия интерфейса не менялась — данные обновляем на месте
+      try { sessionStorage.setItem('ymaster-updated', '1'); } catch (e) {}
+      if (stepEl) stepEl.textContent = `Обновление применено: v${st.to_version} — перезагрузка не потребовалась`;
+      toast(`Обновлено: v${st.to_version} — данные обновлены, продолжаем работу`, 'ok', '🔄 Обновление');
+      try { refreshBadges(); } catch (e) {}
+      try { route(true); } catch (e) {}
     } else if (st.success) {
       toast('Файлы обновлены. Перезапустите сервис: sudo systemctl restart ymaster-check', 'warn', '🔄 Обновление');
     } else if (st.rolled_back) {
@@ -4311,7 +4341,7 @@ function openUpdateProgress() {
     const btn = slot.querySelector('#upd-done');
     if (btn) {
       btn.classList.remove('hidden');
-      btn.onclick = () => { close(); if (st.success && !st.needs_restart) location.reload(); };
+      btn.onclick = () => { close(); };   // перезагрузка выполняется автоматически
     }
   };
   clearInterval(state.updTimer);
@@ -4328,7 +4358,12 @@ function openUpdateProgress() {
     if (ph) ph.innerHTML = phaseRows(st);
     const stepEl = slot.querySelector('#upd-step');
     const curPhase = st.step && st.phases ? st.phases[st.step] : null;
-    if (stepEl && st.running) stepEl.textContent = (curPhase && curPhase.message) || st.step || '…';
+    if (stepEl && st.running) {
+      let msg = (curPhase && curPhase.message) || st.step || '…';
+      const idle = st.last_activity ? Math.round(Date.now() / 1000 - st.last_activity) : 0;
+      if (idle > 15) msg += ` — этап идёт дольше обычного (${idle} с), процесс активен`;
+      stepEl.textContent = msg;
+    }
     const bytes = slot.querySelector('#upd-bytes');
     if (bytes && st.downloaded_bytes)
       bytes.textContent = `· ⬇ загружено: ${updFmtKB(st.downloaded_bytes)}`;
@@ -4337,10 +4372,12 @@ function openUpdateProgress() {
     if (!st.finished) return;
     // v1.50.0: успех считается только когда НОВЫЙ процесс реально работает
     const confirmed = !!(st.to_version && st.current_version === st.to_version);
-    if (st.success && !st.needs_restart && !confirmed) {
+    if (st.success && st.restart_required !== false && !confirmed) {
+      // ждём подтверждения рестарта — только если перезапуск был запланирован
       if (!waitingSince) waitingSince = Date.now();
       const stepEl2 = slot.querySelector('#upd-step');
-      if (stepEl2) stepEl2.textContent = 'Установлено — сервис перезапускается…';
+      const wsec = Math.round((Date.now() - waitingSince) / 1000);
+      if (stepEl2) stepEl2.textContent = `Установлено — сервис перезапускается… ${wsec} с`;
       if (Date.now() - waitingSince > 180000) {   // рестарт так и не случился
         st.needs_restart = true;
         finishUp(st);
@@ -4354,6 +4391,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.53.0': [
+    { icon: '🔄', title: 'Обновление завершает всё само',
+      text: 'Ход обновления виден в реальном времени на каждом шаге: загрузка в процентах и килобайтах, установка зависимостей с живым журналом, таймер каждого этапа. После установки программа сама решает: изменился код — сервис и страница перезагружаются автоматически; менялась только документация — данные обновляются на лету, и работа продолжается без перезагрузки.' },
+  ],
   '1.52.1': [
     { icon: '⏱', title: 'Ход обновления виден всегда',
       text: 'Исправлено «зависание» окна обновления: загрузка изменений теперь видна в процентах и килобайтах в реальном времени, а итог обновления фиксируется до перезапуска сервиса — после него окно показывает успешный отчёт, а не ошибку. Если окно закрыть или перезагрузить страницу, «Настройки» вернут его, пока обновление идёт.' },
