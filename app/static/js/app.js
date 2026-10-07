@@ -547,16 +547,10 @@ function bindPoolForm(root) {
   })();
 }
 
-function showPublicScreen() {
-  $('#register-screen').classList.add('hidden');
-  $('#login-screen').classList.add('hidden');
-  $('#app-shell').classList.add('hidden');
-  const root = $('#public-root');
-  // v1.45.1: приветственная главная — hero с иллюстрацией, живой стат базы,
-  // три шага, форма проверки с похвалой, бонус-блок, вход/регистрация в
-  // кабинет, FAQ и футер. Картинки с подстраховкой: не загрузился файл —
-  // блок мягко скрывается (onerror), вёрстка не ломается.
-  root.innerHTML = `
+// v1.45.2: богатая главная — вынесена в чистый строитель строк, чтобы её
+// можно было безопасно заменить запасным вариантом при любой ошибке.
+function landHeroHTML() {
+  return `
   <div class="land">
     <header class="land-top">
       <div class="land-brand"><img src="/img/logo.svg" alt="" width="28" height="28">Ямастер&nbsp;<span class="grad-text">Чек</span></div>
@@ -633,13 +627,57 @@ function showPublicScreen() {
     <footer class="land-foot">© ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a>
       · info@ymaster.ru · Из чека хранятся только фискальные реквизиты (152-ФЗ)</footer>
   </div>`;
+}
 
-  // плавный скролл по якорям — hash SPA не трогаем
-  root.querySelectorAll('a[data-scroll]').forEach(a => {
+// v1.45.2: запасная упрощённая главная — та же суть, минимум оформления
+function landSimpleHTML() {
+  return `
+  <div style="max-width:760px;margin:0 auto">
+    <div class="glass card">
+      <div class="card-title">🧾 Проверить чек онлайн</div>
+      <p class="form-hint">Наведите камеру на QR-код кассового чека — проверим по официальным
+      источникам и начислим бонусные баллы. Бесплатно и без регистрации.</p>
+      ${publicFormHTML()}
+      <div id="pub-praise" class="hidden" style="margin-top:12px"></div>
+    </div>
+    <div class="glass card" style="margin-top:14px">
+      <div class="card-title">👤 Кабинет участника</div>
+      <p class="form-hint">Баллы за чеки, подарки партнёров и кэшбэк.</p>
+      ${poolAuthHTML()}
+      <div style="margin-top:10px"><a href="#" id="land-to-app" style="font-size:13.5px">Сотрудник компании? Войти в рабочую программу →</a></div>
+    </div>
+  </div>`;
+}
+
+function showPublicScreen() {
+  $('#register-screen').classList.add('hidden');
+  $('#login-screen').classList.add('hidden');
+  $('#app-shell').classList.add('hidden');
+  const root = $('#public-root');
+  // v1.45.2: слоистый рендер — богатая главная → упрощённая → чистая форма.
+  // Любая ошибка больше не способна оставить гостя без страницы.
+  let rich = true;
+  try {
+    root.innerHTML = landHeroHTML();
+  } catch (e) {
+    rich = false;
+    try { console.error('[landing] богатая версия не отрисовалась:', e); } catch (_e) {}
+    try {
+      root.innerHTML = landSimpleHTML() +
+        '<div class="form-hint" style="text-align:center;opacity:.7">Облегчённая версия страницы</div>';
+    } catch (e2) {
+      try { console.error('[landing] простая версия не отрисовалась:', e2); } catch (_e) {}
+      root.innerHTML = '<div class="glass card" style="max-width:760px;margin:0 auto">' +
+        publicFormHTML() + '</div>';
+    }
+  }
+
+  // плавный скролл по якорям — hash SPA не трогаем (только у богатой версии)
+  if (rich) root.querySelectorAll('a[data-scroll]').forEach(a => {
     a.onclick = (e) => {
       e.preventDefault();
       const t = document.querySelector(a.getAttribute('data-scroll'));
-      if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
   });
   const toApp = document.getElementById('land-to-app');
@@ -648,15 +686,19 @@ function showPublicScreen() {
     history.replaceState(null, '', location.pathname);
     showLogin();
   };
-  // живой стат базы — не критичен при сбое сети
-  api.get('/api/v1/public/pool/info').then((info) => {
-    if (!info || !info.enabled) return;
-    const box = document.getElementById('land-stat');
-    if (box) box.innerHTML = `В базе уже <b>${fmtInt(info.receipts_total)}</b> чеков ·
-      проверено <b>${fmtInt(info.verified)}</b> · 1 чек = ${info.points_per_receipt} балл`;
-  }).catch(() => {});
-  bindPoolForm(root);        // форма проверки + похвала после успеха
-  bindPoolAccount(root);     // кабинет: вход/регистрация (или дашборд, если токен уже есть)
+  // живой стат базы — не критичен при сбое сети (только у богатой версии)
+  if (rich) {
+    try {
+      api.get('/api/v1/public/pool/info').then((info) => {
+        if (!info || !info.enabled) return;
+        const box = document.getElementById('land-stat');
+        if (box) box.innerHTML = `В базе уже <b>${fmtInt(info.receipts_total)}</b> чеков ·
+          проверено <b>${fmtInt(info.verified)}</b> · 1 чек = ${info.points_per_receipt} балл`;
+      }).catch(() => {});
+    } catch (e) { try { console.error('[landing] стат базы:', e); } catch (_e) {} }
+  }
+  try { bindPoolForm(root); } catch (e) { try { console.error('[landing] форма:', e); } catch (_e) {} }
+  try { bindPoolAccount(root); } catch (e) { try { console.error('[landing] кабинет:', e); } catch (_e) {} }
   hideSeo();                 // v1.45.1: пререндер убираем только после успешного рендера
 }
 
@@ -4231,6 +4273,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.45.2': [
+    { icon: '🛡', title: 'Главная страница стала надёжнее',
+      text: 'Если оформление страницы не смогло открыться (редкий сбой), теперь автоматически показывается упрощённая версия — проверка чека, баллы и вход доступны всегда. Браузер больше не держит устаревшую копию страницы после обновлений сервиса.' },
+  ],
   '1.45.1': [
     { icon: '🏠', title: 'Новая приветственная страница',
       text: 'Вход и регистрация — прямо на главной: вкладки «Вход», «Регистрация» и «Вход по ссылке». Живая статистика базы чеков, ответы на частые вопросы, аккуратные иллюстрации. Исправили редкий сбой, из-за которого после обновления страница могла не запуститься и остаться без картинок.' },

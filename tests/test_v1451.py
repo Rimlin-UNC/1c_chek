@@ -11,16 +11,13 @@ import re
 
 class TestVersion1451:
     def test_versions_synced(self):
+        # точный пин 1.45.1 перенесён в tests/test_v1452.py (версия ушла вперёд)
         cfg = open("app/config.py", encoding="utf-8").read()
-        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.45.1"
+        assert 'APP_VERSION: str = "' in cfg
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.45.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
-        mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert f'"version": "{ver}"' in mf
+        assert "ymaster-check-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -66,7 +63,7 @@ class TestBootSafety:
 class TestWelcomeLanding:
     def test_login_form_on_main(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        i = js.index("function showPublicScreen() {")
+        i = js.index("function landHeroHTML() {")
         body = js[i:js.index("// v1.31.0: тот же приём", i)]
         # форма входа/регистрации кабинета прямо на главной
         assert "${poolAuthHTML()}" in body
@@ -82,7 +79,7 @@ class TestWelcomeLanding:
 
     def test_landing_rich_content(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        i = js.index("function showPublicScreen() {")
+        i = js.index("function landHeroHTML() {")
         body = js[i:js.index("// v1.31.0: тот же приём", i)]
         # живой стат базы, FAQ, футер, плавные якоря
         assert "land-stat" in body and "/api/v1/public/pool/info" in body

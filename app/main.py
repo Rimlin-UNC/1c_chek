@@ -389,9 +389,14 @@ def _seo_inject(html: str) -> str:
                   '<meta name="description" content="' + SEO_DESC + '">',
                   html, count=1)
     html = html.replace("</head>", head + "</head>", 1)
-    # пререндер: поисковик видит текст даже без JS; SPA убирает блок
-    html = html.replace("<body>",
-                        '<body><!-- seo-injected -->' + SEO_LANDING_HTML, 1)
+    # пререндер: поисковик видит текст даже без JS; SPA убирает блок.
+    # v1.45.2: regex вместо точного "<body>" — тег с атрибутами тоже матчится,
+    # а если body вдруг не найден, секция встаёт сразу после <head>.
+    html, n = re.subn(r"(<body[^>]*>)",
+                      r"\1<!-- seo-injected -->" + SEO_LANDING_HTML, html, count=1)
+    if n == 0:
+        html = html.replace("</head>",
+                            "</head><!-- seo-injected -->" + SEO_LANDING_HTML, 1)
     return html
 
 
@@ -429,4 +434,8 @@ async def spa(full_path: str):
     if full_path and candidate.is_file():
         return FileResponse(candidate)
     from fastapi.responses import HTMLResponse
-    return HTMLResponse(_seo_inject((STATIC_DIR / "index.html").read_text(encoding="utf-8")))
+    # v1.45.2: оболочке запрещаем кэш — браузер после релиза всегда берёт
+    # свежий index.html (иначе старая оболочка ссылается на старые ?v=)
+    return HTMLResponse(
+        _seo_inject((STATIC_DIR / "index.html").read_text(encoding="utf-8")),
+        headers={"Cache-Control": "no-cache"})
