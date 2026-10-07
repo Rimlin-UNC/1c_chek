@@ -398,6 +398,50 @@ function openPoolCameraScan(onText) {
   };
 }
 
+// v1.52.0: ручной ввод реквизитов там же, где сканируют (резерв —
+// QR повреждён). Собирает стандартную строку QR — дальше работает
+// обычная проверка и отправка, ничего дублировать не нужно.
+function poolManualDialog(onQr) {
+  const { slot } = openModal(`
+    <div class="modal-title">⌨ Ручной ввод реквизитов чека</div>
+    <p class="form-hint" style="margin-bottom:12px">Резервный способ — когда QR повреждён
+    или не читается. Реквизиты напечатаны на самом чеке.</p>
+    <div class="form-grid">
+      <label class="field full"><span>Дата и время чека</span>
+        <input id="pm-date" placeholder="22.09.2025 14:30" required></label>
+      <label class="field"><span>Сумма, ₽</span>
+        <input id="pm-sum" type="number" step="0.01" min="0.01" placeholder="1500.00" required></label>
+      <label class="field"><span>Признак расчёта</span>
+        <select id="pm-op"><option value="1">Приход</option><option value="2">Возврат прихода</option></select></label>
+      <label class="field"><span>ФН (8–20 цифр)</span>
+        <input id="pm-fn" placeholder="9999078902001234" required></label>
+      <label class="field"><span>ФД</span>
+        <input id="pm-fd" placeholder="12345" required></label>
+      <label class="field full"><span>ФП / ФПД</span>
+        <input id="pm-fp" placeholder="1234567890" required></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>Отмена</button>
+      <button class="btn btn-primary" id="pm-send">Собрать QR</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  slot.querySelector('#pm-send').onclick = () => {
+    const v = (id) => slot.querySelector(id).value.trim();
+    const m = v('#pm-date').match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+    if (!m) { toast('Дата в формате 22.09.2025 14:30', 'err', 'Проверьте реквизиты'); return; }
+    const fn = v('#pm-fn'), fd = v('#pm-fd'), fp = v('#pm-fp');
+    if (!/^\d{8,20}$/.test(fn) || !/^\d{1,10}$/.test(fd) || !/^\d{1,10}$/.test(fp)) {
+      toast('ФН — 8–20 цифр, ФД и ФП — только цифры', 'err', 'Проверьте реквизиты'); return;
+    }
+    const sum = parseFloat(v('#pm-sum').value.replace(',', '.'));
+    if (!(sum > 0)) { toast('Укажите сумму чека', 'err', 'Проверьте реквизиты'); return; }
+    const qr = `t=${m[3]}${m[2]}${m[1]}T${m[4]}${m[5]}&s=${sum.toFixed(2)}`
+      + `&fn=${fn}&i=${fd}&fp=${fp}&n=${v('#pm-op')}`;
+    $('#modal-root').classList.add('hidden');
+    onQr(qr);
+  };
+}
+
 function publicFormHTML() {
   return `
   <div id="pub-ref" class="info-callout hidden" style="margin-bottom:8px"></div>
@@ -411,6 +455,8 @@ function publicFormHTML() {
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
     <button class="btn btn-sm btn-primary" id="pub-cam"
             title="Живое сканирование камерой — как в разделе «Сканирование»">📸 Сканировать камерой</button>
+    <button class="btn btn-sm" id="pub-manual"
+            title="Резервный способ: QR повреждён — реквизиты с чека">⌨ Ввести вручную</button>
     <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
       <input id="pub-photo" type="file" accept="image/*" capture="environment" class="hidden"></label>
     <span class="form-hint" style="align-self:center">фото чека можно просто перетащить на форму</span>
@@ -494,6 +540,14 @@ function bindPoolForm(root, opts) {
     show('pub-photo-hint', true);
     if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + p.fn
       + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
+  });
+  // v1.52.0: резервный ввод реквизитов (QR повреждён) — тот же конвейер
+  const manBtn = $p('pub-manual');
+  if (manBtn) manBtn.onclick = () => poolManualDialog((qr) => {
+    $p('pub-qr').value = qr;
+    const hint = $p('pub-photo-hint');
+    show('pub-photo-hint', true);
+    if (hint) hint.textContent = 'Реквизиты собраны в строку QR — проверьте и отправьте.';
   });
 
   const pollStatus = (fn) => {
@@ -4294,6 +4348,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.52.0': [
+    { icon: '⌨', title: 'Сканер — весь: добавлен резервный ввод реквизитов',
+      text: 'В форме сдачи чека появилась кнопка «⌨ Ввести вручную» — на случай, когда QR повреждён или не читается. Реквизиты с чека (дата, сумма, ФН, ФД, ФП) собираются в строку QR и проходят обычную проверку. Теперь в каждом месте сдачи чека есть все способы: камера, фото, перетаскивание, строка QR и ручной ввод.' },
+  ],
   '1.51.0': [
     { icon: '📸', title: 'Сканер чека — везде, где сдаётся чек',
       text: 'Тот же отлаженный сканер, что в разделе «Сканирование», теперь на странице «Сдать чек» и в кабинете «Мой Чек-Пул»: живая камера (распознаёт автоматически и игнорирует чужие QR-коды), фото и перетаскивание снимка на форму. Участникам пула больше не нужно никуда переходить — сдать чек можно прямо из кабинета.' },
