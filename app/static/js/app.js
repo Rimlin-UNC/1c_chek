@@ -3978,7 +3978,8 @@ function showInstallDialog() {
 //  v1.4.0: Обновления из приложения (админ)
 // ==========================================================================
 function checkUpdatesSilently() {
-  api.get('/api/v1/admin/update/check', { retries: 1 }).then(r => {
+  // v1.50.0: фоновая проверка при старте — можно из кэша (не грузим GitHub)
+  api.get('/api/v1/admin/update/check?cache=1', { retries: 1 }).then(r => {
     if (r.ok === false) {
       // v1.6.0: GitHub недоступен с сервера — не молчим, но и не спамим (1 раз за сессию)
       state.githubUnreachable = true;
@@ -7385,7 +7386,7 @@ async function viewSettings(container) {
   }
 
   if (isAdmin()) {
-    const loadUpdCard = async () => {
+    const loadUpdCard = async (fresh) => {
       try {
         const st = await api.get('/api/v1/admin/system');
         const cur = $('#upd-current'); if (cur) cur.textContent = 'v' + st.version;
@@ -7425,7 +7426,10 @@ async function viewSettings(container) {
       }).catch(() => { const el = $('#upd-ready'); if (el) el.textContent = ''; });
       setUpdState('checking');
       try {
-        const r = await api.get('/api/v1/admin/update/check?force=1', { retries: 1 });
+        // fresh=true (кнопка) — всегда свежая проверка; иначе можно из кэша
+        const url = fresh ? '/api/v1/admin/update/check?force=1'
+                          : '/api/v1/admin/update/check?cache=1';
+        const r = await api.get(url, { retries: 1 });
         const ch = $('#upd-checked');
         if (r.ok === false) {                    // v1.6.0: структурированный ответ
           state.githubUnreachable = true;
@@ -7452,7 +7456,7 @@ async function viewSettings(container) {
     const bc = $('#btn-check-update');
     if (bc) bc.onclick = async () => {
       bc.disabled = true; bc.textContent = 'Проверяю…';
-      await loadUpdCard();
+      await loadUpdCard(true);
       bc.disabled = false; bc.textContent = '🔍 Проверить обновления';
       if (state.githubUnreachable) toast('GitHub недоступен с сервера — воспользуйтесь ручной инструкцией в карточке', 'err', '🔄 Обновление');
     };

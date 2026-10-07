@@ -57,9 +57,11 @@ def _repo_branch(db: Session) -> tuple[str, str]:
 @router.get("/update/check", summary="Проверить наличие обновлений (админ)")
 def update_check(db: Session = Depends(get_db),
                  user: User = Depends(require_admin),
-                 force: bool = False):
+                 force: bool = False, cache: bool = False):
     try:
-        result = check_update(db, force=force)   # force=1 — мимо кэша (кнопка «Проверить»)
+        # по умолчанию — свежая проверка; ?cache=1 — можно из кэша (фоновые
+        # проверки UI не грузят GitHub); ?force=1 — всегда мимо кэша
+        result = check_update(db, force=force or not cache)
     except Exception as e:                                   # noqa: BLE001
         # v1.6.0: отдаём 200 с ok:false — клиент всегда получает понятную причину
         log_action(user, "update_check_failed", details={"error": str(e)[:200]})
@@ -120,7 +122,7 @@ def update_apply(body: "UpdateApplyBody | None" = None,
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"GitHub недоступен с сервера: {pf['github_error']}")
     try:
-        info = check_update(db)
+        info = check_update(db, force=True)   # v1.50.0: запуск обновления — только по свежей проверке
     except Exception as e:                                   # noqa: BLE001
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Нет связи с GitHub: {e}")
     if not info["update_available"]:

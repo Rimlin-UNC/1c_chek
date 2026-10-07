@@ -185,6 +185,35 @@ class TestStatusEndpointAndUI:
         r2 = client.get("/api/v1/admin/update/check?force=1", headers=adm)
         assert r2.status_code == 200
 
+    def test_apply_checks_fresh_not_cache(self, client, monkeypatch):
+        """Запуск обновления игнорирует кэш: даже если в кэше «доступно»,
+        apply делает свежую проверку (и наоборот)."""
+        from tests.conftest import login
+        from app.services import updater
+        updater._check_cache.clear()
+        updater._check_cache.update({"at": time.time(), "result": {
+            "current_version": "1.50.0", "remote_version": "99.0.0",
+            "update_available": True, "branch": "main", "local_commit": "x",
+            "checked_at": "2026-10-07T00:00:00Z", "source": "cache",
+            "changelog_excerpt": ""}})
+        seen = {"n": 0}
+
+        def fake_remote(repo, branch):
+            seen["n"] += 1
+            return {"version": "1.50.0", "checked_at": "2026-10-07T01:00:00Z",
+                    "source": "fresh"}
+
+        monkeypatch.setattr(updater, "_remote_version", fake_remote)
+        monkeypatch.setattr(updater, "_remote_changelog", lambda r, b: "")
+        adm = login(client, "admin", "admin123")
+        r = client.post("/api/v1/admin/update/apply", headers=adm)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["updated"] is False and "уже последняя" in body["message"]
+        # pre_flight + check_update — обе свежие (кэшированный «99.0.0» проигнорирован)
+        assert seen["n"] >= 1
+        updater._check_cache.clear()
+
     def test_ui_single_toast_and_progress(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
         # фазы и метрики
