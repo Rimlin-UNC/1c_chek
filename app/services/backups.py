@@ -18,7 +18,7 @@ from datetime import datetime
 from ..config import settings
 
 RETENTION = {"daily": 7, "weekly": 2, "preupdate": 5, "manual": 10,
-             "archive": 12}
+             "archive": 12, "imported": 10}   # v1.49.0: + загруженные из файла
 
 
 def _app_dir() -> str:
@@ -185,7 +185,8 @@ def list_backups() -> list[dict]:
                       "created_at": mtime.isoformat() + "Z",
                       "rows": entry.get("rows"),
                       "copy_version": entry.get("version"),
-                      "verified": bool(entry.get("verified"))})
+                      "verified": bool(entry.get("verified")),
+                      "source": entry.get("source")})
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items
 
@@ -211,6 +212,64 @@ def verify_backup(name: str) -> tuple[bool, str]:
     return True, ("Копия целая: база прошла проверку, хеш совпадает. "
                   + "В копии: " + ", ".join(
                       f"{k}: {v}" for k, v in rows.items() if v is not None))
+
+
+def import_backup(tmp_path: str, source_name: str) -> tuple[bool, str, str | None]:
+    """v1.49.0: загрузка копии из внешнего источника (файл, скачанный
+    раньше кнопкой «⬇»). Файл проверяется как база Ямастер Чек
+    (PRAGMA quick_check + наличие основных таблиц), получает имя
+    db-imported-*.db, запись в манифесте (sha256, состав, источник) и
+    хранится как отдельный тип «загруженная» (10) — архивная история
+    (дневные, недельные, месячные) при этом не трогается.
+    Возвращает (ok, сообщение, путь файла или None). После успеха
+    временный файл перемещается на постоянное место."""
+    import sqlite3
+    if not (source_name or "").lower().endswith((".db", ".sqlite", ".sqlite3")):
+        return False, "Файл должен быть копией базы: .db, .sqlite или .sqlite3", None
+    if not os.path.exists(tmp_path):
+        return False, "Файл не получен", None
+    try:
+        con = sqlite3.connect(tmp_path)
+        try:
+            row = con.execute("PRAGMA quick_check").fetchone()
+            tables = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            con.close()
+    except sqlite3.DatabaseError as e:
+        return False, f"Файл не читается как база SQLite: {e.__class__.__name__}", None
+    if not row or row[0] != "ok":
+        return False, (f"База в файле повреждена "
+                       f"(quick_check: {row[0] if row else 'нет ответа'})"), None
+    if not {"users", "receipts"} <= tables:
+        return False, ("В файле нет таблиц Ямастер Чек (users, receipts) — "
+                       "похоже, это база другой программы"), None
+    d = backups_dir()
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = os.path.join(d, f"db-imported-{stamp}.db")
+    n = 1
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(d, f"db-imported-{stamp}-{n}.db")
+    os.replace(tmp_path, dest)
+    h = hashlib.sha256()
+    with open(dest, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    rows = _snapshot_rows(dest)
+    _manifest_write(os.path.basename(dest), {
+        "version": None,
+        "created": datetime.utcnow().isoformat() + "Z",
+        "rows": rows,
+        "sha256": h.hexdigest(),
+        "verified": True,
+        "method": "import",
+        "source": source_name,
+    })
+    _cleanup("imported")
+    msg = ("Копия загружена и проверена: " + os.path.basename(dest)
+           + ". В копии: " + ", ".join(f"{k}: {v}" for k, v in rows.items()))
+    return True, msg, dest
 
 
 def restore_backup(name: str) -> tuple[bool, str]:

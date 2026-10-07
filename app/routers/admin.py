@@ -18,7 +18,7 @@ import re
 import secrets
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, status, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -246,6 +246,50 @@ def backups_verify(body: dict, user: User = Depends(require_admin)):
     ok, msg = verify_backup(name)
     log_action(user, "backup_verify", details={"name": name, "ok": ok})
     return {"ok": ok, "message": msg}
+
+
+@router.post("/backups/import", summary="Загрузить копию из внешнего файла (админ)")
+async def backups_import(file: UploadFile = File(...),
+                         user: User = Depends(require_admin)):
+    """v1.49.0: возврат скачанной раньше копии в архив приложения.
+    Файл проверяется (SQLite quick_check, таблицы программы), получает
+    SHA-256, состав и тип «загруженная» (хранятся 10). Архивные ярусы
+    (дневные, недельные, месячные) не затрагиваются. Имя на диске
+    генерирует программа; оригинальное имя файла хранится в манифесте."""
+    from ..services.backups import backups_dir, import_backup, list_backups
+    MAX_MB = 512
+    tmp = os.path.join(backups_dir(), f"import-tmp-{os.getpid()}.part")
+    size = 0
+    try:
+        with open(tmp, "wb") as out:
+            while True:
+                chunk = await file.read(1 << 20)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_MB << 20:
+                    raise HTTPException(
+                        413, f"Файл больше {MAX_MB} МБ — это не копия Ямастер Чек")
+                out.write(chunk)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    finally:
+        await file.close()
+    ok, msg, path = import_backup(tmp, file.filename or "")
+    if not ok:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise HTTPException(422, msg)
+    log_action(user, "backup_import",
+               details={"file": os.path.basename(path),
+                        "source": file.filename or "", "size": size})
+    return {"ok": True, "message": msg, "items": list_backups()}
 
 
 @router.post("/backups/restore", summary="Восстановить базу из копии (админ)")

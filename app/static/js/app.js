@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.49.0': [
+    { icon: '⬆', title: 'Копию можно вернуть обратно',
+      text: 'Скачанную раньше резервную копию теперь можно загрузить в программу: кнопка «⬆ Загрузить копию» в разделе «Резервные копии». Файл проверяется на целостность и попадает в список — если что-то пошло не так, восстановление в пару кликов.' },
+  ],
   '1.48.0': [
     { icon: '🧭', title: 'Настройки по порядку + фильтр копий',
       text: 'Настройки перестроены от важного к деталям: сверху данные и восстановление, затем проверки и почта, интеграции, личное. В резервных копиях — фильтры по дате и типу (видны только даты, которые есть в архиве) и кнопка проверки копии перед восстановлением с контролем хеша.' },
@@ -6951,8 +6955,12 @@ async function viewSettings(container) {
           <button class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
           <p class="form-hint" style="margin:8px 0 0">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
           1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
-          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.</p>
+          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.
+          Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит файл и добавит его в список («загруженные», хранятся 10).</p>
           <button class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
+          <button class="btn btn-sm" id="btn-bk-import"
+                  title="Загрузить копию из файла: .db, .sqlite, .sqlite3">⬆ Загрузить копию</button>
+          <input type="file" id="bk-import-file" accept=".db,.sqlite,.sqlite3" style="display:none">
         </div>
         <div id="bk-filters" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0"></div>
         <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
@@ -7007,7 +7015,8 @@ async function viewSettings(container) {
     const kindNames = { daily: 'ежедневная (7)', weekly: 'недельная (2)',
                         preupdate: 'перед обновлением (5)',
                         manual: 'вручную (10)',
-                        archive: 'месячный архив (12)' };
+                        imported: 'загруженная (10)',
+                        archive: 'месячный архив (12)' }; // v1.49.0
     const renderBkFilters = (items) => {
       const box = $('#bk-filters');
       if (!box) return;
@@ -7049,7 +7058,7 @@ async function viewSettings(container) {
         ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th></th></tr></thead><tbody>
            ${visible.slice(0, 24).map(b => `<tr style="cursor:default">
              <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
-             <td>${kindNames[b.kind] || b.kind}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}</td>
+             <td>${kindNames[b.kind] || b.kind}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}${b.source ? ` <span class="form-hint" style="font-size:11.5px" title="Загружено из файла: ${esc(b.source)}">из файла</span>` : ''}</td>
              <td>${rowsText(b)}</td>
              <td>${b.size_kb} КБ</td>
              <td style="white-space:nowrap">
@@ -7113,6 +7122,29 @@ async function viewSettings(container) {
     };
     const brf = $('#btn-bk-refresh');
     if (brf) brf.onclick = loadBackups;
+    // v1.49.0: загрузка копии из внешнего источника (файл с компьютера)
+    const bif = $('#btn-bk-import'), bifFile = $('#bk-import-file');
+    if (bif && bifFile) bif.onclick = () => bifFile.click();
+    if (bifFile) bifFile.onchange = async () => {
+      const f = bifFile.files && bifFile.files[0];
+      bifFile.value = '';
+      if (!f) return;
+      bif.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append('file', f, f.name);
+        const resp = await fetch('/api/v1/admin/backups/import', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + getToken() },
+          body: fd,
+        });
+        const r = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(r.detail || 'Загрузка не удалась');
+        toast(r.message, 'ok', '⬆ Загрузка копии');
+        renderBkFilters(r.items); renderBackups(r.items);
+      } catch (e) { toast(e.message, 'err', '⬆ Загрузка копии'); }
+      bif.disabled = false;
+    };
   }
 
   // v1.46.0: «Последние рабочие версии» — откат одним щелчком
