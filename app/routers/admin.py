@@ -236,6 +236,18 @@ def backups_create(body: dict | None = None,
     return {"ok": True, "message": "Копия создана", "items": list_backups()}
 
 
+@router.post("/backups/verify", summary="Проверить копию перед восстановлением (админ)")
+def backups_verify(body: dict, user: User = Depends(require_admin)):
+    """v1.48.0: целостность базы в копии + сверка SHA-256 с манифестом."""
+    from ..services.backups import list_backups, verify_backup
+    name = (body or {}).get("name", "")
+    if name not in {b["name"] for b in list_backups()}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Копия не найдена")
+    ok, msg = verify_backup(name)
+    log_action(user, "backup_verify", details={"name": name, "ok": ok})
+    return {"ok": ok, "message": msg}
+
+
 @router.post("/backups/restore", summary="Восстановить базу из копии (админ)")
 def backups_restore(body: dict, db: Session = Depends(get_db),
                     user: User = Depends(require_admin)):

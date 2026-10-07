@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.48.0': [
+    { icon: '🧭', title: 'Настройки по порядку + фильтр копий',
+      text: 'Настройки перестроены от важного к деталям: сверху данные и восстановление, затем проверки и почта, интеграции, личное. В резервных копиях — фильтры по дате и типу (видны только даты, которые есть в архиве) и кнопка проверки копии перед восстановлением с контролем хеша.' },
+  ],
   '1.47.0': [
     { icon: '🗄', title: 'Архивные копии: день, неделя, месяц',
       text: 'Программа теперь сама ведёт архив: каждый день — дневная копия, каждый понедельник — недельная, 1-го числа — месячный архив. В копии вся база (чеки, пользователи, компании), каждая копия проверяется на целостность, у каждой видно, сколько в ней данных. Архивная история не переписывается обновлениями. Исправлена причина, по которой старые копии могли терять последние данные.' },
@@ -6524,14 +6528,19 @@ async function viewSettings(container) {
 
   container.innerHTML = `
     <div class="settings-grid">
-      <div class="glass card" id="wa-card">
+      <div class="settings-sect" style="order:5">🗄 Данные и восстановление</div>
+      <div class="settings-sect" style="order:19">🧾 Проверка чеков и почта</div>
+      <div class="settings-sect" style="order:29">🧩 Чек-Пул и интеграции</div>
+      <div class="settings-sect" style="order:39">👤 Личное и доступ</div>
+      <div class="settings-sect" style="order:49">📱 Устройство и служебное</div>
+      <div class="glass card" id="wa-card" style="order:40">
         <div class="card-title">🔑 Быстрый вход
           <span class="form-hint">отпечаток / лицо / PIN устройства</span></div>
         <div id="wa-list" class="form-hint" style="margin:6px 0">Загружаем…</div>
         <div id="wa-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
       </div>
       ${isAdmin() ? `
-      <div class="glass card" id="mail-card" style="grid-column:1/-1">
+      <div class="glass card" id="mail-card" style="order:23;grid-column:1/-1">
         <div class="card-title">✉📬 Почтовый центр
           <span class="form-hint">письма кабинета · бот рассылок (v1.44.0)</span></div>
         <div class="form-grid" style="margin:8px 0">
@@ -6579,7 +6588,7 @@ async function viewSettings(container) {
         <div id="mc-log" style="margin-top:8px"></div>
       </div>` : ''}
       ${isAdmin() && appSet ? `
-      <div class="glass card">
+      <div class="glass card" style="order:22">
         <div class="card-title">Общие</div>
         <label style="display:flex;gap:12px;align-items:center;cursor:pointer;margin-bottom:10px">
           <input type="checkbox" id="app-autoverify" ${appSet.auto_verify ? 'checked' : ''} style="width:auto">
@@ -6595,7 +6604,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && fns ? `
-      <div class="glass card">
+      <div class="glass card" style="order:20">
         <div class="card-title">Проверка чеков (ФНС)</div>
         <div class="segmented" style="margin-bottom:14px">
           <button id="seg-mock" class="${fns.provider === 'mock' ? 'active' : ''}">Демо (mock)</button>
@@ -6614,7 +6623,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && fns ? `
-      <div class="glass card">
+      <div class="glass card" style="order:31">
         <div class="card-title">🗂 ЕГРЮЛ/ЕГРИП — Checko.ru <span class="form-hint">(v1.13+)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Ключ заполняет карточки компаний
         реквизитами из ЕГРЮЛ/ЕГРИП по ИНН (полное название, ОГРН, КПП, адрес, руководитель,
@@ -6637,7 +6646,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && tgSet ? `
-      <div class="glass card">
+      <div class="glass card" style="order:33">
         <div class="card-title">🔔 Telegram-бот <span class="form-hint">(v1.16.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Напоминания сотрудникам «сдай чек за сегодня»
         и уведомления о принятых чеках. Токен — у
@@ -6674,7 +6683,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && poolSet ? `
-      <div class="glass card">
+      <div class="glass card" style="order:30">
         <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 9.1 · v1.39.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
@@ -6737,7 +6746,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${me ? `
-      <div class="glass card">
+      <div class="glass card" style="order:34">
         <div class="card-title">🔔 Telegram — личное <span class="form-hint">(v1.16.0)</span></div>
         ${me.telegram_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат привязан — уведомления приходят в Telegram.
@@ -6753,7 +6762,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && appSet ? `
-      <div class="glass card">
+      <div class="glass card" style="order:21">
         <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.2.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции) система получает
         из источников по порядку: <b>API ФНС</b> (мастер-токен, GetTicket) → <b>Приложение ФНС</b> (ИНН + пароль ЛК,
@@ -6789,7 +6798,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() ? `
-      <div class="glass card">
+      <div class="glass card" style="order:13">
         <div class="card-title">🖥 Сервер и команды <span class="form-hint">(v1.17.0)</span></div>
         <dl class="kv" style="font-size:13px" id="sys-info"><dt>Загрузка…</dt><dd></dd></dl>
         <p class="form-hint" style="margin:10px 0 6px">Команды выполняются на сервере по SSH.
@@ -6798,7 +6807,7 @@ async function viewSettings(container) {
         <div id="sys-cmds"></div>
       </div>
 
-      <div class="glass card">
+      <div class="glass card" style="order:11">
         <div class="card-title">🔄 Обновления <span class="form-hint">(v1.6.0)</span></div>
         <div class="upd-status-line"><span class="upd-dot upd-dot--wait" id="upd-dot"></span>
           <span id="upd-status-text">Проверяю…</span></div>
@@ -6844,7 +6853,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() ? `
-      <div class="glass card">
+      <div class="glass card" style="order:12">
         <div class="card-title">↩ Последние рабочие версии
           <span class="form-hint">(v1.46.0 · хранятся три последние)</span></div>
         <p class="form-hint" style="margin-bottom:8px">Программа сама запоминает версии, на которых успешно работала.
@@ -6865,7 +6874,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && onec ? `
-      <div class="glass card">
+      <div class="glass card" style="order:32">
         <div class="card-title">Интеграция с 1С</div>
         <label class="field" style="margin-bottom:12px"><span>Токен Push-доступа</span>
           <div class="token-line"><input id="onec-token" readonly value="${esc(onec.api_token_masked)}">
@@ -6878,7 +6887,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${!isAdmin() && me ? `
-      <div class="glass card">
+      <div class="glass card" style="order:43">
         <div class="card-title">${state.me.role === 'accountant' ? '🏢 Ваша компания' : '👤 Мои чеки'} <span class="form-hint">(v1.17.0)</span></div>
         ${state.me.role === 'accountant' ? `
         <dl class="kv" style="font-size:13px">
@@ -6895,7 +6904,7 @@ async function viewSettings(container) {
         к бухгалтеру. Если забыли — Telegram напомнит (привяжите чат ниже).</p>`}
       </div>` : ''}
 
-      <div class="glass card">
+      <div class="glass card" style="order:52">
         <div class="card-title">🧹 Обслуживание устройства <span class="form-hint">(v1.17.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Если после обновления сервера что-то
         отображается по-старому (иконки, цифры, интерфейс) — сбросьте локальный кэш приложения.
@@ -6903,7 +6912,7 @@ async function viewSettings(container) {
         <button class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
       </div>
 
-      <div class="glass card">
+      <div class="glass card" style="order:50">
         <div class="card-title">🔕 Уведомления</div>
         <p class="form-hint" style="margin-bottom:8px">«Спокойный час» прячет некритичные
         уведомления на выбранный срок; ошибки показываются всегда.</p>
@@ -6918,7 +6927,7 @@ async function viewSettings(container) {
         <div class="form-hint" id="quiet-status" style="margin-top:6px"></div>
       </div>
 
-      <div class="glass card">
+      <div class="glass card" style="order:51">
         <div class="card-title">📲 Приложение на устройстве <span class="form-hint">(v1.5.0)</span></div>
         <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
         полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
@@ -6927,7 +6936,7 @@ async function viewSettings(container) {
       </div>
 
       ${isAdmin() ? `
-      <div class="glass card">
+      <div class="glass card" style="order:10">
         <div class="card-title">💾 Резервные копии <span class="form-hint">(v1.5.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Копии создаются автоматически: ежедневные (7 шт.),
         перед каждым обновлением (5) и архив месяца (12 месяцев) — каталог data/backups на сервере.
@@ -6945,10 +6954,11 @@ async function viewSettings(container) {
           Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.</p>
           <button class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
         </div>
+        <div id="bk-filters" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0"></div>
         <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
       </div>` : ''}
 
-      <div class="glass card">
+      <div class="glass card" style="order:41">
         <div class="card-title">Мой профиль</div>
         <dl class="kv">
           <dt>Логин</dt><dd>${esc(state.me.username)}</dd>
@@ -6962,7 +6972,7 @@ async function viewSettings(container) {
         <button class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
       </div>
 
-      <div class="glass card">
+      <div class="glass card" style="order:42">
         <div class="card-title">Безопасность и доступ</div>
         <dl class="kv">
           <dt>Регистрация</dt><dd>только по приглашениям администратора</dd>
@@ -6972,7 +6982,7 @@ async function viewSettings(container) {
         </dl>
       </div>
 
-      <div class="glass card">
+      <div class="glass card" style="order:53">
         <div class="card-title">О системе</div>
         <dl class="kv">
           <dt>Продукт</dt><dd>${esc(about.app)} v${esc(about.version)}</dd>
@@ -6992,32 +7002,78 @@ async function viewSettings(container) {
 
   // Резервные копии (админ)
   if (isAdmin()) {
+    // v1.48.0: фильтры копий — тип и дата (выпадающие списки справа)
+    const bkState = { kind: '', date: '' };
+    const kindNames = { daily: 'ежедневная (7)', weekly: 'недельная (2)',
+                        preupdate: 'перед обновлением (5)',
+                        manual: 'вручную (10)',
+                        archive: 'месячный архив (12)' };
+    const renderBkFilters = (items) => {
+      const box = $('#bk-filters');
+      if (!box) return;
+      const kinds = {};
+      const dates = {};
+      items.forEach(b => {
+        kinds[b.kind] = (kinds[b.kind] || 0) + 1;
+        const d = (b.created_at || '').slice(0, 10);
+        if (d) dates[d] = (dates[d] || 0) + 1;
+      });
+      box.innerHTML =
+        `<span class="form-hint" style="margin-right:auto">Копий в архиве: <b>${items.length}</b>` +
+        ` · показано: <b>${items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
+            (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date)).length}</b></span>` +
+        `<label class="form-hint">Дата <select id="bk-date"></select></label>` +
+        `<label class="form-hint">Тип <select id="bk-type"></select></label>`;
+      const dsel = box.querySelector('#bk-date');
+      const ksel = box.querySelector('#bk-type');
+      dsel.innerHTML = '<option value="">Все даты</option>' +
+        Object.keys(dates).sort().reverse().map(d =>
+          `<option value="${d}" ${bkState.date === d ? 'selected' : ''}>${d} (${dates[d]})</option>`).join('');
+      ksel.innerHTML = '<option value="">Все типы</option>' +
+        Object.keys(kindNames).filter(k => kinds[k]).map(k =>
+          `<option value="${k}" ${bkState.kind === k ? 'selected' : ''}>${kindNames[k]} — ${kinds[k]}</option>`).join('');
+      dsel.onchange = () => { bkState.date = dsel.value; renderBackups(items); };
+      ksel.onchange = () => { bkState.kind = ksel.value; renderBackups(items); };
+    };
     const renderBackups = (items) => {
       const el = $('#bk-list');
       if (!el) return;
-      const kindNames = { daily: 'ежедневная (7)', weekly: 'недельная (2)',
-                          preupdate: 'перед обновлением (5)',
-                          manual: 'вручную (10)',
-                          archive: 'месячный архив (12)' };
       const rowsText = (b) => (b.rows
         ? `<span class="cell-mono" style="font-size:11.5px">${b.rows.receipts ?? '—'} чек. · ` +
           `${b.rows.users ?? '—'} польз. · ${b.rows.companies ?? '—'} комп.</span>` +
           (b.copy_version ? ` <span class="chip exported"><span class="dot"></span>v${esc(b.copy_version)}</span>` : '')
         : '<span class="form-hint">—</span>');
-      el.innerHTML = items.length
+      const visible = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
+          (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date));
+      el.innerHTML = visible.length
         ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th></th></tr></thead><tbody>
-           ${items.slice(0, 12).map(b => `<tr style="cursor:default">
+           ${visible.slice(0, 24).map(b => `<tr style="cursor:default">
              <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
-             <td>${kindNames[b.kind] || b.kind}</td>
+             <td>${kindNames[b.kind] || b.kind}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}</td>
              <td>${rowsText(b)}</td>
              <td>${b.size_kb} КБ</td>
              <td style="white-space:nowrap">
+               <button class="btn btn-sm" data-verify="${esc(b.name)}"
+                       title="Проверить копию: целостность базы и хеш">🛡</button>
                <button class="btn btn-sm" data-restore="${esc(b.name)}"
                        title="Восстановить базу из этой копии">↩ Восстановить</button>
                <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download title="Скачать копию">⬇</a>
              </td>
            </tr>`).join('')}</tbody></table>`
-        : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>';
+        : (items.length
+          ? '<p class="form-hint">Нет копий по выбранным условиям фильтра</p>'
+          : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>');
+      el.querySelectorAll('button[data-verify]').forEach(btn => {
+        btn.onclick = async () => {
+          const name = btn.getAttribute('data-verify');
+          btn.disabled = true;
+          try {
+            const r = await api.post('/api/v1/admin/backups/verify', { name });
+            toast(r.message, r.ok ? 'ok' : 'err', '🛡 Проверка копии');
+          } catch (e) { toast(e.message, 'err', '🛡 Проверка копии'); }
+          btn.disabled = false;
+        };
+      });
       el.querySelectorAll('button[data-restore]').forEach(btn => {
         btn.onclick = async () => {
           const name = btn.getAttribute('data-restore');
@@ -7029,13 +7085,17 @@ async function viewSettings(container) {
           try {
             const r = await api.post('/api/v1/admin/backups/restore', { name });
             toast(r.message, 'ok', '↩ Восстановление');
-            try { renderBackups((await api.get('/api/v1/admin/backups')).items); } catch (_e) {}
+            try { const it = (await api.get('/api/v1/admin/backups')).items; renderBkFilters(it); renderBackups(it); } catch (_e) {}
           } catch (e) { toast(e.message, 'err', 'Восстановление'); btn.disabled = false; }
         };
       });
     };
     const loadBackups = async () => {
-      try { renderBackups((await api.get('/api/v1/admin/backups')).items); }
+      try {
+        const items = (await api.get('/api/v1/admin/backups')).items;
+        renderBkFilters(items);
+        renderBackups(items);
+      }
       catch { const el = $('#bk-list'); if (el) el.innerHTML = '<p class="form-hint">Список недоступен</p>'; }
     };
     loadBackups();
@@ -7046,7 +7106,7 @@ async function viewSettings(container) {
         const kindSel = $('#bk-kind');
         const r = await api.post('/api/v1/admin/backups',
                                  { kind: kindSel ? kindSel.value : 'manual' });
-        toast(r.message, 'ok', '💾'); renderBackups(r.items);
+        toast(r.message, 'ok', '💾'); renderBkFilters(r.items); renderBackups(r.items);
       }
       catch (e) { toast(e.message, 'err'); }
       bcr.disabled = false;
@@ -7056,6 +7116,18 @@ async function viewSettings(container) {
   }
 
   // v1.46.0: «Последние рабочие версии» — откат одним щелчком
+  // v1.48.0: секции без карточек (для роли) не показываем
+  document.querySelectorAll('.settings-sect').forEach((h) => {
+    const o = parseInt(h.style.order || '0', 10);
+    const cards = container.querySelectorAll('.settings-grid > .glass.card');
+    let has = false;
+    cards.forEach((c) => {
+      const co = parseInt(c.style.order || '60', 10);
+      if (co >= o && co < o + 9) has = true;
+    });
+    if (!has) h.style.display = 'none';
+  });
+
   if (isAdmin()) {
     let relPoll = null;
     const relBox = $('#rel-list');

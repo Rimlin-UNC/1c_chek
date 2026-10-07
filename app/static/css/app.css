@@ -1248,3 +1248,11 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   }
   body.print-ao1 .print-piece { width: auto; transform: none; }
 }
+
+/* v1.48.0: секции страницы настроек (важное сверху) */
+.settings-sect {
+  grid-column: 1 / -1; margin-top: 6px; padding: 6px 2px 2px;
+  font-weight: 800; font-size: 13.5px; letter-spacing: .3px;
+  color: var(--text-dim); text-transform: uppercase;
+  border-top: 2px solid var(--border);
+}

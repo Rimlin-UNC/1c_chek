@@ -9,6 +9,7 @@
 # ======================================================================
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -129,10 +130,16 @@ def create_backup(kind: str = "manual") -> str | None:
         except OSError:
             pass
         return None
+    h = hashlib.sha256()
+    with open(dest, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
     _manifest_write(os.path.basename(dest), {
         "version": settings.APP_VERSION,
         "created": datetime.utcnow().isoformat() + "Z",
         "rows": _snapshot_rows(dest),
+        "sha256": h.hexdigest(),
+        "verified": True,
     })
     _cleanup(kind)
     return dest
@@ -177,9 +184,33 @@ def list_backups() -> list[dict]:
                       "size_kb": round(os.path.getsize(p) / 1024, 1),
                       "created_at": mtime.isoformat() + "Z",
                       "rows": entry.get("rows"),
-                      "copy_version": entry.get("version")})
+                      "copy_version": entry.get("version"),
+                      "verified": bool(entry.get("verified"))})
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items
+
+
+def verify_backup(name: str) -> tuple[bool, str]:
+    """v1.48.0: проверка копии перед восстановлением — целостность базы
+    (PRAGMA quick_check) и совпадение SHA-256 с манифестом (файл не был
+    изменён/повреждён после создания)."""
+    p = backup_path(name)
+    if p is None:
+        return False, "Копия не найдена"
+    entry = _manifest_read().get(name) or {}
+    if not _verify_copy(p):
+        return False, "База в копии повреждена (quick_check не пройден)"
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    digest = h.hexdigest()
+    if entry.get("sha256") and entry["sha256"] != digest:
+        return False, "Файл копии изменился после создания (хеш не совпал)"
+    rows = _snapshot_rows(p)
+    return True, ("Копия целая: база прошла проверку, хеш совпадает. "
+                  + "В копии: " + ", ".join(
+                      f"{k}: {v}" for k, v in rows.items() if v is not None))
 
 
 def restore_backup(name: str) -> tuple[bool, str]:
