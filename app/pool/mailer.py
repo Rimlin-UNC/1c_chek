@@ -73,8 +73,17 @@ def send_mail(db: Session, to_email: str, subject: str, body: str,
         msg.set_content(body)
         if html:
             msg.add_alternative(html, subtype="html")
-        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=12) as smtp:
-            if cfg["tls"]:
+        # v1.44.2: порт 465 = SMTP_SSL — защита с первого байта (так работает
+        # почта Timeweb: smtp.timeweb.ru:465, ящик chek@ymaster.ru).
+        # Остальные порты — как в v1.44.0 (STARTTLS по флагу tls).
+        if cfg["port"] == 465:
+            conn = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=12)
+            tls_needed = False            # соединение уже защищённое
+        else:
+            conn = smtplib.SMTP(cfg["host"], cfg["port"], timeout=12)
+            tls_needed = bool(cfg["tls"])
+        with conn as smtp:
+            if tls_needed:
                 smtp.starttls()
             if cfg["user"]:
                 smtp.login(cfg["user"], cfg["password"])
