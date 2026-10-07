@@ -37,7 +37,12 @@ def backups_dir() -> str:
 
 
 def create_backup(kind: str = "manual") -> str | None:
-    """Создать копию БД. kind: manual | daily | preupdate | archive."""
+    """Создать копию БД. kind: manual | daily | preupdate | archive.
+    v1.46.0: база работает в WAL-режиме — простое копирование файла могло
+    давать копию БЕЗ последних данных (они жили в db-wal). Теперь снимок
+    делается через SQLite Backup API — консистентный при работающем приложении;
+    при недоступности API — прежнее копирование файла (лучше, чем ничего)."""
+    import sqlite3
     src = _db_path()
     if not os.path.exists(src):
         return None
@@ -49,7 +54,18 @@ def create_backup(kind: str = "manual") -> str | None:
     else:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         dest = os.path.join(d, f"db-{kind}-{stamp}.db")
-    shutil.copy2(src, dest)
+    try:
+        scon = sqlite3.connect(src)
+        try:
+            dcon = sqlite3.connect(dest)
+            try:
+                scon.backup(dcon)
+            finally:
+                dcon.close()
+        finally:
+            scon.close()
+    except sqlite3.Error:
+        shutil.copy2(src, dest)          # запасной путь — как в v1.5.0
     _cleanup(kind)
     return dest
 
@@ -83,6 +99,58 @@ def list_backups() -> list[dict]:
                       "created_at": mtime.isoformat() + "Z"})
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items
+
+
+def restore_backup(name: str) -> tuple[bool, str]:
+    """v1.46.0: восстановить базу из копии — прямо из приложения.
+    Страховка: свежая копия текущей базы (preupdate), проверка целостности
+    копии (PRAGMA quick_check) на временном файле, атомарная замена.
+    Возвращает (ok, сообщение)."""
+    import sqlite3
+    src = backup_path(name)
+    if src is None:
+        return False, "Копия не найдена"
+    dst = _db_path()
+    if not os.path.exists(dst):
+        return False, "Файл рабочей базы не найден"
+    safety = create_backup("preupdate")     # страховая копия «как есть сейчас»
+    tmp = os.path.join(backups_dir(), f"db-restore-tmp-{os.getpid()}.db")
+    try:
+        shutil.copy2(src, tmp)
+        try:
+            con = sqlite3.connect(tmp)
+            try:
+                row = con.execute("PRAGMA quick_check").fetchone()
+            finally:
+                con.close()
+        except sqlite3.DatabaseError as e:
+            return False, f"Копия повреждена (не читается как база: {e})"
+        if not row or row[0] != "ok":
+            return False, f"Копия повреждена (quick_check: {row[0] if row else 'нет ответа'})"
+        # устаревшие журналы WAL/SHM не должны пережить замену базы
+        for tail in ("-wal", "-shm"):
+            try:
+                os.remove(dst + tail)
+            except OSError:
+                pass
+        os.replace(tmp, dst)                # атомарно (data/ — тот же диск)
+        # сбрасываем пул соединений: старые держат заменённый файл
+        try:
+            from ..database import engine
+            engine.dispose()
+        except Exception:                   # noqa: BLE001
+            pass
+    except Exception as e:                  # noqa: BLE001
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False, f"{e.__class__.__name__}: {e}"
+    who = os.path.basename(safety) if safety else "не создана"
+    return True, ("База восстановлена из " + name +
+                  f". Страховая копия прежней базы: {who}. "
+                  "Перезапустите приложение, чтобы все данные подхватились: "
+                  "sudo systemctl restart ymaster-check")
 
 
 def backup_path(name: str) -> str | None:

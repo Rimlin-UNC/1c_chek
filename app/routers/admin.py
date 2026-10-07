@@ -134,6 +134,42 @@ def update_apply(body: "UpdateApplyBody | None" = None,
             "target_version": info["remote_version"]}
 
 
+@router.get("/update/releases", summary="Последние рабочие версии для отката (админ)")
+def update_releases(user: User = Depends(require_admin)):
+    """v1.46.0: три последние версии, на которых приложение успешно работало."""
+    from ..services.releases import list_releases
+    return {"items": list_releases(), "current": settings.APP_VERSION,
+            "busy": update_job.running}
+
+
+@router.post("/update/rollback", summary="Откатиться к рабочей версии (админ)")
+def update_rollback(body: dict, db: Session = Depends(get_db),
+                    user: User = Depends(require_admin)):
+    if update_job.running:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Обновление/откат уже выполняется")
+    from ..services.updater import _commit_exists, start_rollback
+    from ..services.releases import find_by_version
+    version = (body or {}).get("version", "").strip()
+    commit = (body or {}).get("commit", "").strip()
+    entry = find_by_version(version) if version else None
+    if entry and not commit:
+        commit = entry["commit"]
+    if not re.fullmatch(r"[0-9a-f]{7,40}", commit or ""):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Не указана рабочая версия для отката")
+    if not _commit_exists(commit):
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "Коммит рабочей версии не найден в репозитории сервера")
+    if version == settings.APP_VERSION:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Версия v{version} уже и так работает")
+    start_rollback(version, commit)
+    log_action(user, "rollback_apply", details={"target": version, "commit": commit[:12]})
+    return {"ok": True,
+            "message": f"Откат к v{version} запущен — следите за статусом",
+            "target_version": version}
+
+
 @router.get("/update/status", summary="Статус/журнал обновления (админ)")
 def update_status(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     from ..services.updater import _history, load_last_update
@@ -189,6 +225,22 @@ def backups_create(user: User = Depends(require_admin)):
         raise HTTPException(500, "Не удалось создать копию")
     log_action(user, "backup_created", details={"file": os.path.basename(path)})
     return {"ok": True, "message": "Копия создана", "items": list_backups()}
+
+
+@router.post("/backups/restore", summary="Восстановить базу из копии (админ)")
+def backups_restore(body: dict, db: Session = Depends(get_db),
+                    user: User = Depends(require_admin)):
+    """v1.46.0: восстановление базы из резервной копии прямо из приложения.
+    Страховая копия текущего состояния создаётся автоматически."""
+    from ..services.backups import list_backups, restore_backup
+    name = (body or {}).get("name", "")
+    if name not in {b["name"] for b in list_backups()}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Копия не найдена")
+    ok, msg = restore_backup(name)
+    log_action(user, "backup_restore", details={"name": name, "ok": ok})
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, msg)
+    return {"ok": True, "message": msg}
 
 
 @router.get("/backups/{name}/download", summary="Скачать копию по имени (админ)")

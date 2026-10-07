@@ -70,6 +70,15 @@ async def lifespan(app: FastAPI):
     log.info("%s v%s запущен. Разработчик: %s (%s)",
              settings.APP_NAME, settings.APP_VERSION,
              settings.VENDOR, settings.VENDOR_SITE)
+    # v1.46.0: приложение успешно стартовало — фиксируем версию как рабочую
+    # (реестр «последних рабочих версий» для отката из приложения/терминала)
+    try:
+        from .services.releases import mark_healthy
+        from .services.updater import _local_commit
+        mark_healthy(settings.APP_VERSION, _local_commit(),
+                     note="успешный запуск")
+    except Exception:                                        # noqa: BLE001
+        pass
     yield
 
 

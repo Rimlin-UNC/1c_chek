@@ -4102,6 +4102,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.46.0': [
+    { icon: '🛟', title: 'Восстановление базы и откат к рабочим версиям',
+      text: 'Резервные копии теперь можно вернуть в программу прямо из настроек — одной кнопкой, со страховой копией и проверкой целостности. Появился блок «Последние рабочие версии»: программа запоминает три последние версии, на которых работала, и к любой можно откатиться, если обновление оказалось проблемным — из приложения или командой sudo bash rollback.sh с сервера, даже если программа не запускается.' },
+  ],
   '1.44.2': [
     { icon: '✉', title: 'Почта на порту 465 работает',
       text: 'Исправили отправку писем через серверы, принимающие почту по защищённому соединению с первого байта (порт 465) — в том числе почту Timeweb. Рассылки Чек-Пула и письма кабинета уходят без изменений настроек.' },
@@ -6831,6 +6835,17 @@ async function viewSettings(container) {
         Проверка идёт по трём независимым каналам (api.github.com → raw → git), поэтому работает даже при блокировках.</p>
       </div>` : ''}
 
+      ${isAdmin() ? `
+      <div class="glass card">
+        <div class="card-title">↩ Последние рабочие версии
+          <span class="form-hint">(v1.46.0 · хранятся три последние)</span></div>
+        <p class="form-hint" style="margin-bottom:8px">Программа сама запоминает версии, на которых успешно работала.
+        Если новая версия проблемная — откатитесь к рабочей одной кнопкой: база не трогается,
+        файлы возвращаются, приложение перезапускается. Если приложение вообще не запускается —
+        на сервере: <span class="cell-mono">sudo bash rollback.sh</span></p>
+        <div id="rel-list"><p class="form-hint">Загружаем…</p></div>
+      </div>` : ''}
+
       ${isAdmin() && onec ? `
       <div class="glass card">
         <div class="card-title">Интеграция с 1С</div>
@@ -6961,9 +6976,28 @@ async function viewSettings(container) {
              <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
              <td>${kindNames[b.kind] || b.kind}</td>
              <td>${b.size_kb} КБ</td>
-             <td><a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download>⬇</a></td>
+             <td style="white-space:nowrap">
+               <button class="btn btn-sm" data-restore="${esc(b.name)}"
+                       title="Восстановить базу из этой копии">↩ Восстановить</button>
+               <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download title="Скачать копию">⬇</a>
+             </td>
            </tr>`).join('')}</tbody></table>`
         : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>';
+      el.querySelectorAll('button[data-restore]').forEach(btn => {
+        btn.onclick = async () => {
+          const name = btn.getAttribute('data-restore');
+          if (!confirm(`Восстановить базу из копии «${name}»?\n\n` +
+              'Текущие данные будут заменены данными копии.\n' +
+              'Перед восстановлением автоматически создаётся страховая копия текущего состояния.\n\n' +
+              'После восстановления потребуется перезапуск приложения.')) return;
+          btn.disabled = true;
+          try {
+            const r = await api.post('/api/v1/admin/backups/restore', { name });
+            toast(r.message, 'ok', '↩ Восстановление');
+            try { renderBackups((await api.get('/api/v1/admin/backups')).items); } catch (_e) {}
+          } catch (e) { toast(e.message, 'err', 'Восстановление'); btn.disabled = false; }
+        };
+      });
     };
     const loadBackups = async () => {
       try { renderBackups((await api.get('/api/v1/admin/backups')).items); }
@@ -6979,6 +7013,78 @@ async function viewSettings(container) {
     };
     const brf = $('#btn-bk-refresh');
     if (brf) brf.onclick = loadBackups;
+  }
+
+  // v1.46.0: «Последние рабочие версии» — откат одним щелчком
+  if (isAdmin()) {
+    let relPoll = null;
+    const relBox = $('#rel-list');
+    const relStop = () => { if (relPoll) { clearInterval(relPoll); relPoll = null; } };
+    const relRender = (items) => {
+      if (!relBox) return;
+      if (!items.length) {
+        relBox.innerHTML = '<p class="form-hint">Рабочие версии появятся, ' +
+          'когда программа успешно проработает после старта или обновления.</p>';
+        return;
+      }
+      relBox.innerHTML = '<table class="data" style="min-width:0"><thead>' +
+        '<tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th></th></tr></thead><tbody>' +
+        items.map(v => `<tr>
+          <td><b>v${esc(v.version)}</b>${v.current ? ' <span class="chip exported"><span class="dot"></span>работает сейчас</span>' : ''}</td>
+          <td class="cell-mono" style="font-size:11.5px">${esc(v.commit_short)}</td>
+          <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
+          <td>${v.current ? '' : `<button class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
+        </tr>`).join('') + '</tbody></table>';
+      relBox.querySelectorAll('button[data-rb]').forEach(btn => {
+        btn.onclick = async () => {
+          const [ver, commit] = btn.getAttribute('data-rb').split('|');
+          if (!confirm(`Откатиться к рабочей версии v${ver}?\n\n` +
+              'Файлы программы вернутся к проверенной версии, база данных НЕ трогается.\n' +
+              'Перед откатом автоматически создаётся копия базы.\n' +
+              'Приложение перезапустится — все будут отключены на ~10 секунд.')) return;
+          btn.disabled = true;
+          try {
+            const r = await api.post('/api/v1/admin/update/rollback', { version: ver, commit });
+            toast(r.message, 'ok', '↩ Откат');
+            relWatch();
+          } catch (e) { toast(e.message, 'err', 'Откат'); btn.disabled = false; }
+        };
+      });
+    };
+    const relLoad = async () => {
+      try {
+        const r = await api.get('/api/v1/admin/update/releases');
+        relRender(r.items || []);
+      } catch (_e) {
+        if (relBox) relBox.innerHTML = '<p class="form-hint">Список недоступен</p>';
+      }
+    };
+    const relWatch = () => {
+      relStop();
+      const t0 = Date.now();
+      relPoll = setInterval(async () => {
+        if (!document.getElementById('rel-list')) { relStop(); return; }  // ушли со страницы
+        try {
+          const st = await api.get('/api/v1/admin/update/status');
+          if (st.job && st.job.running) {
+            if (relBox) relBox.innerHTML =
+              `<div class="chip new"><span class="dot"></span>${esc(st.job.step || 'выполняется')}… ${st.job.progress || 0}%</div>` +
+              (st.job.log || []).slice(-2).map(l => `<div class="form-hint">${esc(l)}</div>`).join('');
+          } else {
+            relStop();
+            if (st.job && st.job.finished) {
+              if (st.job.success) toast('Откат выполнен — страница сейчас перезагрузится', 'ok', '↩');
+              else toast(st.job.error || 'Откат не удался — состояние возвращено', 'err', '↩ Откат');
+              setTimeout(() => location.reload(), 2500);
+              return;
+            }
+            relLoad();
+          }
+        } catch (_e) { /* сеть мигнула — ждём */ }
+        if (Date.now() - t0 > 300000) { relStop(); relLoad(); }
+      }, 1500);
+    };
+    relLoad();
   }
 
   if (isAdmin()) {

@@ -12,6 +12,9 @@
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
 #                                                #   в /etc/ymaster-check/deploy.conf
 #                                                #   и применяются автоматически)
+#   sudo bash rollback.sh                        # СПАСАТЕЛЬ: список рабочих версий
+#   sudo bash rollback.sh 1.44.2                 # откат к рабочей версии (когда
+#                                                #   приложение не запускается)
 #
 # Что делает:
 #   1) ставит пакеты: nginx, ufw, fail2ban, python3-venv, git, sqlite3, certbot*;
@@ -45,6 +48,8 @@ CONF_FILE="$CONF_DIR/deploy.conf"
 for arg in "$@"; do
   case "$arg" in
     --update) UPDATE=1 ;;
+    --rollback) ROLLBACK="list" ;;                    # v1.46.0
+    --rollback=*) ROLLBACK="${arg#*=}" ;;             # v1.46.0: к версии
     --diagnose) DIAGNOSE=1 ;;
     --fix-ssl) FIXSSL=1 ;;
     --no-nginx) WITH_NGINX=0 ;;
@@ -165,6 +170,15 @@ mkdir -p "$APP_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 # ручные git-команды root здесь не должны падать с «dubious ownership»
 git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
+# v1.46.0: откат к рабочей версии — отдельный спасательный сценарий
+# (работает, даже если приложение не запускается: git + systemctl)
+if [[ -n "${ROLLBACK:-}" ]]; then
+  RB_SCRIPT="$APP_DIR/rollback.sh"
+  [[ -f "$RB_SCRIPT" ]] || RB_SCRIPT="$(cd "$(dirname "$0")" && pwd)/rollback.sh"
+  [[ -f "$RB_SCRIPT" ]] || { echo "rollback.sh не найден — сначала выполните deploy.sh --update"; exit 1; }
+  exec bash "$RB_SCRIPT" $ROLLBACK
+fi
 
 # ------------------------------------------------------------------
 bold "3/9 Код с GitHub ($REPO_URL, ветка $BRANCH)"

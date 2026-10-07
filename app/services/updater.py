@@ -49,6 +49,7 @@ class UpdateJob:
         self.reset()
 
     def reset(self) -> None:
+        self.action = "update"       # v1.46.0: update | rollback
         self.old_commit = ""
         self.running = False
         self.step = ""
@@ -76,6 +77,7 @@ class UpdateJob:
     def public(self) -> dict:
         with self._lock:
             return {
+                "action": getattr(self, "action", "update"),
                 "running": self.running, "step": self.step,
                 "progress": self.progress, "log": self.log[-40:],
                 "error": self.error, "finished": self.finished,
@@ -544,6 +546,14 @@ def _do_apply(target_version: str, repo: str, branch: str,
         old_commit = job.old_commit
         req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
 
+        # v1.46.0: запускающий код прямо сейчас работает — фиксируем его
+        # как «последнюю рабочую версию» ДО любых изменений
+        try:
+            from .releases import mark_healthy
+            mark_healthy(settings.APP_VERSION, old_commit or _local_commit(),
+                         note="работала до обновления")
+        except Exception:                                    # noqa: BLE001
+            pass
         job.say("backup", 10, "Резервная копия базы данных…")
         from .backups import create_backup
         backup = create_backup("preupdate")
@@ -656,4 +666,111 @@ def start_apply(target_version: str, repo: str, branch: str,
     t = threading.Thread(target=_do_apply,
                          args=(target_version, repo, branch, sudo_password),
                          daemon=True, name="ymaster-updater")
+    t.start()
+
+
+# ==========================================================================
+#  v1.46.0: ОТКАТ К ПОСЛЕДНЕЙ РАБОЧЕЙ ВЕРСИИ
+#  Зеркало _do_apply, но git reset --hard на коммит рабочей версии.
+#  База данных НЕ трогается (миграции только добавляющие — старый код
+#  работает с новой базой); копия базы делается на всякий случай.
+# ==========================================================================
+def _commit_exists(commit: str) -> bool:
+    rc, _o = _git(["cat-file", "-e", f"{commit}^{{commit}}"], timeout=20)
+    return rc == 0
+
+
+def _do_rollback(target_version: str, commit: str) -> None:
+    try:
+        job.reset()
+        job.action = "rollback"
+        job.running = True
+        job.started_at = time.time()
+        job.to_version = target_version
+        job.old_commit = _local_commit()
+        old_commit = job.old_commit
+        req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+
+        job.say("backup", 10, "Резервная копия базы данных…")
+        from .backups import create_backup
+        backup = create_backup("preupdate")
+        if backup:
+            job.say("backup", 15, f"Бэкап: {os.path.basename(backup)}")
+
+        job.say("fetch", 25, f"Возврат файлов к рабочей версии v{target_version}…")
+        rc, out = _git(["reset", "--hard", commit], timeout=60)
+        if rc != 0:
+            raise RuntimeError(f"git reset: {out}")
+        rc, out = _git(["clean", "-fd", "-e", "data", "-e", ".env",
+                        "-e", "venv", "-e", "*.db"], timeout=60)
+        job.say("fetch", 40, "Лишние файлы вычищены (данные и секреты целы)")
+
+        new_req = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+        if new_req != req_hash_before:
+            job.say("deps", 55, "Зависимости изменились — установка…")
+            rc, out = _run(_pip_cmd(), timeout=900)
+            if rc != 0:
+                raise RuntimeError(f"pip: {out}")
+        else:
+            job.say("deps", 60, "Зависимости не менялись — пропущено")
+
+        job.say("verify", 75, "Проверка целостности (импорт + миграции БД)…")
+        ok, msg = _health_check()
+        if not ok:
+            raise RuntimeError(f"Проверка целостности не пройдена: {msg}")
+
+        try:
+            from .events import broadcast
+            broadcast("server_update", {"to": target_version})
+        except Exception:                                    # noqa: BLE001
+            pass
+        job.say("restart", 92, "Перезапуск сервиса…")
+        restarted, rmsg = _restart_service()
+        job.needs_restart = not restarted
+        job.say("restart", 95, rmsg)
+
+        job.success = True
+        job.finished = True
+        job.progress = 100
+        job.say("done", 100,
+                f"Готово: откат к v{target_version} ({commit[:8]})")
+
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            _append_history(db, {
+                "action": "rollback", "to": target_version,
+                "commit": commit, "commit_before": old_commit,
+                "backup": os.path.basename(backup) if backup else "",
+                "at": datetime.utcnow().isoformat() + "Z", "ok": True})
+        finally:
+            db.close()
+    except Exception as e:                                   # noqa: BLE001
+        job.error = str(e)
+        job.finished = True
+        job.say("error", None, f"ОШИБКА ОТКАТА: {e}")
+        # возвращаем ровно то состояние, что было до попытки отката
+        if old_commit and old_commit != "unknown":
+            rc, _o = _git(["reset", "--hard", old_commit], timeout=60)
+            job.rolled_back = (rc == 0)
+            job.say("rollback", None,
+                    "Состояние до отката восстановлено — ничего не изменилось")
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            _append_history(db, {
+                "action": "rollback_failed", "target": target_version,
+                "error": str(e)[:500], "rolled_back": True,
+                "at": datetime.utcnow().isoformat() + "Z"})
+        finally:
+            db.close()
+    finally:
+        job.running = False
+
+
+def start_rollback(target_version: str, commit: str) -> None:
+    if job.running:
+        raise RuntimeError("Обновление/откат уже выполняется")
+    t = threading.Thread(target=_do_rollback, args=(target_version, commit),
+                         daemon=True, name="ymaster-rollback")
     t.start()
