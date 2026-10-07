@@ -55,8 +55,13 @@ def test_block_responds(client, path, block):
 def test_role_gates(client):
     """Бухгалтеру админ-блоки и опасные мутации закрыты; гость — ничего."""
     adm = login(client, "admin", "admin123")
+    # уникальный корректный ИНН — общая тестовая БД не должна засоряться
+    import time as _t
+    base = "78" + str(int(_t.time()))[-7:]
+    _w = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+    inn = base + str(sum(int(d) * k for d, k in zip(base, _w)) % 11 % 10)
     r = client.post("/api/v1/companies", headers=adm, json={
-        "name": "Смоук ООО", "inn": "7801234564"})
+        "name": "Смоук ООО " + base, "inn": inn})
     assert r.status_code in (200, 201), r.text
     cid = r.json().get("id") or r.json().get("company", {}).get("id")
     inv = client.post("/api/v1/invites", headers=adm,

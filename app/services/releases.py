@@ -66,16 +66,21 @@ def mark_healthy(version: str, commit: str, note: str = "") -> bool:
     if not version or not commit or commit == "unknown":
         return False
     items = _read()
-    for it in items:                    # уже в реестре — обновляем время
-        if it.get("version") == version and it.get("commit") == commit:
-            it["at"] = datetime.utcnow().isoformat() + "Z"
+    now = datetime.utcnow().isoformat() + "Z"
+    for it in items:
+        if it.get("version") == version:
+            if it.get("commit") == commit and not note:
+                it["at"] = now
+                _write(items)
+                return False
+            it["commit"] = commit
+            it["at"] = now
             if note:
                 it["note"] = note[:120]
             _write(items)
             return False
     items.append({"version": version, "commit": commit,
-                  "at": datetime.utcnow().isoformat() + "Z",
-                  "note": note[:120]})
+                  "at": now, "note": note[:120]})
     items = items[-KEEP:]               # только последние KEEP рабочих версий
     _write(items)
     return True
