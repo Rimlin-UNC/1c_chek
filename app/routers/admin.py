@@ -197,6 +197,18 @@ def update_changelog(db: Session = Depends(get_db),
     return {"changelog": remote or local, "source": "github" if remote else "local"}
 
 
+@router.get("/pool-leads", summary="Заявки с главной страницы (админ)")
+def pool_leads(user: User = Depends(require_admin),
+               db: Session = Depends(get_db)):
+    """v1.54.0: e-mail, оставленные на главной («разбор чека на почту»)."""
+    from ..pool.models import PoolLead
+    q = db.query(PoolLead).order_by(PoolLead.created_at.desc())
+    items = [{"email": l.email, "source": l.source,
+              "created_at": l.created_at.isoformat() + "Z"}
+             for l in q.limit(50)]
+    return {"total": q.count(), "items": items}
+
+
 # --------------------------------------------------------------------------
 #  Резервная копия базы (скачивание) + системная сводка
 # --------------------------------------------------------------------------

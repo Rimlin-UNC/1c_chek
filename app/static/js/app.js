@@ -150,10 +150,55 @@ function showSplash(show) {
   el.style.display = show ? 'flex' : 'none';
 }
 
+// v1.54.0: главная страница — статистика пула и заявка на разбор чека.
+// Вход (логин/пароль/отпечаток) не затрагивается: работаем только с новыми id.
+function bindLanding() {
+  const stats = $('#land-stats');
+  if (stats) {
+    api.get('/api/v1/public/pool/info').then((info) => {
+      stats.innerHTML =
+        `<span class="land-stat"><b>${fmtInt(info.receipts_total || 0)}</b><small>чеков в базе</small></span>` +
+        `<span class="land-stat"><b>${fmtInt(info.verified || 0)}</b><small>проверено</small></span>` +
+        `<span class="land-stat"><b>+${info.points_per_receipt ?? 1}</b><small>балл за чек</small></span>`;
+    }).catch(() => {});
+  }
+  const how = $('#land-how-link');
+  if (how) how.onclick = (e) => {
+    e.preventDefault();
+    const el = document.getElementById('land-how');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const lf = $('#land-lead');
+  if (lf) {
+    const t0 = Date.now();
+    lf.onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = $('#land-lead-msg'), btn = $('#land-lead-btn');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/v1/public/pool/leads', {
+          email: $('#land-email').value.trim(),
+          consent: !!$('#land-consent').checked,
+          hp: $('#land-hp').value,
+          form_ms: Date.now() - t0,
+        });
+        try { localStorage.setItem('ymaster-lead-email', $('#land-email').value.trim()); } catch (err) {}
+        msg.textContent = r.message || 'Заявка принята';
+        msg.style.color = 'var(--ok)';
+        btn.textContent = 'Заявка принята';
+      } catch (err) {
+        msg.textContent = err.message || 'Не получилось — попробуйте ещё раз';
+        msg.style.color = '';
+      } finally { btn.disabled = false; }
+    };
+  }
+}
+
 function showLogin() {
   $('#register-screen').classList.add('hidden');
   $('#login-screen').classList.remove('hidden');
   $('#app-shell').classList.add('hidden');
+  bindLanding();                            // v1.54.0: лендинг на главной
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   const form = $('#login-form');
   form.onsubmit = async (e) => {
@@ -543,14 +588,17 @@ function bindPoolForm(root, opts) {
     if (fs.length) decodeToQr(fs[0]);
   });
   // живая камера — тот же модуль scanner.js, что в разделе «Сканирование»
-  const camBtn = $p('pub-cam');
-  if (camBtn) camBtn.onclick = () => openPoolCameraScan((text, p) => {
+  const camPick = () => openPoolCameraScan((text, p) => {
     $p('pub-qr').value = text;
     const hint = $p('pub-photo-hint');
     show('pub-photo-hint', true);
     if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + p.fn
       + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
   });
+  const camBtn = $p('pub-cam');
+  if (camBtn) camBtn.onclick = camPick;
+  // v1.54.0: пришли с главной «Сканировать чек» — камера открывается сама
+  if (/[?&]cam=1/.test(location.hash || '')) setTimeout(camPick, 350);
   // v1.52.0: резервный ввод реквизитов (QR повреждён) — тот же конвейер
   const manBtn = $p('pub-manual');
   if (manBtn) manBtn.onclick = () => poolManualDialog((qr) => {
@@ -581,12 +629,48 @@ function bindPoolForm(root, opts) {
               ? 'Чек на ручной проверке — это не ошибка, администратор посмотрит его вручную.'
               : esc(row.message || 'Источник не нашёл чек — проверьте строку QR.'));
         box.innerHTML = `<div class="info-callout">${poolStatusChip(row.status)}
-          <div style="margin-top:6px">${extra}</div></div>`;
+          <div style="margin-top:6px">${extra}</div>
+          <div style="margin-top:8px"><button class="btn btn-sm" id="pub-mail-btn">✉ Прислать данные чека на e-mail</button></div></div>`;
+        const mb = box.querySelector('#pub-mail-btn');
+        if (mb) mb.onclick = () => mailReceiptDialog(row);
       } else if (tries > 30) {
         clearInterval(timer);
         box.innerHTML = '<div class="info-callout">Проверка занимает больше минуты — статус появится в списке ниже.</div>';
       }
     }, 2000);
+  };
+
+  // v1.54.0: отправка разобранных данных чека на почту (без регистрации)
+  const mailReceiptDialog = (row) => {
+    let saved = '';
+    try { saved = localStorage.getItem('ymaster-lead-email') || ''; } catch (e) {}
+    if (!saved) { const emp = $p('pub-emp'); if (emp) saved = emp.value.trim(); }
+    const { slot } = openModal(`
+      <div class="modal-title">✉ Данные чека на почту</div>
+      <p class="form-hint" style="margin-bottom:10px">Пришлём письмо с реквизитами чека
+      (магазин, сумма, дата, статус проверки). Регистрация не нужна.</p>
+      <label class="field"><span>E-mail</span>
+        <input type="email" id="rcpt-email" required value="${esc(saved)}" autocomplete="email"></label>
+      <div class="modal-actions">
+        <button class="btn" data-close>Отмена</button>
+        <button class="btn btn-primary" id="rcpt-send">Отправить</button>
+      </div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    slot.querySelector('#rcpt-send').onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        const email = slot.querySelector('#rcpt-email').value.trim();
+        const r = await poolApi('POST', '/api/v1/public/pool/receipt-email',
+          { fn: row.fn || '', email, hp: '' });
+        try { localStorage.setItem('ymaster-lead-email', email); } catch (err) {}
+        $('#modal-root').classList.add('hidden');
+        toast(r.message, 'ok', '✉ Чек-Пул');
+      } catch (err) {
+        toast(err.message, 'err', '✉ Чек-Пул');
+        btn.disabled = false;
+      }
+    };
   };
 
   const submit = $p('pub-submit');
@@ -2701,7 +2785,7 @@ document.addEventListener('click', (e) => {
 
 function route(silent = false) {
   if (state.camera) { state.camera.stop(); state.camera = null; }
-  const hash = location.hash.replace(/^#\//, '') || 'dashboard';
+  const hash = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
   const parts = hash.split('/');
   const view = parts[0].split('?')[0];
   if (view === 'register') { location.hash = '#/dashboard'; return; }
@@ -4391,6 +4475,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.54.0': [
+    { icon: '🏠', title: 'Новая главная: скан чека с первого экрана',
+      text: 'Кто заходит на chek.ymaster.ru впервые, сразу видит суть: сканируй чеки — получай баллы и кэшбэк, со статистикой базы, ответами на вопросы и кнопкой сканирования, которая открывает камеру сразу. Вход для постоянных пользователей не изменился — логин, пароль или отпечаток, как прежде. После проверки чека данные можно получить на e-mail.' },
+  ],
   '1.53.0': [
     { icon: '🔄', title: 'Обновление завершает всё само',
       text: 'Ход обновления виден в реальном времени на каждом шаге: загрузка в процентах и килобайтах, установка зависимостей с живым журналом, таймер каждого этапа. После установки программа сама решает: изменился код — сервис и страница перезагружаются автоматически; менялась только документация — данные обновляются на лету, и работа продолжается без перезагрузки.' },

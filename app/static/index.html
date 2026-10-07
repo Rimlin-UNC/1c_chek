@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.53.0">
+<link rel="stylesheet" href="/css/app.css?v=1.54.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -31,6 +31,59 @@
 
   <!-- Экран входа -->
   <div id="login-screen" class="login-screen hidden">
+    <div class="land-wrap">
+    <div class="land-left">
+      <span class="land-badge">Чек-Пул уже работает</span>
+      <h1 class="land-h1">Сканируйте чеки —<br>получайте <span class="land-accent">баллы и кэшбэк</span></h1>
+      <p class="land-lead">Каждый кассовый чек — баллы в открытой базе «Чек-Пул»
+      и кэшбэк у партнёров. Для первого чека регистрация не нужна:
+      навели камеру — балл засчитан.</p>
+      <div class="land-stats" id="land-stats">
+        <span class="land-stat"><b>—</b><small>чеков в базе</small></span>
+        <span class="land-stat"><b>—</b><small>проверено</small></span>
+        <span class="land-stat"><b>+1</b><small>балл за чек</small></span>
+      </div>
+      <div class="land-cta">
+        <a class="btn btn-primary" href="#/public?cam=1">📸 Сканировать чек</a>
+        <a class="btn" href="#land-how" id="land-how-link">Как это работает</a>
+      </div>
+      <ol class="land-steps" id="land-how">
+        <li><img src="/img/manual/scan.jpg" alt="Сканирование QR-кода чека" loading="lazy">
+          <div><b>1. Отсканируйте QR-код чека</b><span>Камерой телефона или фотографией — код распознаётся автоматически.</span></div></li>
+        <li><img src="/img/manual/report.jpg" alt="Данные чека" loading="lazy">
+          <div><b>2. Мы проверяем чек по официальным источникам</b><span>ФНС и «Честный знак»; реквизиты, магазин и сумма берутся из чека.</span></div></li>
+        <li><div class="land-step-noimg"><b>3. Получайте баллы</b><span>Баллы копятся в кабинете, кэшбэк — у партнёров. Укажите e-mail ниже — пришлём разбор чека.</span></div></li>
+      </ol>
+      <form id="land-lead" class="land-lead-form" novalidate>
+        <label class="field"><span>E-mail для разбора чека и писем пула</span>
+          <input type="email" id="land-email" placeholder="you@mail.ru" autocomplete="email"></label>
+        <input type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off"
+               style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="land-consent" style="width:auto;margin-top:2px">
+          <span>Согласен на обработку e-mail для разбора чека и писем пула
+          (152-ФЗ; отписаться можно в любом письме)</span></label>
+        <button class="btn btn-primary btn-block" id="land-lead-btn" type="submit">Прислать разбор чека</button>
+        <div id="land-lead-msg" class="form-hint" style="margin-top:6px"></div>
+      </form>
+      <div class="land-faq">
+        <details><summary>Это законно и безопасно?</summary>
+          <p>Мы принимаем только фискальные реквизиты чека (ФН, ФД, ФП) — они напечатаны
+          на самом чеке. Из персональных данных — только e-mail и только по вашему
+          согласию (152-ФЗ). В публичных списках имя скрыто: видны город и число чеков.</p></details>
+        <details><summary>Нужна ли регистрация?</summary>
+          <p>Для первого чека — нет. Баллы сохранятся в этом браузере, а при регистрации
+          в кабинете присоединятся к аккаунту.</p></details>
+        <details><summary>Сколько можно получить?</summary>
+          <p>1 чек — 1 балл, чеки партнёров — до 100 баллов кэшбэка. Лимит — 50 чеков
+          в сутки с одного устройства.</p></details>
+        <details><summary>А для компаний?</summary>
+          <p>Сотрудники сканируют авансовые и командировочные чеки телефоном,
+          бухгалтер видит их в базе и выгружает в 1С одной кнопкой.</p></details>
+      </div>
+      <p class="land-note">ООО «Ямастер» · ymaster.ru · info@ymaster.ru</p>
+    </div>
+    <div class="land-right">
     <div class="login-card glass">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64">
@@ -68,6 +121,8 @@
         <a href="mailto:info@ymaster.ru">info@ymaster.ru</a><br>
         <a href="#/public">🧾 Сдать чек в Чек-Пул</a> — без входа в систему
       </div>
+    </div>
+    </div>
     </div>
   </div>
 
@@ -269,6 +324,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.53.0"></script>
+  <script type="module" src="/js/app.js?v=1.54.0"></script>
 </body>
 </html>

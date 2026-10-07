@@ -18,6 +18,7 @@ import hmac
 import threading
 import time
 import uuid
+import re
 from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -327,3 +328,108 @@ def partner_qr(code: str = Query("", max_length=32),
     from fastapi import Response
     return Response(content=svg, media_type="image/svg+xml",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+# --------------------------------------------------------------------------
+# v1.54.0: главная страница — быстрый захват контакта и письмо с чеком
+# --------------------------------------------------------------------------
+_LEAD_HITS: dict[str, deque] = {}
+_MAIL_HITS: dict[str, deque] = {}
+_EMAIL_OK = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+
+
+def _limited(hits: dict, ip: str, per_hour: int) -> bool:
+    q = hits.setdefault(ip, deque())
+    now = time.monotonic()
+    while q and now - q[0] > 3600:
+        q.popleft()
+    if len(q) >= per_hour:
+        return False
+    q.append(now)
+    return True
+
+
+class LeadBody(BaseModel):
+    email: str = Field("", max_length=200)
+    consent: bool = False
+    hp: str = ""                    # honeypot: человек поле не видит
+    form_ms: int = 0                # слишком быстрая отправка — бот
+
+
+@router.post("/leads", summary="Главная: заявка «разбор чека на e-mail»")
+def landing_lead(body: LeadBody, request: Request,
+                 db: Session = Depends(get_db)):
+    """v1.54.0: e-mail с главной страницы. 152-ФЗ: только явное согласие,
+    хранится сам адрес, источник и хэши (IP/UA ≤ 12 мес). Боты отсекаются
+    honeypot и таймингом; на один IP — не более 3 заявок в час."""
+    ip = _client_ip(request)
+    if body.hp:                      # бот — отвечаем «успех», не сохраняя
+        return {"ok": True, "message": "Заявка принята"}
+    if body.form_ms and body.form_ms < 800:
+        return {"ok": True, "message": "Заявка принята"}
+    if not body.consent:
+        raise HTTPException(422, "Отметьте согласие на обработку e-mail")
+    email = body.email.strip().lower()
+    if not _EMAIL_OK.match(email):
+        raise HTTPException(422, "Проверьте адрес e-mail")
+    if not _limited(_LEAD_HITS, ip, 3):
+        raise HTTPException(429, "Слишком много заявок с этого адреса — попробуйте позже")
+    from .models import PoolLead
+    db.add(PoolLead(email=email, source="landing", ip_hash=_hash_ip(ip),
+                    user_agent_hash=_hash_ip(
+                        request.headers.get("user-agent", ""))))
+    db.commit()
+    return {"ok": True, "message": "Заявка принята — пришлём разбор чека на этот адрес"}
+
+
+class MailBody(BaseModel):
+    fn: str = Field("", max_length=20)
+    email: str = Field("", max_length=200)
+    hp: str = ""
+
+
+@router.post("/receipt-email", summary="Прислать данные чека на e-mail")
+def receipt_email(body: MailBody, request: Request,
+                  db: Session = Depends(get_db)):
+    """v1.54.0: письмо с разобранными данными отсканированного чека —
+    гость получает результат на почту без регистрации. Не более 3 писем
+    в час с одного IP; письма идут только через настроенный SMTP."""
+    if body.hp:
+        return {"ok": True, "message": "Письмо отправлено"}
+    email = body.email.strip().lower()
+    if not _EMAIL_OK.match(email):
+        raise HTTPException(422, "Проверьте адрес e-mail")
+    ip = _client_ip(request)
+    if not _limited(_MAIL_HITS, ip, 3):
+        raise HTTPException(429, "Слишком много запросов — попробуйте позже")
+    import re as _re
+    from .mailer import base_url, send_mail, smtp_configured
+    from .models import PoolReceipt
+    if not smtp_configured(db):
+        raise HTTPException(503,
+            "Отправка писем пока не настроена — данные чека видны на этой странице")
+    fn = (body.fn or "").strip()
+    r = (db.query(PoolReceipt).filter(PoolReceipt.fn == fn)
+         .order_by(PoolReceipt.created_at.desc()).first())
+    if r is None:
+        raise HTTPException(404, "Чек не найден — отсканируйте его ещё раз")
+    when = r.receipt_date or r.created_at
+    status_ru = {"verified": "подтверждён", "pending": "на проверке",
+                 "rejected": "не прошёл проверку"}.get(r.status, r.status)
+    lines = ["Здравствуйте!", "",
+             "Данные вашего чека из «Ямастер Чек-Пул»:", "",
+             f"ФН {r.fn} · ФД {r.fd} · ФП {r.fp}",
+             f"Магазин: {r.merchant_name or 'уточняется'}",
+             f"Сумма: {r.total_sum:.2f} руб.",
+             f"Дата: {when.strftime('%d.%m.%Y %H:%M') if when else '—'}",
+             f"Статус: {status_ru}",
+             f"Баллы: {r.points_awarded}", "",
+             f"Кабинет участника: {base_url(db)}/#/my", "",
+             "ООО «Ямастер» · ymaster.ru · info@ymaster.ru", "",
+             "Письмо отправлено, потому что этот адрес указали при сканировании",
+             "чека. Если это были не вы — просто не обращайте внимания."]
+    ok, err = send_mail(db, email, "Ваш чек — Ямастер Чек-Пул",
+                        chr(10).join(lines))
+    if not ok:
+        raise HTTPException(502, f"Письмо не ушло: {err}")
+    return {"ok": True, "message": f"Данные чека отправлены на {email}"}

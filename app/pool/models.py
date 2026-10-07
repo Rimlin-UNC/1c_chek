@@ -157,6 +157,18 @@ class PoolConsent(Base):
     accepted_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class PoolLead(Base):
+    """Заявка с главной страницы: e-mail для разбора чека (v1.54.0).
+    152-ФЗ: хранится только сам адрес, источник и технические хэши."""
+    __tablename__ = "pool_leads"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    email: Mapped[str] = mapped_column(String(200), default="")
+    source: Mapped[str] = mapped_column(String(32), default="landing")
+    ip_hash: Mapped[str] = mapped_column(String(32), default="")
+    user_agent_hash: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 def ensure_pool_schema(engine) -> None:
     """Добавляющая миграция пула (v1.31.0): новые таблицы создаёт create_all,
     для уже существующей pool_users добавляет колонку vid (если её нет).
@@ -168,7 +180,8 @@ def ensure_pool_schema(engine) -> None:
         PoolFingerprint.__table__, PoolIpLog.__table__, PoolSignal.__table__,
         PoolReferral.__table__, PoolAchievement.__table__,
         PoolWithdrawal.__table__, PoolApiKey.__table__,
-        PoolApiCall.__table__, MailRule.__table__, MailLog.__table__])
+        PoolApiCall.__table__, MailRule.__table__, MailLog.__table__,
+        PoolLead.__table__])
     insp = sqlalchemy.inspect(engine)
     # v1.37.0: колонки подбора для уже существующей pool_receipts
     rcols = {c["name"] for c in insp.get_columns("pool_receipts")}
