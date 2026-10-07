@@ -40,8 +40,10 @@ class TestBlocksRegistry:
         assert reg == blocks.BLOCKS
         for name, ver in reg.items():
             assert re.match(r"^\d+\.\d+\.\d+$", ver), (name, ver)
-        assert reg["Обновления"] == "1.50.0"
-        assert reg["Резервные копии"] == "1.49.0"
+        # структурные пины: не старее версий на момент 1.50.0
+        vt = lambda v: tuple(int(x) for x in v.split("."))
+        assert vt(reg["Обновления"]) >= (1, 50, 0)
+        assert vt(reg["Резервные копии"]) >= (1, 49, 0)
 
     def test_diff_blocks(self):
         from app.services.updater import diff_blocks

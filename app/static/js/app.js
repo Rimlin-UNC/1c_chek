@@ -27,6 +27,7 @@ const state = {
   ws: null,
   wsOk: false,
   updModalOpen: false,           // v1.50.0: открыто окно обновления — баннер не дублируем
+  updAutoDismissed: 0,           // v1.52.1: ход этого запуска уже закрыли вручную
   camera: null,
   view: 'dashboard',
   routeParam: '',
@@ -4235,12 +4236,14 @@ function openUpdateProgress() {
     <div id="upd-phases" style="margin:10px 0;font-size:13.5px"></div>
     <p class="form-hint" id="upd-step">Запуск…</p>
     <p class="form-hint" id="upd-metrics"><span id="upd-elapsed"></span> <span id="upd-bytes"></span></p>
-    <pre class="codeblock" id="upd-log" style="max-height:180px;font-size:11.5px"></pre>
+    <pre class="codeblock" id="upd-log" style="max-height:180px;overflow:auto;font-size:11.5px"></pre>
     <div id="upd-summary" class="hidden" style="margin:10px 0"></div>
     <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`,
-    { onClose: () => { state.updModalOpen = false; clearInterval(state.updTimer); clearInterval(updTick); } });
+    { onClose: () => { state.updModalOpen = false; state.updAutoDismissed = autoKey;
+                       clearInterval(state.updTimer); clearInterval(updTick); } });
   let finalShown = false;           // v1.50.0: ровно одно финальное уведомление
   let waitingSince = 0;             // с момента «сервис перезапускается»
+  let autoKey = 0;                  // v1.52.1: started_at текущего запуска
   const t0 = Date.now();
   const updTick = setInterval(() => {
     const el = slot.querySelector('#upd-elapsed');
@@ -4257,6 +4260,8 @@ function openUpdateProgress() {
       const dtxt = dur ? ` · ${dur} с` : '';
       if (p.status === 'done') return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
       if (p.status === 'failed') return `<div class="form-error">✗ ${title}${dtxt}</div>`;
+      // после успеха активных фаз не бывает: рестарт мог не успеть закрыться
+      if (st.success) return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
       return `<div style="color:var(--brand)">● ${title}…</div>`;
     }).join('');
   };
@@ -4316,6 +4321,7 @@ function openUpdateProgress() {
     catch { return; }
     const st = resp.job || {};
     st.current_version = resp.current_version || '';
+    autoKey = st.started_at || autoKey;
     const bar = slot.querySelector('#upd-bar');
     if (bar) bar.style.width = Math.max(5, st.progress || 0) + '%';
     const ph = slot.querySelector('#upd-phases');
@@ -4348,6 +4354,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.52.1': [
+    { icon: '⏱', title: 'Ход обновления виден всегда',
+      text: 'Исправлено «зависание» окна обновления: загрузка изменений теперь видна в процентах и килобайтах в реальном времени, а итог обновления фиксируется до перезапуска сервиса — после него окно показывает успешный отчёт, а не ошибку. Если окно закрыть или перезагрузить страницу, «Настройки» вернут его, пока обновление идёт.' },
+  ],
   '1.52.0': [
     { icon: '⌨', title: 'Сканер — весь: добавлен резервный ввод реквизитов',
       text: 'В форме сдачи чека появилась кнопка «⌨ Ввести вручную» — на случай, когда QR повреждён или не читается. Реквизиты с чека (дата, сумма, ФН, ФД, ФП) собираются в строку QR и проходят обычную проверку. Теперь в каждом месте сдачи чека есть все способы: камера, фото, перетаскивание, строка QR и ручной ввод.' },
@@ -7610,6 +7620,12 @@ async function viewSettings(container) {
       }
     };
     loadUpdCard();
+    // v1.52.1: обновление выполняется — вернуть окно хода (если не закрыли его сами)
+    api.get('/api/v1/admin/update/status').then(r => {
+      const st = r.job || {};
+      if (st.running && !st.finished && st.started_at
+          && state.updAutoDismissed !== st.started_at) openUpdateProgress();
+    }).catch(() => {});
     const bc = $('#btn-check-update');
     if (bc) bc.onclick = async () => {
       bc.disabled = true; bc.textContent = 'Проверяю…';

@@ -231,28 +231,61 @@ def _parse_fetch_progress(line: str) -> tuple[int | None, int | None]:
 
 def _git_fetch_progress(branch: str) -> tuple[int, str, int]:
     """git fetch с живым прогрессом загрузки (байты — в job.downloaded_bytes).
-    Прогресс пишется в job с троттлингом — лишней нагрузки на диск нет."""
+    v1.52.1: git пишет прогресс «кареткой» (\r), построчное чтение блокировалось
+    до конца загрузки и выглядело как зависание. Читаем по байтам (select),
+    режем по \r и \n, обновляем статус не чаще раза в 0.7 с."""
+    import select as _select
     cmd = ["git", "fetch", "--progress", "origin", branch]
     total = 0
+    tail: list[str] = []                # последние строки — для отчёта об ошибке
+    last_say = 0.0
+    p = None
     try:
-        p = subprocess.Popen(cmd, cwd=APP_DIR, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
+        p = subprocess.Popen(cmd, cwd=APP_DIR, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE)
         assert p.stderr is not None
-        for line in p.stderr:
-            pct, nbytes = _parse_fetch_progress(line)
-            if nbytes:
-                total = max(total, nbytes)
-                if pct is not None:
-                    job.say("download", 25 + pct // 5,
-                            f"Загрузка изменений: {nbytes // 1024} КБ ({pct}%)")
-        rc = p.wait(timeout=300)
-        out = (p.stderr.read() if p.stderr else "") or ""
-        return rc, out.strip()[-2000:], total
-    except subprocess.TimeoutExpired:
-        p.kill()                                # type: ignore[union-attr]
-        return 124, "timeout: git fetch", total
+        fd = p.stderr.fileno()
+        buf = b""
+        deadline = time.time() + 300
+        while True:
+            rl, _, _ = _select.select([fd], [], [], 1.0)
+            if rl:
+                chunk = os.read(fd, 8192)
+                if not chunk:
+                    break                        # конец потока (процесс закрыл stderr)
+                buf += chunk
+                parts = re.split(rb"[\r\n]", buf)
+                buf = parts.pop()                # незавершённый кусок — в следующий раз
+                for raw in parts:
+                    line = raw.decode("latin-1", "ignore").strip()
+                    if not line:
+                        continue
+                    tail.append(line[-120:])
+                    pct, nbytes = _parse_fetch_progress(line)
+                    if nbytes:
+                        total = max(total, nbytes)
+                    now = time.time()
+                    if pct is not None and now - last_say >= 0.7:
+                        last_say = now
+                        job.say("download", 25 + pct // 5,
+                                f"Загрузка изменений: {max(1, total // 1024)} КБ ({pct}%)")
+            elif p.poll() is not None and not buf:
+                break
+            if time.time() > deadline:
+                p.kill()
+                return 124, "timeout: git fetch", total
+        rc = p.wait(timeout=15)
+        return rc, (" | ".join(tail[-6:]) if rc else "")[-2000:], total
     except FileNotFoundError:
         return 127, "не найдено: git", total
+    except Exception as e:                       # noqa: BLE001
+        return 1, f"{e.__class__.__name__}: {e}", total
+    finally:
+        if p is not None and p.stderr:
+            try:
+                p.stderr.close()
+            except OSError:
+                pass
 
 
 # ==========================================================================
@@ -805,19 +838,18 @@ def _do_apply(target_version: str, repo: str, branch: str,
             "to": target_version,
             "at": datetime.utcnow().isoformat() + "Z",
             "backup": os.path.basename(backup) if backup else ""})
-        job.say("restart", 92, "Перезапуск сервиса (без прав root — re-exec)…")
-        restarted, rmsg = _restart_service(sudo_password)
-        needs_restart = not restarted
-        job.say("restart", 95, rmsg)
-
+        # v1.52.1: итог (статус, история) фиксируем ДО перезапуска.
+        # Самоперезапуск заменяет процесс через execv и НЕ возвращает
+        # управление: всё, что после рестарта, не выполнялось никогда —
+        # на диске оставалось «зависшее» незавершённое обновление, и
+        # интерфейс после рестарта показывал ошибку вместо успеха.
         job.success = True
-        job.needs_restart = needs_restart
+        job.needs_restart = False
         job.finished = True
         job.progress = 100
         job.say("done", 100, f"Готово: v{settings.APP_VERSION} → v{target_version}")
         job.finished_at = time.time()
         job.elapsed_s = max(1, int(job.finished_at - job.started_at))
-        _state_write()
 
         from ..database import SessionLocal
         db = SessionLocal()
@@ -830,11 +862,21 @@ def _do_apply(target_version: str, repo: str, branch: str,
                 # обновление всё равно успешно, не роняем запись истории
                 "backup": os.path.basename(backup) if backup else "",
                 "at": datetime.utcnow().isoformat() + "Z", "ok": True,
-                "duration_s": int(time.time() - job.started_at),
+                "duration_s": job.elapsed_s,
                 "downloaded_bytes": job.downloaded_bytes,
                 "blocks": job.blocks_changed})
         finally:
             db.close()
+        _state_write()
+
+        job.say("restart", 92, "Перезапуск сервиса (без прав root — re-exec)…")
+        restarted, rmsg = _restart_service(sudo_password)
+        if not restarted:
+            # управление вернулось — рестарт недоступен, просим вручную
+            job.needs_restart = True
+            job.say("restart", 95, rmsg)
+            _state_write()
+        # при успешном рестарте процесс заменён — код ниже не выполняется
     except Exception as e:                                   # noqa: BLE001
         job.error = str(e)
         job.finished = True
@@ -842,6 +884,7 @@ def _do_apply(target_version: str, repo: str, branch: str,
         job.note_failure()
         job.finished_at = time.time()
         job.elapsed_s = max(1, int(job.finished_at - job.started_at))
+        _state_write()
         # Автоматический откат на предыдущий коммит — система продолжает работать
         if job.old_commit and job.old_commit != "unknown":
             rc, out = _git(["reset", "--hard", job.old_commit], timeout=60)
