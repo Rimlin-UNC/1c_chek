@@ -44,6 +44,9 @@
 html { height: 100%; }
 body {
   height: 100%;
+  /* v1.56.0: случайный широкий элемент не порождает горизонтальную
+     прокрутку страницы (таблицы и графики прокручиваются внутри блоков) */
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -128,6 +131,9 @@ a:hover { text-decoration: underline; }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .btn-icon:hover { background: var(--panel-strong); color: var(--text); }
+
+/* v1.56.0: гибкие изображения — не выходят за контейнер, без искажений */
+img { max-width: 100%; height: auto; }
 
 input, select, textarea {
   width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
@@ -583,6 +589,17 @@ pre.codeblock {
   table.data tbody tr.selected { background: rgba(255,122,0,.14); }   /* v1.25.0 */
 }
 
+/* v1.56.0: сенсорные экраны — цели касания не меньше 44px (ТЗ адаптива);
+   компактные кнопки в таблицах — 40px, чтобы не раздувать строки */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 40px; }
+  .btn-icon { width: 44px; height: 44px; }
+  .nav-item { min-height: 44px; }
+  .segmented button { min-height: 44px; }
+  .filter-bar .btn { min-height: 44px; }
+}
+
 /* Узкие экраны — телефоны */
 @media (max-width: 640px) {
   .modal-slot { margin: 3vh auto; width: 96vw; padding: 18px 16px; max-height: 92dvh; }
@@ -606,6 +623,10 @@ pre.codeblock {
   /* Таблица чеков: горизонтальная прокрутка остаётся, шрифт чуть компактнее */
   table.data { font-size: 12.5px; min-width: 880px; }
   table.data th, table.data td { padding: 9px 10px; }
+  /* v1.56.0: любая таблица прокручивается внутри своего блока — без
+     горизонтальной прокрутки страницы и без обёртки .table-wrap */
+  table.data { display: block; max-width: 100%; overflow-x: auto;
+               -webkit-overflow-scrolling: touch; }
 }
 
 /* Средние экраны: 3 колонки формы ужимаем в 2 */
@@ -1356,6 +1377,8 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   .land-steps span { font-size: 12.5px; }
   .land-lead-form { padding: 12px; }
   .land-faq summary { font-size: 13.5px; }
+  /* v1.56.0: 16px во всех полях — телефон не зумит страницу при вводе */
+  input, select, textarea { font-size: 16px; }
 }
 
 /* v1.55.1: телефон в альбомной ориентации — компактнее по вертикали */

@@ -3420,16 +3420,33 @@ function bindShell() {
     });
   }
   // v1.10.0: меню можно закрыть ВСЕГДА — гамбургер, фон, ✕, Esc, свайп влево
+  const _sbMobile = () => window.matchMedia('(max-width: 860px)').matches;
   const closeSidebar = () => {
     $('#sidebar').classList.remove('open');
     document.body.classList.remove('sb-open');
     $('#btn-sidebar').setAttribute('aria-expanded', 'false');   // v1.10.1: a11y
+    if (_sbMobile()) $('#sidebar').setAttribute('aria-hidden', 'true');   // v1.56.0: a11y
   };
   $('#btn-sidebar').onclick = () => {
     const opened = $('#sidebar').classList.toggle('open');
     document.body.classList.toggle('sb-open', opened);
     $('#btn-sidebar').setAttribute('aria-expanded', String(opened)); // v1.10.1: a11y
+    $('#sidebar').setAttribute('aria-hidden', String(!opened));      // v1.56.0: a11y
   };
+  // v1.56.0: на десктопе (>860px) меню постоянно видно — служебные
+  // атрибуты и состояние «открыто» сбрасываем (в т.ч. при первом старте);
+  // проверки на методы — чтобы код не падал в DOM-песочницах/заглушках
+  const _sbSyncDesktop = () => {
+    if (_sbMobile()) return;
+    const sb = $('#sidebar'), bt = $('#btn-sidebar');
+    if (!sb || !bt) return;
+    if (typeof sb.removeAttribute === 'function') sb.removeAttribute('aria-hidden');
+    if (sb.classList) sb.classList.remove('open');
+    if (document.body.classList) document.body.classList.remove('sb-open');
+    if (typeof bt.setAttribute === 'function') bt.setAttribute('aria-expanded', 'false');
+  };
+  window.addEventListener('resize', _sbSyncDesktop);
+  _sbSyncDesktop();
   $('#sidebar-backdrop').onclick = closeSidebar;
   $('#sb-close').onclick = closeSidebar;
   // v1.10.2: делегирование на самом меню — тап по пункту выбирает раздел ВСЕГДА,
@@ -4564,6 +4581,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.56.0': [
+    { icon: '📱', title: 'Программа удобна на любом экране — от 320px до десктопа',
+      text: 'Чеки, компании и отчёты на телефоне прокручиваются внутри своих таблиц — страница больше не разъезжается вбок. Кнопки и пункты меню на сенсорных экранах стали крупнее (от 44px — удобно попадать пальцем), поля ввода — 16px, чтобы телефон не зумил при вводе. Картинки не выходят за границы, меню корректно сообщает о своём состоянии программам чтения с экрана (доступность).' },
+  ],
   '1.55.1': [
     { icon: '📱', title: 'Главная: всё видно и на телефоне, и в браузере',
       text: 'Исправили вёрстку главной страницы: она прокручивается целиком — верх лендинга, форма входа и регистрации больше не обрезаются (раньше страница была фиксированной высоты и прятала верх, а форма уезжала за край на телефоне). Поля на мобильном стали 16px — телефон не зумит при вводе, кнопки — во всю ширину. Попутно усилили сохранность данных: копия базы теперь делается и вне каталога приложения, повторный запуск установки обновляет код, а не пересоздаёт его, и база восстанавливается из копии автоматически.' },
