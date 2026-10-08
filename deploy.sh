@@ -79,6 +79,10 @@ BRANCH="${OPT_BRANCH:-$BRANCH}"
 
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
+# v1.55.1: пути данных — для страховых копий и диагностики
+BACKUP_ROOT="/var/backups/ymaster-check"
+DB_FILE="$APP_DIR/data/ymaster_check.db"
+
 # Режим ремонта SSL: deploy.sh --fix-ssl — diagnos + выпуск/продление с полным выводом
 if [[ $FIXSSL -eq 1 ]]; then
   echo "======== Починка SSL — Ямастер Чек ========"
@@ -118,6 +122,14 @@ if [[ $DIAGNOSE -eq 1 ]]; then
   journalctl -u "$SERVICE" -n 12 --no-pager 2>/dev/null | tail -12 || true
   echo "-- приложение напрямую (health):"
   curl -s -o /dev/null -w "   127.0.0.1:8000/health -> HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8000/health || echo "   127.0.0.1:8000 -> НЕ ОТВЕЧАЕТ"
+  echo "-- база данных:"
+  if [[ -f "$DB_FILE" ]]; then
+    ls -l "$DB_FILE" | awk '{print "   файл: " $9 " (" $5 " байт)"}'
+    sqlite3 "$DB_FILE" "SELECT '   users: '||COUNT(*) FROM users; SELECT '   receipts: '||COUNT(*) FROM receipts;" 2>/dev/null || true
+  else
+    echo "   файл базы НЕ НАЙДЕН: $DB_FILE"
+  fi
+  ls -1t "$BACKUP_ROOT"/ymaster_check-*.db 2>/dev/null | head -3 | sed 's/^/   копия: /' || true
   echo "-- nginx:"; nginx -t 2>&1 || true
   systemctl is-active nginx || true
   echo "-- порты (80/443/8000):"
@@ -156,6 +168,22 @@ warn() { echo "  ⚠ $*"; }
 [[ $EUID -ne 0 ]] && { echo "Запустите через sudo: sudo bash deploy.sh"; exit 1; }
 
 # ------------------------------------------------------------------
+# v1.55.1: СТРАХОВКА ДАННЫХ — копия базы и .env до любых операций.
+# Копии живут ВНЕ каталога приложения: переустановка каталога больше
+# не может потерять чеки и настройки (инцидент v1.55.0).
+TS="$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP_ROOT"
+if [[ -f "$DB_FILE" ]]; then
+  cp -a "$DB_FILE" "$BACKUP_ROOT/ymaster_check-$TS.db"
+  ls -1t "$BACKUP_ROOT"/ymaster_check-*.db 2>/dev/null | tail -n +31 | xargs -r rm -f
+  echo "  ✔ страховая копия базы (вне каталога приложения): $BACKUP_ROOT/ymaster_check-$TS.db"
+fi
+if [[ -f "$APP_DIR/.env" ]]; then
+  cp -a "$APP_DIR/.env" "$BACKUP_ROOT/env-$TS.bak"
+  ls -1t "$BACKUP_ROOT"/env-*.bak 2>/dev/null | tail -n +31 | xargs -r rm -f
+fi
+
+# ------------------------------------------------------------------
 bold "1/9 Системные пакеты"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -168,6 +196,8 @@ bold "2/9 Пользователь и каталог"
 id -u "$APP_USER" &>/dev/null || useradd --system --create-home --shell /bin/bash "$APP_USER"
 mkdir -p "$APP_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+# v1.55.1: каталог страховых копий доступен приложению (зеркалирование бэкапов)
+chown "$APP_USER:$APP_USER" "$BACKUP_ROOT" 2>/dev/null || true
 # ручные git-команды root здесь не должны падать с «dubious ownership»
 git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
@@ -182,11 +212,14 @@ fi
 
 # ------------------------------------------------------------------
 bold "3/9 Код с GitHub ($REPO_URL, ветка $BRANCH)"
-if [[ $UPDATE -eq 1 && -d "$APP_DIR/.git" ]]; then
+# v1.55.1: ЛЮБАЯ существующая установка (есть .git) обновляется НА МЕСТЕ —
+# повторный `sudo bash deploy.sh` без --update больше не удаляет код и
+# не вынуждает к «чистой» переустановке с потерей данных.
+if [[ -d "$APP_DIR/.git" ]]; then
   OLD_SCRIPT_MD5=$(md5sum "$APP_DIR/deploy.sh" 2>/dev/null | cut -d" " -f1 || true)
   sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin "$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
-  ok "обновлено из GitHub"
+  ok "обновлено из GitHub (данные не тронуты)"
   # v1.6.2: deploy.sh обновил сам себя — bash уже загрузил СТАРЫЙ текст в
   # память, поэтому перезапускаемся новой версией с теми же аргументами
   NEW_SCRIPT_MD5=$(md5sum "$APP_DIR/deploy.sh" 2>/dev/null | cut -d" " -f1 || true)
@@ -194,22 +227,31 @@ if [[ $UPDATE -eq 1 && -d "$APP_DIR/.git" ]]; then
     bold "deploy.sh обновился — перезапускаюсь новой версией…"
     exec bash "$APP_DIR/deploy.sh" "$@"
   fi
+elif sudo -u "$APP_USER" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR" 2>/dev/null; then
+  ok "репозиторий склонирован"
+elif [[ -d "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
+  # Каталог занят без git (после сбоя старой установки): инициализируем
+  # репозиторий НА МЕСТЕ — data/, .env, venv и база остаются на месте.
+  warn "каталог занят без .git — инициализирую репозиторий на месте (данные сохраняются)"
+  sudo -u "$APP_USER" git -C "$APP_DIR" init -q
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote remove origin 2>/dev/null || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL"
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin "$BRANCH"
+  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard FETCH_HEAD
+  sudo -u "$APP_USER" git -C "$APP_DIR" clean -fd \
+    -e data -e .env -e venv -e '*.db' -e '*.db-*' -e backups >/dev/null || true
+  ok "код получен; data/, .env, venv и база не тронуты"
 else
-  rm -rf "$APP_DIR/app" "$APP_DIR/docs" "$APP_DIR/deploy" 2>/dev/null || true
-  if sudo -u "$APP_USER" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR" 2>/dev/null; then
-    ok "репозиторий склонирован"
+  warn "Публичное клонирование не удалось (приватный репозиторий?)."
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    sudo -u "$APP_USER" git clone --depth 1 \
+      "https://x-access-token:${GITHUB_TOKEN}@github.com/Rimlin-UNC/1c_chek.git" "$APP_DIR"
+    sudo -u "$APP_USER" git -C "$APP_DIR" checkout "$BRANCH"
+    ok "склонировано с GITHUB_TOKEN"
   else
-    warn "Публичное клонирование не удалось (приватный репозиторий?)."
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-      sudo -u "$APP_USER" git clone --depth 1 \
-        "https://x-access-token:${GITHUB_TOKEN}@github.com/Rimlin-UNC/1c_chek.git" "$APP_DIR"
-      sudo -u "$APP_USER" git -C "$APP_DIR" checkout "$BRANCH"
-      ok "склонировано с GITHUB_TOKEN"
-    else
-      echo "  Вариант A: запустите с токеном:  GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh"
-      echo "  Вариант B: сделайте репозиторий публичным."
-      exit 1
-    fi
+    echo "  Вариант A: запустите с токеном:  GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh"
+    echo "  Вариант B: сделайте репозиторий публичным."
+    exit 1
   fi
 fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
@@ -248,6 +290,15 @@ fi
 
 # ------------------------------------------------------------------
 bold "6/9 База данных и администратор"
+# v1.55.1: файла базы нет, но страховые копии есть — восстанавливаем
+# последнюю целую (защита от «слетевшей базы» при переустановке каталога)
+if [[ ! -s "$DB_FILE" ]] && ls "$BACKUP_ROOT"/ymaster_check-*.db >/dev/null 2>&1; then
+  NEWEST_DB="$(ls -1t "$BACKUP_ROOT"/ymaster_check-*.db | head -1)"
+  mkdir -p "$APP_DIR/data"
+  cp -a "$NEWEST_DB" "$DB_FILE"
+  chown "$APP_USER:$APP_USER" "$DB_FILE"
+  warn "файл базы отсутствовал — восстановлен из копии: $NEWEST_DB"
+fi
 sudo -u "$APP_USER" sh -c "cd $APP_DIR && ./venv/bin/python -m app.seed"
 ok "администратор: admin / admin123 (смените при первом входе; если пароль уже меняли — он сохранён)"
 

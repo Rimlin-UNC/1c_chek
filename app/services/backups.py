@@ -90,6 +90,25 @@ def _manifest_write(name: str, entry: dict) -> None:
     os.replace(tmp, p)
 
 
+def _mirror_offapp(dest: str) -> None:
+    """v1.55.1: зеркалим копию ВНЕ каталога приложения — она переживает
+    даже переустановку каталога (инцидент v1.55.0). Каталог создаёт и
+    отдаёт приложению deploy.sh (/var/backups/ymaster-check); для тестов
+    путь переопределяется переменной окружения YMASTER_BACKUP_EXTRA_DIR."""
+    extra = os.environ.get("YMASTER_BACKUP_EXTRA_DIR",
+                           "/var/backups/ymaster-check")
+    try:
+        if not os.path.isdir(extra) or not os.access(extra, os.W_OK):
+            return
+        shutil.copy2(dest, os.path.join(extra, os.path.basename(dest)))
+        same = sorted(f for f in os.listdir(extra)
+                      if f.startswith("db-") and f.endswith(".db"))
+        for old in same[:-30]:
+            os.unlink(os.path.join(extra, old))
+    except OSError:
+        pass
+
+
 def create_backup(kind: str = "manual") -> str | None:
     """Создать копию БД. kind: manual | daily | weekly | preupdate | archive.
     v1.46.0: база работает в WAL-режиме — простое копирование файла могло
@@ -141,6 +160,7 @@ def create_backup(kind: str = "manual") -> str | None:
         "sha256": h.hexdigest(),
         "verified": True,
     })
+    _mirror_offapp(dest)             # v1.55.1: копия вне каталога приложения
     _cleanup(kind)
     return dest
 

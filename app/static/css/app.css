@@ -151,14 +151,14 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 
 /* --- Экран входа ---------------------------------------------------- */
 .login-screen {
-  height: 100vh; height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px;
+  /* v1.55.1: высота по контенту — страница прокручивается целиком, верх не обрезается */
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: flex-start; justify-content: center; padding: 20px;
   animation: fadeIn .4s ease;
-  /* v1.55.0: контент выше экрана прокручивается — «белого экрана» нет;
-     margin:auto у детей сохраняет центрирование, когда всё помещается */
-  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;  /* страховка */
 }
 .login-screen > * { margin: auto; }
-.login-card { width: min(420px, 94vw); padding: 40px 36px 24px; }
+.login-card { width: min(420px, 100%); padding: 40px 36px 24px; }
 .login-logo { text-align: center; margin-bottom: 28px; }
 .login-logo img { filter: drop-shadow(0 6px 18px rgba(255,122,0,.35)); }   /* v1.25.0 */
 .login-logo h1 { font-size: 30px; margin-top: 12px; letter-spacing: .3px; }
@@ -1265,8 +1265,8 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
    v1.54.0: главная страница — лендинг вокруг карточки входа
    ========================================================================== */
 #login-screen .land-wrap {
-  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(300px, 420px);
-  gap: 34px; width: min(1120px, 96vw); margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(min(300px, 100%), 420px);
+  gap: 34px; width: min(1120px, 100%); margin: 0 auto;
   align-items: start; padding: 34px 0 44px;
 }
 .land-left { min-width: 0; }
@@ -1329,6 +1329,40 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   .land-stats { gap: 16px; }
   .land-stat b { font-size: 19px; }
   .login-card { padding: 26px 20px 18px; }
+  /* v1.55.1: карточка входа — по центру колонки, компактнее лендинга */
+  #login-screen .land-right { width: 100%; max-width: 440px; justify-self: center; }
+}
+
+/* v1.55.1: телефон — поля 16px (iOS не зумит при вводе), кнопки во всю
+   ширину, компактные отступы: форма входа и регистрации всегда видна */
+@media (max-width: 520px) {
+  .login-screen { padding: 12px; }
+  .login-card { padding: 24px 16px 16px; }
+  .login-logo { margin-bottom: 18px; }
+  .login-logo img { width: 52px; height: 52px; }
+  .login-logo h1 { font-size: 24px; }
+  .login-card input,
+  .land-lead-form input[type="email"],
+  .land-lead-form input[type="text"] { font-size: 16px; }
+  .login-footer { font-size: 11.5px; }
+  .land-h1 { font-size: 20px; }
+  .land-lead { font-size: 13.5px; }
+  .land-cta .btn { flex: 1 1 100%; justify-content: center; }
+  .land-stats { gap: 12px; }
+  .land-stat b { font-size: 17px; }
+  .land-steps li { padding: 8px; gap: 8px; }
+  .land-steps img { width: 54px; height: 40px; }
+  .land-steps b { font-size: 13.5px; }
+  .land-steps span { font-size: 12.5px; }
+  .land-lead-form { padding: 12px; }
+  .land-faq summary { font-size: 13.5px; }
+}
+
+/* v1.55.1: телефон в альбомной ориентации — компактнее по вертикали */
+@media (max-height: 560px) and (orientation: landscape) {
+  .login-screen { padding: 10px; }
+  .login-card { padding: 18px 20px 12px; }
+  .login-logo { margin-bottom: 10px; }
 }
 
 /* v1.55.0: электронный чек на странице сдачи — появление с анимацией */
