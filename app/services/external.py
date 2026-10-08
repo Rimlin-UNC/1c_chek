@@ -131,6 +131,12 @@ def _parse_operation(receipt: dict) -> int | None:
     op = receipt.get("operation")
     if op in (1, 2):
         return int(op)
+    # v1.57.2: proverkacheka присылает «operationType» (парсеру отдаётся
+    # словарь в нижнем регистре — ключ «operationtype»); раньше тип
+    # приезда извлекался только из строки QR, из ответа терялся
+    op = receipt.get("operationtype")
+    if op in (1, 2):
+        return int(op)
     t = str(receipt.get("type", "")).lower()
     if "refund" in t or "возврат" in t:
         return 2
@@ -235,7 +241,12 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
     meta = _lc(meta or {})
     udata = receipt.get("user_data") if isinstance(receipt.get("user_data"), dict) else {}
     props = []
-    for p_ in (receipt.get("properties") or []):
+    # v1.57.2: у источника «properties» бывает МАССИВОМ и ЕДИНИЧНЫМ
+    # объектом — принимаем оба вида, иначе теряется «Номер заказа»
+    _props_raw = receipt.get("properties")
+    _props_iter = ([_props_raw] if isinstance(_props_raw, dict)
+                   else (_props_raw or [] if isinstance(_props_raw, list) else []))
+    for p_ in _props_iter:
         if isinstance(p_, dict) and p_.get("propertyName"):
             props.append({"name": str(p_["propertyName"])[:200],
                           "value": str(p_.get("propertyValue") or "")[:200]})
@@ -276,6 +287,11 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
         # из metadata источника (бывает, когда в самом чеке адреса нет)
         ("ffd_version", _g("fiscaldocumentformatver")),
         ("source_address", meta.get("address")),
+        # v1.57.2: контрольный знак сообщения, служебная маска и код
+        # ответа источника — для полного соответствия формату API
+        ("message_fiscal_sign", _g("messagefiscalsign")),
+        ("redefine_mask", _g("redefine_mask")),
+        ("source_code", receipt.get("code")),
     ):
         if val not in (None, "", [], {}):
             extra[key] = val
