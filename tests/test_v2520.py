@@ -121,7 +121,9 @@ class TestFullDataLifecycle:
         assert d.get("full_data") is False, "без позиций полными данные не считаются"
 
     def test_fetch_details_idempotent(self, client, monkeypatch):
-        """Повторный запрос для чека с полными данными — не ставится в очередь."""
+        """v1.57.5: блок v1.25.1 возвращён — запрос уходит ВСЕГДА,
+        даже для чека с флагом full_data (у старых чеков флаг стоит,
+        а расширенных данных в базе нет)."""
         import app.routers.receipts as rr
         calls = []
         monkeypatch.setattr(rr, "_run_external_fetch",
@@ -132,12 +134,12 @@ class TestFullDataLifecycle:
         calls.clear()          # авто-загрузка скана тоже писала в calls
         r = client.post(f"/api/v1/receipts/{r1['id']}/fetch-details", headers=adm)
         assert r.status_code == 200, r.text
-        assert r.json()["queued"] is False and r.json()["skipped"] is True
-        assert "уже" in r.json()["message"]
-        assert not calls, "очередь не должна пополняться"
+        assert r.json()["queued"] is True
+        assert calls and calls[0] == [r1["id"]], "запрос должен ставиться в очередь"
 
     def test_fetch_bulk_skips_full(self, client, monkeypatch):
-        """Массовый запрос пропускает полные чеки, счётчик — в сообщении."""
+        """v1.57.5: блок v1.25.1 — массовый запрос ставит в очередь ВСЮ
+        выборку (без «пропуска полных»); квоту бережёт сам человек."""
         import app.routers.receipts as rr
         calls = []
         monkeypatch.setattr(rr, "_run_external_fetch",
@@ -146,17 +148,17 @@ class TestFullDataLifecycle:
         r1 = _scan(client, U)
         r2 = _scan(client, U)
         _set_db(r1["id"], full_data=True)
-        calls.clear()          # авто-загрузка сканов тоже писала в calls
+        calls.clear()
         r = client.post("/api/v1/receipts/fetch-details", headers=adm,
                         json={"receipt_ids": [r1["id"], r2["id"]]})
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["queued"] == 1 and j["skipped"] == 1
-        assert calls and calls[0] == [r2["id"]], "в очередь попал только неполный"
-        # все полные → очередь пуста
+        assert j["queued"] == 2
+        assert calls and sorted(calls[0]) == sorted([r1["id"], r2["id"]])
+        # повторный вызов — тоже уходит в очередь (v1.25.1)
         r = client.post("/api/v1/receipts/fetch-details", headers=adm,
                         json={"receipt_ids": [r1["id"]]})
-        assert r.json()["queued"] == 0 and r.json()["skipped"] == 1
+        assert r.json()["queued"] == 1
 
     def test_filter_full_data_after_backfill(self, client):
         """Backfill: проверенные чеки с позициями = полные; фильтр их видит."""
@@ -205,11 +207,11 @@ class TestFullDataLifecycle:
 class TestUIRules:
     def test_row_only_edit_when_full(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        # у полного чека кнопки запроса нет вовсе (только «изменить»)
-        assert "r.full_data ? '' :" in js
-        assert '📥✓' not in js
-        # запрос — только для неполных, с честным тултипом
-        assert "Чек ещё не имеет полных данных" in js
+        # v1.57.5 (блок v1.25.1): у полного чека — значок «📥✓»,
+        # у неполного — живая кнопка «📥»
+        assert "📥✓" in js
+        assert "r.full_data\n             ? '<span" in js or "r.full_data ? '<span" in js
+        assert 'Получить полные данные чека из сервиса проверки' in js
 
     def test_filter_labels(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

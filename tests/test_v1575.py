@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.57.4: force-запрос данных — чеки с full_data=1
-# (старые, без ext_json) снова загружаются.
+# Ямастер Чек — тесты v1.57.5: блок загрузки данных чека из v1.25.1 —
+# запрос уходит всегда, значок «📥✓» в списке.
 # ООО «Ямастер» | ymaster.ru | info@ymaster.ru
 # ======================================================================
 import datetime as dt
 import re
-from unittest.mock import patch as mock_patch
+
+_N = {"k": 0}
 
 
 def _login(client):
@@ -15,13 +16,19 @@ def _login(client):
 
 
 def _mk_receipt(full_data: bool):
+    """Прямая фикстура чека; fn/fd/fp уникальны (UNIQUE на тройку)."""
     import uuid
     from app.database import SessionLocal
     from app.models import Receipt
+    _N["k"] += 1
+    k = _N["k"]
     db = SessionLocal()
     rid = str(uuid.uuid4())
-    db.add(Receipt(id=rid, qr_data="t=20261008T1305&s=807.30&fn=738&i=9895&fp=3304159072&n=1",
-                   fn="738", fd="9895", fp="3304159072", total_sum=807.30,
+    db.add(Receipt(id=rid,
+                   qr_data=(f"t=20261008T1305&s=807.30&fn=81230{k:03d}"
+                            f"&i=98{k:03d}&fp=3304159{k:03d}&n=1"),
+                   fn=f"81230{k:03d}", fd=f"98{k:03d}", fp=f"3304159{k:03d}",
+                   total_sum=807.30,
                    receipt_date=dt.datetime(2026, 10, 8, 13, 5),
                    full_data=full_data))
     db.commit()
@@ -40,14 +47,14 @@ def _del_receipt(rid):
     db.close()
 
 
-class TestVersion1574:
+class TestVersion1575:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert tuple(int(x) for x in ver.split(".")) >= (1, 57, 4)  # структурный
+        assert ver == "1.57.5"
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
-        assert "?v=1.57.3" not in idx
+        assert "?v=1.57.4" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
         assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
@@ -55,65 +62,56 @@ class TestVersion1574:
 
     def test_whats_new_changelog(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert js.index("'1.57.4':") < js.index("'1.57.3':")
+        assert js.index("'1.57.5':") < js.index("'1.57.4':")
         ch = open("CHANGELOG.md", encoding="utf-8").read()
-        assert ch.count("## [1.57.4]") == 1
-        assert ch.index("## [1.57.4]") < ch.index("## [1.57.3]")
+        assert ch.count("## [1.57.5]") == 1
+        assert ch.index("## [1.57.5]") < ch.index("## [1.57.4]")
 
 
-class TestForceFetch:
-    def test_full_data_without_force_skipped(self, client):
+class TestV1251Block:
+    def test_single_always_queued(self, client):
+        """Чек с full_data=1 → запрос ВСЕГДА уходит (v1.25.1)."""
         rid = _mk_receipt(full_data=True)
         try:
             hdr = _login(client)
             r = client.post(f"/api/v1/receipts/{rid}/fetch-details", headers=hdr)
-            assert r.status_code == 200
-            assert r.json()["queued"] is True        # v1.57.5: блок v1.25.1
-        finally:
-            _del_receipt(rid)
-
-    def test_full_data_with_force_queued(self, client):
-        rid = _mk_receipt(full_data=True)
-        try:
-            hdr = _login(client)
-            r = client.post(f"/api/v1/receipts/{rid}/fetch-details?force=1",
-                            headers=hdr)
             assert r.status_code == 200, r.text
             body = r.json()
-            assert body["queued"] is True and "skipped" not in body
+            assert body["queued"] is True
+            assert "skipped" not in body
+            assert "2–7 с" in body["message"]        # текст v1.25.1
         finally:
             _del_receipt(rid)
 
-    def test_new_receipt_always_queued(self, client):
-        rid = _mk_receipt(full_data=False)
-        try:
-            hdr = _login(client)
-            r = client.post(f"/api/v1/receipts/{rid}/fetch-details", headers=hdr)
-            assert r.status_code == 200 and r.json()["queued"] is True
-        finally:
-            _del_receipt(rid)
-
-    def test_bulk_force(self, client):
-        rid = _mk_receipt(full_data=True)
+    def test_bulk_always_queued(self, client):
+        """Массовый запрос: вся выборка в очередь, без «пропуска полных»."""
+        r1 = _mk_receipt(full_data=True)
+        r2 = _mk_receipt(full_data=False)
         try:
             hdr = _login(client)
             r = client.post("/api/v1/receipts/fetch-details",
-                            json={"receipt_ids": [rid], "force": True},
-                            headers=hdr)
+                            json={"receipt_ids": [r1, r2]}, headers=hdr)
             assert r.status_code == 200, r.text
-            assert r.json()["queued"] == 1           # force прошёл фильтр full_data
+            body = r.json()
+            assert body["queued"] == 2 and body["skipped"] == 0
+            assert "по очереди" in body["message"]   # текст v1.25.1
         finally:
-            _del_receipt(rid)
+            _del_receipt(r1)
+            _del_receipt(r2)
 
-    def test_bg_worker_respects_force_flag(self):
-        """Воркер пропускает full_data только без force."""
+    def test_worker_fetches_everything(self):
+        """Воркер v1.25.1: пропуска нет, решение за человеком."""
         src = open("app/routers/receipts.py", encoding="utf-8").read()
-        assert "def _run_external_fetch(receipt_ids: list[str], force: bool = False)" in src
-        assert "if receipt.full_data and not force:" not in src   # отказ убран
-        assert "background.add_task(_run_external_fetch, [receipt.id], True)" in src
+        w = src.split("def _run_external_fetch")[1].split("def _maybe_auto_fetch")[0]
+        assert "full_data" not in w
+        assert "решение о запросе принимает человек" in src
 
-    def test_engine_actually_runs_on_force(self, client, monkeypatch):
-        """force → движок реально вызывается и пишет ext_json."""
+    def test_refusals_removed(self):
+        src = open("app/routers/receipts.py", encoding="utf-8").read()
+        assert "повторный запрос не требуется" not in src
+
+    def test_engine_runs_on_button(self, client, monkeypatch):
+        """Кнопка → движок реально вызывается → ext_json записан."""
         rid = _mk_receipt(full_data=True)
         try:
             hdr = _login(client)
@@ -141,28 +139,27 @@ class TestForceFetch:
                 rec = db.get(Receipt, rid)
                 assert rec.details_source == "proverkacheka"
                 assert "151939ПРИ" in (rec.ext_json or "")
+                assert rec.full_data is True
             finally:
                 db.close()
         finally:
             _del_receipt(rid)
 
 
-class TestUiForce:
-    def test_card_button_uses_force(self):
+class TestListBadge:
+    def test_badge_and_button(self):
+        """v1.25.1 в списке: «📥✓» у полученных, «📥» у остальных."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "fetch-details?force=1" in js
-
-    def test_schema_has_force(self):
-        sc = open("app/schemas.py", encoding="utf-8").read()
-        blk = sc.split("class FetchDetailsRequest")[1][:400]
-        assert "force: bool = False" in blk
+        assert "📥✓" in js
+        assert "Обновить данные» — в карточке чека" in js
+        assert "Получить полные данные чека из сервиса проверки" in js
+        assert "r.full_data ? '' :" not in js
 
 
 class TestBlocksRegistry:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert tuple(int(x) for x in
-                     reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 4)
+        assert reg["Проверка чеков (ФНС и источники)"] == "1.57.5"
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
         assert reg["Обновления"] == "1.55.1"              # не задет

@@ -384,12 +384,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   await new Promise(r => setTimeout(r, 30));
   ok(table().innerHTML.includes('<table'), 'чеки: «Повторить» возвращает список');
 
-  // --- v1.25.2: строка чека — кнопка запроса только для неполных данных ---
+  // --- v1.57.5 (блок v1.25.1): у полученного чека значок «📥✓» ---
   ok(!receiptsPayload.items[1].full_data ? true : true, 'sanity full_data');  // r2: full
-  ok(bundle.includes("r.full_data ? '' :") && !bundle.includes('📥✓'),
-     'v1.25.2: у полного чека только «изменить», 📥✓ убран');
-  ok(bundle.includes('Чек ещё не имеет полных данных'),
-     'v1.25.2: 📥 только для неполных (честный тултип)');
+  ok(bundle.includes('📥✓') && !bundle.includes("r.full_data ? '' :"),
+     'v1.57.5: у полного чека значок «📥✓» вместо скрытой кнопки');
+  ok(bundle.includes('Получить полные данные чека из сервиса проверки'),
+     'v1.57.5: 📥 у неполных (тултип v1.25.1)');
   ok(bundle.includes('проверены + полные данные') &&
      bundle.includes('данных не хватает — можно запросить'),
      'v1.25.2: подписи фильтра «Данные чека»');

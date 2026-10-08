@@ -58,7 +58,7 @@ class TestDataZoneAlwaysAvailable:
         """В списке 📥 по-прежнему скрыт у full_data — тупик закрыт
         кнопкой в карточке (это осознанное решение, не регресс)."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "r.full_data ? '' :" in js
+        assert "📥✓" in js        # v1.57.5: значок v1.25.1 вместо пустоты
 
 
 class TestEndpointExists:

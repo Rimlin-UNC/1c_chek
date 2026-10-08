@@ -695,9 +695,7 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
 
 
 def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
-    """Фоновый воркер: последовательно, с встроенными паузами движка.
-    v1.57.4: force=True — запросить даже для чеков с full_data=1
-    (чеки, заполненные до появления расширенных полей ext_json)."""
+    """Фоновый воркер: последовательно, с встроенными паузами движка."""
     from ..database import SessionLocal
     db = SessionLocal()
     try:
@@ -705,8 +703,8 @@ def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
             receipt = db.get(Receipt, rid)
             if receipt is None:
                 continue
-            if receipt.full_data and not force:      # v1.25.2: уже полные — пропускаем
-                continue
+            # v1.57.5: поведение v1.25.1 — воркер берёт КАЖДЫЙ переданный
+            # чек (решение о запросе принимает человек, нажав кнопку)
             res = external_engine.fetch(
                 db, receipt.qr_data, receipt.fn, receipt.fd, receipt.fp,
                 receipt.total_sum, receipt.receipt_date)
@@ -736,12 +734,9 @@ def fetch_details_one(receipt_id: str, background: BackgroundTasks,
     receipt = db.get(Receipt, receipt_id)
     if not receipt or not can_view_receipt(user, receipt):      # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    # v1.25.2: без force повторный запрос не нужен — данные уже полные
-    # v1.57.4: force=True — принудительный запрос (чеки, заполненные до
-    # появления ext_json, и обновление данных по кнопке в карточке)
-    if receipt.full_data and not force:
-        return {"ok": True, "queued": False, "skipped": True,
-                "message": "Полные данные уже получены — повторный запрос не требуется"}
+    # v1.57.5: блок v1.25.1 — запрос уходит ВСЕГДА (отказы v1.25.2
+    # «данные уже получены» убрали: у чеков, заполненных до v1.55.0,
+    # флаг full_data стоит при пустых расширенных полях)
     background.add_task(_run_external_fetch, [receipt.id], True)
     log_action(user, "external_fetch", "receipt", receipt.id,
                {"queued": 1, "force": force})
@@ -760,24 +755,10 @@ def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
     ids = [i for i in dict.fromkeys(body.receipt_ids) if i in visible]
     if not ids:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
-    # v1.25.2: без force чеки с полными данными не запрашиваем повторно
-    # v1.57.4: force=True — запросить и чеки с full_data (старые чеки
-    # без расширенных полей ext_json)
-    if getattr(body, "force", False):
-        full_ids = set()
-    else:
-        full_ids = {r.id for r in db.query(Receipt).filter(
-            Receipt.id.in_(ids), Receipt.full_data.is_(True)).all()}
-    ids = [i for i in ids if i not in full_ids]
-    skipped = len(full_ids)
-    if not ids:
-        return {"ok": True, "queued": 0, "skipped": skipped,
-                "message": f"Все выбранные чеки ({skipped}) уже имеют полные "
-                           f"данные — повторный запрос не требуется"}
-    background.add_task(_run_external_fetch, ids, bool(getattr(body, "force", False)))
-    log_action(user, "external_fetch",
-               details={"queued": len(ids), "skipped": skipped,
-                        "force": bool(getattr(body, "force", False))})
+    # v1.57.5: блок v1.25.1 — в очередь уходит вся выбранная Visible-выборка
+    skipped = 0
+    background.add_task(_run_external_fetch, ids)
+    log_action(user, "external_fetch", details={"queued": len(ids)})
     tail = (f" Пропущены без запроса: {skipped} — данные уже полные." if skipped else "")
     return {"ok": True, "queued": len(ids), "skipped": skipped,
             "message": f"В очереди чеков: {len(ids)}. Источники опрашиваются "
