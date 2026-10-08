@@ -52,7 +52,8 @@ class TestVersion1572:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.57.2"
+        # точный пин 1.57.2 перенесён в tests/test_v1573.py (версия ушла вперёд)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 57, 2)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.57.1" not in idx
@@ -189,6 +190,8 @@ class TestBlocksRegistry:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.57.2"
+        # точный пин 1.57.2 перенесён в tests/test_v1573.py
+        assert tuple(int(x) for x in
+                     reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 2)
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
         assert reg["Обновления"] == "1.55.1"              # не задет

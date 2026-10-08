@@ -4167,7 +4167,13 @@ function openEditReceipt(r, onSaved) {
     <label style="display:flex;gap:10px;align-items:center;margin-top:12px;cursor:pointer">
       <input type="checkbox" id="er-notified" ${r.notified ? 'checked' : ''} style="width:auto">
       <span>🔔 Уведомление от сотрудника</span></label>
-    ${extBlockHTML(r.ext)}
+    ${extBlockHTML(r.ext) ||
+      `<div class="info-callout" style="margin-top:12px">🧾 Полные данные чека ещё не получены.
+        <button class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из proverkacheka.com</button>
+        <div class="form-hint" id="er-fetch-msg" style="margin-top:6px"></div></div>`}
+    ${r.ext ? `<div style="margin-top:8px"><button class="btn btn-sm" id="er-refetch"
+        title="Запросить свежие данные из proverkacheka.com; пустые поля заполнятся, ваши правки не затрутся">🔄 Обновить данные из источника</button>
+        <span class="form-hint" id="er-fetch-msg" style="margin-left:8px"></span></div>` : ''}
     <details class="manual-check" style="margin-top:12px">
       <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🌐 Проверить чек вручную на сторонних сервисах</summary>
       <div class="manual-check-links">
@@ -4182,6 +4188,34 @@ function openEditReceipt(r, onSaved) {
       <button class="btn btn-primary" id="er-save">💾 Сохранить</button>
       <button class="btn" id="er-cancel">Отмена</button>
     </div>`);
+
+  // v1.57.3: «Получить/Обновить данные» прямо в карточке чека — доступно
+  // всегда (в списке кнопка 📥 скрыта, когда full_data=1, из-за чего чеки,
+  // заполненные до появления расширенных полей, не могли обновиться)
+  const _fetchData = async (btn) => {
+    if (!btn || btn.disabled) return;
+    const msg = slot.querySelector('#er-fetch-msg');
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Запрашиваю (пауза 2–7 с)…';
+    try {
+      const res = await api.post(`/api/v1/receipts/${r.id}/fetch-details`);
+      if (msg) msg.textContent = res.message || 'Готово';
+      toast(res.message || 'Данные получены', 'info', 'Данные чека');
+      try { await onSaved(); } catch (e) {}          // свежий список
+      const fresh = (viewReceipts._rows || []).find(x => x.id === r.id);
+      if (fresh) { close(); openEditReceipt(fresh, onSaved); }   // переоткрыть с данными
+    } catch (err) {
+      if (msg) msg.textContent = err.message || 'Не удалось получить данные';
+      toast(err.message || 'Не удалось получить данные', 'err');
+      btn.disabled = false;
+      btn.textContent = old;
+    }
+  };
+  const _fb = slot.querySelector('#er-fetch');
+  if (_fb) _fb.onclick = () => _fetchData(_fb);
+  const _rf = slot.querySelector('#er-refetch');
+  if (_rf) _rf.onclick = () => _fetchData(_rf);
 
   // v1.3.0 (баг-фикс): позиции — единый источник DOM; всё введённое читается
   // при сохранении, удаление/добавление работают без потери набранного.
@@ -4644,6 +4678,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.57.3': [
+    { icon: '🔄', title: 'Кнопка получения данных — прямо в карточке чека',
+      text: 'Исправили тупик: у части чеков кнопка «получить данные» в списке скрывалась (полные данные считались полученными), а блок расширенных данных был пуст — и запросить их было негде. Теперь в карточке чека всегда есть либо «🧾 Полные данные», либо кнопка «Получить данные из proverkacheka.com», плюс «Обновить данные» для повторного запроса. Ваши правки не затираются — заполняются только пустые поля.' },
+  ],
   '1.57.2': [
     { icon: '🧾', title: 'Формат чека — по данным настоящего API',
       text: 'Сверили разбор с реальным ответом proverkacheka.com: исправили потерю «Номера заказа» (сервис присылает свойства и объектом, и списком — теперь принимаются оба вида), добавили контрольный знак сообщения и служебные поля. Чек разбирается целиком: позиции с признаками, итоги НДС, касса/смена, налог, место расчётов — всё в карточке чека.' },

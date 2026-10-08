@@ -156,7 +156,7 @@ class TestExtDataVisible:
     def test_ui_block_present(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "function extBlockHTML(ext)" in js
-        assert "${extBlockHTML(r.ext)}" in js
+        assert "${extBlockHTML(r.ext)" in js
         for label in ("Место расчётов", "ККТ (рег. номер)", "Смена",
                       "Налогообложение", "Формат ФФД", "Итоги НДС",
                       "Свойства заказа", "Признаки позиций"):
