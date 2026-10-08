@@ -11,7 +11,8 @@ class TestVersion1561:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.56.1"
+        # точный пин 1.56.1 перенесён в tests/test_v1562.py (версия ушла вперёд)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 56, 1)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.56.0" not in idx

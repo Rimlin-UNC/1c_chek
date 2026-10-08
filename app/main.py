@@ -188,6 +188,11 @@ async def ws_status(ws: WebSocket):
             connected["ok"] = False
 
     pump = asyncio.create_task(_pump_incoming())
+    # v1.56.2: закрытие соединения клиентом (вкладка, сон телефона, потеря
+    # сети) — норма. Между проверкой флага в _pump_incoming и отправкой
+    # ping/события есть гонка: send в уже закрытый сокет кидает
+    # WebSocketDisconnect (1006). Раньше каждый такой случай оставлял
+    # traceback в журнале; теперь обрабатывается тихо, подписка снимается.
     try:
         await ws.send_json({"type": "connected",
                             "payload": {"app": settings.APP_NAME,
@@ -205,6 +210,8 @@ async def ws_status(ws: WebSocket):
                     await ws.send_json({"type": "ping", "payload": {"demo": False}})
                 continue
             await ws.send_text(message)
+    except (WebSocketDisconnect, RuntimeError):
+        pass                        # клиент отключился — это не ошибка сервера
     finally:
         pump.cancel()
         unsubscribe(queue)
