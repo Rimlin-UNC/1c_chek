@@ -100,15 +100,27 @@ class CheckBody(BaseModel):
     employee_email: str = Field("", max_length=200)   # v1.37.0: сценарий C
 
 
-def _receipt_public(r) -> dict:
-    return {
+def _receipt_public(r, db=None) -> dict:
+    """v1.55.0: + позиции и реквизиты (для электронного чека на странице
+    и в письме). Позиции отдаются только владельцу (vid-привязка)."""
+    data = {
         "id": r.id, "status": r.status, "message": r.status_message,
-        "fn": r.fn, "total_sum": r.total_sum,
+        "fn": r.fn, "fd": r.fd, "fp": r.fp, "total_sum": r.total_sum,
         "merchant_name": r.merchant_name,
+        "merchant_inn": r.merchant_inn,
+        "merchant_address": r.merchant_address,
+        "operation": r.operation,
         "receipt_date": r.receipt_date.isoformat() if r.receipt_date else None,
         "points": r.points_awarded,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
+    if db is not None:
+        from .models import PoolItem
+        data["items"] = [{"name": i.name, "quantity": i.quantity,
+                          "price": i.price, "total": i.total}
+                         for i in db.query(PoolItem)
+                         .filter(PoolItem.receipt_id == r.id).all()]
+    return data
 
 
 # --- эндпоинты --------------------------------------------------------------
@@ -267,7 +279,7 @@ def pool_receipt(receipt_id: str, request: Request, response: Response,
                  PoolReceipt.pool_user_id == _user_by_vid(db, vid).id).first())
     if r is None:
         raise HTTPException(404, "Чек не найден")
-    return _receipt_public(r)
+    return _receipt_public(r, db)
 
 
 @router.get("/ref/{code}", summary="Чек-Пул: информация о коде приглашения")
@@ -416,6 +428,48 @@ def receipt_email(body: MailBody, request: Request,
     when = r.receipt_date or r.created_at
     status_ru = {"verified": "подтверждён", "pending": "на проверке",
                  "rejected": "не прошёл проверку"}.get(r.status, r.status)
+    # v1.55.0: HTML-версия письма — электронный чек как на странице
+    from .models import PoolItem
+    _items = (db.query(PoolItem).filter(PoolItem.receipt_id == r.id).all())
+    _rows = "".join(
+        f"<tr><td style='padding:6px 8px;border-bottom:1px solid #eee'>{i.name}</td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #eee;text-align:center'>{i.quantity:g}</td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #eee;text-align:right'>{i.price:.2f}</td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #eee;text-align:right'><b>{i.total:.2f}</b></td></tr>"
+        for i in _items) or (
+        "<tr><td colspan='4' style='padding:8px;color:#777'>Позиции появятся "
+        "после проверки официальными источниками</td></tr>")
+    _html = f"""<div style="max-width:520px;margin:0 auto;font-family:Arial,Segoe UI,sans-serif;color:#1c2333">
+  <div style="background:#fff8f0;border:2px dashed #e8a24a;border-radius:14px;padding:18px 20px">
+    <div style="text-align:center;font-weight:800;letter-spacing:2px;color:#b45309">ЭЛЕКТРОННЫЙ ЧЕК</div>
+    <div style="text-align:center;color:#666;font-size:13px;margin:6px 0 12px">Ямастер Чек-Пул · проверка по официальным источникам</div>
+    <div style="font-size:15px"><b>{r.merchant_name or "Магазин уточняется"}</b></div>
+    <div style="color:#666;font-size:13px;margin-bottom:10px">{r.merchant_address or ""}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <tr style="background:#faf3ea"><th style="text-align:left;padding:6px 8px">Позиция</th>
+      <th style="padding:6px 8px">Кол-во</th><th style="padding:6px 8px">Цена</th>
+      <th style="text-align:right;padding:6px 8px">Сумма</th></tr>{_rows}</table>
+    <div style="display:flex;justify-content:space-between;font-size:16px;margin-top:10px">
+      <b>Итого</b><b>{r.total_sum:.2f} руб.</b></div>
+    <div style="color:#666;font-size:12.5px;margin-top:8px;line-height:1.5">
+      ФН {r.fn} · ФД {r.fd} · ФП {r.fp}<br>
+      Дата: {when.strftime("%d.%m.%Y %H:%M") if when else "—"} · Статус: {status_ru} ·
+      Баллы: {r.points_awarded}</div>
+  </div>
+  <div style="background:#f2f6ff;border-radius:12px;padding:14px 18px;margin-top:12px;font-size:13.5px">
+    <b>Баллы хранятся в кабинете участника</b><br>
+    +1 балл за каждый чек · кэшбэк баллами у партнёров (до 100 за чек) ·
+    история и статусы всех чеков.<br>
+    Чеки, сданные в этом браузере, присоединятся к кабинету автоматически.
+    <div style="margin-top:10px"><a href="{base_url(db)}/#/my"
+      style="background:#e8890c;color:#fff;padding:9px 16px;border-radius:8px;
+      text-decoration:none;font-weight:600">Открыть кабинет</a></div>
+  </div>
+  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · info@ymaster.ru<br>
+  Письмо отправлено, потому что этот адрес указали при сканировании чека.
+  Если это были не вы — просто не обращайте внимания.</div>
+</div>"""
+    import re as _re
     lines = ["Здравствуйте!", "",
              "Данные вашего чека из «Ямастер Чек-Пул»:", "",
              f"ФН {r.fn} · ФД {r.fd} · ФП {r.fp}",
@@ -428,8 +482,8 @@ def receipt_email(body: MailBody, request: Request,
              "ООО «Ямастер» · ymaster.ru · info@ymaster.ru", "",
              "Письмо отправлено, потому что этот адрес указали при сканировании",
              "чека. Если это были не вы — просто не обращайте внимания."]
-    ok, err = send_mail(db, email, "Ваш чек — Ямастер Чек-Пул",
-                        chr(10).join(lines))
+    ok, err = send_mail(db, email, f"Электронный чек на {r.total_sum:.2f} руб. — Ямастер Чек-Пул",
+                        chr(10).join(lines), html=_html)
     if not ok:
         raise HTTPException(502, f"Письмо не ушло: {err}")
     return {"ok": True, "message": f"Данные чека отправлены на {email}"}

@@ -125,6 +125,9 @@ def _ensure_schema() -> None:
              "ALTER TABLE receipts ADD COLUMN assignee VARCHAR(200) DEFAULT ''"),
             ("comment",
              "ALTER TABLE receipts ADD COLUMN comment TEXT DEFAULT ''"),
+            # v1.55.0: расширенные поля источника (proverkacheka: место
+            # расчётов, касса, смена, налог, свойства заказа и др.)
+            ("ext_json", "ALTER TABLE receipts ADD COLUMN ext_json TEXT DEFAULT ''"),
             # --- v1.11.0: мультикомпанийность ---
             ("company_id", "ALTER TABLE receipts ADD COLUMN company_id VARCHAR(36) NULL"),
             # --- v1.2.0: полные данные чека + флаг уведомления ---

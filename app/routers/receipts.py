@@ -664,6 +664,9 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
         receipt.cashier = res.cashier
     if applyable(res.cash_sum):
         receipt.cash_sum = res.cash_sum
+    # v1.55.0: максимум полей источника — структурно, в отдельной колонке
+    if res.extra:
+        receipt.ext_json = json.dumps(res.extra, ensure_ascii=False)
     if applyable(res.ecash_sum):
         receipt.ecash_sum = res.ecash_sum
     if res.found:
@@ -780,7 +783,6 @@ def external_status(user: User = Depends(require_accountant),
             "fns_app": bool(cfg.get("fns_app_inn") and cfg.get("fns_app_password")),
             "crpt": True,                        # v1.26.0: анонимный, без токена
             "proverkacheka": bool(cfg.get("proverkacheka_token")),
-            "custom": bool(cfg.get("external_custom_url")),
         },
         "auto_fetch": appsettings.get_setting(db, "external_auto", "1") == "1",
     }

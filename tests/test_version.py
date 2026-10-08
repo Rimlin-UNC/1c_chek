@@ -95,6 +95,8 @@ class TestOfdRuParsing:
 #  Несколько своих источников
 # ---------------------------------------------------------------------------
 class TestMultiCustom:
+    # v1.55.0: «свои шлюзы» выведены из системы — поля игнорируются,
+    # в цепочке источников custom не участвует никогда
     def test_settings_accept_and_chain_uses_sources(self, client, monkeypatch):
         hdr = login(client, "admin", "admin123")
         r = client.put("/api/v1/settings/external", json={
@@ -102,7 +104,7 @@ class TestMultiCustom:
                 {"name": "шлюз1", "url": "https://api.example.ru/check"},
                 {"name": "шлюз2", "url": "https://api2.example.ru/check"},
             ]}, headers=hdr)
-        assert r.status_code == 200, r.text
+        assert r.status_code == 200, r.text      # поля больше нет — игнор
 
         from app.services.external import engine
         from app.database import SessionLocal
@@ -111,7 +113,7 @@ class TestMultiCustom:
             chain = engine.provider_chain(db)
         finally:
             db.close()
-        assert "custom::шлюз1" in chain and "custom::шлюз2" in chain
+        assert not any(c.startswith("custom") for c in chain)
         assert chain[-1] == "mock"
 
     def test_bad_url_rejected(self, client):
@@ -119,10 +121,10 @@ class TestMultiCustom:
         r = client.put("/api/v1/settings/external", json={
             "external_custom_urls": [{"name": "x", "url": "ftp://bad"}]},
             headers=hdr)
-        assert r.status_code == 400
+        assert r.status_code == 200              # валидация ушла вместе с полем
 
     def test_get_settings_masks_and_lists(self, client):
         hdr = login(client, "admin", "admin123")
         g = client.get("/api/v1/settings/external", headers=hdr).json()
-        assert "external_custom_urls" in g
+        assert "external_custom_urls" not in g   # v1.55.0: ключ удалён из ответа
         assert "has_ofd_ru_token" in g

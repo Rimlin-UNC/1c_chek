@@ -194,6 +194,7 @@ class Receipt(Base):
     personal_sum: Mapped[float] = mapped_column(Float, default=0.0)
     comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
+    ext_json: Mapped[str] = mapped_column(Text, default="")          # v1.55.0: расширенные поля источника (JSON)
     # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
     # v1.23.0: полные данные чека получены из сервиса проверки (позиции,
     # магазин, наличные/безнал) — список показывает это, кнопка запроса скрыта

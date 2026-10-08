@@ -629,10 +629,18 @@ function bindPoolForm(root, opts) {
               ? 'Чек на ручной проверке — это не ошибка, администратор посмотрит его вручную.'
               : esc(row.message || 'Источник не нашёл чек — проверьте строку QR.'));
         box.innerHTML = `<div class="info-callout">${poolStatusChip(row.status)}
-          <div style="margin-top:6px">${extra}</div>
-          <div style="margin-top:8px"><button class="btn btn-sm" id="pub-mail-btn">✉ Прислать данные чека на e-mail</button></div></div>`;
-        const mb = box.querySelector('#pub-mail-btn');
-        if (mb) mb.onclick = () => mailReceiptDialog(row);
+          <div style="margin-top:6px">${extra}</div></div>`;
+        // v1.55.0: электронный чек — человек сразу видит, что сервис работает
+        try {
+          const full = await poolApi('GET', '/api/v1/public/pool/receipt/' + row.id);
+          renderEcheck(box, full);
+        } catch (e) {
+          const mb = document.createElement('button');
+          mb.className = 'btn btn-sm'; mb.style.marginTop = '8px';
+          mb.textContent = '✉ Прислать данные чека на e-mail';
+          mb.onclick = () => mailReceiptDialog(row);
+          box.firstElementChild.appendChild(mb);
+        }
       } else if (tries > 30) {
         clearInterval(timer);
         box.innerHTML = '<div class="info-callout">Проверка занимает больше минуты — статус появится в списке ниже.</div>';
@@ -1130,6 +1138,76 @@ function poolLeadersHTML(d, me) {
   ${me ? `<div class="form-hint" style="margin-top:4px">Ваше место: <b>${me.rank}</b> (${me.receipts} чеков за месяц)` +
     (me.city ? ` · город «${esc(me.city)}»: ${me.city_rank}-е из ${me.city_participants}` : '') + `</div>` : ''}
   ${regions ? `<div class="form-hint" style="margin-top:4px">Регионы месяца: ${regions}</div>` : ''}`;
+}
+
+// ==========================================================================
+//  v1.55.0: электронный чек после скана — «бумажный» вид, отправка HTML-чека
+//  на почту и мягкое приглашение в кабинет. ООО «Ямастер»
+// ==========================================================================
+function renderEcheck(anchor, r) {
+  if (!anchor || anchor.querySelector('.echeck')) return;
+  const when = (r.receipt_date || r.created_at || '').slice(0, 16).replace('T', ' ');
+  const rows = (r.items || []).map(i => `<tr>
+      <td style="padding:5px 6px;border-bottom:1px dashed #e6ddcf">${esc(i.name)}</td>
+      <td class="num" style="padding:5px 6px;border-bottom:1px dashed #e6ddcf;text-align:center">${i.quantity}</td>
+      <td class="num" style="padding:5px 6px;border-bottom:1px dashed #e6ddcf;text-align:right">${fmtSum(i.price)}</td>
+      <td class="num" style="padding:5px 6px;border-bottom:1px dashed #e6ddcf;text-align:right"><b>${fmtSum(i.total)}</b></td>
+    </tr>`).join('');
+  const wrap = document.createElement('div');
+  wrap.className = 'echeck-wrap';
+  wrap.innerHTML = `
+    <div class="echeck">
+      <div class="echeck-head">ЭЛЕКТРОННЫЙ ЧЕК</div>
+      <div class="echeck-sub">совпадает с бумажным · проверен по официальным источникам</div>
+      <div class="echeck-merchant">${esc(r.merchant_name || 'Магазин уточняется')}</div>
+      ${r.merchant_address ? `<div class="echeck-addr">${esc(r.merchant_address)}</div>` : ''}
+      ${rows ? `<table class="echeck-items"><thead><tr><th>Позиция</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+      <div class="echeck-total"><span>Итого</span><span>${fmtSum(r.total_sum)}</span></div>
+      <div class="echeck-props">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>
+        ${when ? when + '<br>' : ''}Статус: ${poolStatusChip(r.status)}
+        ${r.points ? ' · <b>+' + r.points + ' балл' + (r.points > 1 ? 'ов' : '') + '</b>' : ''}</div>
+    </div>
+    <div class="echeck-mail">
+      <b>Пришлём этот чек красивым письмом</b>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input type="email" id="ec-email" class="field-input" placeholder="ваш e-mail"
+               autocomplete="email" style="flex:1;min-width:200px">
+        <button class="btn btn-primary btn-sm" id="ec-send">✉ Прислать HTML-чек</button>
+      </div>
+      <div class="form-hint" id="ec-msg" style="margin-top:6px"></div>
+    </div>
+    <div class="echeck-invite">
+      <b>Баллы хранятся в кабинете</b>
+      <ul><li>+1 балл за каждый чек, кэшбэк у партнёров — до 100 за чек</li>
+      <li>история и статусы всех ваших чеков в одном месте</li>
+      <li>кабинет за минуту — по e-mail или временной ссылке входа; чеки этого браузера присоединятся сами</li></ul>
+      <button class="btn btn-sm" id="ec-cabinet">Открыть кабинет →</button>
+    </div>`;
+  anchor.appendChild(wrap);
+  const send = wrap.querySelector('#ec-send');
+  if (send) send.onclick = async () => {
+    const email = wrap.querySelector('#ec-email').value.trim();
+    const msg = wrap.querySelector('#ec-msg');
+    send.disabled = true;
+    try {
+      const resp = await poolApi('POST', '/api/v1/public/pool/receipt-email',
+        { fn: r.fn || '', email, hp: '' });
+      try { localStorage.setItem('ymaster-lead-email', email); } catch (e) {}
+      if (msg) { msg.textContent = resp.message || 'Отправлено — проверьте почту';
+                 msg.style.color = 'var(--ok)'; }
+      toast(resp.message, 'ok', '✉ Чек-Пул');
+    } catch (err) {
+      if (msg) { msg.textContent = err.message || 'Не удалось отправить'; msg.style.color = ''; }
+    } finally { send.disabled = false; }
+  };
+  const cab = wrap.querySelector('#ec-cabinet');
+  if (cab) cab.onclick = () => {
+    if (!getToken()) {
+      history.replaceState(null, '', location.pathname + '#/my');
+      showPoolScreen();
+    } else { location.hash = '#/my'; }
+  };
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function poolLoadLeadersPub(root) {
@@ -2819,7 +2897,18 @@ function route(silent = false) {
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
   };
-  (renderers[view] || viewDashboard)(container);
+  // v1.55.0: сбой отрисовки не оставляет белый экран — возвращаем
+  // пользователя на рабочий экран (гость → сдача чека, свой → дашборд)
+  const _fallback = (err) => {
+    try { console.error("render:", err); } catch (e) {}
+    try {
+      if (!getToken()) showPublicScreen();
+      else location.hash = "#/dashboard";
+    } catch (e2) {}
+  };
+  try {
+    Promise.resolve((renderers[view] || viewDashboard)(container)).catch(_fallback);
+  } catch (err) { _fallback(err); }
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
 }
 
@@ -4475,6 +4564,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.55.0': [
+    { icon: '🧾', title: 'Электронный чек сразу после скана',
+      text: 'Отсканировали чек — на странице появляется его электронная копия с позициями и суммой: видно, что сервис работает. Чек можно прислать себе красивым HTML-письмом, а баллы — скопить в кабинете (кабинет открывается за минуту, чеки этого браузера присоединятся сами). Источники данных чека теперь отдают и хранят максимум полей (место расчётов, смена, налог, свойства заказа), «свои шлюзы» выведены из системы, мобильная вёрстка главной исправлена.' },
+  ],
   '1.54.0': [
     { icon: '🏠', title: 'Новая главная: скан чека с первого экрана',
       text: 'Кто заходит на chek.ymaster.ru впервые, сразу видит суть: сканируй чеки — получай баллы и кэшбэк, со статистикой базы, ответами на вопросы и кнопкой сканирования, которая открывает камеру сразу. Вход для постоянных пользователей не изменился — логин, пароль или отпечаток, как прежде. После проверки чека данные можно получить на e-mail.' },
@@ -7168,8 +7261,9 @@ async function viewSettings(container) {
         <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.2.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции) система получает
         из источников по порядку: <b>API ФНС</b> (мастер-токен, GetTicket) → <b>Приложение ФНС</b> (ИНН + пароль ЛК,
-        полный чек) → <b>Честный Знак</b> (анонимно, без токена) → <b>ОФД-ру</b> → <b>свои шлюзы</b> →
-        <b>proverkacheka</b> (последним — беречь квоту 12–14 запросов в сутки).
+        полный чек) → <b>Честный Знак</b> (анонимно, без токена) → <b>ОФД-ру</b> →
+        <b>proverkacheka</b> (последним, беречь квоту; API отдаёт максимум полей:
+        позиции с НДС, место расчётов, кассу, смену, налог, свойства заказа).
         Между запросами — случайная пауза 2–7 секунд, при блокировке источник временно «остывает» и включается
         следующий — банов не будет. Источник, ответивший без позиций чека, пропускается — запрос уходит дальше.</p>
         <label class="field" style="margin-bottom:10px"><span>Приложение ФНС «Проверка чеков» — ИНН и пароль ЛК ФНС
@@ -7182,13 +7276,10 @@ async function viewSettings(container) {
         <label class="field" style="margin-bottom:10px"><span>ОФД-ру «QR Cash» (tokenSecret) — API ofd.ru по базе ФНС
           ${ext && ext.has_ofd_ru_token ? '(задан: ' + esc(ext.ofd_ru_token_masked) + ')' : '(не задан — личный кабинет ofd.ru → QR Cash)'}</span>
           <input id="ext-ofd" type="password" placeholder="tokenSecret"></label>
-        <label class="field" style="margin-bottom:10px"><span>Свои источники (до 10) — по одному в строке: Название | URL</span>
-          <textarea id="ext-custom-urls" rows="3" placeholder="проверкачека | https://…/api/check">${esc((ext ? ext.external_custom_urls : []) .map(u => (u.name || 'custom') + ' | ' + u.url).join('\n'))}</textarea>
-          <small class="form-hint">Контракт: POST {qrraw} → JSON с items + totalSum. Подойдёт любой ваш шлюз к сервисам проверки.</small></label>
         <label class="field" style="margin-bottom:10px"><span>Порядок источников</span>
-          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,fns_app,crpt,ofd_ru,custom,proverkacheka')}">
+          <input id="ext-order" value="${esc(ext ? ext.external_order : 'fns_api,fns_app,crpt,ofd_ru,proverkacheka')}">
           <small class="form-hint">fns_api — API ФНС (токен в карточке «Проверка чеков»), fns_app — приложение ФНС (ИНН+пароль ЛК),
-          crpt — Честный Знак (анонимно, без токена), ofd_ru — ОФД-ру, proverkacheka — по токену (квота 12–14/сутки, ставьте последним), custom — свои</small></label>
+          crpt — Честный Знак (анонимно, без токена), ofd_ru — ОФД-ру, proverkacheka — по токену (квота 12–14/сутки, ставьте последним)</small></label>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>
@@ -8008,21 +8099,11 @@ async function viewSettings(container) {
   if (isAdmin() && ext) {
     $('#ext-save').onclick = async () => {
       try {
-        const urls = $('#ext-custom-urls').value.split('\n')
-          .map(l => l.trim()).filter(Boolean)
-          .map(line => {
-            const m = line.split('|');
-            return m.length >= 2
-              ? { name: m[0].trim(), url: m.slice(1).join('|').trim() }
-              : { name: 'custom', url: line };
-          })
-          .filter(u => u.url);
         await api.put('/api/v1/settings/external', {
           fns_app_inn: $('#ext-fns-inn').value.trim() || undefined,
           fns_app_password: $('#ext-fns-pass').value.trim() || undefined,
           proverkacheka_token: $('#ext-pke').value.trim() || undefined,
           ofd_ru_token: $('#ext-ofd').value.trim() || undefined,
-          external_custom_urls: urls,
           external_order: $('#ext-order').value.trim(),
           external_auto: $('#ext-auto').checked,
         });

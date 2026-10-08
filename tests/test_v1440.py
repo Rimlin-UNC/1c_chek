@@ -217,7 +217,10 @@ class TestMailBot:
         # тик «днём» → правило выполняется
         # (фикс хрупкости: tick хранит last_run_at по utcnow — жёсткая дата
         #  ломала тест при смене календарного дня)
-        _now = dt.datetime.utcnow()
+        # v1.55.0: фикс «полуночной» хрупкости — час привязан к полудню,
+        # чтобы оба тика остались в одних календарных сутках при любом запуске
+        _now = dt.datetime.utcnow().replace(hour=12, minute=0,
+                                            second=0, microsecond=0)
         res = mail_center.tick(db, now=_now)
         assert any(x["rule"] == "Подтвердите e-mail" and x["sent"] == 1
                    for x in res["ran"]), res

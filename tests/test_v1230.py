@@ -44,6 +44,7 @@ class TestFullDataFlag:
             items = [ExternalItem(name="Молоко", quantity=1, price=80,
                                   total=80, vat_rate="none", vat_sum=0)]
             raw = {}
+            extra = {}   # v1.55.0: максимум полей источника (ext_json)
         monkeypatch.setattr(ex.engine, "fetch",
                             lambda db, *a, **k: R())
         adm = login(client, "admin", "admin123")

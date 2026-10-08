@@ -153,7 +153,11 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .login-screen {
   height: 100vh; height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px;
   animation: fadeIn .4s ease;
+  /* v1.55.0: контент выше экрана прокручивается — «белого экрана» нет;
+     margin:auto у детей сохраняет центрирование, когда всё помещается */
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
+.login-screen > * { margin: auto; }
 .login-card { width: min(420px, 94vw); padding: 40px 36px 24px; }
 .login-logo { text-align: center; margin-bottom: 28px; }
 .login-logo img { filter: drop-shadow(0 6px 18px rgba(255,122,0,.35)); }   /* v1.25.0 */
@@ -1314,3 +1318,52 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   .land-right { order: -1; }
   .land-h1 { font-size: 25px; }
 }
+
+/* v1.55.0: мобильная вёрстка главной — без съезжания и обрезки */
+@media (max-width: 920px) {
+  #login-screen .land-wrap { padding: 14px 0 26px; gap: 14px; }
+  .land-h1 { font-size: 22px; }
+  .land-lead { font-size: 14px; }
+  .land-steps li { padding: 8px 10px; gap: 10px; }
+  .land-steps img { width: 62px; height: 46px; }
+  .land-stats { gap: 16px; }
+  .land-stat b { font-size: 19px; }
+  .login-card { padding: 26px 20px 18px; }
+}
+
+/* v1.55.0: электронный чек на странице сдачи — появление с анимацией */
+@keyframes echeckIn {
+  from { opacity: 0; transform: translateY(16px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+.echeck-wrap { margin-top: 14px; display: grid; gap: 12px; animation: echeckIn .7s cubic-bezier(.2,.8,.2,1); }
+.echeck {
+  background: #fffdf8; border: 2px dashed #e2c9a8; border-radius: 14px;
+  padding: 16px 18px; color: #2a2418;
+}
+.echeck-head {
+  text-align: center; font-weight: 800; letter-spacing: 3px; color: #b45309; font-size: 14.5px;
+}
+.echeck-sub { text-align: center; color: #8a7a5e; font-size: 12px; margin: 4px 0 10px; }
+.echeck-merchant { font-size: 15.5px; font-weight: 700; }
+.echeck-addr { color: #6f6250; font-size: 12.5px; margin-bottom: 8px; }
+.echeck-items { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0; }
+.echeck-items th { text-align: left; color: #8a7a5e; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid #e2c9a8; }
+.echeck-items th:nth-child(n+2) { text-align: right; }
+.echeck-total {
+  display: flex; justify-content: space-between; font-size: 17px; font-weight: 800;
+  border-top: 2px solid #2a2418; margin-top: 6px; padding-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.echeck-props { color: #6f6250; font-size: 12px; margin-top: 10px; line-height: 1.6; }
+.echeck-mail, .echeck-invite {
+  background: rgba(255, 255, 255, .7); border: 1px solid var(--border);
+  border-radius: 14px; padding: 14px 16px; font-size: 13.5px;
+}
+.echeck-invite { background: rgba(242, 246, 255, .8); }
+.echeck-invite ul { margin: 8px 0 10px; padding-left: 18px; color: var(--text-dim); line-height: 1.55; }
+.field-input {
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px;
+  font-size: 14px; background: #fff;
+}
+

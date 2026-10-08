@@ -224,7 +224,8 @@ class TestChainAndStatus:
 
     def test_default_order_string_updated(self):
         s = open("app/services/external.py", encoding="utf-8").read()
-        assert '"fns_api,fns_app,crpt,ofd_ru,custom,proverkacheka"' in s
+        # v1.55.0: свои шлюзы выведены — custom в порядке по умолчанию нет
+        assert '"fns_api,fns_app,crpt,ofd_ru,proverkacheka"' in s
 
     def test_settings_ui_has_fns_app_fields(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

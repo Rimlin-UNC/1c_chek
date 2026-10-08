@@ -12,9 +12,7 @@
 #   fns_app        — «Приложение ФНС» (APIv2 irkkt-mobile.nalog.ru:8888):
 #                    полный чек с позициями по строке QR; вход по ИНН и
 #                    паролю ЛК ФНС (v1.27.0);
-#   custom         — любой сторонний сервис по контракту «POST {qrraw} → JSON»
-#                    (URL задаёт администратор; подходит для проверкичека.рф
-#                    и других, когда у них появится/станет известен API);
+#   (v1.55.0: источник «свои шлюзы» выведен из системы)
 #   mock           — встроенная эмуляция для тестов и демонстрации.
 #
 # АНТИБАН-МЕХАНИКА (защита от блокировок):
@@ -103,6 +101,7 @@ class ExternalResult:
     ecash_sum: float | None = None
     items: list[ExternalItem] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)   # v1.55.0: расширенные поля
 
 
 # ==========================================================================
@@ -253,6 +252,58 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
                 continue
         return None
 
+    # v1.55.0: максимум полей из расширенных ответов (proverkacheka.com
+    # /api/v1/check/get и совместимые): место расчётов, касса, смена,
+    # налогообложение, НДС-итоги, свойства (номер заказа), регион, ОФД.
+    meta = receipt.get("metadata") if isinstance(receipt.get("metadata"), dict) else {}
+    meta = _lc(meta or {})
+    udata = receipt.get("user_data") if isinstance(receipt.get("user_data"), dict) else {}
+    props = []
+    for p_ in (receipt.get("properties") or []):
+        if isinstance(p_, dict) and p_.get("propertyName"):
+            props.append({"name": str(p_["propertyName"])[:200],
+                          "value": str(p_.get("propertyValue") or "")[:200]})
+    nds_totals = []
+    _ands = receipt.get("amountsReceiptNds")
+    if isinstance(_ands, dict):
+        for a_ in (_ands.get("amountsNds") or []):
+            if isinstance(a_, dict):
+                nds_totals.append({"nds": a_.get("nds"), "ndsSum": a_.get("ndsSum")})
+    tax = _g("appliedtaxationtype")
+    tax_names = {0: "ОСН", 1: "УСН (доходы)", 2: "УСН (доходы − расходы)",
+                 4: "ЕНВД", 16: "НСПО", 32: "ПСН", 64: "ЭСХН", 128: "НПД",
+                 256: "АУСН"}
+    extra = {}
+    for key, val in (
+        ("retail_place", _g("retailplace")),
+        ("kkt_reg_id", (str(_g("kktregid")).strip()
+                        if isinstance(_g("kktregid"), str) else _g("kktregid"))),
+        ("fiscal_drive_number", _g("fiscaldrivenumber")),
+        ("fiscal_document_number", _g("fiscaldocumentnumber")),
+        ("fiscal_sign", _g("fiscalsign")),
+        ("shift_number", _g("shiftnumber")),
+        ("request_number", _g("requestnumber")),
+        ("operation_type", _g("operationtype")),
+        ("number_kkt", _g("numberkkt")),
+        ("region", _g("region")),
+        ("nds0", _g("nds0")),
+        ("taxation", tax_names.get(tax, tax) if tax is not None else None),
+        ("prepaid_sum", money(_g("prepaidsum")) if _g("prepaidsum") else None),
+        ("credit_sum", money(_g("creditsum")) if _g("creditsum") else None),
+        ("provision_sum", money(_g("provisionsum")) if _g("provisionsum") else None),
+        ("ofd_id", meta.get("ofdid")),
+        ("receive_date", meta.get("receivedate")),
+        ("doc_subtype", meta.get("subtype")),
+        ("source_receipt_id", udata.get("id")),
+        ("source_date_create", udata.get("date_create")),
+    ):
+        if val not in (None, "", [], {}):
+            extra[key] = val
+    if props:
+        extra["properties"] = props
+    if nds_totals:
+        extra["nds_totals"] = nds_totals
+
     return ExternalResult(
         ok=True,
         source="",
@@ -269,6 +320,7 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
         ecash_sum=money(_g("ecashtotalsum")) if _g("ecashtotalsum") else None,
         items=items,
         raw=receipt,
+        extra=extra,
     )
 
 
@@ -442,28 +494,6 @@ def fetch_ofdru(fn: str, fd: str, fp: str, total_rub: float,
     return True, "OK", data
 
 
-def fetch_custom(qr_raw: str, url: str) -> tuple[bool, str, dict]:
-    """
-    Собственный источник (контракт в docs/EXTERNAL_CHECKS.md):
-    POST {url}  body: {"qrraw": "..."}  → JSON с данными чека
-    (подойдёт для проверкичека.рф, когда у сервиса будет публичный API).
-    """
-    try:
-        resp = httpx.post(url, json={"qrraw": qr_raw},
-                          headers={"User-Agent": "YmasterCheck/1.2"},
-                          timeout=REQUEST_TIMEOUT)
-    except httpx.HTTPError as e:
-        return False, f"Сеть: {e.__class__.__name__}", {}
-    if resp.status_code in (429, 403):
-        return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}", {}
-    try:
-        return True, "OK", resp.json()
-    except ValueError:
-        return False, "Ответ не JSON", {}
-
-
 def fetch_fns(qr_raw: str, fn: str, fd: str, fp: str, total_rub: float,
               date_time: datetime, master_token: str) -> tuple[bool, str, dict]:
     """
@@ -513,21 +543,12 @@ class ExternalFetchEngine:
         from ..models import AppSetting
         rows = {r.key: r.value for r in db.query(AppSetting).filter(
             AppSetting.key.in_(["fns_master_token", "proverkacheka_token",
-                                "ofd_ru_token", "external_custom_url",
-                                "external_custom_urls", "external_order",
+                                "ofd_ru_token", "external_order",
                                 "external_auto",
                                 "fns_app_inn", "fns_app_password",
                                 "fns_app_secret"])).all()}
-        # Свои источники: список {name,url} из JSON + legacy одиночный URL
-        sources: list[dict] = []
-        try:
-            raw = json.loads(rows.get("external_custom_urls") or "[]")
-            sources += [s for s in raw if isinstance(s, dict) and s.get("url")]
-        except ValueError:
-            pass
-        if rows.get("external_custom_url"):
-            sources.append({"name": "custom", "url": rows["external_custom_url"]})
-        rows["custom_sources"] = sources
+        # v1.55.0: «свои шлюзы» выведены из системы — custom-ключи в БД
+        # больше не читаются и ни на что не влияют (данные не трогаем)
         return rows
 
     def provider_chain(self, db) -> list[str]:
@@ -537,7 +558,10 @@ class ExternalFetchEngine:
         # запросов в сутки; сначала официальное API и анонимный Честный Знак
         # v1.27.0: добавлен fns_app («Приложение ФНС», полный чек по ИНН+паролю ЛК)
         order = [p for p in (cfg.get("external_order") or
-                             "fns_api,fns_app,crpt,ofd_ru,custom,proverkacheka").split(",") if p]
+                             "fns_api,fns_app,crpt,ofd_ru,proverkacheka").split(",") if p]
+        # v1.55.0: «свои шлюзы» выведены из системы (бесполезны на практике);
+        # даже если порядок сохранился в настройках — из цепочки он убирается
+        order = [p for p in order if p != "custom"]
         chain: list[str] = []
         for p in order:
             if p in chain:
@@ -552,8 +576,6 @@ class ExternalFetchEngine:
                 chain.append(p)
             elif p == "proverkacheka" and cfg.get("proverkacheka_token"):
                 chain.append(p)
-            elif p == "custom":
-                chain += [f"custom::{s['name']}" for s in cfg["custom_sources"]]
         # mock всегда в конце — чтобы чеки проверялись даже без токенов
         chain.append("mock")
         return chain
@@ -564,7 +586,7 @@ class ExternalFetchEngine:
     def status(self) -> dict:
         now = time.time()
         out = {}
-        for p in ("fns_api", "fns_app", "ofd_ru", "proverkacheka", "custom", "mock"):
+        for p in ("fns_api", "fns_app", "ofd_ru", "proverkacheka", "mock"):
             cd = self._cooldown_until.get(p, 0.0)
             out[p] = {
                 "available": now >= cd,
@@ -621,13 +643,6 @@ class ExternalFetchEngine:
                                 qr_raw, cfg.get("fns_app_inn", ""),
                                 cfg.get("fns_app_password", ""),
                                 cfg.get("fns_app_secret", ""))
-                        elif provider.startswith("custom::"):
-                            name = provider.split("::", 1)[1]
-                            src = next((x for x in cfg["custom_sources"]
-                                        if x["name"] == name), None)
-                            net_ok, msg, data = (fetch_custom(qr_raw, src["url"])
-                                                 if src else
-                                                 (False, "источник удалён из настроек", {}))
                         elif provider == "ofd_ru":
                             net_ok, msg, data = fetch_ofdru(
                                 fn, fd, fp, total_rub, date_time,
