@@ -134,7 +134,7 @@ class TestSourcesChain:
         assert chain[-1] == "mock"
         # proverkacheka не влезает раньше официальных источников
         if "proverkacheka" in chain:
-            for p in ("fns_api", "fns_app", "crpt", "ofd_ru"):
+            for p in ("fns_api",):
                 if p in chain:
                     assert chain.index("proverkacheka") > chain.index(p)
 
@@ -154,7 +154,7 @@ class TestSourcesChain:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "ofd_ru,custom,proverkacheka" not in js   # порядок без custom
         assert "ext-custom-urls" not in js and "external_custom_urls" not in js
-        assert "отдаёт максимум полей" in js
+        assert "единственного стабильно работающего источника" in js
 
 
 class TestEcheckFlow:

@@ -81,14 +81,8 @@ class TestOfdRuParsing:
         assert res.items[0].price == 89.9
         assert res.date_time is not None
 
-    def test_ofdru_payload_builder(self):
-        import datetime as dt
-        from app.services.external import fetch_ofdru
-        # без токена — сразу понятный отказ, без сети
-        ok, msg, data = fetch_ofdru("fn", "fd", "fp", 100.0,
-                                    dt.datetime(2026, 9, 27, 15, 29), 1, "")
-        assert ok is False
-        assert "tokenSecret" in msg
+    # v1.57.0: источник ОФД-ру выведен из системы — fetch_ofdru удалён;
+    # разбор ответа совместимого источника проверяется выше (OFD_LIKE)
 
 
 # ---------------------------------------------------------------------------
@@ -127,4 +121,5 @@ class TestMultiCustom:
         hdr = login(client, "admin", "admin123")
         g = client.get("/api/v1/settings/external", headers=hdr).json()
         assert "external_custom_urls" not in g   # v1.55.0: ключ удалён из ответа
-        assert "has_ofd_ru_token" in g
+        assert "has_ofd_ru_token" not in g       # v1.57.0: ОФД-ру выведен
+        assert "has_proverkacheka_token" in g

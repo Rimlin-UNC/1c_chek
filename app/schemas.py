@@ -186,16 +186,12 @@ class ExternalSettingsPatch(BaseModel):
     """Настройки источников данных о чеке (только администратор)."""
     fns_master_token: Optional[str] = Field(default=None, max_length=500)
     proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
-    ofd_ru_token: Optional[str] = Field(default=None, max_length=500)  # tokenSecret ofd.ru
-    fns_app_inn: Optional[str] = Field(default=None, max_length=20)      # v1.27.0: ИНН ЛК ФНС
-    fns_app_password: Optional[str] = Field(default=None, max_length=200)  # v1.27.0: пароль ЛК
-    fns_app_secret: Optional[str] = Field(default=None, max_length=200)  # v1.27.0: clientSecret (своя)
     external_order: Optional[str] = Field(default=None, max_length=100)
     external_auto: Optional[bool] = None
 
 
 class ExternalTestRequest(BaseModel):
-    provider: str = "chain"  # chain (весь порядок) | fns_api | fns_app | crpt | ofd_ru | proverkacheka
+    provider: str = "chain"  # chain (весь порядок) | fns_api | proverkacheka
     qrraw: Optional[str] = None
 
 

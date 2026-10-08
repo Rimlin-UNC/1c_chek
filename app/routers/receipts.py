@@ -779,9 +779,9 @@ def external_status(user: User = Depends(require_accountant),
         "chain": external_engine.provider_chain(db),
         "engine": external_engine.status(),
         "configured": {
+            # v1.57.0: рабочий источник один — proverkacheka; fns_api — на
+            # перспективу (мастер-токен в карточке «Проверка чеков»)
             "fns_api": bool(cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN),
-            "fns_app": bool(cfg.get("fns_app_inn") and cfg.get("fns_app_password")),
-            "crpt": True,                        # v1.26.0: анонимный, без токена
             "proverkacheka": bool(cfg.get("proverkacheka_token")),
         },
         "auto_fetch": appsettings.get_setting(db, "external_auto", "1") == "1",

@@ -204,15 +204,8 @@ def get_external(db: Session = Depends(get_db), user: User = Depends(require_adm
         "has_fns_master_token": bool(_get_setting(db, "fns_master_token", "")),
         "proverkacheka_token_masked": _mask(_get_setting(db, "proverkacheka_token", "")),
         "has_proverkacheka_token": bool(_get_setting(db, "proverkacheka_token", "")),
-        "ofd_ru_token_masked": _mask(_get_setting(db, "ofd_ru_token", "")),
-        "has_ofd_ru_token": bool(_get_setting(db, "ofd_ru_token", "")),
-        "fns_app_inn": _get_setting(db, "fns_app_inn", ""),                       # v1.27.0
-        "has_fns_app_login": bool(_get_setting(db, "fns_app_inn", "")
-                                  and _get_setting(db, "fns_app_password", "")),
-        "fns_app_secret_masked": _mask(_get_setting(db, "fns_app_secret", "")),
-        "has_fns_app_secret": bool(_get_setting(db, "fns_app_secret", "")),
         "external_order": _get_setting(db, "external_order",
-                                       "fns_api,fns_app,crpt,ofd_ru,proverkacheka"),
+                                       "proverkacheka"),
         "external_auto": _get_setting(db, "external_auto", "1") == "1",
         "engine": engine.status(),
     }
@@ -225,22 +218,14 @@ def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
         _set_setting(db, "fns_master_token", body.fns_master_token.strip())
     if body.proverkacheka_token is not None and "•" not in body.proverkacheka_token:
         _set_setting(db, "proverkacheka_token", body.proverkacheka_token.strip())
-    if body.ofd_ru_token is not None and "•" not in body.ofd_ru_token:
-        _set_setting(db, "ofd_ru_token", body.ofd_ru_token.strip())
-    # v1.27.0: «Приложение ФНС» (полный чек по ИНН+паролю ЛК)
-    if body.fns_app_inn is not None:
-        _set_setting(db, "fns_app_inn", body.fns_app_inn.strip())
-    if body.fns_app_password is not None and "•" not in body.fns_app_password:
-        _set_setting(db, "fns_app_password", body.fns_app_password.strip())
-    if body.fns_app_secret is not None and "•" not in body.fns_app_secret:
-        _set_setting(db, "fns_app_secret", body.fns_app_secret.strip())
-    # v1.55.0: «свои шлюзы» выведены из системы — поля external_custom_url(s)
-    # из запросов игнорируются (в схеме их больше нет); строки в БД не трогаем
+    # v1.55.0/v1.57.0: выведенные источники (свои шлюзы, Приложение ФНС,
+    # Честный Знак, ОФД-ру) игнорируются — соответствующих полей в схеме
+    # больше нет; строки в БД не трогаем (миграции только добавляющие)
     if body.external_order is not None:
-        allowed = {"fns_api", "fns_app", "crpt", "ofd_ru", "proverkacheka"}
+        allowed = {"fns_api", "proverkacheka"}
         items = [x.strip() for x in body.external_order.split(",") if x.strip() in allowed]
         _set_setting(db, "external_order",
-                     ",".join(items or ["fns_api", "fns_app", "crpt", "ofd_ru", "proverkacheka"]))
+                     ",".join(items or ["proverkacheka"]))
     if body.external_auto is not None:
         _set_setting(db, "external_auto", "1" if body.external_auto else "0")
     log_action(user, "external_settings_updated", details={"auto": body.external_auto})

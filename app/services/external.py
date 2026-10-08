@@ -5,14 +5,14 @@
 # Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
 #
 # v1.2.0. Источники (провайдеры):
-#   fns_api        — официальное API ФНС «Открытое API проверки чека ККТ»
-#                    (нужен Мастер-токен; форма ввода — Настройки → Источники);
 #   proverkacheka  — proverkacheka.com, POST /api/v1/check/get
-#                    (qrraw + token из личного кабинета сервиса);
-#   fns_app        — «Приложение ФНС» (APIv2 irkkt-mobile.nalog.ru:8888):
-#                    полный чек с позициями по строке QR; вход по ИНН и
-#                    паролю ЛК ФНС (v1.27.0);
-#   (v1.55.0: источник «свои шлюзы» выведен из системы)
+#                    (qrraw + token) — ЕДИНСТВЕННЫЙ рабочий источник
+#                    (v1.57.0: документация сверена, забираем максимум полей);
+#   fns_api        — официальное API ФНС «Открытое API проверки чека ККТ»
+#                    (мастер-токен; карточка «Проверка чеков») — НА
+#                    ПЕРСПЕКТИВУ: включается автоматически при появлении токена;
+#   (v1.55.0: свои шлюзы выведены; v1.57.0: Приложение ФНС, Честный Знак,
+#    ОФД-ру выведены из системы — сервисы перестали отвечать)
 #   mock           — встроенная эмуляция для тестов и демонстрации.
 #
 # АНТИБАН-МЕХАНИКА (защита от блокировок):
@@ -47,30 +47,6 @@ COOLDOWN_MAX_SECONDS = 6 * 3600.0    # максимум 6 часов
 MAX_SAME_PROVIDER_RETRIES = 2
 
 PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"
-# v1.26.0: «Честный Знак» — мобильное API (как в приложении ГИС МТ).
-# Подход li0ard/nechestniy_znak (infoFromReceipt): один POST со строкой
-# QR — без токена и мастер-ключей. Тот же уровень удобства, что и
-# proverkacheka, но не тратит суточную квоту.
-CRPT_URL = "https://mobile.api.crpt.ru/mobile/check"
-# v1.27.0: «Приложение ФНС» (мобильное приложение «Проверка чеков»,
-# irkkt-mobile.nalog.ru:8888, APIv2) — ПОЛНЫЙ чек с позициями по строке QR.
-# Нужен вход по ИНН + паролю личного кабинета ФНС (кнопка «Войти по ИНН»
-# в приложении); client_secret — публичная константа приложения billchecker.
-FNS_APP_URL = "https://irkkt-mobile.nalog.ru:8888"
-FNS_APP_CLIENT_SECRET = "IyvrAbKt9h/8p6a7QPh8gpkXYQ4="   # billchecker 2.9.0
-FNS_APP_HEADERS = {
-    "Host": "irkkt-mobile.nalog.ru:8888",
-    "Accept": "*/*",
-    "Device-OS": "iOS",
-    "Device-Id": "7C82010F-16CC-446B-8F66-FC4080C66521",
-    "clientVersion": "2.9.0",
-    "Accept-Language": "ru-RU;q=1, en-US;q=0.9",
-    "User-Agent": "billchecker/2.9.0 (iPhone; iOS 13.6; Scale/2.00)",
-}
-# Сессия приложения ФНС (кэш на время жизни процесса; обновляется при 401)
-_fns_app_session: dict = {"id": "", "ts": 0.0}
-FNS_APP_SESSION_TTL = 6 * 3600.0
-OFDRU_URL = "https://ofd.ru/api/partner/v3/receipts/GetReceipt"   # ОФД-ру «QR Cash» (БД ФНС)
 
 
 @dataclass
@@ -296,6 +272,10 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
         ("doc_subtype", meta.get("subtype")),
         ("source_receipt_id", udata.get("id")),
         ("source_date_create", udata.get("date_create")),
+        # v1.57.0: версия формата фискального документа (ФФД) и адрес
+        # из metadata источника (бывает, когда в самом чеке адреса нет)
+        ("ffd_version", _g("fiscaldocumentformatver")),
+        ("source_address", meta.get("address")),
     ):
         if val not in (None, "", [], {}):
             extra[key] = val
@@ -303,6 +283,22 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
         extra["properties"] = props
     if nds_totals:
         extra["nds_totals"] = nds_totals
+    # v1.57.0: мета позиций — тип оплаты, тип товара и мера количества
+    # (paymentType/productType/itemsQuantityMeasure из ответа proverkacheka)
+    imeta = []
+    for i_, raw_item in enumerate(low.get("items") or []):
+        if not isinstance(raw_item, dict):
+            continue
+        it_ = _lc(raw_item)
+        rec_ = {}
+        for k_ in ("paymenttype", "producttype", "itemsquantitymeasure"):
+            if it_.get(k_) not in (None, ""):
+                rec_[k_] = it_.get(k_)
+        if rec_:
+            rec_["pos"] = i_ + 1
+            imeta.append(rec_)
+    if imeta:
+        extra["items_meta"] = imeta
 
     return ExternalResult(
         ok=True,
@@ -327,105 +323,6 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
 # ==========================================================================
 #  Отдельные провайдеры
 # ==========================================================================
-def fetch_crpt(qr_raw: str) -> tuple[bool, str, dict]:
-    """v1.26.0: «Честный Знак» (mobile.api.crpt.ru) — анонимная проверка.
-
-    POST /mobile/check  {"code": "<строка QR>", "codeType": "qr"}.
-    Токен не нужен; запрос выглядит как из официального приложения
-    (заголовки приложения — иначе API отвечает ошибкой).
-    Возвращает (успех_сети, сообщение, json_ответ).
-    """
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json",
-        "user-agent": ("Platform: iOS 17.2; AppVersion: 4.47.0; "
-                       "AppVersionCode: 7630; Device: iPhone 14 Pro;"),
-        "client": "iOS 17.2; AppVersion: 4.47.0; Device: iPhone 14 Pro;",
-    }
-    try:
-        resp = httpx.post(CRPT_URL, json={"code": qr_raw, "codeType": "qr"},
-                          headers=headers, timeout=REQUEST_TIMEOUT)
-    except httpx.HTTPError as e:
-        return False, f"Сеть: {e.__class__.__name__}", {}
-    if resp.status_code in (429, 403):
-        return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}", {}
-    try:
-        return True, "OK", resp.json()
-    except ValueError:
-        return False, "Ответ не JSON", {}
-
-
-def fetch_fns_app(qr_raw: str, inn: str, password: str,
-                  secret: str = "") -> tuple[bool, str, dict]:
-    """v1.27.0: «Приложение ФНС» (APIv2 irkkt-mobile.nalog.ru:8888).
-
-    Вход: POST /v2/mobile/users/lkfl/auth {inn, client_secret, password}
-    → sessionId. Затем POST /v2/ticket {"qr": …} → id, GET /v2/tickets/{id}
-    → ПОЛНЫЙ чек (document.receipt с позициями) — как в приложении ФНС.
-    Возвращает (успех_сети, сообщение, json_ответ).
-    """
-    global _fns_app_session
-    if not inn or not password:
-        return False, "Не заданы ИНН/пароль ЛК ФНС (Настройки → Источники)", {}
-
-    def _h(session: str = "") -> dict:
-        h = dict(FNS_APP_HEADERS)
-        if session:
-            h["sessionId"] = session
-        return h
-
-    try:
-        # 1) сессия (кэш 6 ч, обновление при 401)
-        session = _fns_app_session["id"]
-        if not session or (time.time() - _fns_app_session["ts"]) > FNS_APP_SESSION_TTL:
-            resp = httpx.post(f"{FNS_APP_URL}/v2/mobile/users/lkfl/auth",
-                              json={"inn": inn, "client_secret": secret or FNS_APP_CLIENT_SECRET,
-                                    "password": password},
-                              headers=_h(), timeout=REQUEST_TIMEOUT)
-            if resp.status_code in (429, 403):
-                return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-            if resp.status_code != 200:
-                return False, (f"Вход в приложение ФНС не удался (HTTP {resp.status_code}: "
-                               "проверьте ИНН и пароль ЛК ФНС)"), {}
-            session = (resp.json() or {}).get("sessionId", "")
-            if not session:
-                return False, "Приложение ФНС: пустой sessionId", {}
-            _fns_app_session = {"id": session, "ts": time.time()}
-
-        # 2) id чека по QR
-        resp = httpx.post(f"{FNS_APP_URL}/v2/ticket", json={"qr": qr_raw},
-                          headers=_h(session), timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 401:                    # сессия протухла — раз перелогин
-            _fns_app_session = {"id": "", "ts": 0.0}
-            net_ok, msg, data = fetch_fns_app(qr_raw, inn, password, secret)
-            if net_ok or not msg.startswith("HTTP 401"):
-                return net_ok, msg, data
-            return False, "HTTP 401 (сессия)", data
-        if resp.status_code in (429, 403):
-            return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-        if resp.status_code != 200:
-            return False, f"HTTP {resp.status_code}", {}
-        ticket_id = (resp.json() or {}).get("id", "")
-        if not ticket_id:
-            return True, "Приложение ФНС: чек по QR не найден", {}
-
-        # 3) полный чек
-        resp = httpx.get(f"{FNS_APP_URL}/v2/tickets/{ticket_id}",
-                         headers=_h(session), timeout=REQUEST_TIMEOUT)
-        if resp.status_code in (429, 403):
-            return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-        if resp.status_code != 200:
-            return False, f"HTTP {resp.status_code}", {}
-        return True, "OK", resp.json()
-    except httpx.HTTPError as e:
-        return False, f"Сеть: {e.__class__.__name__}", {}
-    except ValueError:
-        return False, "Ответ не JSON", {}
-
-
-
 def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
     """
     proverkacheka.com: POST /api/v1/check/get (qrraw + token).
@@ -451,47 +348,6 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
         return True, "OK", resp.json()
     except ValueError:
         return False, "Ответ не JSON", {}
-
-
-def fetch_ofdru(fn: str, fd: str, fp: str, total_rub: float,
-                date_time: datetime, operation: int, token_secret: str) -> tuple[bool, str, dict]:
-    """
-    ОФД-ру «QR Cash» — получение фискального документа ИЗ БД ФНС
-    (POST /api/partner/v3/receipts/GetReceipt, tokenSecret из личного
-    кабинета ofd.ru). Документация: ofd.ru/razrabotchikam/qr-cash.
-    """
-    if not token_secret:
-        return False, "Не задан tokenSecret ofd.ru", {}
-    payload = {
-        "TotalSum": int(round((total_rub or 0) * 100)),          # копейки
-        "DocDateTime": (date_time or datetime.utcnow()).strftime("%Y-%m-%dT%H:%M:%S.000"),
-        "FnNumber": str(fn),
-        "ReceiptOperationType": "2" if operation == 2 else "1",
-        "DocNumber": str(fd),
-        "DocFiscalSign": str(fp),
-        "tokenSecret": token_secret,
-    }
-    try:
-        resp = httpx.post(OFDRU_URL, json=payload,
-                          headers={"User-Agent": "YmasterCheck/1.3"},
-                          timeout=REQUEST_TIMEOUT)
-    except httpx.HTTPError as e:
-        return False, f"Сеть: {e.__class__.__name__}", {}
-    if resp.status_code in (429, 403):
-        return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}", {}
-    try:
-        data = resp.json()
-    except ValueError:
-        return False, "Ответ не JSON", {}
-    low = _lc(data)
-    code = low.get("code")
-    # ОФД-ру: Code != 0 → ошибка запроса (чек не найден/нет доступа)
-    if isinstance(code, int) and code != 0:
-        msg = str(low.get("desc") or low.get("message") or f"код {code}")
-        return True, f"ofd.ru: {msg}", data
-    return True, "OK", data
 
 
 def fetch_fns(qr_raw: str, fn: str, fd: str, fp: str, total_rub: float,
@@ -543,39 +399,39 @@ class ExternalFetchEngine:
         from ..models import AppSetting
         rows = {r.key: r.value for r in db.query(AppSetting).filter(
             AppSetting.key.in_(["fns_master_token", "proverkacheka_token",
-                                "ofd_ru_token", "external_order",
-                                "external_auto",
-                                "fns_app_inn", "fns_app_password",
-                                "fns_app_secret"])).all()}
+                                "external_order", "external_auto"])).all()}
         # v1.55.0: «свои шлюзы» выведены из системы — custom-ключи в БД
         # больше не читаются и ни на что не влияют (данные не трогаем)
         return rows
 
     def provider_chain(self, db) -> list[str]:
-        """Порядок провайдеров с учётом настроек и наличия токенов/URL."""
+        """Порядок провайдеров с учётом настроек и наличия токенов.
+
+        v1.57.0: единственный рабочий источник — proverkacheka.com
+        (POST /api/v1/check/get, qrraw + token; документация сверена).
+        Приложение ФНС, Честный Знак, ОФД-ру и свои шлюзы выведены из
+        системы — сервисы перестали отвечать. fns_api остаётся на
+        перспективу: если в карточке «Проверка чеков» появится
+        мастер-токен ФНС, источник автоматически встанет первым."""
         cfg = self._settings(db)
-        # v1.26.0: proverkacheka переехал в конец — беречь квоту 12–14
-        # запросов в сутки; сначала официальное API и анонимный Честный Знак
-        # v1.27.0: добавлен fns_app («Приложение ФНС», полный чек по ИНН+паролю ЛК)
         order = [p for p in (cfg.get("external_order") or
-                             "fns_api,fns_app,crpt,ofd_ru,proverkacheka").split(",") if p]
-        # v1.55.0: «свои шлюзы» выведены из системы (бесполезны на практике);
-        # даже если порядок сохранился в настройках — из цепочки он убирается
-        order = [p for p in order if p != "custom"]
+                             "proverkacheka").split(",") if p]
+        # v1.55.0/v1.57.0: выведенные источники игнорируем, даже если их
+        # порядок сохранился в настройках
+        dead = {"custom", "fns_app", "crpt", "ofd_ru"}
+        order = [p for p in order if p not in dead]
+        # fns_api — на перспективу (разрешение ФНС на мастер-токен)
+        if (cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN) \
+                and "fns_api" not in order:
+            order.insert(0, "fns_api")
         chain: list[str] = []
         for p in order:
             if p in chain:
                 continue                      # дедупликация порядка
             if p == "fns_api" and (cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN):
-                chain.append(p)
-            elif p == "fns_app" and cfg.get("fns_app_inn") and cfg.get("fns_app_password"):
-                chain.append(p)               # v1.27.0: приложение ФНС
-            elif p == "crpt":
-                chain.append(p)               # v1.26.0: анонимный, токен не нужен
-            elif p == "ofd_ru" and cfg.get("ofd_ru_token"):
-                chain.append(p)
+                chain.append(p)               # перспектива: мастер-токен ФНС
             elif p == "proverkacheka" and cfg.get("proverkacheka_token"):
-                chain.append(p)
+                chain.append(p)               # основной рабочий источник
         # mock всегда в конце — чтобы чеки проверялись даже без токенов
         chain.append("mock")
         return chain
@@ -586,7 +442,7 @@ class ExternalFetchEngine:
     def status(self) -> dict:
         now = time.time()
         out = {}
-        for p in ("fns_api", "fns_app", "ofd_ru", "proverkacheka", "mock"):
+        for p in ("fns_api", "proverkacheka", "mock"):
             cd = self._cooldown_until.get(p, 0.0)
             out[p] = {
                 "available": now >= cd,
@@ -636,18 +492,6 @@ class ExternalFetchEngine:
                         if provider == "proverkacheka":
                             net_ok, msg, data = fetch_proverkacheka(
                                 qr_raw, cfg.get("proverkacheka_token", ""))
-                        elif provider == "crpt":                     # v1.26.0
-                            net_ok, msg, data = fetch_crpt(qr_raw)
-                        elif provider == "fns_app":                  # v1.27.0
-                            net_ok, msg, data = fetch_fns_app(
-                                qr_raw, cfg.get("fns_app_inn", ""),
-                                cfg.get("fns_app_password", ""),
-                                cfg.get("fns_app_secret", ""))
-                        elif provider == "ofd_ru":
-                            net_ok, msg, data = fetch_ofdru(
-                                fn, fd, fp, total_rub, date_time,
-                                2 if False else 1,   # тип уточнится ответом источника
-                                cfg.get("ofd_ru_token", ""))
                         elif provider == "fns_api":
                             token = cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN
                             net_ok, msg, data = fetch_fns(
