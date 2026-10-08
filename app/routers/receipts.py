@@ -694,8 +694,10 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     db.commit()
 
 
-def _run_external_fetch(receipt_ids: list[str]) -> None:
-    """Фоновый воркер: последовательно, с встроенными паузами движка."""
+def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
+    """Фоновый воркер: последовательно, с встроенными паузами движка.
+    v1.57.4: force=True — запросить даже для чеков с full_data=1
+    (чеки, заполненные до появления расширенных полей ext_json)."""
     from ..database import SessionLocal
     db = SessionLocal()
     try:
@@ -703,7 +705,7 @@ def _run_external_fetch(receipt_ids: list[str]) -> None:
             receipt = db.get(Receipt, rid)
             if receipt is None:
                 continue
-            if receipt.full_data:                    # v1.25.2: уже полные — пропускаем
+            if receipt.full_data and not force:      # v1.25.2: уже полные — пропускаем
                 continue
             res = external_engine.fetch(
                 db, receipt.qr_data, receipt.fn, receipt.fd, receipt.fp,
@@ -727,17 +729,22 @@ def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt
 @router.post("/{receipt_id}/fetch-details",
              summary="Получить полные данные чека из сервиса проверки (бухгалтер+)")
 def fetch_details_one(receipt_id: str, background: BackgroundTasks,
+                      force: bool = Query(False, description="Принудительный запрос даже "
+                                                              "при full_data (обновление данных)"),
                       user: User = Depends(require_accountant),
                       db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
     if not receipt or not can_view_receipt(user, receipt):      # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    # v1.25.2: повторный запрос не нужен — данные уже полные
-    if receipt.full_data:
+    # v1.25.2: без force повторный запрос не нужен — данные уже полные
+    # v1.57.4: force=True — принудительный запрос (чеки, заполненные до
+    # появления ext_json, и обновление данных по кнопке в карточке)
+    if receipt.full_data and not force:
         return {"ok": True, "queued": False, "skipped": True,
                 "message": "Полные данные уже получены — повторный запрос не требуется"}
-    background.add_task(_run_external_fetch, [receipt.id])
-    log_action(user, "external_fetch", "receipt", receipt.id, {"queued": 1})
+    background.add_task(_run_external_fetch, [receipt.id], True)
+    log_action(user, "external_fetch", "receipt", receipt.id,
+               {"queued": 1, "force": force})
     return {"ok": True, "queued": True,
             "message": "Запрос отправлен (пауза 2–7 с для защиты от блокировки). "
                        "Данные появятся автоматически"}
@@ -753,17 +760,24 @@ def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
     ids = [i for i in dict.fromkeys(body.receipt_ids) if i in visible]
     if not ids:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
-    # v1.25.2: чеки с полными данными не запрашиваем повторно
-    full_ids = {r.id for r in db.query(Receipt).filter(
-        Receipt.id.in_(ids), Receipt.full_data.is_(True)).all()}
+    # v1.25.2: без force чеки с полными данными не запрашиваем повторно
+    # v1.57.4: force=True — запросить и чеки с full_data (старые чеки
+    # без расширенных полей ext_json)
+    if getattr(body, "force", False):
+        full_ids = set()
+    else:
+        full_ids = {r.id for r in db.query(Receipt).filter(
+            Receipt.id.in_(ids), Receipt.full_data.is_(True)).all()}
     ids = [i for i in ids if i not in full_ids]
     skipped = len(full_ids)
     if not ids:
         return {"ok": True, "queued": 0, "skipped": skipped,
                 "message": f"Все выбранные чеки ({skipped}) уже имеют полные "
                            f"данные — повторный запрос не требуется"}
-    background.add_task(_run_external_fetch, ids)
-    log_action(user, "external_fetch", details={"queued": len(ids), "skipped": skipped})
+    background.add_task(_run_external_fetch, ids, bool(getattr(body, "force", False)))
+    log_action(user, "external_fetch",
+               details={"queued": len(ids), "skipped": skipped,
+                        "force": bool(getattr(body, "force", False))})
     tail = (f" Пропущены без запроса: {skipped} — данные уже полные." if skipped else "")
     return {"ok": True, "queued": len(ids), "skipped": skipped,
             "message": f"В очереди чеков: {len(ids)}. Источники опрашиваются "

@@ -124,7 +124,8 @@ class TestFullDataLifecycle:
         """Повторный запрос для чека с полными данными — не ставится в очередь."""
         import app.routers.receipts as rr
         calls = []
-        monkeypatch.setattr(rr, "_run_external_fetch", lambda ids: calls.append(ids))
+        monkeypatch.setattr(rr, "_run_external_fetch",
+                            lambda ids, force=False: calls.append(ids))
         adm, comp, U = _mk(client, prefix="fdi")
         r1 = _scan(client, U)
         _set_db(r1["id"], full_data=True)
@@ -139,7 +140,8 @@ class TestFullDataLifecycle:
         """Массовый запрос пропускает полные чеки, счётчик — в сообщении."""
         import app.routers.receipts as rr
         calls = []
-        monkeypatch.setattr(rr, "_run_external_fetch", lambda ids: calls.append(ids))
+        monkeypatch.setattr(rr, "_run_external_fetch",
+                            lambda ids, force=False: calls.append(ids))
         adm, comp, U = _mk(client, prefix="fdb")
         r1 = _scan(client, U)
         r2 = _scan(client, U)

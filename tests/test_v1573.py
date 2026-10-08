@@ -11,7 +11,8 @@ class TestVersion1573:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.57.3"
+        # точный пин 1.57.3 перенесён в tests/test_v1574.py (версия ушла вперёд)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 57, 3)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.57.2" not in idx
@@ -43,7 +44,7 @@ class TestDataZoneAlwaysAvailable:
 
     def test_fetch_calls_per_receipt_endpoint(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "api.post(`/api/v1/receipts/${r.id}/fetch-details`)" in js
+        assert "api.post(`/api/v1/receipts/${r.id}/fetch-details?force=1`)" in js
         # после успеха карточка переоткрывается свежими данными
         assert "openEditReceipt(fresh, onSaved)" in js
         assert "Запрашиваю (пауза 2–7 с)" in js
@@ -71,6 +72,8 @@ class TestBlocksRegistry:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.57.3"
+        # точный пин 1.57.3 перенесён в tests/test_v1574.py
+        assert tuple(int(x) for x in
+                     reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 3)
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
         assert reg["Сканирование чеков"] == "1.56.2"      # не задет

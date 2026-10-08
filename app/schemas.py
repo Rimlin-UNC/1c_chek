@@ -180,6 +180,9 @@ class ReceiptItemPatch(BaseModel):
 class FetchDetailsRequest(BaseModel):
     """Массовое получение данных чеков из внешних источников (v1.2.0)."""
     receipt_ids: list[str] = Field(min_length=1, max_length=200)
+    # v1.57.4: принудительный запрос и для чеков с full_data (старые чеки
+    # без расширенных полей ext_json — чеки «не загружались» без этой опции)
+    force: bool = False
 
 
 class ExternalSettingsPatch(BaseModel):
