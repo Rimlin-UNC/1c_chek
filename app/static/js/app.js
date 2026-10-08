@@ -2143,7 +2143,7 @@ async function viewPartners(container) {
           <body style="font-family:Arial,sans-serif;text-align:center;padding:40px">
           <h2>${esc(b.dataset.name)}</h2>
           <p>Сдайте чек в «Чек-Пул» — получите кэшбэк баллами</p>
-          <img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(b.dataset.code)}" width="320" height="320">
+          <img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(b.dataset.code)}" width="320" height="320" style="margin:0 auto">
           <p style="color:#777;font-size:12px">ООО «Ямастер» · ymaster.ru</p>
           </body></html>`);
         w.document.close();
@@ -4581,6 +4581,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.56.1': [
+    { icon: '🔎', title: 'Мелкая шлифовка вёрстки',
+      text: 'У картинок убрали «щель» под ними (изображения стали блочными), текст главной страницы теперь масштабируется вместе с настройкой размера шрифта в браузере — удобно, если хочется крупнее. Поля ввода остались 16px, чтобы телефон не зумил при вводе.' },
+  ],
   '1.56.0': [
     { icon: '📱', title: 'Программа удобна на любом экране — от 320px до десктопа',
       text: 'Чеки, компании и отчёты на телефоне прокручиваются внутри своих таблиц — страница больше не разъезжается вбок. Кнопки и пункты меню на сенсорных экранах стали крупнее (от 44px — удобно попадать пальцем), поля ввода — 16px, чтобы телефон не зумил при вводе. Картинки не выходят за границы, меню корректно сообщает о своём состоянии программам чтения с экрана (доступность).' },
@@ -5656,7 +5660,7 @@ function rcptBlocks(r, qrUrl, qrFail) {
   blocks.push(`<div class="rcpt-foot">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>${fnsMap[r.fns_status] || ''}<br>Ямастер Чек · ymaster.ru</div>`);
   // v1.10.0: фискальный QR — как на настоящем кассовом чеке
   if (qrUrl) {
-    blocks.push(`<div style="text-align:center;margin-top:1.5mm"><img src="${qrUrl}" alt="Фискальный QR чека" style="width:26mm;height:26mm"></div>`);
+    blocks.push(`<div style="text-align:center;margin-top:1.5mm"><img src="${qrUrl}" alt="Фискальный QR чека" style="width:26mm;height:26mm;margin:0 auto"></div>`);
   } else if (qrFail && r.fn) {
     // v1.24.1: код не получен (нет реквизитов/ошибка) — место под код остаётся помечено
     blocks.push('<div class="rcpt-part" style="margin-top:1.5mm">(фискальный QR не получен)</div>');

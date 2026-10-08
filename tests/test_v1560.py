@@ -12,7 +12,8 @@ class TestVersion1560:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.56.0"
+        # точный пин 1.56.0 перенесён в tests/test_v1561.py (версия ушла вперёд)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 56, 0)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.55.1" not in idx
@@ -37,7 +38,7 @@ class TestNoHorizontalScroll:
 
     def test_fluid_images(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert "img { max-width: 100%; height: auto; }" in css
+        assert "img { max-width: 100%; height: auto; display: block; }" in css
 
     def test_tables_scroll_inside_block(self):
         """Таблицы прокручиваются внутри блока даже без .table-wrap
@@ -116,7 +117,9 @@ class TestBlocksRegistry:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Адаптивный интерфейс"] == "1.56.0"   # новый блок
-        assert reg["Чек-Пул"] == "1.56.0"                # публичные экраны
-        assert reg["Обновления"] == "1.55.1"             # не задет
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.55.0"   # не задет
+        vt = lambda v: tuple(int(x) for x in v.split("."))
+        # точные пины 1.56.0 перенесены в tests/test_v1561.py
+        assert vt(reg["Адаптивный интерфейс"]) >= (1, 56, 0)
+        assert vt(reg["Чек-Пул"]) >= (1, 56, 0)
+        assert vt(reg["Обновления"]) >= (1, 55, 1)       # не задет
+        assert vt(reg["Проверка чеков (ФНС и источники)"]) >= (1, 55, 0)
