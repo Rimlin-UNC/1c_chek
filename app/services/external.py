@@ -325,29 +325,59 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
 # ==========================================================================
 def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
     """
-    proverkacheka.com: POST /api/v1/check/get (qrraw + token).
+    proverkacheka.com: POST /api/v1/check/get, поля qrraw + token
+    (токен из личного кабинета сервиса, Cookie ENGID=1.1).
+    v1.57.1: источник принимает разные форматы тела запроса — пробуем
+    последовательно urlencoded → JSON → multipart; формат меняется
+    автоматически, если пришёл 400/422 («неверный формат запроса»).
+    В сообщении об ошибке — причина: токен/квота/формат + фрагмент ответа.
     Возвращает (успех_сети, сообщение, json_ответ).
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (YmasterCheck/1.2; +https://ymaster.ru)",
         "Cookie": "ENGID=1.1",
     }
-    data = {"qrraw": qr_raw}
+    base = {"qrraw": qr_raw}
     if token:
-        data["token"] = token
-    try:
-        resp = httpx.post(PROVERKACHEKA_URL, data=data, headers=headers,
-                          timeout=REQUEST_TIMEOUT)
-    except httpx.HTTPError as e:
-        return False, f"Сеть: {e.__class__.__name__}", {}
-    if resp.status_code in (429, 403):
-        return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}", {}
-    try:
-        return True, "OK", resp.json()
-    except ValueError:
-        return False, "Ответ не JSON", {}
+        base["token"] = token
+
+    def _send(how: str):
+        if how == "json":                      # Content-Type: application/json
+            return httpx.post(PROVERKACHEKA_URL, json=base,
+                              headers=headers, timeout=REQUEST_TIMEOUT)
+        if how == "multipart":                 # multipart/form-data
+            return httpx.post(PROVERKACHEKA_URL,
+                              files={k: (None, v) for k, v in base.items()},
+                              headers=headers, timeout=REQUEST_TIMEOUT)
+        return httpx.post(PROVERKACHEKA_URL, data=base,   # application/x-www-form-urlencoded
+                          headers=headers, timeout=REQUEST_TIMEOUT)
+
+    last_err = ""
+    for how in ("form", "json", "multipart"):
+        try:
+            resp = _send(how)
+        except httpx.HTTPError as e:
+            return False, f"Сеть: {e.__class__.__name__}", {}
+        if resp.status_code == 401:
+            return False, ("HTTP 401: токен не принят — проверьте его в личном "
+                           "кабинете proverkacheka.com (Справка → API)"), {}
+        if resp.status_code == 402:
+            return False, ("HTTP 402: квота/тариф API исчерпаны — пополните "
+                           "баланс в кабинете proverkacheka.com"), {}
+        if resp.status_code in (429, 403):
+            return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
+        if resp.status_code in (400, 422):
+            snippet = (resp.text or "")[:120].replace(chr(10), " ")
+            last_err = f"{how}: HTTP {resp.status_code} {snippet}"
+            continue                # формат тела не подошёл — пробуем следующий
+        if resp.status_code != 200:
+            snippet = (resp.text or "")[:120].replace(chr(10), " ")
+            return False, f"HTTP {resp.status_code} (сервис временно недоступен?) {snippet}", {}
+        try:
+            return True, "OK", resp.json()
+        except ValueError:
+            return False, f"Ответ не JSON: {(resp.text or '')[:120]}", {}
+    return False, f"Формат запроса не принят ({last_err})", {}
 
 
 def fetch_fns(qr_raw: str, fn: str, fd: str, fp: str, total_rub: float,

@@ -220,6 +220,13 @@ class Receipt(Base):
     user: Mapped[User | None] = relationship(lazy="joined")
 
     def to_dict(self, with_items: bool = False) -> dict:
+        # v1.57.1: расширенные поля источника (proverkacheka: место расчётов,
+        # касса/смена, налог, свойства заказа, итоги НДС, ФФД…) — в интерфейс
+        try:
+            import json as _json
+            _ext = _json.loads(self.ext_json) if self.ext_json else None
+        except ValueError:
+            _ext = None
         d = {
             "id": self.id,
             "qr_data": self.qr_data,
@@ -253,6 +260,7 @@ class Receipt(Base):
             "details_fetched_at": (self.details_fetched_at.isoformat() + "Z"
                                    if self.details_fetched_at else None),
             "notified": self.notified,
+            "ext": _ext,                      # v1.57.1: полные данные источника
             "category": self.category or "",
             # v1.12.3: кто добавил чек (ФИО/логин автора скана) —
             # user подгружен joined, доп. запроса нет

@@ -4042,6 +4042,65 @@ function _dtLocal(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// ==========================================================================
+//  v1.57.1: «Полные данные чека» — всё, что вернул proverkacheka.com
+//  (receipts.ext_json): место расчётов, касса/смена, налог, свойства
+//  заказа, итоги НДС, ФФД и пр. Показывается в карточке чека.
+// ==========================================================================
+function extBlockHTML(ext) {
+  if (!ext || typeof ext !== 'object') return '';
+  const rows = [];
+  const add = (label, v) => {
+    if (v === undefined || v === null || v === '') return;
+    rows.push(`<dt>${esc(label)}</dt><dd>${esc(String(v))}</dd>`);
+  };
+  const rub = (v) => (v === undefined || v === null || v === '') ? null
+    : Number(v).toFixed(2) + ' ₽';
+  add('Место расчётов', ext.retail_place);
+  add('Адрес (из источника)', ext.source_address);
+  add('Регион', ext.region);
+  add('ККТ (рег. номер)', ext.kkt_reg_id);
+  add('ККТ (заводской №)', ext.number_kkt);
+  add('Смена', ext.shift_number);
+  add('Чек в смене', ext.request_number);
+  add('Налогообложение', ext.taxation);
+  if (ext.nds0 === 0 || ext.nds0 === '0') add('НДС 0%', 'есть (без НДС)');
+  add('Формат ФФД', ext.ffd_version);
+  add('ОФД', ext.ofd_id);
+  add('Тип документа', ext.doc_subtype);
+  add('Предоплата', rub(ext.prepaid_sum));
+  add('Кредит', rub(ext.credit_sum));
+  add('Встречная предоставление', rub(ext.provision_sum));
+  add('Получено источником', ext.receive_date);
+  add('ID чека в источнике', ext.source_receipt_id);
+  add('Создан в источнике', ext.source_date_create);
+  if (Array.isArray(ext.nds_totals) && ext.nds_totals.length) {
+    const t = ext.nds_totals.map(n =>
+      `НДС ${n.nds}% — ${(Number(n.ndsSum || 0) / 100).toFixed(2)} ₽`).join('; ');
+    rows.push(`<dt>Итоги НДС</dt><dd>${esc(t)}</dd>`);
+  }
+  if (Array.isArray(ext.properties) && ext.properties.length) {
+    const p = ext.properties.map(x => `${x.name}: ${x.value}`).join('; ');
+    rows.push(`<dt>Свойства заказа</dt><dd>${esc(p)}</dd>`);
+  }
+  if (Array.isArray(ext.items_meta) && ext.items_meta.length) {
+    const NAMES = { paymenttype: 'оплата', producttype: 'товар',
+                    itemsquantitymeasure: 'мера' };
+    const m = ext.items_meta.map(x => {
+      const parts = ['paymenttype', 'producttype', 'itemsquantitymeasure']
+        .filter(k => x[k] !== undefined && x[k] !== '')
+        .map(k => `${NAMES[k]} ${x[k]}`);
+      return `№${x.pos}: ${parts.join(', ')}`;
+    }).join('; ');
+    rows.push(`<dt>Признаки позиций</dt><dd>${esc(m)}</dd>`);
+  }
+  if (!rows.length) return '';
+  return `<details class="manual-check" style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🧾 Полные данные чека — из proverkacheka.com</summary>
+    <dl class="kv" style="font-size:12.5px;margin:10px 0 4px">${rows.join('')}</dl>
+  </details>`;
+}
+
 function openEditReceipt(r, onSaved) {
   const isAdminUser = isAdmin();
   const exportedWarn = r.exported && !isAdminUser
@@ -4105,6 +4164,7 @@ function openEditReceipt(r, onSaved) {
     <label style="display:flex;gap:10px;align-items:center;margin-top:12px;cursor:pointer">
       <input type="checkbox" id="er-notified" ${r.notified ? 'checked' : ''} style="width:auto">
       <span>🔔 Уведомление от сотрудника</span></label>
+    ${extBlockHTML(r.ext)}
     <details class="manual-check" style="margin-top:12px">
       <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🌐 Проверить чек вручную на сторонних сервисах</summary>
       <div class="manual-check-links">
@@ -4581,6 +4641,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.57.1': [
+    { icon: '🧾', title: 'Полные данные чека — теперь в карточке чека',
+      text: 'Всё, что присылает proverkacheka.com (место расчётов, касса и смена, налог, свойства заказа, итоги НДС, формат ФФД, оплаты), теперь видно в карточке чека — раскрывающийся блок «Полные данные чека». Запрос к API стал устойчивее: три формата запроса выбираются автоматически, а при ошибке видно точную причину — токен, квота или формат.' },
+  ],
   '1.57.0': [
     { icon: '🔌', title: 'Данные чека — только через proverkacheka.com',
       text: 'Оставили один стабильно работающий источник полных данных чека — proverkacheka.com (документацию API сверили, забираем максимум полей: добавились версия формата ФФД, адрес источника и тип оплаты/товара у позиций). Приложение ФНС, Честный Знак и ОФД-ру выведены из системы — сервисы перестали отвечать. Блок «Проверка чеков (ФНС)» с мастер-токеном не тронут: когда придёт разрешение ФНС, источник включится первым автоматически.' },
