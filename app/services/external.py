@@ -183,8 +183,11 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
     """Единый разбор ответа любого источника → ExternalResult."""
     receipt = _find_receipt_dict(data)
     if receipt is None:
+        _keys = ", ".join(list(data.keys())[:10]) \
+            if isinstance(data, dict) else type(data).__name__
         return ExternalResult(ok=True, source="", found=False,
-                              message="Источник ответил, но данных чека в ответе нет",
+                              message=("Источник ответил, но данных чека в ответе нет "
+                                       f"(ключи ответа: {_keys or '—'})"),
                               raw=data if isinstance(data, dict) else {})
 
     div = _money_divisor(receipt, known_rub)
@@ -372,11 +375,15 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
                           headers=headers, timeout=REQUEST_TIMEOUT)
 
     last_err = ""
+    _accepted_format = ""
     for how in ("form", "json", "multipart"):
         try:
             resp = _send(how)
         except httpx.HTTPError as e:
             return False, f"Сеть: {e.__class__.__name__}", {}
+        # v1.57.8: диагностика — что именно ответил источник
+        log.info("📩 proverkacheka [%s]: HTTP %s, %d байт",
+                 how, resp.status_code, len(resp.content or b""))
         if resp.status_code == 401:
             return False, ("HTTP 401: токен не принят — проверьте его в личном "
                            "кабинете proverkacheka.com (Справка → API)"), {}
@@ -393,9 +400,15 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
             snippet = (resp.text or "")[:120].replace(chr(10), " ")
             return False, f"HTTP {resp.status_code} (сервис временно недоступен?) {snippet}", {}
         try:
-            return True, "OK", resp.json()
+            js = resp.json()
         except ValueError:
             return False, f"Ответ не JSON: {(resp.text or '')[:120]}", {}
+        # v1.57.8: тело ответа в журнал — видно, ЧТО вернул сервис
+        _snip = (resp.text or "").replace("\n", " ").replace("\r", " ")[:700]
+        log.info("📩 proverkacheka [%s]: ответ: %s", how, _snip or "(пусто)")
+        if not _accepted_format:
+            _accepted_format = how
+        return True, "OK", js
     return False, f"Формат запроса не принят ({last_err})", {}
 
 
