@@ -18,9 +18,11 @@ class TestFnsAppRemoved:
 
     def test_default_order_is_proverkacheka(self):
         src = open('app/services/external.py', encoding='utf-8').read()
-        assert 'proverkacheka").split(",")' in src
-        # мёртвые источники перечислены только в «чёрном списке» цепочки
-        assert 'dead = {"custom", "fns_app", "crpt", "ofd_ru"}' in src
+        chain = src.split("def provider_chain")[1].split("def is_available")[0]
+        # v1.57.6: порядок задан системой — proverkacheka.com первый, напрямую
+        assert 'chain.append("proverkacheka")' in chain
+        # мёртвые источники в цепочке не упоминаются вовсе
+        assert 'fns_app' not in chain and 'ofd_ru' not in chain and 'crpt' not in chain
 
     def test_status_has_no_dead_sources(self):
         from app.services.external import ExternalFetchEngine

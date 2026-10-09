@@ -451,34 +451,21 @@ class ExternalFetchEngine:
         return rows
 
     def provider_chain(self, db) -> list[str]:
-        """Порядок провайдеров с учётом настроек и наличия токенов.
+        """Порядок провайдеров. Решение владельца (v1.57.6):
 
-        v1.57.0: единственный рабочий источник — proverkacheka.com
-        (POST /api/v1/check/get, qrraw + token; документация сверена).
-        Приложение ФНС, Честный Знак, ОФД-ру и свои шлюзы выведены из
-        системы — сервисы перестали отвечать. fns_api остаётся на
-        перспективу: если в карточке «Проверка чеков» появится
-        мастер-токен ФНС, источник автоматически встанет первым."""
+        proverkacheka.com — ВСЕГДА первый; без мастер-ключа ФНС запрос
+        уходит напрямую в proverkacheka.com. Запрос к ФНС делается
+        только при заданном мастер-ключе (карточка «Проверка чеков»)
+        и только как резерв — ПОСЛЕ proverkacheka.com. Устаревшая
+        настройка external_order больше не влияет на очерёдность
+        (раньше могла поставить ФНС первой даже без ключа).
+        mock всегда в конце — чеки проверяются даже без токенов."""
         cfg = self._settings(db)
-        order = [p for p in (cfg.get("external_order") or
-                             "proverkacheka").split(",") if p]
-        # v1.55.0/v1.57.0: выведенные источники игнорируем, даже если их
-        # порядок сохранился в настройках
-        dead = {"custom", "fns_app", "crpt", "ofd_ru"}
-        order = [p for p in order if p not in dead]
-        # fns_api — на перспективу (разрешение ФНС на мастер-токен)
-        if (cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN) \
-                and "fns_api" not in order:
-            order.insert(0, "fns_api")
         chain: list[str] = []
-        for p in order:
-            if p in chain:
-                continue                      # дедупликация порядка
-            if p == "fns_api" and (cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN):
-                chain.append(p)               # перспектива: мастер-токен ФНС
-            elif p == "proverkacheka" and cfg.get("proverkacheka_token"):
-                chain.append(p)               # основной рабочий источник
-        # mock всегда в конце — чтобы чеки проверялись даже без токенов
+        if cfg.get("proverkacheka_token"):
+            chain.append("proverkacheka")     # приоритет №1 — напрямую
+        if cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN:
+            chain.append("fns_api")           # резерв: только при мастер-ключе ФНС
         chain.append("mock")
         return chain
 

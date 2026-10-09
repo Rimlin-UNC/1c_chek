@@ -4680,6 +4680,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.57.6': [
+    { icon: '🥇', title: 'Данные чека — сначала напрямую из proverkacheka.com',
+      text: 'Запрос данных теперь всегда уходит сначала напрямую в proverkacheka.com. ФНС подключается только при заданном мастер-ключе и лишь как резерв после proverkacheka.com — раньше сохранённый порядок мог ставить запрос к ФНС первым, и данные не приходили. Порядок источников закреплён системой.' },
+  ],
   '1.57.5': [
     { icon: '📥', title: 'Загрузка данных чека — как в проверенной версии',
       text: 'Вернули блок из v1.25.1: кнопка получения данных отправляет запрос всегда — никаких «данные уже получены». У чека с загруженными данными в списке стоит значок «📥✓», у остальных — кнопка «📥». Квота proverkacheka расходуется по нажатию: старые чеки удобнее обновлять небольшими частями.' },
@@ -7423,13 +7427,12 @@ async function viewSettings(container) {
         сервисы перестали отвечать; их поля из настроек игнорируются).
         При блокировке источник «остывает» с растущей паузой, между запросами —
         2–7 секунд. <b>API ФНС</b> (мастер-токен в карточке «Проверка чеков») —
-        на перспективу: при появлении токена источник автоматически станет первым.</p>
+        резерв: при наличии мастер-ключа запрос к ФНС идёт уже после proverkacheka.com.</p>
         <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
           ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
           <input id="ext-pke" type="password" placeholder="токен API"></label>
-        <label class="field" style="margin-bottom:10px"><span>Порядок источников</span>
-          <input id="ext-order" value="${esc(ext ? ext.external_order : 'proverkacheka')}">
-          <small class="form-hint">proverkacheka — по токену (квота 12–14/сутки); fns_api добавится первым автоматически, когда будет задан мастер-токен ФНС (карточка «Проверка чеков»)</small></label>
+        <div class="field" style="margin-bottom:10px"><span>Порядок источников (задан системой)</span>
+          <small class="form-hint">1️⃣ proverkacheka.com — напрямую, по токену (квота 12–14/сутки) → 2️⃣ ФНС — только при мастер-ключе (карточка «Проверка чеков»), резерв после proverkacheka.com → 3️⃣ демо-источник</small></div>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>
@@ -8251,7 +8254,6 @@ async function viewSettings(container) {
       try {
         await api.put('/api/v1/settings/external', {
           proverkacheka_token: $('#ext-pke').value.trim() || undefined,
-          external_order: $('#ext-order').value.trim(),
           external_auto: $('#ext-auto').checked,
         });
         toast('Источники данных сохранены', 'ok');
