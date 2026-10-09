@@ -4680,6 +4680,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.57.7': [
+    { icon: '🔍', title: 'Лог загрузки данных чека + итоговый приоритет источников',
+      text: 'При каждом запросе данных в журнал пишется полная картина: разбор QR (fn/i/fp/сумма/дата), наличие мастер-ключа ФНС и токена, очередь источников, паузы, ответы, ошибки и что записано в чек. Итоговая логика: нет мастер-ключа ФНС — запрос сразу напрямую в proverkacheka.com; есть ключ — первый запрос в ФНС, proverkacheka.com запасным. Найти: journalctl -u ymaster-check | grep «ДАННЫЕ ЧЕКА».' },
+  ],
   '1.57.6': [
     { icon: '🥇', title: 'Данные чека — сначала напрямую из proverkacheka.com',
       text: 'Запрос данных теперь всегда уходит сначала напрямую в proverkacheka.com. ФНС подключается только при заданном мастер-ключе и лишь как резерв после proverkacheka.com — раньше сохранённый порядок мог ставить запрос к ФНС первым, и данные не приходили. Порядок источников закреплён системой.' },
@@ -7427,12 +7431,12 @@ async function viewSettings(container) {
         сервисы перестали отвечать; их поля из настроек игнорируются).
         При блокировке источник «остывает» с растущей паузой, между запросами —
         2–7 секунд. <b>API ФНС</b> (мастер-токен в карточке «Проверка чеков») —
-        резерв: при наличии мастер-ключа запрос к ФНС идёт уже после proverkacheka.com.</p>
+        итоговая логика: перед запросом смотрим мастер-ключ ФНС — нет ключа: сразу напрямую proverkacheka.com; есть ключ: первый запрос в ФНС, затем proverkacheka.com.</p>
         <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
           ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
           <input id="ext-pke" type="password" placeholder="токен API"></label>
         <div class="field" style="margin-bottom:10px"><span>Порядок источников (задан системой)</span>
-          <small class="form-hint">1️⃣ proverkacheka.com — напрямую, по токену (квота 12–14/сутки) → 2️⃣ ФНС — только при мастер-ключе (карточка «Проверка чеков»), резерв после proverkacheka.com → 3️⃣ демо-источник</small></div>
+          <small class="form-hint">без мастер-ключа ФНС: 1️⃣ proverkacheka.com (токен, квота 12–14/сутки) → демо-источник; при мастер-ключе ФНС: 1️⃣ ФНС → 2️⃣ proverkacheka.com → демо. Журнал загрузки — в логе сервиса (grep «ДАННЫЕ ЧЕКА»)</small></div>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>

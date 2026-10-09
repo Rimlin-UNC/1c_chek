@@ -65,8 +65,8 @@ class TestDeadSourcesRemoved:
         assert chain == ["proverkacheka", "mock"]
 
     def test_chain_fns_api_on_perspective(self, monkeypatch):
-        """v1.57.6: мастер-токен ФНС задан → fns_api резервом ПОСЛЕ
-        proverkacheka.com (приоритет — proverkacheka.com напрямую)."""
+        """v1.57.7 (итоговая логика владельца): мастер-ключ задан →
+        первый запрос в ФНС, proverkacheka.com — запасной после него."""
         from app.services import external
         eng = external.ExternalFetchEngine()
         monkeypatch.setattr(eng, "_settings", lambda db: {
@@ -74,7 +74,7 @@ class TestDeadSourcesRemoved:
             "proverkacheka_token": "tok", "fns_master_token": "master",
         })
         chain = eng.provider_chain(None)
-        assert chain == ["proverkacheka", "fns_api", "mock"]
+        assert chain == ["fns_api", "proverkacheka", "mock"]
 
     def test_status_tuple_clean(self):
         src = open("app/services/external.py", encoding="utf-8").read()
@@ -146,7 +146,7 @@ class TestFnsBlockUntouched:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "(v1.57.0)</span>" in js
         assert "единственного стабильно работающего источника" in js
-        assert "резерв: при наличии мастер-ключа" in js.split("📥 Источники данных чека")[1][:1800]
+        assert "итоговая логика: перед запросом смотрим мастер-ключ ФНС" in js.split("📥 Источники данных чека")[1][:1800]
         assert "Токен proverkacheka.com" in js
 
     def test_external_status_configured(self):

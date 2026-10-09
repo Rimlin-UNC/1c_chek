@@ -103,7 +103,7 @@ class TestV1251Block:
         """Воркер v1.25.1: пропуска нет, решение за человеком."""
         src = open("app/routers/receipts.py", encoding="utf-8").read()
         w = src.split("def _run_external_fetch")[1].split("def _maybe_auto_fetch")[0]
-        assert "full_data" not in w
+        assert "full_data and not force" not in w   # пропуска нет; «full_data» — в журнале
         assert "решение о запросе принимает человек" in src
 
     def test_refusals_removed(self):

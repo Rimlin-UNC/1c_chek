@@ -132,11 +132,11 @@ class TestSourcesChain:
             db.close()
         assert "custom" not in " ".join(chain)
         assert chain[-1] == "mock"
-        # v1.57.6: proverkacheka.com — всегда ПЕРВЫЙ, fns_api — резерв
+        # v1.57.7: при мастер-ключе первый — fns_api, proverkacheka — после
         if "proverkacheka" in chain:
             for p in ("fns_api",):
                 if p in chain:
-                    assert chain.index("proverkacheka") < chain.index(p)
+                    assert chain.index("proverkacheka") > chain.index(p)
 
     def test_chain_ignores_custom_even_if_configured(self, monkeypatch):
         from app.services import external

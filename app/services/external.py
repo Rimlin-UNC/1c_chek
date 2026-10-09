@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import threading
 import time
@@ -45,6 +46,8 @@ REQUEST_TIMEOUT = 20.0
 COOLDOWN_BASE_SECONDS = 600.0        # первый «остывание» — 10 минут
 COOLDOWN_MAX_SECONDS = 6 * 3600.0    # максимум 6 часов
 MAX_SAME_PROVIDER_RETRIES = 2
+
+log = logging.getLogger("ymaster")
 
 PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"
 
@@ -451,21 +454,23 @@ class ExternalFetchEngine:
         return rows
 
     def provider_chain(self, db) -> list[str]:
-        """Порядок провайдеров. Решение владельца (v1.57.6):
+        """ИТОГОВАЯ ЛОГИКА владельца (v1.57.7; как в v1.2.0, где загрузка
+        чеков работала идеально). Перед запросом смотрим мастер-ключ ФНС:
 
-        proverkacheka.com — ВСЕГДА первый; без мастер-ключа ФНС запрос
-        уходит напрямую в proverkacheka.com. Запрос к ФНС делается
-        только при заданном мастер-ключе (карточка «Проверка чеков»)
-        и только как резерв — ПОСЛЕ proverkacheka.com. Устаревшая
-        настройка external_order больше не влияет на очерёдность
-        (раньше могла поставить ФНС первой даже без ключа).
-        mock всегда в конце — чеки проверяются даже без токенов."""
+        • мастер-ключа НЕТ — запрос уходит СРАЗУ напрямую в
+          proverkacheka.com (запрос к ФНС не делаем);
+        • мастер-ключ ЕСТЬ — ПЕРВЫЙ запрос идёт в ФНС, а
+          proverkacheka.com остаётся запасным источником после него.
+
+        Настройка external_order на очерёдность не влияет — порядок
+        задан системой. mock всегда в конце — чеки проверяются даже
+        без токенов."""
         cfg = self._settings(db)
         chain: list[str] = []
-        if cfg.get("proverkacheka_token"):
-            chain.append("proverkacheka")     # приоритет №1 — напрямую
         if cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN:
-            chain.append("fns_api")           # резерв: только при мастер-ключе ФНС
+            chain.append("fns_api")           # мастер-ключ есть → ФНС первой
+        if cfg.get("proverkacheka_token"):
+            chain.append("proverkacheka")     # напрямую / запасной после ФНС
         chain.append("mock")
         return chain
 
@@ -490,6 +495,7 @@ class ExternalFetchEngine:
         gap = random.uniform(GAP_MIN_SECONDS, GAP_MAX_SECONDS)
         wait = last + gap - time.time()
         if wait > 0:
+            log.info("⏳ %s: пауза %.1f с (антибан 2–7 с)…", provider, wait)
             time.sleep(min(wait, GAP_MAX_SECONDS))
         self._last_call[provider] = time.time()
 
@@ -512,6 +518,17 @@ class ExternalFetchEngine:
         errors: list[str] = []
         cfg = self._settings(db)
         known_total = total_rub or None
+
+        # v1.57.7: подробный журнал загрузки (grep «ДАННЫЕ ЧЕКА»)
+        log.info("🔍 ДАННЫЕ ЧЕКА [fn=%s i=%s fp=%s]: старт загрузки "
+                 "(сумма=%s руб., дата=%s)", fn, fd, fp, total_rub, date_time)
+        _mk = cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN
+        _pk = cfg.get("proverkacheka_token")
+        log.info("🔑 Ключи: мастер-ключ ФНС: %s; токен proverkacheka: %s",
+                 ("есть (…" + _mk[-4:] + ")") if _mk else
+                 "НЕТ — запрос идёт напрямую в proverkacheka.com",
+                 ("задан (…" + _pk[-4:] + ")") if _pk else "НЕ задан")
+        log.info("📋 ОЧЕРЕДЬ ИСТОЧНИКОВ: %s", " → ".join(chain))
 
         for provider in chain:
             if not self.is_available(provider):
@@ -551,26 +568,41 @@ class ExternalFetchEngine:
                         # возвращаем «пустое» заполнение
                         if not parsed.found and provider != "mock":
                             errors.append(f"{provider}: {parsed.message}")
+                            log.warning("⚠️ %s: источник ответил, но данных "
+                                        "чека нет (%s) → следующий источник",
+                                        provider, parsed.message)
                             break                       # к следующему источнику
                         parsed.source = provider
                         if provider == "mock":
                             parsed.found = False
                             parsed.message = f"Источник «mock» (демо): {msg}"
+                            log.error("🚫 ДАННЫЕ НЕ ПОЛУЧЕНЫ [fn=%s i=%s fp=%s]: "
+                                      "реальные источники не ответили (%s); "
+                                      "ответ демо-источника записан как «не найден»",
+                                      fn, fd, fp, "; ".join(errors) or "причин нет")
                         else:
                             parsed.found = True
                             parsed.message = msg
                         self._fail_streak[provider] = 0
+                        log.info("✅ %s: ДАННЫЕ ЧЕКА ПОЛУЧЕНЫ (%s)", provider, msg)
                         parsed.raw["engine"] = {"errors": errors, "attempts": attempt + 1}
                         return parsed
 
                     self._note_failure(provider, msg)
                     errors.append(f"{provider}: {msg}")
+                    log.warning("❌ %s: сбой (попытка %d/%d): %s",
+                                provider, attempt + 1,
+                                MAX_SAME_PROVIDER_RETRIES + 1, msg)
                     # блокировка/лимиты → сразу к следующему источнику
                     if "429" in msg or "403" in msg or "блокир" in msg.lower():
+                        log.warning("↪️ %s: блокировка/лимит — переход к "
+                                    "следующему источнику", provider)
                         break
                     # обычный сбой → короткая пауза и повтор того же источника
                     time.sleep(random.uniform(1.0, 2.5))
 
+        log.error("🚫 ДАННЫЕ НЕ ПОЛУЧЕНЫ [fn=%s i=%s fp=%s]: %s",
+                  fn, fd, fp, "; ".join(errors) or "нет доступных источников")
         return ExternalResult(ok=False, source="", found=False,
                               message="Все источники недоступны: " + "; ".join(errors) if errors
                               else "Нет доступных источников")

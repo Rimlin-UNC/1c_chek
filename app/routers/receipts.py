@@ -696,13 +696,17 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
 
 def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
     """Фоновый воркер: последовательно, с встроенными паузами движка."""
+    import logging
+    _log = logging.getLogger("ymaster")
     from ..database import SessionLocal
     db = SessionLocal()
+    _log.info("📥 ЗАГРУЗКА ДАННЫХ: чек(ов) в очереди: %d", len(receipt_ids))
     try:
         for rid in receipt_ids:
             receipt = db.get(Receipt, rid)
             if receipt is None:
                 continue
+            _log.info("🔎 Чек %s: QR: %s", rid, (receipt.qr_data or "")[:140])
             # v1.57.5: поведение v1.25.1 — воркер берёт КАЖДЫЙ переданный
             # чек (решение о запросе принимает человек, нажав кнопку)
             res = external_engine.fetch(
@@ -710,6 +714,10 @@ def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
                 receipt.total_sum, receipt.receipt_date)
             _apply_external_result(db, receipt, res)
             db.refresh(receipt)
+            _log.info("💾 Чек %s: результат=%s, источник=%s, ext_json=%d байт, "
+                      "full_data=%s", rid, "ok" if res.ok else "НЕ получены",
+                      res.source or "—", len(receipt.ext_json or ""),
+                      bool(receipt.full_data))
             broadcast("receipt_updated", receipt.to_dict(with_items=True))
     finally:
         db.close()
