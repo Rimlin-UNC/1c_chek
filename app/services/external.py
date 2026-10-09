@@ -376,7 +376,10 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
 
     last_err = ""
     _accepted_format = ""
-    for how in ("form", "json", "multipart"):
+    _saw_token_rejected = False            # v1.58.0
+    # v1.58.0: multipart — ЕДИНСТВЕННЫЙ формат, принятый API
+    # (проверено контрольным curl на боевом сервере 09.10.2026)
+    for how in ("multipart", "form", "json"):
         try:
             resp = _send(how)
         except httpx.HTTPError as e:
@@ -385,8 +388,10 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
         log.info("📩 proverkacheka [%s]: HTTP %s, %d байт",
                  how, resp.status_code, len(resp.content or b""))
         if resp.status_code == 401:
-            return False, ("HTTP 401: токен не принят — проверьте его в личном "
-                           "кабинете proverkacheka.com (Справка → API)"), {}
+            # v1.58.0: формат мог не передать токен — пробуем следующий
+            _saw_token_rejected = True
+            last_err = f"{how}: HTTP 401 (токен не принят)"
+            continue
         if resp.status_code == 402:
             return False, ("HTTP 402: квота/тариф API исчерпаны — пополните "
                            "баланс в кабинете proverkacheka.com"), {}
@@ -406,28 +411,34 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
         # v1.57.8: тело ответа в журнал — видно, ЧТО вернул сервис
         _snip = (resp.text or "").replace("\n", " ").replace("\r", " ")[:700]
         log.info("📩 proverkacheka [%s]: ответ: %s", how, _snip or "(пусто)")
-        # v1.57.9: ошибка может прийти В ТЕЛЕ при HTTP 200 —
+        # v1.57.9/v1.58.0: ошибка может прийти В ТЕЛЕ при HTTP 200 —
         # {"code":401,"data":"Не авторизован (не представился)…"}
-        if isinstance(js, dict) and isinstance(js.get("code"), int) \
-                and js["code"] in (400, 401, 402, 403, 404, 429, 500):
+        _c = js.get("code") if isinstance(js, dict) else None
+        if isinstance(_c, str) and _c.isdigit():
+            _c = int(_c)                   # v1.58.0: код может прийти строкой
+        if isinstance(_c, int) and _c != 0:
             _bdata = str(js.get("data") or js.get("message") or "")[:160]
-            if js["code"] == 401:
-                return False, ("Токен не принят proverkacheka.com (не авторизован): "
-                               "обновите «Токен доступа к API» в настройках "
-                               "источников (персональная страница /user/…)"), {}
-            if js["code"] == 402:
+            if _c == 401:
+                # v1.58.0: формат мог не передать токен — пробуем следующий
+                _saw_token_rejected = True
+                last_err = f"{how}: код 401 в теле (токен не принят)"
+                continue
+            if _c == 402:
                 return False, (f"Квота/тариф API исчерпаны (code 402: {_bdata}) — "
                                "пополните баланс в кабинете proverkacheka.com"), {}
-            if js["code"] == 404:
-                return False, (f"Чека нет в базе сервиса (code 404: {_bdata}) — "
-                               "источник данных не найден"), {}
-            if js["code"] in (429, 403):
+            if _c in (404, 5):
+                return False, (f"Чека нет в базе сервиса (code {_c}: {_bdata})"), {}
+            if _c in (429, 403):
                 return False, (f"Лимит/блокировка proverkacheka.com "
-                               f"(code {js['code']}: {_bdata})"), {}
-            return False, f"proverkacheka.com code {js['code']}: {_bdata}", {}
+                               f"(code {_c}: {_bdata})"), {}
+            return False, f"proverkacheka.com code {_c}: {_bdata}", {}
         if not _accepted_format:
             _accepted_format = how
         return True, "OK", js
+    if _saw_token_rejected:   # v1.58.0: все форматы отказали в авторизации
+        return False, ("Токен не принят proverkacheka.com (не авторизован): "
+                       "обновите «Токен доступа к API» в настройках "
+                       "источников (персональная страница /user/…)"), {}
     return False, f"Формат запроса не принят ({last_err})", {}
 
 

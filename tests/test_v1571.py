@@ -54,7 +54,7 @@ class TestFetchRobust:
         with mock_patch("httpx.post", self._fake_post(calls, [(200, payload)])):
             ok, msg, data = fetch_proverkacheka("t=…&s=100.00&fn=1&i=2&fp=3&n=1", "tok")
         assert ok and msg == "OK" and data["totalSum"] == 10000
-        assert len(calls) == 1 and "data" in calls[0]     # urlencoded первым
+        assert len(calls) == 1 and "files" in calls[0]     # v1.58.0: multipart первым
 
     def test_fallback_form_json_multipart(self):
         from app.services.external import fetch_proverkacheka
@@ -65,7 +65,7 @@ class TestFetchRobust:
             ok, msg, data = fetch_proverkacheka("t=…", "tok")
         assert ok and data["totalSum"] == 10000
         assert len(calls) == 3
-        assert "data" in calls[0] and "json" in calls[1] and "files" in calls[2]
+        assert "files" in calls[0] and "data" in calls[1] and "json" in calls[2]
 
     def test_all_formats_rejected_message(self):
         from app.services.external import fetch_proverkacheka
@@ -80,9 +80,11 @@ class TestFetchRobust:
     def test_token_and_quota_errors(self):
         from app.services.external import fetch_proverkacheka
         calls = []
-        with mock_patch("httpx.post", self._fake_post(calls, [(401, "{}")])):
+        # v1.58.0: HTTP 401 → перебор всех форматов → итог «Токен не принят»
+        with mock_patch("httpx.post", self._fake_post(
+                calls, [(401, "{}"), (401, "{}"), (401, "{}")])):
             ok, msg, _ = fetch_proverkacheka("t=…", "bad")
-        assert not ok and "токен не принят" in msg
+        assert not ok and "Токен не принят" in msg
         with mock_patch("httpx.post", self._fake_post(calls, [(402, "{}")])):
             ok, msg, _ = fetch_proverkacheka("t=…", "tok")
         assert not ok and "квота" in msg

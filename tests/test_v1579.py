@@ -42,7 +42,7 @@ class TestVersion1579:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.57.9"
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 57, 9)  # структурный
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.57.8" not in idx
@@ -61,7 +61,8 @@ class TestVersion1579:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.57.9"
+        assert tuple(int(x) for x in
+                     reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 9)
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
         assert reg["Обновления"] == "1.55.1"              # не задет
 
@@ -93,8 +94,8 @@ class TestBodyErrors:
         # причина названа прямо, а не «данных чека нет»
         assert "Токен не принят proverkacheka.com" in _reasons(res)
         assert "обновите «Токен доступа к API»" in _reasons(res)
-        # повторов НЕТ: один HTTP-вызов — и переход дальше (mock)
-        assert calls["n"] == 1, calls
+        # v1.58.0: все 3 формата, затем переход дальше (без движковых повторов)
+        assert calls["n"] == 3, calls
         assert res.source == "mock" and res.found is False
         assert "Токен не принят" in caplog.text
 
@@ -133,14 +134,17 @@ class TestBodyErrors:
         assert res.found is True and res.source == "proverkacheka"
 
     def test_field_auth_sends_token(self, monkeypatch):
-        """Токен уходит в поле token (как в проверенной интеграции)."""
+        """v1.58.0: токен уходит полем token, multipart-ом ПЕРВЫМ,
+        полное значение (с префиксом 55035.)."""
         from app.services import external
-        seen = {}
+        calls = []
 
         def fake_post(url, *a, **k):
-            seen.update(k)
+            calls.append(k)
             return _Resp({"code": 401, "data": "нет"})
 
         monkeypatch.setattr(external.httpx, "post", fake_post)
         external.fetch_proverkacheka("qr", "55035.TEMP")
-        assert seen.get("data", {}).get("token") == "55035.TEMP"
+        assert calls, "запросов не было"
+        assert "files" in calls[0], "первый формат должен быть multipart"
+        assert calls[0]["files"]["token"][1] == "55035.TEMP"

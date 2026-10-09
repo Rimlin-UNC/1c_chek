@@ -88,7 +88,7 @@ class TestProverkachekaMaxData:
         assert 'PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"' in src
         f = src.split("def fetch_proverkacheka")[1].split("def fetch_fns")[0]
         assert 'base = {"qrraw": qr_raw}' in f          # v1.57.1: 3 формата
-        assert 'for how in ("form", "json", "multipart"):' in f
+        assert 'for how in ("multipart", "form", "json"):' in f   # v1.58.0: рабочая схема
         assert '"Cookie": "ENGID=1.1"' in f
 
     def test_new_extra_fields_parsed(self):

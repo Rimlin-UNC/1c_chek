@@ -64,7 +64,7 @@ class TestRawResponseLogging:
         ok, msg, data = external.fetch_proverkacheka("t=…&s=…", "tok")
         assert ok and data["totalSum"] == 80730
         txt = caplog.text
-        assert "📩 proverkacheka [form]: HTTP 200" in txt
+        assert "📩 proverkacheka [multipart]: HTTP 200" in txt   # v1.58.0
         assert "ответ:" in txt and '"totalSum": 80730' in txt.replace(" ", " ") \
             or "📩" in txt and "totalSum" in txt
 
