@@ -4680,6 +4680,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.57.9': [
+    { icon: '🔑', title: 'Точная причина: «Токен не принят» — вместо «данных нет»',
+      text: 'По живому логу нашли причину: сервис отвечал «Не авторизован (не представился)» — токен не принимался. Теперь программа распознаёт это и пишет прямо: «Токен не принят — обновите Токен доступа к API». Новый токен формата 55035.… берётся на вашей странице proverkacheka.com/user/… и вставляется в Настройки → Источники данных чека.' },
+  ],
   '1.57.8': [
     { icon: '📩', title: 'В логе теперь виден сырой ответ proverkacheka.com',
       text: 'Каждый ответ источника пишется в журнал: HTTP-код, размер и тело ответа целиком (до 700 символов), а в сообщении «данных чека нет» — ключи присланного JSON. Если чек снова не загрузится — по логу будет видно, что именно вернул сервис, и мы сразу починим разбор.' },
@@ -7437,8 +7441,8 @@ async function viewSettings(container) {
         2–7 секунд. <b>API ФНС</b> (мастер-токен в карточке «Проверка чеков») —
         итоговая логика: перед запросом смотрим мастер-ключ ФНС — нет ключа: сразу напрямую proverkacheka.com; есть ключ: первый запрос в ФНС, затем proverkacheka.com.</p>
         <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
-          ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — получите в личном кабинете proverkacheka.com → Справка → API)'}</span>
-          <input id="ext-pke" type="password" placeholder="токен API"></label>
+          ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — возьмите «Токен доступа к API» на своей странице proverkacheka.com/user/…, формат 55035.хххххх)'}</span>
+          <input id="ext-pke" type="password" placeholder="55035.xxxxxxxxxxx"></label>
         <div class="field" style="margin-bottom:10px"><span>Порядок источников (задан системой)</span>
           <small class="form-hint">без мастер-ключа ФНС: 1️⃣ proverkacheka.com (токен, квота 12–14/сутки) → демо-источник; при мастер-ключе ФНС: 1️⃣ ФНС → 2️⃣ proverkacheka.com → демо. Журнал загрузки — в логе сервиса (grep «ДАННЫЕ ЧЕКА»)</small></div>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">

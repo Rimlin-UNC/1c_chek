@@ -25,7 +25,7 @@ class TestVersion1578:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.57.8"
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 57, 8)  # структурный
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.57.7" not in idx
@@ -44,7 +44,8 @@ class TestVersion1578:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.57.8"
+        assert tuple(int(x) for x in
+                     reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 8)
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
         assert reg["Обновления"] == "1.55.1"              # не задет
 
@@ -71,11 +72,11 @@ class TestRawResponseLogging:
         """Тело ответа доступно в журнале (до 700 символов)."""
         from app.services import external
         caplog.set_level(logging.INFO)
-        body = '{"error": "ticket not found", "code": 404, "detail": "нет чека"}'
+        body = '{"error": "ticket not found", "detail": "нет чека"}'
 
         def fake_post(*a, **k):
             return _FakeResp(200, body, json_obj={"error": "ticket not found",
-                                                  "code": 404})
+                                                  "detail": "нет чека"})
 
         monkeypatch.setattr(external.httpx, "post", fake_post)
         ok, msg, data = external.fetch_proverkacheka("qr", "tok")

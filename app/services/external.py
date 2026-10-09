@@ -406,6 +406,25 @@ def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
         # v1.57.8: тело ответа в журнал — видно, ЧТО вернул сервис
         _snip = (resp.text or "").replace("\n", " ").replace("\r", " ")[:700]
         log.info("📩 proverkacheka [%s]: ответ: %s", how, _snip or "(пусто)")
+        # v1.57.9: ошибка может прийти В ТЕЛЕ при HTTP 200 —
+        # {"code":401,"data":"Не авторизован (не представился)…"}
+        if isinstance(js, dict) and isinstance(js.get("code"), int) \
+                and js["code"] in (400, 401, 402, 403, 404, 429, 500):
+            _bdata = str(js.get("data") or js.get("message") or "")[:160]
+            if js["code"] == 401:
+                return False, ("Токен не принят proverkacheka.com (не авторизован): "
+                               "обновите «Токен доступа к API» в настройках "
+                               "источников (персональная страница /user/…)"), {}
+            if js["code"] == 402:
+                return False, (f"Квота/тариф API исчерпаны (code 402: {_bdata}) — "
+                               "пополните баланс в кабинете proverkacheka.com"), {}
+            if js["code"] == 404:
+                return False, (f"Чека нет в базе сервиса (code 404: {_bdata}) — "
+                               "источник данных не найден"), {}
+            if js["code"] in (429, 403):
+                return False, (f"Лимит/блокировка proverkacheka.com "
+                               f"(code {js['code']}: {_bdata})"), {}
+            return False, f"proverkacheka.com code {js['code']}: {_bdata}", {}
         if not _accepted_format:
             _accepted_format = how
         return True, "OK", js
@@ -606,8 +625,11 @@ class ExternalFetchEngine:
                     log.warning("❌ %s: сбой (попытка %d/%d): %s",
                                 provider, attempt + 1,
                                 MAX_SAME_PROVIDER_RETRIES + 1, msg)
-                    # блокировка/лимиты → сразу к следующему источнику
-                    if "429" in msg or "403" in msg or "блокир" in msg.lower():
+                    # блокировка/лимиты/токен/квота → сразу к следующему
+                    # источнику (повторы бессмысленны)
+                    if ("429" in msg or "403" in msg or "блокир" in msg.lower()
+                            or "токен не принят" in msg.lower()
+                            or "квота" in msg.lower()):
                         log.warning("↪️ %s: блокировка/лимит — переход к "
                                     "следующему источнику", provider)
                         break
