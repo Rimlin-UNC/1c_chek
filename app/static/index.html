@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.58.0">
+<link rel="stylesheet" href="/css/app.css?v=1.58.1">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -214,6 +214,7 @@
         </div>
       </div>
       <nav class="sidebar-nav" id="main-nav">
+        <div class="nav-group">Основное</div>
         <a href="#/dashboard" data-view="dashboard" class="nav-item">
           <span class="nav-icon" data-icon="dashboard"></span>Дашборд
         </a>
@@ -221,13 +222,14 @@
           <span class="nav-icon" data-icon="scan"></span>Сканирование
           <span class="nav-badge hidden" id="nav-queue-badge">0</span>
         </a>
-        <a href="#/public" data-view="public" class="nav-item">
+        <div class="nav-group pool-only">Чек-Пул</div>
+        <a href="#/public" data-view="public" class="nav-item pool-only">
           <span class="nav-icon" data-icon="scan"></span>Сдать чек в пул
         </a>
-        <a href="#/my" data-view="my" class="nav-item">
+        <a href="#/my" data-view="my" class="nav-item pool-only">
           <span class="nav-icon" data-icon="list"></span>Мой Чек-Пул
         </a>
-        <a href="#/partners" data-view="partners" class="nav-item">
+        <a href="#/partners" data-view="partners" class="nav-item pool-only">
           <span class="nav-icon" data-icon="export"></span>Партнёры и кэшбэк
         </a>
         <a href="#/pooladmin" data-view="pooladmin" class="nav-item admin-only hidden">
@@ -239,6 +241,7 @@
         <a href="#/poolpeople" data-view="poolpeople" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Чек-Пул: участники
         </a>
+        <div class="nav-group">Чеки и учёт</div>
         <a href="#/receipts" data-view="receipts" class="nav-item">
           <span class="nav-icon" data-icon="list"></span>Чеки
           <span class="nav-badge" id="nav-receipts-badge">0</span>
@@ -252,6 +255,7 @@
         <a href="#/poolpick" data-view="poolpick" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="list"></span>Подбор из пула
         </a>
+        <div class="nav-group admin-only hidden">Администрирование</div>
         <a href="#/companies" data-view="companies" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Компании
         </a>
@@ -324,6 +328,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.58.0"></script>
+  <script type="module" src="/js/app.js?v=1.58.1"></script>
 </body>
 </html>

@@ -2315,6 +2315,12 @@ function enterApp() {
   $('#user-avatar').textContent = (state.me.full_name || state.me.username)[0].toUpperCase();
   $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
   $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
+  // v1.58.1: страницы Чек-Пула — только когда пул включён (на проде он
+  // выключен: enabled=false → «Сдать чек», «Кабинет», «Партнёры» скрыты)
+  api.get('/api/v1/public/pool/info').then((info) => {
+    state.poolEnabled = !!info.enabled;
+    $$('.pool-only').forEach(el => el.classList.toggle('hidden', !state.poolEnabled));
+  }).catch(() => {});
   applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
   if (isAdmin()) initCompanyFilter();          // v1.11.0: селектор пространства
@@ -2884,6 +2890,9 @@ function route(silent = false) {
     poolpick: isAccountant(),            // v1.37.0: подбор для компании
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
+  // v1.58.1: пул выключен → страницы пула недоступны, меню их скрывает
+  if ((view === 'public' || view === 'my' || view === 'partners') &&
+      state.poolEnabled === false) { location.hash = '#/dashboard'; return; }
 
   const renderers = {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
@@ -4680,6 +4689,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.58.1': [
+    { icon: '📱', title: 'Адаптивная вёрстка: приложение подстроено под каждое устройство',
+      text: 'На телефоне список чеков — удобные карточки с подписями полей вместо прокрутки таблицы, модалки открываются снизу шторкой, кнопки и поля — под палец (от 44px), текст и заголовки масштабируются под экран, учтены вырезы корпуса (safe-area). Меню по ролям: каждый видит только свои разделы; страницы Чек-Пула скрываются, когда пул выключен.' },
+  ],
   '1.58.0': [
     { icon: '🧩', title: 'Нашли рабочую схему авторизации — чеки снова загружаются',
       text: 'Контрольным запросом с сервера доказано: сервис принимает токен 55035.… только в поле token при multipart-запросе. Программа теперь шлёт multipart первым, при отказе перебирает все форматы и лишь потом пишет «Токен не принят». «Чека нет в базе сервиса (code 5)» — отдельная понятная причина для старых чеков.' },
@@ -5566,7 +5579,7 @@ async function viewReceipts(container) {
     // v1.25.2: полные данные есть → только «изменить»; запрос показывается,
     // только если чек ещё НЕ получил данные полностью
     const actions = acc
-      ? `<td style="white-space:nowrap">
+      ? `<td class="cell-actions" style="white-space:nowrap">
            ${r.full_data
              ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
              : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
@@ -5578,16 +5591,16 @@ async function viewReceipts(container) {
     return `<tr data-id="${r.id}">
       <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
         ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
-      <td class="cell-date">${fmtDate(r.receipt_date)}${notifiedMark}
+      <td class="cell-date" data-label="Дата чека">${fmtDate(r.receipt_date)}${notifiedMark}
         ${acc ? advanceBadge(r) : ''}</td>
-      <td class="cell-sum">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
+      <td class="cell-sum" data-label="Сумма">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
         ? `<div class="form-hint">к учёту: ${fmtSum((r.total_sum || 0) - r.personal_sum)}</div>` : ''}</td>
-      <td class="cell-mono">${r.fn}</td><td class="cell-mono">${r.fd}</td><td class="cell-mono">${r.fp}</td>
-      ${acc ? `<td>${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}
+      <td class="cell-mono" data-label="ФН">${r.fn}</td><td class="cell-mono" data-label="ФД">${r.fd}</td><td class="cell-mono" data-label="ФП">${r.fp}</td>
+      ${acc ? `<td data-label="Сотрудник">${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}
         <div class="rcpt-added" title="Кто добавил чек">＋ ${esc(r.created_by_name || r.created_by || '—')}</div></td>` : ''}
-      <td>${chip(r.status)}</td>
-      <td>${chip(r.fns_status)} ${detailsMark}</td>
-      <td>${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
+      <td data-label="Статус">${chip(r.status)}</td>
+      <td data-label="ФНС">${chip(r.fns_status)} ${detailsMark}</td>
+      <td data-label="1С">${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
       ${actions}
     </tr>`;
   }

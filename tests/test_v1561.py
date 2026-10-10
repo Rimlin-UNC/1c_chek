@@ -108,7 +108,8 @@ class TestBlocksRegistry:
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
         assert reg["Чек-Пул"] == "1.56.1"                # лендинг
-        assert reg["Адаптивный интерфейс"] == "1.56.1"   # img/rem
+        assert tuple(int(x) for x in
+                     reg["Адаптивный интерфейс"].split(".")) >= (1, 56, 1)  # структурный   # img/rem
         vt = lambda v: tuple(int(x) for x in v.split("."))
         assert vt(reg["Обновления"]) >= (1, 55, 1)       # не задет
         assert vt(reg["Проверка чеков (ФНС и источники)"]) >= (1, 55, 0)
