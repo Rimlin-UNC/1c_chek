@@ -25,10 +25,32 @@ from .routers import (admin, auth_routes, companies, dashboard, invites, mail_ad
                       receipts, settings_routes, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
+import datetime as _dt
+import os as _os
+import time as _time
+
+try:
+    _MSK = _dt.ZoneInfo("Europe/Moscow")
+except Exception:                       # нет tzdata — фиксированный UTC+3
+    _MSK = _dt.timezone(_dt.timedelta(hours=3), "Europe/Moscow")
+
+# v1.58.2: программа работает по Московскому времени — процесс и журнал
+if _os.environ.get("TZ") != "Europe/Moscow":
+    _os.environ["TZ"] = "Europe/Moscow"
+    _time.tzset()
+
+class _MskFormatter(logging.Formatter):
+    """Времена журнала — строго по Московскому времени (UTC+3)."""
+    def formatTime(self, record, datefmt=None):
+        return _dt.datetime.now(_MSK).strftime("%Y-%m-%d %H:%M:%S") + " +0300"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+_msk_fmt = _MskFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+for _h in logging.getLogger().handlers:
+    _h.setFormatter(_msk_fmt)
 log = logging.getLogger("ymaster")
 
 

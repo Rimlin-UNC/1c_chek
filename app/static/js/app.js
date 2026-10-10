@@ -32,6 +32,7 @@ const state = {
   view: 'dashboard',
   routeParam: '',
   receiptsSelected: new Set(),
+  receiptsView: 'list',                // v1.58.2: вид списка чеков
   recents: JSON.parse(localStorage.getItem('ymaster_recents') || '[]'),
   // v1.53.0: версия интерфейса этой страницы — по ней решаем,
   // нужна ли перезагрузка после обновления
@@ -3049,8 +3050,8 @@ async function viewCompanies(container) {
     <div class="glass card">
       <div class="card-title">🏢 Компании-клиенты <span class="spacer"></span>
         <button class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button>
-        <button class="btn btn-sm" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
-        <button class="btn btn-sm" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
+        <button class="btn btn-sm btn-primary" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
+        <button class="btn btn-sm btn-primary" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
       <p class="form-hint" style="margin-bottom:12px">Каждая компания (ООО, ИП) — изолированное пространство:
       свои сотрудники, свои чеки, своя отчётность. Сотрудники видят только свою компанию,
       вы видите всё и можете перемещать чеки между компаниями.</p>
@@ -4689,6 +4690,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.58.2': [
+    { icon: '🗂', title: 'Чеки: список или карточки — как вам удобнее',
+      text: 'На странице «Чеки» появился переключатель «📋 Список / 🗂 Карточки» (выбор запоминается). В карточках кнопки «📥 Данные» и «✏️ Заполнить» — внизу карточки, всегда на виду. Текст кнопок больше не выходит за границы («Добавить правило» и аналоги), основные кнопки на «Компаниях» — фирменные оранжевые. Журнал и программа теперь строго по Московскому времени (UTC+3).' },
+  ],
   '1.58.1': [
     { icon: '📱', title: 'Адаптивная вёрстка: приложение подстроено под каждое устройство',
       text: 'На телефоне список чеков — удобные карточки с подписями полей вместо прокрутки таблицы, модалки открываются снизу шторкой, кнопки и поля — под палец (от 44px), текст и заголовки масштабируются под экран, учтены вырезы корпуса (safe-area). Меню по ролям: каждый видит только свои разделы; страницы Чек-Пула скрываются, когда пул выключен.' },
@@ -5397,6 +5402,12 @@ async function viewReceipts(container) {
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
         <button class="btn" id="btn-filter">Найти</button>
       </div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <div class="seg" role="group" aria-label="Вид списка чеков">
+          <button class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
+          <button class="btn btn-sm" id="rc-view-cards" title="Карточки чеков">🗂 Карточки</button>
+        </div>
+      </div>
       ${acc ? `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <button class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
@@ -5511,6 +5522,15 @@ async function viewReceipts(container) {
     viewReceipts._mounted = true;    // v1.25.1: список отрисован — мерцание отключаем
     if (!data.items.length) {
       el.innerHTML = emptyState('🧾', 'Чеки не найдены. Отсканируйте первый на вкладке «Сканирование»');
+    } else if (state.receiptsView === 'cards') {
+      // v1.58.2: режим «Карточки» — кнопки действий ВНИЗУ карточки
+      el.innerHTML = `<div class="rc-cards">${data.items.map(r => receiptCard(r, acc)).join('')}</div>`;
+      $$('.rc-card', el).forEach(card => {
+        card.onclick = (e) => {
+          if (e.target.closest('button')) return;
+          receiptDrawer(card.dataset.id);
+        };
+      });
     } else {
       el.innerHTML = `<table class="data"><thead><tr>
         <th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto" title="Выбрать все на странице"></th>
@@ -5603,6 +5623,31 @@ async function viewReceipts(container) {
       <td data-label="1С">${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
       ${actions}
     </tr>`;
+  }
+
+  // v1.58.2: карточка чека (режим «Карточки») — кнопки «данные сервиса»
+  // (📥) и «заполнить вручную» (✏️) — ВНИЗУ карточки, всегда под рукой
+  function receiptCard(r, acc) {
+    const isOwner = r.created_by_id === state.me.id;
+    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    const act = acc
+      ? `${r.full_data
+          ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
+          : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
+              title="Получить полные данные чека из сервиса проверки">📥 Данные</button>`}
+         <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}"
+           title="Изменить чек и позиции (ручное заполнение)">✏️ Заполнить</button>`
+      : (isOwner ? `<button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+            title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button>` : '');
+    return `<div class="rc-card" data-id="${r.id}">
+      <div class="rc-head"><span class="rc-date">${fmtDate(r.receipt_date)}${r.notified ? ' 🔔' : ''}</span>
+        <span class="rc-sum">${fmtSum(r.total_sum)}</span></div>
+      <div class="rc-ids">ФН ${r.fn} · ФД ${r.fd} · ФП ${r.fp}</div>
+      <div class="rc-chips">${chip(r.status)} ${chip(r.fns_status)} ${detailsMark}
+        ${r.exported ? '<span class="chip exported"><span class="dot"></span>1С</span>' : ''}</div>
+      ${acc ? `<div class="rc-meta">👤 ${r.assignee ? esc(r.assignee) : '—'} · ＋ ${esc(r.created_by_name || r.created_by || '—')}${r.company_id ? ' ' + companyChip(r.company_id) : ''}</div>` : ''}
+      <div class="rc-actions">${act}</div>
+    </div>`;
   }
 
   // v1.7.0: счётчик выбора в пользовательском тулбаре
@@ -5717,6 +5762,28 @@ async function viewReceipts(container) {
       state.receiptsSelected.clear();
       toast('Удаление выполнено', 'ok');
       load();
+    };
+  }
+
+  // v1.58.2: переключатель «Список / Карточки» (выбор запоминается)
+  const segL = $('#rc-view-list'), segC = $('#rc-view-cards');
+  if (segL && segC) {
+    try { state.receiptsView = localStorage.getItem('ym_rc_view') || 'list'; }
+    catch (e) { state.receiptsView = 'list'; }
+    const paintSeg = () => {
+      segL.classList.toggle('active', state.receiptsView === 'list');
+      segC.classList.toggle('active', state.receiptsView === 'cards');
+    };
+    paintSeg();
+    segL.onclick = () => {
+      state.receiptsView = 'list';
+      try { localStorage.setItem('ym_rc_view', 'list'); } catch (e) {}
+      paintSeg(); load();
+    };
+    segC.onclick = () => {
+      state.receiptsView = 'cards';
+      try { localStorage.setItem('ym_rc_view', 'cards'); } catch (e) {}
+      paintSeg(); load();
     };
   }
 
