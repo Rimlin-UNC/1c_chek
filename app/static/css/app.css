@@ -1587,3 +1587,12 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   padding:10px 14px; margin:0 0 12px; border-radius:12px; background:#fff7ed;
   border:1px solid #fdba74; color:#7c2d12; font-size:13.5px; }
 .pool-off-banner span { flex:1 1 260px; min-width:220px; }
+
+/* --- v1.59.2: прокрутка гостевых страниц ------------------------------ */
+/* body каркаса приложения имеет overflow:hidden (скроллит внутренний
+   .content). Гостевые экраны (.login-screen: вход, «Сдать чек», кабинет)
+   растут по контенту и сами не переполняются — длинные страницы нельзя
+   было листать. Пока showScreen показывает не-app-shell, body получает
+   класс guest-scroll и страница прокручивается целиком (v1.55.1). */
+body.guest-scroll { height: auto; min-height: 100%;
+  overflow: visible; overflow-x: hidden; }

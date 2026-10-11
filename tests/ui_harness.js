@@ -478,6 +478,15 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      && !!pubScr.classList.contains('hidden') && !!poolScr.classList.contains('hidden'),
      'v1.59.1: showLogin прячет гостевые страницы');
 
+  // --- v1.59.2: гостевые страницы прокручиваются (класс на body) ---
+  sandbox.showPublicScreen();
+  ok(!!document.body.classList.contains('guest-scroll'),
+     'v1.59.2: на гостевом экране body допускает прокрутку страницы');
+  sandbox.showScreen('app-shell');
+  ok(!document.body.classList.contains('guest-scroll'),
+     'v1.59.2: в приложении прокрутка внутренняя (класс снят)');
+  sandbox.showLogin();                       // вернуть гостевой экран
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);
