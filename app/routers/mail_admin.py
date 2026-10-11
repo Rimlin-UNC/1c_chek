@@ -54,9 +54,12 @@ def get_config(db: Session = Depends(get_db),
                            MailLog.created_at >= month_edge).count())
     return {
         # SMTP (те же ключи, что использует кабинет пула)
-        "host": g(db, mailer.SET_SMTP_HOST), "port": g(db, mailer.SET_SMTP_PORT, "587"),
-        "user": g(db, mailer.SET_SMTP_USER), "has_password": bool(g(db, "smtp_pass")),
-        "sender": g(db, mailer.SET_SMTP_FROM) or "chek@chek.ymaster.ru",
+        # v1.58.4: дефолты из docs/knowledge/mail_timeweb.md — только пароль
+        "host": g(db, mailer.SET_SMTP_HOST) or "smtp.timeweb.ru",
+        "port": g(db, mailer.SET_SMTP_PORT, "465"),
+        "user": g(db, mailer.SET_SMTP_USER) or "chek@ymaster.ru",
+        "has_password": bool(g(db, "smtp_pass")),
+        "sender": g(db, mailer.SET_SMTP_FROM) or "chek@ymaster.ru",
         "tls": g(db, mailer.SET_SMTP_TLS, "1") == "1",
         "base_url": g(db, mailer.SET_BASE_URL),
         "configured": mailer.smtp_configured(db),

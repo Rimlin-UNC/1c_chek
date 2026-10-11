@@ -332,11 +332,16 @@ def get_smtp(db: Session = Depends(get_db), admin: User = Depends(require_admin)
     from ..services import appsettings
     from .mailer import SET_BASE_URL, SET_SMTP_FROM, SET_SMTP_HOST, SET_SMTP_PORT, SET_SMTP_TLS, SET_SMTP_USER
     g = appsettings.get_setting
+    # v1.58.4: значения по умолчанию из docs/knowledge/mail_timeweb.md —
+    # админу достаточно ввести пароль ящика chek@ymaster.ru и сохранить
     return {
-        "host": g(db, SET_SMTP_HOST), "port": g(db, SET_SMTP_PORT, "587"),
-        "user": g(db, SET_SMTP_USER), "has_password": bool(g(db, "smtp_pass")),
-        "sender": g(db, SET_SMTP_FROM), "tls": g(db, SET_SMTP_TLS, "1") == "1",
-        "base_url": g(db, SET_BASE_URL),
+        "host": g(db, SET_SMTP_HOST) or "smtp.timeweb.ru",
+        "port": g(db, SET_SMTP_PORT, "465"),
+        "user": g(db, SET_SMTP_USER) or "chek@ymaster.ru",
+        "has_password": bool(g(db, "smtp_pass")),
+        "sender": g(db, SET_SMTP_FROM) or "chek@ymaster.ru",
+        "tls": g(db, SET_SMTP_TLS, "1") == "1",
+        "base_url": g(db, SET_BASE_URL) or "https://chek.ymaster.ru",
         "configured": bool(g(db, SET_SMTP_HOST).strip()),
     }
 

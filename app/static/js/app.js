@@ -4690,6 +4690,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.58.4': [
+    { icon: '✉️', title: 'Почта кабинета: сервер и ящик подставлены — введите только пароль',
+      text: 'В Почтовом центре уже заполнены SMTP-сервер (smtp.timeweb.ru), порт 465 (SSL), логин и адрес отправителя chek@ymaster.ru. Достаточно ввести пароль ящика, нажать «Сохранить» и отправить тестовое письмо. Значения — из нашей инструкции mail_timeweb.md; смените пароль в панели mail.timeweb.com и обновите его здесь.' },
+  ],
   '1.58.3': [
     { icon: '🟠', title: 'Фирменный оранжевый у всех кнопок + время сервера по МСК',
       text: 'Все кнопки программы теперь в корпоративном оранжевом: основные — оранжевый градиент, обычные — мягкая оранжевая подложка (успех — зелёный, удаление — красный, по смыслу). deploy.sh переводит системные часы сервера в МСК — журнал целиком по московскому времени. Переключатель «Список / Карточки» закреплён автотестом с живыми кликами.' },
@@ -7301,22 +7305,22 @@ async function viewSettings(container) {
           <span class="form-hint">письма кабинета · бот рассылок (v1.44.0)</span></div>
         <div class="form-grid" style="margin:8px 0">
           <label class="field"><span>SMTP-сервер</span>
-            <input id="mc-host" placeholder="mail.chek.ymaster.ru" value=""></label>
+            <input id="mc-host" placeholder="smtp.timeweb.ru" value=""></label>
           <label class="field"><span>Порт</span>
-            <input id="mc-port" type="number" value="587" style="max-width:110px"></label>
+            <input id="mc-port" type="number" value="465" style="max-width:110px"></label>
           <label class="field"><span>Логин ящика</span>
-            <input id="mc-user" placeholder="chek@chek.ymaster.ru" value=""></label>
+            <input id="mc-user" placeholder="chek@ymaster.ru" value=""></label>
           <label class="field"><span>Пароль ящика</span>
             <input id="mc-pass" type="password" placeholder="задан — оставьте пустым"></label>
           <label class="field"><span>Ящик отправителя (From)</span>
-            <input id="mc-sender" placeholder="chek@chek.ymaster.ru" value=""></label>
+            <input id="mc-sender" placeholder="chek@ymaster.ru" value=""></label>
           <label class="field"><span>Имя отправителя</span>
             <input id="mc-fromname" placeholder="Чек-Пул Ямастер" value=""></label>
           <label class="field"><span>Адрес сайта для ссылок в письмах</span>
             <input id="mc-baseurl" placeholder="https://chek.ymaster.ru" value=""></label>
           <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
             <input type="checkbox" id="mc-tls" style="width:auto">
-            <span>STARTTLS (обычно включён)</span></label>
+            <span>STARTTLS (для порта 465 не важен — SSL с первого байта)</span></label>
         </div>
         <div class="form-grid" style="margin:8px 0">
           <label class="field"><span>Приветствие (переменная {name})</span>
@@ -7482,7 +7486,7 @@ async function viewSettings(container) {
         ${smtpSet ? `
         <div class="card-title" style="margin-top:14px;font-size:15px">✉️ Почта кабинета <span class="form-hint">(v1.32.0: подтверждение e-mail, вход по ссылке)</span></div>
         <div class="form-grid">
-          <label class="field"><span>SMTP-хост</span><input id="pool-smtp-host" value="${esc(smtpSet.host)}" placeholder="smtp.yandex.ru"></label>
+          <label class="field"><span>SMTP-хост</span><input id="pool-smtp-host" value="${esc(smtpSet.host)}" placeholder="smtp.timeweb.ru"></label>
           <label class="field"><span>Порт</span><input id="pool-smtp-port" value="${esc(smtpSet.port)}"></label>
           <label class="field"><span>Логин</span><input id="pool-smtp-user" value="${esc(smtpSet.user)}"></label>
           <label class="field"><span>Пароль</span><input id="pool-smtp-pass" type="password" placeholder="${smtpSet.has_password ? 'задан — пусто = не менять' : 'пароль SMTP'}"></label>
@@ -8443,7 +8447,7 @@ async function bindMailCenter() {
   try { cfg = await api.get('/api/v1/mail-admin/config'); }
   catch (e) { $m('mc-rules').textContent = e.message || 'Ошибка загрузки'; return; }
   $m('mc-host').value = cfg.host || '';
-  $m('mc-port').value = cfg.port || 587;
+  $m('mc-port').value = cfg.port || 465;
   $m('mc-user').value = cfg.user || '';
   $m('mc-sender').value = cfg.sender || '';
   $m('mc-fromname').value = cfg.from_name || '';
