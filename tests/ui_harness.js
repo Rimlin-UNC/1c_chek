@@ -394,6 +394,22 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('данных не хватает — можно запросить'),
      'v1.25.2: подписи фильтра «Данные чека»');
 
+  // --- v1.58.3: переключатель «Список / Карточки» работает ---
+  const vsegC = _docQ['#rc-view-cards'];
+  ok(!!vsegC && typeof vsegC.onclick === 'function',
+     'чеки: переключатель вида на странице и привязан');
+  if (vsegC && typeof vsegC.onclick === 'function') {
+    await vsegC.onclick();
+    await new Promise(r => setTimeout(r, 40));
+    ok(table().innerHTML.includes('rc-cards') &&
+       table().innerHTML.includes('rc-actions'),
+       'чеки: режим «Карточки» — действия внизу карточки');
+    const vsegL = _docQ['#rc-view-list'];
+    await vsegL.onclick();
+    await new Promise(r => setTimeout(r, 40));
+    ok(table().innerHTML.includes('<table'), 'чеки: возврат в режим «Список»');
+  }
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

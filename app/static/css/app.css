@@ -21,6 +21,8 @@
   --text-dim: #5c5c5c;
   --text-faint: #6b6b6b;
   --accent: #ff7a00;                   /* корпоративный оранжевый #FF7A00 */
+  --accent-soft: #fff1e3;              /* v1.58.3: мягкая оранжевая подложка кнопок */
+  --accent-text: #9a4a00;              /* v1.58.3: тёмно-оранжевый текст кнопок */
   --accent-2: #4b0082;
   --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
   --ok: #2e8b57;                       /* морская зелень #2E8B57 — успех */
@@ -104,15 +106,15 @@ a:hover { text-decoration: underline; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 10px 18px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--panel-strong); color: var(--text);
+  border: 1px solid rgba(255, 122, 0, 0.45);
+  background: var(--accent-soft); color: var(--accent-text);
   font: inherit; font-weight: 600; cursor: pointer;
   transition: transform var(--speed), background var(--speed), border-color var(--speed), box-shadow var(--speed);
   user-select: none;
   /* v1.58.2: длинные подписи переносятся — текст не выходит за границы */
   white-space: normal; overflow-wrap: anywhere; max-width: 100%; text-align: center;
 }
-.btn:hover { transform: translateY(-1px); border-color: var(--hover-border); background: var(--hover-bg); }
+.btn:hover { transform: translateY(-1px); border-color: var(--accent); background: #ffe4c9; }
 .btn:active { transform: translateY(0); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .btn-primary {
@@ -120,9 +122,9 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 8px 24px -8px rgba(255,122,0,.5);
 }
 .btn-primary:hover { background: var(--grad); filter: brightness(1.12); box-shadow: 0 10px 28px -8px rgba(255,122,0,.6); }
-.btn-ok { border-color: rgba(52,211,153,.4); color: var(--ok); }
+.btn-ok { border-color: rgba(52,211,153,.4); color: var(--ok); background: #eaf7f1; }
 .btn-ok:hover { background: rgba(52,211,153,.12); border-color: var(--ok); }
-.btn-bad { border-color: rgba(248,113,113,.4); color: var(--bad); }
+.btn-bad { border-color: rgba(248,113,113,.4); color: var(--bad); background: #fdeeec; }
 .btn-bad:hover { background: rgba(248,113,113,.12); border-color: var(--bad); }
 .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
 .btn-block { width: 100%; }
@@ -132,7 +134,7 @@ a:hover { text-decoration: underline; }
   transition: background var(--speed), color var(--speed);
   display: inline-flex; align-items: center; justify-content: center;
 }
-.btn-icon:hover { background: var(--panel-strong); color: var(--text); }
+.btn-icon:hover { background: var(--accent-soft); color: var(--accent); }
 
 /* v1.56.1: гибкие изображения — не выходят за контейнер, без искажений;
    display:block убирает «щель» под inline-картинками. Центрируемые

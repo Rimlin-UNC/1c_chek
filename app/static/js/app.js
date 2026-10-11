@@ -4690,6 +4690,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.58.3': [
+    { icon: '🟠', title: 'Фирменный оранжевый у всех кнопок + время сервера по МСК',
+      text: 'Все кнопки программы теперь в корпоративном оранжевом: основные — оранжевый градиент, обычные — мягкая оранжевая подложка (успех — зелёный, удаление — красный, по смыслу). deploy.sh переводит системные часы сервера в МСК — журнал целиком по московскому времени. Переключатель «Список / Карточки» закреплён автотестом с живыми кликами.' },
+  ],
   '1.58.2': [
     { icon: '🗂', title: 'Чеки: список или карточки — как вам удобнее',
       text: 'На странице «Чеки» появился переключатель «📋 Список / 🗂 Карточки» (выбор запоминается). В карточках кнопки «📥 Данные» и «✏️ Заполнить» — внизу карточки, всегда на виду. Текст кнопок больше не выходит за границы («Добавить правило» и аналоги), основные кнопки на «Компаниях» — фирменные оранжевые. Журнал и программа теперь строго по Московскому времени (UTC+3).' },
@@ -5775,16 +5779,16 @@ async function viewReceipts(container) {
       segC.classList.toggle('active', state.receiptsView === 'cards');
     };
     paintSeg();
-    segL.onclick = () => {
-      state.receiptsView = 'list';
-      try { localStorage.setItem('ym_rc_view', 'list'); } catch (e) {}
-      paintSeg(); load();
+    const switchView = (v) => {
+      if (state.receiptsView === v) return;
+      state.receiptsView = v;
+      try { localStorage.setItem('ym_rc_view', v); } catch (e) {}
+      paintSeg();
+      viewReceipts._sig = undefined;   // v1.58.3: guard «данные не менялись»
+      load();                          // сброшен — вид обязан перерисоваться
     };
-    segC.onclick = () => {
-      state.receiptsView = 'cards';
-      try { localStorage.setItem('ym_rc_view', 'cards'); } catch (e) {}
-      paintSeg(); load();
-    };
+    segL.onclick = () => switchView('list');
+    segC.onclick = () => switchView('cards');
   }
 
   // --- v1.2.0: действия в строках чеков (делегирование) ---

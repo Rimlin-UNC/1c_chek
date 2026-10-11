@@ -191,6 +191,14 @@ apt-get install -y -qq python3 python3-venv python3-pip git curl sqlite3 \
     nginx ufw fail2ban >/dev/null
 ok "python3, git, nginx, ufw, fail2ban"
 
+# v1.58.3: программа работает по Московскому времени — системные часы
+# тоже переводим (иначе префикс journalctl идёт по UTC, а не по МСК)
+if command -v timedatectl >/dev/null 2>&1; then
+  timedatectl set-timezone Europe/Moscow 2>/dev/null \
+    || warn "не удалось сменить часовой пояс (не критично)"
+  ok "часовой пояс сервера: Europe/Moscow (МСК)"
+fi
+
 # ------------------------------------------------------------------
 bold "2/9 Пользователь и каталог"
 id -u "$APP_USER" &>/dev/null || useradd --system --create-home --shell /bin/bash "$APP_USER"
