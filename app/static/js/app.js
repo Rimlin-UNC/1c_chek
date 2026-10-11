@@ -200,10 +200,22 @@ function bindLanding() {
   }
 }
 
+// v1.59.1: единый переключатель пяти верхних экранов. Раньше
+// showPublicScreen и showPoolScreen заполняли #public-root /
+// #pool-account-root, но обёртки #public-screen / #pool-account-screen
+// оставались с классом hidden из вёрстки — гость видел ПУСТУЮ страницу
+// вместо «Сдать чек в Чек-Пул» и кабинета. Теперь каждый показ экрана
+// одновременно прячет все остальные — рассинхрон невозможен.
+function showScreen(...ids) {
+  for (const id of ['login-screen', 'register-screen', 'public-screen',
+                    'pool-account-screen', 'app-shell']) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !ids.includes(id));
+  }
+}
+
 function showLogin() {
-  $('#register-screen').classList.add('hidden');
-  $('#login-screen').classList.remove('hidden');
-  $('#app-shell').classList.add('hidden');
+  showScreen('login-screen');             // v1.59.1: единый переключатель
   bindLanding();                            // v1.54.0: лендинг на главной
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   const form = $('#login-form');
@@ -817,9 +829,7 @@ function bindPoolForm(root, opts) {
 }
 
 function showPublicScreen() {
-  $('#register-screen').classList.add('hidden');
-  $('#login-screen').classList.add('hidden');
-  $('#app-shell').classList.add('hidden');
+  showScreen('public-screen');          // v1.59.1: раньше обёртка оставалась скрытой
   const root = $('#public-root');
   root.innerHTML = publicFormHTML();
   const back = document.getElementById('public-to-login');
@@ -1744,9 +1754,7 @@ function bindPoolAccount(root) {
 }
 
 function showPoolScreen() {
-  $('#register-screen').classList.add('hidden');
-  $('#login-screen').classList.add('hidden');
-  $('#app-shell').classList.add('hidden');
+  showScreen('pool-account-screen');    // v1.59.1: обёртка показывается
   const root = $('#pool-account-root');
   root.innerHTML = pGet() ? poolDashHTML() : poolAuthHTML();
   const back = document.getElementById('pool-to-login');
@@ -2320,9 +2328,7 @@ async function fraudLoadGraph(box) {
 //  Регистрация по приглашению
 // --------------------------------------------------------------------------
 async function showRegister(token) {
-  $('#login-screen').classList.add('hidden');
-  $('#app-shell').classList.add('hidden');
-  $('#register-screen').classList.remove('hidden');
+  showScreen('register-screen');          // v1.59.1: единый переключатель
   // Всегда есть выход на обычный вход (приглашение может оказаться недействительным)
   const back = document.getElementById('reg-back-to-login');
   if (back) back.onclick = (e) => { e.preventDefault(); history.replaceState(null, '', location.pathname); showLogin(); };
@@ -2378,9 +2384,7 @@ async function showRegister(token) {
 //  Оболочка приложения
 // --------------------------------------------------------------------------
 function enterApp() {
-  $('#login-screen').classList.add('hidden');
-  $('#register-screen').classList.add('hidden');
-  $('#app-shell').classList.remove('hidden');
+  showScreen('app-shell');                  // v1.59.1: единый переключатель
   $('#user-name').textContent = state.me.full_name || state.me.username;
   $('#user-role').textContent = roleLabel(state.me.role);
   $('#user-avatar').textContent = (state.me.full_name || state.me.username)[0].toUpperCase();
@@ -4761,6 +4765,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.59.1': [
+    { icon: '🔗', title: '«Сдать чек» и кабинет по ссылкам снова открываются',
+      text: 'Исправили пустую страницу по ссылке «Сдать чек в Чек-Пул — без входа в систему»: форма сдачи не была видна из-за скрытой обёртки страницы (та же беда была у кабинета участника #/my). Теперь все гостевые страницы открываются: сдать чек камерой, фото, вставкой строки или вручную — и посмотреть свои чеки в кабинете.' },
+  ],
   '1.59.0': [
     { icon: '🟢', title: '«Сдать чек» снова работает: приём чеков включается сам',
       text: 'Разобрались, почему сдача чека не работала: приём в Чек-Пул был выключен настройкой. Теперь при обновлении приём включается автоматически (однократно; если выключите в админке — назад включаться не будет). Три пути сдачи — камера, вставка строки QR, ручной ввод — сходятся в одну и ту же строку и один конвейер: чек сохраняется в базе Чек-Пула, проверяется по официальным источникам, донор получает балл и может посмотреть свой чек. Если приём на паузе — лендинг и форма честно об этом говорят, камера не открывается зря, набранная строка не теряется, а администратор видит плашку с включением одной кнопкой.' },

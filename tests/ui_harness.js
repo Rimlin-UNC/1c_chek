@@ -22,7 +22,13 @@ class El {
       _s: new Set(),
       add: (...c) => c.forEach(x => this.classList._s.add(x)),
       remove: (...c) => c.forEach(x => this.classList._s.delete(x)),
-      toggle: (c) => this.classList._s.has(c) ? this.classList._s.delete(c) : this.classList._s.add(c),
+      toggle: (c, force) => {
+        // v1.59.1: второй аргумент force — как в живом DOM (нужен showScreen)
+        const _has = this.classList._s.has(c);
+        const _want = (force === undefined) ? !_has : !!force;
+        if (_want) this.classList._s.add(c); else this.classList._s.delete(c);
+        return _want;
+      },
       contains: (c) => this.classList._s.has(c),
     };
   }
@@ -450,6 +456,27 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     await new Promise(r => setTimeout(r, 40));
     ok(table().innerHTML.includes('<table'), 'чеки: возврат в режим «Список»');
   }
+
+  // --- v1.59.1: гостевые страницы Чек-Пула видимы (регресс пустой страницы) ---
+  sandbox.showPublicScreen();
+  const pubScr = document.getElementById('public-screen');
+  ok(!!pubScr && !pubScr.classList.contains('hidden'),
+     'v1.59.1: showPublicScreen показывает обёртку #public-screen');
+  ok(document.getElementById('login-screen').classList.contains('hidden'),
+     'v1.59.1: showPublicScreen прячет экран входа (переключатель работает)');
+  ok((_docQ['#public-root'] || document.getElementById('public-root'))
+     .innerHTML.includes('pub-qr'),
+     'v1.59.1: форма сдачи чека в DOM (pub-qr)');
+  sandbox.showPoolScreen();
+  const poolScr = document.getElementById('pool-account-screen');
+  ok(!!poolScr && !poolScr.classList.contains('hidden'),
+     'v1.59.1: showPoolScreen показывает обёртку #pool-account-screen');
+  ok(!!pubScr.classList.contains('hidden'),
+     'v1.59.1: кабинет прячет страницу сдачи');
+  sandbox.showLogin();
+  ok(!document.getElementById('login-screen').classList.contains('hidden')
+     && !!pubScr.classList.contains('hidden') && !!poolScr.classList.contains('hidden'),
+     'v1.59.1: showLogin прячет гостевые страницы');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
