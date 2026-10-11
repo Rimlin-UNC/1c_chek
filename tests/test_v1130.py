@@ -7,8 +7,19 @@
 import itertools
 import shutil
 import subprocess
+import os
+
+
+def worker_bundle_path():
+    """Уникальный путь бандла на воркер pytest-xdist (параллельный прогон)."""
+    w = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    return f"/tmp/ymaster_ui_bundle_{w}.js"
+
+
+
 
 from tests.conftest import login
+from tests.test_v1121 import worker_bundle_path
 
 _SEQ = itertools.count(900, 10)
 
@@ -253,9 +264,9 @@ class TestUiHarnessV1130:
             import pytest
             pytest.skip("node недоступен")
         from tests.test_v1121 import _build_bundle
-        open("/tmp/ymaster_ui_bundle.js", "w", encoding="utf-8").write(
+        open(worker_bundle_path(), "w", encoding="utf-8").write(
             _build_bundle())
-        r = subprocess.run(["node", "tests/ui_harness.js"],
+        r = subprocess.run(["node", "tests/ui_harness.js", worker_bundle_path()],
                            capture_output=True, text=True, timeout=120,
                            cwd=".")
         out = (r.stdout + r.stderr)

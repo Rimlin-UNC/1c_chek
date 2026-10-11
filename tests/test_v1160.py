@@ -7,6 +7,7 @@
 # ======================================================================
 import itertools
 import os
+import pytest
 import re
 import subprocess
 
@@ -64,6 +65,22 @@ class TestUpdaterSelfHeal:
 
 
 class TestTelegramSettings:
+    @pytest.fixture(autouse=True)
+    def _no_tg_token(self):
+        """v1.58.5: тест проверяет has_token=False — убираем токен,
+        который параллельные соседние файлы могли оставить в базе."""
+        from app.database import SessionLocal
+        from app.models import AppSetting
+        s = SessionLocal()
+        try:
+            row = s.get(AppSetting, "telegram_bot_token")
+            if row:
+                s.delete(row)
+                s.commit()
+        finally:
+            s.close()
+        yield
+
     def test_roundtrip_and_secret(self, client):
         hdr = login(client, "admin", "admin123")
         r = client.get("/api/v1/settings/telegram", headers=hdr)

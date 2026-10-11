@@ -20,6 +20,15 @@ MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js",
            "printpack.js", "api.js", "app.js"]
 
 
+import os
+
+
+def worker_bundle_path():
+    """Уникальный путь бандла на воркер pytest-xdist (параллельный прогон)."""
+    w = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    return f"/tmp/ymaster_ui_bundle_{w}.js"
+
+
 def _build_bundle() -> str:
     parts = []
     for name in MODULES:
@@ -38,12 +47,12 @@ class TestUiBundleParses:
     def test_full_bundle_parses(self):
         """ВЕСЬ клиентский код обязан парситься целиком: одна синтаксическая
         ошибка в любом модуле = приложение не открывается вовсе."""
-        open("/tmp/ymaster_ui_bundle.js", "w", encoding="utf-8").write(
+        open(worker_bundle_path(), "w", encoding="utf-8").write(
             _build_bundle())
         r = subprocess.run(
             ["node", "-e",
              "new (require('vm').Script)(require('fs').readFileSync("
-             "'/tmp/ymaster_ui_bundle.js','utf8')); console.log('PARSE_OK')"],
+             f"'{worker_bundle_path()}','utf8')); console.log('PARSE_OK')"],
             capture_output=True, text=True, timeout=60)
         assert r.returncode == 0, (r.stdout + r.stderr)[:2000]
         assert "PARSE_OK" in r.stdout

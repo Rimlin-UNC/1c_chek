@@ -85,6 +85,22 @@ def _wipe(db):
             db.query(PoolWithdrawal).delete(synchronize_session=False)
             db.query(PoolReferral).delete(synchronize_session=False)
             db.query(PoolConsent).delete(synchronize_session=False)
+            # v1.58.5: ip-лог, сигналы, токены и фингерпринты держат FK
+            # на pool_users — без их очистки изолированный прогон падает
+            from app.pool.models import (PoolFingerprint, PoolIpLog,
+                                         PoolSignal, PoolToken)
+            db.query(PoolToken).filter(
+                PoolToken.user_id.in_(vid_ids)).delete(
+                synchronize_session=False)
+            db.query(PoolFingerprint).filter(
+                PoolFingerprint.user_id.in_(vid_ids)).delete(
+                synchronize_session=False)
+            db.query(PoolIpLog).filter(
+                PoolIpLog.user_id.in_(vid_ids)).delete(
+                synchronize_session=False)
+            db.query(PoolSignal).filter(
+                PoolSignal.user_id.in_(vid_ids)).delete(
+                synchronize_session=False)
             db.query(PoolUser).filter(PoolUser.vid.isnot(None)).delete(
                 synchronize_session=False)
             _enable(db, False)
@@ -326,6 +342,16 @@ class TestWebIntegration:
                 synchronize_session=False)
             db2.query(PoolPoint).filter_by(user_id=u.id).delete(
                 synchronize_session=False)
+            # v1.58.5: антифрод и вовлечение создают на юзера токен/
+            # фингерпринт/ip-лог/сигнал/ачивку/согласие — чистим,
+            # иначе FK не даст удалить юзера
+            from app.pool.models import (PoolAchievement, PoolConsent,
+                                         PoolFingerprint, PoolIpLog,
+                                         PoolSignal, PoolToken)
+            for _m in (PoolToken, PoolFingerprint, PoolIpLog, PoolSignal,
+                       PoolAchievement, PoolConsent):
+                db2.query(_m).filter_by(user_id=u.id).delete(
+                    synchronize_session=False)
             db2.delete(u)
             db2.commit()
         finally:

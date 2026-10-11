@@ -6,6 +6,17 @@
 # ООО «Ямастер» | ymaster.ru | info@ymaster.ru
 # ======================================================================
 import re
+import os
+
+
+def worker_bundle_path():
+    """Уникальный путь бандла на воркер pytest-xdist (параллельный прогон)."""
+    w = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    return f"/tmp/ymaster_ui_bundle_{w}.js"
+
+
+from tests.test_v1121 import worker_bundle_path
+
 
 
 class TestVersion1583:
@@ -108,10 +119,10 @@ class TestToggleLockedByHarness:
         # бандл строится из ТЕКУЩЕГО app.js (как в test_v1130)
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from tests.test_v1121 import _build_bundle
-        open("/tmp/ymaster_ui_bundle.js", "w", encoding="utf-8").write(
+        open(worker_bundle_path(), "w", encoding="utf-8").write(
             _build_bundle())
         r = subprocess.run(
-            ["node", "tests/ui_harness.js"],
+            ["node", "tests/ui_harness.js", worker_bundle_path()],
             capture_output=True, text=True, timeout=120,
             cwd=str(Path(__file__).resolve().parent.parent))
         assert r.returncode == 0, (r.stdout + r.stderr)[-1500:]

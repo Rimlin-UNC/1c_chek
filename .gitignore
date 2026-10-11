@@ -22,3 +22,6 @@ logs/
 dist/
 build/
 node_modules/
+
+# v1.58.5: локальные базы среды разработки/превью — в git не нужны
+preview.db*

@@ -5,6 +5,7 @@
 # вводит только пароль.
 # ООО «Ямастер» | ymaster.ru | info@ymaster.ru
 # ======================================================================
+import pytest
 import re
 
 
@@ -44,6 +45,23 @@ class TestVersion1584:
 
 class TestMailDefaults:
     """GET-эндпоинты возвращают реквизиты mail_timeweb.md по умолчанию."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_mail_defaults(self):
+        """v1.58.5: перед тестом — пустые SMTP-настройки (только тогда
+        эндпоинты обязаны вернуть значения по умолчанию); при параллельном
+        прогоне соседние тест-файлы могут оставлять свои настройки."""
+        from app.database import SessionLocal
+        from app.services import appsettings
+        db = SessionLocal()
+        try:
+            for _k in ("smtp_host", "smtp_port", "smtp_user", "smtp_from",
+                       "smtp_pass", "proverkacheka_token"):
+                appsettings.set_setting(db, _k, "")
+            db.commit()
+        finally:
+            db.close()
+        yield
 
     def test_pool_smtp_defaults(self, client):
         hdr = _login(client)

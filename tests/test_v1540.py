@@ -4,6 +4,7 @@
 # разбор на e-mail) при полностью сохранённом входе в программу.
 # ООО «Ямастер» | ymaster.ru | info@ymaster.ru
 # ======================================================================
+import pytest
 import re
 
 
@@ -132,6 +133,22 @@ class TestLeadsApi:
 
 
 class TestReceiptEmailApi:
+    @pytest.fixture(autouse=True)
+    def _no_smtp(self):
+        """v1.58.5: тест про «почта не настроена» обязан сам гарантировать
+        пустой SMTP (в параллельном прогоне соседние файлы оставляют
+        настройки в базе воркера)."""
+        from app.database import SessionLocal
+        from app.services import appsettings
+        db = SessionLocal()
+        try:
+            for _k in ("smtp_host", "smtp_user", "smtp_pass"):
+                appsettings.set_setting(db, _k, "")
+            db.commit()
+        finally:
+            db.close()
+        yield
+
     def test_receipt_email_no_smtp_503(self, client):
         r = client.post("/api/v1/public/pool/receipt-email", json={
             "fn": "1234567890123456", "email": "a@mail.ru", "hp": ""})

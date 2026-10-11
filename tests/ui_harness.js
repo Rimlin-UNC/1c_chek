@@ -158,7 +158,8 @@ const receiptsPayload = {
   items: [
     { id: 'r1', receipt_date: '2026-10-05T12:00', total_sum: 100.0, fn: '9999078902001299',
       fd: '11', fp: '111', operation: 1, status: 'new', fns_status: 'unknown',
-      exported: false, notified: false, full_data: false, assignee: 'Иван Отчётный',
+      exported: false, notified: false, full_data: false,
+      assignee: '<script>alert(1)</script>',   // v1.58.5: XSS-проба
       created_by_id: 'u2', created_by_name: 'Иванов И.', category: 'Хозрасходы' },
     { id: 'r2', receipt_date: '2026-10-06T13:00', total_sum: 250.5, fn: '9999078902001307',
       fd: '12', fp: '222', operation: 1, status: 'verified', fns_status: 'valid',
@@ -213,7 +214,9 @@ sandbox.fetch = async (url, opts) => {
 };
 
 vm.createContext(sandbox);
-const bundle = fs.readFileSync('/tmp/ymaster_ui_bundle.js', 'utf8');
+// v1.58.5: путь бандла — аргумент (уникален на воркер xdist)
+const bundlePath = process.argv[2] || '/tmp/ymaster_ui_bundle.js';
+const bundle = fs.readFileSync(bundlePath, 'utf8');
 vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
 
 (async () => {
@@ -383,6 +386,21 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   await _docQ['#rc-retry'].onclick();
   await new Promise(r => setTimeout(r, 30));
   ok(table().innerHTML.includes('<table'), 'чеки: «Повторить» возвращает список');
+
+  // --- v1.58.5: XSS-экранирование и юнит-проверки хелперов ---
+  ok(!table().innerHTML.includes('<script>alert'),
+     'xss: присланное «<script>» не попало в DOM как тег');
+  ok(table().innerHTML.includes('&lt;script&gt;'),
+     'xss: присланное «<script>» экранировано (esc)');
+  ok(typeof sandbox.fmtSum === 'function' &&
+     sandbox.fmtSum(807.3) === '807,30 ₽',
+     'unit: fmtSum — рубли с двумя знаками');
+  ok(typeof sandbox.fmtDate === 'function' &&
+     sandbox.fmtDate('2026-10-08T13:05').includes('08.10.26'),
+     'unit: fmtDate — формат дд.мм.гг');
+  ok(typeof sandbox.esc === 'function' &&
+     sandbox.esc('<b>') === '&lt;b&gt;',
+     'unit: esc — экранирование HTML');
 
   // --- v1.57.5 (блок v1.25.1): у полученного чека значок «📥✓» ---
   ok(!receiptsPayload.items[1].full_data ? true : true, 'sanity full_data');  // r2: full
