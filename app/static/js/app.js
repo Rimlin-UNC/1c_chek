@@ -157,6 +157,11 @@ function bindLanding() {
   const stats = $('#land-stats');
   if (stats) {
     api.get('/api/v1/public/pool/info').then((info) => {
+      // v1.59.0: лендинг честен о состоянии — бейдж не обещает «уже
+      // работает», когда приём чеков выключен настройкой
+      const badge = $('#land-badge');
+      if (badge) badge.textContent = info.enabled
+        ? 'Чек-Пул уже работает' : 'Чек-Пул на паузе — приём скоро откроется';
       stats.innerHTML =
         `<span class="land-stat"><b>${fmtInt(info.receipts_total || 0)}</b><small>чеков в базе</small></span>` +
         `<span class="land-stat"><b>${fmtInt(info.verified || 0)}</b><small>проверено</small></span>` +
@@ -457,6 +462,16 @@ function openPoolCameraScan(onText) {
 // v1.52.0: ручной ввод реквизитов там же, где сканируют (резерв —
 // QR повреждён). Собирает стандартную строку QR — дальше работает
 // обычная проверка и отправка, ничего дублировать не нужно.
+// v1.59.0: единая сборка строки QR из реквизитов чека — ручной путь даёт
+// ровно ту же строку, что камера и вставка; формат совпадает с серверным
+// build_qr_string, строку парсит тот же parse_qr (юнит-тест синхронности)
+function buildManualQr(dateStr, sum, op, fn, fd, fp) {
+  const m = dateStr.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (!m) return '';
+  return `t=${m[3]}${m[2]}${m[1]}T${m[4]}${m[5]}&s=${sum.toFixed(2)}`
+    + `&fn=${fn}&i=${fd}&fp=${fp}&n=${op}`;
+}
+
 function poolManualDialog(onQr) {
   const { slot } = openModal(`
     <div class="modal-title">⌨ Ручной ввод реквизитов чека</div>
@@ -483,19 +498,47 @@ function poolManualDialog(onQr) {
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#pm-send').onclick = () => {
     const v = (id) => slot.querySelector(id).value.trim();
-    const m = v('#pm-date').match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
-    if (!m) { toast('Дата в формате 22.09.2025 14:30', 'err', 'Проверьте реквизиты'); return; }
     const fn = v('#pm-fn'), fd = v('#pm-fd'), fp = v('#pm-fp');
     if (!/^\d{8,20}$/.test(fn) || !/^\d{1,10}$/.test(fd) || !/^\d{1,10}$/.test(fp)) {
       toast('ФН — 8–20 цифр, ФД и ФП — только цифры', 'err', 'Проверьте реквизиты'); return;
     }
     const sum = parseFloat(v('#pm-sum').value.replace(',', '.'));
     if (!(sum > 0)) { toast('Укажите сумму чека', 'err', 'Проверьте реквизиты'); return; }
-    const qr = `t=${m[3]}${m[2]}${m[1]}T${m[4]}${m[5]}&s=${sum.toFixed(2)}`
-      + `&fn=${fn}&i=${fd}&fp=${fp}&n=${v('#pm-op')}`;
+    const qr = buildManualQr(v('#pm-date'), sum, v('#pm-op'), fn, fd, fp);
+    if (!qr) { toast('Дата в формате 22.09.2025 14:30', 'err', 'Проверьте реквизиты'); return; }
     $('#modal-root').classList.add('hidden');
     onQr(qr);
   };
+}
+
+// v1.59.0: выключенный приём чеков больше не «молчит» — админ видит
+// плашку прямо в программе и включает приём одной кнопкой (раньше флаг
+// был только в настройках, и пул мог быть выключен незаметно для всех —
+// именно так «Сдать чек» и «не работала»)
+function poolEnableBanner() {
+  if ($('#pool-off-banner')) return;
+  const shell = $('#app-shell');
+  if (!shell) return;
+  const bar = document.createElement('div');
+  bar.id = 'pool-off-banner';
+  bar.className = 'pool-off-banner';
+  bar.innerHTML = '<span>⏸ Приём чеков в Чек-Пул выключен — доноры не могут '
+    + 'сдать чек и посмотреть свои баллы.</span>'
+    + '<button class="btn btn-sm" id="pool-off-on">▶ Включить приём чеков</button>'
+    + '<button class="btn btn-sm" id="pool-off-hide" title="Скрыть до следующего входа">Не сейчас</button>';
+  if (typeof shell.insertBefore === 'function') shell.insertBefore(bar, shell.firstChild);
+  else shell.appendChild(bar);
+  const on = bar.querySelector('#pool-off-on'), hide = bar.querySelector('#pool-off-hide');
+  if (on) on.onclick = async () => {
+    try {
+      const r = await api.put('/api/v1/pool-admin/settings', { enabled: true });
+      state.poolEnabled = true;
+      $$('.pool-only').forEach(el => el.classList.remove('hidden'));
+      bar.remove();
+      toast(r.message || 'Приём чеков включён', 'ok', '🧩 Чек-Пул');
+    } catch (e) { toast(e.message, 'err', '🧩 Чек-Пул'); }
+  };
+  if (hide) hide.onclick = () => bar.remove();
 }
 
 function publicFormHTML() {
@@ -598,8 +641,11 @@ function bindPoolForm(root, opts) {
   });
   const camBtn = $p('pub-cam');
   if (camBtn) camBtn.onclick = camPick;
-  // v1.54.0: пришли с главной «Сканировать чек» — камера открывается сама
-  if (/[?&]cam=1/.test(location.hash || '')) setTimeout(camPick, 350);
+  // v1.54.0/v1.59.0: пришли с главной «Сканировать чек» — камера откроется
+  // сама, но только когда подтвердится, что приём включён (раньше была
+  // гонка: камера открывалась до ответа сервера, донор сканировал, а форма
+  // под ней заменялась «Приём выключен» — всё насмарку)
+  const camWanted = /[?&]cam=1/.test(location.hash || '');
   // v1.52.0: резервный ввод реквизитов (QR повреждён) — тот же конвейер
   const manBtn = $p('pub-manual');
   if (manBtn) manBtn.onclick = () => poolManualDialog((qr) => {
@@ -728,12 +774,35 @@ function bindPoolForm(root, opts) {
   }
 
   (async () => {
-    try {
-      const info = await api.get('/api/v1/public/pool/info');
-      if (!info.enabled) {
-        root.innerHTML = '<div class="info-callout">Приём чеков сейчас выключен — загляните позже.</div>';
-        return;
-      }
+    let info = null;
+    try { info = await api.get('/api/v1/public/pool/info'); }
+    catch (e) { /* сеть могла мигнуть — форма остаётся */ }
+    if (info && info.enabled === false) {
+      // v1.59.0: приём на паузе — больше не затираем форму целиком
+      // (донор не теряет отсканированную/вставленную строку QR): баннер
+      // поверх формы, отправка заблокирована, есть повторная проверка
+      const banner = document.createElement('div');
+      banner.className = 'info-callout';
+      banner.innerHTML = '⏸ <b>Приём чеков сейчас на паузе</b> — отправить чек '
+        + 'пока нельзя. Загляните позже или проверьте ещё раз.'
+        + '<br><button class="btn btn-sm" id="pub-retry" style="margin-top:8px">🔄 Проверить ещё раз</button>';
+      if (typeof root.insertBefore === 'function') root.insertBefore(banner, root.firstChild);
+      else root.appendChild(banner);
+      const sbm = $p('pub-submit');
+      if (sbm) { sbm.disabled = true; sbm.title = 'Приём чеков временно выключен'; }
+      const rb = banner.querySelector('#pub-retry');
+      if (rb) rb.onclick = async () => {
+        try {
+          const i2 = await api.get('/api/v1/public/pool/info');
+          if (i2 && i2.enabled) {
+            banner.remove();
+            if (sbm) { sbm.disabled = false; sbm.title = ''; }
+          }
+        } catch (e) { /* сеть мигнула — баннер остаётся */ }
+      };
+      return;                        // камера по ?cam=1 не открывается зря
+    }
+    if (info) {
       const box = $p('pub-info');
       if (box) box.innerHTML = `В пуле уже <b>${fmtInt(info.receipts_total)}</b> чеков, из них проверено
         <b>${fmtInt(info.verified)}</b>. 1 чек = ${info.points_per_receipt} балл ·
@@ -741,8 +810,9 @@ function bindPoolForm(root, opts) {
       const ot = $p('pub-offerta-text');
       if (ot) ot.textContent = info.offerta;
       poolLoadLeadersPub(root);          // v1.36.0: лидерборд месяца
-    } catch (e) { /* сеть могла мигнуть — форма остаётся */ }
+    }
     await loadMine();
+    if (camWanted) camPick();          // v1.59.0: камера — при включённом приёме
   })();
 }
 
@@ -2321,6 +2391,7 @@ function enterApp() {
   api.get('/api/v1/public/pool/info').then((info) => {
     state.poolEnabled = !!info.enabled;
     $$('.pool-only').forEach(el => el.classList.toggle('hidden', !state.poolEnabled));
+    if (!state.poolEnabled && isAdmin()) poolEnableBanner();   // v1.59.0
   }).catch(() => {});
   applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
@@ -4690,6 +4761,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.59.0': [
+    { icon: '🟢', title: '«Сдать чек» снова работает: приём чеков включается сам',
+      text: 'Разобрались, почему сдача чека не работала: приём в Чек-Пул был выключен настройкой. Теперь при обновлении приём включается автоматически (однократно; если выключите в админке — назад включаться не будет). Три пути сдачи — камера, вставка строки QR, ручной ввод — сходятся в одну и ту же строку и один конвейер: чек сохраняется в базе Чек-Пула, проверяется по официальным источникам, донор получает балл и может посмотреть свой чек. Если приём на паузе — лендинг и форма честно об этом говорят, камера не открывается зря, набранная строка не теряется, а администратор видит плашку с включением одной кнопкой.' },
+  ],
   '1.58.4': [
     { icon: '✉️', title: 'Почта кабинета: сервер и ящик подставлены — введите только пароль',
       text: 'В Почтовом центре уже заполнены SMTP-сервер (smtp.timeweb.ru), порт 465 (SSL), логин и адрес отправителя chek@ymaster.ru. Достаточно ввести пароль ящика, нажать «Сохранить» и отправить тестовое письмо. Значения — из нашей инструкции mail_timeweb.md; смените пароль в панели mail.timeweb.com и обновите его здесь.' },

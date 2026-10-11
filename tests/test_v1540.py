@@ -75,9 +75,11 @@ class TestLandingMarkup:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         # '#/public?cam=1' маршрутизируется как public
         assert "split('?')[0]" in js
-        # авто-открытие камеры по параметру
+        # авто-открытие камеры по параметру (v1.59.0: только при включённом
+        # приёме — гейт camWanted вместо мгновенного setTimeout)
         assert "/[?&]cam=1/.test(location.hash" in js
-        assert "setTimeout(camPick, 350)" in js
+        assert "const camWanted = /[?&]cam=1/.test(location.hash" in js
+        assert "if (camWanted) camPick();" in js
 
     def test_landing_bindings(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

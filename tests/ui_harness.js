@@ -402,6 +402,29 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      sandbox.esc('<b>') === '&lt;b&gt;',
      'unit: esc — экранирование HTML');
 
+  // --- v1.59.0: три пути сдачи чека дают одну и ту же строку QR ---
+  ok(typeof sandbox.buildManualQr === 'function',
+     'v1.59.0: buildManualQr доступен');
+  const mq = sandbox.buildManualQr('22.09.2025 14:30', 1500.5, '1',
+                                   '9999078902001234', '12345', '1234567890');
+  ok(mq === 't=20250922T1430&s=1500.50&fn=9999078902001234&i=12345'
+     + '&fp=1234567890&n=1',
+     'v1.59.0: ручной ввод собирает каноничную строку QR (как камера/вставка)');
+  ok(typeof sandbox.parseQrClient === 'function' && !!sandbox.parseQrClient(mq)
+     && sandbox.parseQrClient(mq).fn === '9999078902001234'
+     && sandbox.parseQrClient(mq).sum === '1500.50',
+     'v1.59.0: строка ручного ввода парсится клиентским парсером');
+  ok(sandbox.buildManualQr('некорректно', 100, '1', '1', '1', '1') === '',
+     'v1.59.0: buildManualQr защищён от неверной даты');
+  ok(bundle.includes('function poolEnableBanner')
+     && bundle.includes("bar.id = 'pool-off-banner'"),
+     'v1.59.0: плашка админу о выключенном приёме');
+  ok(bundle.includes('camWanted') && !bundle.includes('setTimeout(camPick'),
+     'v1.59.0: камера открывается только при включённом приёме (без гонки)');
+  ok(bundle.includes('pub-retry')
+     && bundle.includes('Приём чеков сейчас на паузе'),
+     'v1.59.0: пауза — баннер + повторная проверка вместо затирания формы');
+
   // --- v1.57.5 (блок v1.25.1): у полученного чека значок «📥✓» ---
   ok(!receiptsPayload.items[1].full_data ? true : true, 'sanity full_data');  // r2: full
   ok(bundle.includes('📥✓') && !bundle.includes("r.full_data ? '' :"),

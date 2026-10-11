@@ -157,7 +157,16 @@ class TestPublicCheck:
     def test_info_endpoint(self):
         c = _client()
         info = c.get("/api/v1/public/pool/info").json()
-        assert info["enabled"] is False
+        # v1.59.0: приём включается миграцией — сверяем с настройкой,
+        # а не с жёстким «выключен по умолчанию»
+        from app.database import SessionLocal
+        from app.services import appsettings
+        _s = SessionLocal()
+        try:
+            want = appsettings.get_setting(_s, "pool_enabled") == "1"
+        finally:
+            _s.close()
+        assert info["enabled"] is want
         assert "offerta" in info and info["offerta_version"]
         assert info["daily_limit"] == 50
         db = _db(); _enable(db, True); db.commit(); db.close()
@@ -252,6 +261,11 @@ class TestPublicCheck:
         assert b["accepted"] is False and b["result"] == "bad_qr"
 
     def test_disabled_pool(self):
+        # v1.59.0: приём включён миграцией — тест явно выключает настройку
+        db = _db()
+        _enable(db, False)
+        db.commit()
+        db.close()
         c = _client()
         b = c.post("/api/v1/public/pool/check",
                    json={"qr_text": _qr(), "offerta": True}).json()

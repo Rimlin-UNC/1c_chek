@@ -79,6 +79,7 @@ def init_db() -> None:
         traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
+    _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
     # ошибка уходит в журнал, приложение стартует на прежней схеме.
@@ -90,6 +91,34 @@ def init_db() -> None:
         except Exception:  # noqa: BLE001
             import traceback
             traceback.print_exc()
+
+
+def _enable_pool_once() -> None:
+    """v1.59.0: одноразовое включение приёма чеков «Чек-Пула» при обновлении.
+
+    Приём был выключен по умолчанию — доноры не могли сдать чек (форма
+    честно писала «Приём чеков сейчас выключен»). Решение владельца
+    (11.10.2026): при обновлении на v1.59.0 приём включается автоматически
+    один раз. Маркер pool_enabled_autoset_v1590 делает шаг одноразовым:
+    если владелец после обновления выключит приём в админке — приложение
+    его включать обратно не будет. Миграция меняет только значения
+    настроек (добавляющая, структуру и данные не трогает).
+    """
+    from .services import appsettings
+    db = SessionLocal()
+    try:
+        if appsettings.get_setting(db, "pool_enabled_autoset_v1590") != "1":
+            if appsettings.get_setting(db, "pool_enabled", "0") != "1":
+                appsettings.set_setting(db, "pool_enabled", "1")
+                print("  Миграция v1.59.0: приём чеков в Чек-Пул включён "
+                      "(доноры снова могут сдавать чеки)")
+            appsettings.set_setting(db, "pool_enabled_autoset_v1590", "1")
+    except Exception:                                  # noqa: BLE001
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+    finally:
+        db.close()
 
 
 def _ensure_schema() -> None:

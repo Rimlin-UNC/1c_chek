@@ -1581,3 +1581,9 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
 .card-title, .modal-title, h1, h2, h3 { overflow-wrap: anywhere; }
 .form-hint { overflow-wrap: anywhere; }
 .chip { max-width: 100%; overflow-wrap: anywhere; }
+
+/* --- v1.59.0: плашка «приём чеков в Чек-Пул выключен» (для админа) --- */
+.pool-off-banner { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  padding:10px 14px; margin:0 0 12px; border-radius:12px; background:#fff7ed;
+  border:1px solid #fdba74; color:#7c2d12; font-size:13.5px; }
+.pool-off-banner span { flex:1 1 260px; min-width:220px; }
