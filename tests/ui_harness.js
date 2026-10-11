@@ -492,6 +492,24 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes("state.receiptsView === 'cards'"),
      'v1.59.3: «Список» рендерит таблицу (строка на чек), «Карточки» отдельным режимом');
 
+  // --- v1.59.4: приглашения — select компаний + аккуратные действия ---
+  ok(bundle.includes('iv-company-select') &&
+     bundle.includes('Другая компания — вписать'),
+     'v1.59.4: диалог приглашения — select компаний + своя компания');
+  ok(bundle.includes("api.get('/api/v1/companies')") &&
+     bundle.includes('Array.isArray(_list)'),
+     'v1.59.4: список компаний свежий из базы при открытии');
+  ok(bundle.includes('<div class="row-actions">') &&
+     bundle.includes('<th>Действия</th>') &&
+     !bundle.includes('<th>Компания</th><th>Использовано</th>'),
+     'v1.59.4: список приглашений — 6 колонок, кнопки блоком row-actions');
+  await sandbox.inviteDialog();               // под бухгалтером харнесса
+  const ivSlot = root._cls['.modal-slot'];
+  ok(ivSlot.innerHTML.includes('iv-role') && ivSlot.innerHTML.includes('iv-save'),
+     'v1.59.4: диалог приглашения открывается (роль/срок/создать)');
+  const ivClose = ivSlot.querySelector('[data-close]');
+  if (ivClose && ivClose.onclick) await ivClose.onclick();
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

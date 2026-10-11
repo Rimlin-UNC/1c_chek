@@ -3045,20 +3045,35 @@ function scanCompanyId() {
 
 // v1.11.0: приглашение с привязкой к компании (глобальная — используется
 // и на экране «Пользователи», и на экране «Компании»)
-function inviteDialog(companyIdPref = '', companyName = '') {
+async function inviteDialog(companyIdPref = '', companyName = '') {
     // v1.12.0: компания — первичное поле: выбрать из списка или ввести новую
-    // (создастся автоматически); по компании определяется группа доступа
-    const prefName = companyName || (state.companies.find(c => c.id === companyIdPref) || {}).name || '';
+    // (создастся автоматически); по компании определяется группа доступа.
+    // v1.59.4: список компаний — СВЕЖИЙ из базы при каждом открытии
+    // (кэш мог быть пуст — «выпадающий список не работает»); вместо
+    // капризного datalist — честный <select> + поле «своя компания»
+    if (isAdmin() && (!Array.isArray(state.companies) || !state.companies.length)) {
+      try {
+        const _list = await api.get('/api/v1/companies');
+        if (Array.isArray(_list)) state.companies = _list;
+      } catch (e) { /* не загрузился — останется вариант «своя компания» */ }
+    }
+    const compsAll = Array.isArray(state.companies) ? state.companies : [];
+    const compsActive = compsAll.filter(c => c && c.is_active);
+    const NEW_COMPANY = '__new__';
+    const prefName = companyName || (compsAll.find(c => c.id === companyIdPref) || {}).name || '';
+    const showNew = !compsActive.length || (!!prefName && !compsActive.some(c => c.name === prefName));
     const { slot } = openModal(`
       <div class="modal-title">✉️ Новое приглашение</div>
       <div class="form-grid">
-        ${isAdmin() ? `<label class="field full"><span>Компания — группа доступа (выберите или введите новую)</span>
-          <input id="iv-company-name" list="iv-company-list" value="${esc(prefName)}"
-                 placeholder="ООО «Партнёр-СВ», ИП Иванов…">
-          <datalist id="iv-company-list">
-            ${state.companies.filter(c => c.is_active).map(c =>
-              `<option value="${esc(c.name)}"></option>`).join('')}
-          </datalist></label>` : ''}
+        ${isAdmin() ? `<label class="field full"><span>Компания — группа доступа (выберите из списка)</span>
+          <select id="iv-company-select">
+            ${compsActive.map(c =>
+              `<option value="${esc(c.name)}"${c.name === prefName ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
+            <option value="${NEW_COMPANY}"${showNew ? ' selected' : ''}>➕ Другая компания — вписать…</option>
+          </select></label>
+        <label class="field full${showNew ? '' : ' hidden'}" id="iv-company-new-wrap"><span>Название новой компании (создастся автоматически)</span>
+          <input id="iv-company-name" value="${showNew ? esc(prefName) : ''}"
+                 placeholder="ООО «Партнёр-СВ», ИП Иванов…"></label>` : ''}
         <label class="field"><span>Роль нового пользователя</span>
           <select id="iv-role">
             <option value="accountant">Бухгалтер (расширенные права)</option>
@@ -3076,11 +3091,24 @@ function inviteDialog(companyIdPref = '', companyName = '') {
         <button class="btn btn-primary" id="iv-save">Создать ссылку</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    const ivSel = slot.querySelector('#iv-company-select');
+    const ivNewWrap = slot.querySelector('#iv-company-new-wrap');
+    if (ivSel && ivNewWrap) {
+      // v1.59.4: «своя компания» — поле появляется при выборе варианта
+      const ivSyncNew = () => ivNewWrap.classList.toggle('hidden', ivSel.value !== NEW_COMPANY);
+      ivSel.onchange = ivSyncNew;
+      ivSyncNew();
+    }
     slot.querySelector('#iv-save').onclick = async () => {
       try {
-        // v1.12.0: резолюция компании по названию (есть — берём, нет — создаём)
-        const nameInput = slot.querySelector('#iv-company-name');
-        let companyNameVal = nameInput ? nameInput.value.trim() : '';
+        // v1.12.0/v1.59.4: резолюция компании по названию (выбрали из
+        // списка — берём её; «другая» — создастся при сохранении)
+        let companyNameVal = '';
+        if (ivSel) {
+          companyNameVal = ivSel.value === NEW_COMPANY
+            ? slot.querySelector('#iv-company-name').value.trim()
+            : ivSel.value;
+        }
         if (companyNameVal && !state.companies.some(
             c => c.name.toLowerCase() === companyNameVal.toLowerCase())) {
           const created = await api.post('/api/v1/companies', { name: companyNameVal });
@@ -4772,6 +4800,10 @@ function openUpdateProgress() {
 }
 
 const WHATS_NEW = {
+  '1.59.4': [
+    { icon: '✉️', title: 'Приглашения: список компаний в выпадающем списке + своя компания',
+      text: 'В карточке «Новое приглашение» компании теперь в честном выпадающем списке — берутся из базы прямо при открытии (раньше список мог быть пустым). Есть вариант «➕ Другая компания — вписать…»: название вводится руками, компания создастся сама. Список приглашённых причёсан: лишняя колонка «Компания» убрана, кнопки «Ссылка / QR / Отозвать» выстроены аккуратным блоком и на телефоне переносятся строкой, а не наезжают друг на друга.' },
+  ],
   '1.59.3': [
     { icon: '📋', title: '«Список» чеков снова в одну строку',
       text: 'В режиме «Список» каждый чек — одна компактная строка таблицы, как раньше; на телефоне таблица прокручивается по горизонтали внутри своего блока. Режим «🗂 Карточки» не тронут — переключатель «📋 Список / 🗂 Карточки» работает как прежде.' },
@@ -6993,20 +7025,21 @@ async function viewUsers(container) {
       <div class="card-title">Приглашения <span class="spacer"></span>
         <button class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
-        <th>Компания (группа)</th><th>Роль</th><th>Компания</th><th>Использовано</th><th>Действует до</th>
-        <th>Статус</th><th>Ссылка</th><th></th></tr></thead><tbody>
+        <th>Компания (группа)</th><th>Роль</th><th>Использовано</th><th>Действует до</th>
+        <th>Статус</th><th>Действия</th></tr></thead><tbody>
         ${invitesV.length ? invitesV.map(i => `<tr style="cursor:default">
           <td><b>${esc(i.company_name || '—')}</b>${i.note ? `<div class="form-hint">${esc(i.note)}</div>` : ''}</td>
           <td>${roleChip(i.role)}</td>
-          <td>${esc(i.company_name || '—')}</td>
           <td>${i.used_count} / ${i.max_uses}</td>
           <td class="cell-date">${i.expires_at ? fmtDate(i.expires_at) : '∞'}</td>
           <td>${i.valid ? '<span class="chip verified"><span class="dot"></span>активно</span>' : '<span class="chip failed"><span class="dot"></span>' + (i.revoked ? 'отозвано' : 'исчерпано') + '</span>'}</td>
-          <td style="white-space:nowrap">${i.valid
-            ? `<button class="btn btn-sm i-link" data-token="${esc(i.token)}">🔗 копировать</button>
-               <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>` : '—'}</td>
-          <td>${i.valid ? `<button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}">Отозвать</button>` : ''}</td>
-        </tr>`).join('') : `<tr style="cursor:default"><td colspan="8">${emptyState('✉️', 'Приглашений для этой группы нет')}</td></tr>`}
+          <td>${i.valid
+            ? `<div class="row-actions">
+                 <button class="btn btn-sm i-link" data-token="${esc(i.token)}" title="Скопировать ссылку-приглашение">🔗 Ссылка</button>
+                 <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>
+                 <button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}" title="Отозвать — ссылка перестанет работать">Отозвать</button>
+               </div>` : '—'}</td>
+        </tr>`).join('') : `<tr style="cursor:default"><td colspan="6">${emptyState('✉️', 'Приглашений для этой группы нет')}</td></tr>`}
       </tbody></table></div>
     </div>
 

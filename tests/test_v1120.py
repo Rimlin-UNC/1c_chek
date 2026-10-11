@@ -108,7 +108,9 @@ class TestNotesToCompaniesMigration:
 class TestNotesUi:
     def test_invite_dialog_company_first_and_filter(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "iv-company-name" in js and "iv-company-list" in js
+        # v1.59.4: компании — честный select из базы + «своя компания»
+        assert "iv-company-name" in js and "iv-company-select" in js
+        assert "Другая компания — вписать" in js
         assert "company_name: companyNameVal" in js
         assert "p-company-filter" in js                  # фильтр группы
         assert "Компания (группа)" in js                 # колонка приглашений

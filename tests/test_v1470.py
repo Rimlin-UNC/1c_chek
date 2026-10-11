@@ -122,7 +122,18 @@ class TestBackupGuard:
         monkeypatch.setattr(backups, "create_backup",
                             lambda k: calls.append(k))
         g = backups.DailyBackupGuard()
+        # v1.59.4: «обычный день» фиксируем (среда 2026-10-07) — с реальными
+        # часами тест падал каждый понедельник (weekly) и 1-го числа (archive)
+        real_dt0 = backups.datetime
+
+        class _PlainDay(real_dt0):
+            @classmethod
+            def now(cls):
+                return real_dt0(2026, 10, 7, 10, 0, 0)   # среда
+
+        monkeypatch.setattr(backups, "datetime", _PlainDay)
         g.tick()
+        monkeypatch.setattr(backups, "datetime", real_dt0)
         assert calls == ["daily"]              # обычный день
         g2 = backups.DailyBackupGuard()
         calls.clear()

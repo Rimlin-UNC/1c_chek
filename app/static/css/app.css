@@ -499,8 +499,9 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
   font: inherit; font-weight: 700; cursor: pointer; transition: background var(--speed), color var(--speed);
 }
 .segmented button.active { background: var(--grad); color: #fff; }
-.token-line { display: flex; gap: 8px; align-items: center; }
-.token-line input { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.token-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }   /* v1.59.4 */
+.token-line input { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+  flex: 1 1 200px; min-width: 0; }
 
 /* --- Инфоблоки --------------------------------------------------------------------- */
 .info-callout {
@@ -1564,3 +1565,9 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
    класс guest-scroll и страница прокручивается целиком (v1.55.1). */
 body.guest-scroll { height: auto; min-height: 100%;
   overflow: visible; overflow-x: hidden; }
+
+/* --- v1.59.4: аккуратные кнопки в строках (список приглашений) --- */
+/* кнопки выстраиваются в ряд и ПЕРЕНОСЯТСЯ, а не наезжают друг на друга
+   на узких экранах; таблица приглашений — 6 колонок вместо 8 */
+.row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row-actions .btn { flex: 0 1 auto; white-space: nowrap; }
