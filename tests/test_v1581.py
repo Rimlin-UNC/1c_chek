@@ -57,11 +57,12 @@ class TestAdaptiveCss:
         assert "env(safe-area-inset-bottom)" in css
 
     def test_receipts_cards_on_mobile(self):
+        # v1.59.3: «Список» — настоящая таблица (одна строка на чек);
+        # псевдокарточки ≤720px убраны по решению владельца
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert "@media (max-width: 720px)" in css
-        assert "#receipts-table .data thead { display: none; }" in css
-        assert "content: attr(data-label)" in css
-        assert "border-radius: 14px" in css
+        assert "content: attr(data-label)" not in css
+        assert "#receipts-table .data thead { display: none; }" not in css
+        assert ".table-wrap { overflow-x: auto; border-radius: var(--radius); }" in css
 
     def test_bottom_sheet_modals(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
@@ -117,8 +118,6 @@ class TestReceiptCards:
         assert 'td class="cell-actions" style="white-space:nowrap"' in js
 
     def test_other_tables_not_affected(self):
-        """Карточки — только у списка чеков; прочие таблицы не тронуты."""
+        """Режим «Карточки» чеков не задет: свои стили .rc-* на месте."""
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        mobile = css.split("@media (max-width: 720px)")[1].split("@media")[0]
-        assert "table.data {" not in mobile      # селектор только #receipts-table
-        assert "#receipts-table" in mobile
+        assert ".rc-cards {" in css and ".rc-card {" in css

@@ -78,8 +78,9 @@ class TestListCardsToggle:
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert ".rc-actions { display: flex; flex-wrap: wrap; gap: 8px;" in css
         assert "margin-top: auto; }" in css          # прижаты к низу карточки
-        # мобильные карточки: кнопки внизу с разделителем
-        assert "#receipts-table .data td.cell-actions {" in css
+        # v1.59.3: кнопки в карточках прижаты вниз; мобильный CSS
+        # псевдокарточек таблицы убран («Список» — одна строка на чек)
+        assert "#receipts-table .data td.cell-actions {" not in css
         assert "border-top: 1px dashed var(--border);" in css
 
     def test_toggle_style(self):

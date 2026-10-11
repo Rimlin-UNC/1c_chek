@@ -1474,34 +1474,10 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   input, select, textarea { font-size: 16px; }
 }
 
-/* --- Список чеков ≤720px: строки-КАРТОЧКИ вместо скролла таблицы --- */
-@media (max-width: 720px) {
-  #receipts-table .data thead { display: none; }
-  #receipts-table .data, #receipts-table .data tbody { display: block; }
-  #receipts-table .data tr {
-    display: block; position: relative; background: var(--bg-card);
-    border: 1px solid var(--border); border-radius: 14px;
-    padding: 12px 12px 10px 46px; margin: 0 0 10px;
-  }
-  #receipts-table .data tr.selected { border-color: var(--accent); }
-  #receipts-table .data td {
-    display: flex; align-items: baseline; gap: 10px;
-    padding: 2px 0; border: 0; white-space: normal; word-break: break-word;
-  }
-  #receipts-table .data td::before {
-    content: attr(data-label); flex: 0 0 92px;
-    font-size: 12px; font-weight: 700; color: var(--text-faint);
-  }
-  #receipts-table .data td:first-child { position: absolute; left: 12px; top: 13px; padding: 0; }
-  #receipts-table .data td:first-child::before { content: none; }
-  #receipts-table .data td.cell-actions,
-  #receipts-table .data td:last-child {
-    justify-content: flex-end; padding-top: 8px; gap: 8px;
-  }
-  #receipts-table .data td.cell-actions::before,
-  #receipts-table .data td:last-child::before { content: none; }
-  #receipts-table .data td.cell-mono { font-size: 12.5px; }
-}
+/* --- v1.59.3: «Список» чеков — настоящая таблица на экранах любой
+   ширины (одна строка на чек, решение владельца). Строки-КАРТОЧКИ
+   ≤720px убраны; на телефоне таблица прокручивается по горизонтали
+   внутри .table-wrap. Режим «Карточки» (.rc-cards) работает как раньше. --- */
 
 /* --- Модалки на телефоне: нижняя шторка + sticky-кнопки --- */
 @media (max-width: 640px) {
@@ -1563,14 +1539,6 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
 .rc-actions { display: flex; flex-wrap: wrap; gap: 8px;
   justify-content: flex-end; border-top: 1px dashed var(--border);
   padding-top: 10px; margin-top: auto; }
-
-/* Мобильные карточки (таблица ≤720px): кнопки — внизу с разделителем */
-@media (max-width: 720px) {
-  #receipts-table .data td.cell-actions {
-    justify-content: flex-end; border-top: 1px dashed var(--border);
-    margin-top: 8px; padding-top: 10px;
-  }
-}
 
 /* Страница «Настройки»: ровная сетка, без наплывов */
 .settings-grid { grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }

@@ -487,6 +487,11 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.59.2: в приложении прокрутка внутренняя (класс снят)');
   sandbox.showLogin();                       // вернуть гостевой экран
 
+  // --- v1.59.3: «Список» — одна строка на чек (таблица, не карточки) ---
+  ok(bundle.includes('<table class="data"') &&
+     bundle.includes("state.receiptsView === 'cards'"),
+     'v1.59.3: «Список» рендерит таблицу (строка на чек), «Карточки» отдельным режимом');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);
