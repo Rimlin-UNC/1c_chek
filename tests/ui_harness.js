@@ -510,6 +510,25 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   const ivClose = ivSlot.querySelector('[data-close]');
   if (ivClose && ivClose.onclick) await ivClose.onclick();
 
+  // --- v1.59.5: краткая форма ОПФ в списке компаний приглашения ---
+  ok(typeof sandbox.shortOpfName === 'function', 'v1.59.5: shortOpfName доступен');
+  ok(sandbox.shortOpfName('Общество с ограниченной ответственностью «Ромашка»')
+     === 'ООО «Ромашка»', 'v1.59.5: ООО — краткая форма');
+  ok(sandbox.shortOpfName('Индивидуальный предприниматель Иванов И.И.')
+     === 'ИП Иванов И.И.', 'v1.59.5: ИП — краткая форма');
+  ok(sandbox.shortOpfName('Самозанятый гражданин Петров П.П.')
+     === 'Самозанятый Петров П.П.', 'v1.59.5: самозанятый — краткая форма');
+  ok(sandbox.shortOpfName('Плательщик налога на профессиональный доход Сидоров С.С.')
+     === 'Самозанятый Сидоров С.С.', 'v1.59.5: НПД → Самозанятый');
+  ok(sandbox.shortOpfName('Акционерное общество «Заря»') === 'АО «Заря»',
+     'v1.59.5: АО — краткая форма');
+  ok(sandbox.shortOpfName('Крестьянское (фермерское) хозяйство «Нива»')
+     === 'КФХ «Нива»', 'v1.59.5: КФХ — краткая форма');
+  ok(sandbox.shortOpfName('Ромашка') === 'Ромашка',
+     'v1.59.5: без ОПФ — как есть');
+  ok(bundle.includes('shortOpfName(compName(c))'),
+     'v1.59.5: список приглашения показывает краткие имена (карточка → фолбэк)');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);
