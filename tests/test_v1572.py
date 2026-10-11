@@ -194,4 +194,4 @@ class TestBlocksRegistry:
         assert tuple(int(x) for x in
                      reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 2)
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
-        assert reg["Обновления"] == "1.55.1"              # не задет
+        assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 55, 1)              # не задет

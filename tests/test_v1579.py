@@ -64,7 +64,7 @@ class TestVersion1579:
         assert tuple(int(x) for x in
                      reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 9)
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
-        assert reg["Обновления"] == "1.55.1"              # не задет
+        assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 55, 1)              # не задет
 
     def test_token_hint_new_format(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

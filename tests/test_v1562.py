@@ -65,4 +65,4 @@ class TestBlocksRegistry:
         assert reg["Чек-Пул"] == "1.56.1"              # не задет
         assert tuple(int(x) for x in
                      reg["Адаптивный интерфейс"].split(".")) >= (1, 56, 1)  # v1.58.1: бамп
-        assert reg["Обновления"] == "1.55.1"           # не задет
+        assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 55, 1)           # не задет

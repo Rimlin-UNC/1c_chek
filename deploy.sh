@@ -191,12 +191,22 @@ apt-get install -y -qq python3 python3-venv python3-pip git curl sqlite3 \
     nginx ufw fail2ban >/dev/null
 ok "python3, git, nginx, ufw, fail2ban"
 
-# v1.58.3: программа работает по Московскому времени — системные часы
-# тоже переводим (иначе префикс journalctl идёт по UTC, а не по МСК)
-if command -v timedatectl >/dev/null 2>&1; then
-  timedatectl set-timezone Europe/Moscow 2>/dev/null \
-    || warn "не удалось сменить часовой пояс (не критично)"
+# v1.58.3/v1.59.6: программа работает по Московскому времени — системные
+# часы ОБЯЗАНЫ идти по МСК (иначе префикс journalctl отстаёт на 3 часа).
+# timedatectl может молча не сработать (на проде так и случилось) —
+# дублируем прямой записью /etc/localtime и /etc/timezone: работает
+# всегда, systemd-timedated не нужен; journald перечитывает зону после
+# рестарта — префикс журнала становится Московским.
+if [[ -f /usr/share/zoneinfo/Europe/Moscow ]]; then
+  ln -snf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
+  echo "Europe/Moscow" > /etc/timezone
+  if command -v timedatectl >/dev/null 2>&1; then
+    timedatectl set-timezone Europe/Moscow 2>/dev/null || true
+  fi
+  systemctl restart systemd-journald 2>/dev/null || true
   ok "часовой пояс сервера: Europe/Moscow (МСК)"
+else
+  warn "zoneinfo Europe/Moscow не найден — часовой пояс не изменён"
 fi
 
 # ------------------------------------------------------------------

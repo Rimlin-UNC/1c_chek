@@ -30,11 +30,27 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from ..config import settings
+
+# v1.59.6: метки журнала хода обновления — строго по Московскому времени.
+# Наивный datetime.now() шёл по поясу сервера: при UTC журнал отставал
+# на 3 часа от карточек обновления (те хранят UTC+«Z», браузер сам
+# переводит в МСК). ZoneInfo с фолбэком — как в app/main.py.
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _MSK = _ZoneInfo("Europe/Moscow")
+except Exception:                                        # noqa: BLE001
+    _MSK = timezone(timedelta(hours=3), "Europe/Moscow")
+
+
+def _msk_stamp() -> str:
+    """Метка [ЧЧ:ММ:СС] журнала обновления по Московскому времени."""
+    return datetime.now(_MSK).strftime("%H:%M:%S")
+
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RAW_BASE = "https://raw.githubusercontent.com/{repo}/{branch}/{path}"
@@ -97,7 +113,7 @@ class UpdateJob:
             if progress is not None:
                 self.progress = max(self.progress, min(100, progress))
             if message:
-                stamp = datetime.now().strftime("%H:%M:%S")
+                stamp = _msk_stamp()          # v1.59.6: МСК, не пояс сервера
                 self.log.append(f"[{stamp}] {message}")
             now = time.time()
             self.last_activity = now          # v1.53.0: пульс активности
