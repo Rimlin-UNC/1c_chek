@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, require_admin
 from ..database import get_db
-from ..models import Company, Invite, Receipt, User
+from ..models import Company, Invite, Receipt, User, iso_z
 from ..schemas import (CheckoLookup, CompanyCreate, CompanyDeleteBody,
                        CompanyPatch)
 from ..services import checko, appsettings
@@ -78,7 +78,7 @@ def _stats(db: Session, company_ids: list[str]) -> dict[str, dict]:
             .filter(Receipt.company_id.in_(company_ids))
             .group_by(Receipt.company_id).all())
     return {r[0]: {"receipts": int(r[1]), "sum": round(float(r[2]), 2),
-                   "last_activity": r[3].isoformat() if r[3] else None}
+                   "last_activity": iso_z(r[3])}
             for r in rows}
 
 
@@ -262,8 +262,7 @@ def company_card(company_id: str, admin: User = Depends(require_admin),
         "last_activity": stats.get("last_activity"),
         "team": [u.to_dict() for u in team],
         "card": card,
-        "card_updated_at": (comp.card_updated_at.isoformat()
-                            if comp.card_updated_at else None),
+        "card_updated_at": iso_z(comp.card_updated_at),
         "has_checko_key": bool(appsettings.get_setting(db, checko.SETTING_KEY, "")),
         "risk": risk_assessment(card if isinstance(card, dict) else None,
                                 comp.inn or ""),
@@ -299,7 +298,7 @@ def refresh_card(company_id: str, admin: User = Depends(require_admin),
     log_action(admin, "company_card_refreshed", "company", comp.id,
                {"inn": inn, "name_full": result["card"]["name_full"]})
     return {"card": result["card"],
-            "card_updated_at": comp.card_updated_at.isoformat(),
+            "card_updated_at": iso_z(comp.card_updated_at),
             "name_full": result["card"]["name_full"], "company": comp.to_dict()}
 
 

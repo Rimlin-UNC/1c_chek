@@ -144,7 +144,7 @@ def stats(days: int = Query(14, ge=7, le=90),
         "notified_count": int(notified),        # уведомления сотрудников
         "vat_month": round(float(vat_month), 2),  # НДС за текущий месяц
         "by_assignee": by_assignee,             # сводка по подотчётникам
-        "generated_at": dt.datetime.utcnow().isoformat(),
+        "generated_at": dt.datetime.utcnow().isoformat() + "Z",
     }
 
 

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from ..models import iso_z          # v1.60.0: инстанты — UTC+«Z»
 
 from .models import (PoolAchievement, PoolReceipt, PoolUser,
                      PoolWithdrawal)
@@ -151,7 +152,7 @@ def achievements_payload(db: Session, user: PoolUser) -> list[dict]:
         items.append({
             "code": code, "name": meta["name"], "desc": meta["desc"],
             "earned": a is not None,
-            "awarded_at": a.awarded_at.isoformat() if a else None,
+            "awarded_at": iso_z(a.awarded_at) if a else None,
             "progress": progress.get(code, 0), "goal": meta["goal"],
         })
     return items
@@ -311,11 +312,11 @@ def status_for(db: Session, user: PoolUser) -> dict:
                         and active is None,
         "active": ({"points": active.points, "status": active.status,
                     "sms_required": active.sms_required,
-                    "at": active.created_at.isoformat()} if active else None),
+                    "at": iso_z(active.created_at)} if active else None),
         "achievements": achievements_payload(db, user),
         "history": [{"points": w.points, "status": w.status,
                      "sms_required": w.sms_required,
-                     "at": w.created_at.isoformat()} for w in history],
+                     "at": iso_z(w.created_at)} for w in history],
     }
 
 

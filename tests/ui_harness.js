@@ -529,6 +529,27 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('shortOpfName(compName(c))'),
      'v1.59.5: список приглашения показывает краткие имена (карточка → фолбэк)');
 
+  // --- v1.60.0: время — UTC+«Z» с сервера, показ в местной зоне ---
+  ok(typeof sandbox.updLogLine === 'function', 'v1.60.0: updLogLine доступен');
+  const updOut = sandbox.updLogLine('[2026-10-12T10:00:00Z] Готово: v1.60.0');
+  ok(/^\[\d{2}:\d{2}:\d{2}\] Готово: v1\.60\.0$/.test(updOut),
+     'v1.60.0: метку журнала с «Z» показываем в местной зоне (ЧЧ:ММ:СС)');
+  ok(sandbox.updLogLine('[12:00:00] старая запись') === '[12:00:00] старая запись',
+     'v1.60.0: старые метки журнала не трогаем');
+  // инвариант без привязки к зоне контейнера: «Z»-время отрисовывается
+  // ровно так же, как тот же момент, записанный местным «настенным» временем
+  const zdt = new Date('2026-10-12T10:00:00Z');
+  const pad = (x) => String(x).padStart(2, '0');
+  const localIso = zdt.getFullYear() + '-' + pad(zdt.getMonth() + 1) + '-'
+    + pad(zdt.getDate()) + 'T' + pad(zdt.getHours()) + ':' + pad(zdt.getMinutes());
+  ok(sandbox.fmtDate('2026-10-12T10:00:00Z') === sandbox.fmtDate(localIso),
+     'v1.60.0: fmtDate — «Z»-время == тот же момент в местной зоне');
+  ok(sandbox.fmtDate('2026-10-08T13:05').includes('13:05'),
+     'v1.60.0: бизнес-время (дата чека) показывается как есть');
+  ok(bundle.includes('function updLogLine') &&
+     bundle.includes('.map(updLogLine)'),
+     'v1.60.0: журнал обновления рендерится через updLogLine');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

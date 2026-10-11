@@ -236,5 +236,5 @@ def hint_for(db: Session, referee) -> dict:
         return {"code": code, "points": points, "need_receipts": min_count,
                 "have_receipts": n,
                 "ready_at": (referral.created_at
-                             + timedelta(days=delay_days)).isoformat()}
+                             + timedelta(days=delay_days)).isoformat() + "Z"}
     return {}

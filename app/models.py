@@ -31,6 +31,18 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def iso_z(dt: datetime | None) -> str | None:
+    """v1.60.0: момент времени → ISO-строка UTC с «Z».
+
+    В БД моменты хранятся наивным UTC (utcnow()); API ОБЯЗАНО помечать
+    их «Z», чтобы браузер показывал время в местной зоне пользователя —
+    приложение открывают из любой страны и города. Бизнес-времена
+    (дата/время чека с кассы, даты для 1С, оси графиков) остаются
+    без «Z» намеренно: они показываются как есть, по кассе.
+    """
+    return dt.isoformat() + "Z" if dt else None
+
+
 # --------------------------------------------------------------------------
 #  v1.11.0: Компании (мультикомпанийность — аутсорсинг бухгалтерии)
 #  Пространство клиента: ООО/ИП со своими сотрудниками, чеками и отчётами.
@@ -62,7 +74,7 @@ class Company(Base):
             "inn": self.inn,
             "note": self.note,
             "is_active": self.is_active,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": iso_z(self.created_at),
         }
 
 
@@ -99,8 +111,8 @@ class User(Base):
             "company_id": self.company_id,
             "is_active": self.is_active,
             "must_change_password": self.must_change_password,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
+            "created_at": iso_z(self.created_at),
+            "last_login_at": iso_z(self.last_login_at),
         }
 
 
@@ -131,8 +143,8 @@ class Invite(Base):
             "role": self.role,
             "note": self.note,
             "company_id": self.company_id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "created_at": iso_z(self.created_at),
+            "expires_at": iso_z(self.expires_at),
             "max_uses": self.max_uses,
             "used_count": self.used_count,
             "revoked": self.revoked,
@@ -241,16 +253,16 @@ class Receipt(Base):
             "full_data": bool(self.full_data),
             "status": self.status,
             "fns_status": self.fns_status,
-            "fns_checked_at": self.fns_checked_at.isoformat() if self.fns_checked_at else None,
+            "fns_checked_at": iso_z(self.fns_checked_at),
             "fns_message": self.fns_message,
             "exported": self.exported,
-            "exported_at": self.exported_at.isoformat() if self.exported_at else None,
+            "exported_at": iso_z(self.exported_at),
             "source": self.source,
             "assignee": self.assignee or "",
             "comment": self.comment or "",
             "created_by": (self.user.username if self.user else None),
             "created_by_id": self.created_by,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": iso_z(self.created_at),
             "items_count": len(self.items),
             # v1.2.0: данные источников и уведомления — во всех представлениях
             "merchant_name": self.merchant_name, "merchant_inn": self.merchant_inn,
@@ -357,7 +369,7 @@ class AuditLog(Base):
             "entity_type": self.entity_type,
             "entity_id": self.entity_id,
             "details": self.details,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": iso_z(self.created_at),
         }
 
 
@@ -412,10 +424,8 @@ class WebauthnCredential(Base):
     def to_dict(self) -> dict:
         return {
             "id": self.id, "label": self.label,
-            "created_at": (self.created_at.isoformat()
-                           if self.created_at else None),
-            "last_used_at": (self.last_used_at.isoformat()
-                             if self.last_used_at else None),
+            "created_at": iso_z(self.created_at),
+            "last_used_at": iso_z(self.last_used_at),
         }
 
 

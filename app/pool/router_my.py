@@ -16,6 +16,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from ..models import iso_z          # v1.60.0: инстанты — UTC+«Z»
 
 from ..database import get_db
 from . import accounts, engage, ingest, mailer, referral
@@ -62,7 +63,7 @@ def summary(db: Session = Depends(get_db),
         "today": q.filter(PoolReceipt.created_at >= day_start).count(),
         "daily_limit": ingest.DAILY_LIMIT,
         "points_per_receipt": ingest.POINTS_PER_RECEIPT,
-        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "created_at": iso_z(user.created_at),
     }
 
 
@@ -95,7 +96,7 @@ def receipts(status: str = Query("", max_length=16),
             "merchant_name": r.merchant_name, "merchant_inn": r.merchant_inn,
             "items_count": counts.get(r.id, 0),
             "points": r.points_awarded,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_at": iso_z(r.created_at),
         } for r in rows],
     }
 
@@ -247,7 +248,7 @@ def referrals(db: Session = Depends(get_db),
             label = f"гость {(ru.vid or ru.id)[:8]}"
         items.append({
             "label": label,
-            "at": ref.created_at.isoformat() if ref.created_at else None,
+            "at": iso_z(ref.created_at),
             "email_verified": bool(ru.email_verified),
             "receipts_verified": (db.query(PoolReceipt)
                                   .filter_by(pool_user_id=ru.id,

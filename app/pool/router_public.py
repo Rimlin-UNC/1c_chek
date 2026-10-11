@@ -101,6 +101,7 @@ class CheckBody(BaseModel):
 
 
 def _receipt_public(r, db=None) -> dict:
+    from ..models import iso_z          # v1.60.0: инстанты — UTC+«Z»
     """v1.55.0: + позиции и реквизиты (для электронного чека на странице
     и в письме). Позиции отдаются только владельцу (vid-привязка)."""
     data = {
@@ -112,7 +113,7 @@ def _receipt_public(r, db=None) -> dict:
         "operation": r.operation,
         "receipt_date": r.receipt_date.isoformat() if r.receipt_date else None,
         "points": r.points_awarded,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "created_at": iso_z(r.created_at),
     }
     if db is not None:
         from .models import PoolItem

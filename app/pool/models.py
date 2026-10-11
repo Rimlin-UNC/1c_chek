@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
+from ..models import iso_z          # v1.60.0: инстанты в API — UTC+«Z»
 
 
 def _uid() -> str:
@@ -419,11 +420,9 @@ class MailRule(Base):
             "cond_days": int(self.cond_days or 0),
             "recipients": self.recipients, "subject": self.subject,
             "body": self.body,
-            "last_run_at": (self.last_run_at.isoformat()
-                            if self.last_run_at else None),
+            "last_run_at": iso_z(self.last_run_at),
             "last_result": self.last_result,
-            "created_at": (self.created_at.isoformat()
-                           if self.created_at else None),
+            "created_at": iso_z(self.created_at),
         }
 
 
@@ -445,6 +444,5 @@ class MailLog(Base):
             "id": self.id, "rule_id": self.rule_id, "to_email": self.to_email,
             "subject": self.subject, "status": self.status,
             "error": self.error,
-            "created_at": (self.created_at.isoformat()
-                           if self.created_at else None),
+            "created_at": iso_z(self.created_at),
         }

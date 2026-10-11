@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import require_admin
 from ..database import get_db
-from ..models import User
+from ..models import User, iso_z
 
 router = APIRouter(prefix="/api/v1/pool-admin", tags=["pool"])
 
@@ -139,7 +139,7 @@ def pool_receipts(status: str = Query("", max_length=16),
             "status_message": r.status_message,
             "region_code": r.region_code, "city": r.city,
             "industry": r.industry, "geo_accuracy": r.geo_accuracy,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_at": iso_z(r.created_at),
         } for r in rows],
     }
 
@@ -492,7 +492,7 @@ def participants(q: str = "", limit: int = Query(50, ge=1, le=200),
             "points": int(u.points or 0), "receipts": int(rcpt),
             "is_blocked": bool(u.is_blocked),
             "risk_score": int(u.risk_score or 0),
-            "created_at": (u.created_at.isoformat() if u.created_at else None),
+            "created_at": (iso_z(u.created_at)),
         })
         if len(items) >= limit:
             break

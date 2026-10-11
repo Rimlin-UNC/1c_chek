@@ -4773,7 +4773,7 @@ function openUpdateProgress() {
       toast(st.error || 'Обновление не удалось', 'err', '🔄 Обновление');
     }
     const log = slot.querySelector('#upd-log');
-    if (log) log.textContent = (st.log || []).join('\n');
+    if (log) log.textContent = (st.log || []).map(updLogLine).join('\n');
     const btn = slot.querySelector('#upd-done');
     if (btn) {
       btn.classList.remove('hidden');
@@ -4804,7 +4804,7 @@ function openUpdateProgress() {
     if (bytes && st.downloaded_bytes)
       bytes.textContent = `· ⬇ загружено: ${updFmtKB(st.downloaded_bytes)}`;
     const log = slot.querySelector('#upd-log');
-    if (log) log.textContent = (st.log || []).join('\n');
+    if (log) log.textContent = (st.log || []).map(updLogLine).join('\n');
     if (!st.finished) return;
     // v1.50.0: успех считается только когда НОВЫЙ процесс реально работает
     const confirmed = !!(st.to_version && st.current_version === st.to_version);
@@ -4826,7 +4826,21 @@ function openUpdateProgress() {
   }, 2000);
 }
 
+// v1.60.0: строки журнала обновления приходят с меткой UTC («Z») —
+// каждая показывается в МЕСТНОЙ зоне пользователя (приложение открывают
+// из любой страны и города). Старые строки вида [ЧЧ:ММ:СС] — как есть.
+function updLogLine(l) {
+  const m = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\]\s*(.*)$/.exec(l || '');
+  if (!m) return l;
+  return '[' + new Date(m[1]).toLocaleTimeString('ru-RU',
+    { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '] ' + m[2];
+}
+
 const WHATS_NEW = {
+  '1.60.0': [
+    { icon: '🌍', title: 'Время — единообразно по всему приложению, в вашей местной зоне',
+      text: 'Все моменты времени (чеки, пользователи, приглашения, кабинеты, журнал обновлений) теперь отдаются сервером в UTC с меткой «Z» и показываются в вашей местной зоне — приложение корректно работает из любой страны и города, без привязки к часовому поясу сервера. Дата и время на чеке остаются как на кассе. Метки журнала хода обновления тоже переводятся в вашу зону; старые записи журнала показываются как были.' },
+  ],
   '1.59.6': [
     { icon: '🕒', title: 'Время — везде Московское, включая журнал обновлений',
       text: 'Метки журнала хода обновления ([ЧЧ:ММ:СС]) теперь всегда по Московскому времени — раньше они шли по поясу сервера и отставали на 3 часа от карточек обновления. deploy.sh переводит сервер в МСК даже когда штатная смена пояса не срабатывает, а сам сервис принудительно работает в МСК — префикс journalctl тоже станет Московским после обновления. Старые записи журнала не переписываются — новые пойдут по МСК.' },
@@ -8177,7 +8191,7 @@ async function viewSettings(container) {
           if (st.job && st.job.running) {
             if (relBox) relBox.innerHTML =
               `<div class="chip new"><span class="dot"></span>${esc(st.job.step || 'выполняется')}… ${st.job.progress || 0}%</div>` +
-              (st.job.log || []).slice(-2).map(l => `<div class="form-hint">${esc(l)}</div>`).join('');
+              (st.job.log || []).slice(-2).map(l => `<div class="form-hint">${esc(updLogLine(l))}</div>`).join('');
           } else {
             relStop();
             if (st.job && st.job.finished) {

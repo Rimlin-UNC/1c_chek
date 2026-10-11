@@ -51,7 +51,7 @@ def ping(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
         "service": "Ямастер Чек",
         "vendor": "ООО Ямастер (ymaster.ru)",
         "pending_receipts": pending,
-        "server_time": dt.datetime.utcnow().isoformat(),
+        "server_time": dt.datetime.utcnow().isoformat() + "Z",
     }
 
 

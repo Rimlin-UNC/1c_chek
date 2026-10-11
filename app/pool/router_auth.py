@@ -17,6 +17,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..models import iso_z          # v1.60.0: инстанты — UTC+«Z»
 from . import accounts, antifraud, ingest, mailer, referral
 
 router = APIRouter(prefix="/api/v1/pool-auth", tags=["pool-auth"])
@@ -60,7 +61,7 @@ def _user_payload(u) -> dict:
     return {
         "id": u.id, "email": u.email, "email_verified": bool(u.email_verified),
         "points": u.points or 0, "trust_level": u.trust_level or 0,
-        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "created_at": iso_z(u.created_at),
     }
 
 

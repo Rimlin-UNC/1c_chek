@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import require_admin
 from ..database import get_db
-from ..models import User
+from ..models import User, iso_z
 from . import antifraud
 from .models import (PoolFingerprint, PoolIpLog, PoolReferral, PoolSignal,
                      PoolUser)
@@ -67,7 +67,7 @@ def signals(status: str = Query("", max_length=16),
             "id": s.id, "code": s.code, "severity": s.severity,
             "points": s.points, "status": s.status,
             "details": s.details, "receipt_id": s.receipt_id,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "created_at": iso_z(s.created_at),
             "resolved_by": s.resolved_by,
             "user": _user_label(db, s.user_id),
         } for s in rows],
@@ -109,22 +109,21 @@ def user_card(uid: str, db: Session = Depends(get_db),
         if i.ip not in seen:
             seen.add(i.ip)
             uniq_ips.append({"ip": i.ip, "ip24": i.ip24,
-                             "at": i.created_at.isoformat() if i.created_at else None})
+                             "at": iso_z(i.created_at)})
     return {
         "user": {"id": u.id, "email": u.email, "vid": u.vid,
                  "points": u.points, "risk_score": u.risk_score,
                  "quarantined": bool(u.quarantined_at),
-                 "quarantined_at": (u.quarantined_at.isoformat()
-                                    if u.quarantined_at else None),
+                 "quarantined_at": iso_z(u.quarantined_at),
                  "trust_level": u.trust_level,
                  "is_blocked": bool(u.is_blocked)},
         "signals": [{
             "id": s.id, "code": s.code, "severity": s.severity,
             "points": s.points, "status": s.status, "details": s.details,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "created_at": iso_z(s.created_at),
         } for s in sig],
         "devices": [{"visitor": d.visitor_hash[:12], "seen": d.seen_count,
-                     "last_at": d.last_at.isoformat() if d.last_at else None}
+                     "last_at": iso_z(d.last_at)}
                     for d in devices],
         "ips": uniq_ips[:10],
         "related_users": [_user_label(db, r) for r in list(related)[:20]],

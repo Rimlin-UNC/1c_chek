@@ -22,7 +22,8 @@ class TestVersion1596:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.59.6"
+        # v1.60.0: структурная проверка — строгий замок версии в test_v1600
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 59, 6)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.59.5" not in idx
@@ -41,28 +42,32 @@ class TestVersion1596:
     def test_updates_block_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Обновления"] == "1.59.6"
+        assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 59, 6)
 
 
 class TestUpdateLogMoscow:
     """Метки журнала обновления — по Московскому времени всегда."""
 
-    def test_msk_stamp_matches_utc_plus_3(self):
-        from app.services.updater import _msk_stamp
-        expected = (datetime.utcnow() + timedelta(hours=3)) \
-            .strftime("%H:%M:%S")
-        got = _msk_stamp()
-        # допускаем переход через границу секунды/минуты между двумя вызовами
-        assert got == expected or abs((
-            datetime.strptime(got, "%H:%M:%S")
-            - datetime.strptime(expected, "%H:%M:%S")
-        ).total_seconds()) <= 2
+    def test_log_stamp_is_utc_z(self):
+        """v1.60.0: метка журнала — момент в UTC с «Z» (зону выбирает браузер)."""
+        from app.services.updater import _utc_stamp
+        s = _utc_stamp()
+        assert s.endswith("Z") and "T" in s
+        got = datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        assert abs((got - datetime.now(timezone.utc)).total_seconds()) <= 2
+
+    def test_say_log_line_carries_z(self):
+        from app.services.updater import UpdateJob
+        job = UpdateJob()
+        job.say("check", message="проверка времени")
+        assert job.log and job.log[0].startswith("[2")
+        assert job.log[0].split("]")[0].endswith("Z")
 
     def test_naive_now_removed_from_say(self):
         src = open("app/services/updater.py", encoding="utf-8").read()
         assert 'stamp = datetime.now().strftime("%H:%M:%S")' not in src
-        assert "stamp = _msk_stamp()" in src
-        assert 'ZoneInfo("Europe/Moscow")' in src
+        assert "stamp = _utc_stamp()" in src
+        assert "_msk_stamp" not in src
 
     def test_deploy_scripts_syntax(self):
         import subprocess

@@ -23,7 +23,7 @@ from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, act_admin_id,
                     get_current_user, hash_password, raw_bearer_token,
                     verify_password)
 from ..database import get_db
-from ..models import Company, Invite, User
+from ..models import Company, Invite, User, iso_z
 from ..schemas import LoginRequest, PasswordChange, RegisterRequest
 from ..security import login_guard
 from ..services.audit import log_action
@@ -80,7 +80,7 @@ def invite_info(token: str, db: Session = Depends(get_db)):
         "note": invite.note,
         "company_id": invite.company_id,           # v1.11.0
         "company_name": comp.name if comp else None,
-        "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+        "expires_at": iso_z(invite.expires_at),
     }
 
 
