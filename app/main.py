@@ -87,6 +87,15 @@ async def lifespan(app: FastAPI):
     except Exception:                                    # noqa: BLE001
         log.exception("webhooks worker start failed")
 
+    # v1.68.0: демоны очереди автозагрузки деталей чеков (2 воркера)
+    try:
+        from .routers.receipts import start_fetch_workers
+        _n = start_fetch_workers()
+        if _n:
+            log.info("fetch queue workers started: %d", _n)
+    except Exception:                                    # noqa: BLE001
+        log.exception("fetch queue workers start failed")
+
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:
         import asyncio as _aio

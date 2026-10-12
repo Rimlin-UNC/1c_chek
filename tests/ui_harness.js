@@ -598,6 +598,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('X-Ymaster-Signature') && bundle.includes('wh-save'),
      'v1.67.0: подпись HMAC и кнопки вебхуков');
 
+  // --- v1.68.0: устойчивость (рекомендации аудита) ---
+  ok(bundle.includes('Ключ подписи токенов') && bundle.includes('secret_key_ok'),
+     'v1.68.0: статус SECRET_KEY в карточке «Система»');
+  ok(bundle.includes("'1.68.0':") && bundle.includes('очередь'),
+     'v1.68.0: What’s New устойчивости');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

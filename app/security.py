@@ -92,9 +92,14 @@ def real_client_ip(request) -> str:
     if _is_trusted_peer(host or ""):
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
-            first = fwd.split(",")[0].strip()
-            if first:
-                return first[:45]
+            entries = [x.strip() for x in fwd.split(",") if x.strip()]
+            if entries:
+                # v1.68.0 (рекомендация аудита): правый край XFF — то, что
+                # видел НАШ прокси. Устойчиво к обоим режимам nginx:
+                # $remote_addr (один элемент) и $proxy_add_x_forwarded_for
+                # (клиентская подделка слева игнорируется — прокси дописал
+                # реального соседа правее).
+                return entries[-1][:45]
     return (host or "unknown")[:45]
 
 

@@ -23,8 +23,11 @@ class TestTrustedProxy:
 
         return real_client_ip(_R())
 
-    def test_nginx_on_loopback_trusted(self):
-        assert self._req("127.0.0.1", "203.0.113.7, 10.0.0.1") == "203.0.113.7"
+    def test_nginx_append_mode_rightmost(self):
+        """v1.68.0: правый край XFF — что видел наш прокси; подделка
+        слева игнорируется (nginx в режиме $proxy_add_x_forwarded_for)."""
+        assert self._req("127.0.0.1", "1.2.3.4, 203.0.113.7") == "203.0.113.7"
+        assert self._req("127.0.0.1", "203.0.113.7, 10.0.0.1") == "10.0.0.1"
 
     def test_private_proxy_trusted(self):
         assert self._req("10.1.1.5", "198.51.100.9") == "198.51.100.9"
@@ -149,7 +152,9 @@ class TestVersion1671:
         import re
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.67.1"
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
+        # v1.68.0: строгий замок версии переехал в test_v1680
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 67, 1)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx
         ch = open("CHANGELOG.md", encoding="utf-8").read()
@@ -159,6 +164,7 @@ class TestVersion1671:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Роли и доступ"] == "1.67.1"
+        assert tuple(int(x) for x in
+                     reg["Роли и доступ"].split(".")) >= (1, 67, 1)
         assert reg["Сканирование чеков"] == "1.67.1"
         assert reg["Чек-Пул"] == "1.56.1"          # блок не менялся

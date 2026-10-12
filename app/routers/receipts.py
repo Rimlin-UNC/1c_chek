@@ -19,6 +19,9 @@ import csv
 import datetime as dt
 import io
 import json
+import logging
+import os
+import queue
 import threading
 import time
 
@@ -979,11 +982,76 @@ def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
         _FETCH_SEM.release()                 # v1.67.1
 
 
+# --------------------------------------------------------------------------
+#  v1.68.0 (рекомендация аудита v1.67.1): очередь автозагрузки деталей —
+#  2 демона-воркера вместо потока на каждый чек. Отклик скана прежний
+#  (чек встаёт в очередь мгновенно), фиксированные воркеры + дедуп по
+#  чеку снимают фоновые пики; ёмкость 500 (реальные объёмы — единицы).
+# --------------------------------------------------------------------------
+_FETCHQ: queue.Queue = queue.Queue(maxsize=500)
+_FETCHQ_IDS: set = set()
+_FETCHQ_LOCK = threading.Lock()
+_FETCH_WORKERS: list = []
+
+
+def _enqueue_fetch(receipt_id: str) -> bool:
+    """Поставить чек в очередь загрузки деталей (False — уже в очереди)."""
+    with _FETCHQ_LOCK:
+        if receipt_id in _FETCHQ_IDS:
+            return False
+        _FETCHQ_IDS.add(receipt_id)
+    try:
+        _FETCHQ.put_nowait(receipt_id)
+    except queue.Full:
+        with _FETCHQ_LOCK:
+            _FETCHQ_IDS.discard(receipt_id)
+        logging.getLogger("ymaster").warning(
+            "очередь загрузки переполнена — чек %s отложен (есть ручная "
+            "кнопка «получить данные»)", receipt_id)
+        return False
+    return True
+
+
+def _fetchq_worker() -> None:
+    while True:
+        rid = _FETCHQ.get()
+        with _FETCHQ_LOCK:
+            _FETCHQ_IDS.discard(rid)
+        try:
+            _run_external_fetch([rid])
+        except Exception:                                # noqa: BLE001
+            logging.getLogger("ymaster").exception("fetch queue worker")
+        finally:
+            _FETCHQ.task_done()
+
+
+def start_fetch_workers(n: int = 2) -> int:
+    """Запустить демонов очереди (идемпотентно). → сколько ДОзапущено."""
+    if os.environ.get("YM_FETCHQ_OFF") == "1":   # тесты: детерминизм
+        return 0
+    alive = sum(1 for w in _FETCH_WORKERS if w.is_alive())
+    if alive >= n:
+        return 0
+    spawned = 0
+    for i in range(n - alive):
+        t = threading.Thread(target=_fetchq_worker, daemon=True,
+                             name=f"ymaster-fetchq-{i}")
+        t.start()
+        _FETCH_WORKERS.append(t)
+        spawned += 1
+    logging.getLogger("ymaster").info("fetch queue workers: %d", n)
+    return spawned
+
+
+def fetch_queue_stats() -> dict:
+    return {"queued": _FETCHQ.qsize()}
+
+
 def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt) -> bool:
     """Автозагрузка деталей после скана (настройка external_auto, по умолч. вкл)."""
     if (appsettings.get_setting(db, "external_auto", "1") == "1"
             and receipt.status == "new" and not receipt.full_data):   # v1.25.2
-        background.add_task(_run_external_fetch, [receipt.id])
+        _enqueue_fetch(receipt.id)           # v1.68.0: очередь вместо потока
         return True
     return False
 

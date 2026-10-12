@@ -237,6 +237,11 @@ def digest_text(db: Session) -> str:
         lines.append("Пока нет чеков за сегодня и вчера.")
     for name, cnt, total in rows:
         lines.append(f"• {name}: {int(cnt)} чек(ов) на {float(total):.2f} ₽")
+    from . import webhooks as _wh
+    _stuck = _wh.stuck_count(db)                 # v1.68.0: контроль вебхуков
+    if _stuck:
+        lines.append(f"🪝 Вебхуки: {_stuck} недоставлено (исчерпаны "
+                     "повторы) — проверьте приёмник в «Настройках»")
     lines.append("Хорошего дня! ✅")
     return "\n".join(lines)
 

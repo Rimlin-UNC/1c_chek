@@ -95,6 +95,37 @@ def settings_info(db: Session) -> dict:
     }
 
 
+def pending_count(db: Session) -> int:
+    """Сколько записей ещё не доставлено (включая ждущие повтора)."""
+    from ..models import WebhookLog
+    return db.query(WebhookLog).filter(
+        WebhookLog.delivered_at.is_(None)).count()
+
+
+def stuck_count(db: Session) -> int:
+    """Недоставлено и попытки исчерпаны — нужен человек у приёмника."""
+    from ..models import WebhookLog
+    return db.query(WebhookLog).filter(
+        WebhookLog.delivered_at.is_(None),
+        WebhookLog.attempt >= MAX_ATTEMPTS).count()
+
+
+_last_stuck_warn: list = [""]
+
+
+def _warn_stuck_once_daily(db: Session) -> None:
+    """v1.68.0: раз в сутки — предупреждение о застрявших вебхуках."""
+    n = stuck_count(db)
+    if not n:
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _last_stuck_warn[0] == today:
+        return
+    _last_stuck_warn[0] = today
+    log.warning("вебхуки: %d недоставлено (исчерпаны повторы) — проверьте "
+                "приёмник %s или кнопку «Тестовый POST»", n, get_url(db))
+
+
 def sign_payload(secret: str, body: str, ts: int) -> str:
     """HMAC-SHA256 от "{ts}.{body}" — приёмник считает так же."""
     mac = hmac.new(secret.encode("utf-8"),
@@ -253,6 +284,7 @@ def _worker_loop() -> None:
             if not is_enabled(db):
                 continue
             deliver_due(db)
+            _warn_stuck_once_daily(db)           # v1.68.0
         except Exception:                               # noqa: BLE001
             log.exception("webhooks worker loop")
         finally:

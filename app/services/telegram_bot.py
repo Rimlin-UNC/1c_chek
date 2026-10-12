@@ -482,6 +482,11 @@ def _send_digest(db: Session) -> None:
         lines.append("Сегодня чеков пока нет.")
     for name, cnt, total in rows:
         lines.append(f"• {name}: {int(cnt)} чек(ов) на {float(total):.2f} ₽")
+    from . import webhooks as _wh
+    _stuck = _wh.stuck_count(db)                 # v1.68.0: контроль вебхуков
+    if _stuck:
+        lines.append(f"🪝 Вебхуки: {_stuck} недоставлено (исчерпаны "
+                     "повторы) — проверьте приёмник в «Настройках»")
     text = "\n".join(lines)
     staff = [u for u in db.query(User).filter(
         User.is_active.is_(True),

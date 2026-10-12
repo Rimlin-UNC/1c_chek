@@ -13,6 +13,7 @@ import pytest
 
 _TMP = tempfile.mkdtemp(prefix="ymaster-test-")
 os.environ["YM_NO_REEXEC"] = "1"   # v1.17.0: тесты не должны ре-исполнять процесс
+os.environ["YM_FETCHQ_OFF"] = "1"  # v1.68.0: очередь загрузки off — детерминизм
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

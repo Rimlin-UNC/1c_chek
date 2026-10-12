@@ -376,6 +376,8 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
     except (OSError, ValueError):
         pass
     from ..models import Company
+    from .receipts import fetch_queue_stats as _fetch_queue_stats
+    from ..security import secret_is_weak
     return {
         "version": settings.APP_VERSION,
         "python": sys.version.split()[0],
@@ -396,6 +398,10 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
         "unit": unit,
         "sudoers_cmd": sudoers_cmd,
         "reexec": _reexec_allowed(),
+        # v1.68.0 (рекомендация аудита): статус ключа подписи токенов
+        "secret_key_ok": not secret_is_weak(settings.SECRET_KEY),
+        # v1.68.0: глубина очереди автозагрузки (наблюдаемость)
+        "fetch_queue": _fetch_queue_stats(),
     }
 
 
