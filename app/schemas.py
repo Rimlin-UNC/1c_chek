@@ -213,6 +213,16 @@ class PolicyPatch(BaseModel):
     forbidden_categories: Optional[list[str]] = None
 
 
+# --- v1.63.0: самообучающийся маппинг «запомнить для поставщика» --------------
+class RememberMerchantBody(BaseModel):
+    fields: list[str] = Field(default_factory=list,
+                              description="category | assignee | comment")
+    values: Optional[dict[str, str]] = Field(
+        default=None, description="значения из формы (иначе — сохранённые)")
+    inn: Optional[str] = Field(default=None, max_length=20,
+                               description="ИНН (иначе — ИНН чека)")
+
+
 class AppSettingsPatch(BaseModel):
     auto_verify: Optional[bool] = None
     # v1.8.0: срок сдачи авансового отчёта от даты чека (дней; приказ руководителя,

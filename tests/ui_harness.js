@@ -563,6 +563,14 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('Политика расходов') && bundle.includes('pol-save'),
      'v1.62.0: карточка «Политика расходов» в настройках');
 
+  // --- v1.63.0: самообучающийся маппинг — блок запоминания и карточка правил ---
+  ok(bundle.includes('Запомнить для поставщика') &&
+     bundle.includes('remember-merchant'),
+     'v1.63.0: блок «Запомнить для поставщика» в карточке чека');
+  ok(bundle.includes('Правила поставщиков') &&
+     bundle.includes('mr-backfill'),
+     'v1.63.0: карточка «Правила поставщиков» в настройках');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

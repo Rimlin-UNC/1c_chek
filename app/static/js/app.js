@@ -4344,6 +4344,26 @@ function openEditReceipt(r, onSaved) {
       </div>
       <p class="form-hint" style="margin-top:6px">Реквизиты чека: ФН ${esc(r.fn)} · ФД ${esc(r.fd)} · ФП ${esc(r.fp)} · ${fmtSum(r.total_sum)} — скопируйте их на сайте сервиса.</p>
     </details>
+    ${r.merchant_inn && isAdminUser || r.merchant_inn && state.me.role === 'accountant' ? `
+    <details class="manual-check" style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🧠 Запомнить для поставщика (ИНН ${esc(r.merchant_inn)})</summary>
+      <p class="form-hint" style="margin:8px 0">Будущие чеки этого поставщика получат
+      выбранные значения, если поля у них пустые. Существующие значения правилами
+      не затираются.</p>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="mr-cat" ${r.category ? 'checked' : ''} style="width:auto">
+          <span>Статья расходов</span></label>
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="mr-asg" ${r.assignee ? 'checked' : ''} style="width:auto">
+          <span>Сотрудник</span></label>
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="mr-cmt" ${r.comment ? 'checked' : ''} style="width:auto">
+          <span>Комментарий</span></label>
+      </div>
+      <button class="btn btn-sm" id="er-remember">🧠 Запомнить</button>
+      <span class="form-hint" id="er-remember-msg" style="margin-left:8px"></span>
+    </details>` : ''}
     <div class="modal-actions">
       <button class="btn btn-primary" id="er-save">💾 Сохранить</button>
       <button class="btn" id="er-cancel">Отмена</button>
@@ -4480,6 +4500,28 @@ function openEditReceipt(r, onSaved) {
       await api.patch('/api/v1/receipts/' + r.id, body);
       toast('Чек обновлён', 'ok');
       close(); onSaved && onSaved();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+
+  // v1.63.0: «Запомнить для поставщика» — правило по ИНН из текущей формы
+  const _rm = slot.querySelector('#er-remember');
+  if (_rm) _rm.onclick = async () => {
+    const map = { 'mr-cat': 'category', 'mr-asg': 'assignee', 'mr-cmt': 'comment' };
+    const fields = Object.keys(map)
+      .filter((id) => slot.querySelector('#' + id) && slot.querySelector('#' + id).checked)
+      .map((id) => map[id]);
+    if (!fields.length) return toast('Отметьте, что запомнить', 'warn', '🧠');
+    try {
+      const res = await api.post(`/api/v1/receipts/${r.id}/remember-merchant`, {
+        fields,
+        inn: slot.querySelector('#er-inn').value.trim(),
+        values: {
+          category: (catPick.value === '__custom__' ? catInput.value : catPick.value).trim(),
+          assignee: slot.querySelector('#er-assignee').value.trim(),
+          comment: slot.querySelector('#er-comment').value.trim() } });
+      toast(res.message, 'ok', '🧠');
+      const m = slot.querySelector('#er-remember-msg');
+      if (m) m.textContent = res.message;
     } catch (e) { toast(e.message, 'err'); }
   };
 }
@@ -4850,6 +4892,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.63.0': [
+    { icon: '🧠', title: 'Запомнить для поставщика: чеки одного ИНН заполняются сами',
+      text: 'Бухгалтер поправил статью/сотрудника/комментарий у чека → в карточке чека (✏️) появился блок «Запомнить для поставщика». Система запоминает правила по ИНН магазина и подставляет их в будущие чеки этого поставщика — только в пустые поля, ваши правки не затирает. Список правил — в Настройках («🧠 Правила поставщиков»), оттуда же можно применить правило к старым чекам одной кнопкой.' },
+  ],
   '1.62.0': [
     { icon: '⚖️', title: 'Политика расходов: лимиты и запрещённые статьи — мягкий контроль',
       text: 'Бухгалтер задаёт лимит ₽ на чек и лимит ₽ в месяц на сотрудника, а также запрещённые статьи расходов (Настройки → «Политика расходов»). Чек с нарушением не блокируется: в списке и карточке у него появляется чип «⚖️ политика» с причиной, а на дашборде — счётчик нарушений. В суммах участвует «к учёту» — сумма чека минус личные покупки. Настройки свои у каждой компании.' },
@@ -7479,7 +7525,7 @@ async function viewAudit(container) {
 // ==========================================================================
 async function viewSettings(container) {
   let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null;
-  let pol = null, companies = null;   // v1.62.0: политика расходов
+  let pol = null, companies = null, mrules = null;   // v1.62.0/v1.63.0
   try { me = await api.get('/api/v1/auth/me'); } catch {}
   try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); } }
   catch { /* ignore */ }
@@ -7490,6 +7536,8 @@ async function viewSettings(container) {
   // v1.62.0: политика расходов — бухгалтер и админ
   if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
   if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
+  // v1.63.0: правила поставщиков — бухгалтер и админ
+  if (isAccountant()) { try { mrules = await api.get('/api/v1/receipts/merchant-rules'); } catch {} }
 
   container.innerHTML = `
     <div class="settings-grid">
@@ -7591,6 +7639,28 @@ async function viewSettings(container) {
           (поле «Статья расходов»). Чеков с нарушениями сейчас: <b>${pol.flagged || 0}</b>.</span></label>
         <button class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
         <div id="pol-msg" class="form-hint" style="margin-top:6px"></div>
+      </div>` : ''}
+
+      ${isAccountant() && mrules ? `
+      <div class="glass card" style="order:25">
+        <div class="card-title">🧠 Правила поставщиков
+          <span class="form-hint">самообучающийся маппинг (v1.63+)</span></div>
+        <p class="form-hint" style="margin-bottom:8px">Правило = поставщик (ИНН) + поле.
+        Будущие чеки этого поставщика получают значение в ПУСТОЕ поле,
+        существующие данные правилами не затираются.</p>
+        ${mrules.length ? `<div class="table-wrap"><table class="data"><thead><tr>
+          <th>Поставщик</th><th>Поле</th><th>Значение</th><th>Применили</th><th></th></tr></thead><tbody>
+          ${mrules.map((m) => `<tr>
+            <td>${esc(m.merchant_name || '—')}<div class="form-hint">ИНН ${esc(m.merchant_inn)}</div></td>
+            <td>${({ category: 'Статья', assignee: 'Сотрудник', comment: 'Комментарий' })[m.field] || esc(m.field)}</td>
+            <td title="${esc(m.value)}">${esc((m.value || '').slice(0, 55))}${(m.value || '').length > 55 ? '…' : ''}</td>
+            <td>${m.applied_count || 0}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-sm mr-backfill" data-id="${m.id}" title="Заполнить пустые поля у старых чеков этого поставщика">⏪ к старым</button>
+              <button class="btn btn-sm mr-del" data-id="${m.id}" title="Удалить правило">🗑</button></td>
+          </tr>`).join('')}</tbody></table></div>`
+          : '<div class="form-hint">Правил ещё нет. Откройте чек (✏️), заполните статью/сотрудника/комментарий и нажмите «🧠 Запомнить» в блоке «Запомнить для поставщика».</div>'}
+        <div id="mr-msg" class="form-hint" style="margin-top:6px"></div>
       </div>` : ''}
 
       ${isAdmin() && fns ? `
@@ -8638,6 +8708,22 @@ async function viewSettings(container) {
     };
     const polSel = $('#pol-company');
     if (polSel) polSel.onchange = () => { viewSettings(container); };
+  }
+
+  // v1.63.0: правила поставщиков — «к старым» и удаление
+  if (mrules) {
+    $$('.mr-backfill').forEach((b) => { b.onclick = async () => {
+      try {
+        const r = await api.post(`/api/v1/receipts/merchant-rules/${b.dataset.id}/backfill`);
+        toast(r.message, 'ok', '⏪');
+        viewSettings(container);
+      } catch (e) { toast(e.message, 'err'); } }; });
+    $$('.mr-del').forEach((b) => { b.onclick = async () => {
+      try {
+        await api.del(`/api/v1/receipts/merchant-rules/${b.dataset.id}`);
+        toast('Правило удалено', 'ok', '🧠');
+        viewSettings(container);
+      } catch (e) { toast(e.message, 'err'); } }; });
   }
 
   if (isAdmin() && fns) {

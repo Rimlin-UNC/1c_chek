@@ -35,11 +35,12 @@ from ..services.scoping import (can_edit_receipt, can_view_receipt,
 
 from ..config import settings
 from ..database import get_db
-from ..models import (Company, FnsLog, MappingSetting, Receipt,
-                      ReceiptItem, User)
+from ..models import (Company, FnsLog, MappingSetting, MerchantRule,
+                      Receipt, ReceiptItem, User)
 from ..schemas import (AssignBulk, ExportRequest, FetchDetailsRequest,
                        ManualReceipt, ReceiptMoveBody, ReceiptPatch,
-                       AdvanceReportBody, ScanRequest, VerifyRequest)
+                       RememberMerchantBody, AdvanceReportBody, ScanRequest,
+                       VerifyRequest)
 from ..services import appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
@@ -91,6 +92,11 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         _pol.refresh_receipt(db, receipt)
     except Exception:                              # noqa: BLE001
         pass                                       # политика не ломает приём
+    try:                                           # v1.63.0: правила поставщика
+        from ..services import merchant_rules as _mr
+        _mr.apply_rules(db, receipt)
+    except Exception:                              # noqa: BLE001
+        pass                                       # правила не ломают приём
     db.commit()
     db.refresh(receipt)
     return receipt, True
@@ -415,6 +421,125 @@ def list_categories(company_id: str | None = Query(None, max_length=36),
             for c, n in rows if (c or "").strip()]
 
 
+# --------------------------------------------------------------------------
+#  v1.63.0: самообучающийся маппинг — «запомнить для поставщика (ИНН)».
+#  Правило-кандидат на связку (компания, ИНН, поле): автозаполнение
+#  ПУСТЫХ полей будущих чеков; массовое «Применить к старым»; список и
+#  удаление правил. Доступ — бухгалтер+.
+# --------------------------------------------------------------------------
+_MERCHANT_FIELDS = ("category", "assignee", "comment")
+
+
+@router.get("/merchant-rules", summary="Правила поставщиков (бухгалтер+)")
+def list_merchant_rules(user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    if user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Правила поставщиков — бухгалтеру и администратору")
+    q = db.query(MerchantRule)
+    if user.role != ROLE_ADMIN:
+        q = q.filter(MerchantRule.company_id == user.company_id)
+    rows = q.order_by(MerchantRule.created_at.desc()).limit(200).all()
+    return [r.to_dict() for r in rows]
+
+
+@router.post("/merchant-rules/{rule_id}/backfill",
+             summary="Применить правило к старым чекам поставщика (бухгалтер+)")
+def backfill_merchant_rule(rule_id: str,
+                           user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    if user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Правила поставщиков — бухгалтеру и администратору")
+    rule = db.get(MerchantRule, rule_id)
+    if not rule or (user.role != ROLE_ADMIN
+                    and rule.company_id != user.company_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Правило не найдено")
+    from ..services import merchant_rules as mr
+    updated = mr.backfill(db, rule)
+    db.commit()
+    log_action(user, "merchant_rule_backfill", "merchant_rule", rule.id,
+               {"field": rule.field, "inn": rule.merchant_inn,
+                "updated": updated})
+    return {"ok": True, "updated": int(updated),
+            "message": (f"Правило применено к {updated} чекам задним числом"
+                        if updated else
+                        "У старых чеков поставщика поля уже заполнены")}
+
+
+@router.delete("/merchant-rules/{rule_id}",
+               summary="Удалить правило поставщика (бухгалтер+)")
+def delete_merchant_rule(rule_id: str,
+                         user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    if user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Правила поставщиков — бухгалтеру и администратору")
+    rule = db.get(MerchantRule, rule_id)
+    if not rule or (user.role != ROLE_ADMIN
+                    and rule.company_id != user.company_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Правило не найдено")
+    db.delete(rule)
+    db.commit()
+    log_action(user, "merchant_rule_deleted", "merchant_rule", rule.id,
+               {"field": rule.field, "inn": rule.merchant_inn})
+    return {"ok": True, "message": "Правило удалено"}
+
+
+@router.post("/{receipt_id}/remember-merchant",
+             summary="Запомнить статью/сотрудника/комментарий для поставщика (ИНН)")
+def remember_merchant(receipt_id: str, body: RememberMerchantBody,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    if user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Запоминание для поставщика — бухгалтеру и администратору")
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt or not can_view_receipt(user, receipt):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    inn = (body.inn or receipt.merchant_inn or "").strip()
+    if not inn:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "У чека нет ИНН поставщика — заполните «ИНН магазина» в карточке чека")
+    fields = [f for f in (body.fields or []) if f in _MERCHANT_FIELDS][:3]
+    if not fields:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Не выбраны поля для запоминания")
+    from ..services import merchant_rules as mr
+    rules, skipped = [], []
+    for f in fields:
+        raw = (body.values or {}).get(f)
+        value = str(raw if raw is not None else (getattr(receipt, f, None) or ""))
+        value = value.strip()[:mr.RULE_FIELDS[f]]
+        if not value:
+            skipped.append(f)
+            continue
+        rule = (db.query(MerchantRule)
+                .filter(MerchantRule.company_id == receipt.company_id,
+                        MerchantRule.merchant_inn == inn,
+                        MerchantRule.field == f).first())
+        if rule:
+            rule.value = value
+            rule.merchant_name = receipt.merchant_name or rule.merchant_name
+        else:
+            rule = MerchantRule(
+                company_id=receipt.company_id, merchant_inn=inn,
+                merchant_name=(receipt.merchant_name or "")[:500],
+                field=f, value=value, created_by=user.id)
+            db.add(rule)
+        rules.append(rule)
+    db.commit()
+    log_action(user, "merchant_rule_created", "receipt", receipt.id,
+               {"inn": inn, "fields": [r.field for r in rules],
+                "skipped": skipped})
+    msg = ("Запомнил для поставщика ИНН " + inn + ": "
+           + ", ".join(mr.FIELD_LABELS[r.field] for r in rules)) \
+        if rules else "Нечего запоминать — значения пустые"
+    return {"ok": True, "message": msg, "skipped": skipped,
+            "rules": [r.to_dict() for r in rules]}
+
+
 @router.get("/{receipt_id}", summary="Чек с позициями")
 def get_receipt(receipt_id: str,
                 user: User = Depends(get_current_user),
@@ -562,6 +687,13 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
         _pol.refresh_receipt(db, receipt)
     except Exception:                              # noqa: BLE001
         pass
+    # v1.63.0: появился/изменился ИНН — правила поставщика заполняют
+    # пустые поля (человеческие значения не трогают)
+    try:
+        from ..services import merchant_rules as _mr
+        _mr.apply_rules(db, receipt)
+    except Exception:                              # noqa: BLE001
+        pass
 
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,
@@ -633,6 +765,12 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
         from ..services import policy as _pol
         for r in rows:
             _pol.refresh_receipt(db, r)
+    except Exception:                              # noqa: BLE001
+        pass
+    try:                                           # v1.63.0: правила компании
+        from ..services import merchant_rules as _mr   # назначения
+        for r in rows:
+            _mr.apply_rules(db, r)
     except Exception:                              # noqa: BLE001
         pass
     db.commit()
@@ -733,6 +871,12 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     try:
         from ..services import policy as _pol
         _pol.refresh_receipt(db, receipt)
+    except Exception:                              # noqa: BLE001
+        pass
+    # v1.63.0: источник дал ИНН — правила поставщика заполняют пустые поля
+    try:
+        from ..services import merchant_rules as _mr
+        _mr.apply_rules(db, receipt)
     except Exception:                              # noqa: BLE001
         pass
     try:

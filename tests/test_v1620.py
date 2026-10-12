@@ -29,7 +29,8 @@ class TestVersion1620:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.62.0"
+        # v1.63.0: структурная проверка — строгий замок версии в test_v1630
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 62, 0)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.61.0" not in idx
@@ -48,7 +49,7 @@ class TestVersion1620:
     def test_settings_block_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Настройки"] == "1.62.0"
+        assert tuple(int(x) for x in reg["Настройки"].split(".")) >= (1, 62, 0)
 
 
 # ------------------------------------------------------------------ правила

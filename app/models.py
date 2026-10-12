@@ -329,6 +329,44 @@ class ReceiptItem(Base):
 
 
 # --------------------------------------------------------------------------
+#  v1.63.0: самообучающийся маппинг — правила поставщиков («запомнить
+#  для поставщика ИНН»). Ключ — компания + ИНН + поле; автозаполнение
+#  только ПУСТЫХ полей. Отдельная таблица: настройки 1С-маппинга
+#  (mapping_settings) не трогает.
+# --------------------------------------------------------------------------
+class MerchantRule(Base):
+    __tablename__ = "merchant_rules"
+    __table_args__ = (
+        UniqueConstraint("company_id", "merchant_inn", "field",
+                         name="uq_merchant_rule"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    merchant_inn: Mapped[str] = mapped_column(String(20), index=True)
+    merchant_name: Mapped[str] = mapped_column(String(500), default="",
+                                               server_default="")
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True)
+    field: Mapped[str] = mapped_column(String(30))   # category | assignee | comment
+    value: Mapped[str] = mapped_column(String(2000), default="")
+    applied_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "merchant_inn": self.merchant_inn,
+            "merchant_name": self.merchant_name or "",
+            "company_id": self.company_id,
+            "field": self.field,
+            "value": self.value or "",
+            "applied_count": int(self.applied_count or 0),
+            "created_at": iso_z(self.created_at),
+        }
+
+
+# --------------------------------------------------------------------------
 #  Настройки маппинга реквизитов чека → документы 1С
 # --------------------------------------------------------------------------
 class MappingSetting(Base):
