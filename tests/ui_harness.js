@@ -550,6 +550,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('.map(updLogLine)'),
      'v1.60.0: журнал обновления рендерится через updLogLine');
 
+  // --- v1.61.0: «На ручной проверке» — путь правил виден в интерфейсе ---
+  ok(bundle.includes('На ручной проверке') &&
+     bundle.includes('pending'),
+     'v1.61.0: статус «На ручной проверке» доступен в интерфейсе');
+  ok(bundle.includes('value="pending"'),
+     'v1.61.0: фильтр чеков умеет искать «На ручной проверке»');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

@@ -684,6 +684,20 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     if not human_edited:
         receipt.details_source = res.source or receipt.details_source
     receipt.details_fetched_at = dt.datetime.utcnow()
+    # v1.61.0: «понимающий» конвейер правил — если машинные данные
+    # противоречивы (суммы позиций ≠ итог и т.п.), чек уходит на ручную
+    # проверку с понятной причиной. Ручные правки (manual_edit) не
+    # трогаем; статусы только понижаем до pending, не повышаем.
+    if res.found and res.items and receipt.details_source != "manual_edit":
+        try:
+            from ..services.integrity import check_items
+            _v = check_items(res.items, receipt.total_sum)
+        except Exception:                                 # noqa: BLE001
+            _v = None                                     # правила не ломают приём
+        if _v is not None and not _v.ok and receipt.status == "verified":
+            receipt.status = "pending"
+            receipt.fns_message = (f"Проверка данных чека: данные "
+                                   f"не сходятся — {_v.message}")[:500]
     try:
         raw = json.loads(receipt.raw_data or "{}")
     except ValueError:

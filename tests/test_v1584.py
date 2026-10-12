@@ -40,7 +40,7 @@ class TestVersion1584:
         reg = updater.read_blocks("app/services/blocks.py")
         assert reg["Почтовый центр"] == "1.58.4"
         assert reg["Адаптивный интерфейс"] == "1.58.3"   # не задет
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.58.0"
+        assert tuple(int(x) for x in reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 58, 0)
         assert reg["Чек-Пул"] == "1.56.1"
 
 

@@ -176,9 +176,20 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
                 quantity=it.quantity or 1, price=it.price or 0,
                 total=it.total or 0, vat_rate=str(it.vat_rate or "none"),
                 vat_sum=it.vat_sum or 0))
+        # v1.61.0: «понимающий» конвейер правил — суммы/цены/дубли.
+        # Только уже полученные данные, доп. запросов к источникам нет.
+        try:
+            from ..services.integrity import check_items
+            _v = check_items(ext.items, receipt.total_sum)
+        except Exception:                                 # noqa: BLE001
+            _v = None                                     # правила не ломают приём
         if anomaly:
             receipt.status = "pending"                   # сумма-аномалия → вручную
             receipt.status_message = "Сумма-аномалия — ручная проверка"
+        elif _v is not None and not _v.ok:
+            receipt.status = "pending"                   # данные не сходятся → вручную
+            receipt.status_message = (f"Проверка данных чека: данные "
+                                      f"не сходятся — {_v.message}")[:500]
         else:
             receipt.status = "verified"
             receipt.status_message = "Данные чека подтверждены источником"

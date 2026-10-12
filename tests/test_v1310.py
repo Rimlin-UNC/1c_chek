@@ -37,6 +37,7 @@ def _qr(sum_rub="1250.00"):
             f"&i=65{k:03d}&fp=780{k:03d}&n=1")
 
 
+# v1.61.0: позиции согласованы с итогом 1250 ₽ (450 + 800)
 _TICKET = ExternalResult(
     ok=True, source="test", found=True, message="OK",
     date_time=datetime(2026, 9, 5, 14, 30),
@@ -44,8 +45,8 @@ _TICKET = ExternalResult(
     merchant_name="ООО Ромашка", merchant_inn="7704001275",
     merchant_address="г. Тихвин, ул. Советская 12",
     items=[
-        ExternalItem(name="Кофе", quantity=2.0, price=350.0, total=700.0,
-                     vat_rate="10", vat_sum=70.0),
+        ExternalItem(name="Кофе", quantity=2.0, price=225.0, total=450.0,
+                     vat_rate="10", vat_sum=45.0),
         ExternalItem(name="Торт", quantity=1.0, price=800.0, total=800.0,
                      vat_rate="20", vat_sum=160.0),
     ],

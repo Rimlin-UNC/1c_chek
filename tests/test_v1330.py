@@ -215,8 +215,8 @@ class TestPipelineEnrichment:
                                 address="г Казань, ул Баумана, 1",
                                 merchant="Пятёрочка",
                                 items=[ExternalItem(name="КОФЕ ЗЕРНОВОЙ",
-                                                    quantity=1.0, price=500.0,
-                                                    total=500.0)]))
+                                                    quantity=1.0, price=800.0,
+                                                    total=800.0)]))
         db = _db()
         _enable(db, True)
         u = PoolUser(vid="geo-e2e-vid")
