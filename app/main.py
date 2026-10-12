@@ -77,6 +77,13 @@ async def lifespan(app: FastAPI):
             log.info("max worker auto-started")
     except Exception:                                    # noqa: BLE001
         log.exception("max worker start failed")
+    # v1.67.0: исходящие webhooks — воркер доставки (если включён и URL задан)
+    try:
+        from .services import webhooks
+        if webhooks.start_worker():
+            log.info("webhooks worker auto-started")
+    except Exception:                                    # noqa: BLE001
+        log.exception("webhooks worker start failed")
 
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:

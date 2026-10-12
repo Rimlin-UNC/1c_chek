@@ -609,6 +609,71 @@ def refresh_bot(db: Session = Depends(get_db), admin: User = Depends(require_adm
     return {"ok": True, "bot_username": username}
 
 
+@router.get("/webhooks", summary="Настройки исходящих вебхуков (админ)")
+def get_webhooks(db: Session = Depends(get_db),
+                 admin: User = Depends(require_admin)):
+    from ..services import webhooks as wh
+    return {**wh.settings_info(db),
+            "worker_running": wh.worker_is_alive(),
+            "hint": "Как только чек проходит проверку (verified), приложение "
+                    "шлёт POST JSON на ваш URL. Каждая посылка подписана "
+                    "HMAC-SHA256 (X-Ymaster-Signature, время — X-Ymaster-Task); "
+                    "при сбое повторяем через 1 → 5 → 15 минут. Секрет хранится "
+                    "зашифрованным."}
+
+
+@router.put("/webhooks", summary="Сохранить настройки вебхуков (админ)")
+def put_webhooks(body: dict, db: Session = Depends(get_db),
+                 admin: User = Depends(require_admin)):
+    import re as _re
+    from ..services import webhooks as wh
+    from ..services.appsettings import set_setting as _s
+    body = body or {}
+    if "url" in body:
+        url = (body.get("url") or "").strip()
+        if url and not _re.fullmatch(r"https?://[^\s\"'<>]+", url):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "URL должен начинаться с http:// или https:// "
+                                "(например https://пример.рф/webhooks/chek)")
+        _s(db, wh.SETT_URL, url)
+    if "secret" in body:
+        sec = (body.get("secret") or "").strip()
+        if sec == "-":
+            _s(db, wh.SETT_SECRET, "")           # убрать секрет
+        elif sec:
+            _s(db, wh.SETT_SECRET, sec)          # уйдёт зашифрованным
+    if "events" in body:
+        evs = body.get("events") or []
+        if (not isinstance(evs, list) or not evs
+                or [e for e in evs if e not in wh.ALL_EVENTS]):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Доступные события: receipt_verified")
+        _s(db, wh.SETT_EVENTS, ",".join(evs))
+    if "enabled" in body:
+        _s(db, wh.SETT_ENABLED, "1" if body["enabled"] else "0")
+    started = wh.restart_worker()
+    log_action(admin, "webhooks_settings_saved",
+               details={"enabled": bool(body.get("enabled", False)),
+                        "worker": started})
+    return {"ok": True, "worker_running": started,
+            "message": ("Воркер вебхуков запущен — события пойдут на приёмник"
+                        if started else
+                        "Сохранено. Доставка включится, когда зададите URL "
+                        "и включите тумблер")}
+
+
+@router.post("/webhooks/test", summary="Тестовый POST на приёмник (админ)")
+def test_webhooks(db: Session = Depends(get_db),
+                  admin: User = Depends(require_admin)):
+    from ..services import webhooks as wh
+    try:
+        code, msg = wh.send_test(db)
+    except wh.WebhookError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    log_action(admin, "webhooks_test", details={"code": code})
+    return {"ok": True, "code": code, "message": msg}
+
+
 @router.get("/app/summary", summary="Краткие настройки для всех ролей")
 def app_summary(db: Session = Depends(get_db),
                 user: User = Depends(get_current_user)):

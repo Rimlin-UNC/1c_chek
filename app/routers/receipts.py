@@ -1133,6 +1133,9 @@ def _verify_one_sync(receipt_id: str) -> None:
                       ok=result.ok, duration_ms=duration))
         db.commit()
         broadcast("receipt_verified", receipt.to_dict())
+        # v1.67.0: событие наружу — исходящий webhook (очередь + повторы)
+        from ..services.webhooks import enqueue_receipt_verified
+        enqueue_receipt_verified(db, receipt.id)
     except Exception as e:  # не роняем воркер
         try:
             db.rollback()

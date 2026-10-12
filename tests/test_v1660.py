@@ -40,7 +40,8 @@ class TestVersion1660:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.66.0"
+        # v1.67.0: строгий замок версии переехал в test_v1670
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 66, 0)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.65.0" not in idx
@@ -59,7 +60,8 @@ class TestVersion1660:
     def test_telegram_block_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Telegram-уведомления"] == "1.66.0"
+        assert tuple(int(x) for x in
+                     reg["Telegram-уведомления"].split(".")) >= (1, 66, 0)
 
 
 # ------------------------------------------------------------------ MAX API

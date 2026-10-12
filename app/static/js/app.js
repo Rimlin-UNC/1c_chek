@@ -5040,6 +5040,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.67.0': [
+    { icon: '🪝', title: 'Вебхуки: чек проверен — событие уходит наружу',
+      text: 'Финал Фазы 1: как только чек получает статус «verified», приложение само шлёт POST JSON на ваш URL — во внешнюю таблицу, 1С-шлюз или сервис-посредник. Каждая посылка подписана HMAC-SHA256 (X-Ymaster-Signature), при сбое повторяем 1 → 5 → 15 минут, очередь — на сервере. Настройки → «Вебхуки: события наружу».' },
+  ],
   '1.66.0': [
     { icon: '🛡', title: 'Ассистенты: Telegram и MAX — напоминания, дайджест, выбор канала',
       text: 'У ассистентов теперь два мессенджера: Telegram и MAX (российский, работает без прокси). В настройках выбирайте канал: Telegram, MAX или оба сразу — напоминания «сдай чеки за сегодня» (18:00) и утренний дайджест бухгалтеру приходят туда, где сотрудник привязан. Подключение прежнее: Настройки → получить код → отправить боту /start КОД. Геолокацию не запрашиваем — только время и факты по чекам (152-ФЗ).' },
@@ -7729,10 +7733,10 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null;   // v1.66.0: + MAX
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null, whSet = null;   // v1.66.0: + MAX, v1.67.0: + webhooks
   let pol = null, companies = null, mrules = null;   // v1.62.0/v1.63.0
   try { me = await api.get('/api/v1/auth/me'); } catch {}
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); } }   // v1.66.0: + MAX
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); whSet = await api.get('/api/v1/settings/webhooks'); } }   // v1.66.0: + MAX, v1.67.0: + webhooks
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
   let appSum = null, sysInfo = null;
@@ -8078,6 +8082,35 @@ async function viewSettings(container) {
                <span id="mx-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="mx-code-hint" style="margin-top:8px"></p>`}
+      </div>` : ''}
+
+      ${isAdmin() && whSet ? `
+      <div class="glass card" style="order:37">
+        <div class="card-title">🪝 Вебхуки: события наружу <span class="form-hint">(v1.67.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Как только чек сотрудника проходит проверку
+        (статус «verified»), приложение отправляет <b>POST JSON</b> на ваш URL —
+        во внешнюю таблицу, 1С-шлюз или сервис-посредник, без кода на вашей стороне.
+        Каждая посылка подписана <b>HMAC-SHA256</b> (заголовок <b>X-Ymaster-Signature</b>,
+        unix-время — в <b>X-Ymaster-Task</b>); при сбое повторяем через 1 → 5 → 15 минут.
+        Формула подписи: HMAC(секрет, «время.тело»). Событие «чек проверен» — receipt_verified.</p>
+        <label class="field" style="margin-bottom:10px"><span>URL приёмника (POST, ответ 2xx)</span>
+          <input id="wh-url" value="${esc(whSet.url || '')}" placeholder="https://пример.рф/webhooks/chek"></label>
+        <label class="field" style="margin-bottom:10px"><span>Секрет для подписи
+          ${whSet.has_secret ? '(задан: ' + esc(whSet.secret_masked) + ')' : '(не задан — посылки без подписи)'}</span>
+          <input id="wh-secret" type="password" autocomplete="off" placeholder="пусто — не менять; «-» — убрать"></label>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 8px">
+          <input type="checkbox" id="wh-enabled" ${whSet.enabled_flag ? 'checked' : ''} style="width:auto">
+          <span>Включить доставку (очередь и повторы — сами)</span></label>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
+          <input type="checkbox" id="wh-ev-verified" ${whSet.events.includes('receipt_verified') ? 'checked' : ''} style="width:auto">
+          <span>Событие «чек проверен» (receipt_verified)</span></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="wh-save">💾 Сохранить</button>
+          <button class="btn btn-sm" id="wh-test">🧪 Тестовый POST</button>
+        </div>
+        <p class="form-hint" style="margin-top:10px">В очереди: ${whSet.stats.pending} ждёт ·
+          ${whSet.stats.delivered} доставлено · воркер: ${whSet.worker_running ? '✅ запущен' : '⏸ стоит'} ·
+          статус виден после сохранения</p>
       </div>` : ''}
 
       ${isAdmin() && appSet ? `
@@ -8833,6 +8866,29 @@ async function viewSettings(container) {
     if (ttt) ttt.onclick = async () => {
       try { const r = await api.post('/api/v1/settings/telegram/test', {});
         toast(r.message, 'ok', '🔔'); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+    // v1.67.0: вебхуки — сохранение и тест
+    const whSave = $('#wh-save');
+    if (whSave) whSave.onclick = async () => {
+      const events = [];
+      if ($('#wh-ev-verified') && $('#wh-ev-verified').checked) events.push('receipt_verified');
+      const body = {
+        url: $('#wh-url').value.trim(),
+        enabled: $('#wh-enabled').checked,
+        events };
+      const sec = $('#wh-secret').value.trim();
+      if (sec) body.secret = sec;
+      try {
+        const r = await api.put('/api/v1/settings/webhooks', body);
+        toast(r.message, r.worker_running ? 'ok' : 'warn', '🪝');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const whTest = $('#wh-test');
+    if (whTest) whTest.onclick = async () => {
+      try { const r = await api.post('/api/v1/settings/webhooks/test', {});
+        toast(r.message, 'ok', '🪝'); }
       catch (e) { toast(e.message, 'err'); }
     };
     // v1.66.0: сохранение настроек MAX

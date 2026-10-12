@@ -592,6 +592,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('tg-channel') && bundle.includes('Оба ассистента'),
      'v1.66.0: выбор канала (telegram/max/both) в настройках');
 
+  // --- v1.67.0: исходящие webhooks ---
+  ok(bundle.includes('Вебхуки: события наружу') && bundle.includes('/api/v1/settings/webhooks'),
+     'v1.67.0: карточка вебхуков в настройках');
+  ok(bundle.includes('X-Ymaster-Signature') && bundle.includes('wh-save'),
+     'v1.67.0: подпись HMAC и кнопки вебхуков');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

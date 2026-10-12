@@ -495,3 +495,40 @@ class WebauthnChallenge(Base):
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class WebhookLog(Base):
+    """Исходящий вебхук (v1.67.0): запись очереди доставки наружу.
+
+    Событие «чек verified» → POST JSON на URL администратора с подписью
+    HMAC-SHA256 и повторами 60/300/900 с (attempt/next_attempt_at).
+    Успех — любой 2xx (delivered_at); исчерпание попыток — запись
+    остаётся с last_error для разбора. Лимит очереди — 50 записей."""
+    __tablename__ = "webhook_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    event_type: Mapped[str] = mapped_column(String(50), default="receipt_verified",
+                                            index=True)
+    receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True,
+                                                   index=True)
+    company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    url: Mapped[str] = mapped_column(String(500), default="")
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str] = mapped_column(String(300), default="")
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow,
+                                                 index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "event_type": self.event_type,
+            "receipt_id": self.receipt_id, "url": self.url,
+            "attempt": self.attempt, "last_status": self.last_status,
+            "last_error": self.last_error,
+            "delivered_at": iso_z(self.delivered_at),
+            "created_at": iso_z(self.created_at),
+        }

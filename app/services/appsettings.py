@@ -18,6 +18,7 @@ SECRET_KEYS = frozenset({
     "telegram_proxy",                                # v1.29.0: socks5://user:pass@…
     "smtp_pass",                                     # v1.32.0: пароль SMTP Чек-Пула
     "max_bot_token",                                 # v1.66.0: токен бота MAX
+    "webhook_secret",                                # v1.67.0: секрет подписи вебхуков
 })
 
 
