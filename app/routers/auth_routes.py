@@ -136,6 +136,8 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
     d["is_platform_admin"] = (user.role == "admin")
     # v1.16.0: Telegram-привязка для личного кабинета настроек
     d["telegram_bound"] = bool(user.telegram_chat_id)
+    # v1.66.0: привязка ассистента MAX
+    d["max_bound"] = bool(user.max_user_id)
     # v1.17.0: реквизиты своей компании — для блока «Ваша компания»
     if user.company_id:
         c = db.get(Company, user.company_id)

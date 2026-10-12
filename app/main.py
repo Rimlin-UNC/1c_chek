@@ -70,6 +70,13 @@ async def lifespan(app: FastAPI):
             log.info("telegram worker auto-started")
     except Exception:                                    # noqa: BLE001
         log.exception("telegram worker start failed")
+    # v1.66.0: ассистент MAX — отдельный long-poll поток (если включён)
+    try:
+        from .services import max_bot as mx
+        if mx.start_worker():
+            log.info("max worker auto-started")
+    except Exception:                                    # noqa: BLE001
+        log.exception("max worker start failed")
 
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:

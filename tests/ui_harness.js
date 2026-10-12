@@ -586,6 +586,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('serverScanPdf'),
      'v1.65.0: приём PDF в конвейере сканирования');
 
+  // --- v1.66.0: ассистенты Telegram + MAX, выбор канала ---
+  ok(bundle.includes('Ассистент MAX') && bundle.includes('/api/v1/settings/max'),
+     'v1.66.0: карточка MAX в настройках');
+  ok(bundle.includes('tg-channel') && bundle.includes('Оба ассистента'),
+     'v1.66.0: выбор канала (telegram/max/both) в настройках');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

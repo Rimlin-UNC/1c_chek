@@ -108,6 +108,8 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     # v1.16.0: Telegram-уведомления (chat_id после привязки бота по коду)
     telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # v1.66.0: ассистент MAX — id пользователя для уведомлений
+    max_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

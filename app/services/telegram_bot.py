@@ -36,6 +36,8 @@ PROXY_SCHEMES = ("socks5://", "socks5h://", "http://", "https://")
 _QR_HINT_RE = re.compile(r"fn=\d{8,}", re.IGNORECASE)
 SETT_TIME = "telegram_reminder_time"     # "HH:MM"
 SETT_TEXT = "telegram_reminder_text"
+SETT_DIGEST = "digest_enabled"           # v1.66.0: утренний дайджест (общий)
+DIGEST_TIME = (8, 0)                     # v1.66.0: дайджест в 08:00
 DEFAULT_REMIND_TIME = "18:00"
 DEFAULT_REMIND_TEXT = ("👋 {name}, не забудьте сфотографировать чеки за сегодня — "
                        "откройте «Ямастер Чек» и сканируйте. Бухгалтер скажет спасибо!")
@@ -433,9 +435,71 @@ def _send_reminders(db: Session) -> None:
         log.info("telegram reminders sent: %s", sent)
 
 
-def _should_run(db: Session) -> bool:
-    """v1.29.0: воркер нужен, если бот включён И токен задан."""
+def _digest_due(db: Session) -> bool:
+    """v1.66.0: утренний дайджест в 08:00 (один раз в сутки)."""
     from . import appsettings
+    if appsettings.get_setting(db, SETT_DIGEST, "1") != "1":
+        return False
+    now = datetime.now()
+    target = now.replace(hour=DIGEST_TIME[0], minute=DIGEST_TIME[1],
+                         second=0, microsecond=0)
+    if not (target <= now < target + timedelta(minutes=10)):
+        return False
+    return appsettings.get_setting(db, "tg_last_digest", "") != \
+        now.strftime("%Y-%m-%d")
+
+
+def _send_digest(db: Session) -> None:
+    """v1.66.0: дайджест бухгалтерам/админам — в Telegram (кто привязан)."""
+    from . import appsettings
+    from . import max_bot as _mx
+    from ..models import Receipt, User
+    from sqlalchemy import func as _f
+    if _mx.get_channel(db) == "max":      # канал «только MAX» — шлёт MAX-бот
+        return
+    token = get_token(db)
+    if not token:
+        return
+    now = datetime.now()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = (db.query(Receipt.assignee, _f.count(Receipt.id),
+                     _f.coalesce(_f.sum(Receipt.total_sum), 0.0))
+            .filter(Receipt.created_at >= day_start, Receipt.assignee != "")
+            .group_by(Receipt.assignee)
+            .order_by(_f.sum(Receipt.total_sum).desc()).limit(12).all())
+    lines = [f"📊 Дайджест «Ямастер Чек» на {now.strftime('%d.%m')}:"]  # noqa: E501
+    if not rows:
+        lines.append("Сегодня чеков пока нет.")
+    for name, cnt, total in rows:
+        lines.append(f"• {name}: {int(cnt)} чек(ов) на {float(total):.2f} ₽")
+    text = "\n".join(lines)
+    staff = [u for u in db.query(User).filter(
+        User.is_active.is_(True),
+        User.telegram_chat_id.isnot(None),
+        User.telegram_chat_id != "",
+        User.role.in_(("admin", "accountant"))).all()]
+    proxy = get_proxy(db)
+    sent = 0
+    for u in staff:
+        try:
+            send_message(token, u.telegram_chat_id, text, proxy=proxy)
+            sent += 1
+            time.sleep(0.3)                              # анти-флуд
+        except Exception as e:                           # noqa: BLE001
+            log.warning("digest %s: %s", u.username, e)
+    if sent:
+        appsettings.set_setting(db, "tg_last_digest",
+                                now.strftime("%Y-%m-%d"))
+        log.info("digest sent: %s", sent)
+
+
+def _should_run(db: Session) -> bool:
+    """v1.29.0: воркер нужен, если бот включён И токен задан.
+    v1.66.0: канал «только MAX» — Telegram-воркер не нужен."""
+    from . import appsettings
+    from . import max_bot as _mx
+    if _mx.get_channel(db) == "max":
+        return False
     return (appsettings.get_setting(db, SETT, "0") == "1") and bool(get_token(db))
 
 
@@ -468,6 +532,8 @@ def _worker_loop() -> None:
                 last_reminder_check = time.time()
                 if _reminders_due(db):
                     _send_reminders(db)
+                if _digest_due(db):                      # v1.66.0: дайджест 08:00
+                    _send_digest(db)
         except Exception as e:                           # noqa: BLE001
             log.warning("telegram loop: %s", e)
             _stop.wait(10)

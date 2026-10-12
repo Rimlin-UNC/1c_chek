@@ -132,6 +132,8 @@ def _ensure_schema() -> None:
             ("company_id", "ALTER TABLE users ADD COLUMN company_id VARCHAR(36) NULL"),
             # --- v1.16.0: Telegram-уведомления ---
             ("telegram_chat_id", "ALTER TABLE users ADD COLUMN telegram_chat_id VARCHAR(32) NULL"),
+            # v1.66.0: ассистент MAX (id пользователя MAX для уведомлений)
+            ("max_user_id", "ALTER TABLE users ADD COLUMN max_user_id VARCHAR(32) NULL"),
         ],
         "invites": [
             ("company_id", "ALTER TABLE invites ADD COLUMN company_id VARCHAR(36) NULL"),

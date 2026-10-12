@@ -178,3 +178,25 @@ def telegram_unbind(user: User = Depends(get_current_user),
     user.telegram_chat_id = None
     db.commit()
     return {"ok": True, "message": "Telegram отвязан"}
+
+
+@router.post("/me/max/bind", summary="Одноразовый код привязки MAX")
+def max_bind_code(user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """v1.66.0: код привязки ассистента MAX (как у Telegram: /start КОД)."""
+    from ..services import max_bot as mx
+    code = mx.new_bind_code(db, user.id)
+    instruction = ("Откройте MAX, найдите бота «Ямастер Чек» "
+                   "(имя и ссылка — в настройках администратора) "
+                   f"и отправьте ему: /start {code}")
+    return {"code": code, "ttl": mx.BIND_TTL,
+            "bot_username": mx._username_cache or "",
+            "instruction": instruction}
+
+
+@router.post("/me/max/unbind", summary="Отвязать MAX-уведомления")
+def max_unbind(user: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    user.max_user_id = None
+    db.commit()
+    return {"ok": True, "message": "MAX отвязан"}

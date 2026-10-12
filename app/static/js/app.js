@@ -5040,6 +5040,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.66.0': [
+    { icon: '🛡', title: 'Ассистенты: Telegram и MAX — напоминания, дайджест, выбор канала',
+      text: 'У ассистентов теперь два мессенджера: Telegram и MAX (российский, работает без прокси). В настройках выбирайте канал: Telegram, MAX или оба сразу — напоминания «сдай чеки за сегодня» (18:00) и утренний дайджест бухгалтеру приходят туда, где сотрудник привязан. Подключение прежнее: Настройки → получить код → отправить боту /start КОД. Геолокацию не запрашиваем — только время и факты по чекам (152-ФЗ).' },
+  ],
   '1.65.0': [
     { icon: '📄', title: 'Чеки из PDF: электронный чек из письма или банка — в один клик',
       text: 'На странице «Сканирование» появилась кнопка «📄 Загрузить PDF-чек», а в зону перетаскивания можно бросать PDF. Сервер находит фискальный QR-код в тексте документа (без OCR) и проводит чек по обычному конвейеру: проверка ФНС, полные данные, правила. Лимит — 5 МБ. Сканированный PDF без текста честно отклоняется: пришлите фото или отсканируйте QR камерой.' },
@@ -7725,10 +7729,10 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null;
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null;   // v1.66.0: + MAX
   let pol = null, companies = null, mrules = null;   // v1.62.0/v1.63.0
   try { me = await api.get('/api/v1/auth/me'); } catch {}
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); } }
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); } }   // v1.66.0: + MAX
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
   let appSum = null, sysInfo = null;
@@ -7925,6 +7929,12 @@ async function viewSettings(container) {
           <input type="checkbox" id="tg-enabled" ${tgSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Включить бота: напоминания в ${esc(tgSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
         <div class="form-grid">
+          <label class="field"><span>Канал ассистентов (v1.66.0)</span>
+            <select id="tg-channel">
+              <option value="telegram" ${tgSet.channel === 'telegram' ? 'selected' : ''}>Telegram</option>
+              <option value="max" ${tgSet.channel === 'max' ? 'selected' : ''}>MAX</option>
+              <option value="both" ${tgSet.channel === 'both' ? 'selected' : ''}>Оба ассистента (в паре)</option>
+            </select></label>
           <label class="field"><span>Время напоминания (ЧЧ:ММ)</span>
             <input id="tg-time" value="${esc(tgSet.reminder_time)}" placeholder="18:00"></label>
           <label class="field"><span>Подключено сотрудников</span>
@@ -7941,6 +7951,40 @@ async function viewSettings(container) {
         <p class="form-hint" id="tg-diag-out" style="margin-top:10px"></p>
         <p class="form-hint" style="margin-top:6px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
           статус воркера также виден после сохранения</p>
+      </div>` : ''}
+
+      ${isAdmin() && maxSet ? `
+      <div class="glass card" style="order:35">
+        <div class="card-title">🛡 Ассистент MAX <span class="form-hint">(v1.66.0)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Тот же функционал, что у Telegram
+        (напоминания «сдай чеки за сегодня», утренний дайджест), но через мессенджер MAX —
+        сервер Минцифры, <b>прокси не нужен</b>. Токен — на платформе
+        <a href="https://business.max.ru/self" target="_blank" rel="noopener">business.max.ru</a>
+        (Чат-боты → ⋮ → Настройки → скопировать токен). Выбор канала — в карточке
+        Telegram выше: «Telegram», «MAX» или «Оба ассистента».</p>
+        <label class="field" style="margin-bottom:10px"><span>Токен бота MAX
+          ${maxSet.has_token ? '(задан: ' + esc(maxSet.token_masked) + (maxSet.bot_username ? ', @' + esc(maxSet.bot_username) : '') + ')' : '(не задан)'}</span>
+          <input id="mx-token" type="password" autocomplete="off" placeholder="токен с платформы MAX"></label>
+        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
+          <input type="checkbox" id="mx-enabled" ${maxSet.enabled ? 'checked' : ''} style="width:auto">
+          <span>Включить бота: напоминания в ${esc(maxSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
+        <div class="form-grid">
+          <label class="field"><span>Время напоминания (ЧЧ:ММ)</span>
+            <input id="mx-time" value="${esc(maxSet.reminder_time)}" placeholder="18:00"></label>
+          <label class="field"><span>Подключено сотрудников</span>
+            <input value="${maxSet.bound_users}" disabled></label>
+          <label class="field full"><span>Текст напоминания ({name} — имя сотрудника)</span>
+            <input id="mx-text" value="${esc(maxSet.reminder_text)}"></label>
+          <label class="field full" style="display:flex;gap:10px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="mx-digest" ${maxSet.digest_enabled ? 'checked' : ''} style="width:auto">
+            <span>Утренний дайджест бухгалтеру и администратору (в 08:00)</span></label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
+          <button class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
+        </div>
+        <p class="form-hint" style="margin-top:10px">${maxSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
+          статус виден после сохранения</p>
       </div>` : ''}
 
       ${isAdmin() && poolSet ? `
@@ -8020,6 +8064,20 @@ async function viewSettings(container) {
                <span id="tg-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="tg-code-hint" style="margin-top:8px"></p>`}
+      </div>` : ''}
+
+      ${me ? `
+      <div class="glass card" style="order:36">
+        <div class="card-title">🛡 MAX — личное <span class="form-hint">(v1.66.0)</span></div>
+        ${me.max_bound
+          ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
+             <button class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
+          : `<p class="form-hint" style="margin-bottom:10px">Нажмите «Получить код», затем в MAX отправьте боту приложения: <b>/start КОД</b>.</p>
+             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+               <button class="btn btn-primary btn-sm" id="mx-code">🔑 Получить код</button>
+               <span id="mx-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
+             </div>
+             <p class="form-hint" id="mx-code-hint" style="margin-top:8px"></p>`}
       </div>` : ''}
 
       ${isAdmin() && appSet ? `
@@ -8750,6 +8808,8 @@ async function viewSettings(container) {
         if (tok) body.bot_token = tok;
         const prx = $('#tg-proxy').value.trim();          // v1.29.0
         if (prx) body.proxy = prx;
+        const chSel = $('#tg-channel');                    // v1.66.0: канал
+        if (chSel) body.channel = chSel.value;
         const r = await api.put('/api/v1/settings/telegram', body);
         toast(r.message, r.worker_running ? 'ok' : 'warn', '🔔');
         route(true);
@@ -8775,6 +8835,28 @@ async function viewSettings(container) {
         toast(r.message, 'ok', '🔔'); }
       catch (e) { toast(e.message, 'err'); }
     };
+    // v1.66.0: сохранение настроек MAX
+    const mxSave = $('#mx-save');
+    if (mxSave) mxSave.onclick = async () => {
+      const body = {
+        enabled: $('#mx-enabled').checked,
+        reminder_time: $('#mx-time').value.trim(),
+        reminder_text: $('#mx-text').value.trim(),
+        digest_enabled: $('#mx-digest').checked };
+      const tok = $('#mx-token').value.trim();
+      if (tok) body.bot_token = tok;
+      try {
+        const r = await api.put('/api/v1/settings/max', body);
+        toast(r.message, r.worker_running ? 'ok' : 'warn', '🛡');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const mxTest = $('#mx-test');
+    if (mxTest) mxTest.onclick = async () => {
+      try { const r = await api.post('/api/v1/settings/max/test', {});
+        toast(r.message, 'ok', '🛡'); }
+      catch (e) { toast(e.message, 'err'); }
+    };
     const tgr = $('#tg-refresh');
     if (tgr) tgr.onclick = async () => {
       try { const r = await api.post('/api/v1/settings/telegram/refresh-bot', {});
@@ -8796,6 +8878,23 @@ async function viewSettings(container) {
     if (tu) tu.onclick = async () => {
       if (!confirm('Отвязать Telegram-уведомления?')) return;
       try { const r = await api.post('/api/v1/users/me/telegram/unbind', {});
+        toast(r.message, 'ok'); route(true); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+    // v1.66.0: личный MAX — код и отвязка
+    const mc = $('#mx-code');
+    if (mc) mc.onclick = async () => {
+      try {
+        const r = await api.post('/api/v1/users/me/max/bind', {});
+        $('#mx-code-out').textContent = r.code;
+        $('#mx-code-hint').textContent = r.instruction + ' — код действует 15 минут.';
+        toast('Код получен — отправьте боту /start ' + r.code, 'ok', '🛡');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const mu = $('#mx-unbind');
+    if (mu) mu.onclick = async () => {
+      if (!confirm('Отвязать MAX-уведомления?')) return;
+      try { const r = await api.post('/api/v1/users/me/max/unbind', {});
         toast(r.message, 'ok'); route(true); }
       catch (e) { toast(e.message, 'err'); }
     };

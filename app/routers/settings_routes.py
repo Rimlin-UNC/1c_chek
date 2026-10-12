@@ -419,6 +419,88 @@ def reveal_checko(body: dict, request: Request,
 # --------------------------------------------------------------------------
 #  v1.16.0: Telegram-бот (токен — секрет, шифруется; worker с hot-restart)
 # --------------------------------------------------------------------------
+@router.get("/max", summary="Настройки ассистента MAX (админ)")
+def get_max_settings(db: Session = Depends(get_db),
+                     admin: User = Depends(require_admin)):
+    from ..services import max_bot as mx
+    from ..services.appsettings import get_setting as _g
+    s = mx.bot_settings(db)
+    return {**s, "token_masked": _mask(_g(db, mx.SETT_TOKEN, "")),
+            "worker_running": mx.worker_is_alive(),
+            "bound_users": db.query(User).filter(
+                User.max_user_id.isnot(None)).count(),
+            "hint": "Токен бота MAX — на платформе business.max.ru "
+                    "(Чат-боты → ⋮ → Настройки). Токен хранится зашифрованным. "
+                    "Сервер Минцифры — прокси не нужен. Сотрудники подключаются "
+                    "сами: Настройки → MAX — личное → код → /start КОД."}
+
+
+@router.put("/max", summary="Сохранить настройки ассистента MAX (админ)")
+def put_max_settings(body: dict, db: Session = Depends(get_db),
+                     admin: User = Depends(require_admin)):
+    import re as _re
+    from ..services import max_bot as mx
+    from ..services.appsettings import set_setting as _s
+    body = body or {}
+    if "channel" in body:
+        ch = (body.get("channel") or "").strip()
+        if ch not in ("telegram", "max", "both"):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Канал: telegram, max или both")
+        _s(db, mx.SETT_CHANNEL, ch)
+    token = (body.get("bot_token") or "").strip()
+    if token and token != "-":
+        # формат токена MAX не опубликован — мягкая проверка + живой get_me
+        if not _re.fullmatch(r"[A-Za-z0-9_\-]{20,}", token):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Токен MAX — строка с платформы business.max.ru "
+                                "(Чат-боты → ⋮ → Настройки → токен)")
+        _s(db, mx.SETT_TOKEN, token)                 # уйдёт зашифрованным
+        try:
+            mx.get_me(token)
+        except mx.MaxError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+        mx.refresh_username(db)
+    elif token == "-":
+        _s(db, mx.SETT_TOKEN, "")
+    if "enabled" in body:
+        _s(db, mx.SETT, "1" if body["enabled"] else "0")
+    if "reminder_time" in body:
+        tme = (body.get("reminder_time") or "").strip()
+        if tme:
+            m = _re.fullmatch(r"(\d{2}):(\d{2})", tme)
+            if not m or not (0 <= int(m.group(1)) < 24 and 0 <= int(m.group(2)) < 60):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    "Время напоминаний — в формате ЧЧ:ММ (например 18:00)")
+            _s(db, mx.SETT_TIME, tme)
+    if "reminder_text" in body:
+        _s(db, mx.SETT_TEXT, (body.get("reminder_text") or "").strip()[:500])
+    if "digest_enabled" in body:
+        _s(db, mx.SETT_DIGEST, "1" if body["digest_enabled"] else "0")
+    started = mx.restart_worker()
+    log_action(admin, "max_settings_saved",
+               details={"enabled": bool(body.get("enabled", False)),
+                        "channel": mx.get_channel(db), "worker": started})
+    return {"ok": True, "worker_running": started,
+            "message": ("MAX-бот запущен — напоминания и дайджест по расписанию"
+                        if started else
+                        "Сохранено. Бот включится, когда зададите токен и включите тумблер")}
+
+
+@router.post("/max/test", summary="Тестовое сообщение себе в MAX (админ)")
+def test_max(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import max_bot as mx
+    if not admin.max_user_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Сначала привяжите MAX: блок «MAX — личное» ниже")
+    try:
+        mx.send_message(mx.get_token(db), admin.max_user_id,
+                        "🧪 Тест: уведомления «Ямастер Чек» работают!")
+    except mx.MaxError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    return {"ok": True, "message": "Отправлено — проверьте MAX"}
+
+
 @router.get("/telegram", summary="Настройки Telegram-бота (админ)")
 def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from ..services import telegram_bot as tg
@@ -426,8 +508,10 @@ def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_ad
     from ..services.appsettings import get_setting as _g
     key = _mask(_g(db, tg.SETT_TOKEN, ""))
     proxy_masked = _mask(_g(db, tg.SETT_PROXY, ""))
+    from ..services import max_bot as _mx
     return {**s, "token_masked": key,
             "proxy_masked": proxy_masked,
+            "channel": _mx.get_channel(db),   # v1.66.0: канал ассистентов
             "bound_users": db.query(User).filter(
                 User.telegram_chat_id.isnot(None)).count(),
             "hint": "Токен от @BotFather хранится зашифрованным. Если сервер "
@@ -468,6 +552,13 @@ def put_telegram(body: dict, db: Session = Depends(get_db),
         tg.refresh_username(db)                      # кэш username бота
     if "enabled" in (body or {}):
         _s(db, tg.SETT, "1" if body["enabled"] else "0")
+    if "channel" in (body or {}):            # v1.66.0: канал ассистентов
+        from ..services.max_bot import SETT_CHANNEL as _ASSIST_CH
+        ch = (body.get("channel") or "").strip()
+        if ch not in ("telegram", "max", "both"):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Канал: telegram, max или both")
+        _s(db, _ASSIST_CH, ch)
     if "reminder_time" in (body or {}):
         tme = (body["reminder_time"] or "").strip()
         if tme:
