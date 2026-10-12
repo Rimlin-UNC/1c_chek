@@ -199,5 +199,5 @@ class TestBlocksRegistry:
         # точный пин 1.57.0 перенесён в tests/test_v1571.py
         assert tuple(int(x) for x in
                      reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 0)
-        assert reg["Сканирование чеков"] == "1.56.2"     # не задет
+        assert tuple(int(x) for x in reg["Сканирование чеков"].split(".")) >= (1, 56, 2)     # не задет
         assert reg["Чек-Пул"] == "1.56.1"                # не задет

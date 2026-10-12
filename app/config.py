@@ -37,7 +37,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.64.0"
+    APP_VERSION: str = "1.65.0"
     DEFAULT_BRANCH: str = "arena/01a0caaa-1c-chek"   # ветка для обновлений из приложения
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
     # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
@@ -79,6 +79,8 @@ class Settings:
     # --- Общие -----------------------------------------------------------
     CORS_ORIGINS: list[str] = _env("CORS_ORIGINS", "*").split(",")
     MAX_UPLOAD_MB: int = int(_env("MAX_UPLOAD_MB", "12"))
+    # v1.65.0: лимит размера PDF-чека (концепция: 2–5 МБ, 1 ГБ RAM)
+    PDF_MAX_MB: int = int(_env("PDF_MAX_MB", "5"))
     FIRST_RUN_SEED: bool = _env("FIRST_RUN_SEED", "1") == "1"
 
 

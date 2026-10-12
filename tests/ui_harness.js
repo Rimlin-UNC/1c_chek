@@ -579,6 +579,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('ur-role'),
      'v1.64.0: роль «Руководитель» в интерфейсе ролей');
 
+  // --- v1.65.0: PDF-чеки — кнопка и приём в бандле ---
+  ok(bundle.includes('btn-pdf') && bundle.includes('Загрузить PDF-чек'),
+     'v1.65.0: кнопка «Загрузить PDF-чек» на сканировании');
+  ok(bundle.includes('application/pdf') &&
+     bundle.includes('serverScanPdf'),
+     'v1.65.0: приём PDF в конвейере сканирования');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

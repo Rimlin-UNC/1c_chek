@@ -61,7 +61,7 @@ class TestBlocksRegistry:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Сканирование чеков"] == "1.56.2"   # живые статусы чеков
+        assert tuple(int(x) for x in reg["Сканирование чеков"].split(".")) >= (1, 56, 2)   # живые статусы чеков
         assert reg["Чек-Пул"] == "1.56.1"              # не задет
         assert tuple(int(x) for x in
                      reg["Адаптивный интерфейс"].split(".")) >= (1, 56, 1)  # v1.58.1: бамп

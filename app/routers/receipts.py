@@ -228,6 +228,57 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
 
 
 # --------------------------------------------------------------------------
+#  POST /scan/pdf — v1.65.0: электронный чек из почты/банка (текстовый
+#  PDF). QR достаём из текстового слоя (без OCR), дальше — ТОТ ЖЕ
+#  конвейер: parse_qr → _upsert_receipt (дедуп) → авто-проверки.
+#  Лимит размера PDF_MAX_MB; замки приёма v1.51–1.54 не тронуты.
+# --------------------------------------------------------------------------
+@router.post("/scan/pdf", summary="Приём PDF-чека: QR из текстового слоя (почта/банк)")
+async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    raw = await file.read()
+    if len(raw) > settings.PDF_MAX_MB * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            f"Файл больше {settings.PDF_MAX_MB} МБ — "
+                            f"пришлите PDF поменьше")
+    from ..services import pdf_receipts
+    try:
+        qr_texts = pdf_receipts.extract_qr_texts(raw)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+
+    created, duplicate = False, False
+    last = None
+    for qr_text in qr_texts:                 # нескольких чеков в файле — по одному
+        try:
+            parsed = parse_qr(qr_text)
+        except QRParseError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+        receipt, created_i = _upsert_receipt(db, parsed, "pdf", user,
+                                             target_company_id(db, user, None))
+        duplicate = duplicate or not created_i
+        created = created or created_i
+        if created_i:
+            log_action(user, "receipt_created", "receipt", receipt.id,
+                       {"fn": receipt.fn, "fd": receipt.fd, "source": "pdf"})
+            _notify_receipt_created(user, receipt)
+            broadcast("receipt_created", receipt.to_dict())
+            _maybe_auto_verify(background, db, receipt)
+            _maybe_auto_fetch(background, db, receipt)
+        last = receipt
+    return {
+        "receipt": _attach_company(db, last.to_dict(with_items=True)) if last else None,
+        "duplicate": duplicate,
+        "message": ("Чек из PDF принят"
+                    if created else
+                    "Чек из PDF уже был в системе"
+                    if duplicate else "Чек принят"),
+        "codes_found": len(qr_texts),
+    }
+
+
+# --------------------------------------------------------------------------
 #  POST /manual — ручной ввод реквизитов (резервный режим)
 # --------------------------------------------------------------------------
 @router.post("/manual", summary="Ручной ввод реквизитов чека")

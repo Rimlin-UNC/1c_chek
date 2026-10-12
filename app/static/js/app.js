@@ -4226,13 +4226,15 @@ async function viewScan(container) {
         </div>
         <div class="scan-actions">
           <button class="btn" id="btn-upload">🖼 Загрузить фото чека</button>
+          <button class="btn" id="btn-pdf">📄 Загрузить PDF-чек</button>
           <button class="btn" id="btn-paste">📋 Вставить QR-текст</button>
           <button class="btn" id="btn-manual">⌨ Ввести вручную</button>
           <input type="file" id="file-input" accept="image/*" multiple class="hidden">
+          <input type="file" id="pdf-input" accept="image/*,.pdf,application/pdf" class="hidden">
         </div>
         <div class="dropzone" id="dropzone">
           <span class="big-ico">⬇️</span>
-          Перетащите сюда фотографии чеков — можно несколько сразу
+          Перетащите сюда фотографии или PDF-чеки — можно несколько сразу
         </div>
         <div class="torch-note">Совет: чеки с экрана телефона тоже распознаются. Держите QR в рамке при хорошем свете.
         После скана чек автоматически уходит на проверку в ФНС.</div>
@@ -4293,6 +4295,9 @@ async function viewScan(container) {
 
   $('#btn-upload').onclick = () => $('#file-input').click();
   $('#file-input').onchange = (e) => handleFiles([...e.target.files]);
+  // v1.65.0: PDF-чеки из почты/банка (QR из текстового слоя, без OCR)
+  $('#btn-pdf').onclick = () => $('#pdf-input').click();
+  $('#pdf-input').onchange = (e) => handleFiles([...e.target.files]);
   const dz = $('#dropzone');
   dz.onclick = () => $('#file-input').click();
   dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('dragover'); };
@@ -5035,6 +5040,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.65.0': [
+    { icon: '📄', title: 'Чеки из PDF: электронный чек из письма или банка — в один клик',
+      text: 'На странице «Сканирование» появилась кнопка «📄 Загрузить PDF-чек», а в зону перетаскивания можно бросать PDF. Сервер находит фискальный QR-код в тексте документа (без OCR) и проводит чек по обычному конвейеру: проверка ФНС, полные данные, правила. Лимит — 5 МБ. Сканированный PDF без текста честно отклоняется: пришлите фото или отсканируйте QR камерой.' },
+  ],
   '1.64.0': [
     { icon: '📊', title: 'Роль «Руководитель»: расходы компании на одном экране',
       text: 'Новая роль — для директора и руководителей отделов: видит все чеки своей компании и «Отчёт руководителя» с разрезами по сотрудникам и статьям расходов (30/90/365 дней), с переходом до отдельного чека. Только просмотр: проверку в ФНС, выгрузку в 1С и правки делает бухгалтер. Выдать роль — в приглашении или кнопкой «↕ Роль» у пользователя. Администратор по-прежнему видит всё и может открыть приложение глазами любой роли.' },
@@ -5592,10 +5601,15 @@ async function flushOfflineQueue(manual = false) {
 
 async function handleFiles(files) {
   for (const file of files) {
-    if (!file.type.startsWith('image/')) { toast(`${file.name}: не изображение`, 'warn'); continue; }
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf'
+      || /\.pdf$/i.test(file.name || '');
+    if (!isImage && !isPdf) { toast(`${file.name}: не изображение и не PDF`, 'warn'); continue; }
     try {
       const { valid, raws } = await decodeImageFile(file);
-      if (valid.length === 0 && raws.length === 0) {
+      if (isPdf) {
+        await serverScanPdf(file);          // v1.65.0: PDF — сразу серверу
+      } else if (valid.length === 0 && raws.length === 0) {
         await serverScanImage(file);
       } else if (valid.length) {
         for (const p of valid) {
@@ -5630,6 +5644,26 @@ async function serverScanImage(file) {
       pickVariantDialog(variants);
     } else {
       toast(e.message, 'err', file.name);
+    }
+  }
+}
+
+// v1.65.0: PDF-чек — QR из текстового слоя достаёт сервер (без OCR);
+// тот же конвейер приёма, что скан и фото. Диалог «несколько чеков» —
+// сервер возвращает 300 c вариантами, как у фото.
+async function serverScanPdf(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await api.post('/api/v1/receipts/scan/pdf', fd);
+    if (r.receipt) pushRecent(r.receipt);
+    toast(r.message || 'Готово', 'ok', 'Чек из PDF');
+  } catch (e) {
+    if (e.status === 300) {
+      const variants = (e.data && e.data.detail && e.data.detail.variants) || [];
+      pickVariantDialog(variants);
+    } else {
+      toast(e.message, 'err', file.name || 'Чек из PDF');
     }
   }
 }
