@@ -32,6 +32,7 @@ ANTIFLOOD_SEC = 0.4                      # ≤2 сообщений/сек на �
 SETT = "max_enabled"
 SETT_TOKEN = "max_bot_token"             # секрет (appsettings.SECRET_KEYS)
 SETT_CHANNEL = "assistants_channel"      # telegram | max | both (общий)
+SETT_USERNAME = "max_bot_username"       # v1.70.1: фактический ник бота
 SETT_TIME = "max_reminder_time"
 SETT_TEXT = "max_reminder_text"
 SETT_DIGEST = "digest_enabled"           # утренний дайджест (общий)
@@ -65,6 +66,12 @@ def get_channel(db: Session) -> str:
 
 def bot_settings(db: Session) -> dict:
     from . import appsettings
+    if not _username_cache and not appsettings.get_setting(
+            db, SETT_USERNAME, "") and get_token(db):
+        try:
+            refresh_username(db)             # v1.70.1: ник для диплинков
+        except Exception:                    # noqa: BLE001
+            pass
     tme = appsettings.get_setting(db, SETT_TIME, DEFAULT_REMIND_TIME)
     if not re.fullmatch(r"\d{2}:\d{2}", tme or ""):
         tme = DEFAULT_REMIND_TIME
@@ -134,6 +141,8 @@ def send_rich(token: str, user_id: int | str, text: str,
 
 
 def refresh_username(db: Session) -> str:
+    """v1.70.1: username бота из MAX API — и сразу в настройки: от него
+    зависят ВСЕ диплинки (вход с сайта, приглашения, реферальные)."""
     global _username_cache
     token = get_token(db)
     if not token:
@@ -143,7 +152,28 @@ def refresh_username(db: Session) -> str:
         _username_cache = me.get("username") or ""
     except MaxError:
         _username_cache = ""
+    u = (_username_cache or "").strip()
+    if u:
+        from . import appsettings
+        if appsettings.get_setting(db, SETT_USERNAME, "") != u:
+            appsettings.set_setting(db, SETT_USERNAME, u)
     return _username_cache
+
+
+def bot_username(db: Session, refresh: bool = False) -> str:
+    """Ник бота для диплинков: настройка (сохранённая) → кэш get_me →
+    (по запросу) MAX API → нейтральный запасной вариант. Публичные
+    обработчики зовут с refresh=False — без сетевых вызовов."""
+    from . import appsettings
+    u = (appsettings.get_setting(db, SETT_USERNAME, "") or "").strip()
+    if u:
+        return u
+    u = (_username_cache or "").strip()
+    if u:
+        return u
+    if refresh:
+        return refresh_username(db) or "chek.ymaster.bot"
+    return "chek.ymaster.bot"
 
 
 # --------------------------------------------------------------------------
@@ -413,17 +443,25 @@ def _poll_once(marker: list) -> None:
 
 
 def _should_run(db: Session) -> bool:
-    """v1.66.0: MAX-воркер нужен, если бот включён, токен задан и канал
-    не «только Telegram»."""
+    """v1.70.1: воркер живёт по «Включён + токен» — независимо от канала
+    уведомлений (канал решает лишь, куда слать дайджесты/напоминания).
+    Иначе при канале «telegram» (по умолчанию) бот MAX молчал: не читал
+    /start-коды, подтверждения входа и QR-строки."""
     from . import appsettings
-    if get_channel(db) == "telegram":
-        return False
     return (appsettings.get_setting(db, SETT, "0") == "1") and bool(get_token(db))
 
 
 def _worker_loop() -> None:
     marker = [None]
     last_check = 0.0
+    try:                          # v1.70.1: ник бота — для всех диплинков
+        _db0 = _db_session()
+        try:
+            refresh_username(_db0)
+        finally:
+            _db0.close()
+    except Exception:                                  # noqa: BLE001
+        pass
     while not _stop.is_set():
         db = _db_session()
         try:

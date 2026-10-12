@@ -168,7 +168,7 @@ def scan(body: ScanBody, db: Session = Depends(get_db),
 def summary(db: Session = Depends(get_db), user=Depends(require_pool_user)):
     d = _me_dict(db, user)
     d["receipts"] = _last_receipts(db, user)
-    d["ref_link"] = (maxapp.ref_deep_link(user.tg_user_id, d["ref_code"])
+    d["ref_link"] = (maxapp.ref_deep_link(db, d["ref_code"])
                      if d["ref_code"] else "")
     d["app_version"] = settings.APP_VERSION
     return d

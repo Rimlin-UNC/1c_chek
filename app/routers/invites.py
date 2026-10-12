@@ -155,8 +155,8 @@ def send_max(invite_id: str, body: SendMaxBody, request: Request,
     if not mid:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            "Получатель не найден: пусть откроет бота chek.ymaster.bot "
-            "в MAX (или мини-приложение) — и отправьте ещё раз")
+            "Получатель не найден: пусть откроет вашего бота в MAX "
+            "(или мини-приложение) — и отправьте ещё раз")
     token = max_bot.get_token(db)
     if not token:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -177,7 +177,8 @@ def send_max(invite_id: str, body: SendMaxBody, request: Request,
             + "\nОткройте ссылку — вход и регистрация займут минуту.")
     buttons = [
         {"type": "link", "text": "Открыть в MAX",
-         "url": f"https://max.ru/chek.ymaster.bot?startapp=inv_{inv.token}"},
+         "url": (f"https://max.ru/{max_bot.bot_username(db, refresh=True)}"
+                 f"?startapp=inv_{inv.token}")},
         {"type": "link", "text": "Открыть на сайте", "url": web_url},
     ]
     try:

@@ -97,9 +97,11 @@ def bot_token(db) -> str:
     return appsettings.get_setting(db, "max_bot_token", "") or ""
 
 
-def ref_deep_link(max_id, ref_code: str) -> str:
-    """Диплинк приглашения: открывает мини-приложение бота с кодом."""
-    return f"https://max.ru/chek.ymaster.bot?startapp=ref_{ref_code}"
+def ref_deep_link(db, ref_code: str) -> str:
+    """Диплинк приглашения: открывает мини-приложение бота с кодом
+    (ник бота — фактический, из настроек, v1.70.1)."""
+    from . import max_bot
+    return f"https://max.ru/{max_bot.bot_username(db)}?startapp=ref_{ref_code}"
 
 
 def parse_start_param(sp: str) -> dict:

@@ -87,7 +87,8 @@ class TestVersion1700:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.70.0"
+        # v1.70.1: строгий замок версии переехал в test_v1701
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 0)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.69.0" not in idx
@@ -132,8 +133,9 @@ class TestMaxWebLogin:
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["code"].startswith("login_") and len(d["code"]) >= 30
-        assert d["max_link"] == ("https://max.ru/chek.ymaster.bot"
-                                 "?startapp=" + d["code"])
+        # v1.70.1: username бота динамический (см. test_v1701)
+        assert (d["max_link"].startswith("https://max.ru/")
+                and d["max_link"].endswith("?startapp=" + d["code"]))
         assert d["expires_in"] == 600
 
     def test_poll_pending_then_confirm_and_login(self, client):
@@ -300,8 +302,10 @@ class TestMaxInvites:
         assert str(captured["uid"]) == "5111"
         assert "МАКС-Веб" in captured["text"]
         urls = [b["url"] for b in captured["buttons"]]
-        assert (f"https://max.ru/chek.ymaster.bot?startapp=inv_{inv['token']}"
-                in urls)
+        # v1.70.1: ник бота в кнопке — динамический
+        assert any(u.startswith("https://max.ru/")
+                   and u.endswith("?startapp=inv_" + inv["token"])
+                   for u in urls)
         assert any(u.endswith("/#/register/" + inv["token"]) for u in urls)
 
     def test_send_max_by_digits(self, client, monkeypatch):

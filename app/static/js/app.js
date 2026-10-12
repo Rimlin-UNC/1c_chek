@@ -102,6 +102,7 @@ async function loadAppVersion() {
   try {
     const about = await api.get('/api/v1/about', { retries: 1 });
     state.appVersion = about.version;
+    window.MXBOT = about.max_bot_username || window.MXBOT || '';  // v1.70.1
     const els = [$('#brand-version'), $('#footer-version')];
     els.forEach(el => { if (el) el.textContent = 'v' + about.version; });
   } catch { /* версия не критична */ }
@@ -259,11 +260,17 @@ async function maxLoginFlow(code, isTicket) {
   const { slot } = openModal(`
     <div class="modal-title">🛡 Вход через MAX</div>
     <div class="info-callout" id="mxl-status">Ждём подтверждение в MAX…<br>
-      <span class="form-hint">Откройте в приложении MAX бота
-      <b>chek.ymaster.bot</b> и подтвердите вход — окно закроется само.
-      Если MAX не открылся — отправьте боту сообщение: <b>${esc(code)}</b></span></div>
-    <div class="modal-actions"><button class="btn" data-close>Отмена</button></div>`);
+      <span class="form-hint">Нажмите «Открыть MAX» и подтвердите вход у бота —
+      окно закроется само. Если MAX не открылся — отправьте боту сообщение:
+      <b>${esc(code)}</b></span></div>
+    <div class="modal-actions">
+      <button class="btn" data-close>Отмена</button>
+      <button class="btn btn-primary" id="mxl-open">🛡 Открыть MAX</button></div>`);
   const stop = { v: false };
+  const mxo = slot.querySelector('#mxl-open');
+  if (mxo) mxo.onclick = () =>
+    window.open('https://max.ru/' + (window.MXBOT || 'chek.ymaster.bot')
+      + '?startapp=' + encodeURIComponent(code), '_blank');
   slot.querySelector('[data-close]').onclick = () => {
     stop.v = true; $('#modal-root').classList.add('hidden');
   };
@@ -5106,6 +5113,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.1': [
+    { icon: '🛡', title: 'Починили связь с MAX: бот определяется сам',
+      text: 'Если бот в MAX назван не стандартно, диплинки вели не туда, а при канале уведомлений «telegram» бот молчал. Теперь вход через MAX, приглашения и мини-приложение используют фактический ник вашего бота из настроек, бот MAX работает независимо от канала, а мини-приложение открывается и по адресу без слэша.' },
+  ],
   '1.70.0': [
     { icon: '🛡', title: 'Вход через MAX на сайте и приглашения от бота',
       text: 'На странице входа появилась кнопка «Войти или зарегистрироваться через MAX»: подтвердите вход у бота chek.ymaster.bot — и сайт откроется без пароля (одноразовый код, подпись MAX проверяет сервер). Приглашения теперь может отправлять бот в MAX: укажите MAX-логин получателя — придёт сообщение с кнопками; принять приглашение можно прямо в MAX, на сайт попадёте уже залогиненным.' },
@@ -8162,7 +8173,7 @@ async function viewSettings(container) {
         ${me.max_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
              <button class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
-          : `<p class="form-hint" style="margin-bottom:10px"><b>Войти через MAX</b> — мини-приложение бота chek.ymaster.bot: скан QR и баллы. Для напоминаний здесь — классика: «Получить код» → боту <b>/start КОД</b> (или войдите с логином, совпадающим с username MAX — привяжем сами).</p>
+          : `<p class="form-hint" style="margin-bottom:10px"><b>Войти через MAX</b> — мини-приложение бота MAX: скан QR и баллы. Для напоминаний здесь — классика: «Получить код» → боту <b>/start КОД</b> (или войдите с логином, совпадающим с username MAX — привяжем сами).</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                <button class="btn btn-primary btn-sm" id="mx-open">🛡 Войти через MAX</button>
                <button class="btn btn-sm" id="mx-code">🔑 Получить код</button>
@@ -9028,7 +9039,9 @@ async function viewSettings(container) {
     // v1.69.0: вход через MAX — мини-приложение бота chek.ymaster.bot
     const mo = $('#mx-open');
     if (mo) mo.onclick = () => {
-      window.open('https://max.ru/chek.ymaster.bot?startapp=bind', '_blank');
+      // v1.70.1: ник бота — фактический (из настроек, через /about)
+      window.open('https://max.ru/' + (window.MXBOT || 'chek.ymaster.bot')
+        + '?startapp=bind', '_blank');
     };
     // v1.66.0: личный MAX — код и отвязка
     const mc = $('#mx-code');

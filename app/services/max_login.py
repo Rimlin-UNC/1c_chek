@@ -28,8 +28,7 @@ CODE_TTL_S = 10 * 60                     # жизнь кода на подтве
 TICKET_TTL_S = 15 * 60                   # веб-билет из мини-приложения
 RATE_MAX = 10                            # кодов с одного IP в час
 RATE_WINDOW_S = 3600
-SITE_URL = "https://chek.ymaster.ru"     # боевой домен (как диплинк бота)
-BOT_LINK = "https://max.ru/chek.ymaster.bot"
+SITE_URL = "https://chek.ymaster.ru"     # боевой домен
 
 _ip_times: dict[str, deque] = {}
 _UNSAFE = re.compile(r"[^a-z0-9_]")
@@ -54,8 +53,10 @@ def create_code(db: Session, ip: str = "") -> dict:
                         ip=(ip or "")[:64],
                         expires_at=utcnow() + dt.timedelta(seconds=CODE_TTL_S)))
     db.commit()
+    from . import max_bot
     return {"code": raw, "expires_in": CODE_TTL_S,
-            "max_link": f"{BOT_LINK}?startapp={raw}"}
+            "max_link": (f"https://max.ru/{max_bot.bot_username(db)}"
+                         f"?startapp={raw}")}
 
 
 def _live_row(db: Session, raw: str) -> MaxLoginCode | None:

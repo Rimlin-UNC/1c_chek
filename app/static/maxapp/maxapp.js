@@ -43,7 +43,7 @@ async function boot() {
   const app = wa();
   if (!app || !app.initData) {
     $('view-loading').innerHTML = '<p>Откройте приложение из чата бота ' +
-      '<b>chek.ymaster.bot</b> в MAX — так работает вход без пароля.</p>';
+      'в MAX — так работает вход без пароля.</p>';
     return;
   }
   try {
@@ -141,7 +141,7 @@ $('btn-send').onclick = () => {
 };
 $('btn-share').onclick = () => {
   const app = wa();
-  const link = 'https://max.ru/chek.ymaster.bot?startapp=ref_' + (ME.ref_code || '');
+  const link = ME.ref_link || 'https://max.ru/chek.ymaster.bot?startapp=ref_' + (ME.ref_code || '');
   const text = 'Сдавай чеки в «Ямастер Чек» прямо в MAX — копи баллы! Мой код: ' + (ME.ref_code || '');
   try {
     if (app && app.shareMaxContent) app.shareMaxContent({text, link});

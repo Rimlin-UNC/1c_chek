@@ -295,9 +295,11 @@ def health():
 def about():
     from .models import Receipt
     from .database import SessionLocal
+    from .services import max_bot as _mx
     db = SessionLocal()
     try:
         receipts_count = db.query(Receipt).count()
+        mx_username = _mx.bot_username(db, refresh=False)  # v1.70.1
     finally:
         db.close()
     return {
@@ -306,6 +308,7 @@ def about():
         "vendor": settings.VENDOR,
         "site": settings.VENDOR_SITE,
         "email": settings.VENDOR_EMAIL,
+        "max_bot_username": mx_username,
         "receipts_total": receipts_count,
         "fns_provider_default": settings.FNS_PROVIDER,
     }
@@ -376,7 +379,7 @@ async def maxapp_page(fname: str = ""):
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(full_path: str):
     """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
-    if full_path.startswith(("api/", "onec/", "ws/", "maxapp")):
+    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     # Прямые файлы (manifest, sw, иконки)
     candidate = STATIC_DIR / full_path
