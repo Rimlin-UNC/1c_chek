@@ -366,8 +366,10 @@ async def maxapp_page(fname: str = ""):
     if "/" in fname or ".." in fname or fname.startswith("."):
         raise HTTPException(status_code=404)
     static = BASE_DIR / "app" / "static" / "maxapp"
-    if fname and (static / fname).is_file():
-        return FileResponse(static / fname)
+    if fname:
+        f = static / fname
+        return FileResponse(f) if f.is_file() \
+            else JSONResponse({"detail": "Not found"}, status_code=404)
     return FileResponse(static / "index.html")
 
 
