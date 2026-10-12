@@ -557,6 +557,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('value="pending"'),
      'v1.61.0: фильтр чеков умеет искать «На ручной проверке»');
 
+  // --- v1.62.0: политика расходов — чип и карточка настроек в бандле ---
+  ok(bundle.includes('policy_flags') && bundle.includes('⚖️ политика'),
+     'v1.62.0: чип политики расходов рендерится в списке');
+  ok(bundle.includes('Политика расходов') && bundle.includes('pol-save'),
+     'v1.62.0: карточка «Политика расходов» в настройках');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

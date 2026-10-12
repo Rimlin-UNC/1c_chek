@@ -85,6 +85,12 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         status="new",
     )
     db.add(receipt)
+    db.flush()                                     # v1.62.0: id до политики
+    try:                                           # v1.62.0: пометка нарушений
+        from ..services import policy as _pol      # политики (мягко)
+        _pol.refresh_receipt(db, receipt)
+    except Exception:                              # noqa: BLE001
+        pass                                       # политика не ломает приём
     db.commit()
     db.refresh(receipt)
     return receipt, True
@@ -549,6 +555,14 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
             receipt.details_source = "manual_edit"
             receipt.details_fetched_at = dt.datetime.utcnow()
 
+    # v1.62.0: сумма/личное/статья/сотрудник могли измениться — пересчёт
+    # политики (мягко: только пометка, статус не трогаем)
+    try:
+        from ..services import policy as _pol
+        _pol.refresh_receipt(db, receipt)
+    except Exception:                              # noqa: BLE001
+        pass
+
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,
                {"fields": changed["fields"], "role": user.role})
@@ -567,6 +581,15 @@ def bulk_assign(body: AssignBulk, user: User = Depends(require_accountant),
                         Receipt.assignee_lc: body.assignee.strip().casefold()[:200]},   # v1.25.1
                        synchronize_session=False))
     db.commit()
+    # v1.62.0: сотрудник изменился — пересчёт политики затронутых чеков
+    try:
+        from ..services import policy as _pol
+        for r in db.query(Receipt).filter(
+                Receipt.id.in_(body.receipt_ids)).all():
+            _pol.refresh_receipt(db, r)
+        db.commit()
+    except Exception:                              # noqa: BLE001
+        db.rollback()
     log_action(user, "receipts_assigned", details={"count": updated,
                                                    "assignee": body.assignee})
     return {"ok": True, "updated": updated,
@@ -605,6 +628,13 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
             r.assignee_lc = r.assignee.casefold()[:200]   # v1.25.1
         moved_ids.append(r.id)
         moved += 1
+    # v1.62.0: компания/сотрудник изменились — пересчёт политики
+    try:
+        from ..services import policy as _pol
+        for r in rows:
+            _pol.refresh_receipt(db, r)
+    except Exception:                              # noqa: BLE001
+        pass
     db.commit()
     if moved:
         log_action(user, "receipts_moved", details={
@@ -698,6 +728,13 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
             receipt.status = "pending"
             receipt.fns_message = (f"Проверка данных чека: данные "
                                    f"не сходятся — {_v.message}")[:500]
+    # v1.62.0: политика расходов — пересчёт флагов после машинных данных
+    # (сумма к учёту могла измениться). Мягко: статусы не трогаем.
+    try:
+        from ..services import policy as _pol
+        _pol.refresh_receipt(db, receipt)
+    except Exception:                              # noqa: BLE001
+        pass
     try:
         raw = json.loads(receipt.raw_data or "{}")
     except ValueError:

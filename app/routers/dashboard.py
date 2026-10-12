@@ -128,6 +128,12 @@ def stats(days: int = Query(14, ge=7, le=90),
         by_company = [{"id": cid, "name": name, "count": int(c), "sum": round(float(s), 2)}
                       for cid, name, c, s in comp_rows]
 
+    # v1.62.0: комплаенс — сколько чеков в пространстве с нарушениями
+    # политики расходов (лимиты, запрещённые статьи)
+    policy_flagged = (scoped(db.query(func.count(Receipt.id)))
+                      .filter(Receipt.policy_flags.isnot(None),
+                              Receipt.policy_flags != "").scalar()) or 0
+
     return {
         "by_company": by_company,               # v1.11.0 (только админ)
         "total": int(total),
@@ -144,6 +150,7 @@ def stats(days: int = Query(14, ge=7, le=90),
         "notified_count": int(notified),        # уведомления сотрудников
         "vat_month": round(float(vat_month), 2),  # НДС за текущий месяц
         "by_assignee": by_assignee,             # сводка по подотчётникам
+        "policy_flagged": int(policy_flagged),  # v1.62.0: нарушения политики
         "generated_at": dt.datetime.utcnow().isoformat() + "Z",
     }
 

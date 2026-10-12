@@ -59,6 +59,11 @@ class Company(Base):
                                             server_default="")
     inn: Mapped[str] = mapped_column(String(20), default="")     # ИНН организации/ИП
     note: Mapped[str] = mapped_column(String(500), default="")   # памятка (договор, контакт)
+    # --- v1.62.0: политика расходов (лимиты и комплаенс) ---
+    limit_per_check: Mapped[float | None] = mapped_column(Float, nullable=True)
+    limit_per_month: Mapped[float | None] = mapped_column(Float, nullable=True)
+    forbidden_categories: Mapped[str] = mapped_column(String(1000), default="",
+                                                      server_default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # v1.13.0: карточка компании — данные ЕГРЮЛ/ЕГРИП (JSON из Checko)
     card_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
@@ -73,6 +78,11 @@ class Company(Base):
             "display_name": self.short_name or self.name,   # v1.22.0: для списков
             "inn": self.inn,
             "note": self.note,
+            "limit_per_check": self.limit_per_check,
+            "limit_per_month": self.limit_per_month,
+            "forbidden_categories": [s.strip() for s in
+                                     (self.forbidden_categories or "").split(",")
+                                     if s.strip()],
             "is_active": self.is_active,
             "created_at": iso_z(self.created_at),
         }
@@ -224,6 +234,11 @@ class Receipt(Base):
     category: Mapped[str] = mapped_column(String(100), default="")          # v1.4.0: статья расходов
     category_lc: Mapped[str] = mapped_column(String(100), default="", index=True)  # нормализованная (регистр/кириллица)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # v1.62.0: нарушения политики расходов (коды через запятую:
+    # limit_check | limit_month | forbidden_category) — мягкая пометка,
+    # статус чека не меняет
+    policy_flags: Mapped[str] = mapped_column(String(200), default="",
+                                              server_default="")
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     items: Mapped[list["ReceiptItem"]] = relationship(
@@ -273,6 +288,8 @@ class Receipt(Base):
                                    if self.details_fetched_at else None),
             "notified": self.notified,
             "ext": _ext,                      # v1.57.1: полные данные источника
+            "policy_flags": [f for f in (self.policy_flags or "").split(",")
+                             if f],          # v1.62.0: нарушения политики
             "category": self.category or "",
             # v1.12.3: кто добавил чек (ФИО/логин автора скана) —
             # user подгружен joined, доп. запроса нет

@@ -11,17 +11,19 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import (APIRouter, Depends, HTTPException, Query,
+                     Request, status)
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, require_accountant, require_admin, verify_password
 from ..config import settings as cfg
 from ..database import get_db
-from ..models import AppSetting, User
-from ..schemas import (AppSettingsPatch, ExternalSettingsPatch,
+from ..models import AppSetting, Company, Receipt, User
+from ..schemas import (AppSettingsPatch, ExternalSettingsPatch, PolicyPatch,
                        ExternalTestRequest, FnsSettingsPatch, MappingSave,
                        OnecSettingsPatch)
 from ..services import appsettings, exporter, secretbox
+from sqlalchemy import func
 from ..security import limiter
 from ..services.audit import log_action
 
@@ -191,6 +193,82 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
         "auto_verify": body.auto_verify,
         "advance_deadline_days": body.advance_deadline_days})
     return {"ok": True, "message": "Настройки сохранены"}
+
+
+# --------------------------------------------------------------------------
+#  v1.62.0: Политика расходов — лимиты ₽/чек, ₽/мес на сотрудника,
+#  запрещённые статьи расходов (на каждую компанию). Мягкий комплаенс:
+#  чек с нарушением НЕ блокируется — пометка policy_flags + чип в списке
+#  + счётчик в сводке. Чтение — бухгалтер+, изменение — администратор.
+# --------------------------------------------------------------------------
+def _default_company(db: Session) -> Company | None:
+    return (db.query(Company).filter(Company.is_active == True)  # noqa: E712
+            .order_by(Company.created_at).first())
+
+
+@router.get("/policy", summary="Политика расходов компании (бухгалтер+)")
+def get_policy(company_id: str | None = Query(None, max_length=36),
+               db: Session = Depends(get_db),
+               user: User = Depends(require_accountant)):
+    comp = None
+    if user.role == "admin":
+        if company_id:
+            comp = db.get(Company, company_id)
+            if not comp:
+                raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                    "Компания не найдена")
+        else:
+            comp = _default_company(db)
+    else:
+        comp = db.get(Company, user.company_id) if user.company_id else None
+    flagged = 0
+    if comp:
+        flagged = (db.query(func.count(Receipt.id))
+                   .filter(Receipt.company_id == comp.id,
+                           Receipt.policy_flags != "").scalar()) or 0
+    from ..services import policy as policy_service
+    return {
+        "company_id": comp.id if comp else None,
+        "company_name": comp.name if comp else None,
+        "limit_per_check": comp.limit_per_check if comp else None,
+        "limit_per_month": comp.limit_per_month if comp else None,
+        "forbidden_categories": (policy_service.parse_categories(
+            comp.forbidden_categories) if comp else []),
+        "flagged": int(flagged),     # чеков с нарушениями политики сейчас
+    }
+
+
+@router.put("/policy", summary="Сохранить политику расходов (администратор)")
+def put_policy(body: PolicyPatch, db: Session = Depends(get_db),
+               user: User = Depends(require_admin)):
+    if body.company_id:
+        comp = db.get(Company, body.company_id)
+        if not comp:
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                "Компания не найдена")
+    else:
+        comp = _default_company(db)
+        if not comp:
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                "Нет активных компаний")
+    if body.limit_per_check is not None:
+        comp.limit_per_check = body.limit_per_check or None    # 0 = снять
+    if body.limit_per_month is not None:
+        comp.limit_per_month = body.limit_per_month or None    # 0 = снять
+    if body.forbidden_categories is not None:
+        cats = [c.strip()[:100] for c in body.forbidden_categories
+                if c and c.strip()][:50]
+        comp.forbidden_categories = ", ".join(cats)
+    from ..services import policy as policy_service
+    flagged = policy_service.refresh_company(db, comp.id)
+    db.commit()
+    log_action(user, "policy_updated", "company", comp.id, {
+        "limit_per_check": comp.limit_per_check,
+        "limit_per_month": comp.limit_per_month,
+        "forbidden_categories": comp.forbidden_categories,
+        "flagged": flagged})
+    return {"ok": True, "message": "Политика расходов сохранена",
+            "flagged": int(flagged), "company_id": comp.id}
 
 
 # --------------------------------------------------------------------------

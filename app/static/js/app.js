@@ -3056,6 +3056,17 @@ function companyIdParam() {
   return (isAdmin() && state.companyFilter !== 'all') ? state.companyFilter : null;
 }
 
+// v1.62.0: чип нарушений политики расходов (мягкий контроль)
+const POLICY_LABELS = {
+  limit_check: 'сумма к учёту выше лимита чека',
+  limit_month: 'превышен месячный лимит сотрудника',
+  forbidden_category: 'статья расходов запрещена политикой'
+};
+function policyChip(flags) {
+  if (!flags || !flags.length) return '';
+  const why = flags.map((f) => POLICY_LABELS[f] || f).join('; ');
+  return `<span class="chip new" title="Политика расходов: ${esc(why)}">⚖️ политика</span>`;
+}
 function companyChip(cid) {
   // Бейдж компании для админа (когда не включён фильтр одной компании)
   if (!isAdmin() || !cid) return '';
@@ -3663,7 +3674,8 @@ async function viewDashboard(container) {
       ${isAccountant() ? `
       ${kpiCard('kpi-attention', '⏳ Требуют внимания', 'не обработаны > 3 дней').replace('class="glass kpi"', 'class="glass kpi ym-focus-target"')}
       ${kpiCard('kpi-notified', '🔔 Уведомления', 'от сотрудников')}
-      ${kpiCard('kpi-vat', 'НДС за месяц', 'сумма к учёту')}` : ''}
+      ${kpiCard('kpi-vat', 'НДС за месяц', 'сумма к учёту')}
+      ${kpiCard('kpi-policy', '⚖️ Политика', 'чеки с нарушениями')}` : ''}
     </div>
     <div class="grid cards-2" style="margin-top:16px">
       <div class="glass card">
@@ -3714,6 +3726,7 @@ async function viewDashboard(container) {
     animateNumber($('#kpi-attention .kpi-value'), stats.attention_count || 0);
     animateNumber($('#kpi-notified .kpi-value'), stats.notified_count || 0);
     animateNumber($('#kpi-vat .kpi-value'), stats.vat_month || 0, fmtSum);
+    animateNumber($('#kpi-policy .kpi-value'), stats.policy_flagged || 0);
     const bs = $('#btn-statement');
     if (bs) bs.onclick = () => openStatementModal();
     const az = $('#dash-assignee');
@@ -4837,6 +4850,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.62.0': [
+    { icon: '⚖️', title: 'Политика расходов: лимиты и запрещённые статьи — мягкий контроль',
+      text: 'Бухгалтер задаёт лимит ₽ на чек и лимит ₽ в месяц на сотрудника, а также запрещённые статьи расходов (Настройки → «Политика расходов»). Чек с нарушением не блокируется: в списке и карточке у него появляется чип «⚖️ политика» с причиной, а на дашборде — счётчик нарушений. В суммах участвует «к учёту» — сумма чека минус личные покупки. Настройки свои у каждой компании.' },
+  ],
   '1.61.0': [
     { icon: '🧠', title: 'Проверка данных чека: ловим несоответствия автоматически',
       text: 'Когда приходят полные данные чека, система проверяет их по правилам: сумма позиций сходится с итогом чека, цена × количество сходится с суммой позиции, нет дублей позиций. Если что-то не сходится — чек уходит на ручную проверку с понятной причиной (видно в карточке чека и в списке по фильтру «На ручной проверке»). Работает и в «Базе чеков», и в Чек-Пуле. Дополнительных запросов к источникам нет — правила проверяют уже полученные данные.' },
@@ -5809,7 +5826,7 @@ async function viewReceipts(container) {
       <td class="cell-mono" data-label="ФН">${r.fn}</td><td class="cell-mono" data-label="ФД">${r.fd}</td><td class="cell-mono" data-label="ФП">${r.fp}</td>
       ${acc ? `<td data-label="Сотрудник">${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}
         <div class="rcpt-added" title="Кто добавил чек">＋ ${esc(r.created_by_name || r.created_by || '—')}</div></td>` : ''}
-      <td data-label="Статус">${chip(r.status)}</td>
+      <td data-label="Статус">${chip(r.status)}${policyChip(r.policy_flags)}</td>
       <td data-label="ФНС">${chip(r.fns_status)} ${detailsMark}</td>
       <td data-label="1С">${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
       ${actions}
@@ -5834,7 +5851,7 @@ async function viewReceipts(container) {
       <div class="rc-head"><span class="rc-date">${fmtDate(r.receipt_date)}${r.notified ? ' 🔔' : ''}</span>
         <span class="rc-sum">${fmtSum(r.total_sum)}</span></div>
       <div class="rc-ids">ФН ${r.fn} · ФД ${r.fd} · ФП ${r.fp}</div>
-      <div class="rc-chips">${chip(r.status)} ${chip(r.fns_status)} ${detailsMark}
+      <div class="rc-chips">${chip(r.status)} ${chip(r.fns_status)} ${detailsMark} ${policyChip(r.policy_flags)}
         ${r.exported ? '<span class="chip exported"><span class="dot"></span>1С</span>' : ''}</div>
       ${acc ? `<div class="rc-meta">👤 ${r.assignee ? esc(r.assignee) : '—'} · ＋ ${esc(r.created_by_name || r.created_by || '—')}${r.company_id ? ' ' + companyChip(r.company_id) : ''}</div>` : ''}
       <div class="rc-actions">${act}</div>
@@ -7462,6 +7479,7 @@ async function viewAudit(container) {
 // ==========================================================================
 async function viewSettings(container) {
   let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null;
+  let pol = null, companies = null;   // v1.62.0: политика расходов
   try { me = await api.get('/api/v1/auth/me'); } catch {}
   try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); } }
   catch { /* ignore */ }
@@ -7469,6 +7487,9 @@ async function viewSettings(container) {
   let appSum = null, sysInfo = null;
   try { appSum = await api.get('/api/v1/settings/app/summary'); } catch {}
   if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
+  // v1.62.0: политика расходов — бухгалтер и админ
+  if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
+  if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
 
   container.innerHTML = `
     <div class="settings-grid">
@@ -7545,6 +7566,31 @@ async function viewSettings(container) {
           дней после израсходования (п. 6.3 Указания ЦБ 3210-У) — срок в организации устанавливает
           руководитель приказом; просрочка подсвечивается в «Базе чеков».</span></label>
         <button class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
+      </div>` : ''}
+
+      ${isAccountant() && pol ? `
+      <div class="glass card" style="order:24">
+        <div class="card-title">⚖️ Политика расходов
+          <span class="form-hint">лимиты и запрещённые статьи (v1.62+)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Мягкий контроль: чек с нарушением
+        НЕ блокируется — в списке у него появляется чип «⚖️ политика», а на дашборде
+        растёт счётчик нарушений. В суммах участвует «к учёту»: сумма чека минус
+        личные покупки сотрудника.</p>
+        ${isAdmin() && companies && companies.length ? `
+        <label class="field" style="max-width:340px;margin-bottom:8px"><span>Компания</span>
+          <select id="pol-company">${companies.map((c) => `<option value="${c.id}" ${c.id === pol.company_id ? 'selected' : ''}>${esc(c.display_name || c.name)}</option>`).join('')}</select></label>` : ''}
+        <div class="form-grid" style="margin:8px 0;max-width:560px">
+          <label class="field"><span>Лимит ₽ на чек (пусто или 0 — без лимита)</span>
+            <input type="number" id="pol-check" min="0" step="0.01" value="${pol.limit_per_check ?? ''}"></label>
+          <label class="field"><span>Лимит ₽ в месяц на сотрудника (пусто или 0 — без лимита)</span>
+            <input type="number" id="pol-month" min="0" step="0.01" value="${pol.limit_per_month ?? ''}"></label>
+        </div>
+        <label class="field" style="max-width:560px"><span>Запрещённые статьи расходов (через запятую)</span>
+          <input id="pol-cats" placeholder="Алкоголь, Табак, Подарки" value="${esc((pol.forbidden_categories || []).join(', '))}">
+          <span class="form-hint">Регистр не важен. Статья указывается в чеке
+          (поле «Статья расходов»). Чеков с нарушениями сейчас: <b>${pol.flagged || 0}</b>.</span></label>
+        <button class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
+        <div id="pol-msg" class="form-hint" style="margin-top:6px"></div>
       </div>` : ''}
 
       ${isAdmin() && fns ? `
@@ -8569,6 +8615,29 @@ async function viewSettings(container) {
         toast('Настройки сохранены', 'ok');
       } catch (e) { toast(e.message, 'err'); }
     };
+  }
+
+  // v1.62.0: политика расходов — сохранение и смена компании
+  if (pol) {
+    const polSave = $('#pol-save');
+    if (polSave) polSave.onclick = async () => {
+      const body = {
+        limit_per_check: parseFloat($('#pol-check').value) || 0,
+        limit_per_month: parseFloat($('#pol-month').value) || 0,
+        forbidden_categories: $('#pol-cats').value.split(',')
+          .map((s) => s.trim()).filter(Boolean) };
+      const sel = $('#pol-company');
+      if (sel && sel.value) body.company_id = sel.value;
+      try {
+        const r = await api.put('/api/v1/settings/policy', body);
+        const m = $('#pol-msg');
+        if (m) m.textContent = (r.message || 'Сохранено')
+          + (r.flagged ? ` · чеков с нарушениями: ${r.flagged}` : '');
+        toast(r.message || 'Политика сохранена', 'ok', '⚖️');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const polSel = $('#pol-company');
+    if (polSel) polSel.onchange = () => { viewSettings(container); };
   }
 
   if (isAdmin() && fns) {

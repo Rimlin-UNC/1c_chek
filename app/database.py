@@ -141,6 +141,13 @@ def _ensure_schema() -> None:
             ("card_updated_at", "ALTER TABLE companies ADD COLUMN card_updated_at DATETIME NULL"),
             # v1.22.0: сокращённое наименование из ЕГРЮЛ/ЕГРИП
             ("short_name", "ALTER TABLE companies ADD COLUMN short_name VARCHAR(200) DEFAULT ''"),
+            # v1.62.0: политика расходов (лимиты и комплаенс)
+            ("limit_per_check",
+             "ALTER TABLE companies ADD COLUMN limit_per_check FLOAT NULL"),
+            ("limit_per_month",
+             "ALTER TABLE companies ADD COLUMN limit_per_month FLOAT NULL"),
+            ("forbidden_categories",
+             "ALTER TABLE companies ADD COLUMN forbidden_categories VARCHAR(1000) DEFAULT ''"),
         ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
@@ -173,6 +180,9 @@ def _ensure_schema() -> None:
             ("category_lc", "ALTER TABLE receipts ADD COLUMN category_lc VARCHAR(100) DEFAULT ''"),
             # --- v1.8.0: личные суммы в чеке ---
             ("personal_sum", "ALTER TABLE receipts ADD COLUMN personal_sum FLOAT DEFAULT 0"),
+            # v1.62.0: нарушения политики расходов (мягкая пометка)
+            ("policy_flags",
+             "ALTER TABLE receipts ADD COLUMN policy_flags VARCHAR(200) DEFAULT ''"),
         ],
     }
     insp = inspect(engine)

@@ -205,6 +205,14 @@ class UpdateApplyBody(BaseModel):
     sudo_password: Optional[str] = Field(default=None, max_length=256)
 
 
+# --- v1.62.0: политика расходов (лимиты и комплаенс) --------------------------
+class PolicyPatch(BaseModel):
+    company_id: Optional[str] = Field(default=None, max_length=36)
+    limit_per_check: Optional[float] = Field(default=None, ge=0, le=10_000_000)
+    limit_per_month: Optional[float] = Field(default=None, ge=0, le=1_000_000_000)
+    forbidden_categories: Optional[list[str]] = None
+
+
 class AppSettingsPatch(BaseModel):
     auto_verify: Optional[bool] = None
     # v1.8.0: срок сдачи авансового отчёта от даты чека (дней; приказ руководителя,
