@@ -53,18 +53,25 @@ class TestFetchQueue:
         assert "start_fetch_workers" in main
 
     def test_enqueue_dedup_and_drain(self):
+        import queue as _q
         from app.routers import receipts as rc
-        before = rc.fetch_queue_stats()["queued"]
-        assert rc._enqueue_fetch("audit-no-such-1") is True
-        assert rc._enqueue_fetch("audit-no-such-1") is False   # дедуп
-        assert rc.fetch_queue_stats()["queued"] == before + 1
-        # ручной слив без воркеров (в тестах очередь off — детерминизм)
-        rid = rc._FETCHQ.get()
-        with rc._FETCHQ_LOCK:
-            rc._FETCHQ_IDS.discard(rid)
-        rc._FETCHQ.task_done()
-        assert rc._FETCHQ.qsize() == before
-        assert "audit-no-such-1" not in rc._FETCHQ_IDS
+        # v1.69.0: изоляция глобального состояния очереди — фон-потоки
+        # других тестов могли подкинуть чужие id между снапшотом и проверкой
+        old_q, old_ids = rc._FETCHQ, rc._FETCHQ_IDS
+        rc._FETCHQ, rc._FETCHQ_IDS = _q.Queue(), set()
+        try:
+            assert rc._enqueue_fetch("audit-no-such-1") is True
+            assert rc._enqueue_fetch("audit-no-such-1") is False  # дедуп
+            assert rc.fetch_queue_stats()["queued"] == 1
+            # ручной слив без воркеров (в тестах очередь off — детерминизм)
+            rid = rc._FETCHQ.get()
+            with rc._FETCHQ_LOCK:
+                rc._FETCHQ_IDS.discard(rid)
+            rc._FETCHQ.task_done()
+            assert rc._FETCHQ.qsize() == 0
+            assert "audit-no-such-1" not in rc._FETCHQ_IDS
+        finally:
+            rc._FETCHQ, rc._FETCHQ_IDS = old_q, old_ids
 
     def test_start_workers_idempotent(self, monkeypatch):
         from app.routers import receipts as rc

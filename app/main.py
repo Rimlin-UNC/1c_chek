@@ -13,7 +13,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -23,7 +23,7 @@ from .config import settings
 from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
-from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, onec,
+from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
                       receipts, settings_routes, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
@@ -341,6 +341,7 @@ app.include_router(pool_fraud.router)      # v1.34.0: /api/v1/pool-fraud/*
 app.include_router(router_company.router)  # v1.37.0: /api/v1/pool-company/*
 app.include_router(pool_api.router)        # v1.39.0: /api/v1/pool-api/* (агрегаты)
 app.include_router(pool_my.router)         # v1.32.0: /api/v1/pool-my/*
+app.include_router(maxapp.router)          # v1.69.0: /api/v1/maxapp/* (мини-приложение MAX)
 
 
 # --------------------------------------------------------------------------
@@ -354,10 +355,26 @@ STATIC_DIR = BASE_DIR / "app" / "static"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
+@app.get("/maxapp", include_in_schema=False)
+@app.get("/maxapp/", include_in_schema=False)
+@app.get("/maxapp/{fname}", include_in_schema=False)
+async def maxapp_page(fname: str = ""):
+    """Мини-приложение MAX (v1.69.0): статика без авторизации.
+
+    MAX грузит страницу в вебвью; авторизация — подпись initData,
+    API-токен выдаёт POST /api/v1/maxapp/session."""
+    if "/" in fname or ".." in fname or fname.startswith("."):
+        raise HTTPException(status_code=404)
+    static = BASE_DIR / "app" / "static" / "maxapp"
+    if fname and (static / fname).is_file():
+        return FileResponse(static / fname)
+    return FileResponse(static / "index.html")
+
+
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(full_path: str):
     """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
-    if full_path.startswith(("api/", "onec/", "ws/")):
+    if full_path.startswith(("api/", "onec/", "ws/", "maxapp")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     # Прямые файлы (manifest, sw, иконки)
     candidate = STATIC_DIR / full_path

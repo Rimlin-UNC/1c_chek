@@ -5040,6 +5040,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.69.0': [
+    { icon: '🛡', title: 'Мини-приложение в MAX: сканируй чек, копи баллы',
+      text: 'Теперь в MAX есть мини-приложение «Ямастер Чек»: жмите кнопку в чате бота chek.ymaster.bot — сканируете QR чека нативной камерой, баллы капают сразу, история и код приглашения всегда под рукой. Вход через MAX — один нажим, пароль не нужен (подпись MAX проверяется на сервере). Сотрудникам: в Настройках появилась кнопка «Войти через MAX» — привязка ассистента сама.' },
+  ],
   '1.68.1': [
     { icon: '🧯', title: 'Устойчивость 2: уведомления и пул соединений',
       text: 'Повторный стресс вскрыл: уведомления о чеках плодили потоки без предела и изредка исчерпывали пул базы при всплесках. Теперь их не больше 8 одновременно (пропуск — безобидный), а запас соединений увеличен. Замеры: 60 одновременных — 236 мс, ноль ошибок чтения.' },
@@ -8088,9 +8092,10 @@ async function viewSettings(container) {
         ${me.max_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
              <button class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
-          : `<p class="form-hint" style="margin-bottom:10px">Нажмите «Получить код», затем в MAX отправьте боту приложения: <b>/start КОД</b>.</p>
+          : `<p class="form-hint" style="margin-bottom:10px"><b>Войти через MAX</b> — мини-приложение бота chek.ymaster.bot: скан QR и баллы. Для напоминаний здесь — классика: «Получить код» → боту <b>/start КОД</b> (или войдите с логином, совпадающим с username MAX — привяжем сами).</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-               <button class="btn btn-primary btn-sm" id="mx-code">🔑 Получить код</button>
+               <button class="btn btn-primary btn-sm" id="mx-open">🛡 Войти через MAX</button>
+               <button class="btn btn-sm" id="mx-code">🔑 Получить код</button>
                <span id="mx-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="mx-code-hint" style="margin-top:8px"></p>`}
@@ -8949,6 +8954,11 @@ async function viewSettings(container) {
       try { const r = await api.post('/api/v1/users/me/telegram/unbind', {});
         toast(r.message, 'ok'); route(true); }
       catch (e) { toast(e.message, 'err'); }
+    };
+    // v1.69.0: вход через MAX — мини-приложение бота chek.ymaster.bot
+    const mo = $('#mx-open');
+    if (mo) mo.onclick = () => {
+      window.open('https://max.ru/chek.ymaster.bot?startapp=bind', '_blank');
     };
     // v1.66.0: личный MAX — код и отвязка
     const mc = $('#mx-code');

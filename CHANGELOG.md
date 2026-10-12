@@ -3,6 +3,36 @@
 > Разработчик и владелец идеи: ООО «Ямастер» · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
 > Формат: Semantic Versioning (MAJOR.MINOR.PATCH)
 
+## [1.69.0] — 2026-10-12
+### Added
+- **Мини-приложение MAX** (бот chek.ymaster.bot): страница
+  `app/static/maxapp/` — Bridge MAX (`st.max.ru/js/max-web-app.js`),
+  нативный сканер QR `WebApp.openCodeReader` (камера/галерея),
+  `BackButton`, тема MAX через CSS-переменные. Экраны: Сканер
+  (сдача чека, баллы в реальном времени), Чеки (история), Профиль
+  (баллы, YM-код, приглашение друзей через `shareMaxContent`).
+  Раздаётся с нашего сервера `/maxapp/` (https) — URL вставляется в
+  настройки бота на business.max.ru.
+- **Вход/регистрация через MAX**: `POST /api/v1/maxapp/session`
+  валидирует initData по документации (hash = HMAC-SHA256(secret,
+  launch_params), secret = HMAC-SHA256("WebAppData", bot_token),
+  auth_date ≤ 24 ч, сравнение `compare_digest`) и заводит/находит
+  PoolUser по MAX-id. Сессия привязывает ассистента MAX
+  (`users.max_user_id`) — напоминания и дайджест без /start КОД.
+- API: `POST /maxapp/scan` (precheck + фоновый `ingest_parsed`,
+  источник «max»: дедуп/лимиты/баллы — движок Чек-Пула без дублей),
+  `GET /maxapp/me`, `GET /maxapp/summary` (YM-код + диплинк
+  `max.ru/chek.ymaster.bot?startapp=ref_YM-XXXXXX` — приглашения).
+- Кнопка «🛡 Войти через MAX» в «Настройки → MAX — личное».
+- Блок «Мини-приложение MAX»: 1.69.0; раздел инструкции с картинкой.
+### Сохранено намеренно
+- Ядро приёма, замки 1.51–1.54, печать, роли, вебхуки — не тронуты;
+  токен бота — существующий секрет `max_bot_token` (в код не
+  встраивается); трефold-сервисы (почта, SMS) не добавлялись.
+### Test
+- tests/test_v1690.py: валидация initData (5 негативных кейсов),
+  сессия/ре-логин, сдача+дедуп, пул выключен, статика, замки.
+
 ## [1.68.1] — 2026-10-12
 ### Fixed (повторный стресс-тест v1.68.0)
 - **notify_user порождал поток+сессию на каждый скан без предела** —

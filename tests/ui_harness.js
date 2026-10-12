@@ -604,6 +604,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.68.0':") && bundle.includes('очередь'),
      'v1.68.0: What’s New устойчивости');
 
+  // --- v1.69.0: мини-приложение MAX ---
+  ok(bundle.includes('Войти через MAX') && bundle.includes('max.ru/chek.ymaster.bot'),
+     'v1.69.0: кнопка входа через MAX в настройках');
+  ok(bundle.includes("'1.69.0':"),
+     'v1.69.0: What’s New мини-приложения');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);
