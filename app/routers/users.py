@@ -13,7 +13,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, get_current_user,
+from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER,
+                    get_current_user,
                     hash_password, require_admin)
 from ..database import get_db
 from ..models import Company, User
@@ -37,7 +38,7 @@ def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admi
 @router.post("", summary="Создать пользователя (роль: бухгалтер или пользователь)")
 def create_user(body: UserCreate, db: Session = Depends(get_db),
                 admin: User = Depends(require_admin)):
-    if body.role not in (ROLE_ACCOUNTANT, ROLE_USER):
+    if body.role not in (ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER):
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "Роль «администратор» не выдаётся при создании. "
                             "Администратор один — передача прав через promote-admin.")

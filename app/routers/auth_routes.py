@@ -18,7 +18,8 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, act_admin_id,
+from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER,
+                    act_admin_id,
                     client_ip, create_access_token, decode_token,
                     get_current_user, hash_password, raw_bearer_token,
                     verify_password)
@@ -91,7 +92,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Приглашение недействительно, отозвано или уже использовано. "
                             "Запросите новую ссылку у администратора.")
-    if invite.role not in (ROLE_ACCOUNTANT, ROLE_USER):
+    if invite.role not in (ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER):
         # Администратор не назначается через приглашения — только передача прав
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недопустимая роль в приглашении")
 

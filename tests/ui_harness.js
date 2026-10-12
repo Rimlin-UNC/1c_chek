@@ -571,6 +571,14 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('mr-backfill'),
      'v1.63.0: карточка «Правила поставщиков» в настройках');
 
+  // --- v1.64.0: роль «руководитель» и отчёт с разрезами ---
+  ok(bundle.includes('boss-only') && bundle.includes('Отчёт руководителя') &&
+     bundle.includes('viewBoss'),
+     'v1.64.0: отчёт руководителя доступен в интерфейсе');
+  ok(bundle.includes("manager: 'Руководитель'") &&
+     bundle.includes('ur-role'),
+     'v1.64.0: роль «Руководитель» в интерфейсе ролей');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

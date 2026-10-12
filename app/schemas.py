@@ -26,7 +26,7 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=6, max_length=200)
     full_name: str = ""
     organization: str = ""
-    role: Literal["accountant", "user"] = "user"
+    role: Literal["accountant", "manager", "user"] = "user"
     company_id: Optional[str] = Field(default=None, max_length=36,
                                       description="v1.11.0: компания сотрудника")
 
@@ -35,7 +35,7 @@ class UserPatch(BaseModel):
     full_name: Optional[str] = None
     organization: Optional[str] = None
     password: Optional[str] = Field(default=None, min_length=6, max_length=200)
-    role: Optional[Literal["accountant", "user"]] = None
+    role: Optional[Literal["accountant", "manager", "user"]] = None
     is_active: Optional[bool] = None
     company_id: Optional[str] = Field(default=None, max_length=36,
                                       description="v1.11.0: перевод в другую компанию")
@@ -129,7 +129,7 @@ class RegisterRequest(BaseModel):
 
 
 class InviteCreate(BaseModel):
-    role: Literal["accountant", "user"] = "user"
+    role: Literal["accountant", "manager", "user"] = "user"
     max_uses: int = Field(default=1, ge=1, le=200)
     expires_hours: int = Field(default=72, ge=1, le=8760)
     note: str = Field(default="", max_length=200)

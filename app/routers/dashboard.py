@@ -73,7 +73,7 @@ def stats(days: int = Query(14, ge=7, le=90),
     notified = 0
     vat_month = 0.0
     by_assignee: list[dict] = []
-    if user.role in ("admin", "accountant"):
+    if user.role in ("admin", "accountant", "manager"):   # v1.64.0: + руководитель
         cutoff = dt.datetime.utcnow() - dt.timedelta(days=3)
         attention = (scoped(db.query(func.count(Receipt.id)))
                      .filter(Receipt.status.in_(["new", "verifying"]),
@@ -151,6 +151,45 @@ def stats(days: int = Query(14, ge=7, le=90),
         "vat_month": round(float(vat_month), 2),  # НДС за текущий месяц
         "by_assignee": by_assignee,             # сводка по подотчётникам
         "policy_flagged": int(policy_flagged),  # v1.62.0: нарушения политики
+        "generated_at": dt.datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@router.get("/breakdown", summary="Разрезы расходов: по сотрудникам и статьям (руководитель+)")
+def breakdown(days: int = Query(30, ge=7, le=365),
+              company_id: str | None = Query(None, max_length=36,
+                                             description="компания (только админ)"),
+              user: User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """v1.64.0: отчёт руководителя — суммы к учёту (чек минус личные)
+    по сотрудникам и статьям расходов за период. Drill-down до чека
+    делает клиент (список чеков по сотруднику/статье). Пространство —
+    как везде: руководитель видит свою компанию, админ — всё/выбор."""
+    start = dt.datetime.utcnow() - dt.timedelta(days=days)
+    accountable = (func.coalesce(Receipt.total_sum, 0.0)
+                   - func.coalesce(Receipt.personal_sum, 0.0))
+    base = (scope_receipts(db.query(Receipt), user, company_id)
+            .filter(Receipt.receipt_date >= start,
+                    Receipt.operation == 1,
+                    Receipt.status != "failed"))
+    emp = (base.filter(Receipt.assignee != "")
+           .with_entities(Receipt.assignee, func.count(Receipt.id),
+                          func.coalesce(func.sum(accountable), 0.0))
+           .group_by(Receipt.assignee)
+           .order_by(func.sum(accountable).desc())
+           .limit(50).all())
+    cats = (base.filter(Receipt.category != "")
+            .with_entities(Receipt.category, func.count(Receipt.id),
+                           func.coalesce(func.sum(accountable), 0.0))
+            .group_by(Receipt.category)
+            .order_by(func.sum(accountable).desc())
+            .limit(30).all())
+    return {
+        "days": days,
+        "by_assignee": [{"name": a, "count": int(c), "sum": round(float(s or 0), 2)}
+                        for a, c, s in emp],
+        "by_category": [{"name": c, "count": int(n), "sum": round(float(s or 0), 2)}
+                        for c, n, s in cats],
         "generated_at": dt.datetime.utcnow().isoformat() + "Z",
     }
 

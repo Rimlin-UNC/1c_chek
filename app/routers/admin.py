@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER,
+from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_MANAGER, ROLE_USER,
                     act_admin_id, create_access_token,
                     create_impersonation_token, decode_token,
                     get_current_user, raw_bearer_token, require_admin)
@@ -464,8 +464,8 @@ class RoleChange(BaseModel):
 @router.patch("/users/{user_id}/role", summary="Сменить роль пользователя (админ)")
 def change_role(user_id: str, body: RoleChange,
                 db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    if body.role not in (ROLE_ACCOUNTANT, ROLE_USER):
-        raise HTTPException(422, "Роль: accountant или user")
+    if body.role not in (ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER):
+        raise HTTPException(422, "Роль: accountant, manager или user")
     target = db.get(User, user_id)
     if not target:
         raise HTTPException(404, "Пользователь не найден")

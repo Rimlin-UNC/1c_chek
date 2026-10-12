@@ -13,7 +13,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, get_current_user
+from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER,
+                    get_current_user)
 from ..database import get_db
 from ..models import User
 from ..services.manual_content import build_manual
@@ -29,7 +30,8 @@ def get_manual(db: Session = Depends(get_db),
     data = build_manual()
     if user.role == ROLE_ADMIN:
         return {**data, "your_role": ROLE_ADMIN, "show_tabs": True}
-    audience = ROLE_ACCOUNTANT if user.role == ROLE_ACCOUNTANT else ROLE_USER
+    audience = (ROLE_MANAGER if user.role == ROLE_MANAGER else
+                ROLE_ACCOUNTANT if user.role == ROLE_ACCOUNTANT else ROLE_USER)
     sections = [s for s in data["sections"]
                 if s["audience"] in ("all", audience)]
     return {**data, "your_role": audience, "show_tabs": False,

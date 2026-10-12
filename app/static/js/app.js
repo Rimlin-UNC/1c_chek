@@ -49,6 +49,7 @@ const VIEW_TITLES = {
   dashboard: 'Дашборд', scan: 'Сканирование чеков', receipts: 'База чеков',
   export: 'Выгрузка в 1С', mapping: 'Маппинг реквизитов', users: 'Пользователи и приглашения',
   audit: 'Журнал действий', settings: 'Настройки', companies: 'Компании',
+  boss: 'Отчёт руководителя',         // v1.64.0: разрезы расходов
   public: 'Сдать чек в Чек-Пул',       // v1.31.0: доступно и гостям
   partners: 'Партнёры и кэшбэк',       // v1.38.0: партнёрская программа
   my: 'Мой Чек-Пул',                   // v1.32.0: кабинет участника пула
@@ -90,6 +91,7 @@ function shortOpfName(name) {
   return n;
 }
 const isAccountant = () => state.me && (state.me.role === 'admin' || state.me.role === 'accountant');
+const isManager = () => state.me && state.me.role === 'manager';   // v1.64.0: только просмотр
 const isAdmin = () => state.me && state.me.role === 'admin';
 
 // --------------------------------------------------------------------------
@@ -2424,6 +2426,8 @@ function enterApp() {
   $('#user-avatar').textContent = (state.me.full_name || state.me.username)[0].toUpperCase();
   $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
   $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
+  // v1.64.0: отчёт руководителя — руководителю и администратору
+  $$('.boss-only').forEach(el => el.classList.toggle('hidden', !(isAdmin() || isManager())));
   // v1.58.1: страницы Чек-Пула — только когда пул включён (на проде он
   // выключен: enabled=false → «Сдать чек», «Кабинет», «Партнёры» скрыты)
   api.get('/api/v1/public/pool/info').then((info) => {
@@ -2597,6 +2601,7 @@ async function renderPersonaMenu(m) {
     const users = await api.get('/api/v1/users');
     const act = users.filter(u => u.is_active && u.role !== 'admin');
     const acc = act.filter(u => u.role === 'accountant');
+    const mgr = act.filter(u => u.role === 'manager');   // v1.64.0
     const usr = act.filter(u => u.role === 'user');
     const row = (u) =>
       `<button class="pm-item" data-uid="${esc(u.id)}" role="menuitem">
@@ -2605,6 +2610,8 @@ async function renderPersonaMenu(m) {
          <span class="pm-sub">${esc(u.username)}${u.company_name ? ' · ' + esc(u.company_name) : ''}</span>
        </button>`;
     m.querySelector('.pm-body').innerHTML =
+      (mgr.length ? `<div class="pm-group">Руководители</div>` +
+        mgr.map(row).join('') : '') +
       `<div class="pm-group">Бухгалтеры</div>` +
       (acc.length ? acc.map(row).join('') : '<div class="pm-none">нет бухгалтеров</div>') +
       `<div class="pm-group">Сотрудники</div>` +
@@ -2998,6 +3005,7 @@ function route(silent = false) {
     poolpeople: isAdmin(),               // v1.41.0: участники + просмотр
     fraud: isAdmin(),                    // v1.34.0: антифрод
     poolpick: isAccountant(),            // v1.37.0: подбор для компании
+    boss: isManager() || isAdmin(),      // v1.64.0: отчёт руководителя
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
   // v1.58.1: пул выключен → страницы пула недоступны, меню их скрывает
@@ -3015,6 +3023,7 @@ function route(silent = false) {
     poolpeople: viewPoolPeople,           // v1.41.0: участники + просмотр кабинета
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
+    boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
   // v1.55.0: сбой отрисовки не оставляет белый экран — возвращаем
   // пользователя на рабочий экран (гость → сдача чека, свой → дашборд)
@@ -3115,6 +3124,7 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
         <label class="field"><span>Роль нового пользователя</span>
           <select id="iv-role">
             <option value="accountant">Бухгалтер (расширенные права)</option>
+            <option value="manager">Руководитель (только просмотр своей компании)</option>
             <option value="user">Пользователь (сканирование)</option>
           </select></label>
         <label class="field"><span>Срок действия, часов</span>
@@ -3907,6 +3917,138 @@ function renderAppearanceState() {
 }
 
 // ==========================================================================
+// v1.64.0: ОТЧЁТ РУКОВОДИТЕЛЯ — расходы компании в разрезе сотрудников
+// и статей с drill-down до чека. Только просмотр: ничего не меняет.
+// Руководитель видит свою компанию (изоляция на сервере), админ — всё
+// или выбранную компанию.
+// ==========================================================================
+async function viewBoss(container) {
+  if (!(isManager() || isAdmin())) { location.hash = '#/dashboard'; return; }
+  viewBoss._days = viewBoss._days || 30;
+  viewBoss._company = viewBoss._company || '';
+  let comps = null;
+  if (isAdmin()) { try { comps = await api.get('/api/v1/companies'); } catch (e) {} }
+
+  const drill = async (title, params) => {
+    const { slot } = openModal(`<div class="modal-title">🔍 ${esc(title)}</div>
+      <div id="drill-body"><div class="form-hint">Загружаю…</div></div>
+      <div class="modal-actions"><button class="btn" data-close>Закрыть</button></div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+    try {
+      const r = await api.get('/api/v1/receipts?page=1&page_size=50&' + params);
+      const rows = r.items || [];
+      $('#drill-body', slot).innerHTML = rows.length
+        ? `<div class="table-wrap"><table class="data"><thead><tr>
+            <th>Дата</th><th>Сумма</th><th>Сотрудник</th><th>Статья</th><th>Статус</th></tr></thead><tbody>
+            ${rows.map((x) => `<tr class="drill-open" data-id="${x.id}" style="cursor:pointer">
+              <td class="cell-date">${fmtDate(x.receipt_date)}</td>
+              <td class="num">${fmtSum(x.total_sum)}</td>
+              <td>${esc(x.assignee || '—')}</td>
+              <td>${esc(x.category || '—')}</td>
+              <td>${chip(x.status)}</td></tr>`).join('')}</tbody></table></div>
+           <div class="form-hint" style="margin-top:6px">Нажмите на строку — карточка чека. Показано ${rows.length} из ${r.total}.</div>`
+        : '<div class="form-hint">Чеков нет.</div>';
+      $$('.drill-open', slot).forEach((tr) => { tr.onclick = () => openBossReceipt(tr.dataset.id); });
+    } catch (e) { $('#drill-body', slot).innerHTML = `<div class="form-error">${esc(e.message)}</div>`; }
+  };
+
+  const load = async () => {
+    const cq = (isAdmin() && viewBoss._company) ? `&company_id=${viewBoss._company}` : '';
+    let stats = null, bd = null;
+    try { stats = await api.get('/api/v1/dashboard/stats' + (cq ? '?days=30' + cq : '')); } catch (e) {}
+    try { bd = await api.get(`/api/v1/dashboard/breakdown?days=${viewBoss._days}${cq}`); } catch (e) {}
+    if (!bd) {
+      container.innerHTML = '<div class="glass card"><div class="form-hint">Не удалось загрузить отчёт. Попробуйте ещё раз.</div></div>';
+      return;
+    }
+    const heat = {};
+    ((stats && stats.by_assignee) || []).forEach((a) => { heat[a.name] = a; });
+    const emp = bd.by_assignee || [], cats = bd.by_category || [];
+    const totSum = emp.reduce((a, x) => a + (x.sum || 0), 0);
+    const totCnt = emp.reduce((a, x) => a + (x.count || 0), 0);
+    container.innerHTML = `
+      <div class="glass card" style="margin-bottom:14px">
+        <div class="card-title">📊 Отчёт руководителя
+          <span class="spacer"></span>
+          ${isAdmin() && comps && comps.length ? `<select id="boss-company" class="btn btn-sm" style="max-width:240px;width:auto">
+            <option value="">🏢 Все компании</option>
+            ${comps.filter((c) => c.is_active).map((c) => `<option value="${c.id}" ${viewBoss._company === c.id ? 'selected' : ''}>${esc(c.display_name || c.name)}</option>`).join('')}</select>` : ''}
+          <select id="boss-days" class="btn btn-sm" style="width:auto">
+            <option value="30" ${viewBoss._days === 30 ? 'selected' : ''}>30 дней</option>
+            <option value="90" ${viewBoss._days === 90 ? 'selected' : ''}>90 дней</option>
+            <option value="365" ${viewBoss._days === 365 ? 'selected' : ''}>год</option>
+          </select></div>
+        <div class="kpi-grid" style="margin-bottom:12px">
+          ${kpiCard('kpi-boss-sum', 'Сумма к учёту', 'приходы без отклонённых')}
+          ${kpiCard('kpi-boss-cnt', 'Чеков', `за ${viewBoss._days} дн.`)}
+          ${kpiCard('kpi-boss-sob', 'Сотрудников', 'с расходами за период')}
+          ${kpiCard('kpi-boss-pol', '⚖️ Политика', 'чеки с нарушениями')}
+        </div>
+        <div class="form-hint">Только просмотр: менять чеки и статусы — роль бухгалтера.
+        Нажмите на строку таблицы — покажу чеки этого сотрудника или статьи.</div>
+      </div>
+      <div class="settings-grid">
+        <div class="glass card" style="order:10">
+          <div class="card-title">👥 По сотрудникам</div>
+          ${emp.length ? `<div class="table-wrap"><table class="data"><thead><tr>
+            <th>Сотрудник</th><th>Чеков</th><th>Сумма, ₽</th><th></th></tr></thead><tbody>
+            ${emp.map((x) => { const h = heat[x.name] || {};
+              return `<tr class="drill-row" data-p="assignee=${encodeURIComponent(x.name)}" style="cursor:pointer">
+              <td><b>${esc(x.name)}</b>${h.late ? ` <span class="heat-chip heat-late">🔴 просрочка: ${h.late}</span>` : (h.soon ? ` <span class="heat-chip heat-soon">🟠 близко: ${h.soon}</span>` : '')}</td>
+              <td class="num">${fmtInt(x.count)}</td><td class="num">${fmtSum(x.sum)}</td>
+              <td class="form-hint">чеки →</td></tr>`; }).join('')}
+            </tbody></table></div>` : '<div class="form-hint">Расходов сотрудников за период нет.</div>'}
+        </div>
+        <div class="glass card" style="order:11">
+          <div class="card-title">🗂 По статьям расходов</div>
+          ${cats.length ? `<div class="table-wrap"><table class="data"><thead><tr>
+            <th>Статья</th><th>Чеков</th><th>Сумма, ₽</th><th></th></tr></thead><tbody>
+            ${cats.map((x) => `<tr class="drill-row" data-p="category=${encodeURIComponent(x.name)}" style="cursor:pointer">
+              <td><b>${esc(x.name)}</b></td><td class="num">${fmtInt(x.count)}</td><td class="num">${fmtSum(x.sum)}</td>
+              <td class="form-hint">чеки →</td></tr>`).join('')}
+            </tbody></table></div>` : '<div class="form-hint">Статьи расходов пока не заполнены — попросите бухгалтера указывать статью у чеков.</div>'}
+        </div>
+      </div>`;
+    animateNumber($('#kpi-boss-sum .kpi-value'), totSum, fmtSum);
+    animateNumber($('#kpi-boss-cnt .kpi-value'), totCnt);
+    animateNumber($('#kpi-boss-sob .kpi-value'), emp.length);
+    animateNumber($('#kpi-boss-pol .kpi-value'), (stats && stats.policy_flagged) || 0);
+    const dsel = $('#boss-days');
+    if (dsel) dsel.onchange = () => { viewBoss._days = parseInt(dsel.value, 10) || 30; viewBoss(container); };
+    const csel = $('#boss-company');
+    if (csel) csel.onchange = () => { viewBoss._company = csel.value; viewBoss(container); };
+    $$('.drill-row[data-p]').forEach((tr) => {
+      tr.onclick = () => drill('Чеки: ' + decodeURIComponent((tr.dataset.p || '').split('=')[1] || ''), tr.dataset.p);
+    });
+  };
+  await load();
+}
+
+// Карточка чека для руководителя (только чтение)
+async function openBossReceipt(id) {
+  try {
+    const r = await api.get('/api/v1/receipts/' + id);
+    const { slot } = openModal(`<div class="modal-title">🧾 Чек ${fmtSum(r.total_sum)}</div>
+      <dl class="kv">
+        <dt>Дата чека</dt><dd>${fmtDate(r.receipt_date)}</dd>
+        <dt>Сотрудник</dt><dd>${esc(r.assignee || '—')}</dd>
+        <dt>Статья</dt><dd>${esc(r.category || '—')}</dd>
+        <dt>Поставщик</dt><dd>${esc(r.merchant_name || '—')}</dd>
+        <dt>Статус</dt><dd>${chip(r.status)} ${chip(r.fns_status)}</dd>
+        <dt>ФН / ФД / ФП</dt><dd class="mono" style="font-size:12px">${esc(r.fn)} / ${esc(r.fd)} / ${esc(r.fp)}</dd>
+        ${r.comment ? `<dt>Комментарий</dt><dd>${esc(r.comment)}</dd>` : ''}
+      </dl>
+      ${(r.items || []).length ? `<div class="table-wrap"><table class="data"><thead><tr>
+        <th>Позиция</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>
+        ${r.items.map((it) => `<tr><td>${esc(it.name)}</td><td class="num">${it.quantity}</td>
+          <td class="num">${fmtSum(it.price)}</td><td class="num">${fmtSum(it.total)}</td></tr>`).join('')}
+        </tbody></table></div>` : ''}
+      <div class="modal-actions"><button class="btn" data-close>Закрыть</button></div>`);
+    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  } catch (e) { toast(e.message, 'err', 'Чек'); }
+}
+
+// ==========================================================================
 // v1.21.0: ИНСТРУКЦИЯ — всплывающее окно «классическая инструкция».
 // Содержание хранится НА СЕРВЕРЕ (/api/v1/manual), версия = версия
 // приложения: обновляется вместе с программой. Администратор может
@@ -3929,6 +4071,7 @@ async function openManual() {
        ${data.show_tabs ? `<div class="manual-tabs" id="manual-tabs">
          <button class="manual-tab" data-aud="admin">Администратор</button>
          <button class="manual-tab" data-aud="accountant">Бухгалтер</button>
+         <button class="manual-tab" data-aud="manager">Руководитель</button>
          <button class="manual-tab" data-aud="user">Сотрудник</button>
        </div>` : ''}
        <div id="manual-body"></div>
@@ -4892,6 +5035,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.64.0': [
+    { icon: '📊', title: 'Роль «Руководитель»: расходы компании на одном экране',
+      text: 'Новая роль — для директора и руководителей отделов: видит все чеки своей компании и «Отчёт руководителя» с разрезами по сотрудникам и статьям расходов (30/90/365 дней), с переходом до отдельного чека. Только просмотр: проверку в ФНС, выгрузку в 1С и правки делает бухгалтер. Выдать роль — в приглашении или кнопкой «↕ Роль» у пользователя. Администратор по-прежнему видит всё и может открыть приложение глазами любой роли.' },
+  ],
   '1.63.0': [
     { icon: '🧠', title: 'Запомнить для поставщика: чеки одного ИНН заполняются сами',
       text: 'Бухгалтер поправил статью/сотрудника/комментарий у чека → в карточке чека (✏️) появился блок «Запомнить для поставщика». Система запоминает правила по ИНН магазина и подставляет их в будущие чеки этого поставщика — только в пустые поля, ваши правки не затирает. Список правил — в Настройках («🧠 Правила поставщиков»), оттуда же можно применить правило к старым чекам одной кнопкой.' },
@@ -7188,7 +7335,9 @@ async function viewUsers(container) {
       ? '<span class="chip exported"><span class="dot"></span>Администратор</span>'
       : (role === 'accountant'
         ? '<span class="chip new"><span class="dot"></span>Бухгалтер</span>'
-        : '<span class="chip unknown"><span class="dot"></span>Пользователь</span>');
+        : (role === 'manager'
+          ? '<span class="chip unknown"><span class="dot"></span>Руководитель</span>'
+          : '<span class="chip unknown"><span class="dot"></span>Пользователь</span>'));
   }
 
   // --- Приглашения ---
@@ -7242,11 +7391,28 @@ async function viewUsers(container) {
     userDialog(u);
   });
   // v1.4.0: расширенные действия администратора
-  $$('.u-role').forEach(btn => btn.onclick = async () => {
-    const to = btn.dataset.role === 'accountant' ? 'user' : 'accountant';
-    if (!confirm(`Сделать ${btn.dataset.name} ${to === 'accountant' ? 'БУХГАЛТЕРОМ (расширенный доступ)' : 'ПОЛЬЗОВАТЕЛЕМ (только свои чеки)'}?`)) return;
-    try { const r = await api.patch(`/api/v1/admin/users/${btn.dataset.id}/role`, { role: to }); toast(r.message, 'ok'); route(true); }
-    catch (e) { toast(e.message, 'err'); }
+  $$('.u-role').forEach(btn => btn.onclick = () => {
+    // v1.64.0: ролей три — выбор из списка вместо переключателя
+    const { slot } = openModal(`<div class="modal-title">↕ Роль: ${esc(btn.dataset.name)}</div>
+      <label class="field"><span>Новая роль</span>
+        <select id="ur-role">
+          <option value="user">Пользователь — только свои чеки</option>
+          <option value="accountant">Бухгалтер — расширенный доступ</option>
+          <option value="manager">Руководитель — только просмотр своей компании</option>
+        </select></label>
+      <div class="modal-actions">
+        <button class="btn" id="ur-cancel">Отмена</button>
+        <button class="btn btn-primary" id="ur-save">Сменить роль</button></div>`);
+    slot.querySelector('#ur-cancel').onclick = () => $('#modal-root').classList.add('hidden');
+    slot.querySelector('#ur-save').onclick = async () => {
+      const to = slot.querySelector('#ur-role').value;
+      try {
+        const r = await api.patch(`/api/v1/admin/users/${btn.dataset.id}/role`, { role: to });
+        toast(r.message, 'ok');
+        $('#modal-root').classList.add('hidden');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
   });
   $$('.u-reset').forEach(btn => btn.onclick = async () => {
     if (!confirm(`Сбросить пароль ${btn.dataset.name}? Сотрудник получит временный пароль и сменит его при входе.`)) return;
@@ -7286,6 +7452,7 @@ async function viewUsers(container) {
           <select id="u-role" ${u && u.role === 'admin' ? 'disabled' : ''}>
             <option value="user" ${u?.role === 'user' ? 'selected' : ''}>Пользователь</option>
             <option value="accountant" ${u?.role === 'accountant' ? 'selected' : ''}>Бухгалтер</option>
+            <option value="manager" ${u?.role === 'manager' ? 'selected' : ''}>Руководитель</option>
             ${u && u.role === 'admin' ? '<option value="admin" selected>Администратор</option>' : ''}
           </select></label>
         <label class="field"><span>ФИО</span><input id="u-fullname" value="${esc(u?.full_name || '')}"></label>

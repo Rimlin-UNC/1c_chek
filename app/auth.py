@@ -27,6 +27,7 @@ from .models import User
 # Роли системы: администратор всегда один (передача прав — отдельной процедурой)
 ROLE_ADMIN = "admin"
 ROLE_ACCOUNTANT = "accountant"
+ROLE_MANAGER = "manager"     # v1.64.0: руководитель — только просмотр своей компании
 ROLE_USER = "user"
 
 bearer_scheme = HTTPBearer(auto_error=False)

@@ -994,6 +994,15 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
     if not can_view_receipt(user, receipt):                     # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    # v1.64.0: удаляет не «кто видит», а «кто отвечает за учёт»:
+    # администратор — любой; бухгалтер — своей компании; автор — свой
+    # чек, пока он не выгружен в 1С (руководитель — только просмотр)
+    is_owner = receipt.created_by == user.id
+    if not (user.role == ROLE_ADMIN or can_edit_receipt(user, receipt)
+            or (is_owner and not receipt.exported)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Удалять чеки может бухгалтер, автор (до выгрузки "
+                            "в 1С) или администратор")
     if receipt.exported and user.role != ROLE_ADMIN:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Чек уже выгружен в 1С; удалять может только администратор")

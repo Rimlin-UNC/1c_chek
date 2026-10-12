@@ -6,7 +6,9 @@
 #
 # Роли:
 #   admin        — платформа: видит ВСЕ компании (опциональный фильтр);
-#   accountant   — видит все чеки СВОЕЙ компании;
+#   accountant   — видит все чеки СВОЕЙ компании, может менять;
+#   manager      — v1.64.0: видит все чеки СВОЕЙ компании, ТОЛЬКО просмотр
+#                  (отчёт руководителя: разрезы + drill-down до чека);
 #   user         — видит только СВОИ чеки внутри СВОЕЙ компании.
 #
 # ООО «Ямастер» | ymaster.ru | info@ymaster.ru
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Query, Session
 
-from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER
+from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER
 from ..models import Company, Receipt, User
 
 
@@ -57,6 +59,8 @@ def can_view_receipt(user: User, receipt: Receipt) -> bool:
     if receipt.company_id != user.company_id:
         return False                     # чужая компания — «не существует»
     if user.role == ROLE_ACCOUNTANT:
+        return True
+    if user.role == ROLE_MANAGER:        # v1.64.0: вся компания, без правки
         return True
     return receipt.created_by == user.id
 

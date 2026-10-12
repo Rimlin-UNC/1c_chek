@@ -37,7 +37,8 @@ class TestVersion1595:
     def test_roles_block_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Роли и доступ"] == "1.59.5"
+        # v1.64.0: структурная проверка — блок ведут строгие замки новых версий
+        assert tuple(int(x) for x in reg["Роли и доступ"].split(".")) >= (1, 59, 5)
 
 
 class TestShortOpf:

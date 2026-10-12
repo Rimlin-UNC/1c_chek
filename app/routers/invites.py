@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ACCOUNTANT, ROLE_USER, require_admin
+from ..auth import ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER, require_admin
 from ..database import get_db
 from ..models import Company, Invite, User
 from ..schemas import InviteCreate
@@ -62,7 +62,8 @@ def create_invite(body: InviteCreate, db: Session = Depends(get_db),
         company_id = comp.id
     invite = Invite(
         token=secrets.token_urlsafe(16),
-        role=body.role if body.role in (ROLE_ACCOUNTANT, ROLE_USER) else ROLE_USER,
+        role=body.role if body.role in (ROLE_ACCOUNTANT, ROLE_MANAGER,
+                                        ROLE_USER) else ROLE_USER,
         note=body.note.strip(),
         company_id=company_id,               # v1.11.0: пространство приглашённого
         created_by=admin.id,
