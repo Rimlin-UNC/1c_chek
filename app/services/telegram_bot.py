@@ -640,8 +640,21 @@ def wake() -> None:
 # --------------------------------------------------------------------------
 #  Уведомления из бизнес-логики (fire-and-forget)
 # --------------------------------------------------------------------------
+_NOTIFY_SEM = threading.Semaphore(8)     # v1.68.1: потоков уведомлений ≤ 8
+
+
 def notify_user(user_id: str, text: str) -> None:
-    """Отправить сообщение пользователю, если привязан. Ошибки — в лог."""
+    """Отправить сообщение пользователю, если привязан. Ошибки — в лог.
+
+    v1.68.1 (аудит/стресс): поток+сессия на каждый скан выедали пул при
+    всплесках. Теперь параллельных уведомлений ≤ 8; при занятой очереди
+    уведомление пропускается (best-effort — напоминания и дайджесты
+    останутся, этот канал не гарантия доставки)."""
+    if not _NOTIFY_SEM.acquire(blocking=False):
+        log.info("telegram notify %s: канал занят — уведомление пропущено",
+                 user_id)
+        return
+
     def _run() -> None:
         db = _db_session()
         try:
@@ -656,6 +669,7 @@ def notify_user(user_id: str, text: str) -> None:
             log.info("telegram notify %s: %s", user_id, e)
         finally:
             db.close()
+            _NOTIFY_SEM.release()
     threading.Thread(target=_run, daemon=True).start()
 
 

@@ -41,9 +41,10 @@ engine = create_engine(
     settings.DATABASE_URL,
     connect_args=_connect_args,
     pool_pre_ping=True,
-    # v1.67.1 (аудит/стресс): 5+10 соединений не хватало — фоновые задачи
-    # держали сессии, запросы висели до 30 с. Теперь 20+20, ждём 10 с.
-    pool_size=20, max_overflow=20, pool_timeout=10,
+    # v1.67.1 (аудит/стресс): 5+10 не хватало. v1.68.1: всплески (60
+    # одновременных + фоновые воркеры) выедали и 20+20 — запас 60; SQLite-
+    # соединение — файловый дескриптор, overflow закрывается после использования.
+    pool_size=20, max_overflow=60, pool_timeout=15,
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

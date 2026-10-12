@@ -101,7 +101,7 @@ class TestDbResilience:
         from app.database import engine
         assert engine.pool.size() >= 20
         assert getattr(engine.pool, "_max_overflow", 0) >= 20
-        assert engine.pool._timeout <= 10
+        assert engine.pool._timeout <= 15   # v1.68.1: 15 с
 
     def test_sqlite_pragmas(self):
         from app.database import engine
