@@ -57,6 +57,10 @@ async function boot() {
     $('view-loading').classList.add('hidden');
     $('view-app').classList.remove('hidden');
     await loadSummary();
+    // v1.70.0: вход с сайта (login_…) и приглашения (inv_…)
+    const sp = (app.initDataUnsafe && app.initDataUnsafe.start_param) || '';
+    if (sp.indexOf('login_') === 0) showLoginConfirm(sp);
+    else if (sp.indexOf('inv_') === 0) showInvite(sp);
   } catch (e) {
     $('view-loading').innerHTML = '<p>' + esc(e.message) + '</p>' +
       '<p class="hint">Закройте и откройте приложение из чата бота заново.</p>';
@@ -145,5 +149,83 @@ $('btn-share').onclick = () => {
     else window.open(link, '_blank');
   } catch (e) { window.open(link, '_blank'); }
 };
+
+function openLink(url) {
+  const app = wa();
+  try { if (app && app.openLink) { app.openLink(url); return; } } catch (e) {}
+  window.open(url, '_blank');
+}
+
+// ---- v1.70.0: сервис-экраны (вход с сайта, приглашения) -------------
+function showService(title, html) {
+  $('view-app').classList.add('hidden');
+  const s = $('view-service');
+  s.classList.remove('hidden');
+  $('service-title').textContent = title;
+  $('service-body').innerHTML = html;
+  const app = wa();
+  if (app && app.BackButton && app.BackButton.show) {
+    try {
+      app.BackButton.show();
+      const back = () => {
+        s.classList.add('hidden');
+        $('view-app').classList.remove('hidden');
+        try { app.BackButton.offClick(back); app.BackButton.hide(); } catch (e) {}
+      };
+      app.BackButton.onClick(back);
+    } catch (e) {}
+  }
+}
+
+async function showLoginConfirm(code) {
+  showService('Вход на сайт',
+    '<p>Сайт <b>chek.ymaster.ru</b> запрашивает вход под вашим ' +
+    'MAX-аккаунтом' + (ME.name ? ' (' + esc(ME.name) + ')' : '') + '.</p>' +
+    '<p class="hint">Подтвердите — на сайте всё произойдёт автоматически. ' +
+    'Если это не вы открывали сайт — просто закройте этот экран.</p>' +
+    '<div style="height:10px"></div>' +
+    '<button class="btn" id="svc-confirm">Подтвердить вход</button>' +
+    '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>');
+  $('svc-confirm').onclick = async () => {
+    try {
+      await api('POST', '/api/v1/maxapp/confirm-login', {code: code});
+      $('svc-msg').textContent = 'Готово! Вернитесь на сайт — вход выполнится сам.';
+      $('svc-confirm').disabled = true;
+    } catch (e) { $('svc-msg').textContent = e.message; }
+  };
+}
+
+async function showInvite(token) {
+  showService('Приглашение', '<p class="hint">Загружаем…</p>');
+  try {
+    const d = await api('GET',
+      '/api/v1/maxapp/invite?token=' + encodeURIComponent(token));
+    if (!d.valid) {
+      $('service-body').innerHTML =
+        '<p>' + esc(d.message || 'Приглашение недействительно') + '</p>';
+      return;
+    }
+    const roleRu = {accountant: 'Бухгалтер', manager: 'Руководитель',
+                    user: 'Пользователь'}[d.role] || d.role;
+    $('service-body').innerHTML =
+      '<p>Вас пригласили в «Ямастер Чек»' +
+      (d.company_name ? ' — компания <b>' + esc(d.company_name) + '</b>' : '') +
+      '.<br>Роль: <b>' + esc(roleRu) + '</b>' +
+      (d.expires_at ? '<br><span class="hint">действует до ' +
+        esc(d.expires_at) + '</span>' : '') + '</p>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn" id="svc-accept">Принять и открыть сайт</button>' +
+      '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>';
+    $('svc-accept').onclick = async () => {
+      try {
+        const r = await api('POST', '/api/v1/maxapp/invite/accept',
+                            {token: token});
+        $('svc-msg').textContent = 'Готово! Открываем сайт…';
+        $('svc-accept').disabled = true;
+        setTimeout(() => openLink(r.web_link), 600);
+      } catch (e) { $('svc-msg').textContent = e.message; }
+    };
+  } catch (e) { $('service-body').innerHTML = '<p>' + esc(e.message) + '</p>'; }
+}
 
 boot();

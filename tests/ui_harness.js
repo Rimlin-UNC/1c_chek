@@ -609,6 +609,10 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.69.0: кнопка входа через MAX в настройках');
   ok(bundle.includes("'1.69.0':"),
      'v1.69.0: What’s New мини-приложения');
+  ok(bundle.includes('maxLoginFlow') && bundle.includes('/api/v1/auth/max/poll'),
+     'v1.70.0: вход через MAX на сайте (форма+опрос)');
+  ok(bundle.includes("'1.70.0':") && bundle.includes('send-max'),
+     'v1.70.0: приглашения через бота MAX');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

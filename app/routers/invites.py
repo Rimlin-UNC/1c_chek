@@ -123,3 +123,67 @@ def revoke_invite(invite_id: str, db: Session = Depends(get_db),
     db.commit()
     log_action(admin, "invite_revoked", "invite", invite.id)
     return {"ok": True, "message": "Приглашение отозвано"}
+
+
+# ==========================================================================
+#  v1.70.0: отправка приглашения получателю ботом в MAX
+# ==========================================================================
+from pydantic import BaseModel, Field
+
+
+class SendMaxBody(BaseModel):
+    max_login: str = Field(min_length=3, max_length=100)
+
+
+@router.post("/{invite_id}/send-max",
+             summary="Отправить приглашение получателю ботом в MAX")
+def send_max(invite_id: str, body: SendMaxBody, request: Request,
+             db: Session = Depends(get_db),
+             admin: User = Depends(require_admin)):
+    """Резолвим MAX-логин → id (PoolUser мини-приложения, сотрудник с
+    привязкой или цифровой id) и шлём сообщение с кнопками: открыть
+    приглашение в MAX (мини-приложение) или на сайте."""
+    inv = db.get(Invite, invite_id)
+    if not inv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Приглашение не найдено")
+    if not inv.is_valid:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Приглашение недействительно — создайте новое")
+    from ..auth import client_ip
+    from ..services import max_bot, max_login
+    mid = max_login.resolve_max_id(db, body.max_login)
+    if not mid:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Получатель не найден: пусть откроет бота chek.ymaster.bot "
+            "в MAX (или мини-приложение) — и отправьте ещё раз")
+    token = max_bot.get_token(db)
+    if not token:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Бот MAX не настроен (Настройки → Ассистенты)")
+    comp = db.get(Company, inv.company_id) if inv.company_id else None
+    roles = {"accountant": "Бухгалтер", "manager": "Руководитель",
+             "user": "Пользователь"}
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = (request.headers.get("x-forwarded-host")
+            or request.headers.get("host") or "localhost")
+    web_url = f"{proto}://{host}/#/register/{inv.token}"
+    text = ("📩 Приглашение в «Ямастер Чек»\n"
+            + (f"Компания: {comp.name}\n" if comp else "")
+            + f"Роль: {roles.get(inv.role, inv.role)}\n"
+            + (f"Действует до: "
+               f"{inv.expires_at.strftime('%d.%m.%Y %H:%M')}\n"
+               if inv.expires_at else "")
+            + "\nОткройте ссылку — вход и регистрация займут минуту.")
+    buttons = [
+        {"type": "link", "text": "Открыть в MAX",
+         "url": f"https://max.ru/chek.ymaster.bot?startapp=inv_{inv.token}"},
+        {"type": "link", "text": "Открыть на сайте", "url": web_url},
+    ]
+    try:
+        max_bot.send_rich(token, mid, text, buttons)
+    except max_bot.MaxError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+    log_action(admin, "invite_send_max", "invite", inv.id,
+               {"max_id": mid, "ip": client_ip(request)})
+    return {"sent": True, "max_id": mid}

@@ -532,3 +532,23 @@ class WebhookLog(Base):
             "delivered_at": iso_z(self.delivered_at),
             "created_at": iso_z(self.created_at),
         }
+
+
+class MaxLoginCode(Base):
+    """v1.70.0: одноразовые коды входа/регистрации через MAX (веб).
+    Код хранится только хэшем (sha256); подтверждение — подписанный
+    контур MAX (мини-приложение: подпись initData, или сообщение боту).
+    max_user_id заполнен → код подтверждён; used_at → код погашен."""
+
+    __tablename__ = "max_login_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(20), default="web")
+    max_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    max_username: Mapped[str] = mapped_column(String(100), default="")
+    max_name: Mapped[str] = mapped_column(String(200), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

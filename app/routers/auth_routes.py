@@ -67,6 +67,46 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------------------------------
+#  v1.70.0: вход/регистрация через MAX (device-code). Сайт создаёт
+#  одноразовый код; подтверждение — подписанный контур MAX (мини-приложение
+#  или сообщение боту). Сессия — та же, что при входе по паролю.
+# --------------------------------------------------------------------------
+from pydantic import BaseModel, Field
+
+
+class MaxPollBody(BaseModel):
+    code: str = Field(min_length=16, max_length=160)
+
+
+@router.post("/max/start",
+             summary="Вход через MAX: создать одноразовый код")
+def max_login_start(request: Request, db: Session = Depends(get_db)):
+    from ..services import max_login
+    return max_login.create_code(db, client_ip(request))
+
+
+@router.post("/max/poll",
+             summary="Вход через MAX: статус кода (ok → сессия сайта)")
+def max_login_poll(body: MaxPollBody, request: Request,
+                   db: Session = Depends(get_db)):
+    from ..services import max_login
+    r = max_login.poll(db, body.code)
+    if r.get("status") != "ok":
+        return JSONResponse(r)
+    log_action(None, "login_max",
+               details={"ip": client_ip(request),
+                        "username": r["user"].get("username")})
+    resp = JSONResponse({"status": "ok", "access_token": r["access_token"],
+                         "token_type": "bearer", "user": r["user"]})
+    resp.set_cookie(
+        "ymaster_token", r["access_token"],
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True, samesite="lax", path="/",
+    )
+    return resp
+
+
+# --------------------------------------------------------------------------
 #  Приглашения
 # --------------------------------------------------------------------------
 @router.get("/invite-info", summary="Информация о приглашении (для страницы регистрации)")

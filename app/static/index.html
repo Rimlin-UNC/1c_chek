@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.69.0">
+<link rel="stylesheet" href="/css/app.css?v=1.70.0">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -115,6 +115,13 @@
           <div class="form-hint" style="margin-top:6px;text-align:center">
             устройство само подтвердит вас — пароль не вводится</div>
         </div>
+        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 10px">
+          <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+          <span class="form-hint" style="white-space:nowrap">или</span>
+          <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+        </div>
+        <button type="button" class="btn btn-block" id="login-max">🛡 Войти или зарегистрироваться через MAX</button>
+        <div class="form-hint" style="margin-top:6px;text-align:center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
       </form>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
@@ -331,6 +338,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.69.0"></script>
+  <script type="module" src="/js/app.js?v=1.70.0"></script>
 </body>
 </html>

@@ -120,6 +120,19 @@ def send_message(token: str, user_id: int | str, text: str) -> bool:
     return True
 
 
+def send_rich(token: str, user_id: int | str, text: str,
+              buttons: list) -> bool:
+    """Сообщение с inline-кнопками-ссылками (v1.70.0). Каждая кнопка —
+    {"type": "link", "text": ..., "url": ...} (документация MAX Bot API:
+    attachments → inline_keyboard → buttons)."""
+    api(token, "messages", params={"user_id": int(user_id), "notify": True},
+        payload={"text": text[:4000],
+                 "attachments": [{"type": "inline_keyboard",
+                                  "payload": {"buttons": [buttons]}}]})
+    time.sleep(ANTIFLOOD_SEC)
+    return True
+
+
 def refresh_username(db: Session) -> str:
     global _username_cache
     token = get_token(db)
@@ -187,6 +200,19 @@ def handle_update(db: Session, upd: dict) -> None:
         send_message(token, user_id,
                      "✅ Готово! Теперь сюда будут приходить напоминания "
                      "о чеках и уведомления «Ямастер Чек».")
+        return
+    m_login = re.search(r"login_[A-Za-z0-9_-]{16,120}", text)
+    if m_login:
+        # v1.70.0: подтверждение входа на сайт кодом из формы входа
+        from . import max_login
+        ok = max_login.confirm(db, m_login.group(0), user_id,
+                               username=str(sender.get("username") or ""),
+                               display=str(sender.get("first_name") or ""))
+        send_message(token, user_id,
+                     "✅ Вход на сайт подтверждён — вернитесь в браузер, "
+                     "вход выполнится автоматически." if ok else
+                     "⚠️ Код входа не найден или устарел — на сайте нажмите "
+                     "«Войти через MAX» ещё раз.")
         return
     if _QR_HINT_RE.search(text):
         _pool_process_async(user_id, sender.get("username"), text)

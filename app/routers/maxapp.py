@@ -14,13 +14,14 @@ import logging
 import threading
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..config import settings
-from ..models import User
+from ..auth import ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER
+from ..models import Company, Invite, User
 from ..pool import ingest
 from ..pool import referral as pool_referral
 from ..pool.accounts import issue_pool_token, require_pool_user
@@ -174,3 +175,94 @@ def summary(db: Session = Depends(get_db), user=Depends(require_pool_user)):
 
 
 from ..pool.models import PoolUser as _PoolUserModel  # noqa: E402
+
+
+# ==========================================================================
+#  v1.70.0: вход/регистрация на сайте через MAX + приглашения
+# ==========================================================================
+class ConfirmLoginBody(BaseModel):
+    code: str = Field(min_length=16, max_length=160)
+
+
+class InviteTokenBody(BaseModel):
+    token: str = Field(min_length=8, max_length=64)
+
+
+@router.post("/confirm-login",
+             summary="Подтвердить вход на сайт (код из формы входа)")
+def confirm_login(body: ConfirmLoginBody, db: Session = Depends(get_db),
+                  user=Depends(require_pool_user)):
+    """Вызывается мини-приложением, когда открыто по диплинку
+    startapp=login_<код> с сайта: пул-JWT уже доказывает личность MAX."""
+    from ..services import max_login
+    ok = max_login.confirm(db, body.code, str(user.tg_user_id or ""),
+                           username=user.tg_username or "",
+                           display=user.tg_username or "")
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "Код не найден, устарел или уже подтверждён")
+    return {"status": "confirmed"}
+
+
+def _invite_or_none(db: Session, token: str):
+    inv = db.query(Invite).filter(
+        Invite.token == (token or "").strip()).first()
+    return inv if (inv is not None and inv.is_valid) else None
+
+
+@router.get("/invite",
+            summary="Информация о приглашении (для мини-приложения)")
+def invite_preview(token: str = Query(default="", min_length=8,
+                                      max_length=64),
+                   db: Session = Depends(get_db)):
+    inv = _invite_or_none(db, token)
+    if inv is None:
+        return {"valid": False,
+                "message": "Приглашение недействительно или уже использовано"}
+    comp = db.query(Company).filter(Company.id == inv.company_id).first() \
+        if inv.company_id else None
+    return {"valid": True, "role": inv.role,
+            "company_name": comp.name if comp else "",
+            "expires_at": inv.expires_at.strftime("%d.%m.%Y %H:%M")
+            if inv.expires_at else ""}
+
+
+@router.post("/invite/accept",
+             summary="Принять приглашение: вход/компания + билет на сайт")
+def invite_accept(body: InviteTokenBody, db: Session = Depends(get_db),
+                  user=Depends(require_pool_user)):
+    """Создаёт учётную запись (или присоединяет «личную» к компании)
+    по приглашению и выдаёт одноразовый веб-билет — мини-приложение
+    открывает сайт уже залогиненным."""
+    from ..services import max_login
+    inv = _invite_or_none(db, body.token)
+    if inv is None or inv.role not in (ROLE_ACCOUNTANT, ROLE_MANAGER,
+                                       ROLE_USER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Приглашение недействительно или уже использовано")
+    max_id = str(user.tg_user_id or "")
+    existing = db.query(User).filter(User.max_user_id == max_id).first()
+    comp_name = ""
+    if inv.company_id:
+        _c = db.query(Company).filter(Company.id == inv.company_id).first()
+        comp_name = _c.name if _c else ""
+    if existing is not None and existing.company_id:
+        if inv.company_id and existing.company_id == inv.company_id:
+            code = max_login.make_webticket(db, max_id,
+                                            user.tg_username or "",
+                                            user.tg_username or "")
+            return {"status": "ok", "action": "already",
+                    "username": existing.username,
+                    "company_name": comp_name,
+                    "web_link": f"{max_login.SITE_URL}/#/max-login/{code}"}
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Эта учётная запись уже привязана к другой "
+                            "компании — войдите на сайт под своим логином")
+    u = max_login.login_or_register(db, max_id, user.tg_username or "",
+                                    user.tg_username or "", invite=inv)
+    code = max_login.make_webticket(db, max_id, user.tg_username or "",
+                                    user.tg_username or "")
+    return {"status": "ok",
+            "action": "upgraded" if existing is not None else "registered",
+            "username": u.username, "company_name": comp_name,
+            "web_link": f"{max_login.SITE_URL}/#/max-login/{code}"}

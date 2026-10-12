@@ -115,6 +115,9 @@ async function boot() {
   loadAppVersion();
 
   // Регистрация по приглашению: #/register/<token>
+  // v1.70.0: вход по одноразовому билету из мини-приложения MAX
+  const mxl = location.hash.match(/^#\/max-login\/([A-Za-z0-9_-]{16,150})$/);
+  if (mxl) { showLogin(); maxLoginFlow(mxl[1], true); return; }
   const m = location.hash.match(/^#\/register\/(.+)$/);
   if (m) { showSplash(false); showRegister(m[1]); return; }
 
@@ -250,10 +253,56 @@ function showScreen(...ids) {
   }
 }
 
+// v1.70.0: вход/регистрация через MAX — одноразовый код, подтверждение
+// в MAX (мини-приложение бота или сообщение боту), затем сессия сайта.
+async function maxLoginFlow(code, isTicket) {
+  const { slot } = openModal(`
+    <div class="modal-title">🛡 Вход через MAX</div>
+    <div class="info-callout" id="mxl-status">Ждём подтверждение в MAX…<br>
+      <span class="form-hint">Откройте в приложении MAX бота
+      <b>chek.ymaster.bot</b> и подтвердите вход — окно закроется само.
+      Если MAX не открылся — отправьте боту сообщение: <b>${esc(code)}</b></span></div>
+    <div class="modal-actions"><button class="btn" data-close>Отмена</button></div>`);
+  const stop = { v: false };
+  slot.querySelector('[data-close]').onclick = () => {
+    stop.v = true; $('#modal-root').classList.add('hidden');
+  };
+  const t0 = Date.now();
+  while (!stop.v && Date.now() - t0 < 5 * 60 * 1000) {
+    await new Promise(r => setTimeout(r, isTicket ? 800 : 2500));
+    if (stop.v) return;
+    let p;
+    try { p = await api.post('/api/v1/auth/max/poll', { code }); }
+    catch (e) { $('#mxl-status').innerHTML = esc(e.message); return; }
+    if (p.status === 'ok') {
+      $('#modal-root').classList.add('hidden');
+      setToken(p.access_token);
+      state.me = p.user;
+      enterApp();
+      toast('Вход через MAX выполнен', 'ok', '🛡');
+      return;
+    }
+    if (p.status === 'expired') {
+      $('#mxl-status').innerHTML =
+        '⏳ Код устарел или уже использован — нажмите «Войти через MAX» ещё раз.';
+      return;
+    }
+  }
+  if (!stop.v) $('#mxl-status').innerHTML = '⏳ Время ожидания вышло — попробуйте ещё раз.';
+}
+
 function showLogin() {
   showScreen('login-screen');             // v1.59.1: единый переключатель
   bindLanding();                            // v1.54.0: лендинг на главной
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
+  // v1.70.0: кнопка входа/регистрации через MAX на форме входа
+  const lm = $('#login-max');
+  if (lm) lm.onclick = async () => {
+    try {
+      const r = await api.post('/api/v1/auth/max/start', {});
+      maxLoginFlow(r.code, false);
+    } catch (e) { toast(e.message, 'err'); }
+  };
   const form = $('#login-form');
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -3133,10 +3182,13 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
           <input id="iv-uses" type="number" value="1" min="1" max="200"></label>
         <label class="field full"><span>Памятка (для кого ссылка, необязательно)</span>
           <input id="iv-note" placeholder="Иванова — бухгалтерия"></label>
+        <label class="field full"><span>MAX-логин получателя — бот отправит приглашение сам (необязательно)</span>
+          <input id="iv-maxlogin" placeholder="username из MAX или цифровой ID"></label>
       </div>
       <div class="modal-actions">
         <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="iv-save">Создать ссылку</button>
+        <button class="btn" id="iv-save">Создать ссылку</button>
+        <button class="btn btn-primary" id="iv-save-max">📨 Создать и отправить в MAX</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     const ivSel = slot.querySelector('#iv-company-select');
@@ -3147,7 +3199,7 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
       ivSel.onchange = ivSyncNew;
       ivSyncNew();
     }
-    slot.querySelector('#iv-save').onclick = async () => {
+    const createInvite = async (sendMax) => {
       try {
         // v1.12.0/v1.59.4: резолюция компании по названию (выбрали из
         // списка — берём её; «другая» — создастся при сохранении)
@@ -3169,6 +3221,18 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
           note: slot.querySelector('#iv-note').value.trim(),
           ...(companyNameVal ? { company_name: companyNameVal } : {}),
         });
+        if (sendMax) {
+          const mx = slot.querySelector('#iv-maxlogin').value.trim();
+          if (mx.length < 3) { toast('Укажите MAX-логин получателя', 'err'); return; }
+          try {
+            await api.post('/api/v1/invites/' + inv.id + '/send-max',
+                           { max_login: mx });
+            toast('Приглашение отправлено в MAX', 'ok', '📨');
+          } catch (e2) {
+            toast('Ссылка создана, но бот не смог отправить: ' + e2.message,
+                  'err', 6000);
+          }
+        }
         $('#modal-root').classList.add('hidden');
         const url = `${location.origin}/#/register/${inv.token}`;
         const { slot: s2 } = openModal(`
@@ -3192,6 +3256,8 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
         route(true);
       } catch (e) { toast(e.message, 'err'); }
     };
+    slot.querySelector('#iv-save').onclick = () => createInvite(false);
+    slot.querySelector('#iv-save-max').onclick = () => createInvite(true);
   }
 
 // --- Экран «Компании» ------------------------------------------------------
@@ -5040,6 +5106,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.0': [
+    { icon: '🛡', title: 'Вход через MAX на сайте и приглашения от бота',
+      text: 'На странице входа появилась кнопка «Войти или зарегистрироваться через MAX»: подтвердите вход у бота chek.ymaster.bot — и сайт откроется без пароля (одноразовый код, подпись MAX проверяет сервер). Приглашения теперь может отправлять бот в MAX: укажите MAX-логин получателя — придёт сообщение с кнопками; принять приглашение можно прямо в MAX, на сайт попадёте уже залогиненным.' },
+  ],
   '1.69.0': [
     { icon: '🛡', title: 'Мини-приложение в MAX: сканируй чек, копи баллы',
       text: 'Теперь в MAX есть мини-приложение «Ямастер Чек»: жмите кнопку в чате бота chek.ymaster.bot — сканируете QR чека нативной камерой, баллы капают сразу, история и код приглашения всегда под рукой. Вход через MAX — один нажим, пароль не нужен (подпись MAX проверяется на сервере). Сотрудникам: в Настройках появилась кнопка «Войти через MAX» — привязка ассистента сама.' },
