@@ -940,11 +940,20 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     db.commit()
 
 
+# v1.67.1 (аудит/стресс): мок-источник спит 2–7 с на чек (антибан), реальная
+# ФНС — сетевые таймауты. Без ограничения параллелизма каждая фоновая задача
+# держала сессию БД всё время загрузки → исчерпание пула. Ждущие семафора
+# сессию НЕ занимают.
+_FETCH_SEM = threading.Semaphore(4)
+_VERIFY_SEM = threading.Semaphore(4)
+
+
 def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
     """Фоновый воркер: последовательно, с встроенными паузами движка."""
     import logging
     _log = logging.getLogger("ymaster")
     from ..database import SessionLocal
+    _FETCH_SEM.acquire()                     # v1.67.1: ждём БЕЗ сессии
     db = SessionLocal()
     _log.info("📥 ЗАГРУЗКА ДАННЫХ: чек(ов) в очереди: %d", len(receipt_ids))
     try:
@@ -967,6 +976,7 @@ def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
             broadcast("receipt_updated", receipt.to_dict(with_items=True))
     finally:
         db.close()
+        _FETCH_SEM.release()                 # v1.67.1
 
 
 def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt) -> bool:
@@ -1072,6 +1082,7 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
 def _verify_one_sync(receipt_id: str) -> None:
     """Синхронное выполнение проверки (для фонового потока)."""
     from ..database import SessionLocal
+    _VERIFY_SEM.acquire()                    # v1.67.1: ждём БЕЗ сессии
     db = SessionLocal()
     try:
         receipt = db.get(Receipt, receipt_id)
@@ -1148,6 +1159,7 @@ def _verify_one_sync(receipt_id: str) -> None:
             pass
     finally:
         db.close()
+        _VERIFY_SEM.release()                # v1.67.1
 
 
 def _run_verification(receipt_ids: list[str]) -> None:

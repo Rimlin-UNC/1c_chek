@@ -127,6 +127,13 @@ class TestWorkersShortSessions:
             sig = inspect.signature(mod._poll_once)
             assert all(a != "db" for a in sig.parameters), mod.__name__
 
+    def test_fetch_verify_bounded(self):
+        """Фоновые задачи внешних источников ограничены семафором 4."""
+        src = open("app/routers/receipts.py", encoding="utf-8").read()
+        assert "_FETCH_SEM = threading.Semaphore(4)" in src
+        assert "_VERIFY_SEM = threading.Semaphore(4)" in src
+        assert "for _VERIFY_SEM.release" not in src  # релиз только в finally
+
     def test_secret_weak_detector(self):
         from app.security import secret_is_weak
         assert secret_is_weak("")
