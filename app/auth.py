@@ -161,8 +161,6 @@ require_accountant = require_role(ROLE_ADMIN, ROLE_ACCOUNTANT)
 
 
 def client_ip(request: Request) -> str:
-    """IP клиента с учётом reverse-proxy."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """IP клиента с учётом reverse-proxy (v1.67.1: только доверенный прокси)."""
+    from .security import real_client_ip
+    return real_client_ip(request)

@@ -100,11 +100,9 @@ def _ip24(ip: str) -> str:
 
 
 def request_ip(request) -> str:
-    """IP клиента: в бою nginx ставит X-Forwarded-For — доверяем первому."""
-    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if xff:
-        return xff[:45]
-    return (request.client.host if request.client else "")[:45]
+    """IP клиента (v1.67.1: X-Forwarded-For — только от доверенного прокси)."""
+    from ..security import real_client_ip
+    return real_client_ip(request)
 
 
 def _is_datacenter(ip: str) -> bool:

@@ -14,12 +14,14 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .security import rate_limit_middleware, security_headers_middleware
+from .security import (rate_limit_middleware, secret_is_weak,
+                       security_headers_middleware)
 from .database import init_db
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, onec,
                       receipts, settings_routes, users, webauthn)
@@ -103,6 +105,11 @@ async def lifespan(app: FastAPI):
 
     import asyncio as _asyncio
     _asyncio.get_running_loop().create_task(_mail_bot_loop())
+    if secret_is_weak(settings.SECRET_KEY):              # v1.67.1: аудит
+        log.warning("SECRET_KEY не задан, дефолтный или короче 32 символов — "
+                    "задайте длинный случайный SECRET_KEY в .env (иначе "
+                    "токены подделываемы). Прод: install.sh/deploy.sh "
+                    "генерируют его сами.")
     log.info("%s v%s запущен. Разработчик: %s (%s)",
              settings.APP_NAME, settings.APP_VERSION,
              settings.VENDOR, settings.VENDOR_SITE)
@@ -132,6 +139,18 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def _safe_validation_handler(request: Request, exc: RequestValidationError):
+    """422 без падений (v1.67.1, аудит): бинарные тела (multipart в JSON
+    эндпоинт) роняли стандартный кодировщик ошибок → 500 + трейсбэк."""
+    items = []
+    for e in (exc.errors() or [])[:5]:
+        loc = "/".join(str(x) for x in (e.get("loc") or []) if x != "body")
+        items.append(f"{loc}: {str(e.get('msg', ''))[:160]}".strip(": "))
+    return JSONResponse(status_code=422,
+                        content={"detail": "; ".join(items) or "Некорректный запрос"})
 
 @app.middleware("http")
 async def _rate_limit(request, call_next):

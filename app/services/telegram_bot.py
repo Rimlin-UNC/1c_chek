@@ -352,8 +352,15 @@ def _db_session():
     return SessionLocal()
 
 
-def _poll_once(db: Session, offset: list[int]) -> None:
-    token = get_token(db)
+def _poll_once(offset: list[int]) -> None:
+    """v1.67.1 (аудит/стресс): сессия БД больше НЕ держится во время
+    25-секундного long-poll — короткие сессии на каждое действие."""
+    db = _db_session()
+    try:
+        token = get_token(db)
+        proxy = get_proxy(db)
+    finally:
+        db.close()
     if not token:
         time.sleep(5)
         return
@@ -361,7 +368,7 @@ def _poll_once(db: Session, offset: list[int]) -> None:
         result = api(token, "getUpdates", {
             "offset": offset[0], "timeout": POLL_TIMEOUT,
             "allowed_updates": ["message"]}, timeout=POLL_TIMEOUT + 10,
-            proxy=get_proxy(db))                         # v1.29.0
+            proxy=proxy)                                 # v1.29.0
     except TelegramError as e:
         msg = str(e)
         # v1.29.0: 409 = токен опрашивает другой процесс — ждём, апдейты
@@ -371,10 +378,13 @@ def _poll_once(db: Session, offset: list[int]) -> None:
         return
     for upd in result or []:
         offset[0] = max(offset[0], (upd.get("update_id") or 0) + 1)
+        db = _db_session()
         try:
             handle_update(db, upd)
         except Exception as e:                           # noqa: BLE001
             log.warning("telegram handle: %s", e)
+        finally:
+            db.close()
 
 
 def _reminders_due(db: Session) -> bool:
@@ -527,7 +537,9 @@ def _worker_loop() -> None:
             if not _should_run(db):
                 log.info("telegram worker: бот выключен — воркер остановлен")
                 return
-            _poll_once(db, offset)                       # long-poll (до ~25 c)
+            db.close()                                   # v1.67.1: БД не держим
+            _poll_once(offset)                           # long-poll (до ~25 c)
+            db = _db_session()
             if time.time() - last_reminder_check > 30:   # проверка не чаще 2х/мин
                 last_reminder_check = time.time()
                 if _reminders_due(db):

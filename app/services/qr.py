@@ -91,6 +91,9 @@ def parse_qr(raw: str) -> ParsedQR:
     raw = (raw or "").strip()
     if len(raw) < 10:
         raise QRParseError("Строка слишком короткая для QR-кода чека")
+    if len(raw) > 4000:                      # v1.67.1: аудит — CPU-гигиена
+        raise QRParseError("Строка слишком длинная для QR-кода чека "
+                           "(максимум 4000 символов)")
 
     tags: dict[str, str] = {}
 

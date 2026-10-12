@@ -93,7 +93,7 @@ def _ip_allow(ip: str) -> bool:
 
 # --- схемы -----------------------------------------------------------------
 class CheckBody(BaseModel):
-    qr_text: str = ""
+    qr_text: str = Field("", max_length=4000)   # v1.67.1: аудит — кап длины
     offerta: bool = False
     hp: str = ""                # honeypot: человек это поле не видит и не заполняет
     form_ms: int = 0            # время заполнения формы (антифрод-минимум)

@@ -351,8 +351,13 @@ def _db_session():
     return SessionLocal()
 
 
-def _poll_once(db: Session, marker: list) -> None:
-    token = get_token(db)
+def _poll_once(marker: list) -> None:
+    """v1.67.1 (аудит/стресс): сессия БД не держится во время long-poll."""
+    db = _db_session()
+    try:
+        token = get_token(db)
+    finally:
+        db.close()
     if not token:
         _stop.wait(5)
         return
@@ -367,10 +372,13 @@ def _poll_once(db: Session, marker: list) -> None:
         return
     marker[0] = result.get("marker") or marker[0]
     for upd in result.get("updates") or []:
+        db = _db_session()
         try:
             handle_update(db, upd)
         except Exception as e:                          # noqa: BLE001
             log.warning("max handle: %s", e)
+        finally:
+            db.close()
 
 
 def _should_run(db: Session) -> bool:
@@ -392,7 +400,9 @@ def _worker_loop() -> None:
             if not _should_run(db):
                 log.info("max worker: бот выключен — воркер остановлен")
                 return
-            _poll_once(db, marker)
+            db.close()                                   # v1.67.1: БД не держим
+            _poll_once(marker)
+            db = _db_session()
             if time.time() - last_check > 30:   # проверка не чаще 2х/мин
                 last_check = time.time()
                 if _digest_due(db):

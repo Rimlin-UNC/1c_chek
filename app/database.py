@@ -41,6 +41,9 @@ engine = create_engine(
     settings.DATABASE_URL,
     connect_args=_connect_args,
     pool_pre_ping=True,
+    # v1.67.1 (аудит/стресс): 5+10 соединений не хватало — фоновые задачи
+    # держали сессии, запросы висели до 30 с. Теперь 20+20, ждём 10 с.
+    pool_size=20, max_overflow=20, pool_timeout=10,
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -52,6 +55,10 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):  # pragma: no cover
     if settings.DATABASE_URL.startswith("sqlite"):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
+        # v1.67.1 (аудит/стресс): параллельные записи ждут блокировку до 5 с
+        # вместо мгновенного «database is locked»; NORMAL достаточно при WAL
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 

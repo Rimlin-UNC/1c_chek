@@ -412,8 +412,12 @@ class TestFraudHold:
         db.close()
         return rows
 
-    def test_same_subnet_signal(self):
+    def test_same_subnet_signal(self, monkeypatch):
         """Пригласивший и реферал из одной /24 → сигнал на пригласившего."""
+        import app.security as _sec
+        monkeypatch.setattr(_sec, "real_client_ip",
+                            lambda r: ((r.headers.get("x-forwarded-for") or "")
+                                       .split(",")[0].strip() or "9.9.9.9"))
         c = _client()
         owner = _reg(c, "net-r@x.ru", headers={"X-Forwarded-For": "91.7.7.7"})
         db = _db()

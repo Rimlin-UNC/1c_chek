@@ -69,13 +69,48 @@ def _zone_for(path: str):
     return None
 
 
+def _is_trusted_peer(host: str) -> bool:
+    """Прямой сосед — доверенный обратный прокси? (loopback / приватные сети)."""
+    if not host:
+        return False
+    try:
+        import ipaddress
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback or ip.is_private
+    except ValueError:
+        return host in ("localhost",)
+
+
+def real_client_ip(request) -> str:
+    """IP клиента для лимитов и аудита (v1.67.1, аудит 12.10.2026).
+
+    X-Forwarded-For принимается ТОЛЬКО если прямой сосед — доверенный
+    прокси (nginx на той же машине/приватной сети). При прямом доступе
+    присланный злоумышленником XFF игнорируется — иначе ротация заголовка
+    обходила и лимит частоты, и блокировку перебора пароля."""
+    host = request.client.host if getattr(request, "client", None) else ""
+    if _is_trusted_peer(host or ""):
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            first = fwd.split(",")[0].strip()
+            if first:
+                return first[:45]
+    return (host or "unknown")[:45]
+
+
+def secret_is_weak(secret: str) -> bool:
+    """v1.67.1: дефолтный или слишком короткий ключ подписи токенов."""
+    return (not secret
+            or secret == "ymaster-dev-secret-change-me-in-production"
+            or len(secret) < 32)
+
+
 async def rate_limit_middleware(request: Request, call_next):
     """ASGI-прослойка: ограничение частоты запросов по IP."""
     zone = _zone_for(request.url.path)
     if zone:
         name, limit, window = zone
-        ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() \
-            or (request.client.host if request.client else "?")
+        ip = real_client_ip(request)             # v1.67.1: доверенный прокси
         if not limiter.allow(f"{name}:{ip}", limit, window):
             return JSONResponse(
                 {"detail": "Слишком много запросов. Попробуйте позже."},

@@ -169,7 +169,11 @@ class TestDeviceLayer:
 
 
 class TestNetworkLayer:
-    def test_datacenter_ip(self):
+    def test_datacenter_ip(self, monkeypatch):
+        import app.security as _sec
+        monkeypatch.setattr(_sec, "real_client_ip",
+                            lambda r: ((r.headers.get("x-forwarded-for") or "")
+                                       .split(",")[0].strip() or "9.9.9.9"))
         c = _client()
         r = c.post("/api/v1/pool-auth/register", json={"email": "dc@x.ru", "password": "parol-1234"},
                    headers={"X-Forwarded-For": "52.14.9.9"})
@@ -189,8 +193,12 @@ class TestNetworkLayer:
         db.close()
         assert sig is None
 
-    def test_subnet_cluster(self):
+    def test_subnet_cluster(self, monkeypatch):
         """5+ регистраций из одной /24 за сутки → SUBNET_CLUSTER (+45)."""
+        import app.security as _sec
+        monkeypatch.setattr(_sec, "real_client_ip",
+                            lambda r: ((r.headers.get("x-forwarded-for") or "")
+                                       .split(",")[0].strip() or "9.9.9.9"))
         c = _client()
         for i in range(5):
             c.post("/api/v1/pool-auth/register",
@@ -202,7 +210,11 @@ class TestNetworkLayer:
         db.close()
         assert sig is not None and sig.points == 45
 
-    def test_ip_log_records(self):
+    def test_ip_log_records(self, monkeypatch):
+        import app.security as _sec
+        monkeypatch.setattr(_sec, "real_client_ip",
+                            lambda r: ((r.headers.get("x-forwarded-for") or "")
+                                       .split(",")[0].strip() or "9.9.9.9"))
         c = _client()
         r = c.post("/api/v1/pool-auth/register", json={"email": "log@x.ru", "password": "parol-1234"},
                    headers={"X-Forwarded-For": "91.2.3.4"})

@@ -151,12 +151,8 @@ class TestWorkerLifecycle:
         monkeypatch.setattr(tg, "api",
                             lambda *a, **k: (_ for _ in ()).throw(
                                 tg.TelegramError("Telegram: Conflict: 409")))
-        db = SessionLocal()
-        try:
-            tg._poll_once(db, [0])
-            assert sleeps and sleeps[0] == 30
-        finally:
-            db.close()
+        tg._poll_once([0])                       # v1.67.1: без сессии снаружи
+        assert sleeps and sleeps[0] == 30
 
 
 class TestHandleUpdateUsesProxy:
