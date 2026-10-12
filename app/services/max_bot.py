@@ -33,6 +33,9 @@ SETT = "max_enabled"
 SETT_TOKEN = "max_bot_token"             # секрет (appsettings.SECRET_KEYS)
 SETT_CHANNEL = "assistants_channel"      # telegram | max | both (общий)
 SETT_USERNAME = "max_bot_username"       # v1.70.1: фактический ник бота
+_DEFAULT_NICK = "chek.ymaster.bot"       # публичный ник по умолчанию
+_TECH_NICK = re.compile(r"^id\d+_bot$")  # v1.70.2: служебный username из get_me
+_last_update_ago = None                  # v1.70.2: сек с последнего события
 SETT_TIME = "max_reminder_time"
 SETT_TEXT = "max_reminder_text"
 SETT_DIGEST = "digest_enabled"           # утренний дайджест (общий)
@@ -83,6 +86,10 @@ def bot_settings(db: Session) -> dict:
         "digest_enabled": appsettings.get_setting(db, SETT_DIGEST, "1") == "1",
         "has_token": bool(get_token(db)),
         "bot_username": _username_cache,
+        # v1.70.2: публичный ник для ссылок + признак «бот слушает»
+        "bot_nick": bot_username(db),
+        "last_update_ago": (int(_last_update_ago)
+                            if _last_update_ago is not None else None),
     }
 
 
@@ -153,27 +160,41 @@ def refresh_username(db: Session) -> str:
     except MaxError:
         _username_cache = ""
     u = (_username_cache or "").strip()
-    if u:
+    # v1.70.2: служебный username вида idNNNN_bot в настройки не пишем —
+    # публичный ник бота (для ссылок max.ru/ник) задаётся отдельно
+    if u and not _TECH_NICK.fullmatch(u):
         from . import appsettings
         if appsettings.get_setting(db, SETT_USERNAME, "") != u:
             appsettings.set_setting(db, SETT_USERNAME, u)
     return _username_cache
 
 
+def _public(u: str) -> str:
+    """Публичный ник для диплинков: служебный idNNNN_bot не годится."""
+    u = (u or "").strip()
+    return "" if (not u or _TECH_NICK.fullmatch(u)) else u
+
+
+def note_update() -> None:
+    """Воркер получил события из MAX (диагностика «бот слушает»)."""
+    global _last_update_ago
+    _last_update_ago = 0.0
+
+
 def bot_username(db: Session, refresh: bool = False) -> str:
-    """Ник бота для диплинков: настройка (сохранённая) → кэш get_me →
-    (по запросу) MAX API → нейтральный запасной вариант. Публичные
+    """ПУБЛИЧНЫЙ ник бота для диплинков (max.ru/ник): настройка → кэш
+    get_me (если не служебный idNNNN_bot) → chek.ymaster.bot. Служебные
     обработчики зовут с refresh=False — без сетевых вызовов."""
     from . import appsettings
-    u = (appsettings.get_setting(db, SETT_USERNAME, "") or "").strip()
+    u = _public(appsettings.get_setting(db, SETT_USERNAME, ""))
     if u:
         return u
-    u = (_username_cache or "").strip()
+    u = _public(_username_cache)
     if u:
         return u
     if refresh:
-        return refresh_username(db) or "chek.ymaster.bot"
-    return "chek.ymaster.bot"
+        return _public(refresh_username(db)) or _DEFAULT_NICK
+    return _DEFAULT_NICK
 
 
 # --------------------------------------------------------------------------
@@ -432,6 +453,10 @@ def _poll_once(marker: list) -> None:
         _stop.wait(30 if "401" in str(e) else 15)
         return
     marker[0] = result.get("marker") or marker[0]
+    note_update()                          # v1.70.2: бот слушает
+    ups = result.get("updates") or []
+    if ups:
+        log.info("max poll: %d событи(й)", len(ups))
     for upd in result.get("updates") or []:
         db = _db_session()
         try:

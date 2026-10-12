@@ -173,7 +173,8 @@ async def security_headers_middleware(request: Request, call_next) -> Response:
     response: Response = await call_next(request)
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; script-src 'self' https://st.max.ru; "
+        "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
         "connect-src 'self' ws: wss:; media-src 'self'; object-src 'none'; frame-ancestors 'none'",
     )
     response.headers.setdefault("X-Content-Type-Options", "nosniff")

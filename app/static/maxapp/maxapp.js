@@ -39,11 +39,36 @@ function refresh(res) {
 }
 
 // ---- запуск ---------------------------------------------------------
+function waitForBridge(ms) {
+  // Bridge (st.max.ru) может догружаться асинхронно — ждём до ms мс
+  return new Promise((res) => {
+    const t0 = Date.now();
+    const tick = () => {
+      if (wa() && wa().initData) return res(true);
+      if (Date.now() - t0 >= ms) return res(false);
+      setTimeout(tick, 150);
+    };
+    tick();
+  });
+}
+
 async function boot() {
+  const ok = await waitForBridge(1600);
   const app = wa();
   if (!app || !app.initData) {
-    $('view-loading').innerHTML = '<p>Откройте приложение из чата бота ' +
-      'в MAX — так работает вход без пароля.</p>';
+    const bridge = !!app;
+    $('view-loading').innerHTML =
+      (bridge
+        ? '<p>MAX не передал данные входа.</p>'
+        : '<p>Откройте приложение из чата вашего бота в MAX — ' +
+          'там работает вход без пароля.</p>') +
+      '<div style="height:10px"></div>' +
+      '<button class="btn secondary" id="mx-out-open">Открыть MAX</button>' +
+      '<div style="height:8px"></div>' +
+      '<button class="btn" id="mx-retry">Повторить</button>';
+    $('mx-out-open').onclick = () =>
+      openLink('https://max.ru/chek.ymaster.bot');
+    $('mx-retry').onclick = () => { location.reload(); };
     return;
   }
   try {

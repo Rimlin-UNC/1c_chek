@@ -15,7 +15,8 @@ class TestVersions1701:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.70.1"
+        # v1.70.2: строгий замок версии переехал в test_v1702
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 1)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and "?v=1.70.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
@@ -54,16 +55,18 @@ class TestBotUsername:
 
         def fake_me(token):
             calls["n"] += 1
-            return {"username": "id4712030034_bot", "name": "chek.ymaster.ru"}
+            return {"username": "myshop_bot", "name": "chek.ymaster.ru"}
 
         monkeypatch.setattr(max_bot, "get_me", fake_me)
         s = SessionLocal()
         try:
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
-            assert max_bot.refresh_username(s) == "id4712030034_bot"
+            assert max_bot.refresh_username(s) == "myshop_bot"
             assert calls["n"] == 1
             # сохранился в настройках — дальше сеть не нужна
-            assert max_bot.bot_username(s) == "id4712030034_bot"
+            assert max_bot.bot_username(s) == "myshop_bot"
+            appsettings.set_setting(s, "max_bot_username", "")
+            max_bot._username_cache = ""                        # изоляция
             assert calls["n"] == 1
         finally:
             s.rollback(); s.close()
@@ -74,8 +77,8 @@ class TestBotUsername:
         monkeypatch.setattr(max_bot, "refresh_username", lambda db: "")
         s = SessionLocal()
         try:
-            assert max_bot.bot_username(s, refresh=False) in (
-                "chek.ymaster.bot", "id4712030034_bot")
+            # v1.70.2: служебный id-ник игнорируется — публичный по умолчанию
+            assert max_bot.bot_username(s, refresh=False) == "chek.ymaster.bot"
         finally:
             s.rollback(); s.close()
 
@@ -84,13 +87,14 @@ class TestBotUsername:
         from app.services import appsettings, max_bot
         s = SessionLocal()
         try:
-            appsettings.set_setting(s, "max_bot_username", "id4712030034_bot")
+            # v1.70.2: служебный id-ник в ссылки не идёт — берём публичный
+            appsettings.set_setting(s, "max_bot_username", "myshop_bot")
         finally:
             s.rollback(); s.close()
         r = client.post("/api/v1/auth/max/start", json={})
         assert r.status_code == 200
         assert r.json()["max_link"] == (
-            "https://max.ru/id4712030034_bot?startapp=" + r.json()["code"])
+            "https://max.ru/myshop_bot?startapp=" + r.json()["code"])
 
     def test_ref_link_uses_real_username(self, client, monkeypatch):
         import hashlib, hmac, json, time, urllib.parse
@@ -98,7 +102,7 @@ class TestBotUsername:
         from app.services import appsettings
         s = SessionLocal()
         try:
-            appsettings.set_setting(s, "max_bot_username", "id4712030034_bot")
+            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
             appsettings.set_setting(s, "pool_enabled", "1")
         finally:
@@ -121,18 +125,18 @@ class TestBotUsername:
         h = {"Authorization": "Bearer " + r.json()["access_token"]}
         d = client.get("/api/v1/maxapp/summary", headers=h).json()
         assert d["ref_link"].startswith(
-            "https://max.ru/id4712030034_bot?startapp=ref_")
+            "https://max.ru/chek.ymaster.bot?startapp=ref_")
 
     def test_about_exposes_bot_username(self, client):
         from app.database import SessionLocal
         from app.services import appsettings
         s = SessionLocal()
         try:
-            appsettings.set_setting(s, "max_bot_username", "id4712030034_bot")
+            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
         finally:
             s.rollback(); s.close()
         d = client.get("/api/v1/about").json()
-        assert d["max_bot_username"] == "id4712030034_bot"
+        assert d["max_bot_username"] == "chek.ymaster.bot"
 
 
 # ------------------------------------------------------------------ воркер

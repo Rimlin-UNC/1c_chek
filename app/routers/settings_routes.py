@@ -427,6 +427,7 @@ def get_max_settings(db: Session = Depends(get_db),
     s = mx.bot_settings(db)
     return {**s, "token_masked": _mask(_g(db, mx.SETT_TOKEN, "")),
             "worker_running": mx.worker_is_alive(),
+            "last_update_ago": s.get("last_update_ago"),
             "bound_users": db.query(User).filter(
                 User.max_user_id.isnot(None)).count(),
             "hint": "Токен бота MAX — на платформе business.max.ru "
@@ -463,6 +464,17 @@ def put_max_settings(body: dict, db: Session = Depends(get_db),
         mx.refresh_username(db)
     elif token == "-":
         _s(db, mx.SETT_TOKEN, "")
+    # v1.70.2: публичный ник бота для диплинков (max.ru/ник)
+    nick = (body.get("bot_nick") or "").strip()
+    if nick:
+        if nick == "-":
+            _s(db, mx.SETT_USERNAME, "")
+        elif not _re.fullmatch(r"[A-Za-z0-9._-]{2,64}", nick):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Ник бота: латиница, цифры и . _ - "
+                                "(как в ссылке max.ru/ник)")
+        else:
+            _s(db, mx.SETT_USERNAME, nick)
     if "enabled" in body:
         _s(db, mx.SETT, "1" if body["enabled"] else "0")
     if "reminder_time" in body:

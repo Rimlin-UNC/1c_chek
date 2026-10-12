@@ -5113,6 +5113,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.2': [
+    { icon: '🛡', title: 'MAX живой: мини-приложение открывается, ссылки — на вашего бота',
+      text: 'Нашли и починили три причины: страница мини-приложения блокировала загрузку фирменного моста MAX (CSP) — теперь разрешён только домен MAX; служебный username бота (id…_bot) больше не подставляется в ссылки — публичный ник задаётся в Настройках (по умолчанию chek.ymaster.bot); приложение дожидается моста MAX и показывает понятную ошибку с кнопками, если что-то не так. В карточке бота видно, слушает ли он события.' },
+  ],
   '1.70.1': [
     { icon: '🛡', title: 'Починили связь с MAX: бот определяется сам',
       text: 'Если бот в MAX назван не стандартно, диплинки вели не туда, а при канале уведомлений «telegram» бот молчал. Теперь вход через MAX, приглашения и мини-приложение используют фактический ник вашего бота из настроек, бот MAX работает независимо от канала, а мини-приложение открывается и по адресу без слэша.' },
@@ -8080,11 +8084,13 @@ async function viewSettings(container) {
             <input type="checkbox" id="mx-digest" ${maxSet.digest_enabled ? 'checked' : ''} style="width:auto">
             <span>Утренний дайджест бухгалтеру и администратору (в 08:00)</span></label>
         </div>
+        <label class="field full" style="margin-top:8px"><span>Публичный ник бота — для ссылок max.ru/ник (вход через MAX, приглашения). Служебный username вида id…_bot из платформы не подходит</span>
+          <input id="mx-nick" value="${esc(maxSet.bot_nick || '')}" placeholder="chek.ymaster.bot"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
           <button class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
         </div>
-        <p class="form-hint" style="margin-top:10px">${maxSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
+        <p class="form-hint" style="margin-top:10px">${maxSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'}${maxSet.last_update_ago != null ? ` · события ${maxSet.last_update_ago < 90 ? 'сейчас' : Math.round(maxSet.last_update_ago / 60) + ' мин назад'}` : ''} ·
           статус виден после сохранения</p>
       </div>` : ''}
 
@@ -8998,6 +9004,8 @@ async function viewSettings(container) {
         reminder_time: $('#mx-time').value.trim(),
         reminder_text: $('#mx-text').value.trim(),
         digest_enabled: $('#mx-digest').checked };
+      const nk = $('#mx-nick').value.trim();
+      if (nk) body.bot_nick = nk;
       const tok = $('#mx-token').value.trim();
       if (tok) body.bot_token = tok;
       try {
