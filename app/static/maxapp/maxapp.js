@@ -149,8 +149,7 @@ async function uploadPhoto(ev) {
 async function scanQr() {
   const app = wa();
   if (!app || !app.openCodeReader) {
-    say('Сканер недоступен — выберите фото с QR-кодом', false);
-    pickPhoto();
+    scanCamera();                    // v1.70.7: своя камера вместо тупика
     return;
   }
   try {
@@ -158,8 +157,7 @@ async function scanQr() {
     const raw = await app.openCodeReader(false);   // камера; true — +галерея
     if (raw) await submit(raw);
   } catch (e) {
-    say('Сканер не открылся — выберите фото с QR-кодом', false);
-    pickPhoto();
+    scanCamera();                    // v1.70.7: камера, если MAX не открыл сканер
   }
 }
 
@@ -198,6 +196,7 @@ $('btn-send').onclick = () => {
   if (v.length < 10) { say('Вставьте строку QR-кода чека', false); return; }
   submit(v);
 };
+$('btn-cam').onclick = scanCamera;
 $('btn-photo').onclick = pickPhoto;
 $('qr-file').onchange = uploadPhoto;
 $('btn-share').onclick = () => {
@@ -218,7 +217,8 @@ function openLink(url) {
 }
 
 // ---- v1.70.0: сервис-экраны (вход с сайта, приглашения) -------------
-function showService(title, html) {
+function showService(title, html, onBack) {
+  window._svcBack = onBack || null;
   $('view-app').classList.add('hidden');
   const s = $('view-service');
   s.classList.remove('hidden');
@@ -229,6 +229,9 @@ function showService(title, html) {
     try {
       app.BackButton.show();
       const back = () => {
+        const cb = window._svcBack;
+        window._svcBack = null;
+        if (cb) { try { cb(); } catch (e) {} }
         s.classList.add('hidden');
         $('view-app').classList.remove('hidden');
         try { app.BackButton.offClick(back); app.BackButton.hide(); } catch (e) {}
@@ -236,6 +239,72 @@ function showService(title, html) {
       app.BackButton.onClick(back);
     } catch (e) {}
   }
+}
+
+// ---- v1.70.7: собственная камера (getUserMedia + jsQR) --------------
+let _camStream = null;
+
+function stopCam() {
+  if (_camStream) {
+    try { _camStream.getTracks().forEach(x => x.stop()); } catch (e) {}
+    _camStream = null;
+  }
+}
+
+function closeCam() {
+  stopCam();
+  const s = $('view-service');
+  if (s) s.classList.add('hidden');
+  const a = $('view-app');
+  if (a) a.classList.remove('hidden');
+}
+
+async function scanCamera() {
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      {video: {facingMode: 'environment'}});
+  } catch (e) {
+    say('Камера недоступна — выберите фото с QR-кодом', false);
+    pickPhoto();
+    return;
+  }
+  _camStream = stream;
+  showService('Сканер камеры',
+    '<video id="cam-v" autoplay playsinline muted ' +
+    'style="width:100%;border-radius:12px;background:#000"></video>' +
+    '<p class="hint" style="margin-top:8px">Наведите камеру на QR чека — ' +
+    'распознаётся автоматически</p>' +
+    '<div style="height:8px"></div>' +
+    '<button class="btn secondary" id="cam-photo">🖼 Не считывается — выбрать фото</button>',
+    closeCam);
+  const v = $('cam-v');
+  v.srcObject = stream;
+  try { await v.play(); } catch (e) {}
+  $('cam-photo').onclick = () => { closeCam(); pickPhoto(); };
+  const cv = document.createElement('canvas');
+  const cx = cv.getContext('2d', {willReadFrequently: true});
+  const tick = () => {
+    if (!_camStream) return;                     // экран закрыли
+    if (v.videoWidth > 0) {
+      cv.width = v.videoWidth;
+      cv.height = v.videoHeight;
+      cx.drawImage(v, 0, 0);
+      let code = null;
+      try {
+        const img = cx.getImageData(0, 0, cv.width, cv.height);
+        code = window.jsQR(img.data, img.width, img.height);
+      } catch (e) {}
+      if (code && code.data) {
+        const raw = code.data;
+        closeCam();
+        submit(raw);
+        return;
+      }
+    }
+    setTimeout(tick, 180);
+  };
+  tick();
 }
 
 async function showLoginConfirm(code) {

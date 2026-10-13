@@ -261,12 +261,23 @@ async function maxLoginFlow(code, isTicket) {
     <div class="modal-title">🛡 Вход через MAX</div>
     <div class="info-callout" id="mxl-status">Ждём подтверждение в MAX…<br>
       <span class="form-hint">Нажмите «Открыть MAX» и подтвердите вход у бота —
-      окно закроется само. Если MAX не открылся — отправьте боту сообщение:
-      <b>${esc(code)}</b></span></div>
+      окно закроется само. Если приложение не открылось — <b>отправьте боту
+      сообщение</b> с кодом ниже (в чате бота): вход подтвердится и без
+      приложения.</span>
+      <div class="token-line" style="margin-top:8px"><input readonly
+        value="${esc(code)}" id="mxl-code"><button class="btn btn-sm"
+        id="mxl-copy">копировать</button></div></div>
     <div class="modal-actions">
       <button class="btn" data-close>Отмена</button>
       <button class="btn btn-primary" id="mxl-open">🛡 Открыть MAX</button></div>`);
   const stop = { v: false };
+  const mxcp = slot.querySelector('#mxl-copy');
+  if (mxcp) mxcp.onclick = () => {
+    try {
+      navigator.clipboard && navigator.clipboard.writeText(code);
+      toast('Код скопирован — вставьте его в чат бота в MAX', 'ok', '📋');
+    } catch (e) {}
+  };
   const mxo = slot.querySelector('#mxl-open');
   if (mxo) mxo.onclick = () =>
     window.open('https://max.ru/' + (window.MXBOT || 'chek.ymaster.bot')
@@ -5113,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.7': [
+    { icon: '🎥', title: 'Сканер чека прямо в окне приложения',
+      text: 'В мини-приложении появилась собственная камера: наводите на QR чека — строка распознаётся сама (тот же движок, что на сайте) и чек сдаётся, даже если нативный сканер MAX не открылся. Порядок: сканер MAX → камера в окне → фото → вставка строки. В окне входа — кнопка «копировать» и путь «отправьте код боту сообщением»: регистрация работает даже без приложения.' },
+  ],
   '1.70.6': [
     { icon: '📷', title: 'Диплинки — на username бота; сканер: фото как запасной путь',
       text: 'Разобрались с «ссылка устарела»: в MAX диплинк работает только по username бота из платформы (обычно вида id…_bot) — отображаемое имя не резолвится. Все ссылки (вход, приглашения, «Поделиться») теперь автоматически ведут к боту из токена. Сканеру добавили надёжный запасной путь: если нативный сканер MAX не открылся — выберите фото с QR, сервер сам распознает чек (тот же механизм, что на сайте).' },

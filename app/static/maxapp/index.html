@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ямастер Чек — мини-приложение</title>
 <script src="https://st.max.ru/js/max-web-app.js"></script>
+<script src="/maxapp/jsQR.js"></script>
 <style>
 :root { --bg: var(--tg-theme-bg-color, #f5f1ea); --fg: var(--tg-theme-text-color, #2b2347);
         --accent: var(--tg-theme-button-color, #e8721c); --accent-fg: var(--tg-theme-button-text-color, #fff);
@@ -48,6 +49,8 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
     </div>
     <button class="btn" id="btn-scan">📷 Сканировать QR чека</button>
     <div style="height:8px"></div>
+    <button class="btn secondary" id="btn-cam">🎥 Камера в окне</button>
+    <div style="height:8px"></div>
     <div class="card">
       <div class="hint" style="margin-bottom:6px">Или вставьте строку QR:</div>
       <input id="qr-input" placeholder="t=…&s=…&fn=…&i=…&fp=…&n=…">
@@ -86,6 +89,6 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   <button data-tab="profile">⭐ Профиль</button>
 </nav>
 
-<script src="/maxapp/maxapp.js?v=1.70.6"></script>
+<script src="/maxapp/maxapp.js?v=1.70.7"></script>
 </body>
 </html>

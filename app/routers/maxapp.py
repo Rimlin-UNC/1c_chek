@@ -101,6 +101,8 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
         from fastapi import HTTPException
         from ..services import max_bot as _mb
         tech = _mb.tech_username(db)
+        log.info("maxapp session отказ (%s), токен-бот: %s",
+                 err, tech or "неизвестен")
         detail = (f"Подпись MAX не совпала с сохранённым токеном бота "
                   f"«{tech}». Если вы открыли приложение из чата другого "
                   "вашего бота — вставьте в Настройках → Ассистент MAX "
@@ -116,6 +118,7 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
                                  "заново")
     assert user_raw is not None
     max_id = str(user_raw["id"])
+    log.info("maxapp session ok: max_id=%s", max_id)
     username = (user_raw.get("username") or "").strip()
 
     existing = (db.query(_PoolUserModel)

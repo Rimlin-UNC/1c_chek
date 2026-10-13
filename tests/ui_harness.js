@@ -623,6 +623,8 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.5: кнопка «Чей токен?» с живой проверкой');
   ok(bundle.includes("'1.70.6':"),
      'v1.70.6: What’s New — username-диплинки и фото-сканер');
+  ok(bundle.includes("'1.70.7':") && bundle.includes('mxl-copy'),
+     'v1.70.7: камера в мини-приложении и копирование кода входа');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
