@@ -92,11 +92,11 @@ def bot_settings(db: Session) -> dict:
         "bot_nick": bot_username(db),
         "last_update_ago": (int(_last_update_ago)
                             if _last_update_ago is not None else None),
-        # v1.70.3: чей токен + несовпадение с публичным ником
+        # v1.70.6: чей токен; «несовпадение» = ник в настройках вручную
+        # переопределён и разошёлся с username бота из токена
         "token_bot": tech_username(db),
         "token_mismatch": bool(
-            _TECH_NICK.fullmatch(tech_username(db))
-            and bot_username(db) != tech_username(db)),
+            tech_username(db) and bot_username(db) != tech_username(db)),
     }
 
 
@@ -172,9 +172,10 @@ def refresh_username(db: Session) -> str:
         from . import appsettings as _as
         if _as.get_setting(db, SETT_TECH, "") != u:
             _as.set_setting(db, SETT_TECH, u)
-    # v1.70.2: служебный username вида idNNNN_bot в настройки не пишем —
-    # публичный ник бота (для ссылок max.ru/ник) задаётся отдельно
-    if u and not _TECH_NICK.fullmatch(u):
+    # v1.70.6: username бота (в т.ч. служебный idNNNN_bot) — единственное
+    # валидное имя для диплинков max.ru/<username>; сохраняем как есть,
+    # ссылки всегда ведут к боту из токена
+    if u:
         from . import appsettings
         if appsettings.get_setting(db, SETT_USERNAME, "") != u:
             appsettings.set_setting(db, SETT_USERNAME, u)
@@ -206,14 +207,14 @@ def bot_username(db: Session, refresh: bool = False) -> str:
     get_me (если не служебный idNNNN_bot) → chek.ymaster.bot. Служебные
     обработчики зовут с refresh=False — без сетевых вызовов."""
     from . import appsettings
-    u = _public(appsettings.get_setting(db, SETT_USERNAME, ""))
+    u = (appsettings.get_setting(db, SETT_USERNAME, "") or "").strip()
     if u:
         return u
-    u = _public(_username_cache)
+    u = (_username_cache or "").strip()
     if u:
         return u
     if refresh:
-        return _public(refresh_username(db)) or _DEFAULT_NICK
+        return (refresh_username(db) or "").strip() or _DEFAULT_NICK
     return _DEFAULT_NICK
 
 

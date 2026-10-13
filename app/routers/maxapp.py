@@ -14,7 +14,8 @@ import logging
 import threading
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (APIRouter, Depends, File, HTTPException,
+                     Query, UploadFile, status)
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -142,18 +143,13 @@ def me(db: Session = Depends(get_db), user=Depends(require_pool_user)):
     return d
 
 
-@router.post("/scan", summary="Сдача чека из мини-приложения (нативный QR)")
-def scan(body: ScanBody, db: Session = Depends(get_db),
-         user=Depends(require_pool_user)):
-    parsed, pre_err = ingest.precheck_ingest(db, body.qr, user)
-    if pre_err is not None:
-        return {**pre_err, "accepted": False}
-    fast = (body.form_ms or 0) < 1200        # антифрод: слишком быстрое окно
+def _launch_ingest(user, qr_raw: str, parsed, fast: bool) -> dict:
+    """Общий финал /scan и /scan-image: precheck пройден, уходим в фон."""
     res = {"result": "pending", "message": "Чек принят — проверяем",
            "accepted": True, "fn": parsed.fn, "fd": parsed.fd,
            "fp": parsed.fp, "points": 0,
            "user_points": int(user.points or 0)}
-    user_id, qr_raw = user.id, body.qr
+    user_id = user.id
 
     def _bg():
         from ..database import SessionLocal
@@ -171,6 +167,53 @@ def scan(body: ScanBody, db: Session = Depends(get_db),
     threading.Thread(target=_bg, daemon=True,
                      name="ymaster-maxapp-ingest").start()
     return res
+
+
+@router.post("/scan", summary="Сдача чека из мини-приложения (нативный QR)")
+def scan(body: ScanBody, db: Session = Depends(get_db),
+         user=Depends(require_pool_user)):
+    parsed, pre_err = ingest.precheck_ingest(db, body.qr, user)
+    if pre_err is not None:
+        return {**pre_err, "accepted": False}
+    fast = (body.form_ms or 0) < 1200        # антифрод: слишком быстрое окно
+    return _launch_ingest(user, body.qr, parsed, fast)
+
+
+@router.post("/scan-image",
+             summary="Сдача чека фотографией QR-кода (фолбэк сканера)")
+async def scan_image(file: UploadFile = File(...),
+                     db: Session = Depends(get_db),
+                     user=Depends(require_pool_user)):
+    """Если нативный сканер MAX недоступен — распознаём QR на фото
+    сервером (тот же конвейер, что на сайте: services.imaging)."""
+    raw = await file.read()
+    if len(raw) > settings.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            f"Файл больше {settings.MAX_UPLOAD_MB} МБ")
+    from ..services import imaging
+    from ..services.imaging import MultipleReceiptsError
+    try:
+        result = imaging.decode_qr_image(raw)
+    except MultipleReceiptsError:
+        return {"accepted": False, "result": "multi",
+                "message": "На фото несколько разных чеков — "
+                           "сдайте по одному",
+                "points": 0, "user_points": int(user.points or 0)}
+    except (ingest.QRParseError, ValueError) as e:      # noqa: BLE001
+        return {"accepted": False, "result": "bad_qr",
+                "message": f"Не похоже на чек: {e}",
+                "points": 0, "user_points": int(user.points or 0)}
+    parsed = result.parsed
+    if parsed is None:
+        return {"accepted": False, "result": "bad_qr",
+                "message": "QR чека на фото не найден — снимите ближе "
+                           "и ровнее",
+                "points": 0, "user_points": int(user.points or 0)}
+    qr_raw = parsed.qr_data or ""
+    _, pre_err = ingest.precheck_ingest(db, qr_raw, user)
+    if pre_err is not None:
+        return {**pre_err, "accepted": False}
+    return _launch_ingest(user, qr_raw, parsed, fast=False)
 
 
 @router.get("/summary", summary="Сводка: баллы, чеки, код приглашения")

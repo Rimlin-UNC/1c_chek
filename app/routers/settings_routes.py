@@ -455,8 +455,7 @@ def check_max_token(db: Session = Depends(get_db),
     username = (me.get("username") or "").strip()
     public = mx.bot_username(db)
     return {"ok": True, "bot": username, "public_nick": public,
-            "mismatch": bool(mx._TECH_NICK.fullmatch(username)
-                             and public != username)}
+            "mismatch": bool(username and public != username)}
 
 
 @router.put("/max", summary="Сохранить настройки ассистента MAX (админ)")

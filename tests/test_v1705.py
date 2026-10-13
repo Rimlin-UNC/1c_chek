@@ -118,7 +118,8 @@ class TestVersions1705:
     def test_versions_synced(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.70.5"
+        # v1.70.6: строгий замок версии переехал в test_v1706
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 5)
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and "?v=1.70.4" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()

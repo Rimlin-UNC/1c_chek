@@ -63,11 +63,10 @@ async function boot() {
         : '<p>Откройте приложение из чата вашего бота в MAX — ' +
           'там работает вход без пароля.</p>') +
       '<div style="height:10px"></div>' +
-      '<button class="btn secondary" id="mx-out-open">Открыть MAX</button>' +
+      '<p class="hint">Откройте чат вашего бота в MAX и запустите ' +
+      'приложение кнопкой в чате.</p>' +
       '<div style="height:8px"></div>' +
       '<button class="btn" id="mx-retry">Повторить</button>';
-    $('mx-out-open').onclick = () =>
-      openLink('https://max.ru/chek.ymaster.bot');
     $('mx-retry').onclick = () => { location.reload(); };
     return;
   }
@@ -119,14 +118,49 @@ function statusRu(s) {
 }
 
 // ---- сканер ---------------------------------------------------------
+function pickPhoto() {
+  const f = $('qr-file');
+  if (f) f.click();
+}
+
+async function uploadPhoto(ev) {
+  const f = ev && ev.target ? ev.target.files[0] : null;
+  if (!f) return;
+  say('Ищем QR на фото…');
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const r = await fetch(API + '/api/v1/maxapp/scan-image', {
+      method: 'POST',
+      headers: TOKEN ? {Authorization: 'Bearer ' + TOKEN} : {},
+      body: fd,
+    }).then(async x => {
+      const d = await x.json().catch(() => ({}));
+      if (!x.ok) throw new Error(d.detail || ('HTTP ' + x.status));
+      return d;
+    });
+    refresh(r);
+    if (r.accepted === false) say(r.message || 'Не принято', false);
+    else { say('Чек принят! Баллы начислим после проверки ✓'); loadSummary(); }
+  } catch (e) { say(e.message, false); }
+  finally { $('qr-file').value = ''; }
+}
+
 async function scanQr() {
   const app = wa();
-  if (!app || !app.openCodeReader) { say('Сканер недоступен — вставьте строку', false); return; }
+  if (!app || !app.openCodeReader) {
+    say('Сканер недоступен — выберите фото с QR-кодом', false);
+    pickPhoto();
+    return;
+  }
   try {
     if (app.requestScreenMaxBrightness) { try { await app.requestScreenMaxBrightness(); } catch (e) {} }
     const raw = await app.openCodeReader(false);   // камера; true — +галерея
     if (raw) await submit(raw);
-  } catch (e) { say('Сканирование прервано', false); }
+  } catch (e) {
+    say('Сканер не открылся — выберите фото с QR-кодом', false);
+    pickPhoto();
+  }
 }
 
 async function submit(qr) {
@@ -164,6 +198,8 @@ $('btn-send').onclick = () => {
   if (v.length < 10) { say('Вставьте строку QR-кода чека', false); return; }
   submit(v);
 };
+$('btn-photo').onclick = pickPhoto;
+$('qr-file').onchange = uploadPhoto;
 $('btn-share').onclick = () => {
   const app = wa();
   const link = ME.ref_link || 'https://max.ru/chek.ymaster.bot?startapp=ref_' + (ME.ref_code || '');

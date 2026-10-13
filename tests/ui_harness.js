@@ -621,6 +621,8 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.3: диагностика «чей токен» в карточке MAX');
   ok(bundle.includes('mx-who') && bundle.includes('check-token'),
      'v1.70.5: кнопка «Чей токен?» с живой проверкой');
+  ok(bundle.includes("'1.70.6':"),
+     'v1.70.6: What’s New — username-диплинки и фото-сканер');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

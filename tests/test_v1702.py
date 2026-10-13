@@ -28,9 +28,9 @@ class TestCsp1702:
 # ------------------------------------------------------------------ ник бота
 class TestBotNick1702:
     def test_tech_nick_not_used_in_links(self, client):
-        """get_me может вернуть технический username (idNNNN_bot) — он не
-        годится для диплинков: используем публичный ник (настройка или
-        chek.ymaster.bot)."""
+        """v1.70.6: username бота (даже служебный idNNNN_bot) — единственное
+        валидное имя диплинка max.ru/<username>; ссылки ведут к боту из
+        токена (прод: отображаемое имя не резолвится)."""
         from app.database import SessionLocal
         from app.services import appsettings, max_bot
         s = SessionLocal()
@@ -38,7 +38,7 @@ class TestBotNick1702:
             appsettings.set_setting(s, "max_bot_username", "id4712030034_bot")
         finally:
             s.rollback(); s.close()
-        assert max_bot.bot_username(s) == "chek.ymaster.bot"
+        assert max_bot.bot_username(s) == "id4712030034_bot"
 
     def test_public_nick_used(self, client):
         from app.database import SessionLocal
@@ -59,10 +59,11 @@ class TestBotNick1702:
         try:
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
             appsettings.set_setting(s, "max_bot_username", "")
-            assert max_bot.refresh_username(s) == "id4712030034_bot"  # в кэше
-            # …но в настройках технический ник НЕ сохранён
-            assert appsettings.get_setting(s, "max_bot_username", "") == ""
-            assert max_bot.bot_username(s) == "chek.ymaster.bot"
+            assert max_bot.refresh_username(s) == "id4712030034_bot"
+            # v1.70.6: username токен-бота сохраняется — для диплинков
+            assert appsettings.get_setting(
+                s, "max_bot_username", "") == "id4712030034_bot"
+            assert max_bot.bot_username(s) == "id4712030034_bot"
         finally:
             s.rollback(); s.close()
 
@@ -90,7 +91,8 @@ class TestBotNick1702:
         finally:
             s.rollback(); s.close()
         d = client.get("/api/v1/about").json()
-        assert d["max_bot_username"] == "chek.ymaster.bot"
+        # v1.70.6: /about отдаёт username токен-бота (для диплинков фронта)
+        assert d["max_bot_username"] == "id4712030034_bot"
 
     def test_settings_accept_bot_nick(self, client):
         h = client.post("/api/v1/auth/login",
@@ -132,8 +134,8 @@ class TestWorkerAndMiniApp1702:
     def test_maxapp_waits_for_bridge(self):
         src = open("app/static/maxapp/maxapp.js", encoding="utf-8").read()
         assert "waitForBridge" in src
-        # фолбэк без Bridge предлагает «Открыть MAX», а не только заглушку
-        assert "mx-out-open" in src
+        # v1.70.6: фолбэк без Bridge — честная инструкция и «Повторить»
+        assert "mx-retry" in src
 
 
 # ------------------------------------------------------------------ версии/замки

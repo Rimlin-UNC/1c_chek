@@ -100,15 +100,17 @@ class TestDiag1703:
             # служебное имя сохранено отдельно (диагностика)
             assert appsettings.get_setting(s, "max_bot_tech", "") == \
                 "id4712030034_bot"
-            # публичный ник не испорчен
+            # v1.70.6: username токен-бота сохраняется и в настройках
             assert appsettings.get_setting(
-                s, "max_bot_username", "") == "chek.ymaster.bot"
+                s, "max_bot_username", "") == "id4712030034_bot"
             st = max_bot.bot_settings(s)
             assert st["token_bot"] == "id4712030034_bot"
-            assert st["token_mismatch"] is True
+            assert st["token_mismatch"] is False   # настройка == токен-боту
         finally:
             s.rollback(); s.close()
             appsettings.set_setting(s, "max_bot_tech", "")
+            appsettings.set_setting(s, "max_bot_username", "")
+            max_bot._username_cache = ""           # изоляция глобального кэша
 
     def test_no_mismatch_when_same(self, client, monkeypatch):
         from app.database import SessionLocal
