@@ -36,6 +36,7 @@ SETT_USERNAME = "max_bot_username"       # v1.70.1: фактический ни�
 _DEFAULT_NICK = "chek.ymaster.bot"       # публичный ник по умолчанию
 _TECH_NICK = re.compile(r"^id\d+_bot$")  # v1.70.2: служебный username из get_me
 SETT_TECH = "max_bot_tech"               # v1.70.3: чей токен (служебное имя)
+SITE_URL = "https://chek.ymaster.ru"     # v1.70.4: кнопка «Открыть сайт»
 _last_update_ago = None                  # v1.70.2: сек с последнего события
 SETT_TIME = "max_reminder_time"
 SETT_TEXT = "max_reminder_text"
@@ -243,6 +244,29 @@ def consume_bind_code(code: str) -> str | None:
     return item[0]
 
 
+def _send_welcome(token: str, user_id: int | str) -> None:
+    """v1.70.4: /start без кода — приветствие с кнопками. Главное —
+    open_app: штатный запуск мини-приложения бота прямо из сообщения
+    (MAX Bot API, «Клавиатура»); не зависит от кнопки в шапке чата.
+    Если API отверг open_app — повтор с диплинк-кнопкой, затем текст."""
+    text = ("👋 Это бот «Ямастер Чек».\n\n"
+            "📷 Пришлите строку QR-кода чека (t=…&s=…) — проверим и "
+            "начислим баллы.\n"
+            "🛡 Кнопка ниже открывает мини-приложение: сканер QR, баллы, "
+            "история.\n"
+            "🔑 Код привязки уведомлений — в «Настройках» сайта "
+            + SITE_URL.replace("https://", "") + ".")
+    buttons = [{"type": "open_app", "text": "🛡 Открыть приложение"},
+               {"type": "link", "text": "🌐 Открыть сайт", "url": SITE_URL}]
+    try:
+        send_rich(token, user_id, text, buttons)
+    except MaxError:
+        try:
+            send_rich(token, user_id, text, [buttons[1]])
+        except MaxError:
+            send_message(token, user_id, text)
+
+
 def handle_update(db: Session, upd: dict) -> None:
     """Сообщение /start КОД → привязка max_user_id к пользователю."""
     msg = ((upd.get("update") or {}).get("message")
@@ -283,6 +307,14 @@ def handle_update(db: Session, upd: dict) -> None:
                      "вход выполнится автоматически." if ok else
                      "⚠️ Код входа не найден или устарел — на сайте нажмите "
                      "«Войти через MAX» ещё раз.")
+        return
+    if re.fullmatch(r"\s*/start(?:\s+\S+)?\s*", text):
+        # v1.70.4: /start без валидного кода — приветствие с кнопками
+        # (меню команд в MAX само не появляется — обрабатываем сами)
+        _send_welcome(token, user_id)
+        return
+    if re.fullmatch(r"\s*/app\s*", text, re.IGNORECASE):
+        _send_welcome(token, user_id)
         return
     if _QR_HINT_RE.search(text):
         _pool_process_async(user_id, sender.get("username"), text)
