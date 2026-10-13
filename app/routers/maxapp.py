@@ -98,8 +98,17 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
                             "Мини-приложение ещё не настроено")
     if err in ("format", "bad_hash"):
         from fastapi import HTTPException
-        raise HTTPException(401, "Подпись MAX не сошлась — откройте "
-                                 "приложение из чата бота ещё раз")
+        from ..services import max_bot as _mb
+        tech = _mb.tech_username(db)
+        detail = (f"Подпись MAX не совпала с сохранённым токеном бота "
+                  f"«{tech}». Если вы открыли приложение из чата другого "
+                  "вашего бота — вставьте в Настройках → Ассистент MAX "
+                  "токен именно его и откройте приложение заново"
+                  if tech else
+                  "Подпись MAX не сошлась — проверьте токен бота "
+                  "(Настройки → Ассистент MAX) и откройте приложение "
+                  "из чата бота ещё раз")
+        raise HTTPException(401, detail)
     if err == "expired":
         from fastapi import HTTPException
         raise HTTPException(401, "Сессия устарела — откройте приложение "

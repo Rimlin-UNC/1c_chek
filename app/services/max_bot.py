@@ -35,6 +35,7 @@ SETT_CHANNEL = "assistants_channel"      # telegram | max | both (общий)
 SETT_USERNAME = "max_bot_username"       # v1.70.1: фактический ник бота
 _DEFAULT_NICK = "chek.ymaster.bot"       # публичный ник по умолчанию
 _TECH_NICK = re.compile(r"^id\d+_bot$")  # v1.70.2: служебный username из get_me
+SETT_TECH = "max_bot_tech"               # v1.70.3: чей токен (служебное имя)
 _last_update_ago = None                  # v1.70.2: сек с последнего события
 SETT_TIME = "max_reminder_time"
 SETT_TEXT = "max_reminder_text"
@@ -90,6 +91,11 @@ def bot_settings(db: Session) -> dict:
         "bot_nick": bot_username(db),
         "last_update_ago": (int(_last_update_ago)
                             if _last_update_ago is not None else None),
+        # v1.70.3: чей токен + несовпадение с публичным ником
+        "token_bot": tech_username(db),
+        "token_mismatch": bool(
+            _TECH_NICK.fullmatch(tech_username(db))
+            and bot_username(db) != tech_username(db)),
     }
 
 
@@ -160,6 +166,11 @@ def refresh_username(db: Session) -> str:
     except MaxError:
         _username_cache = ""
     u = (_username_cache or "").strip()
+    if u:
+        # v1.70.3: чей токен — видно всегда (диагностика «подпись не сошлась»)
+        from . import appsettings as _as
+        if _as.get_setting(db, SETT_TECH, "") != u:
+            _as.set_setting(db, SETT_TECH, u)
     # v1.70.2: служебный username вида idNNNN_bot в настройки не пишем —
     # публичный ник бота (для ссылок max.ru/ник) задаётся отдельно
     if u and not _TECH_NICK.fullmatch(u):
@@ -173,6 +184,14 @@ def _public(u: str) -> str:
     """Публичный ник для диплинков: служебный idNNNN_bot не годится."""
     u = (u or "").strip()
     return "" if (not u or _TECH_NICK.fullmatch(u)) else u
+
+
+def tech_username(db: Session) -> str:
+    """Служебное имя бота, чей токен сохранён (диагностика несовпадения
+    «приложение открыто из одного бота, а токен от другого»)."""
+    from . import appsettings
+    return ((appsettings.get_setting(db, SETT_TECH, "") or "").strip()
+            or (_username_cache or "").strip())
 
 
 def note_update() -> None:

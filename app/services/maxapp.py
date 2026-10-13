@@ -74,13 +74,24 @@ def validate_init_data(init_data: str, bot_token: str) -> tuple[dict | None, str
     if abs(time.time() - auth_date) > AUTH_TTL:
         return None, "expired"
     provided_hash = kv["hash"]
-    launch = "\n".join(f"{k}={v}" for k, v in sorted(pairs) if k != "hash")
     secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-    calc = hmac.new(secret, launch.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(calc, provided_hash):
+
+    def _calc(extra_decode: bool) -> str:
+        # доковский формат: значения закодированы один раз; страховка на
+        # случай двойного энкода клиента/платформы — вторая попытка
+        launch = "\n".join(
+            f"{k}={(urllib.parse.unquote(v) if extra_decode else v)}"
+            for k, v in sorted(pairs) if k != "hash")
+        return hmac.new(secret, launch.encode(), hashlib.sha256).hexdigest()
+
+    ok_plain = hmac.compare_digest(_calc(False), provided_hash)
+    ok_extra = (not ok_plain and
+                hmac.compare_digest(_calc(True), provided_hash))
+    if not (ok_plain or ok_extra):
         return None, "bad_hash"
     try:
-        user = json_loads(kv["user"])
+        user = json_loads(kv["user"] if ok_plain
+                          else urllib.parse.unquote(kv["user"]))
         assert isinstance(user, dict) and str(user.get("id", "")).strip()
     except Exception:                                    # noqa: BLE001
         return None, "format"
