@@ -436,6 +436,29 @@ def get_max_settings(db: Session = Depends(get_db),
                     "сами: Настройки → MAX — личное → код → /start КОД."}
 
 
+@router.get("/max/check-token",
+            summary="Живая проверка: чей токен бота MAX сохранён (админ)")
+def check_max_token(db: Session = Depends(get_db),
+                    admin: User = Depends(require_admin)):
+    """get_me по сохранённому токену → имя бота; сравнение с публичным
+    ником (подписи initData и диплинки работают только у бота из
+    токена). v1.70.5 — диагностика «Подпись MAX не сошлась»."""
+    from ..services import max_bot as mx
+    token = mx.get_token(db)
+    if not token:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Токен не задан (Настройки → Ассистент MAX)")
+    try:
+        me = mx.get_me(token)
+    except mx.MaxError as e:
+        return {"ok": False, "error": str(e)}
+    username = (me.get("username") or "").strip()
+    public = mx.bot_username(db)
+    return {"ok": True, "bot": username, "public_nick": public,
+            "mismatch": bool(mx._TECH_NICK.fullmatch(username)
+                             and public != username)}
+
+
 @router.put("/max", summary="Сохранить настройки ассистента MAX (админ)")
 def put_max_settings(body: dict, db: Session = Depends(get_db),
                      admin: User = Depends(require_admin)):

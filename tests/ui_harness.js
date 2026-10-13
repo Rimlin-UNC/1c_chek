@@ -619,6 +619,8 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.2: публичный ник бота и статус слушания в карточке MAX');
   ok(bundle.includes('token_mismatch'),
      'v1.70.3: диагностика «чей токен» в карточке MAX');
+  ok(bundle.includes('mx-who') && bundle.includes('check-token'),
+     'v1.70.5: кнопка «Чей токен?» с живой проверкой');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

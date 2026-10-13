@@ -83,16 +83,19 @@ def confirm(db: Session, raw: str, max_id: str, username: str = "",
 
 
 def poll(db: Session, raw: str) -> dict:
-    """Статус кода: pending | expired | ok (ok — код погашен, сессия готова)."""
+    """Статус кода: pending | expired | ok (ok — код погашен, сессия
+    готова). v1.70.5: код гасим ТОЛЬКО после успешного входа/регистрации —
+    если регистрация не прошла (например, выключена), код можно
+    использовать повторно после устранения причины."""
     row = _live_row(db, raw)
     if row is None:
         return {"status": "expired"}
     if not row.max_user_id:
         return {"status": "pending"}
-    row.used_at = utcnow()
-    db.commit()
     user = login_or_register(db, row.max_user_id, row.max_username,
                              row.max_name or row.max_username)
+    row.used_at = utcnow()
+    db.commit()
     return {"status": "ok", "access_token": create_access_token(user),
             "user": user.to_dict()}
 

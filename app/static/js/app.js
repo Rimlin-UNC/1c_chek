@@ -5113,6 +5113,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.5': [
+    { icon: '🪪', title: 'Проверка токена в один клик',
+      text: 'В карточке «Ассистент MAX» появилась кнопка «Чей токен?» — мгновенно показывает, боту с каким именем принадлежит сохранённый токен, и при несовпадении даёт пошаговую инструкцию (именно несовпадение токена — причина «Подпись MAX не сошлась»). Код входа больше не сгорает, если регистрация не прошла.' },
+  ],
   '1.70.4': [
     { icon: '🛡', title: 'Меню команд: /start открывает приложение',
       text: 'MAX не показывает меню команд автоматически — теперь бот сам отвечает на /start и /app приветствием с кнопкой «Открыть приложение» (штатный open_app): мини-приложение запускается прямо из сообщения, даже если кнопки в шапке чата не видно.' },
@@ -8098,6 +8102,7 @@ async function viewSettings(container) {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
           <button class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
+          <button class="btn btn-sm" id="mx-who">🪪 Чей токен?</button>
         </div>
         <p class="form-hint" style="margin-top:10px">${maxSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'}${maxSet.last_update_ago != null ? ` · события ${maxSet.last_update_ago < 90 ? 'сейчас' : Math.round(maxSet.last_update_ago / 60) + ' мин назад'}` : ''} ·
           статус виден после сохранения</p>
@@ -9022,6 +9027,37 @@ async function viewSettings(container) {
         toast(r.message, r.worker_running ? 'ok' : 'warn', '🛡');
         route(true);
       } catch (e) { toast(e.message, 'err'); }
+    };
+    // v1.70.5: живая проверка — чей токен сохранён
+    const mxWho = $('#mx-who');
+    if (mxWho) mxWho.onclick = async () => {
+      mxWho.disabled = true;
+      try {
+        const r = await api.get('/api/v1/settings/max/check-token');
+        if (!r.ok) { toast('MAX недоступен: ' + r.error, 'err', 6000); return; }
+        if (r.mismatch) {
+          openModal(`<div class="modal-title">🪪 Токен не от того бота</div>
+            <div class="info-callout">Сохранённый токен принадлежит боту
+            <b>${esc(r.bot)}</b>, а ссылки/мини-приложение настроены для
+            <b>${esc(r.public_nick)}</b>. Подписи входа и ответы бота
+            работают только у бота из токена.</div>
+            <p class="form-hint" style="margin-top:10px"><b>Как исправить:</b><br>
+            1) business.max.ru → <b>Чат-боты</b> → выберите бота
+            <b>${esc(r.public_nick)}</b> → ⋮ → <b>Настройки</b>;<br>
+            2) скопируйте <b>токен</b> (значок копирования);<br>
+            3) вставьте его в поле «Токен бота MAX» выше;<br>
+            4) «Сохранить и запустить»;<br>
+            5) откройте мини-приложение из чата <b>${esc(r.public_nick)}</b> и
+            повторите вход.</p>
+            <div class="modal-actions"><button class="btn btn-primary" data-close>Понятно</button></div>`)
+            .slot.querySelector('[data-close]').onclick = () =>
+              $('#modal-root').classList.add('hidden');
+        } else {
+          toast('Токен принадлежит боту «' + r.bot + '» — совпадает с ником ✓',
+                'ok', '🪪');
+        }
+      } catch (e) { toast(e.message, 'err'); }
+      finally { mxWho.disabled = false; }
     };
     const mxTest = $('#mx-test');
     if (mxTest) mxTest.onclick = async () => {
