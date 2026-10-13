@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import ssl
 import threading
 import time
 from datetime import datetime, timedelta
@@ -26,6 +28,25 @@ from sqlalchemy.orm import Session
 log = logging.getLogger("ymaster.max")
 
 API_BASE = "https://platform-api2.max.ru"
+# v1.70.8: API MAX использует сертификат Минцифры (Russian Trusted CA),
+# которого нет в стандартных CA-bundle — в комплекте наш корневой
+# сертификат; если проверка всё же не прошла (сервер без обновлений) —
+# один повтор без проверки сертификата с предупреждением в журнале.
+_CA_RU = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "certs", "russian_trusted_ca.pem")
+
+
+def _max_ssl() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    try:
+        if os.path.exists(_CA_RU):
+            ctx.load_verify_locations(cafile=_CA_RU)
+    except Exception:                                    # noqa: BLE001
+        log.warning("MAX: не удалось загрузить %s", _CA_RU)
+    return ctx
+
+
+_MAX_SSL = _max_ssl()
 BIND_TTL = 15 * 60                       # код привязки живёт 15 минут
 POLL_TIMEOUT = 25                        # long-poll, сек (лимит API: 90)
 ANTIFLOOD_SEC = 0.4                      # ≤2 сообщений/сек на диалог
@@ -112,15 +133,28 @@ def api(token: str, method: str, params: dict | None = None,
     """Вызов MAX Bot API. Токен — в заголовке Authorization (не в query!)."""
     url = f"{API_BASE}/{method.lstrip('/')}"
     headers = {"Authorization": token}
-    try:
+
+    def _call(verify):
         if payload is not None:
-            resp = httpx.post(url, params=params, json=payload,
-                              headers=headers, timeout=timeout)
-        else:
-            resp = httpx.get(url, params=params, headers=headers,
-                             timeout=timeout)
+            return httpx.post(url, params=params, json=payload,
+                              headers=headers, timeout=timeout,
+                              verify=verify)
+        return httpx.get(url, params=params, headers=headers,
+                         timeout=timeout, verify=verify)
+
+    try:
+        resp = _call(_MAX_SSL)
     except Exception as e:                              # noqa: BLE001
-        raise MaxError(f"MAX недоступен: {e}") from e
+        if "CERTIFICATE_VERIFY_FAILED" in str(e):
+            # v1.70.8: сервер без корня Минцифры — работаем, но кричим
+            log.warning("MAX: проверка сертификата не прошла — повтор "
+                        "без неё (добавьте app/certs/russian_trusted_ca.pem)")
+            try:
+                resp = _call(False)
+            except Exception as e2:                     # noqa: BLE001
+                raise MaxError(f"MAX недоступен: {e2}") from e2
+        else:
+            raise MaxError(f"MAX недоступен: {e}") from e
     if resp.status_code == 401:
         raise MaxError("MAX: токен неверный или отозван")
     if resp.status_code == 429:

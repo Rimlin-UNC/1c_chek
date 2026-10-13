@@ -83,7 +83,8 @@ class TestMaxApi:
             def json(self):
                 return {"message": {}}
 
-        def _post(url, headers=None, params=None, json=None, timeout=None):
+        def _post(url, headers=None, params=None, json=None, timeout=None,
+          verify=None):
             captured.update(url=url, headers=headers, params=params, json=json)
             return _Resp()
 
@@ -297,6 +298,8 @@ class TestAssistantsMigration:
         """Решение владельца: геолокацию НЕ запрашиваем (152-ФЗ)."""
         for f in ("app/services/max_bot.py", "app/services/telegram_bot.py"):
             src = open(f, encoding="utf-8").read()
+            # v1.70.8: load_verify_locations — это SSL CA, не геолокация (152-ФЗ)
+            src = src.replace("load_verify_locations", "")
             assert "location" not in src.lower(), f
 
     def test_blocks_registry(self):
