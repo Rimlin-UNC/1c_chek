@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.9': [
+    { icon: '🗂', title: 'Настройки — меню с разделами',
+      text: 'Страница настроек перестроена в меню: пять разделов — данные, проверка чеков, интеграции, личное, устройство — и подменю по карточкам. На компьютере и планшете меню-колонка слева (всегда на виду), на телефоне — компактные аккордеоны. Выбор пункта плавно подводит к карточке и подсвечивает её; прямые ссылки вида #/settings/checks/st-fns открывают нужное место сразу. Кнопка «🔍 Все настройки» возвращает привычный вид одним листом — выбор запоминается. Разделы, пустые для вашей роли, скрываются.' },
+  ],
   '1.70.8': [
     { icon: '🛡', title: 'MAX отвечает: починено соединение с API',
       text: 'Найдена главная причина молчания бота: API MAX использует сертификат Минцифры, которого нет в стандартном хранилище сервера — все запросы падали с CERTIFICATE_VERIFY_FAILED. Теперь корневой сертификат в комплекте приложения, а если проверка всё же не прошла — запрос повторяется без неё (с предупреждением в журнале). «Чей токен?», «Тест себе», напоминания и ответы бота работают.' },
@@ -7884,21 +7888,44 @@ async function viewSettings(container) {
   // v1.63.0: правила поставщиков — бухгалтер и админ
   if (isAccountant()) { try { mrules = await api.get('/api/v1/receipts/merchant-rules'); } catch {} }
 
+  // v1.70.9: страница настроек — меню с разделами и подменю;
+  // прямой заход по #/settings/<раздел>/<карточка> открывает группу и карточку
+  const SETTINGS_GROUPS = [
+    { key: 'data',     icon: '🗄', title: 'Данные и восстановление' },
+    { key: 'checks',   icon: '🧾', title: 'Проверка чеков и почта' },
+    { key: 'integr',   icon: '🧩', title: 'Чек-Пул и интеграции' },
+    { key: 'personal', icon: '👤', title: 'Личное и доступ' },
+    { key: 'device',   icon: '📱', title: 'Устройство и служебное' },
+  ];
+  const _cur = (() => {
+    const p = (state.routeParam || '').split('/').filter(Boolean);
+    return { group: p[0] || '', card: p[1] || '' };
+  })();
+  if (_cur.group) document.body.classList.remove('settings-all');
+  else if (localStorage.getItem('settings_all') === '1') {
+    document.body.classList.add('settings-all');
+  }
   container.innerHTML = `
+    <div class="settings-layout">
+    <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">${
+      SETTINGS_GROUPS.map((g) => `
+      <div class="snav-group" data-grp="${g.key}">
+        <button type="button" class="snav-head" aria-expanded="false">
+          <span class="snav-ico">${g.icon}</span><span class="snav-title">${g.title}</span>
+          <span class="snav-cnt"></span><span class="snav-chev" aria-hidden="true">›</span>
+        </button>
+        <div class="snav-sub"></div>
+      </div>`).join('')}
+    </nav>
     <div class="settings-grid">
-      <div class="settings-sect" style="order:5">🗄 Данные и восстановление</div>
-      <div class="settings-sect" style="order:19">🧾 Проверка чеков и почта</div>
-      <div class="settings-sect" style="order:29">🧩 Чек-Пул и интеграции</div>
-      <div class="settings-sect" style="order:39">👤 Личное и доступ</div>
-      <div class="settings-sect" style="order:49">📱 Устройство и служебное</div>
-      <div class="glass card" id="wa-card" style="order:40">
+      <div class="glass card" id="wa-card" data-sec="personal" style="order:40">
         <div class="card-title">🔑 Быстрый вход
           <span class="form-hint">отпечаток / лицо / PIN устройства</span></div>
         <div id="wa-list" class="form-hint" style="margin:6px 0">Загружаем…</div>
         <div id="wa-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
       </div>
       ${isAdmin() ? `
-      <div class="glass card" id="mail-card" style="order:23;grid-column:1/-1">
+      <div class="glass card" id="mail-card" data-sec="checks" style="order:23;grid-column:1/-1">
         <div class="card-title">✉📬 Почтовый центр
           <span class="form-hint">письма кабинета · бот рассылок (v1.44.0)</span></div>
         <div class="form-grid" style="margin:8px 0">
@@ -7946,7 +7973,7 @@ async function viewSettings(container) {
         <div id="mc-log" style="margin-top:8px"></div>
       </div>` : ''}
       ${isAdmin() && appSet ? `
-      <div class="glass card" style="order:22">
+      <div class="glass card" id="st-common" data-sec="checks" style="order:22">
         <div class="card-title">Общие</div>
         <label style="display:flex;gap:12px;align-items:center;cursor:pointer;margin-bottom:10px">
           <input type="checkbox" id="app-autoverify" ${appSet.auto_verify ? 'checked' : ''} style="width:auto">
@@ -7962,7 +7989,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAccountant() && pol ? `
-      <div class="glass card" style="order:24">
+      <div class="glass card" id="st-policy" data-sec="checks" style="order:24">
         <div class="card-title">⚖️ Политика расходов
           <span class="form-hint">лимиты и запрещённые статьи (v1.62+)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Мягкий контроль: чек с нарушением
@@ -7987,7 +8014,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAccountant() && mrules ? `
-      <div class="glass card" style="order:25">
+      <div class="glass card" id="st-mrules" data-sec="checks" style="order:25">
         <div class="card-title">🧠 Правила поставщиков
           <span class="form-hint">самообучающийся маппинг (v1.63+)</span></div>
         <p class="form-hint" style="margin-bottom:8px">Правило = поставщик (ИНН) + поле.
@@ -8009,7 +8036,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && fns ? `
-      <div class="glass card" style="order:20">
+      <div class="glass card" id="st-fns" data-sec="checks" style="order:20">
         <div class="card-title">Проверка чеков (ФНС)</div>
         <div class="segmented" style="margin-bottom:14px">
           <button id="seg-mock" class="${fns.provider === 'mock' ? 'active' : ''}">Демо (mock)</button>
@@ -8028,7 +8055,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && fns ? `
-      <div class="glass card" style="order:31">
+      <div class="glass card" id="st-checko" data-sec="integr" style="order:31">
         <div class="card-title">🗂 ЕГРЮЛ/ЕГРИП — Checko.ru <span class="form-hint">(v1.13+)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Ключ заполняет карточки компаний
         реквизитами из ЕГРЮЛ/ЕГРИП по ИНН (полное название, ОГРН, КПП, адрес, руководитель,
@@ -8051,7 +8078,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && tgSet ? `
-      <div class="glass card" style="order:33">
+      <div class="glass card" id="st-tgbot" data-sec="integr" style="order:33">
         <div class="card-title">🔔 Telegram-бот <span class="form-hint">(v1.16.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Напоминания сотрудникам «сдай чек за сегодня»
         и уведомления о принятых чеках. Токен — у
@@ -8094,7 +8121,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && maxSet ? `
-      <div class="glass card" style="order:35">
+      <div class="glass card" id="st-max" data-sec="integr" style="order:35">
         <div class="card-title">🛡 Ассистент MAX <span class="form-hint">(v1.66.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Тот же функционал, что у Telegram
         (напоминания «сдай чеки за сегодня», утренний дайджест), но через мессенджер MAX —
@@ -8132,7 +8159,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && poolSet ? `
-      <div class="glass card" style="order:30">
+      <div class="glass card" id="st-pool" data-sec="integr" style="order:30">
         <div class="card-title">🧩 Чек-Пул <span class="form-hint">(Этап 9.1 · v1.39.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Открытая база чеков (план docs/plan.md): любой человек
         сдаёт чек на странице «Сдать чек» (#/public) — строкой QR или фото кода;
@@ -8195,7 +8222,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${me ? `
-      <div class="glass card" style="order:34">
+      <div class="glass card" id="st-tgme" data-sec="personal" style="order:34">
         <div class="card-title">🔔 Telegram — личное <span class="form-hint">(v1.16.0)</span></div>
         ${me.telegram_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат привязан — уведомления приходят в Telegram.
@@ -8211,7 +8238,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${me ? `
-      <div class="glass card" style="order:36">
+      <div class="glass card" id="st-maxme" data-sec="personal" style="order:36">
         <div class="card-title">🛡 MAX — личное <span class="form-hint">(v1.66.0)</span></div>
         ${me.max_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
@@ -8226,7 +8253,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && whSet ? `
-      <div class="glass card" style="order:37">
+      <div class="glass card" id="st-webhooks" data-sec="integr" style="order:37">
         <div class="card-title">🪝 Вебхуки: события наружу <span class="form-hint">(v1.67.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Как только чек сотрудника проходит проверку
         (статус «verified»), приложение отправляет <b>POST JSON</b> на ваш URL —
@@ -8255,7 +8282,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && appSet ? `
-      <div class="glass card" style="order:21">
+      <div class="glass card" id="st-sources" data-sec="checks" style="order:21">
         <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.57.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции, место расчётов,
         касса, смена, налог, свойства заказа, итоги НДС) система получает из
@@ -8281,7 +8308,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() ? `
-      <div class="glass card" style="order:13">
+      <div class="glass card" id="st-server" data-sec="data" style="order:13">
         <div class="card-title">🖥 Сервер и команды <span class="form-hint">(v1.17.0)</span></div>
         <dl class="kv" style="font-size:13px" id="sys-info"><dt>Загрузка…</dt><dd></dd></dl>
         <p class="form-hint" style="margin:10px 0 6px">Команды выполняются на сервере по SSH.
@@ -8290,7 +8317,7 @@ async function viewSettings(container) {
         <div id="sys-cmds"></div>
       </div>
 
-      <div class="glass card" style="order:11">
+      <div class="glass card" id="st-update" data-sec="data" style="order:11">
         <div class="card-title">🔄 Обновления <span class="form-hint">(v1.6.0)</span></div>
         <div class="upd-status-line"><span class="upd-dot upd-dot--wait" id="upd-dot"></span>
           <span id="upd-status-text">Проверяю…</span></div>
@@ -8336,7 +8363,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() ? `
-      <div class="glass card" style="order:12">
+      <div class="glass card" id="st-releases" data-sec="data" style="order:12">
         <div class="card-title">↩ Последние рабочие версии
           <span class="form-hint">(v1.46.0 · хранятся три последние)</span></div>
         <p class="form-hint" style="margin-bottom:8px">Программа сама запоминает версии, на которых успешно работала.
@@ -8357,7 +8384,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${isAdmin() && onec ? `
-      <div class="glass card" style="order:32">
+      <div class="glass card" id="st-onec" data-sec="integr" style="order:32">
         <div class="card-title">Интеграция с 1С</div>
         <label class="field" style="margin-bottom:12px"><span>Токен Push-доступа</span>
           <div class="token-line"><input id="onec-token" readonly value="${esc(onec.api_token_masked)}">
@@ -8370,7 +8397,7 @@ async function viewSettings(container) {
       </div>` : ''}
 
       ${!isAdmin() && me ? `
-      <div class="glass card" style="order:43">
+      <div class="glass card" id="st-mycompany" data-sec="personal" style="order:43">
         <div class="card-title">${state.me.role === 'accountant' ? '🏢 Ваша компания' : '👤 Мои чеки'} <span class="form-hint">(v1.17.0)</span></div>
         ${state.me.role === 'accountant' ? `
         <dl class="kv" style="font-size:13px">
@@ -8387,7 +8414,7 @@ async function viewSettings(container) {
         к бухгалтеру. Если забыли — Telegram напомнит (привяжите чат ниже).</p>`}
       </div>` : ''}
 
-      <div class="glass card" style="order:52">
+      <div class="glass card" id="st-devclean" data-sec="device" style="order:52">
         <div class="card-title">🧹 Обслуживание устройства <span class="form-hint">(v1.17.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Если после обновления сервера что-то
         отображается по-старому (иконки, цифры, интерфейс) — сбросьте локальный кэш приложения.
@@ -8395,7 +8422,7 @@ async function viewSettings(container) {
         <button class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
       </div>
 
-      <div class="glass card" style="order:50">
+      <div class="glass card" id="st-notify" data-sec="device" style="order:50">
         <div class="card-title">🔕 Уведомления</div>
         <p class="form-hint" style="margin-bottom:8px">«Спокойный час» прячет некритичные
         уведомления на выбранный срок; ошибки показываются всегда.</p>
@@ -8410,7 +8437,7 @@ async function viewSettings(container) {
         <div class="form-hint" id="quiet-status" style="margin-top:6px"></div>
       </div>
 
-      <div class="glass card" style="order:51">
+      <div class="glass card" id="st-pwa" data-sec="device" style="order:51">
         <div class="card-title">📲 Приложение на устройстве <span class="form-hint">(v1.5.0)</span></div>
         <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
         полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
@@ -8419,7 +8446,7 @@ async function viewSettings(container) {
       </div>
 
       ${isAdmin() ? `
-      <div class="glass card" style="order:10">
+      <div class="glass card" id="st-backups" data-sec="data" style="order:10">
         <div class="card-title">💾 Резервные копии <span class="form-hint">(v1.5.0)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Копии создаются автоматически: ежедневные (7 шт.),
         перед каждым обновлением (5) и архив месяца (12 месяцев) — каталог data/backups на сервере.
@@ -8445,7 +8472,7 @@ async function viewSettings(container) {
         <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
       </div>` : ''}
 
-      <div class="glass card" style="order:41">
+      <div class="glass card" id="st-profile" data-sec="personal" style="order:41">
         <div class="card-title">Мой профиль</div>
         <dl class="kv">
           <dt>Логин</dt><dd>${esc(state.me.username)}</dd>
@@ -8459,7 +8486,7 @@ async function viewSettings(container) {
         <button class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
       </div>
 
-      <div class="glass card" style="order:42">
+      <div class="glass card" id="st-security" data-sec="personal" style="order:42">
         <div class="card-title">Безопасность и доступ</div>
         <dl class="kv">
           <dt>Регистрация</dt><dd>только по приглашениям администратора</dd>
@@ -8469,7 +8496,7 @@ async function viewSettings(container) {
         </dl>
       </div>
 
-      <div class="glass card" style="order:53">
+      <div class="glass card" id="st-about" data-sec="device" style="order:53">
         <div class="card-title">О системе</div>
         <dl class="kv">
           <dt>Продукт</dt><dd>${esc(about.app)} v${esc(about.version)}</dd>
@@ -8481,7 +8508,96 @@ async function viewSettings(container) {
         <p class="form-hint">Все права на систему принадлежат ООО «Ямастер». Использование и модификация
         — согласно лицензии проекта.</p>
       </div>
+    </div>
     </div>`;
+
+  // v1.70.9: тулбар и поведение меню-иерархии настроек
+  const settingsApply = (nav, cur) => {
+    const allMode = document.body.classList.contains('settings-all');
+    const bAll = $('#snav-all');
+    if (bAll) bAll.textContent = allMode ? '☰ Меню настроек' : '🔍 Все настройки';
+    nav.querySelectorAll('.snav-group').forEach((grp) => {
+      const isCur = !!cur.group && grp.getAttribute('data-grp') === cur.group;
+      grp.classList.toggle('open', allMode || isCur);
+      grp.querySelectorAll('.snav-item').forEach((b) =>
+        b.classList.toggle('active', !!cur.card && b.getAttribute('data-open') === cur.card));
+    });
+  };
+  const snav = $('#settings-nav');
+  if (snav) {
+    snav.insertAdjacentHTML('afterbegin',
+      '<div class="snav-tools">' +
+      '<button type="button" class="btn btn-sm" id="snav-all">🔍 Все настройки</button>' +
+      '<button type="button" class="btn btn-sm" id="snav-collapse">✕ Свернуть</button>' +
+      '</div>');
+    $('#snav-all').onclick = () => {
+      const on = !document.body.classList.contains('settings-all');
+      document.body.classList.toggle('settings-all', on);
+      localStorage.setItem('settings_all', on ? '1' : '');
+      if ((location.hash || '#/settings').length > '#/settings'.length) {
+        location.hash = '#/settings';             // пере-рендер через route()
+      } else {
+        settingsApply(snav, { group: '', card: '' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    $('#snav-collapse').onclick = () =>
+      snav.querySelectorAll('.snav-group.open').forEach((g) => {
+        g.classList.remove('open');
+        g.querySelector('.snav-head').setAttribute('aria-expanded', 'false');
+      });
+    const cardsAll = Array.from(container.querySelectorAll('.settings-grid > .glass.card'));
+    snav.querySelectorAll('.snav-group').forEach((grp) => {
+      const key = grp.getAttribute('data-grp');
+      const items = cardsAll
+        .filter((c) => c.getAttribute('data-sec') === key)
+        .map((c) => {
+          const ttl = c.querySelector('.card-title');
+          const raw = (ttl && ttl.childNodes[0] ? ttl.childNodes[0].textContent
+                       : (ttl ? ttl.textContent : '')).trim();
+          const cp0 = raw.codePointAt(0) || 0;
+          const ico = cp0 >= 0x2190 ? String.fromCodePoint(cp0) : '';
+          const label = (ico ? raw.slice(String.fromCodePoint(cp0).length).trim() : raw) || raw;
+          return { id: c.id || '', ico: ico, label: label };
+        });
+      grp.querySelector('.snav-sub').innerHTML = items.length ? items.map((it) =>
+        `<button type="button" class="snav-item" data-open="${it.id}">` +
+        (it.ico ? `<span class="snav-ico">${it.ico}</span>` : '') +
+        `<span>${esc(it.label)}</span></button>`).join('')
+        : '<div class="snav-empty">для вашей роли здесь пусто</div>';
+      grp.querySelector('.snav-cnt').textContent = items.length || '';
+      grp.querySelector('.snav-head').onclick = () => {
+        const open = grp.classList.toggle('open');
+        grp.querySelector('.snav-head').setAttribute('aria-expanded', open);
+        if (open && window.matchMedia('(max-width: 900px)').matches) {
+          snav.querySelectorAll('.snav-group').forEach((g2) => {
+            if (g2 !== grp) g2.classList.remove('open');
+          });
+          const gtop = grp.getBoundingClientRect().top;
+          if (gtop < 0 || gtop > 320) {
+            window.scrollTo({ top: window.pageYOffset + gtop - 76, behavior: 'smooth' });
+          }
+        }
+      };
+      grp.querySelectorAll('.snav-item').forEach((btn) => {
+        btn.onclick = () => {
+          const id = btn.getAttribute('data-open');
+          if (!id) return;
+          document.body.classList.remove('settings-all');
+          localStorage.setItem('settings_all', '');
+          snav.querySelectorAll('.snav-group').forEach((g2) => {
+            if (g2 !== grp) g2.classList.remove('open');
+          });
+          grp.classList.add('open');
+          settingsApply(snav, { group: key, card: id });
+          try { history.replaceState(null, '', '#/settings/' + key + '/' + id); } catch (e) { /* no history */ }
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+      });
+    });
+    settingsApply(snav, _cur);
+  }
 
   // PWA-кнопка в настройках (все роли)
   const bp = $('#btn-pwa');
@@ -8628,16 +8744,20 @@ async function viewSettings(container) {
 
   // v1.46.0: «Последние рабочие версии» — откат одним щелчком
   // v1.48.0: секции без карточек (для роли) не показываем
-  document.querySelectorAll('.settings-sect').forEach((h) => {
-    const o = parseInt(h.style.order || '0', 10);
-    const cards = container.querySelectorAll('.settings-grid > .glass.card');
-    let has = false;
-    cards.forEach((c) => {
-      const co = parseInt(c.style.order || '60', 10);
-      if (co >= o && co < o + 9) has = true;
-    });
-    if (!has) h.style.display = 'none';
+  // v1.70.9: то же для меню — пустые группы скрываются целиком;
+  // прямой заход по #/settings/<раздел>/<карточка> открывает и подсвечивает
+  document.querySelectorAll('#settings-nav .snav-group').forEach((g) => {
+    const gkey = g.getAttribute('data-grp');
+    const has = Array.from(container.querySelectorAll('.settings-grid > .glass.card'))
+      .some((c) => c.getAttribute('data-sec') === gkey);
+    if (!has) g.style.display = 'none';
   });
+  const snavFinal = $('#settings-nav');
+  if (snavFinal) settingsApply(snavFinal, _cur);
+  if (_cur.group && _cur.card) {
+    const elCur = document.getElementById(_cur.card);
+    if (elCur) setTimeout(() => elCur.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }
 
   if (isAdmin()) {
     let relPoll = null;

@@ -144,7 +144,9 @@ class TestButtonAndOverflow:
 
     def test_overflow_guards(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert ".glass.card { min-width: 0; max-width: 100%; }" in css
+        # v1.70.9: к правиле добавлен scroll-margin под sticky-шапку
+        assert ".glass.card { min-width: 0; max-width: 100%;" in css
+        assert "scroll-margin-top: calc(var(--topbar-h) + 14px)" in css
         assert ".card-title, .modal-title, h1, h2, h3 { overflow-wrap: anywhere; }" in css
         assert ".form-hint { overflow-wrap: anywhere; }" in css
 

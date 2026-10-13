@@ -627,6 +627,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.7: камера в мини-приложении и копирование кода входа');
   ok(bundle.includes("'1.70.8':"),
      'v1.70.8: What’s New — сертификат Минцифры для API MAX');
+  ok(bundle.includes("'1.70.9':") && bundle.includes('settings-nav') &&
+     bundle.includes('data-sec="data"') && bundle.includes('settingsApply'),
+     'v1.70.9: настройки — меню с разделами и подменю');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

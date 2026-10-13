@@ -32,12 +32,15 @@ class TestVersion1480:
 class TestSettingsHierarchy:
     def test_sections_and_order(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        # заголовки секций в порядке важности
-        assert 'settings-sect" style="order:5">🗄 Данные и восстановление' in js
-        assert 'settings-sect" style="order:19">🧾 Проверка чеков и почта' in js
-        assert 'settings-sect" style="order:29">🧩 Чек-Пул и интеграции' in js
-        assert 'settings-sect" style="order:39">👤 Личное и доступ' in js
-        assert 'settings-sect" style="order:49">📱 Устройство и служебное' in js
+        # v1.70.9: заголовки секций переехали в меню-иерархию
+        assert "key: 'data'" in js and 'Данные и восстановление' in js
+        assert "key: 'checks'" in js and 'Проверка чеков и почта' in js
+        assert "key: 'integr'" in js and 'Чек-Пул и интеграции' in js
+        assert "key: 'personal'" in js and 'Личное и доступ' in js
+        assert "key: 'device'" in js and 'Устройство и служебное' in js
+        assert 'data-sec="data"' in js and 'data-sec="checks"' in js
+        assert 'data-sec="integr"' in js and 'data-sec="personal"' in js
+        assert 'data-sec="device"' in js
         # критичные карточки получили меньшие order, чем служебные
         i_backup = js.index('💾 Резервные копии <span class="form-hint">(v1.5.0)</span>')
         seg_backup = js[js.rindex('glass card', i_backup - 500, i_backup):i_backup]
@@ -48,13 +51,15 @@ class TestSettingsHierarchy:
         i_dev = js.index('🧹 Обслуживание устройства')
         seg_dev = js[js.rindex('glass card', i_dev - 500, i_dev):i_dev]
         assert 'order:52' in seg_dev
-        # пустые секции скрываются
-        assert "querySelectorAll('.settings-sect')" in js
-        assert "h.style.display = 'none'" in js
+        # пустые секции/группы скрываются (v1.70.9: группы меню)
+        assert "querySelectorAll('#settings-nav .snav-group')" in js
+        assert "g.style.display = 'none'" in js
+        assert "snav-item" in js and "history.replaceState" in js
 
     def test_section_css(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert ".settings-sect {" in css and "grid-column: 1 / -1" in css
+        assert ".snav-group {" in css and ".settings-layout {" in css
+        assert "@media (max-width: 900px)" in css
 
 
 class TestBackupFiltersAndVerify:
