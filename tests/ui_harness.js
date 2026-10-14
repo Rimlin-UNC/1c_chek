@@ -630,6 +630,10 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.9':") && bundle.includes('settings-nav') &&
      bundle.includes('data-sec="data"') && bundle.includes('settingsApply'),
      'v1.70.9: настройки — меню с разделами и подменю');
+  ok(bundle.includes("'1.70.10':") &&
+     bundle.includes("localStorage.setItem('settings_all', '')") &&
+     bundle.includes("snav.scrollIntoView"),
+     'v1.70.10: возврат из «Все настройки» всегда виден');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

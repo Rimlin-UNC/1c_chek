@@ -1288,8 +1288,12 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   gap: 18px; align-items: start;
 }
 .settings-layout .settings-grid { min-width: 0; }
-body.settings-all .settings-nav { display: none; }
-body.settings-all .settings-layout { grid-template-columns: 1fr; }
+/* v1.70.10: в режиме «все настройки» прячем только группы меню —
+   панель с кнопками остаётся на виду (раньше пряталась и вместе с ней
+   единственная кнопка возврата; меню казалось пропавшим навсегда) */
+body.settings-all .settings-nav .snav-group { display: none; }
+body.settings-all #snav-collapse { display: none; }
+body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr); }
 .settings-nav {
   position: sticky; top: calc(var(--topbar-h) + 12px);
   display: flex; flex-direction: column; gap: 10px;

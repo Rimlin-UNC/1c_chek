@@ -18,18 +18,23 @@ class TestVersions1709:
     def test_config_version(self):
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert ver == "1.70.9"
+        # v1.70.10: строгий замок версии переехал в test_v17010
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 9)
 
     def test_static_versions_synced(self):
+        # v1.70.10: проверка синхронности версий — генерическая (по config),
+        # чтобы не релаксировать её при каждом релизе
+        cfg = open("app/config.py", encoding="utf-8").read()
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
         sw = open("app/static/sw.js", encoding="utf-8").read()
         idx = open("app/static/index.html", encoding="utf-8").read()
         mx = open("app/static/maxapp/index.html", encoding="utf-8").read()
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert "ymaster-check-v1.70.9" in sw
-        assert "/css/app.css?v=1.70.9" in sw and "/js/app.js?v=1.70.9" in sw
-        assert "/css/app.css?v=1.70.9" in idx and "/js/app.js?v=1.70.9" in idx
-        assert "/maxapp/maxapp.js?v=1.70.9" in mx
-        assert '"version": "1.70.9"' in mf
+        assert f"ymaster-check-v{ver}" in sw
+        assert f"/css/app.css?v={ver}" in sw and f"/js/app.js?v={ver}" in sw
+        assert f"/css/app.css?v={ver}" in idx and f"/js/app.js?v={ver}" in idx
+        assert f"/maxapp/maxapp.js?v={ver}" in mx
+        assert f'"version": "{ver}"' in mf
 
     def test_changelog_and_whatsnew(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()
@@ -101,7 +106,9 @@ class TestSettingsMenuCss:
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert ".settings-layout {" in css
         assert "grid-template-columns: 268px minmax(0, 1fr)" in css
-        assert "body.settings-all .settings-nav { display: none" in css
+        # v1.70.10: прячутся только группы, панель с кнопками остаётся видимой
+        assert "body.settings-all .settings-nav .snav-group { display: none;" in css
+        assert "body.settings-all .settings-nav { display: none;" not in css
         assert "@media (max-width: 900px)" in css
         assert ".settings-nav {" in css and "position: sticky" in css
         assert ".snav-group {" in css and ".snav-item.active" in css

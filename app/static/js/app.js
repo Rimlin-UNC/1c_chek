@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.10': [
+    { icon: '🧭', title: 'Починено исчезновение меню настроек',
+      text: 'Кнопка «🔍 Все настройки» прятала вместе с карточками и само меню — а вместе с ним единственную кнопку возврата, так что меню казалось пропавшим навсегда (даже после перезагрузки). Теперь в режиме «все настройки» слева остаётся узкая панель с кнопкой «☰ Меню настроек» — выход всегда на виду и при прокрутке не уходит. При входе в настройки первый раздел раскрывается сам; «✕ Свернуть» возвращает к меню, даже если вы глубоко прокрутили страницу.' },
+  ],
   '1.70.9': [
     { icon: '🗂', title: 'Настройки — меню с разделами',
       text: 'Страница настроек перестроена в меню: пять разделов — данные, проверка чеков, интеграции, личное, устройство — и подменю по карточкам. На компьютере и планшете меню-колонка слева (всегда на виду), на телефоне — компактные аккордеоны. Выбор пункта плавно подводит к карточке и подсвечивает её; прямые ссылки вида #/settings/checks/st-fns открывают нужное место сразу. Кнопка «🔍 Все настройки» возвращает привычный вид одним листом — выбор запоминается. Разделы, пустые для вашей роли, скрываются.' },
@@ -7901,8 +7905,11 @@ async function viewSettings(container) {
     const p = (state.routeParam || '').split('/').filter(Boolean);
     return { group: p[0] || '', card: p[1] || '' };
   })();
-  if (_cur.group) document.body.classList.remove('settings-all');
-  else if (localStorage.getItem('settings_all') === '1') {
+  if (_cur.group) {
+    // v1.70.10: явный заход по ссылке на карточку — режим «все» не держим
+    document.body.classList.remove('settings-all');
+    try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
+  } else if (localStorage.getItem('settings_all') === '1') {
     document.body.classList.add('settings-all');
   }
   container.innerHTML = `
@@ -8538,14 +8545,26 @@ async function viewSettings(container) {
         location.hash = '#/settings';             // пере-рендер через route()
       } else {
         settingsApply(snav, { group: '', card: '' });
+        // v1.70.10: вернулись в меню — первый раздел раскрываем сразу
+        if (!on) {
+          const g0 = Array.from(snav.querySelectorAll('.snav-group'))
+            .find((g) => g.style.display !== 'none' && g.querySelector('.snav-item'));
+          if (g0 && !snav.querySelector('.snav-group.open')) {
+            g0.classList.add('open');
+            g0.querySelector('.snav-head').setAttribute('aria-expanded', 'true');
+          }
+        }
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
-    $('#snav-collapse').onclick = () =>
+    $('#snav-collapse').onclick = () => {
       snav.querySelectorAll('.snav-group.open').forEach((g) => {
         g.classList.remove('open');
         g.querySelector('.snav-head').setAttribute('aria-expanded', 'false');
       });
+      // v1.70.10: свернули из глубины страницы — показываем, где меню
+      try { snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* старые браузеры */ }
+    };
     const cardsAll = Array.from(container.querySelectorAll('.settings-grid > .glass.card'));
     snav.querySelectorAll('.snav-group').forEach((grp) => {
       const key = grp.getAttribute('data-grp');
@@ -8754,6 +8773,17 @@ async function viewSettings(container) {
   });
   const snavFinal = $('#settings-nav');
   if (snavFinal) settingsApply(snavFinal, _cur);
+  // v1.70.10: меню без открытых разделов выглядит «пустым» — раскрываем
+  // первый видимый непустой раздел (кроме режима «все настройки»)
+  if (snavFinal && !_cur.group && !document.body.classList.contains('settings-all') &&
+      !snavFinal.querySelector('.snav-group.open')) {
+    const g0 = Array.from(snavFinal.querySelectorAll('.snav-group'))
+      .find((g) => g.style.display !== 'none' && g.querySelector('.snav-item'));
+    if (g0) {
+      g0.classList.add('open');
+      g0.querySelector('.snav-head').setAttribute('aria-expanded', 'true');
+    }
+  }
   if (_cur.group && _cur.card) {
     const elCur = document.getElementById(_cur.card);
     if (elCur) setTimeout(() => elCur.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
