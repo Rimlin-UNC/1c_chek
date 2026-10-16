@@ -8131,7 +8131,11 @@ async function viewSettings(container) {
             <span class="form-hint" id="ag-state"></span>
           </div>
           <pre id="ag-setup-log" style="max-height:170px;overflow:auto;font-size:12px;background:#fff;border:1px solid #d8d4ec;border-radius:8px;padding:8px;margin:0 0 8px"></pre>
+          <label class="field hidden" id="ag-sudo-row" style="margin:0 0 8px"><span>🔑 Пароль сервера (sudo)</span>
+            <input type="password" id="ag-sudo-pw" autocomplete="off" placeholder="пароль служебного пользователя программы">
+            <span class="form-hint">программа работает без root, а sudo просит пароль — как в окне обновления: sudo проверяет пароль служебного пользователя приложения, не ваш. Используется только на время установки и нигде не сохраняется.</span></label>
           <div style="display:flex;gap:8px">
+            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-start">Установить</button>
             <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
             <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
           </div>
@@ -9236,12 +9240,42 @@ async function viewSettings(container) {
     };
     const agClose = $('#ag-close');
     if (agClose) agClose.onclick = () => { agStop(); const b = $('#ag-setup'); if (b) b.classList.add('hidden'); };
+    async function agLaunch(extra) {
+      const r = await api.post('/api/v1/settings/telegram/adguard/setup',
+        Object.assign({ action: 'start' }, extra || {}));
+      toast(r.message || 'Установка запущена', 'ok', '\ud83d\udee1 AdGuard');
+      const row = $('#ag-sudo-row'), st = $('#ag-start');
+      if (row) row.classList.add('hidden');
+      if (st) st.classList.add('hidden');
+      agStop(); agPoll(); agTimer = setInterval(agPoll, 1500);
+    }
+    function agNeedPassword(msg) {
+      const row = $('#ag-sudo-row'), st = $('#ag-start');
+      if (row) row.classList.remove('hidden');
+      if (st) st.classList.remove('hidden');
+      const box = $('#ag-setup');
+      if (box) box.classList.remove('hidden');
+      const state = $('#ag-state');
+      if (state) state.textContent = 'нужен пароль сервера (sudo) — введите ниже и нажмите «Установить»';
+      toast(msg || 'Нужен пароль сервера (sudo) — как в окне обновления', 'warn', '\ud83d\udee1');
+    }
     if (tga) tga.onclick = async () => {
       try {
-        const r = await api.post('/api/v1/settings/telegram/adguard/setup', { action: 'start' });
-        toast(r.message || 'Установка запущена', 'ok', '\ud83d\udee1 AdGuard');
-        agStop(); agPoll(); agTimer = setInterval(agPoll, 1500);
-      } catch (e) { toast(e.message, 'err'); agPoll(); }
+        let pf = null;
+        try { pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight'); } catch (e) { pf = null; }
+        if (pf && pf.need_password) { agNeedPassword(pf.hint); return; }
+        await agLaunch({});
+      } catch (e) {
+        if (/root|sudo|парол/i.test(e.message || '')) agNeedPassword(e.message);
+        else toast(e.message, 'err');
+      }
+    };
+    const agStart = $('#ag-start');
+    if (agStart) agStart.onclick = async () => {
+      const pwEl = $('#ag-sudo-pw');
+      const pw = pwEl && pwEl.value ? pwEl.value : '';
+      try { await agLaunch(pw ? { sudo_password: pw } : {}); }
+      catch (e) { toast(e.message, 'err'); }
     };
     // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
     api.get('/api/v1/settings/telegram/adguard/setup').then(r => {

@@ -661,6 +661,20 @@ def adguard_setup_status(admin: User = Depends(require_admin)):
                     "журнал; ссылка входа AdGuard появляется в job.login_url."}
 
 
+@router.get("/telegram/adguard/setup/preflight",
+            summary="Готовность сервера к автоустановке AdGuard (админ)")
+def adguard_setup_preflight(admin: User = Depends(require_admin)):
+    from ..services import adguard_setup as ag
+    pf = ag.preflight()
+    if pf["need_password"]:
+        pf["hint"] = ("Программа работает без root, а sudo просит пароль — "
+                      "введите пароль сервера в панели установки (как в "
+                      "окне обновления; sudo проверяет пароль служебного "
+                      "пользователя программы). Используется только на "
+                      "время установки и нигде не сохраняется.")
+    return pf
+
+
 @router.post("/telegram/adguard/setup",
              summary="Автоустановка AdGuard VPN из программы: start/cancel (админ)")
 def adguard_setup_action(body: dict, db: Session = Depends(get_db),
@@ -677,7 +691,8 @@ def adguard_setup_action(body: dict, db: Session = Depends(get_db),
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Установка уже выполняется — смотрите журнал "
                             "в карточке Telegram")
-    ag.start_setup(db)
+    # пароль — только в память задания (sudo -S на время установки)
+    ag.start_setup(db, sudo_password=(body or {}).get("sudo_password") or "")
     log_action(admin, "adguard_setup_start")
     return {"ok": True,
             "message": "Установка запущена — следите за процессом в карточке"}

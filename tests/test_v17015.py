@@ -293,6 +293,36 @@ class TestSetupRoutes:
         finally:
             ag.job.reset()
 
+    def test_preflight_endpoint(self, client, monkeypatch):
+        adm = login(client, "admin", "admin123")
+        monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(ag.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"returncode": 1})())
+        r = client.get("/api/v1/settings/telegram/adguard/setup/preflight",
+                       headers=adm)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["need_password"] is True and "hint" in body
+        monkeypatch.setattr(ag.os, "geteuid", lambda: 0)
+        r = client.get("/api/v1/settings/telegram/adguard/setup/preflight",
+                       headers=adm)
+        assert r.json()["need_password"] is False
+
+    def test_start_passes_sudo_password(self, client, monkeypatch):
+        ag.job.reset()
+        adm = login(client, "admin", "admin123")
+        seen = {}
+
+        def fake_start(db, sudo_password=""):
+            seen["pw"] = sudo_password
+
+        monkeypatch.setattr(ag, "start_setup", fake_start)
+        r = client.post("/api/v1/settings/telegram/adguard/setup",
+                        headers=adm,
+                        json={"action": "start", "sudo_password": "pw1"})
+        assert r.status_code == 200
+        assert seen["pw"] == "pw1"
+
     def test_start_spawns_job(self, client, monkeypatch):
         ag.job.reset()
         adm = login(client, "admin", "admin123")
@@ -307,6 +337,121 @@ class TestSetupRoutes:
             assert r.status_code == status.HTTP_409_CONFLICT
         finally:
             ag.job.reset()
+
+
+class TestSudoRights:
+    """Программа не от root: sudo -n, либо sudo -S с паролем из диалога
+    (как в механизме обновления). Пароль — только память, не public()."""
+
+    def test_run_cmd_pass_mode_uses_stdin(self, monkeypatch):
+        seen = {}
+
+        class R:
+            returncode = 0
+            stdout, stderr = "ok", ""
+
+        def fake_run(full, shell=False, capture_output=False, text=False,
+                     timeout=None, input=None):
+            seen["full"], seen["input"] = full, input
+            return R()
+
+        monkeypatch.setattr(ag.subprocess, "run", fake_run)
+        ag.job.reset()
+        ag.job.sudo_mode = "pass"
+        ag.job._sudo_pass = "pw123"
+        rc, out = ag.run_cmd(["systemctl", "daemon-reload"])
+        assert rc == 0
+        assert seen["full"][:3] == ["sudo", "-S", "-p", ""][:3]
+        assert "daemon-reload" in seen["full"]
+        assert seen["input"] == "pw123\n"          # пароль через stdin
+
+    def test_run_cmd_nopass_mode(self, monkeypatch):
+        seen = {}
+
+        class R:
+            returncode = 0
+            stdout, stderr = "ok", ""
+
+        def fake_run(full, shell=False, capture_output=False, text=False,
+                     timeout=None, input=None):
+            seen["full"] = full
+            return R()
+
+        monkeypatch.setattr(ag.subprocess, "run", fake_run)
+        ag.job.reset()
+        ag.job.sudo_mode = "nopass"
+        ag.run_cmd(["cp", "a", "b"])
+        assert seen["full"] == ["sudo", "-n", "cp", "a", "b"]
+
+    def test_precheck_wrong_password_message(self, monkeypatch):
+        class R:
+            def __init__(self, rc):
+                self.returncode = rc
+                self.stdout, self.stderr = "", "sorry"
+
+        def fake_run(full, **k):
+            # systemctl есть (0), sudo -n true и sudo -S true — нет (1)
+            lst = list(full) if not isinstance(full, str) else [full]
+            return R(0 if lst and lst[0] == "systemctl" else 1)
+
+        monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(ag.subprocess, "run", fake_run)
+        ag.job.reset()
+        ag.job._sudo_pass = "bad"
+        with pytest.raises(RuntimeError) as ei:
+            ag._step_precheck()
+        assert "СЛУЖЕБНОГО" in str(ei.value)
+
+    def test_precheck_password_ok(self, monkeypatch):
+        calls = []
+
+        class R:
+            def __init__(self, rc):
+                self.returncode = rc
+                self.stdout, self.stderr = "ok", ""
+
+        def fake_run(full, **k):
+            calls.append((list(full) if not isinstance(full, str) else full,
+                          k.get("input")))
+            return R(1 if list(full) == ["sudo", "-n", "true"] else 0)
+
+        monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(ag.subprocess, "run", fake_run)
+        ag.job.reset()
+        ag.job._sudo_pass = "good"
+        ag._step_precheck()
+        assert ag.job.sudo_mode == "pass"
+
+    def test_preflight_modes(self, monkeypatch):
+        class R:
+            def __init__(self, rc):
+                self.returncode = rc
+
+        monkeypatch.setattr(ag.os, "geteuid", lambda: 0)
+        assert ag.preflight() == {"root": True, "sudo_nopass": False,
+                                  "need_password": False}
+        monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(ag.subprocess, "run", lambda *a, **k: R(1))
+        pf = ag.preflight()
+        assert pf["need_password"] is True
+
+    def test_login_argv_modes(self):
+        ag.job.reset()
+        assert ag._login_argv("cli") == ["cli", "login"]
+        ag.job.sudo_mode = "nopass"
+        assert ag._login_argv("cli") == ["sudo", "-n", "cli", "login"]
+        ag.job.sudo_mode = "pass"
+        assert ag._login_argv("cli") == ["sudo", "-S", "-p", "", "cli",
+                                         "login"]
+        ag.job.reset()
+
+    def test_password_never_in_public(self):
+        ag.job.reset()
+        ag.job._sudo_pass = "secret-pw"
+        import json as _json
+        blob = _json.dumps(ag.job.public(), ensure_ascii=False)
+        assert "secret-pw" not in blob and "sudo_pass" not in blob
+        ag.job.reset()
 
 
 class TestKitAndUi:
@@ -327,6 +472,7 @@ class TestKitAndUi:
         assert 'id="ag-setup"' in js and 'id="ag-setup-log"' in js
         assert "Подтвердить вход в AdGuard" in js
         assert "action: 'cancel'" in js or 'action: "cancel"' in js
+        assert "ag-sudo-pw" in js and "preflight" in js      # v1.70.15: sudo
 
     def test_readme_quick_path(self):
         rd = open("deploy/adguard-vpn/README.md", encoding="utf-8").read()

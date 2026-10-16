@@ -86,7 +86,8 @@ class SetupJob:
         self.login_url = ""
         self.cli_version = ""
         self.ping_ms = None
-        self.sudo_used = False
+        self.sudo_mode = "none"      # none|root|nopass|pass (после precheck)
+        self._sudo_pass = ""         # только память: не в public() и не на диск
         self.started_at = 0.0
         self.finished_at = 0.0
         self.elapsed_s = 0
@@ -148,7 +149,7 @@ class SetupJob:
                 "login_url": self.login_url,
                 "cli_version": self.cli_version,
                 "ping_ms": self.ping_ms,
-                "sudo_used": self.sudo_used,
+                "sudo_mode": self.sudo_mode,
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
                 "elapsed_s": self.elapsed_s,
@@ -199,11 +200,16 @@ def setup_status() -> dict:
 # ==========================================================================
 #  Запуск/отмена
 # ==========================================================================
-def start_setup(db) -> None:
-    """Запустить установку (409-контроль на маршруте; здесь — страховка)."""
+def start_setup(db, sudo_password: str = "") -> None:
+    """Запустить установку (409-контроль на маршруте; здесь — страховка).
+
+    sudo_password — пароль служебного пользователя программы (как в окне
+    обновления): живёт только в памяти задания, используется лишь для
+    `sudo -S` на время установки и нигде не сохраняется."""
     if job.running:
         raise RuntimeError("Установка уже выполняется")
     job.reset()
+    job._sudo_pass = sudo_password or ""
     job.running = True
     job.started_at = time.time()
     _state_write()
@@ -225,18 +231,24 @@ def cancel_setup() -> bool:
 #  Исполнение команд (фиксированные строки, без пользовательского ввода)
 # ==========================================================================
 def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
-            shell: bool = False) -> tuple[int, str]:
-    """Выполнить команду, вернуть (код, вывод). Префикс sudo — по правам."""
-    if job.sudo_used:
-        if shell:
-            full: list[str] | str = ["sudo", "-n", "sh", "-c", cmd]
-            shell = False
-        else:
-            full = ["sudo", "-n"] + list(cmd)
+            shell: bool = False, input_text: str = "") -> tuple[int, str]:
+    """Выполнить команду, вернуть (код, вывод).
+
+    Права — по режиму из precheck: root — как есть; nopass — `sudo -n`;
+    pass — `sudo -S -p ""` с паролем служебного пользователя через stdin
+    (пароль не попадает ни в аргументы процессов, ни в журнал)."""
+    if job.sudo_mode in ("nopass", "pass"):
+        inner = ["sh", "-c", cmd] if shell else list(cmd)
+        full = (["sudo", "-n"] if job.sudo_mode == "nopass"
+                else ["sudo", "-S", "-p", ""]) + inner
+        if job.sudo_mode == "pass" and not input_text:
+            input_text = (job._sudo_pass or "") + "\n"
+        shell = False
     else:
         full = cmd
     p = subprocess.run(full, shell=shell, capture_output=True,
-                       text=True, timeout=timeout)
+                       text=True, timeout=timeout,
+                       input=input_text or None)
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -273,6 +285,15 @@ def extract_login_url(line: str) -> str:
     return ""
 
 
+def _login_argv(cli: str) -> list[str]:
+    """Аргументы `login` с учётом режима прав (см. run_cmd)."""
+    if job.sudo_mode == "nopass":
+        return ["sudo", "-n", cli, "login"]
+    if job.sudo_mode == "pass":
+        return ["sudo", "-S", "-p", "", cli, "login"]
+    return [cli, "login"]
+
+
 def _login_worker(cli: str) -> tuple[int, str, str]:
     """`login` с живым журналом: строки пишем в job, ссылку — в job.login_url.
 
@@ -282,9 +303,19 @@ def _login_worker(cli: str) -> tuple[int, str, str]:
     """
     out: list[str] = []
     url = ""
-    proc = subprocess.Popen([cli, "login"], stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True,
-                            errors="replace", start_new_session=True)
+    use_pass = job.sudo_mode == "pass"
+    proc = subprocess.Popen(
+        _login_argv(cli), stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, errors="replace",
+        start_new_session=True,
+        stdin=subprocess.PIPE if use_pass else None)
+    if use_pass and proc.stdin is not None:
+        try:                                    # пароль sudo — сразу в stdin
+            proc.stdin.write((job._sudo_pass or "") + "\n")
+            proc.stdin.flush()
+            proc.stdin.close()
+        except OSError:
+            pass
 
     def _pump() -> None:
         nonlocal url
@@ -340,17 +371,46 @@ def _step_precheck() -> None:
     if not shutil.which("curl"):
         raise RuntimeError("curl не найден: sudo apt install -y curl")
     if os.geteuid() == 0:
-        job.sudo_used = False
+        job.sudo_mode = "root"
         job.say("precheck", "Права: root — хорошо.")
+    elif subprocess.run(["sudo", "-n", "true"], capture_output=True,
+                        timeout=15).returncode == 0:
+        job.sudo_mode = "nopass"
+        job.say("precheck", "Права: sudo без пароля — хорошо.")
+    elif job._sudo_pass:
+        ok = subprocess.run(["sudo", "-S", "-p", "", "true"],
+                            input=job._sudo_pass + "\n",
+                            capture_output=True, text=True,
+                            timeout=15).returncode == 0
+        if not ok:
+            raise RuntimeError("Пароль sudo не подошёл. sudo проверяет "
+                               "пароль СЛУЖЕБНОГО пользователя программы, "
+                               "а не ваш пароль из терминала (как в окне "
+                               "обновления).")
+        job.sudo_mode = "pass"
+        job.say("precheck", "Права: sudo с паролем — только на время "
+                            "установки, нигде не сохраняется.")
     else:
-        rc, _ = run_cmd(["sudo", "-n", "true"], timeout=15)
-        if rc != 0:
-            raise RuntimeError("Нужны права root: запустите программу от "
-                               "root (как на проде) или дайте sudo без "
-                               "пароля пользователю программы.")
-        job.sudo_used = True
-        job.say("precheck", "Права: через sudo (без пароля) — хорошо.")
+        raise RuntimeError("Программа работает без прав root, а sudo "
+                           "просит пароль. Введите пароль сервера в "
+                           "панели установки (как в окне обновления) — "
+                           "он используется только на время установки.")
     job.say("precheck", "Сервер готов к установке.", "done", 8)
+
+
+def preflight() -> dict:
+    """Готовность прав ДО старта — UI решает, показывать ли поле пароля."""
+    root = os.geteuid() == 0
+    nopass = False
+    if not root:
+        try:
+            nopass = subprocess.run(["sudo", "-n", "true"],
+                                    capture_output=True,
+                                    timeout=15).returncode == 0
+        except Exception:                                # noqa: BLE001
+            nopass = False
+    return {"root": root, "sudo_nopass": nopass,
+            "need_password": not root and not nopass}
 
 
 def sys_platform_linux() -> bool:
@@ -433,12 +493,12 @@ def _copy_kit() -> None:
     for name, (dst_key, mode) in UNIT_MAP.items():
         src = os.path.join(DEPLOY_DIR, name)
         dst = os.path.join(DEST_DIRS[dst_key], name)
-        if job.sudo_used:
-            run_cmd(["sudo", "-n", "cp", src, dst], timeout=30)
-            run_cmd(["sudo", "-n", "chmod", f"{mode:o}", dst], timeout=15)
-        else:
+        if job.sudo_mode == "root":
             shutil.copyfile(src, dst)
             os.chmod(dst, mode)
+        else:
+            run_cmd(["cp", src, dst], timeout=30)
+            run_cmd(["chmod", f"{mode:o}", dst], timeout=15)
 
 
 def _step_tunnel() -> None:
