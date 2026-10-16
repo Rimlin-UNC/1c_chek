@@ -18,7 +18,8 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..auth import (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER,
+from ..auth import (cookie_secure, ROLE_ADMIN, ROLE_ACCOUNTANT,
+                    ROLE_MANAGER, ROLE_USER,
                     act_admin_id,
                     client_ip, create_access_token, decode_token,
                     get_current_user, hash_password, raw_bearer_token,
@@ -62,6 +63,7 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
         "ymaster_token", token,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
+        secure=cookie_secure(request),          # v1.70.11: только по HTTPS
     )
     return resp
 
@@ -102,6 +104,7 @@ def max_login_poll(body: MaxPollBody, request: Request,
         "ymaster_token", r["access_token"],
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
+        secure=cookie_secure(request),          # v1.70.11: только по HTTPS
     )
     return resp
 
@@ -162,6 +165,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
         "ymaster_token", token,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
+        secure=cookie_secure(request),          # v1.70.11: только по HTTPS
     )
     return resp
 
@@ -214,6 +218,7 @@ def change_password(body: PasswordChange, request: Request,
         "ymaster_token", token,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
+        secure=cookie_secure(request),          # v1.70.11: только по HTTPS
     )
     return resp
 

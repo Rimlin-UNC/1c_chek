@@ -204,7 +204,7 @@ async def _cache_headers(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS or ["*"],
+    allow_origins=settings.CORS_ORIGINS,   # v1.70.11: без wildcard-дефолта
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -380,6 +380,10 @@ async def maxapp_page(fname: str = ""):
 async def spa(full_path: str):
     """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
     if full_path.startswith(("api/", "onec/", "ws/", "maxapp/")):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    if ".." in full_path:
+        # v1.70.11: страховка от траверсала сверх нормализации сервера
+        # (живая проверка v1.70.11: и так не эксплуатируется, но замок важнее)
         return JSONResponse({"detail": "Not found"}, status_code=404)
     # Прямые файлы (manifest, sw, иконки)
     candidate = STATIC_DIR / full_path

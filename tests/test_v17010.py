@@ -11,7 +11,8 @@ from app.config import settings
 
 class TestVersions17010:
     def test_config_version(self):
-        assert settings.APP_VERSION == "1.70.10"
+        # v1.70.11: строгий замок версии переехал в test_v17011
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= (1, 70, 10)
 
     def test_changelog(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()

@@ -121,6 +121,16 @@ def raw_bearer_token(
     return request.cookies.get("ymaster_token")
 
 
+def cookie_secure(request: Request) -> bool:
+    """v1.70.11: Secure-флаг cookie — только когда соединение действительно
+    HTTPS (схема или X-Forwarded-Proto от локального nginx; uvicorn слушает
+    только 127.0.0.1, снаружи заголовок подделать нельзя). На http-превью
+    и в локальной сети cookie работает как раньше."""
+    if request.url.scheme == "https":
+        return True
+    return (request.headers.get("x-forwarded-proto") or "").lower() == "https"
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
