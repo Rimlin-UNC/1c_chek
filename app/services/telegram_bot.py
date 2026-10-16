@@ -42,6 +42,11 @@ SETT_TIME = "telegram_reminder_time"     # "HH:MM"
 SETT_API_BASE = "telegram_api_base"      # v1.70.12: сменный адрес Bot API (мост)
 SETT_TEXT = "telegram_reminder_text"
 SETT_DIGEST = "digest_enabled"           # v1.66.0: утренний дайджест (общий)
+# v1.70.14: суточный пинг пути Telegram (AdGuard-автопилот)
+SETT_PING_MS = "telegram_ping_ms"        # последний замер, целые мс
+SETT_PING_AT = "telegram_ping_at"        # когда замеряли
+SETT_PING_OK = "telegram_ping_ok"        # путь жив? 1/0
+PING_TIME = (15, 0)                      # автозамер в 15:00 МСК, окно 20 мин
 DIGEST_TIME = (8, 0)                     # v1.66.0: дайджест в 08:00
 DEFAULT_REMIND_TIME = "18:00"
 DEFAULT_REMIND_TEXT = ("👋 {name}, не забудьте сфотографировать чеки за сегодня — "
@@ -102,6 +107,9 @@ def bot_settings(db: Session) -> dict:
         "bot_username": (_bot_username or ""),
         "worker_running": _worker.is_alive() if _worker else False,
         "proxy_configured": bool(get_proxy(db)),           # v1.29.0
+        "ping_ms": _ping_ms_or_none(db),                   # v1.70.14
+        "ping_at": appsettings.get_setting(db, SETT_PING_AT, ""),
+        "ping_ok": appsettings.get_setting(db, SETT_PING_OK, "") == "1",
     }
 
 
@@ -489,6 +497,70 @@ def _digest_due(db: Session) -> bool:
         now.strftime("%Y-%m-%d")
 
 
+def _ping_due(db: Session, now: datetime | None = None) -> bool:
+    """v1.70.14: суточный автозамер пинга — 15:00 МСК, окно 20 минут."""
+    from . import appsettings
+    now = now or datetime.now()
+    target = now.replace(hour=PING_TIME[0], minute=PING_TIME[1],
+                         second=0, microsecond=0)
+    if not (target <= now < target + timedelta(minutes=20)):
+        return False
+    return appsettings.get_setting(db, "tg_last_ping", "") != \
+        now.strftime("%Y-%m-%d")
+
+
+def _ping_ms_or_none(db: Session) -> int | None:
+    """Последний замер пинга (целые мс) или None."""
+    from . import appsettings
+    v = appsettings.get_setting(db, SETT_PING_MS, "")
+    try:
+        return int(v) if v else None
+    except ValueError:
+        return None
+
+
+def ping_proxy(db: Session, samples: int = 3,
+               scheduled: bool = False) -> dict:
+    """v1.70.14: средний пинг настроенного пути до Telegram (3 запроса).
+
+    Замеряем фактический путь бота: через прокси (AdGuard VPN
+    socks5://127.0.0.1:1080 и т.п.) или напрямую. Любой HTTP-ответ
+    считается успехом (важна латентность, не статус). Результат хранится
+    в настройках и показывается в карточке Telegram. Экономно: 3
+    коротких запроса; scheduled=True — суточный автозамер 15:00 МСК.
+    """
+    proxy = get_proxy(db)
+    origin = get_api_base(db).rstrip("/")
+    lat, fails = [], 0
+    for i in range(samples):
+        t0 = time.monotonic()
+        try:
+            httpx.get(origin + "/", timeout=8.0, proxy=proxy or None)
+            lat.append((time.monotonic() - t0) * 1000.0)
+        except Exception:                                # noqa: BLE001
+            fails += 1
+        if i < samples - 1:
+            time.sleep(0.2)
+    ok = bool(lat)
+    ms = round(sum(lat) / len(lat)) if lat else None
+    from . import appsettings
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    appsettings.set_setting(db, SETT_PING_MS, str(ms) if ms is not None else "")
+    appsettings.set_setting(db, SETT_PING_AT, stamp)
+    appsettings.set_setting(db, SETT_PING_OK, "1" if ok else "0")
+    if scheduled:
+        appsettings.set_setting(db, "tg_last_ping",
+                                datetime.now().strftime("%Y-%m-%d"))
+    if ok:
+        log.info("telegram ping: %s мс (%d/%d ок, прокси: %s)",
+                 ms, len(lat), samples, bool(proxy))
+    else:
+        log.warning("telegram ping: путь недоступен (%d/%d неудач, прокси: %s)",
+                    fails, samples, bool(proxy))
+    return {"ok": ok, "ms": ms, "ok_samples": len(lat), "samples": samples,
+            "at": stamp, "proxy": bool(proxy)}
+
+
 def _send_digest(db: Session) -> None:
     """v1.66.0: дайджест бухгалтерам/админам — в Telegram (кто привязан)."""
     from . import appsettings
@@ -582,6 +654,8 @@ def _worker_loop() -> None:
                     _send_reminders(db)
                 if _digest_due(db):                      # v1.66.0: дайджест 08:00
                     _send_digest(db)
+                if _ping_due(db):                    # v1.70.14: пинг 15:00 МСК
+                    ping_proxy(db, scheduled=True)
         except Exception as e:                           # noqa: BLE001
             log.warning("telegram loop: %s", e)
             _stop.wait(10)

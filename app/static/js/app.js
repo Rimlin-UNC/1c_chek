@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.14': [
+    { icon: '📏', title: 'Пинг Telegram в карточке и суточный автопилот',
+      text: 'Рядом с кнопкой AdGuard VPN — кнопка «📏 Пинг»: три коротких запроса, показываем среднее. Автоматический замер — раз в сутки в 15:00 по МСК (экономия: всего несколько коротких запросов в день). На сервере — сценарий-автопилот tg-health.sh: если пинг выше 30 мс или Telegram недоступен, сам подключает Германию, а если и она медленная — локацию с минимальным пингом.' },
+  ],
   '1.70.13': [
     { icon: '🛡', title: 'Telegram через AdGuard VPN — второй сервер не нужен',
       text: 'Если есть лицензия AdGuard VPN: её CLI ставится прямо на этот сервер, режим SOCKS5 поднимает локальный прокси socks5://127.0.0.1:1080, а бот отправляет через него напоминания и ответы (кнопка-пресет «🛡 AdGuard VPN» в настройках Telegram). Готовая пошаговая инструкция и автозапуск — deploy/adguard-vpn. Мост и канал MAX остаются как запасные пути.' },
@@ -8115,6 +8119,10 @@ async function viewSettings(container) {
           <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
           <span class="form-hint">подставить локальный прокси AdGuard VPN (CLI на этом же сервере, режим SOCKS5) — инструкция deploy/adguard-vpn</span>
         </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px">
+          <button type="button" class="btn btn-sm" id="tg-ping" title="3 коротких запроса, среднее">📏 Пинг</button>
+          <span class="form-hint" id="tg-ping-out">${tgSet.ping_ms != null && tgSet.ping_ms !== '' ? ('последний замер: ' + tgSet.ping_ms + ' мс · ' + esc(tgSet.ping_at || '') + (tgSet.ping_ok ? '' : ' · ⚠ путь недоступен — tg-health.sh сменит локацию')) : 'ещё не измерялся — автоматически в 15:00 МСК или кнопкой'}</span>
+        </div>
         <label class="field" style="margin-bottom:10px"><span>Адрес API (v1.70.12)
           ${tgSet.api_base && tgSet.api_base !== 'https://api.telegram.org' ? '(нестандартный: ' + esc(tgSet.api_base) + ')' : '(стандартный)'}</span>
           <input id="tg-apibase" autocomplete="off" placeholder="https://api.telegram.org — или свой мост: http://127.0.0.1:8077 (пусто — не менять; «-» — стандартный)"></label>
@@ -9170,6 +9178,17 @@ async function viewSettings(container) {
         prx.value = 'socks5://127.0.0.1:1080';
         toast('Подставлен локальный прокси AdGuard VPN (CLI, режим SOCKS5). Установите CLI по инструкции deploy/adguard-vpn/README.md, затем «Сохранить и запустить».', 'ok', '🛡');
       }
+    };
+    const tgp = $('#tg-ping');                        // v1.70.14: замер пинга
+    if (tgp) tgp.onclick = async () => {
+      const out = $('#tg-ping-out');
+      if (out) out.textContent = 'Измеряю (3 запроса)…';
+      try {
+        const r = await api.post('/api/v1/settings/telegram/ping', {});
+        if (out) out.textContent = r.ok
+          ? ('последний замер: ' + r.ms + ' мс (' + r.ok_samples + '/' + r.samples + ' ок) · ' + r.at)
+          : '⚠ путь недоступен — проверьте прокси/мост или запустите tg-health.sh';
+      } catch (e) { if (out) out.textContent = 'Ошибка: ' + e.message; }
     };
     const tgd = $('#tg-diag');                            // v1.29.0
     if (tgd) tgd.onclick = async () => {

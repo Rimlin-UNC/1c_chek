@@ -1,0 +1,12 @@
+# ======================================================================
+# Ямастер Чек — разовый запуск автопилота AdGuard VPN (v1.70.14)
+# Расписание задаёт tg-health.timer (15:10 по серверному времени = МСК).
+# ======================================================================
+[Unit]
+Description=Ymaster Check — Telegram path health (AdGuard VPN autopilot)
+After=network-online.target adguard-vpn-telegram.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tg-health.sh

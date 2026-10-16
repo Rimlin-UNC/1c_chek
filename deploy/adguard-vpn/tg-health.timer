@@ -1,0 +1,18 @@
+# ======================================================================
+# Ямастер Чек — расписание автопилота: ежедневно в 15:10 (сервер = МСК).
+# Persistent=true — если сервер был выключен в 15:10, проверка выполнится
+# при включении. Установка:
+#   sudo cp tg-health.service tg-health.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tg-health.timer
+# Логи: journalctl -u tg-health.service -f
+# ======================================================================
+[Unit]
+Description=Ymaster Check — daily Telegram ping check (15:10 MSK)
+
+[Timer]
+OnCalendar=*-*-* 15:10:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

@@ -646,6 +646,12 @@ def diagnose_telegram(db: Session = Depends(get_db), admin: User = Depends(requi
     return tg.diagnose(db)
 
 
+@router.post("/telegram/ping", summary="Замер пинга пути Telegram: 3 запроса, среднее (админ)")
+def ping_telegram(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    from ..services import telegram_bot as tg
+    return tg.ping_proxy(db)
+
+
 @router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")
 def refresh_bot(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from ..services import telegram_bot as tg

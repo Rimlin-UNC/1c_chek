@@ -639,6 +639,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.13':") && bundle.includes('tg-adguard') &&
      bundle.includes('socks5://127.0.0.1:1080'),
      'v1.70.13: пресет AdGuard VPN для Telegram');
+  ok(bundle.includes("'1.70.14':") && bundle.includes('tg-ping') &&
+     bundle.includes('settings/telegram/ping'),
+     'v1.70.14: пинг пути Telegram в карточке (3 запроса, среднее)');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
