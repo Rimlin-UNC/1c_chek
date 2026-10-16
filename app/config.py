@@ -37,7 +37,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.70.11"
+    APP_VERSION: str = "1.70.12"
     DEFAULT_BRANCH: str = "arena/01a0caaa-1c-chek"   # ветка для обновлений из приложения
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
     # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
@@ -80,6 +80,9 @@ class Settings:
     # v1.70.11: без wildcard-дефолта — веб-клиент и мини-app работают
     # на одном источнике; кросс-домен при необходимости — CORS_ORIGINS в .env
     CORS_ORIGINS: list[str] = [x.strip() for x in _env("CORS_ORIGINS", "").split(",") if x.strip()]
+    # v1.70.12: адрес Telegram Bot API — свой шлюз/мост вместо официального
+    # (поле настройки «Адрес API» важнее env; bridge: deploy/tg-bridge)
+    TELEGRAM_API_BASE: str = _env("TELEGRAM_API_BASE", "https://api.telegram.org")
     MAX_UPLOAD_MB: int = int(_env("MAX_UPLOAD_MB", "12"))
     # v1.65.0: лимит размера PDF-чека (концепция: 2–5 МБ, 1 ГБ RAM)
     PDF_MAX_MB: int = int(_env("PDF_MAX_MB", "5"))

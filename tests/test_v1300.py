@@ -215,7 +215,7 @@ class TestBotIntegration:
             _enable(db)
             sent = []
             monkeypatch.setattr(tg, "send_message",
-                                lambda t, c, text, proxy="": sent.append(text) or True)
+                                lambda t, c, text, proxy="", base="": sent.append(text) or True)
             monkeypatch.setattr(tg, "get_token", lambda db: "T")
             monkeypatch.setattr(tg, "get_proxy", lambda db: "")
             tg.handle_update(db, {"message": {"chat": {"id": "1"}, "text": "/start"}})

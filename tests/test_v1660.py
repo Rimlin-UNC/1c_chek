@@ -201,7 +201,7 @@ class TestDigestAndReminders:
             s.commit()
             sent_tg, sent_mx = [], []
 
-            def _tg_send(token, chat_id, text, proxy=""):
+            def _tg_send(token, chat_id, text, proxy="", base=""):
                 sent_tg.append(chat_id)
                 return True
 

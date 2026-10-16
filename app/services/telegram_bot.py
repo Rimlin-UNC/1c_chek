@@ -26,6 +26,10 @@ from sqlalchemy.orm import Session
 log = logging.getLogger("ymaster.telegram")
 
 API_BASE = "https://api.telegram.org/bot{token}/{method}"
+# v1.70.12: адрес Bot API можно заменить своим шлюзом/мостом (сервер в
+# сети, где api.telegram.org недоступен; bridge: deploy/tg-bridge).
+# Приоритет: настройка «Адрес API» (БД) -> env TELEGRAM_API_BASE -> официальный.
+TG_API_BASE_DEFAULT = "https://api.telegram.org"
 BIND_TTL = 15 * 60                       # код привязки живёт 15 минут
 POLL_TIMEOUT = 25                        # long-poll, сек
 SETT = "telegram_enabled"
@@ -35,6 +39,7 @@ PROXY_SCHEMES = ("socks5://", "socks5h://", "http://", "https://")
 # v1.30.0: «Чек-Пул» — бот принимает строки QR от любого человека
 _QR_HINT_RE = re.compile(r"fn=\d{8,}", re.IGNORECASE)
 SETT_TIME = "telegram_reminder_time"     # "HH:MM"
+SETT_API_BASE = "telegram_api_base"      # v1.70.12: сменный адрес Bot API (мост)
 SETT_TEXT = "telegram_reminder_text"
 SETT_DIGEST = "digest_enabled"           # v1.66.0: утренний дайджест (общий)
 DIGEST_TIME = (8, 0)                     # v1.66.0: дайджест в 08:00
@@ -66,6 +71,22 @@ def get_proxy(db: Session) -> str:
     return appsettings.get_setting(db, SETT_PROXY, "") or settings.TELEGRAM_PROXY
 
 
+def get_api_base(db: Session) -> str:
+    """v1.70.12: сменный адрес Bot API (настройка «Адрес API» или env).
+
+    Урл без хвоста /bot…/method: https://api.telegram.org или адрес моста
+    (deploy/tg-bridge). «-» в настройке возвращает официальный адрес."""
+    from . import appsettings
+    from ..config import settings
+    val = (appsettings.get_setting(db, SETT_API_BASE, "") or "").strip()
+    if val == "-":
+        return TG_API_BASE_DEFAULT
+    if val:
+        return val
+    env = (getattr(settings, "TELEGRAM_API_BASE", "") or "").strip()
+    return env or TG_API_BASE_DEFAULT
+
+
 def bot_settings(db: Session) -> dict:
     from . import appsettings
     token = get_token(db)
@@ -88,11 +109,13 @@ def bot_settings(db: Session) -> dict:
 #  Вызовы API (обезличенные ошибки)
 # --------------------------------------------------------------------------
 def api(token: str, method: str, payload: dict | None = None,
-        timeout: float = 35.0, proxy: str = "") -> dict:
+        timeout: float = 35.0, proxy: str = "",
+        base: str = "") -> dict:
     if not token:
         raise TelegramError("Токен бота не задан — укажите его в настройках")
+    origin = (base or "").rstrip("/") or API_BASE.rsplit("/bot", 1)[0]
     try:
-        resp = httpx.post(API_BASE.format(token=token, method=method),
+        resp = httpx.post(origin + "/bot" + token + "/" + method,
                           json=payload or {}, timeout=timeout,
                           proxy=proxy or None)           # v1.29.0
     except Exception:                                    # noqa: BLE001
@@ -113,15 +136,16 @@ def api(token: str, method: str, payload: dict | None = None,
     return data.get("result") or {}
 
 
-def get_me(token: str, proxy: str = "") -> dict:
-    me = api(token, "getMe", proxy=proxy)
+def get_me(token: str, proxy: str = "", base: str = "") -> dict:
+    me = api(token, "getMe", proxy=proxy, base=base)
     return {"username": (me.get("username") or ""), "name": (me.get("first_name") or "")}
 
 
-def send_message(token: str, chat_id: str | int, text: str, proxy: str = "") -> bool:
+def send_message(token: str, chat_id: str | int, text: str,
+                 proxy: str = "", base: str = "") -> bool:
     api(token, "sendMessage", {"chat_id": chat_id, "text": text[:3500],
                                "parse_mode": "", "disable_web_page_preview": True},
-        proxy=proxy)
+        proxy=proxy, base=base)
     return True
 
 
@@ -180,9 +204,10 @@ def handle_update(db: Session, upd: dict) -> None:
         return
     token = get_token(db)
     proxy = get_proxy(db)                                # v1.29.0
+    _base = get_api_base(db)                             # v1.70.12
 
     def _send(txt: str) -> None:
-        send_message(token, chat_id, txt, proxy=proxy)
+        send_message(token, chat_id, txt, proxy=proxy, base=_base)
 
     from ..models import User
     text_low = text.lower()
@@ -314,9 +339,11 @@ def _pool_process_async(chat_id: str, from_id: str | None,
         db = _db_session()
         try:
             _proxy = get_proxy(db)
+            _base = get_api_base(db)                     # v1.70.12
             reply = process_pool_message(db, chat_id, from_id, from_username, text)
             if reply:
-                send_message(get_token(db), chat_id, reply, proxy=_proxy)
+                send_message(get_token(db), chat_id, reply,
+                             proxy=_proxy, base=_base)
         except Exception as e:                               # noqa: BLE001
             log.warning("pool ingest %s: %s", chat_id, e)
         finally:
@@ -359,6 +386,7 @@ def _poll_once(offset: list[int]) -> None:
     try:
         token = get_token(db)
         proxy = get_proxy(db)
+        base = get_api_base(db)                          # v1.70.12
     finally:
         db.close()
     if not token:
@@ -368,7 +396,8 @@ def _poll_once(offset: list[int]) -> None:
         result = api(token, "getUpdates", {
             "offset": offset[0], "timeout": POLL_TIMEOUT,
             "allowed_updates": ["message"]}, timeout=POLL_TIMEOUT + 10,
-            proxy=proxy)                                 # v1.29.0
+            proxy=proxy,                                 # v1.29.0
+            base=base)                                   # v1.70.12
     except TelegramError as e:
         msg = str(e)
         # v1.29.0: 409 = токен опрашивает другой процесс — ждём, апдейты
@@ -429,12 +458,13 @@ def _send_reminders(db: Session) -> None:
         return
     text_tpl = appsettings.get_setting(db, SETT_TEXT, DEFAULT_REMIND_TEXT)
     proxy = get_proxy(db)                                # v1.29.0
+    base = get_api_base(db)                              # v1.70.12
     sent = 0
     for u in _users_to_remind(db):
         try:
             name = (u.full_name or u.username or "").split()[0]
             send_message(token, u.telegram_chat_id,
-                         text_tpl.format(name=name), proxy=proxy)
+                         text_tpl.format(name=name), proxy=proxy, base=base)
             sent += 1
             time.sleep(0.3)                              # анти-флуд
         except Exception as e:                           # noqa: BLE001
@@ -494,10 +524,11 @@ def _send_digest(db: Session) -> None:
         User.telegram_chat_id != "",
         User.role.in_(("admin", "accountant"))).all()]
     proxy = get_proxy(db)
+    base = get_api_base(db)                              # v1.70.12
     sent = 0
     for u in staff:
         try:
-            send_message(token, u.telegram_chat_id, text, proxy=proxy)
+            send_message(token, u.telegram_chat_id, text, proxy=proxy, base=base)
             sent += 1
             time.sleep(0.3)                              # анти-флуд
         except Exception as e:                           # noqa: BLE001
@@ -602,10 +633,11 @@ def restart_worker() -> bool:
     return False
 
 
-def _probe(proxy: str) -> dict:
+def _probe(proxy: str, base: str = "") -> dict:
     """Одна проба пути до Telegram API (валидность токена не проверяем)."""
+    origin = (base or "").rstrip("/") or TG_API_BASE_DEFAULT
     try:
-        httpx.post(API_BASE.format(token="0:x", method="getMe"),
+        httpx.post(origin + "/bot0:x/getMe",
                    json={}, timeout=8.0, proxy=proxy or None)
         return {"ok": True, "error": ""}
     except Exception as e:                               # noqa: BLE001
@@ -617,18 +649,25 @@ def diagnose(db: Session) -> dict:
     direct = _probe("")
     proxy = get_proxy(db)
     via = _probe(proxy) if proxy else {"ok": False, "error": "прокси не задан"}
-    if via["ok"]:
+    api_base = get_api_base(db)                          # v1.70.12
+    via_base = (_probe("", api_base)
+                if api_base != TG_API_BASE_DEFAULT
+                else {"ok": False, "error": "не задан"})
+    if via_base["ok"]:
+        v = ("ok", "Мост доступен — бот будет работать через адрес API "
+             "из настроек. Нажмите «Сохранить и запустить».")
+    elif via["ok"]:
         v = ("ok", "Через прокси Telegram доступен — бот будет работать. "
              "Нажмите «Сохранить и запустить».")
     elif direct["ok"]:
         v = ("ok", "Прямой доступ к Telegram есть — прокси не нужен.")
-    elif proxy:
-        v = ("bad", "И прямой доступ, и прокси не работают — проверьте "
-             "адрес/логин/пароль прокси.")
     else:
-        v = ("bad", "С сервера нет доступа к api.telegram.org (частая ситуация "
-             "в РФ). Укажите прокси в поле выше и повторите.")
+        v = ("bad", "Прямой доступ к api.telegram.org заблокирован (типично "
+             "для РФ). Варианты: прокси, свой адрес API (мост — "
+             "deploy/tg-bridge в комплекте) или канал MAX.")
     return {"direct": direct, "proxy": via, "proxy_configured": bool(proxy),
+            "api_base": api_base,
+            "via_base": via_base,                        # v1.70.12
             "verdict": v[0], "message": v[1]}
 
 
@@ -664,7 +703,8 @@ def notify_user(user_id: str, text: str) -> None:
             if not u or not u.telegram_chat_id or not token:
                 return
             send_message(token, u.telegram_chat_id, text,
-                         proxy=get_proxy(db))            # v1.29.0
+                         proxy=get_proxy(db),
+                         base=get_api_base(db))          # v1.29.0/v1.70.12
         except Exception as e:                           # noqa: BLE001
             log.info("telegram notify %s: %s", user_id, e)
         finally:

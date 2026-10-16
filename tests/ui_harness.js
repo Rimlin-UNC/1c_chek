@@ -634,6 +634,8 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes("localStorage.setItem('settings_all', '')") &&
      bundle.includes("snav.scrollIntoView"),
      'v1.70.10: возврат из «Все настройки» всегда виден');
+  ok(bundle.includes("'1.70.12':") && bundle.includes('tg-apibase'),
+     'v1.70.12: Telegram — сменный адрес API (мост/шлюз)');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

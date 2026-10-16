@@ -15,7 +15,8 @@ from app.main import app, spa
 
 class TestVersions17011:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.11"
+        # v1.70.12: строгий замок версии переехал в test_v17012
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= (1, 70, 11)
 
     def test_changelog(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()

@@ -542,9 +542,11 @@ def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_ad
     from ..services.appsettings import get_setting as _g
     key = _mask(_g(db, tg.SETT_TOKEN, ""))
     proxy_masked = _mask(_g(db, tg.SETT_PROXY, ""))
+    api_base = _g(db, tg.SETT_API_BASE, "")              # v1.70.12
     from ..services import max_bot as _mx
     return {**s, "token_masked": key,
             "proxy_masked": proxy_masked,
+            "api_base": api_base,                        # v1.70.12
             "channel": _mx.get_channel(db),   # v1.66.0: канал ассистентов
             "bound_users": db.query(User).filter(
                 User.telegram_chat_id.isnot(None)).count(),
@@ -572,6 +574,16 @@ def put_telegram(body: dict, db: Session = Depends(get_db),
                                     "Прокси должен начинаться с socks5:// или http:// "
                                     "(например socks5://логин:пароль@хост:порт)")
             _s(db, tg.SETT_PROXY, proxy)             # уйдёт зашифрованным (секрет)
+    # v1.70.12: адрес API (мост/шлюз). Пусто = не менять; «-» = стандартный.
+    if "api_base" in (body or {}):
+        apb = ((body.get("api_base")) or "").strip().rstrip("/")
+        if apb == "-":
+            _s(db, tg.SETT_API_BASE, "")
+        elif apb:
+            if not (apb.startswith("http://") or apb.startswith("https://")):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    "Адрес API должен начинаться с http:// или https://")
+            _s(db, tg.SETT_API_BASE, apb)            # уйдёт зашифрованным (секрет)
     token = ((body or {}).get("bot_token") or "").strip()
     if token:
         if not _re.fullmatch(r"\d{6,}:[A-Za-z0-9_\-]{30,}", token):
@@ -580,7 +592,8 @@ def put_telegram(body: dict, db: Session = Depends(get_db),
                                 "из @BotFather (вид: 123456789:AA…)")
         _s(db, tg.SETT_TOKEN, token)                 # уйдёт зашифрованным
         try:
-            tg.get_me(token, proxy=tg.get_proxy(db))
+            tg.get_me(token, proxy=tg.get_proxy(db),
+                      base=tg.get_api_base(db))      # v1.70.12
         except tg.TelegramError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
         tg.refresh_username(db)                      # кэш username бота

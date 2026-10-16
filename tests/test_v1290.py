@@ -36,7 +36,7 @@ class TestProxyPlumbing:
     def test_api_sends_proxy_and_hints_on_network_fail(self, monkeypatch):
         seen = {}
 
-        def fake_post(url, json=None, timeout=None, proxy=None):
+        def fake_post(url, json=None, timeout=None, proxy=None, base=None):
             seen["proxy"] = proxy
             raise RuntimeError("TLS closed")
 
@@ -49,7 +49,7 @@ class TestProxyPlumbing:
     def test_send_message_passes_proxy(self, monkeypatch):
         seen = {}
 
-        def fake_api(token, method, payload=None, timeout=35.0, proxy=""):
+        def fake_api(token, method, payload=None, timeout=35.0, proxy="", base=""):
             seen["proxy"] = proxy
             seen["method"] = method
             return {}
@@ -67,7 +67,7 @@ class TestDiagnose:
         try:
             appsettings.set_setting(db, tg.SETT_PROXY, "socks5://good@h:1080")
             monkeypatch.setattr(tg, "_probe",
-                                lambda p: {"ok": bool(p), "error": "" if p else "TLS"})
+                                lambda p, base="": {"ok": bool(p), "error": "" if p else "TLS"})
             d = tg.diagnose(db)
             assert d["verdict"] == "ok" and "прокси" in d["message"].lower()
         finally:
@@ -80,7 +80,7 @@ class TestDiagnose:
         try:
             appsettings.set_setting(db, tg.SETT_PROXY, "")
             monkeypatch.setattr(tg, "_probe",
-                                lambda p: {"ok": False, "error": "ConnectError"})
+                                lambda p, base="": {"ok": False, "error": "ConnectError"})
             d = tg.diagnose(db)
             assert d["verdict"] == "bad"
             assert "api.telegram.org" in d["message"]
@@ -94,7 +94,7 @@ class TestDiagnose:
         try:
             appsettings.set_setting(db, tg.SETT_PROXY, "")
             monkeypatch.setattr(tg, "_probe",
-                                lambda p: {"ok": True, "error": ""})
+                                lambda p, base="": {"ok": True, "error": ""})
             assert tg.diagnose(db)["verdict"] == "ok"
         finally:
             db.close()
@@ -168,7 +168,7 @@ class TestHandleUpdateUsesProxy:
             code = tg.new_bind_code(db, user.id)
             sent = {}
             monkeypatch.setattr(tg, "send_message",
-                                lambda token, chat_id, text, proxy="":
+                                lambda token, chat_id, text, proxy="", base="":
                                 sent.update({"proxy": proxy, "text": text}))
             tg.handle_update(db, {"message": {"chat": {"id": "777"},
                                               "text": f"/start {code}"}})
@@ -209,7 +209,7 @@ class TestTelegramRoutes:
         adm = login(client, "admin", "admin123")
         calls = {}
 
-        def fake_get_me(token, proxy=""):
+        def fake_get_me(token, proxy="", base=""):
             calls["proxy"] = proxy
             return {"username": "ymaster_chek_bot"}
 
@@ -227,7 +227,7 @@ class TestTelegramRoutes:
 
     def test_diagnose_endpoint(self, client, monkeypatch):
         adm = login(client, "admin", "admin123")
-        monkeypatch.setattr(tg, "_probe", lambda p: {"ok": False, "error": "TLS"})
+        monkeypatch.setattr(tg, "_probe", lambda p, base="": {"ok": False, "error": "TLS"})
         d = client.post("/api/v1/settings/telegram/diagnose", headers=adm).json()
         assert d["verdict"] == "bad" and d["direct"]["ok"] is False
 

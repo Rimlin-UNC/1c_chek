@@ -1,0 +1,27 @@
+# ======================================================================
+# Ямастер Чек — systemd-юнит Telegram API-моста (v1.70.12)
+# Установка (на машине, где Telegram доступен):
+#   sudo mkdir -p /opt/tg-bridge
+#   sudo cp tg_bridge.py /opt/tg-bridge/
+#   sudo cp tg-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tg-bridge
+# Проверка: curl http://127.0.0.1:8077/health   →  {"ok": true}
+# Наружу порт не открывайте (ufw): приложение ходит по SSH-туннелю —
+# см. README.md рядом.
+# ======================================================================
+[Unit]
+Description=Ymaster Check — Telegram API bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/tg-bridge/tg_bridge.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

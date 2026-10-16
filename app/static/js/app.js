@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.12': [
+    { icon: '🛰', title: 'Telegram-бот работает даже там, где Telegram заблокирован',
+      text: 'Если сервер не видит api.telegram.org, теперь есть три пути: прокси (было), новый сменный адрес API и готовый «мост» — крошечная служба из одного файла (deploy/tg-bridge в комплекте), которая ставится на любой недорогой сервер с доступом к Telegram и пересылает трафик бота. Диагностика показывает все три пути сразу. Напоминания, дайджесты и ответы бота идут через выбранный путь; канал MAX не тронут.' },
+  ],
   '1.70.11': [
     { icon: '🛡', title: 'Техническое обновление безопасности',
       text: 'Сессия на HTTPS помечается защищённым флагом cookie, по умолчанию закрыт кросс-доменный доступ к API и добавлены дополнительные барьеры против подбора адресов. Внешне ничего не изменилось: вход, чеки и настройки работают как прежде.' },
@@ -8101,8 +8105,12 @@ async function viewSettings(container) {
           ${tgSet.has_token ? '(задан: ' + esc(tgSet.token_masked) + (tgSet.bot_username ? ', @' + esc(tgSet.bot_username) : '') + ')' : '(не задан)'}</span>
           <input id="tg-token" type="password" autocomplete="off" placeholder="123456789:AA…"></label>
         <label class="field" style="margin-bottom:10px"><span>Прокси для Telegram
-          ${tgSet.proxy_configured ? '(задан: ' + esc(tgSet.proxy_masked || '•••') + ')' : '(не задан — нужен, если api.telegram.org недоступен с сервера)'}</span>
+          ${tgSet.proxy_configured ? '(задан: ' + esc(tgSet.proxy_masked || '•••') + ')' : '(не задан — классический способ обхода блокировки)'}</span>
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
+        <label class="field" style="margin-bottom:10px"><span>Адрес API (v1.70.12)
+          ${tgSet.api_base && tgSet.api_base !== 'https://api.telegram.org' ? '(нестандартный: ' + esc(tgSet.api_base) + ')' : '(стандартный)'}</span>
+          <input id="tg-apibase" autocomplete="off" placeholder="https://api.telegram.org — или свой мост: http://127.0.0.1:8077 (пусто — не менять; «-» — стандартный)"></label>
+        <p class="form-hint" style="margin:2px 0 10px">🛰 Прокси нет и прямого доступа тоже? Поднимите <b>мост</b> на любой машине с доступом к Telegram (дешёвый VPS, домашний ПК): один файл из <code>deploy/tg-bridge</code> в комплекте + адрес здесь. Подробно — в разделе инструкции «Telegram-бот сквозь блокировки».</p>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="tg-enabled" ${tgSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Включить бота: напоминания в ${esc(tgSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
@@ -9137,6 +9145,8 @@ async function viewSettings(container) {
         if (tok) body.bot_token = tok;
         const prx = $('#tg-proxy').value.trim();          // v1.29.0
         if (prx) body.proxy = prx;
+        const apb = $('#tg-apibase').value.trim();         // v1.70.12: адрес API
+        if (apb) body.api_base = apb;
         const chSel = $('#tg-channel');                    // v1.66.0: канал
         if (chSel) body.channel = chSel.value;
         const r = await api.put('/api/v1/settings/telegram', body);
@@ -9155,7 +9165,9 @@ async function viewSettings(container) {
         out.innerHTML = `${mark} ${esc(r.message)}<br>` +
           `<span class="form-hint">напрямую: ${r.direct.ok ? 'доступен' : 'блокируется' +
             (r.direct.error ? ' (' + esc(r.direct.error) + ')' : '')}` +
-          ` · через прокси: ${r.proxy.ok ? 'доступен' : 'не задан/не работает'}</span>`;
+          ` · через прокси: ${r.proxy.ok ? 'доступен' : 'не задан/не работает'}` +
+          (r.via_base ? ` · через адрес API: ${r.via_base.ok ? 'доступен' : 'не работает'}` : '') +
+          `</span>`;
       } catch (e) { out.textContent = 'Ошибка: ' + e.message; }
     };
     const ttt = $('#tg-test');

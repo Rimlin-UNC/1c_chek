@@ -158,8 +158,8 @@ class TestTelegramLogic:
         sent = []
         from app.services import telegram_bot as tg
         monkeypatch.setattr(tg, "send_message",
-                            lambda token, chat_id, text, proxy="":
-                            sent.append((chat_id, text)) or True)   # v1.29.0: +proxy
+                            lambda token, chat_id, text, proxy="", base="":
+                            sent.append((chat_id, text)) or True)   # v1.29.0: +proxy, v1.70.12: +base
         monkeypatch.setattr(tg, "get_token", lambda db: "fake-token")
         s = SessionLocal()
         try:
