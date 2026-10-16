@@ -33,7 +33,11 @@ class TestAdguardKit:
         assert "adguardvpn-cli login" in rd_txt
         assert "socks5h://127.0.0.1:1080" in rd_txt
         assert "api.telegram.org" in rd_txt
-        assert "deploy/adguard-vpn" not in rd_txt   # самоссылки не нужны
+        # v1.70.14: README — страница скачивания комплекта с GitHub
+        # (файлов нет на сервере, пока их не скачали командами отсюда).
+        assert "raw.githubusercontent.com/Rimlin-UNC/1c_chek" in rd_txt
+        assert "curl -fsSL -o /usr/local/sbin/tg-health.sh" in rd_txt
+        assert "ln -sf /opt/adguardvpn_cli/adguardvpn-cli" in rd_txt
 
     def test_unit(self):
         unit = open("deploy/adguard-vpn/adguard-vpn-telegram.service",

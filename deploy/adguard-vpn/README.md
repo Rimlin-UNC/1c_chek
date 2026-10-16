@@ -17,11 +17,20 @@
 
 ## Установка на сервере (Ubuntu)
 
-1. **Установите CLI** (официальный установщик; на вопрос про ссылку в
-   `/usr/local/bin` ответьте Y):
+1. **Установите CLI** (официальный установщик). ВАЖНО: вставляйте
+   команды **по одной** — установщик в середине задаёт вопрос
+   «create a link in /usr/local/bin? [y/N]», и если следующая строка
+   из скопированного блока прилетит в этот момент, она уйдёт в вопрос
+   как ответ («Invalid response»), а ссылка создана не будет:
    ```
    curl -fsSL https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/release/install.sh | sh -s -- -v
    ```
+   Если ссылка всё же не создалась (пишет `adguardvpn-cli: command
+   not found`) — создайте её вручную одной командой:
+   ```
+   ln -sf /opt/adguardvpn_cli/adguardvpn-cli /usr/local/bin/adguardvpn-cli
+   ```
+   Проверка: `adguardvpn-cli --version` — должен ответить версией.
 2. **Войдите в аккаунт с лицензией** (один раз):
    ```
    adguardvpn-cli login
@@ -46,11 +55,16 @@
    ```
    Любой ответ HTTP (200/302/404) — путь жив; «таймаут» — попробуйте
    другую локацию (шаги 4–5).
-6. **Автозапуск** (юнит рядом — `adguard-vpn-telegram.service`):
+6. **Автозапуск туннеля** (юнит `adguard-vpn-telegram.service` —
+   переподключает VPN после перезагрузки сервера). Файлы комплекта
+   берите с GitHub (ветка с v1.70.14; после merge в main замените
+   `arena/01a0caaa-1c-chek` на `main`):
    ```
-   sudo cp adguard-vpn-telegram.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now adguard-vpn-telegram
+   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek
+   curl -fsSL -o /etc/systemd/system/adguard-vpn-telegram.service \
+       $B/deploy/adguard-vpn/adguard-vpn-telegram.service
+   systemctl daemon-reload
+   systemctl enable --now adguard-vpn-telegram
    ```
    ВАЖНО: вход CLI хранится в домашнем каталоге пользователя. Юнит
    запускает CLI от root — если делали `login` не под root, выполните
@@ -93,17 +107,25 @@
      смены — контрольный замер. Список локаций с пингами запрашивается
      только в этот момент (не тратим трафик в здоровые дни).
 
-**Установка (один раз):**
+**Установка (один раз).** Скачайте три файла автопилота и включите
+таймер (под root `sudo` не нужен; команды можно вставлять блоком —
+вопросов они не задают):
 ```
-sudo cp tg-health.sh /usr/local/sbin/ && sudo chmod +x /usr/local/sbin/tg-health.sh
-sudo cp tg-health.service tg-health.timer /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now tg-health.timer
+B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek
+curl -fsSL -o /usr/local/sbin/tg-health.sh $B/deploy/adguard-vpn/tg-health.sh
+chmod +x /usr/local/sbin/tg-health.sh
+curl -fsSL -o /etc/systemd/system/tg-health.service $B/deploy/adguard-vpn/tg-health.service
+curl -fsSL -o /etc/systemd/system/tg-health.timer $B/deploy/adguard-vpn/tg-health.timer
+systemctl daemon-reload
+systemctl enable --now tg-health.timer
 ```
 
-**Проверка вручную:** `sudo systemctl start tg-health.service` и
-`journalctl -u tg-health.service -f`. Порог и прокси меняются в шапке
-скрипта (`TARGET_MS`, `PROXY`).
+**Проверка вручную** (сразу видно результат, не дожидаясь 15:10):
+`systemctl start tg-health.service` и `journalctl -u tg-health.service
+-n 30 --no-pager`. Порог и прокси меняются в шапке скрипта
+(`TARGET_MS`, `PROXY`).
 
-Таймер живёт по серверному времени — сервер по инструкции стоит в МСК.
+Таймер живёт по серверному времени — сервер по инструкции стоит в МСК
+(проверка: `timedatectl`; если нет — `timedatectl set-timezone Europe/Moscow`).
 Точные пороги подберёте сами: 30 мс — хороший уровень для уведомлений бота
-(трафик крошечный, даже 60 мс не заметят сотрудники)..
+(трафик крошечный, даже 60 мс не заметят сотрудники).
