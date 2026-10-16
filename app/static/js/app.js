@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.15': [
+    { icon: '🛡', title: 'AdGuard VPN ставится из программы — в один клик',
+      text: 'Кнопка «🛡 AdGuard VPN» в карточке Telegram теперь всё делает сама: установит CLI, покажет ссылку для подтверждения входа (открыли — установка идёт дальше сама), пропишет автоподключение и суточный автопилот, подставит прокси и проверит путь. Весь процесс виден живым журналом, в конце — «завершено успешно» либо понятная ошибка.' },
+  ],
   '1.70.14': [
     { icon: '📏', title: 'Пинг Telegram в карточке и суточный автопилот',
       text: 'Рядом с кнопкой AdGuard VPN — кнопка «📏 Пинг»: три коротких запроса, показываем среднее. Автоматический замер — раз в сутки в 15:00 по МСК (экономия: всего несколько коротких запросов в день). На сервере — сценарий-автопилот tg-health.sh: если пинг выше 30 мс или Telegram недоступен, сам подключает Германию, а если и она медленная — локацию с минимальным пингом.' },
@@ -8117,7 +8121,20 @@ async function viewSettings(container) {
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
           <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
-          <span class="form-hint">подставить локальный прокси AdGuard VPN (CLI на этом же сервере, режим SOCKS5) — инструкция deploy/adguard-vpn</span>
+          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, службы, прокси, проверка пути (v1.70.15). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
+        </div>
+        <div id="ag-setup" class="hidden" style="border:2px solid #d8d4ec;border-radius:10px;padding:10px 12px;margin:0 0 10px;background:rgba(59,42,126,.04)">
+          <div id="ag-steps" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px"></div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <a id="ag-link" class="btn btn-sm hidden" target="_blank" rel="noopener" href="#">🔗 Подтвердить вход в AdGuard</a>
+            <span class="form-hint hidden" id="ag-link-hint">ссылка действует ~30 минут — откройте, войдите, установка продолжится сама</span>
+            <span class="form-hint" id="ag-state"></span>
+          </div>
+          <pre id="ag-setup-log" style="max-height:170px;overflow:auto;font-size:12px;background:#fff;border:1px solid #d8d4ec;border-radius:8px;padding:8px;margin:0 0 8px"></pre>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
+            <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
+          </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px">
           <button type="button" class="btn btn-sm" id="tg-ping" title="3 коротких запроса, среднее">📏 Пинг</button>
@@ -9171,14 +9188,69 @@ async function viewSettings(container) {
       } catch (e) { toast(e.message, 'err'); }
       tts.disabled = false;
     };
-    const tga = $('#tg-adguard');                     // v1.70.13: пресет AdGuard VPN
-    if (tga) tga.onclick = () => {
-      const prx = $('#tg-proxy');
-      if (prx) {
-        prx.value = 'socks5://127.0.0.1:1080';
-        toast('Подставлен локальный прокси AdGuard VPN (CLI, режим SOCKS5). Установите CLI по инструкции deploy/adguard-vpn/README.md, затем «Сохранить и запустить».', 'ok', '🛡');
+    const tga = $('#tg-adguard');                     // v1.70.15: автоустановка AdGuard
+    let agTimer = 0;
+    const AG_ICONS = { done: '\u2705', active: '\u23f3', failed: '\u274c', skip: '\u2796', pending: '\u00b7' };
+    function agRender(st) {
+      const box = $('#ag-setup');
+      if (!box) return;
+      box.classList.remove('hidden');
+      const se = $('#ag-steps');
+      if (se) se.innerHTML = (st.steps || []).map(s =>
+        '<div style="display:flex;gap:8px;align-items:baseline">' +
+        '<span style="width:20px;text-align:center;flex:none">' + (AG_ICONS[s.status] || '\u00b7') + '</span>' +
+        '<span>' + esc(s.title) + (s.message ? ' — <span class="form-hint">' + esc(s.message) + '</span>' : '') + '</span></div>'
+      ).join('');
+      const link = $('#ag-link'), hint = $('#ag-link-hint');
+      if (link && hint) {
+        if (st.login_url && st.running) {
+          link.href = st.login_url;
+          link.classList.remove('hidden'); hint.classList.remove('hidden');
+        } else { link.classList.add('hidden'); hint.classList.add('hidden'); }
       }
+      const log = $('#ag-setup-log');
+      if (log) { log.textContent = (st.log || []).join('\n'); log.scrollTop = log.scrollHeight; }
+      const state = $('#ag-state');
+      if (state) state.textContent = st.running
+        ? ('идёт установка\u2026 ' + (st.progress || 0) + '%')
+        : (st.success ? '\u2705 Установка завершена успешно' : '\u274c Ошибка: ' + (st.error || 'неизвестно'));
+      if (st.finished && st.success) {
+        const prx = $('#tg-proxy');
+        if (prx && !prx.value) prx.value = 'socks5://127.0.0.1:1080';
+      }
+      const cancel = $('#ag-cancel');
+      if (cancel) cancel.classList.toggle('hidden', !st.running);
+    }
+    async function agPoll() {
+      try {
+        const r = await api.get('/api/v1/settings/telegram/adguard/setup');
+        const st = r.job || {};
+        agRender(st);
+        if (!st.running && agTimer) { clearInterval(agTimer); agTimer = 0; }
+      } catch (e) { /* страница ушла — тишина */ }
+    }
+    function agStop() { if (agTimer) { clearInterval(agTimer); agTimer = 0; } }
+    const agCancel = $('#ag-cancel');
+    if (agCancel) agCancel.onclick = async () => {
+      try { await api.post('/api/v1/settings/telegram/adguard/setup', { action: 'cancel' }); toast('Останавливаю установку\u2026', 'ok', '\ud83d\udee1'); } catch (e) { toast(e.message, 'err'); }
     };
+    const agClose = $('#ag-close');
+    if (agClose) agClose.onclick = () => { agStop(); const b = $('#ag-setup'); if (b) b.classList.add('hidden'); };
+    if (tga) tga.onclick = async () => {
+      try {
+        const r = await api.post('/api/v1/settings/telegram/adguard/setup', { action: 'start' });
+        toast(r.message || 'Установка запущена', 'ok', '\ud83d\udee1 AdGuard');
+        agStop(); agPoll(); agTimer = setInterval(agPoll, 1500);
+      } catch (e) { toast(e.message, 'err'); agPoll(); }
+    };
+    // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
+    api.get('/api/v1/settings/telegram/adguard/setup').then(r => {
+      const st = r.job || {};
+      if (st.running || (st.finished && st.finished_at && Date.now() / 1000 - st.finished_at < 900)) {
+        agRender(st);
+        if (st.running) { agStop(); agTimer = setInterval(agPoll, 1500); }
+      }
+    }).catch(() => {});
     const tgp = $('#tg-ping');                        // v1.70.14: замер пинга
     if (tgp) tgp.onclick = async () => {
       const out = $('#tg-ping-out');

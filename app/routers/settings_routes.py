@@ -652,6 +652,37 @@ def ping_telegram(db: Session = Depends(get_db), admin: User = Depends(require_a
     return tg.ping_proxy(db)
 
 
+@router.get("/telegram/adguard/setup",
+            summary="Статус автоустановки AdGuard VPN (админ)")
+def adguard_setup_status(admin: User = Depends(require_admin)):
+    from ..services import adguard_setup as ag
+    return {"job": ag.setup_status(), "running": ag.job.running,
+            "hint": "Механика как у обновления: фазы по порядку, живой "
+                    "журнал; ссылка входа AdGuard появляется в job.login_url."}
+
+
+@router.post("/telegram/adguard/setup",
+             summary="Автоустановка AdGuard VPN из программы: start/cancel (админ)")
+def adguard_setup_action(body: dict, db: Session = Depends(get_db),
+                         admin: User = Depends(require_admin)):
+    from ..services import adguard_setup as ag
+    action = (body or {}).get("action", "start")
+    if action == "cancel":
+        if not ag.cancel_setup():
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Установка не выполняется")
+        log_action(admin, "adguard_setup_cancel")
+        return {"ok": True, "message": "Останавливаю…"}
+    if ag.job.running:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Установка уже выполняется — смотрите журнал "
+                            "в карточке Telegram")
+    ag.start_setup(db)
+    log_action(admin, "adguard_setup_start")
+    return {"ok": True,
+            "message": "Установка запущена — следите за процессом в карточке"}
+
+
 @router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")
 def refresh_bot(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from ..services import telegram_bot as tg

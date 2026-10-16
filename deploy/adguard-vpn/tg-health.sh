@@ -73,5 +73,11 @@ if { [ "$AVG2" -lt 0 ] || [ "$AVG2" -gt "$TARGET" ]; } && [ -n "$FAST" ] && [ "$
   AVG3=$(measure)
   echo "tg-health: итог «$FAST» пинг ${AVG3} мс"
 fi
+# если туннелем владеет systemd-юнит — передаём ему подключение
+# (юнит переподключится на выбранную локацию; Restart=always держит туннель)
+if systemctl is-active -q adguard-vpn-telegram 2>/dev/null; then
+  systemctl try-restart adguard-vpn-telegram 2>/dev/null || true
+fi
+
 echo "tg-health: готово (проверка программы — кнопка «📏 Пинг» в карточке Telegram)"
 exit 0

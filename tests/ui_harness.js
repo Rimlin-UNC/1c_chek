@@ -642,6 +642,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.14':") && bundle.includes('tg-ping') &&
      bundle.includes('settings/telegram/ping'),
      'v1.70.14: пинг пути Telegram в карточке (3 запроса, среднее)');
+  ok(bundle.includes('/telegram/adguard/setup') && bundle.includes('ag-setup-log') &&
+     bundle.includes("'1.70.15':"),
+     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + живой журнал)');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

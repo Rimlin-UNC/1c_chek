@@ -19,7 +19,8 @@ from app.services import telegram_bot as tg
 
 class TestVersions17014:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.14"
+        # v1.70.15: пин ослаблен до минимума (точную версию проверяет свой тест)
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= (1, 70, 14)
 
     def test_changelog(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()
