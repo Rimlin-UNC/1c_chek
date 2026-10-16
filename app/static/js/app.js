@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.13': [
+    { icon: '🛡', title: 'Telegram через AdGuard VPN — второй сервер не нужен',
+      text: 'Если есть лицензия AdGuard VPN: её CLI ставится прямо на этот сервер, режим SOCKS5 поднимает локальный прокси socks5://127.0.0.1:1080, а бот отправляет через него напоминания и ответы (кнопка-пресет «🛡 AdGuard VPN» в настройках Telegram). Готовая пошаговая инструкция и автозапуск — deploy/adguard-vpn. Мост и канал MAX остаются как запасные пути.' },
+  ],
   '1.70.12': [
     { icon: '🛰', title: 'Telegram-бот работает даже там, где Telegram заблокирован',
       text: 'Если сервер не видит api.telegram.org, теперь есть три пути: прокси (было), новый сменный адрес API и готовый «мост» — крошечная служба из одного файла (deploy/tg-bridge в комплекте), которая ставится на любой недорогой сервер с доступом к Telegram и пересылает трафик бота. Диагностика показывает все три пути сразу. Напоминания, дайджесты и ответы бота идут через выбранный путь; канал MAX не тронут.' },
@@ -8107,10 +8111,14 @@ async function viewSettings(container) {
         <label class="field" style="margin-bottom:10px"><span>Прокси для Telegram
           ${tgSet.proxy_configured ? '(задан: ' + esc(tgSet.proxy_masked || '•••') + ')' : '(не задан — классический способ обхода блокировки)'}</span>
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
+          <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
+          <span class="form-hint">подставить локальный прокси AdGuard VPN (CLI на этом же сервере, режим SOCKS5) — инструкция deploy/adguard-vpn</span>
+        </div>
         <label class="field" style="margin-bottom:10px"><span>Адрес API (v1.70.12)
           ${tgSet.api_base && tgSet.api_base !== 'https://api.telegram.org' ? '(нестандартный: ' + esc(tgSet.api_base) + ')' : '(стандартный)'}</span>
           <input id="tg-apibase" autocomplete="off" placeholder="https://api.telegram.org — или свой мост: http://127.0.0.1:8077 (пусто — не менять; «-» — стандартный)"></label>
-        <p class="form-hint" style="margin:2px 0 10px">🛰 Прокси нет и прямого доступа тоже? Поднимите <b>мост</b> на любой машине с доступом к Telegram (дешёвый VPS, домашний ПК): один файл из <code>deploy/tg-bridge</code> в комплекте + адрес здесь. Подробно — в разделе инструкции «Telegram-бот сквозь блокировки».</p>
+        <p class="form-hint" style="margin:2px 0 10px">🛰 Прокси нет и прямого доступа тоже? Поднимите <b>мост</b> на любой машине с доступом к Telegram (дешёвый VPS, домашний ПК): один файл из <code>deploy/tg-bridge</code> в комплекте + адрес здесь. Подробно — в разделе инструкции «Telegram-бот сквозь блокировки». Есть лицензия AdGuard VPN? Второй сервер не нужен: CLI прямо на этом сервере, кнопка 🛡 у поля прокси и deploy/adguard-vpn.</p>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="tg-enabled" ${tgSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Включить бота: напоминания в ${esc(tgSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
@@ -9154,6 +9162,14 @@ async function viewSettings(container) {
         route(true);
       } catch (e) { toast(e.message, 'err'); }
       tts.disabled = false;
+    };
+    const tga = $('#tg-adguard');                     // v1.70.13: пресет AdGuard VPN
+    if (tga) tga.onclick = () => {
+      const prx = $('#tg-proxy');
+      if (prx) {
+        prx.value = 'socks5://127.0.0.1:1080';
+        toast('Подставлен локальный прокси AdGuard VPN (CLI, режим SOCKS5). Установите CLI по инструкции deploy/adguard-vpn/README.md, затем «Сохранить и запустить».', 'ok', '🛡');
+      }
     };
     const tgd = $('#tg-diag');                            // v1.29.0
     if (tgd) tgd.onclick = async () => {

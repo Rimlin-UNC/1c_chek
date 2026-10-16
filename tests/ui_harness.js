@@ -636,6 +636,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.10: возврат из «Все настройки» всегда виден');
   ok(bundle.includes("'1.70.12':") && bundle.includes('tg-apibase'),
      'v1.70.12: Telegram — сменный адрес API (мост/шлюз)');
+  ok(bundle.includes("'1.70.13':") && bundle.includes('tg-adguard') &&
+     bundle.includes('socks5://127.0.0.1:1080'),
+     'v1.70.13: пресет AdGuard VPN для Telegram');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

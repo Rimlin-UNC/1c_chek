@@ -663,7 +663,8 @@ def diagnose(db: Session) -> dict:
         v = ("ok", "Прямой доступ к Telegram есть — прокси не нужен.")
     else:
         v = ("bad", "Прямой доступ к api.telegram.org заблокирован (типично "
-             "для РФ). Варианты: прокси, свой адрес API (мост — "
+             "для РФ). Варианты: прокси (в т.ч. AdGuard VPN на этом же "
+             "сервере — deploy/adguard-vpn), свой адрес API (мост — "
              "deploy/tg-bridge в комплекте) или канал MAX.")
     return {"direct": direct, "proxy": via, "proxy_configured": bool(proxy),
             "api_base": api_base,

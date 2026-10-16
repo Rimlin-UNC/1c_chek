@@ -23,7 +23,8 @@ from app.services import telegram_bot as tg
 # ---------------------------------------------------------------- версии
 class TestVersions17012:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.12"
+        # v1.70.13: строгий замок версии переехал в test_v17013
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= (1, 70, 12)
 
     def test_env_api_base(self):
         assert settings.TELEGRAM_API_BASE == "https://api.telegram.org"
