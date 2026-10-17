@@ -656,6 +656,10 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      !bundle.includes('agNeedPassword') &&
      !/agLaunch\([^)]*sudo_password/.test(bundle),
      'v1.70.16: поле пароля сервера (sudo) из панели AdGuard удалено');
+  ok(bundle.includes("'1.70.17':") && bundle.includes('refspec') &&
+     bundle.includes('Источник обновлений') &&
+     bundle.includes('ambiguous argument'),
+     'v1.70.17: обновление на другую ветку — fetch явным refspec (без «ambiguous argument»)');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

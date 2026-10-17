@@ -94,7 +94,9 @@ def _restore_proxy_setting():
 # ==============================================================================
 class TestVersions17016:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.16"
+        # v1.70.17: пин ослаблен (точную версию проверяет свой тест)
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 16)
 
     def test_changelog(self):
         ch = _read("CHANGELOG.md")
@@ -111,10 +113,11 @@ class TestVersions17016:
         assert js.index("'1.70.16':") < js.index("'1.70.15':")
 
     def test_versions_everywhere(self):
+        # v1.70.17: сверяем с текущей версией из config (точки синхронны)
         for f in ("app/static/index.html", "app/static/sw.js",
                   "app/static/manifest.webmanifest",
                   "app/static/maxapp/index.html"):
-            assert "1.70.16" in _read(f), f
+            assert settings.APP_VERSION in _read(f), f
 
     def test_service_header_mentions_passwordless(self):
         src = _read("app/services/adguard_setup.py")
