@@ -620,6 +620,16 @@ def _step_precheck() -> None:
                            "systemd (Ubuntu/Debian).")
     if not shutil.which("curl"):
         raise RuntimeError("curl не найден: sudo apt install -y curl")
+    # v1.70.26: /dev/net/tun проверяем ДО установки CLI и ДО ссылки входа.
+    # Без TUN вся схема «VPN только для Telegram» невозможна, а раньше отказ
+    # всплывал лишь в шаге tun — то есть после 1–2 минут установки и после
+    # того, как владелец открыл и подтвердил ссылку входа. Помощник проверяет
+    # то же в фазе preflight, но она вызывается только в режиме helper,
+    # поэтому здесь проверка своя, работающая при любом режиме прав.
+    if not os.path.exists("/dev/net/tun"):
+        raise RuntimeError("Нет /dev/net/tun — TUN-режим недоступен "
+                           "(сервер в контейнере без NET_ADMIN?). Без него "
+                           "поднять VPN только для Telegram не получится.")
     mode, note = _detect_rights()
     if not mode:
         job.one_time_cmd = one_time_cmd()
@@ -942,14 +952,14 @@ def _step_tunnel() -> None:
     rc, out = run_cmd(["systemctl", "daemon-reload"], timeout=30)
     if rc != 0:
         raise RuntimeError("daemon-reload не удался: " + (out or "")[-200:])
-    run_cmd(["systemctl", "enable", "adguard-vpn-telegram"], timeout=30)
-    rc, out = run_cmd(["systemctl", "restart", "adguard-vpn-telegram"],
+    run_cmd(["systemctl", "enable", TUNNEL_UNIT], timeout=30)
+    rc, out = run_cmd(["systemctl", "restart", TUNNEL_UNIT],
                       timeout=60)
     if rc != 0:
         raise RuntimeError("Служба туннеля не запустилась: "
                            + (out or "").strip()[-300:])
     for _ in range(10):                        # до 20 с на подключение
-        rc, _ = run_cmd(["systemctl", "is-active", "adguard-vpn-telegram"],
+        rc, _ = run_cmd(["systemctl", "is-active", TUNNEL_UNIT],
                         timeout=15)
         if rc == 0:
             break
@@ -975,8 +985,10 @@ def _step_autopilot() -> None:
     rc, out = run_cmd(["systemctl", "daemon-reload"], timeout=30)
     if rc != 0:
         raise RuntimeError("daemon-reload не удался: " + (out or "")[-200:])
-    run_cmd(["systemctl", "enable", "tg-health.timer"], timeout=30)
-    rc, out = run_cmd(["systemctl", "enable", "--now", "tg-health.timer"],
+    # v1.70.26: одним вызовом. `enable --now` и ставит автозапуск, и
+    # запускает таймер, поэтому стоявший перед ним отдельный `enable` был
+    # лишним повтором той же работы.
+    rc, out = run_cmd(["systemctl", "enable", "--now", TIMER_UNIT],
                       timeout=30)
     if rc != 0:
         raise RuntimeError("Таймер автопилота не включился: "

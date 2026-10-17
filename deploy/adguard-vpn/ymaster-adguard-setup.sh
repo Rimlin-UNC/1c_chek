@@ -174,6 +174,29 @@ phase_install_rule() {
   say "   комплект : $KIT_DIR"
   say "   правило  : $SUDOERS_FILE (пользователь: $user)"
   say "   проверка : sudo -u \"$user\" sudo -n $HELPER rights"
+
+  # 4) v1.70.26: если VPN уже был установлен ранее — обновляем РАЗЛОЖЕННЫЕ
+  # по системе юниты и tg-health.sh из свежего комплекта. Раньше deploy.sh
+  # --update обновлял только $KIT_DIR, а /etc/systemd/system и
+  # /usr/local/sbin/tg-health.sh оставались старыми до следующего прогона
+  # мастера. Из-за этого исправления в автопилоте не попадали на сервер:
+  # например, дорелизный tg-health.sh мерил пинг через socks5h://127.0.0.1:1080
+  # и в TUN-режиме получал -1, ежедневно дёргая локацию на живом туннеле.
+  if [ -f "/etc/systemd/system/${TUNNEL_UNIT}.service" ]; then
+    say "   обновление: VPN уже установлен — освежаю юниты и автопилот"
+    for f in "${UNITS_ETC[@]}"; do
+      install -m 0644 -o root -g root "$KIT_DIR/$f" "/etc/systemd/system/$f" \
+        || say "   внимание: не обновить /etc/systemd/system/$f"
+    done
+    for f in "${UNITS_SBIN[@]}"; do
+      install -m 0755 -o root -g root "$KIT_DIR/$f" "/usr/local/sbin/$f" \
+        || say "   внимание: не обновить /usr/local/sbin/$f"
+    done
+    systemctl daemon-reload 2>/dev/null || true
+    # try-restart, а не restart: VPN, который владелец ВЫКЛЮЧИЛ кнопкой,
+    # включать обратно нельзя — красная кнопка обязана означать «выключено».
+    systemctl try-restart "$TUNNEL_UNIT" 2>/dev/null || true
+  fi
 }
 
 phase_remove_rule() {
@@ -192,6 +215,13 @@ phase_preflight() {
   [ "$(uname -s)" = "Linux" ] || die "автоустановка работает на Linux"
   systemctl --version >/dev/null 2>&1 || die "systemd не найден (нужен Ubuntu/Debian)"
   command -v curl >/dev/null 2>&1 || die "curl не найден: apt install -y curl"
+  # v1.70.26: /dev/net/tun проверяем ЗДЕСЬ, а не только в фазе tun. Раньше
+  # отказ всплывал в самом конце — уже ПОСЛЕ установки CLI (1–2 минуты) и
+  # после того, как владелец открыл ссылку входа и подтвердил её. Без TUN
+  # схема «VPN только для Telegram» невозможна в принципе, поэтому говорить
+  # об этом надо до установки, а не после потраченной ссылки подтверждения.
+  [ -e /dev/net/tun ] \
+    || die "нет /dev/net/tun — TUN-режим недоступен (контейнер без NET_ADMIN?). Без него поднять VPN только для Telegram не получится"
   [ -d "$KIT_DIR" ] || die "комплект не разложен ($KIT_DIR) — выполните install-rule ещё раз"
   if cli_path >/dev/null 2>&1; then
     say "cli: $(cli_path)"
@@ -272,10 +302,20 @@ phase_login() {
 # Почему AUTO, а не NONE: AUTO сам держит маршруты при реконнектах и смене
 # локации; в паре с selective в туннель попадают только перечисленные домены.
 #
-# Имя фазы — ИСТОРИЧЕСКОЕ «socks». Именно оно записано в уже установленные
-# sudoers-правила /etc/sudoers.d/ymaster-adguard (правило перечисляет фазы
-# явно, а обновление из приложения install-rule не перезапускает). Поэтому
-# программа по-прежнему вызывает фазу «socks», а «tun» принято как синоним.
+# v1.70.25: имя фазы — «tun»; прежний синоним «socks» удалён (два имени
+# одного действия — лишнее). Правило перечисляет фазы явно, поэтому его
+# переустанавливает deploy.sh --update.
+#
+# v1.70.26: режим ПЕРЕПРОВЕРЯЕТСЯ по факту, а не по коду возврата.
+# `site-exclusions mode selective` может не подействовать, и тогда список
+# исключений работает НАОБОРОТ: в general-режиме через VPN идёт ВЕСЬ трафик
+# сервера, КРОМЕ перечисленных доменов, — то есть сайт, ФНС, MAX и 1С
+# уехали бы в VPN, а Telegram остался прямым (и заблокированным). Прежняя
+# обязательная проверка «api.telegram.org присутствует в show» эту инверсию
+# НЕ ловила: домен лежал бы в общем списке и grep проходил. Молча перевернуть
+# требование «туннелим только Telegram» недопустимо, поэтому режим читается
+# обратно (`site-exclusions mode` без аргументов печатает текущий — README CLI)
+# и при расхождении фаза падает с точной причиной.
 phase_tun() {
   need_root "tun"
   [ -e /dev/net/tun ] || die "нет /dev/net/tun — TUN-режим недоступен (контейнер без NET_ADMIN?)"
@@ -285,6 +325,16 @@ phase_tun() {
     || die "set-tun-routing-mode AUTO не удался"
   "$cli" site-exclusions mode selective \
     || die "site-exclusions mode selective не удался"
+  # v1.70.26: перечитываем режим — без аргументов `mode` печатает текущий.
+  # Это единственная защита от тихой инверсии требования (см. шапку фазы):
+  # general = всё КРОМЕ Telegram, selective = ТОЛЬКО Telegram.
+  local cur
+  cur=$("$cli" site-exclusions mode 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+  case "$cur" in
+    *selective*) : ;;
+    *general*)   die "режим исключений остался GENERAL — через VPN шёл бы весь трафик сервера КРОМЕ Telegram (нужно наоборот). Выполните: sudo adguardvpn-cli site-exclusions mode selective" ;;
+    *)           die "не подтвердить selective-режим (вывод CLI: ${cur:-пусто}). Проверьте: sudo adguardvpn-cli site-exclusions mode" ;;
+  esac
 
   # Домены Telegram. api.telegram.org — обязателен (Bot API); поддомены
   # AdGuard сам не наследует (issue #148), поэтому wildcards добавлены
@@ -338,7 +388,21 @@ phase_units() {
     sleep 2
   done
   [ "$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null)" = "active" ] \
-    || die "туннель не поднялся за 20 с — journalctl -u $TUNNEL_UNIT"
+    || die "туннель не поднялся за 20 с — journalctl -u $TUNNEL_UNIT (частая причина: нет активной лицензии AdGuard — sudo adguardvpn-cli license)"
+  # v1.70.26: «active» — ещё не доказательство, что мы в TUN. Проверяем по
+  # факту, а не по конфигу: юнит жив, но режим мог остаться SOCKS (тогда
+  # слушается 127.0.0.1:1080, а в туннель прозрачно не уходит НИЧЕГО — поле
+  # «Прокси» мастер очистил, и бот пошёл бы напрямую, то есть в блокировку).
+  # Проверки выбраны независимыми от формата вывода CLI: слушающий порт 1080
+  # и наличие tun-интерфейса — это поведение, а не текст конфига.
+  if (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    die "туннель активен, но режим остался SOCKS (слушается 127.0.0.1:1080) — трафик Telegram в VPN не уходит. Выполните: sudo adguardvpn-cli config set-mode TUN && sudo systemctl restart $TUNNEL_UNIT"
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    ip -o link show 2>/dev/null | grep -qiE '^[0-9]+: (tun|utun|wg|adguard)' \
+      || say "внимание: tun-интерфейс не найден (ip link) — проверьте маршруты: ip route"
+  fi
   say "туннель активен и переживёт перезагрузку"
 }
 
@@ -356,17 +420,28 @@ phase_autopilot() {
 # то есть включил бы VPN обратно за спиной владельца.
 phase_off() {
   need_root "off"
-  systemctl disable --now "$TIMER_UNIT" >/dev/null 2>&1 || true
+  # v1.70.26: отказ таймера больше не проглатывается. `|| true` означал, что
+  # выживший автопилот в 15:10 увидит мёртвый путь и сам выполнит `connect -l`,
+  # то есть ВКЛЮЧИТ VPN обратно — а кнопка в панели будет гореть красным.
+  # Красная кнопка обязана означать «VPN выключен», поэтому состояние таймера
+  # перечитывается и при расхождении фаза падает честно.
+  local trc=0
+  systemctl disable --now "$TIMER_UNIT" >/dev/null 2>&1 || trc=$?
   systemctl disable --now "$TUNNEL_UNIT" >/dev/null 2>&1 || true
   local cli
   if cli=$(cli_path); then
     # ручной сеанс (connect вне юнита) тоже надо снять
     "$cli" disconnect >/dev/null 2>&1 || true
   fi
-  local st
+  local st tst ten
   st=$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null || true)
   [ "$st" = "active" ] && die "туннель не остановился — systemctl status $TUNNEL_UNIT"
-  say "VPN выключен: туннель остановлен, автопилот отключён"
+  tst=$(systemctl is-active "$TIMER_UNIT" 2>/dev/null || true)
+  ten=$(systemctl is-enabled "$TIMER_UNIT" 2>/dev/null || true)
+  if [ "$tst" = "active" ] || [ "$ten" = "enabled" ]; then
+    die "автопилот не отключился (active=$tst, enabled=$ten, код $trc) — в 15:10 он включил бы VPN обратно. Выполните: sudo systemctl disable --now $TIMER_UNIT"
+  fi
+  say "VPN выключен: туннель остановлен, автопилот отключён ($tst/$ten)"
   say "вход и лицензия сохранены — повторное включение без ссылки"
 }
 

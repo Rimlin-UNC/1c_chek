@@ -693,6 +693,14 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('btn-ok') && bundle.includes('btn-bad') &&
      bundle.includes('agVpnOn'),
      'v1.70.25: цвет кнопки берётся из фактического состояния VPN');
+  // v1.70.26: успех доказывается по факту, а не по коду возврата. Режим
+  // исключений перечитывается (general = смысл списка наоборот), поддержка TUN
+  // проверяется до установки CLI и до ссылки входа.
+  ok(bundle.includes("'1.70.26':") && bundle.includes('/dev/net/tun') &&
+     bundle.includes('selective'),
+     'v1.70.26: режим «через VPN только Telegram» перечитывается, а не предполагается');
+  ok(bundle.includes('1080') && bundle.includes('КРОМЕ Telegram'),
+     'v1.70.26: владельцу объяснены инверсия general-режима и остаточный SOCKS-порт');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

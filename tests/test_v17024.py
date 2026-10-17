@@ -58,6 +58,19 @@ fi
 if [ "$1" = "site-exclusions" ] && [ "$2" = "show" ]; then
   [ -f "$AG_STUB_STATE" ] && cat "$AG_STUB_STATE"
 fi
+# v1.70.26: `site-exclusions mode` БЕЗ аргументов печатает текущий режим —
+# так ведёт себя настоящий CLI (README AdGuardVPNCLI). Помощник перечитывает
+# режим, чтобы не принять general за selective: смысл списка при этом
+# противоположный (в VPN всё, КРОМЕ перечисленного). Стартовое значение —
+# general, как у CLI по умолчанию, поэтому тест небезразличен к проверке.
+if [ "$1" = "site-exclusions" ] && [ "$2" = "mode" ]; then
+  if [ "${3:-}" = "selective" ] || [ "${3:-}" = "general" ]; then
+    printf '%s\n' "$3" > "$AG_STUB_MODE"
+  else
+    m=$(cat "$AG_STUB_MODE" 2>/dev/null)
+    printf '%s\n' "${m:-general}"
+  fi
+fi
 if [ "$1" = "--version" ]; then echo "adguardvpn-cli 1.7.12"; fi
 exit 0
 """
@@ -96,9 +109,12 @@ def stub_cli(tmp_path):
     cli.chmod(0o755)
     log = tmp_path / "cli.log"
     state = tmp_path / "exclusions.txt"
+    mode = tmp_path / "mode.txt"
     log.write_text("", encoding="utf-8")
     state.write_text("", encoding="utf-8")
-    return {"bindir": str(bindir), "log": str(log), "state": str(state)}
+    mode.write_text("", encoding="utf-8")
+    return {"bindir": str(bindir), "log": str(log), "state": str(state),
+            "mode": str(mode)}
 
 
 def _run_phase(stub, phase, cwd):
@@ -115,6 +131,7 @@ def _run_phase(stub, phase, cwd):
            "PATH=" + env_path,
            "AG_STUB_LOG=" + stub["log"],
            "AG_STUB_STATE=" + stub["state"],
+           "AG_STUB_MODE=" + stub["mode"],
            "bash", os.path.abspath(HELPER_SH), phase]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120,
                           cwd=cwd, stdin=subprocess.DEVNULL)
