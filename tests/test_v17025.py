@@ -447,6 +447,37 @@ class TestUi:
         assert "agPaint(r.vpn, !!st.running)" in js
         assert js.count("agPaint(") >= 4
 
+    def test_failed_off_rereads_state_instead_of_guessing(self):
+        """После неудачного выключения состояние ПЕРЕЧИТЫВАЕТСЯ с сервера.
+
+        Отказ может быть частичным (автопилот погашен, туннель выжил — помощник
+        тогда честно падает с «туннель не остановился») и полным (нет правила
+        помощника). В обоих случаях VPN остаётся включённым, и кнопка обязана
+        продолжать предлагать «выключить». Если вместо этого нарисовать красную
+        «включить», следующий клик запустит мастер поверх работающего туннеля.
+        """
+        js = _read(APP_JS)
+        assert "async function agRefreshVpn()" in js
+        off = js[js.index("async function agTurnOff()"):
+                 js.index("if (tga) tga.onclick")]
+        # ни одна ветка отказа не красит кнопку угаданным состоянием
+        assert "{ on: true, known: true }" not in off
+        assert "agPaint(null, false)" not in off
+        # обе ветки отказа перечитывают фактическое состояние
+        assert off.count("await agRefreshVpn()") >= 2, off
+        # а перечитывание берёт его с сервера, а не из кэша
+        refresh = js[js.index("async function agRefreshVpn()"):
+                     js.index("async function agTurnOff()")]
+        assert "/api/v1/settings/telegram/adguard/setup" in refresh
+        assert "agPaint(r.vpn" in refresh
+
+    def test_off_response_without_vpn_field_still_rereads(self):
+        """Ответ старого сервера может не содержать `vpn` — не угадываем."""
+        js = _read(APP_JS)
+        off = js[js.index("async function agTurnOff()"):
+                 js.index("if (tga) tga.onclick")]
+        assert "if (r && r.vpn) agPaint(r.vpn, false); else await agRefreshVpn();" in off
+
     def test_no_proxy_prefill(self):
         js = _read(APP_JS)
         assert "prx.value = 'socks5://127.0.0.1:1080'" not in js

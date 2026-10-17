@@ -9361,18 +9361,33 @@ async function viewSettings(container) {
     // выключен — запускаем мастер (первый раз он покажет ссылку регистрации
     // сервера). Состояние берём из фактического состояния юнита, а не из
     // журнала установки: туннель могли остановить руками.
+    // v1.70.25: перечитать ФАКТИЧЕСКОЕ состояние VPN с сервера и покрасить
+    // кнопку по нему. Нужно после любой неудачи выключения: угадывать
+    // состояние нельзя. Отказ может быть частичным (автопилот погашен, туннель
+    // выжил — помощник в этом случае честно падает с «туннель не
+    // остановился»), а может быть и полным (нет правила помощника). В обоих
+    // случаях VPN остаётся включённым, и кнопка обязана продолжать предлагать
+    // «выключить»: стань она красной «включить», следующий клик запустил бы
+    // мастер поверх работающего туннеля.
+    async function agRefreshVpn() {
+      try {
+        const r = await api.get('/api/v1/settings/telegram/adguard/setup');
+        agPaint(r.vpn, !!(r.job && r.job.running));
+      } catch (e) { agPaint(null, false); }
+    }
     async function agTurnOff() {
       agPaint(null, true);
       try {
         const r = await api.post('/api/v1/settings/telegram/adguard/setup',
           { action: 'off' });
-        if (r && r.need_rule) { agNeedRule(r, r.message); agPaint(null, false); return; }
+        if (r && r.need_rule) { agNeedRule(r, r.message); await agRefreshVpn(); return; }
         toast(r.message || 'VPN выключен', 'ok', '\ud83d\udee1 AdGuard');
-        agPaint(r.vpn, false);
+        // ответ мог прийти без vpn (старый сервер) — тогда перечитываем сами
+        if (r && r.vpn) agPaint(r.vpn, false); else await agRefreshVpn();
       } catch (e) {
         if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
         else toast(e.message, 'err');
-        agPaint({ on: true, known: true }, false);
+        await agRefreshVpn();
       }
     }
     if (tga) tga.onclick = async () => {
