@@ -643,9 +643,19 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('settings/telegram/ping'),
      'v1.70.14: пинг пути Telegram в карточке (3 запроса, среднее)');
   ok(bundle.includes('/telegram/adguard/setup') && bundle.includes('ag-setup-log') &&
-     bundle.includes('ag-sudo-pw') && bundle.includes('adguard/setup/preflight') &&
-     bundle.includes("'1.70.15':"),
-     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + sudo-пароль + живой журнал)');
+     bundle.includes('adguard/setup/preflight') && bundle.includes("'1.70.15':"),
+     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + живой журнал)');
+  ok(bundle.includes("'1.70.16':") && bundle.includes('ag-cmd') &&
+     bundle.includes('ag-copy-cmd') && bundle.includes('ag-recheck') &&
+     bundle.includes('one_time_cmd') && bundle.includes('ymaster-adguard-setup') &&
+     bundle.includes('/etc/sudoers.d/ymaster-adguard'),
+     'v1.70.16: мастер AdGuard без пароля — одна команда для терминала и «Проверить снова»');
+  // Пароль окна обновления (своя механика, v1.17.0) остаётся — проверяем,
+  // что из панели AdGuard исчезли ЕЁ идентификаторы пароля.
+  ok(!bundle.includes('ag-sudo-pw') && !bundle.includes('ag-sudo-row') &&
+     !bundle.includes('agNeedPassword') &&
+     !/agLaunch\([^)]*sudo_password/.test(bundle),
+     'v1.70.16: поле пароля сервера (sudo) из панели AdGuard удалено');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

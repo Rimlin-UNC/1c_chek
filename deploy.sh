@@ -366,6 +366,17 @@ else
   warn "sudoers-правило не установлено — обновление из приложения потребует ручного рестарта"
 fi
 
+# v1.70.16: мастер AdGuard VPN работает БЕЗ пароля сервера — ставим
+# привилегированного помощника (root:root) и узкое sudoers-правило на его
+# фиксированные фазы. Блок защищён: ошибка не должна ронять деплой —
+# без правила панель мастера покажет одну команду для терминала.
+AG_HELPER_SRC="$APP_DIR/deploy/adguard-vpn/ymaster-adguard-setup.sh"
+if [[ -f "$AG_HELPER_SRC" ]] && bash "$AG_HELPER_SRC" install-rule "$APP_DIR" >/dev/null 2>&1; then
+  ok "sudoers: мастер AdGuard VPN работает без пароля (помощник ymaster-adguard-setup)"
+else
+  warn "помощник AdGuard не установлен — мастер покажет одну команду для терминала"
+fi
+
 # ------------------------------------------------------------------
 bold "8/9 Nginx + файрвол UFW + fail2ban"
 if [[ $WITH_NGINX -eq 1 ]]; then

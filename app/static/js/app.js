@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.16': [
+    { icon: '🔓', title: 'Мастер AdGuard — без пароля сервера',
+      text: 'Поле «🔑 Пароль сервера (sudo)» из панели AdGuard VPN убрано: мастер больше не принимает пароли вовсе. Привилегированные шаги (установка CLI, вход, SOCKS5, службы, автопилот) делает один помощник /usr/local/sbin/ymaster-adguard-setup, разрешённый узким правилом /etc/sudoers.d/ymaster-adguard на фиксированные фазы — произвольные команды от root из приложения не выполняются. deploy.sh ставит помощник и правило сам; на сервере, где их ещё нет, панель показывает ОДНУ готовую команду (кнопка «📋 Скопировать») — выполнили в SSH, нажали «Проверить снова», мастер пошёл дальше без пароля.' },
+  ],
   '1.70.15': [
     { icon: '🛡', title: 'AdGuard VPN ставится из программы — в один клик',
       text: 'Кнопка «🛡 AdGuard VPN» в карточке Telegram теперь всё делает сама: установит CLI, покажет ссылку для подтверждения входа (открыли — установка идёт дальше сама), пропишет автоподключение и суточный автопилот, подставит прокси и проверит путь. Весь процесс виден живым журналом, в конце — «завершено успешно» либо понятная ошибка.' },
@@ -8121,7 +8125,7 @@ async function viewSettings(container) {
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
           <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
-          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, службы, прокси, проверка пути (v1.70.15). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
+          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, службы, прокси, проверка пути — <b>без пароля сервера</b> (v1.70.16). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
         </div>
         <div id="ag-setup" class="hidden" style="border:2px solid #d8d4ec;border-radius:10px;padding:10px 12px;margin:0 0 10px;background:rgba(59,42,126,.04)">
           <div id="ag-steps" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px"></div>
@@ -8131,11 +8135,14 @@ async function viewSettings(container) {
             <span class="form-hint" id="ag-state"></span>
           </div>
           <pre id="ag-setup-log" style="max-height:170px;overflow:auto;font-size:12px;background:#fff;border:1px solid #d8d4ec;border-radius:8px;padding:8px;margin:0 0 8px"></pre>
-          <label class="field hidden" id="ag-sudo-row" style="margin:0 0 8px"><span>🔑 Пароль сервера (sudo)</span>
-            <input type="password" id="ag-sudo-pw" autocomplete="off" placeholder="пароль служебного пользователя программы">
-            <span class="form-hint">программа работает без root, а sudo просит пароль — как в окне обновления: sudo проверяет пароль служебного пользователя приложения, не ваш. Используется только на время установки и нигде не сохраняется.</span></label>
+          <div class="field hidden" id="ag-rule-row" style="margin:0 0 8px"><span>🔓 Правило для помощника — одна команда, один раз</span>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="ag-cmd" readonly autocomplete="off" style="flex:1 1 320px;min-width:220px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px" value="">
+              <button type="button" class="btn btn-sm" id="ag-copy-cmd">📋 Скопировать</button>
+            </div>
+            <span class="form-hint">мастер AdGuard <b>не спрашивает пароль сервера</b>: привилегированные шаги делает помощник <code>/usr/local/sbin/ymaster-adguard-setup</code>, разрешённый узким правилом <code>/etc/sudoers.d/ymaster-adguard</code>. Откройте SSH, выполните команду один раз (deploy.sh ставит её сам при установке/обновлении) и нажмите «Проверить снова» — дальше мастер пойдёт без пароля.</span></div>
           <div style="display:flex;gap:8px">
-            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-start">Установить</button>
+            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-recheck">Проверить снова</button>
             <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
             <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
           </div>
@@ -9221,6 +9228,11 @@ async function viewSettings(container) {
       if (st.finished && st.success) {
         const prx = $('#tg-proxy');
         if (prx && !prx.value) prx.value = 'socks5://127.0.0.1:1080';
+        agHideRule();
+      }
+      // v1.70.16: остановились на правах — показываем одну команду (без пароля)
+      if (st.finished && !st.success && st.one_time_cmd) {
+        agNeedRule({ one_time_cmd: st.one_time_cmd }, '');
       }
       const cancel = $('#ag-cancel');
       if (cancel) cancel.classList.toggle('hidden', !st.running);
@@ -9240,42 +9252,70 @@ async function viewSettings(container) {
     };
     const agClose = $('#ag-close');
     if (agClose) agClose.onclick = () => { agStop(); const b = $('#ag-setup'); if (b) b.classList.add('hidden'); };
-    async function agLaunch(extra) {
+    // v1.70.16: мастер БЕЗ пароля — никаких полей пароля, только одна
+    // команда для терминала (её ставит deploy.sh) и кнопка «Проверить снова».
+    async function agLaunch() {
       const r = await api.post('/api/v1/settings/telegram/adguard/setup',
-        Object.assign({ action: 'start' }, extra || {}));
+        { action: 'start' });
+      if (r && r.warning) toast(r.warning, 'warn', '\ud83d\udd13');
       toast(r.message || 'Установка запущена', 'ok', '\ud83d\udee1 AdGuard');
-      const row = $('#ag-sudo-row'), st = $('#ag-start');
-      if (row) row.classList.add('hidden');
-      if (st) st.classList.add('hidden');
+      agHideRule();
       agStop(); agPoll(); agTimer = setInterval(agPoll, 1500);
     }
-    function agNeedPassword(msg) {
-      const row = $('#ag-sudo-row'), st = $('#ag-start');
+    function agHideRule() {
+      const row = $('#ag-rule-row'), rc = $('#ag-recheck');
+      if (row) row.classList.add('hidden');
+      if (rc) rc.classList.add('hidden');
+    }
+    function agNeedRule(pf, msg) {
+      const row = $('#ag-rule-row'), rc = $('#ag-recheck');
+      const cmd = (pf && pf.one_time_cmd) || '';
       if (row) row.classList.remove('hidden');
-      if (st) st.classList.remove('hidden');
+      if (rc) rc.classList.remove('hidden');
+      const inp = $('#ag-cmd');
+      if (inp) inp.value = cmd;
       const box = $('#ag-setup');
       if (box) box.classList.remove('hidden');
       const state = $('#ag-state');
-      if (state) state.textContent = 'нужен пароль сервера (sudo) — введите ниже и нажмите «Установить»';
-      toast(msg || 'Нужен пароль сервера (sudo) — как в окне обновления', 'warn', '\ud83d\udee1');
+      if (state) state.textContent = 'нужно правило помощника: выполните команду в SSH один раз и нажмите «Проверить снова» (пароль сервера мастер не спрашивает)';
+      toast(msg || 'Нужна одна команда в терминале — после неё мастер работает без пароля', 'warn', '\ud83d\udd13');
     }
+    const agCopy = $('#ag-copy-cmd');
+    if (agCopy) agCopy.onclick = async () => {
+      const inp = $('#ag-cmd');
+      const txt = inp && inp.value ? inp.value : '';
+      if (!txt) { toast('Команда пуста — откройте панель кнопкой «🛡 AdGuard VPN»', 'warn'); return; }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
+        else { if (inp) { inp.select(); document.execCommand('copy'); } }
+        toast('Команда скопирована — выполните её в SSH один раз', 'ok', '\ud83d\udccb');
+      } catch (e) { toast('Скопируйте команду вручную (выделите поле)', 'warn'); }
+    };
     if (tga) tga.onclick = async () => {
       try {
         let pf = null;
         try { pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight'); } catch (e) { pf = null; }
-        if (pf && pf.need_password) { agNeedPassword(pf.hint); return; }
-        await agLaunch({});
+        if (pf && pf.ready === false) { agNeedRule(pf, pf.hint); return; }
+        if (pf && pf.need_password) { agNeedRule(pf, pf.hint); return; }
+        await agLaunch();
       } catch (e) {
-        if (/root|sudo|парол/i.test(e.message || '')) agNeedPassword(e.message);
+        if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
         else toast(e.message, 'err');
       }
     };
-    const agStart = $('#ag-start');
-    if (agStart) agStart.onclick = async () => {
-      const pwEl = $('#ag-sudo-pw');
-      const pw = pwEl && pwEl.value ? pwEl.value : '';
-      try { await agLaunch(pw ? { sudo_password: pw } : {}); }
-      catch (e) { toast(e.message, 'err'); }
+    const agRecheck = $('#ag-recheck');
+    if (agRecheck) agRecheck.onclick = async () => {
+      agRecheck.disabled = true;
+      try {
+        const pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight');
+        if (pf && pf.ready) {
+          toast('Права есть (' + (pf.mode || 'helper') + ') — запускаю мастер', 'ok', '\u2705');
+          await agLaunch();
+        } else {
+          agNeedRule(pf, 'Правило ещё не видно: выполните команду в SSH и повторите');
+        }
+      } catch (e) { toast(e.message, 'err'); }
+      agRecheck.disabled = false;
     };
     // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
     api.get('/api/v1/settings/telegram/adguard/setup').then(r => {
