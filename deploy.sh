@@ -12,6 +12,10 @@
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
 #                                                #   в /etc/ymaster-check/deploy.conf
 #                                                #   и применяются автоматически)
+#   sudo bash deploy.sh --update --branch=main   # обновление с ЯВНОЙ веткой
+#                                                #   v1.70.19: приоритет ветки —
+#                                                #   --branch= > BRANCH= (окружение)
+#                                                #   > deploy.conf > main
 #   sudo bash rollback.sh                        # СПАСАТЕЛЬ: список рабочих версий
 #   sudo bash rollback.sh 1.44.2                 # откат к рабочей версии (когда
 #                                                #   приложение не запускается)
@@ -30,13 +34,18 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Rimlin-UNC/1c_chek.git}"
-BRANCH="${BRANCH:-main}"   # v1.70.18: канал обновлений — main
+# v1.70.18: канал обновлений — main
+# v1.70.19: значение из окружения запоминаем ОТДЕЛЬНО (ENV_BRANCH) — иначе его
+# затирает source deploy.conf ниже, и явный BRANCH= молча игнорировался.
+ENV_BRANCH="${BRANCH:-}"
+BRANCH="${ENV_BRANCH:-main}"
 APP_DIR="/opt/ymaster-check"
 APP_USER="ymaster"
 SERVICE="ymaster-check"
 
 DOMAIN=""
 SSL_DOMAIN=""
+OPT_BRANCH=""     # v1.70.19: --branch= (важнее запомненного в deploy.conf)
 UPDATE=0
 DIAGNOSE=0
 FIXSSL=0
@@ -57,9 +66,9 @@ for arg in "$@"; do
     --no-ssl) OPT_SSL="none" ;;
     --domain=*) OPT_DOMAIN="${arg#*=}" ;;
     --repo=*) REPO_URL="${arg#*=}" ;;
-    --branch=*) BRANCH="${arg#*=}" ;;
+    --branch=*) OPT_BRANCH="${arg#*=}" ;;   # v1.70.19: см. разрешение ниже
     -h|--help)
-      sed -n '2,25p' "$0"; exit 0 ;;
+      sed -n '2,32p' "$0"; exit 0 ;;   # v1.70.19: шапка целиком
     *) echo "Неизвестный аргумент: $arg"; exit 1 ;;
   esac
 done
@@ -75,7 +84,14 @@ fi
 DOMAIN="${OPT_DOMAIN:-$DOMAIN}"
 SSL_DOMAIN="${OPT_SSL:-$SSL_DOMAIN}"
 [[ "$SSL_DOMAIN" == "none" ]] && SSL_DOMAIN=""
-BRANCH="${OPT_BRANCH:-$BRANCH}"
+# v1.70.19: приоритет ветки — --branch= > BRANCH= из окружения > deploy.conf >
+# main. Раньше --branch= писал прямо в BRANCH, и source deploy.conf его затирал:
+# на сервере с конфигом прошлого запуска флаг молча игнорировался, а --update
+# уезжал на запомненную (возможно, устаревшую) ветку.
+BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"
+if [[ -n "$OPT_BRANCH" || -n "$ENV_BRANCH" ]]; then
+  echo "  ℹ Ветка задана явно (--branch=${OPT_BRANCH:-—}, BRANCH=${ENV_BRANCH:-—}) → $BRANCH"
+fi
 
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------

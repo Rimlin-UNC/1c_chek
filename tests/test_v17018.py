@@ -45,7 +45,9 @@ def _read(path):
 # ==============================================================================
 class TestVersions17018:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.18"
+        # v1.70.19: пин ослаблен (точную версию проверяет свой тест)
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 18)
 
     def test_changelog(self):
         ch = _read("CHANGELOG.md")
@@ -81,7 +83,9 @@ class TestDefaultBranchIsMain:
 
     def test_deploy_sh_default(self):
         sh = _read("deploy.sh")
-        m = re.search(r'BRANCH="\$\{BRANCH:-([^}]+)\}"', sh)
+        # v1.70.19: значение по умолчанию берётся через ENV_BRANCH, чтобы
+        # BRANCH= из окружения не затирался source deploy.conf
+        m = re.search(r'BRANCH="\$\{(?:BRANCH|ENV_BRANCH):-([^}]+)\}"', sh)
         assert m, "не найден BRANCH по умолчанию в deploy.sh"
         assert m.group(1) == NEW_BRANCH
 
@@ -93,8 +97,9 @@ class TestDefaultBranchIsMain:
     def test_explicit_branch_still_wins_in_deploy(self):
         """--branch= и BRANCH= важнее значения по умолчанию."""
         sh = _read("deploy.sh")
-        assert '--branch=*) BRANCH="${arg#*=}"' in sh
-        assert re.search(r'OPT_BRANCH:-\$BRANCH', sh)
+        assert re.search(r"--branch=\*\)\s+OPT_BRANCH=", sh), \
+            "v1.70.19: --branch= должен писать в OPT_BRANCH"
+        assert re.search(r'BRANCH="\$\{OPT_BRANCH:-', sh)
 
     def test_ui_placeholder(self):
         js = _read("app/static/js/app.js")
@@ -251,7 +256,7 @@ class TestDeployShResolvesMain:
         --branch= (без root-проверки и без самого деплоя)."""
         sh = _read("deploy.sh")
         start = sh.index('REPO_URL="${REPO_URL:-')
-        end_marker = 'BRANCH="${OPT_BRANCH:-$BRANCH}"'
+        end_marker = 'BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"'
         region = sh[start:sh.index(end_marker) + len(end_marker)]
         probe = ("#!/usr/bin/env bash\nset -uo pipefail\n"
                  + region + '\necho "BRANCH=$BRANCH"\n')
@@ -269,7 +274,7 @@ class TestDeployShResolvesMain:
         """BRANCH из окружения важнее значения по умолчанию (deploy.sh)."""
         sh = _read("deploy.sh")
         start = sh.index('REPO_URL="${REPO_URL:-')
-        end_marker = 'BRANCH="${OPT_BRANCH:-$BRANCH}"'
+        end_marker = 'BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"'
         region = sh[start:sh.index(end_marker) + len(end_marker)]
         probe = ("#!/usr/bin/env bash\nset -uo pipefail\n"
                  + region + '\necho "BRANCH=$BRANCH"\n')

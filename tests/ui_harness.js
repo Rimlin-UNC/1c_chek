@@ -663,6 +663,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.18':") && bundle.includes('placeholder="main"') &&
      !bundle.includes('placeholder="arena/01a0caaa-1c-chek"'),
      'v1.70.18: канал обновлений — main (подсказка поля «Ветка»)');
+  ok(bundle.includes("'1.70.19':") && bundle.includes('OPT_BRANCH') &&
+     bundle.includes('deploy.conf') && bundle.includes('Ветка задана явно'),
+     'v1.70.19: deploy.sh — приоритет --branch= > BRANCH= > deploy.conf > main');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
