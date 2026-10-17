@@ -128,25 +128,17 @@ def _run_phase(stub, phase, cwd):
                     reason="нет /dev/net/tun — TUN-режим недоступен")
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash недоступен")
 class TestPhaseTunLive:
-    def test_tun_sequence_for_phase_socks(self, stub_cli, tmp_path):
-        """Фаза `socks` (её зовёт программа) настраивает TUN + selective."""
+    def test_tun_sequence_for_phase_tun(self, stub_cli, tmp_path):
+        """Фаза `tun` (её зовёт программа) настраивает TUN + selective."""
         cwd = str(tmp_path / "cwd")
         os.makedirs(cwd)
-        r = _run_phase(stub_cli, "socks", cwd)
+        r = _run_phase(stub_cli, "tun", cwd)
         assert r.returncode == 0, r.stdout + r.stderr
         lines = _read(stub_cli["log"]).splitlines()
         assert "config set-mode TUN" in lines
         assert "config set-tun-routing-mode AUTO" in lines
         assert "site-exclusions mode selective" in lines
         assert "site-exclusions add api.telegram.org" in lines
-
-    def test_phase_tun_is_synonym(self, stub_cli, tmp_path):
-        """Фаза `tun` делает то же самое — имя для будущих sudoers-правил."""
-        cwd = str(tmp_path / "cwd")
-        os.makedirs(cwd)
-        r = _run_phase(stub_cli, "tun", cwd)
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert "config set-mode TUN" in _read(stub_cli["log"]).splitlines()
 
     def test_wildcards_passed_literally(self, stub_cli, tmp_path):
         """`*.telegram.org` доходит до CLI literally, а не glob-ом.
@@ -157,7 +149,7 @@ class TestPhaseTunLive:
         """
         cwd = str(tmp_path / "cwd")
         os.makedirs(cwd)
-        r = _run_phase(stub_cli, "socks", cwd)
+        r = _run_phase(stub_cli, "tun", cwd)
         assert r.returncode == 0, r.stdout + r.stderr
         log = _read(stub_cli["log"])
         assert "site-exclusions add *.telegram.org" in log
@@ -168,15 +160,15 @@ class TestPhaseTunLive:
         """Без api.telegram.org туннель бессмыслен — фаза обязана упасть."""
         cwd = str(tmp_path / "cwd")
         os.makedirs(cwd)
-        _run_phase(stub_cli, "socks", cwd)
+        _run_phase(stub_cli, "tun", cwd)
         assert "api.telegram.org" in _read(stub_cli["state"]).split()
 
     def test_idempotent_second_run(self, stub_cli, tmp_path):
         """Повторный запуск не ломает настройку (идемпотентность)."""
         cwd = str(tmp_path / "cwd")
         os.makedirs(cwd)
-        first = _run_phase(stub_cli, "socks", cwd)
-        second = _run_phase(stub_cli, "socks", cwd)
+        first = _run_phase(stub_cli, "tun", cwd)
+        second = _run_phase(stub_cli, "tun", cwd)
         assert first.returncode == 0 and second.returncode == 0, \
             second.stdout + second.stderr
         # домены не задублировались в списке исключений
@@ -187,7 +179,7 @@ class TestPhaseTunLive:
         """Режим SCRIPT не вызывается: он не работает (#69, #190)."""
         cwd = str(tmp_path / "cwd")
         os.makedirs(cwd)
-        r = _run_phase(stub_cli, "socks", cwd)
+        r = _run_phase(stub_cli, "tun", cwd)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "SCRIPT" not in _read(stub_cli["log"])
         assert "create-route-script" not in _read(stub_cli["log"])
@@ -216,21 +208,18 @@ class TestHelperStatic:
             or 'grep -q "api.telegram.org"' in sh, \
             "должна быть проверка, что Bot API попал в исключения"
 
-    def test_both_phase_names_dispatched(self):
-        """`socks` и `tun` — отдельные строки диспетчера, обе в phase_tun."""
+    def test_phase_dispatched(self):
         sh = _read(HELPER_SH)
-        assert re.search(r"^\s+socks\)\s+phase_tun ;;", sh, re.M)
         assert re.search(r"^\s+tun\)\s+phase_tun ;;", sh, re.M)
 
-    def test_old_phase_name_still_allowed(self):
-        """`socks` остаётся в ALLOWED_PHASES: старые правила его требуют."""
+    def test_allowed_phases_match_service(self):
+        """v1.70.25: «socks» вычищен — два имени одного действия не нужны."""
         sh = _read(HELPER_SH)
         m = re.search(r'^ALLOWED_PHASES="([^"]+)"', sh, re.M)
         assert m, "не найден список разрешённых фаз"
         allowed = m.group(1).split()
-        assert "socks" in allowed, \
-            "без `socks` мастер сломается на серверах со старым правилом"
-        assert "tun" in allowed
+        assert "socks" not in allowed
+        assert "tun" in allowed and "off" in allowed
         assert "install-rule" not in allowed and "remove-rule" not in allowed
         assert set(allowed) == set(ag.HELPER_PHASES), allowed
 
@@ -275,22 +264,28 @@ class TestServiceStepTun:
         Раньше в root/nopass команда set-mode выполнялась напрямую через
         run_cmd, и одна настройка жила в двух местах (Python и bash).
         """
+        from app.database import SessionLocal
         calls = []
         monkeypatch.setattr(ag, "run_helper",
-                            lambda phase, timeout=ag.CMD_TIMEOUT, stream=False:
+                            lambda phase, timeout=ag.CMD_TIMEOUT, stream=False,
+                            mode=None:
                             calls.append(phase) or (0, "ok\nготово"))
 
         def _boom(*a, **k):
             raise AssertionError("шаг режима не должен ходить через run_cmd")
         monkeypatch.setattr(ag, "run_cmd", _boom)
 
-        for mode in ("root", "nopass", "helper"):
-            calls.clear()
-            ag.job.reset()
-            ag.job.sudo_mode = mode
-            ag._step_tun()
-            assert calls == ["socks"], (mode, calls)
-            assert ag.job.steps["tun"]["status"] == "done"
+        db = SessionLocal()
+        try:
+            for mode in ("root", "nopass", "helper"):
+                calls.clear()
+                ag.job.reset()
+                ag.job.sudo_mode = mode
+                ag._step_tun(db)
+                assert calls == ["tun"], (mode, calls)
+                assert ag.job.steps["tun"]["status"] == "done"
+        finally:
+            db.close()
 
     def test_step_tun_failure_reports_reason(self, monkeypatch, state_dir):
         monkeypatch.setattr(ag, "run_helper",
@@ -298,7 +293,7 @@ class TestServiceStepTun:
                             (1, "set-mode TUN не удался"))
         ag.job.sudo_mode = "root"
         with pytest.raises(RuntimeError) as ei:
-            ag._step_tun()
+            ag._step_tun(None)
         msg = str(ei.value)
         assert "TUN" in msg and "set-mode TUN не удался" in msg
 
@@ -309,42 +304,58 @@ class TestServiceStepTun:
                             (1, ""))
         ag.job.sudo_mode = "root"
         with pytest.raises(RuntimeError) as ei:
-            ag._step_tun()
+            ag._step_tun(None)
         assert str(ei.value).strip().endswith(":") is False
         assert len(str(ei.value)) > len("Не включить режим TUN")
 
 
 class TestProxyCleared:
+    """v1.70.25: очистка прокси переехала из отдельного шага `proxy` в шаг
+    `tun` — в TUN-режиме прокси как понятие не применяется, и отдельный шаг
+    «Настройка программы (прокси не нужен)» только путал владельца."""
+
     def test_proxy_value_is_empty(self):
         assert ag.PROXY_VALUE == "", \
             "в TUN-режиме нет SOCKS-слушателя: прокси должен быть пустым"
 
-    def test_step_proxy_clears_setting(self, state_dir):
+    def test_no_separate_proxy_step(self):
+        assert "proxy" not in ag.STEP_ORDER
+        assert "proxy" not in ag.STEP_TITLE
+        assert not hasattr(ag, "_step_proxy")
+
+    def test_step_tun_clears_setting(self, state_dir, monkeypatch):
         from app.database import SessionLocal
         from app.services import appsettings
+        monkeypatch.setattr(ag, "run_helper",
+                            lambda phase, timeout=ag.CMD_TIMEOUT, stream=False,
+                            mode=None: (0, "ok\nготово"))
         db = SessionLocal()
         try:
             appsettings.set_setting(db, ag.SETT_PROXY,
                                     "socks5://127.0.0.1:1080")
-            ag._step_proxy(db)
+            ag.job.sudo_mode = "root"
+            ag._step_tun(db)
             # get_setting подставляет default при ПУСТОМ значении, поэтому
             # возврат сенсинела и есть доказательство, что прокси очищен.
             assert appsettings.get_setting(db, ag.SETT_PROXY, "SENSEL") == \
                 "SENSEL"
-            assert ag.job.steps["proxy"]["status"] == "done"
-            assert "убран" in ag.job.steps["proxy"]["message"]
+            assert ag.job.steps["tun"]["status"] == "done"
+            assert any("убран" in line for line in ag.job.log), ag.job.log
         finally:
             db.close()
 
-    def test_step_proxy_warns_about_env_override(self, state_dir,
-                                                monkeypatch):
+    def test_step_tun_warns_about_env_override(self, state_dir, monkeypatch):
         """TELEGRAM_PROXY переопределяет пустую настройку — шаг об этом пишет."""
         from app.database import SessionLocal
+        monkeypatch.setattr(ag, "run_helper",
+                            lambda phase, timeout=ag.CMD_TIMEOUT, stream=False,
+                            mode=None: (0, "ok\nготово"))
         monkeypatch.setattr(settings, "TELEGRAM_PROXY",
                             "socks5://env:1080", raising=False)
         db = SessionLocal()
         try:
-            ag._step_proxy(db)
+            ag.job.sudo_mode = "root"
+            ag._step_tun(db)
             assert any("TELEGRAM_PROXY" in line for line in ag.job.log), \
                 ag.job.log
         finally:

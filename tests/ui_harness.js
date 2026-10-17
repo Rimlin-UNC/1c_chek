@@ -686,6 +686,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.24: AdGuard переведён на TUN + selective — через VPN только Telegram');
   ok(!bundle.includes("prx.value = 'socks5://127.0.0.1:1080'"),
      'v1.70.24: после установки прокси socks5://127.0.0.1:1080 не подставляется');
+  // v1.70.25: одна кнопка-переключатель (зелёная = работает, красная = выключен)
+  ok(bundle.includes("'1.70.25':") && bundle.includes('agPaint') &&
+     bundle.includes('agTurnOff') && bundle.includes("action: 'off'"),
+     'v1.70.25: AdGuard VPN — кнопка-переключатель включить/выключить');
+  ok(bundle.includes('btn-ok') && bundle.includes('btn-bad') &&
+     bundle.includes('agVpnOn'),
+     'v1.70.25: цвет кнопки берётся из фактического состояния VPN');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

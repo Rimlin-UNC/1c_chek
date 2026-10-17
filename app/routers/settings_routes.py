@@ -653,12 +653,13 @@ def ping_telegram(db: Session = Depends(get_db), admin: User = Depends(require_a
 
 
 @router.get("/telegram/adguard/setup",
-            summary="Статус автоустановки AdGuard VPN (админ)")
+            summary="Статус AdGuard VPN: задание + включён ли VPN (админ)")
 def adguard_setup_status(admin: User = Depends(require_admin)):
+    """v1.70.25: добавлено `vpn` — по нему панель красит кнопку-переключатель
+    (зелёный = VPN работает, красный = выключен)."""
     from ..services import adguard_setup as ag
     return {"job": ag.setup_status(), "running": ag.job.running,
-            "hint": "Механика как у обновления: фазы по порядку, живой "
-                    "журнал; ссылка входа AdGuard появляется в job.login_url."}
+            "vpn": ag.vpn_status()}
 
 
 @router.get("/telegram/adguard/setup/preflight",
@@ -671,7 +672,7 @@ def adguard_setup_preflight(admin: User = Depends(require_admin)):
 
 
 @router.post("/telegram/adguard/setup",
-             summary="Автоустановка AdGuard VPN из программы: start/cancel (админ)")
+             summary="AdGuard VPN из программы: start/cancel/off (админ)")
 def adguard_setup_action(body: dict, db: Session = Depends(get_db),
                          admin: User = Depends(require_admin)):
     from ..services import adguard_setup as ag
@@ -682,6 +683,21 @@ def adguard_setup_action(body: dict, db: Session = Depends(get_db),
                                 "Установка не выполняется")
         log_action(admin, "adguard_setup_cancel")
         return {"ok": True, "message": "Останавливаю…"}
+    if action == "off":
+        # v1.70.25: выключение VPN той же кнопкой. CLI и вход не удаляются,
+        # поэтому повторное включение идёт без ссылки подтверждения.
+        r = ag.turn_off()
+        if not r.get("ok"):
+            if r.get("need_rule"):
+                # правило помощника не установлено/устарело: это не конфликт,
+                # а «нужна одна команда в терминале» — отдаём её в ответе.
+                return {"ok": False, "need_rule": True,
+                        "one_time_cmd": r.get("one_time_cmd", ""),
+                        "message": r.get("error", "")}
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                r.get("error") or "Не выключить VPN")
+        log_action(admin, "adguard_off")
+        return {"ok": True, "vpn": r.get("vpn"), "message": r.get("message", "")}
     if ag.job.running:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Установка уже выполняется — смотрите журнал "

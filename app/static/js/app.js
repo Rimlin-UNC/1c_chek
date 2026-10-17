@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.25': [
+    { icon: '🔘', title: 'AdGuard VPN — одна кнопка-переключатель: включить (зелёная) и выключить (красная)',
+      text: 'Кнопка «🛡 AdGuard VPN» в настройках Telegram стала переключателем. Красная — VPN выключен: нажатие запускает мастер, который сам поставит CLI, покажет ссылку входа (первый раз это регистрация сервера в аккаунте AdGuard), включит режим «через VPN только Telegram», пропишет службы и проверит путь. Зелёная — VPN работает: нажатие останавливает туннель и автопилот, при этом вход и лицензия сохраняются, поэтому повторное включение идёт уже без ссылки. Цвет берётся из фактического состояния службы туннеля, а не из журнала установки: туннель могли остановить руками, и кнопка не должна врать. Если состояние определить не удалось, кнопка так и пишет вместо ложного «выключен». Выключение гасит сначала автопилот и только потом туннель — иначе автопилот в 15:10 увидел бы мёртвый путь и сам подключил VPN обратно за вашей спиной. Одновременно убрано лишнее: отдельный шаг «прокси» влит в шаг режима (в TUN прокси как понятие не применяется), из перечня команд помощника вычищено устаревшее второе имя фазы режима, а из панели — мёртвая ветка про пароль сервера, которого мастер не спрашивает с версии 1.70.16.' },
+  ],
   '1.70.24': [
     { icon: '🛡', title: 'AdGuard VPN переведён на TUN: через VPN идёт только Telegram, прокси в карточке больше не нужен',
       text: 'Раньше мастер включал режим SOCKS5: AdGuard поднимал локальный прокси 127.0.0.1:1080, а программа прописывала его в поле «Прокси для Telegram». У этой схемы нашлось слабое место — библиотека, через которую программа ходит в SOCKS, не поддерживает удалённое разрешение имён (socks5h). Это значит, что адрес api.telegram.org определялся обычным DNS сервера, и при отравлении DNS бот получал подменённый адрес и молчал, хотя сам прокси был жив и зелёный. Теперь мастер включает штатный режим AdGuard: TUN-туннель с маршрутизацией AUTO и selective-исключениями, в список которых добавлены домены Telegram (api.telegram.org и поддомены). Через VPN идёт только Telegram, весь прочий трафик сервера — сайт, ФНС, MAX, 1С — остаётся прямым, а DNS уходит в туннель, поэтому подмена адреса больше не возможна. Поле «Прокси» мастер теперь очищает: в TUN-режиме локального прокси нет, и оставленное старое значение отправило бы бота в несуществующий порт. Замер пинга и автопилот сохранены и работают по тому же пути, которым реально ходит бот. Кнопка и ссылка подтверждения входа не изменились: «🛡 AdGuard VPN» → открыть ссылку → войти → установка продолжится сама.' },
@@ -8157,7 +8161,7 @@ async function viewSettings(container) {
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
           <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
-          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, режим TUN «через VPN только Telegram», службы, проверка пути — <b>без пароля сервера</b> (v1.70.16). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
+          <span class="form-hint" id="tg-adguard-hint">одна кнопка: <b>включить</b> — программа сама поставит CLI, покажет ссылку входа (первый раз это регистрация сервера), переведёт VPN в режим «через него только Telegram» и проверит путь; <b>выключить</b> — остановит туннель и автопилот, вход и лицензия сохранятся. Пароль сервера не спрашивается. Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
         </div>
         <div id="ag-setup" class="hidden" style="border:2px solid #d8d4ec;border-radius:10px;padding:10px 12px;margin:0 0 10px;background:rgba(59,42,126,.04)">
           <div id="ag-steps" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px"></div>
@@ -9275,11 +9279,35 @@ async function viewSettings(container) {
       const cancel = $('#ag-cancel');
       if (cancel) cancel.classList.toggle('hidden', !st.running);
     }
+    // v1.70.25: одна кнопка-переключатель. Зелёная = VPN работает (нажатие
+    // выключает), красная = выключен (нажатие включает: первый раз — со
+    // ссылкой регистрации сервера). Цвет берётся из фактического состояния
+    // юнита туннеля, а не из факта «установка когда-то завершилась успешно»:
+    // туннель могли остановить руками или он мог упасть.
+    let agVpnOn = false;
+    function agPaint(vpn, busy) {
+      const b = $('#tg-adguard');
+      if (!b) return;
+      agVpnOn = !!(vpn && vpn.on);
+      const known = !!(vpn && vpn.known);
+      b.classList.toggle('btn-ok', agVpnOn && !busy);
+      b.classList.toggle('btn-bad', !agVpnOn && !busy);
+      b.disabled = !!busy;
+      b.textContent = busy ? '⏳ AdGuard VPN…'
+        : (agVpnOn ? '🛡 AdGuard VPN: включить → выключить'
+          : (known ? '🛡 AdGuard VPN: включить'
+            : '🛡 AdGuard VPN: включить (состояние неизвестно)'));
+      const h = $('#tg-adguard-hint');
+      if (h && known) h.innerHTML = agVpnOn
+        ? 'VPN <b>включён</b>: через туннель идёт только Telegram, остальной трафик сервера прямой. Нажмите кнопку, чтобы выключить — вход и лицензия сохранятся, повторное включение пойдёт без ссылки.'
+        : 'VPN <b>выключен</b>. Нажмите кнопку: программа сама поставит CLI, покажет ссылку входа (первый раз это регистрация сервера), включит режим «через VPN только Telegram» и проверит путь. Пароль не спрашивается.';
+    }
     async function agPoll() {
       try {
         const r = await api.get('/api/v1/settings/telegram/adguard/setup');
         const st = r.job || {};
         agRender(st);
+        agPaint(r.vpn, !!st.running);
         if (!st.running && agTimer) { clearInterval(agTimer); agTimer = 0; }
       } catch (e) { /* страница ушла — тишина */ }
     }
@@ -9329,12 +9357,30 @@ async function viewSettings(container) {
         toast('Команда скопирована — выполните её в SSH один раз', 'ok', '\ud83d\udccb');
       } catch (e) { toast('Скопируйте команду вручную (выделите поле)', 'warn'); }
     };
+    // v1.70.25: одна кнопка на два действия. VPN включён — выключаем,
+    // выключен — запускаем мастер (первый раз он покажет ссылку регистрации
+    // сервера). Состояние берём из фактического состояния юнита, а не из
+    // журнала установки: туннель могли остановить руками.
+    async function agTurnOff() {
+      agPaint(null, true);
+      try {
+        const r = await api.post('/api/v1/settings/telegram/adguard/setup',
+          { action: 'off' });
+        if (r && r.need_rule) { agNeedRule(r, r.message); agPaint(null, false); return; }
+        toast(r.message || 'VPN выключен', 'ok', '\ud83d\udee1 AdGuard');
+        agPaint(r.vpn, false);
+      } catch (e) {
+        if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
+        else toast(e.message, 'err');
+        agPaint({ on: true, known: true }, false);
+      }
+    }
     if (tga) tga.onclick = async () => {
+      if (agVpnOn) { await agTurnOff(); return; }
       try {
         let pf = null;
         try { pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight'); } catch (e) { pf = null; }
         if (pf && pf.ready === false) { agNeedRule(pf, pf.hint); return; }
-        if (pf && pf.need_password) { agNeedRule(pf, pf.hint); return; }
         await agLaunch();
       } catch (e) {
         if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
@@ -9356,13 +9402,17 @@ async function viewSettings(container) {
       agRecheck.disabled = false;
     };
     // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
+    // v1.70.25: здесь же красим кнопку-переключатель по фактическому
+    // состоянию VPN — иначе до первого опроса она показывала бы «выключен»
+    // на работающем туннеле.
     api.get('/api/v1/settings/telegram/adguard/setup').then(r => {
       const st = r.job || {};
+      agPaint(r.vpn, !!st.running);
       if (st.running || (st.finished && st.finished_at && Date.now() / 1000 - st.finished_at < 900)) {
         agRender(st);
         if (st.running) { agStop(); agTimer = setInterval(agPoll, 1500); }
       }
-    }).catch(() => {});
+    }).catch(() => { agPaint(null, false); });
     const tgp = $('#tg-ping');                        // v1.70.14: замер пинга
     if (tgp) tgp.onclick = async () => {
       const out = $('#tg-ping-out');

@@ -10,12 +10,15 @@
 #
 #   sudo -n /usr/local/sbin/ymaster-adguard-setup <фаза>
 #
-# Фазы: preflight | install | login | socks | tun | units | autopilot |
+# Фазы: preflight | install | login | tun | off | units | autopilot |
 #       version | status | rights | install-rule | remove-rule
 #
-# v1.70.24: фаза «socks» теперь включает режим TUN + selective-исключения
-# (через VPN идёт только Telegram). Имя сохранено ради уже установленных
-# sudoers-правил; «tun» принято как синоним.
+# v1.70.24: режим — TUN + selective-исключения (через VPN идёт только
+# Telegram); фаза исторически звалась «socks».
+# v1.70.25: «socks» убран (два имени одного действия — лишее), добавлена
+# фаза «off» — выключение VPN одной кнопкой. Правило перечисляет фазы явно,
+# поэтому его переустанавливает deploy.sh --update; если правило старое,
+# мастер покажет одну команду install-rule вместо «sudo: not allowed».
 #
 # Одноразовая установка правила (владелец в терминале, один раз):
 #   sudo bash /opt/ymaster-check/deploy/adguard-vpn/ymaster-adguard-setup.sh install-rule
@@ -51,10 +54,12 @@ INSTALL_TMP="/tmp/ymaster-adguard-install.sh"
 INSTALL_CMD="curl -fsSL $INSTALL_URL -o $INSTALL_TMP && sh $INSTALL_TMP -a y"
 # Фазы, доступные из-под приложения (в них и состоит sudoers-правило).
 # install-rule/remove-rule здесь НЕТ: их владелец выполняет вручную.
-# v1.70.24: «tun» добавлено как синоним «socks» (см. phase_tun). «socks»
-# остаётся в списке ОБЯЗАТЕЛЬНО: уже установленные на серверах правила его
-# перечисляют, а обновление из приложения install-rule не перезапускает.
-ALLOWED_PHASES="preflight rights install login socks tun units autopilot version status"
+# v1.70.25: «socks» убран — это было историческое имя фазы режима, а правило
+# всё равно приходится переустанавливать ради новой фазы «off» (выключение
+# VPN), поэтому держать два имени одного действия смысла нет. Правило
+# переустанавливает deploy.sh --update; если его не обновили, мастер честно
+# покажет одну команду install-rule вместо «sudo: not allowed».
+ALLOWED_PHASES="preflight rights install login tun off units autopilot version status"
 
 # v1.70.24: домены Telegram для selective-исключений — через VPN идёт только
 # они, весь прочий трафик сервера остаётся прямым. Поддомены AdGuard сам не
@@ -344,6 +349,27 @@ phase_autopilot() {
   say "автопилот включён (замер 15:00, смена локации 15:10)"
 }
 
+# v1.70.25: выключение VPN одной кнопкой. CLI и вход НЕ удаляются — повторное
+# включение идёт без ссылки подтверждения.
+# Порядок важен: СНАЧАЛА гасим автопилот. Иначе в 15:10 tg-health.sh увидит
+# мёртвый путь (мы только что отключили туннель) и сам выполнит `connect -l`,
+# то есть включил бы VPN обратно за спиной владельца.
+phase_off() {
+  need_root "off"
+  systemctl disable --now "$TIMER_UNIT" >/dev/null 2>&1 || true
+  systemctl disable --now "$TUNNEL_UNIT" >/dev/null 2>&1 || true
+  local cli
+  if cli=$(cli_path); then
+    # ручной сеанс (connect вне юнита) тоже надо снять
+    "$cli" disconnect >/dev/null 2>&1 || true
+  fi
+  local st
+  st=$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null || true)
+  [ "$st" = "active" ] && die "туннель не остановился — systemctl status $TUNNEL_UNIT"
+  say "VPN выключен: туннель остановлен, автопилот отключён"
+  say "вход и лицензия сохранены — повторное включение без ссылки"
+}
+
 # ----------------------------------------------------------------------
 main() {
   local phase="${1:-}"
@@ -356,12 +382,8 @@ main() {
     status)       phase_status ;;
     install)      phase_install ;;
     login)        phase_login ;;
-    # v1.70.24: обе фазы настраивают TUN + selective. «socks» — историческое
-    # имя: оно перечислено в уже установленных на серверах sudoers-правилах,
-    # а обновление из приложения install-rule не перезапускает. «tun» — новое
-    # понятное имя, добавлено в правило при следующем install-rule.
-    socks)        phase_tun ;;
     tun)          phase_tun ;;
+    off)          phase_off ;;
     units)        phase_units ;;
     autopilot)    phase_autopilot ;;
     install-rule) phase_install_rule "${1:-$DEFAULT_APP_DIR}" ;;

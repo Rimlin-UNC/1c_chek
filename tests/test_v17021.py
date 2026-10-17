@@ -261,17 +261,19 @@ class TestTimeoutReporting:
 
     def test_run_helper_timeout_returns_124(self, fresh_job, monkeypatch):
         fresh_job.sudo_mode = "root"
-        monkeypatch.setattr(ag, "helper_argv", lambda phase: ["sleep", "5"])
-        rc, out = ag.run_helper("socks", timeout=0.2)
+        monkeypatch.setattr(ag, "helper_argv",
+                            lambda phase, mode=None: ["sleep", "5"])
+        rc, out = ag.run_helper("tun", timeout=0.2)
         assert rc == 124
-        assert "помощник socks" in out, out
+        assert "помощник tun" in out, out
 
     def test_run_helper_missing_helper_returns_127(self, fresh_job,
                                                    monkeypatch):
         fresh_job.sudo_mode = "root"
         monkeypatch.setattr(ag, "helper_argv",
-                            lambda phase: ["/нет/такой/comанды", "x", phase])
-        rc, out = ag.run_helper("socks", timeout=5)
+                            lambda phase, mode=None:
+                            ["/нет/такой/comанды", "x", phase])
+        rc, out = ag.run_helper("tun", timeout=5)
         assert rc == 127
         assert "Помощник не найден" in out
 

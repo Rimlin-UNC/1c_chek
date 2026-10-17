@@ -106,11 +106,11 @@ class TestStaleRunningState:
         """Живое задание из памяти важнее любого файла."""
         _write_stale(state_dir)
         ag.job.running = True
-        ag.job.step = "socks"
+        ag.job.step = "tun"
         st = ag.setup_status()
         assert st["running"] is True
         assert st.get("interrupted") is None
-        assert st["step"] == "socks"
+        assert st["step"] == "tun"
 
     def test_finished_state_passed_through(self, state_dir):
         """Завершённое задание не помечается прерванным."""

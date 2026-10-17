@@ -264,8 +264,8 @@ class TestHelperScript:
         m = re.search(r'^ALLOWED_PHASES="([^"]+)"', sh, re.M)
         assert m, "не найден список разрешённых фаз"
         allowed = m.group(1).split()
-        for phase in ("preflight", "install", "login", "socks", "units",
-                      "autopilot", "version", "status", "rights"):
+        for phase in ("preflight", "install", "login", "tun", "off",
+                      "units", "autopilot", "version", "status", "rights"):
             assert phase in allowed, phase
         assert "install-rule" not in allowed and "remove-rule" not in allowed
         assert set(allowed) == set(ag.HELPER_PHASES), allowed
@@ -468,9 +468,9 @@ class TestRunHelper:
         monkeypatch.setattr(ag.subprocess, "run",
                             lambda argv, **k: seen.update(argv=argv, k=k)
                             or _R(0, "готово"))
-        rc, out = ag.run_helper("socks")
+        rc, out = ag.run_helper("tun")
         assert rc == 0 and out == "готово"
-        assert seen["argv"] == ["sudo", "-n", ag.HELPER_PATH, "socks"]
+        assert seen["argv"] == ["sudo", "-n", ag.HELPER_PATH, "tun"]
         assert seen["k"]["stdin"] == subprocess.DEVNULL
 
     def test_helper_argv_root_mode_runs_script_directly(self, monkeypatch,
@@ -667,12 +667,17 @@ class TestStepsInHelperMode:
 
     def test_tun_through_helper(self, monkeypatch, fresh_job, tmp_path):
         # v1.70.24: шаг режима называется «tun» (TUN + selective вместо
-        # SOCKS5), а фазу помощника по-прежнему зовут «socks» — это имя
-        # перечислено в уже установленных на серверах sudoers-правилах.
+        # SOCKS5). v1.70.25: фаза помощника тоже «tun» (исторический синоним
+        # «socks» вычищен), и шаг принимает db — он поглотил очистку прокси.
+        from app.database import SessionLocal
         calls = []
         _patch_helper_mode(monkeypatch, tmp_path, calls)
-        ag._step_tun()
-        assert calls == ["helper:socks"]
+        db = SessionLocal()
+        try:
+            ag._step_tun(db)
+        finally:
+            db.close()
+        assert calls == ["helper:tun"]
         assert fresh_job.steps["tun"]["status"] == "done"
 
     def test_tunnel_through_helper(self, monkeypatch, fresh_job, tmp_path):
@@ -724,7 +729,7 @@ class TestStepsInHelperMode:
                 ag.PROXY_VALUE
             priv = [c for c in calls if c.startswith("helper:")]
             assert [p.split(":")[1] for p in priv] == \
-                ["version", "socks", "units", "autopilot"]
+                ["version", "tun", "units", "autopilot"]
             assert not any("sudo" in c for c in calls)
         finally:
             db.close()

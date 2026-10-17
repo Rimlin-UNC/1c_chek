@@ -84,10 +84,14 @@ HELPER_NAME = "ymaster-adguard-setup"
 HELPER_PATH = "/usr/local/sbin/" + HELPER_NAME
 HELPER_SRC = "ymaster-adguard-setup.sh"          # в deploy/adguard-vpn
 HELPER_RULE = "/etc/sudoers.d/ymaster-adguard"   # правило NOPASSWD
-HELPER_PHASES = ("preflight", "rights", "install", "login", "socks", "tun",
+HELPER_PHASES = ("preflight", "rights", "install", "login", "tun", "off",
                  "units", "autopilot", "version", "status")
 RIGHTS_MODES = ("root", "nopass", "helper")      # «pass» в v1.70.16 удалён
 SETT_PROXY = "telegram_proxy"
+# v1.70.25: имена юнитов — одни на сервис и помощник (раньше в сервисе были
+# рассыпаны литералы, и переименование юнита разошлось бы молча).
+TUNNEL_UNIT = "adguard-vpn-telegram"
+TIMER_UNIT = "tg-health.timer"
 # v1.70.24: в режиме TUN трафик до Telegram уходит в туннель ПРОЗРАЧНО
 # (selective-исключение на api.telegram.org), а локального SOCKS-слушателя
 # 127.0.0.1:1080 больше нет. Оставь мы там прежний socks5://… — бот ходил бы
@@ -97,7 +101,7 @@ SETT_PROXY = "telegram_proxy"
 # путь, которым реально пользуется бот.
 PROXY_VALUE = ""
 STEP_ORDER = ["precheck", "cli", "login", "tun", "tunnel",
-              "autopilot", "proxy", "verify", "done"]
+              "autopilot", "verify", "done"]
 STEP_TITLE = {
     "precheck": "Проверка сервера",
     "cli": "Установка AdGuard VPN CLI",
@@ -105,7 +109,6 @@ STEP_TITLE = {
     "tun": "Режим TUN: через VPN только Telegram",
     "tunnel": "Туннель и автоподключение",
     "autopilot": "Автопилот: пинг 15:00, смена локации 15:10",
-    "proxy": "Настройка программы (прокси не нужен — убираем)",
     "verify": "Проверка пути до Telegram",
     "done": "Готово",
 }
@@ -390,16 +393,19 @@ def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
 
 
 def run_helper(phase: str, timeout: float = CMD_TIMEOUT,
-               stream: bool = False) -> tuple[int, str]:
+               stream: bool = False, mode: str | None = None) -> tuple[int, str]:
     """v1.70.16: привилегированный шаг через помощника — `sudo -n <helper> <фаза>`.
 
     Фаза — только из HELPER_PHASES (фиксированный набор, аргументов нет):
     ровно эти команды разрешает sudoers-правило /etc/sudoers.d/ymaster-adguard.
     В режиме root помощник не нужен — выполняем фазу тем же сценарием напрямую
-    (он лежит в комплекте), а в режиме nopass — через `sudo -n`."""
+    (он лежит в комплекте), а в режиме nopass — через `sudo -n`.
+
+    v1.70.25: `mode` можно передать явно — выключение VPN (turn_off) работает
+    вне задания установки, где job.sudo_mode ещё не определён precheck'ом."""
     if phase not in HELPER_PHASES:
         raise RuntimeError(f"Неизвестная фаза помощника: {phase}")
-    argv = helper_argv(phase)
+    argv = helper_argv(phase, mode)
     try:
         p = subprocess.run(argv, capture_output=True, text=True,
                            timeout=timeout, stdin=subprocess.DEVNULL)
@@ -421,11 +427,17 @@ def helper_script() -> str:
     return src if os.path.exists(src) else ""
 
 
-def helper_argv(phase: str) -> list[str]:
-    """Аргументы вызова помощника по режиму прав (см. run_helper)."""
+def helper_argv(phase: str, mode: str | None = None) -> list[str]:
+    """Аргументы вызова помощника по режиму прав (см. run_helper).
+
+    v1.70.25: `mode` можно передать явно. Это нужно выключению VPN
+    (turn_off) — оно выполняется вне задания установки, и ради него
+    подменять job.sudo_mode было бы грязно: на это состояние смотрит
+    живой журнал установки.
+    """
     script = HELPER_PATH if os.path.exists(HELPER_PATH) \
         else os.path.join(DEPLOY_DIR, HELPER_SRC)
-    if job.sudo_mode == "root":
+    if (mode or job.sudo_mode) == "root":
         return ["bash", script, phase]
     return ["sudo", "-n", script, phase]
 
@@ -659,6 +671,62 @@ def preflight() -> dict:
     return out
 
 
+def _systemctl_state(unit: str) -> str:
+    """Состояние юнита БЕЗ root: active|inactive|failed|unknown.
+
+    `systemctl is-active` доступен любому пользователю, поэтому помощник и
+    sudo здесь не нужны — состояние кнопки-переключателя должно читаться
+    всегда, в том числе когда правило помощника ещё не установлено.
+    """
+    try:
+        p = subprocess.run(["systemctl", "is-active", unit],
+                           capture_output=True, text=True, timeout=15,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    out = (p.stdout or "").strip()
+    # rc у is-active ненулевой для всего, кроме active — важен именно текст
+    return out or "unknown"
+
+
+def vpn_status() -> dict:
+    """v1.70.25: включён ли VPN сейчас — для цвета кнопки-переключателя.
+
+    `known=False` означает «systemd недоступен» (контейнер/песочница):
+    кнопка в этом случае не утверждает, что VPN выключен, а честно говорит,
+    что состояние неизвестно. Врать владельцу цветом нельзя.
+    """
+    st = _systemctl_state(TUNNEL_UNIT)
+    return {"on": st == "active", "state": st, "unit": TUNNEL_UNIT,
+            "known": st != "unknown"}
+
+
+def turn_off() -> dict:
+    """v1.70.25: выключить VPN одной кнопкой (фаза `off` помощника).
+
+    CLI и вход в аккаунт НЕ удаляются — повторное включение идёт без ссылки
+    подтверждения. Помощник гасит СНАЧАЛА автопилот и только потом туннель:
+    иначе tg-health.sh в 15:10 увидел бы мёртвый путь и сам выполнил
+    `connect -l`, то есть включил бы VPN обратно за спиной владельца.
+    """
+    if job.running:
+        return {"ok": False,
+                "error": "Сейчас идёт установка — сначала остановите её "
+                         "(кнопка «Остановить» в панели)."}
+    mode, _note = _detect_rights()
+    if not mode:
+        cmd = one_time_cmd()
+        return {"ok": False, "need_rule": True, "one_time_cmd": cmd,
+                "error": NO_RIGHTS_ERROR + " " + cmd}
+    rc, out = run_helper("off", timeout=120, mode=mode)
+    if rc != 0:
+        return {"ok": False, "error": "Не выключить VPN: " + _reason(out)}
+    return {"ok": True, "vpn": vpn_status(),
+            "message": "VPN выключен: туннель остановлен, автопилот отключён. "
+                       "Вход и лицензия сохранены — повторное включение "
+                       "без ссылки."}
+
+
 def sys_platform_linux() -> bool:
     return os.uname().sysname.lower().startswith("linux")
 
@@ -773,7 +841,7 @@ def _step_login() -> None:
         job.say("login", "Вход подтверждён ✔", "done", 45)
 
 
-def _step_tun() -> None:
+def _step_tun(db) -> None:
     """v1.70.24: TUN + selective — через VPN идёт только Telegram.
 
     Шаг исторически назывался «socks» (режим SOCKS5, локальный прокси
@@ -789,22 +857,41 @@ def _step_tun() -> None:
     Самодельная маршрутизация по CIDR (режим SCRIPT) не используется:
     AdguardTeam/AdGuardVPNCLI#69 и #190 — «Unknown error», не подключается.
 
-    Фаза помощника вызывается по-прежнему «socks»: именно это имя перечислено
-    в уже установленных на серверах sudoers-правилах, а обновление из
-    приложения install-rule не перезапускает. Помощник принимает и «tun».
+    v1.70.25: шаг поглотил прежний отдельный шаг «proxy». В TUN-режиме прокси
+    как понятие не применяется (трафик уходит в туннель прозрачно), поэтому
+    отдельный шаг «Настройка программы (прокси не нужен — убираем» только
+    путал владельца. Очистка поля осталась — она обязательна: оставленное
+    socks5://127.0.0.1:1080 отправило бы бота в порт, который больше никто
+    не слушает.
     """
     job.say("tun", "Включаем TUN и правило «через VPN только Telegram»…",
             "active", 50)
     # run_helper сам выбирает обёртку по режиму прав (root — bash, nopass и
     # helper — sudo -n), поэтому ветвление по sudo_mode здесь не нужно.
-    rc, out = run_helper("socks", timeout=120)
+    rc, out = run_helper("tun", timeout=120)
     if rc != 0:
         raise RuntimeError("Не включить режим TUN с selective-исключениями: "
                            + _reason(out))
     tail = (out or "").strip().splitlines()
     job.say("tun", (tail[-1][:90] if tail else
-                    "TUN + selective: через VPN идёт только Telegram."),
-            "done", 55)
+                    "TUN + selective: через VPN идёт только Telegram."))
+
+    # Прокси в TUN-режиме не нужен — поле обязано быть пустым.
+    from . import appsettings
+    before = appsettings.get_setting(db, SETT_PROXY, "")
+    appsettings.set_setting(db, SETT_PROXY, PROXY_VALUE)
+    if before:
+        job.say("tun", f"Прежний прокси ({before}) убран из карточки: "
+                       "в TUN трафик идёт прозрачно.")
+    # env TELEGRAM_PROXY переопределяет пустую настройку (get_proxy) — если он
+    # задан, честнее сказать об этом сразу, чем искать «почему бот молчит».
+    from ..config import settings
+    if settings.TELEGRAM_PROXY:
+        job.say("tun", "Внимание: в окружении задан TELEGRAM_PROXY="
+                       f"{settings.TELEGRAM_PROXY} — он переопределит пустое "
+                       "поле; уберите его из .env для TUN-режима.")
+    job.say("tun", "Режим TUN включён: через VPN идёт только Telegram.",
+            "done", 58)
 
 
 def _copy_kit() -> None:
@@ -898,36 +985,6 @@ def _step_autopilot() -> None:
                          "времени (= МСК).", "done", 80)
 
 
-def _step_proxy(db) -> None:
-    """v1.70.24: в TUN-режиме прокси программе НЕ нужен — убираем его.
-
-    Трафик до api.telegram.org уходит в туннель прозрачно (selective-
-    исключение), поэтому бот должен ходить напрямую. Оставь мы в карточке
-    прежний socks5://127.0.0.1:1080 — бот стучался бы в порт, который в
-    TUN-режиме больше никто не слушает, и молчал. Пустое значение настройки
-    = прямое соединение = и есть настоящий путь через туннель; замер пинга
-    (ping_proxy) при пустом прокси измеряет ровно его.
-    """
-    job.say("proxy", "Убираем прокси из настроек программы (в TUN он не "
-                     "нужен)…", "active", 85)
-    from . import appsettings
-    before = appsettings.get_setting(db, SETT_PROXY, "")
-    appsettings.set_setting(db, SETT_PROXY, PROXY_VALUE)
-    if before:
-        job.say("proxy", f"Прежний прокси ({before}) убран: трафик идёт "
-                         "прозрачно через туннель.", "done", 90)
-    else:
-        job.say("proxy", "Прокси не задан — так и должно быть: трафик идёт "
-                         "прозрачно через туннель.", "done", 90)
-    # env TELEGRAM_PROXY переопределяет пустую настройку (get_proxy) — если он
-    # задан, честнее сказать об этом сразу, чем искать «почему бот молчит».
-    from ..config import settings
-    if settings.TELEGRAM_PROXY:
-        job.say("proxy", "Внимание: в окружении задан TELEGRAM_PROXY="
-                         f"{settings.TELEGRAM_PROXY} — он переопределит "
-                         "пустое поле; уберите его из .env для TUN-режима.")
-
-
 def _step_verify(db) -> None:
     job.say("verify", "Проверяем путь: 3 коротких запроса до Telegram…",
             "active", 93)
@@ -973,12 +1030,11 @@ def _run_steps(db) -> None:
     _step_login()
     if job.cancel_requested:
         raise RuntimeError("Отменено владельцем.")
-    _step_tun()
+    _step_tun(db)
     _step_tunnel()
     _step_autopilot()
-    _step_proxy(db)
     _step_verify(db)
-    job.say("done", "Готово: путь до Telegram работает, пинг "
-                    f"{job.ping_ms} мс. Осталось включить бота — "
-                    "«💾 Сохранить и запустить» в карточке.", "done", 100)
+    job.say("done", "Готово: VPN включён, путь до Telegram работает, пинг "
+                    f"{job.ping_ms} мс. Кнопка «🛡 AdGuard VPN» горит зелёным; "
+                    "повторное нажатие выключит VPN.", "done", 100)
     job.finish(success=True)

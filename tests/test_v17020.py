@@ -31,8 +31,8 @@ from app.services import adguard_setup as ag
 
 HELPER = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
 RESOLUTION = 'BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"'
-ALLOWED = ("preflight", "rights", "install", "login", "socks", "units",
-           "autopilot", "version", "status")
+ALLOWED = ("preflight", "rights", "install", "login", "tun", "off",
+           "units", "autopilot", "version", "status")
 FORBIDDEN_IN_RULE = ("install-rule", "remove-rule")
 
 
