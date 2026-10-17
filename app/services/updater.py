@@ -953,6 +953,17 @@ def _do_apply(target_version: str, repo: str, branch: str,
         rc, out = _git(["reset", "--hard", target_ref], timeout=60)
         if rc != 0:
             raise RuntimeError(f"git reset: {out}")
+        # v1.70.20: выравниваем метку локальной ветки по каналу обновлений.
+        # reset --hard меняет содержимое и указатель ТЕКУЩЕЙ ветки, поэтому при
+        # смене источника HEAD оставался на старой ветке: код новый, а `git pull`
+        # на сервере тянул прежний канал. -B файлы не трогает (коммит тот же),
+        # поэтому шаг необязательный — сбой не должен ронять обновление.
+        _git(["checkout", "-q", "-B", branch], timeout=30)
+        # upstream — на новый канал: без него `git pull` на сервере отвечает
+        # «Already up to date» и ничего не тянет. Работает, потому что
+        # _git_fetch_progress дописал ветку в remote.origin.fetch.
+        _git(["branch", "-q", f"--set-upstream-to=origin/{branch}", branch],
+             timeout=30)
         # Удалённые из проекта файлы не должны оставаться (без -x: БД/.env/venv целы)
         rc, out = _git(["clean", "-fd", "-e", "data", "-e", ".env",
                         "-e", "venv", "-e", "*.db"], timeout=60)

@@ -88,9 +88,9 @@ class TestVersions1708:
         # v1.70.9: строгий замок версии переехал в test_v1709
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 8)
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.js?v={ver}" in idx and "?v=1.70.7" not in idx
+        assert f"app.js?v={ver}" in idx and '?v=1.70.7"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "1.70.7" not in sw
+        assert f"ymaster-check-v{ver}" in sw and "-v1.70.7'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

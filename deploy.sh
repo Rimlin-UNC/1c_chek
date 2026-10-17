@@ -260,6 +260,16 @@ if [[ -d "$APP_DIR/.git" ]]; then
   sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin \
     "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  # v1.70.20: выравниваем МЕТКУ локальной ветки по каналу. reset --hard меняет
+  # только содержимое и указатель текущей ветки, поэтому после смены канала HEAD
+  # оставался на старой ветке (код новый, а `git pull` тянул прежний канал).
+  # -B безопасен: коммит тот же, файлы не трогаются.
+  sudo -u "$APP_USER" git -C "$APP_DIR" checkout -q -B "$BRANCH" 2>/dev/null || true
+  # upstream — на новый канал, иначе `git pull` на сервере отвечает
+  # «Already up to date» и ничего не тянет. Работает, потому что ветка уже
+  # дописана в remote.origin.fetch шагом выше (set-branches --add).
+  sudo -u "$APP_USER" git -C "$APP_DIR" branch -q \
+    --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
   ok "обновлено из GitHub (данные не тронуты)"
   # v1.6.2: deploy.sh обновил сам себя — bash уже загрузил СТАРЫЙ текст в
   # память, поэтому перезапускаемся новой версией с теми же аргументами
@@ -283,6 +293,11 @@ elif [[ -d "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
   sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin \
     "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  # v1.70.20: метка локальной ветки и upstream — по каналу
+  # (см. пояснение в --update пути)
+  sudo -u "$APP_USER" git -C "$APP_DIR" checkout -q -B "$BRANCH" 2>/dev/null || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" branch -q \
+    --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
   sudo -u "$APP_USER" git -C "$APP_DIR" clean -fd \
     -e data -e .env -e venv -e '*.db' -e '*.db-*' -e backups >/dev/null || true
   ok "код получен; data/, .env, venv и база не тронуты"
@@ -408,10 +423,18 @@ fi
 # фиксированные фазы. Блок защищён: ошибка не должна ронять деплой —
 # без правила панель мастера покажет одну команду для терминала.
 AG_HELPER_SRC="$APP_DIR/deploy/adguard-vpn/ymaster-adguard-setup.sh"
-if [[ -f "$AG_HELPER_SRC" ]] && bash "$AG_HELPER_SRC" install-rule "$APP_DIR" >/dev/null 2>&1; then
+# v1.70.20: вывод помощника больше НЕ глушим. Раньше `>/dev/null 2>&1` прятал
+# причину отказа, и в логе деплоя оставалось только общее «⚠ помощник AdGuard
+# не установлен» — так была скрыта настоящая ошибка install-rule
+# («app_dir: unbound variable»), из-за которой правило не ставилось вовсе.
+if [[ -f "$AG_HELPER_SRC" ]] \
+   && AG_HELPER_OUT=$(bash "$AG_HELPER_SRC" install-rule "$APP_DIR" 2>&1); then
   ok "sudoers: мастер AdGuard VPN работает без пароля (помощник ymaster-adguard-setup)"
 else
   warn "помощник AdGuard не установлен — мастер покажет одну команду для терминала"
+  if [[ -n "${AG_HELPER_OUT:-}" ]]; then
+    echo "$AG_HELPER_OUT" | tail -n 5 | sed 's/^/       причина: /'
+  fi
 fi
 
 # ------------------------------------------------------------------

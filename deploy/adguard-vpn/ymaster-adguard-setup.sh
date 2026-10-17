@@ -81,7 +81,11 @@ svc_user() {
 # ----------------------------------------------------------------------
 phase_install_rule() {
   need_root "install-rule"
-  local app_dir="${1:-$DEFAULT_APP_DIR}" src="$app_dir/deploy/adguard-vpn"
+  # v1.70.20: ОБЯЗАТЕЛЬНО двумя строками. В одном `local a=… b="$a/…"` bash
+  # раскрывает слова до присваиваний, поэтому под `set -u` вторая переменная
+  # падала с «app_dir: unbound variable» — фаза install-rule не работала вовсе.
+  local app_dir="${1:-$DEFAULT_APP_DIR}"
+  local src="$app_dir/deploy/adguard-vpn"
   [ -d "$src" ] || die "каталог комплекта не найден: $src (укажите путь к программе: install-rule /путь/к/ymaster-check)"
   [ -f "$src/$(basename "$0")" ] || [ -f "$src/ymaster-adguard-setup.sh" ] \
     || die "в $src нет ymaster-adguard-setup.sh — обновите программу"
