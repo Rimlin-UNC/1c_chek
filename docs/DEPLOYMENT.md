@@ -21,8 +21,8 @@
 ```bash
 ssh root@94.183.236.179
 
-# скачать скрипт развёртывания из вашего репозитория (ветка arena/01a0caaa-1c-chek):
-curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+# скачать скрипт развёртывания из вашего репозитория (ветка main):
+curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 
 # запустить:
 sudo bash deploy.sh
@@ -36,7 +36,7 @@ sudo bash deploy.sh
 |---|---|
 | 1 | Устанавливает пакеты: `python3-venv, git, nginx, ufw, fail2ban, sqlite3` |
 | 2 | Создаёт системного пользователя `ymaster`, каталог `/opt/ymaster-check` |
-| 3 | **Клонирует ветку `arena/01a0caaa-1c-chek` с GitHub** (для приватного репозитория: `GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh`) |
+| 3 | **Клонирует ветку `main` с GitHub** (для приватного репозитория: `GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh`) |
 | 4 | Разворачивает venv, ставит зависимости из `requirements.txt` |
 | 5 | Генерирует `SECRET_KEY` и токен 1С в `.env` (права 600) |
 | 6 | Инициализирует БД и администратора (`admin` / `admin123`) |
@@ -88,7 +88,7 @@ sqlite3 /opt/ymaster-check/data/ymaster_check.db ".tables"   # БД
 ## 2. Докер (Docker Compose)
 
 ```bash
-git clone --branch arena/01a0caaa-1c-chek https://github.com/Rimlin-UNC/1c_chek.git
+git clone --branch main https://github.com/Rimlin-UNC/1c_chek.git
 cd 1c_chek && cp .env.example .env    # заполните SECRET_KEY
 docker compose up -d --build
 ```
@@ -144,7 +144,7 @@ python3 run.py --port 8000
 1. В панели: «Контейнеры» / Docker → создать из образа:
    сборка из репозитория (Dockerfile в корне), порт 8000.
 2. Либо на самом сервере:
-   `git clone -b arena/01a0caaa-1c-chek https://github.com/Rimlin-UNC/1c_chek.git && cd 1c_chek`
+   `git clone -b main https://github.com/Rimlin-UNC/1c_chek.git && cd 1c_chek`
    `docker compose up -d --build`   (внутри: uvicorn +-healthcheck; Nginx/TLS — вашим прокси)
 3. Переменные окружения — см. `.env.example` (SECRET_KEY обязателен).
 

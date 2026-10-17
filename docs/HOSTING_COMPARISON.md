@@ -105,7 +105,7 @@ Beget — месяц бесплатного теста; reg.ru/SpaceWeb — со
   2. В DNS-панели ymaster.ru заранее снизить TTL до 300 с.
   3. Поменять A-запись chek.ymaster.ru → IP нового VPS.
   4. Одна команда на новом сервере:
-       curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+       curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
        sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru
      (если репозиторий приватный: GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh ...)
   5. Войти admin/admin123, сменить пароль, создать приглашения.

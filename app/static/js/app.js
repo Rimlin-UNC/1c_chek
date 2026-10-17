@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.18': [
+    { icon: '🌿', title: 'Канал обновлений — ветка main',
+      text: 'Веткой обновлений по умолчанию стала main (была временная рабочая ветка арены, которая после слияния остаётся на старой версии). Изменились DEFAULT_BRANCH в настройках программы и BRANCH в deploy.sh, а также все ссылки комплекта: быстрый старт, README, docs/DEPLOYMENT.md, docs/update_playbook.md, deploy/adguard-vpn/README.md и подсказка поля «Ветка» в окне обновления. Если источник задан явно (repo_branch в настройках или --branch= у deploy.sh) — он по-прежнему важнее значения по умолчанию. С v1.70.17 смена ветки источника не требует похода в SSH: fetch идёт явным refspec’ом, поэтому переход на main безопасен на уже развёрнутых серверах.' },
+  ],
   '1.70.17': [
     { icon: '🔄', title: 'Обновление на другую ветку больше не падает',
       text: 'Если в «🎛 Источник обновлений» указать ветку, отличную от ветки установки, обновление заканчивалось ошибкой «git reset: fatal: ambiguous argument origin/…: unknown revision» и откатом. Причина в клоне «--depth 1 --branch»: git отслеживает только свою ветку, поэтому fetch чужой ветки проходил успешно (rc 0), но ref origin/<ветка> не создавался — на нём и падал reset. Теперь fetch идёт явным refspec’ом (+refs/heads/<ветка>:refs/remotes/origin/<ветка>), ветка дописывается в настройки origin, цель для reset проверяется заранее (origin/<ветка> → запасной FETCH_HEAD → понятная ошибка), а строка «Изменённых файлов: 0» больше не появляется при сбое сравнения. deploy.sh для свежих установок разрешает все ветки сразу.' },
@@ -8415,7 +8419,7 @@ async function viewSettings(container) {
             <label class="field"><span>Репозиторий (owner/repo)</span>
               <input id="upd-repo" placeholder="Rimlin-UNC/1c_chek"></label>
             <label class="field"><span>Ветка</span>
-              <input id="upd-branch-input" placeholder="arena/01a0caaa-1c-chek"></label>
+              <input id="upd-branch-input" placeholder="main"></label>
           </div>
           <button class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
         </details>

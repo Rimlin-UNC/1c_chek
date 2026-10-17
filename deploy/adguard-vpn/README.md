@@ -107,10 +107,9 @@
    другую локацию (шаги 4–5).
 6. **Автозапуск туннеля** (юнит `adguard-vpn-telegram.service` —
    переподключает VPN после перезагрузки сервера). Файлы комплекта
-   берите с GitHub (ветка с v1.70.14; после merge в main замените
-   `arena/01a0caaa-1c-chek` на `main`):
+   берите с GitHub (ветка `main` — канал обновлений с v1.70.18):
    ```
-   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek
+   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
    curl -fsSL -o /etc/systemd/system/adguard-vpn-telegram.service \
        $B/deploy/adguard-vpn/adguard-vpn-telegram.service
    systemctl daemon-reload
@@ -161,7 +160,7 @@
 таймер (под root `sudo` не нужен; команды можно вставлять блоком —
 вопросов они не задают):
 ```
-B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek
+B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
 curl -fsSL -o /usr/local/sbin/tg-health.sh $B/deploy/adguard-vpn/tg-health.sh
 chmod +x /usr/local/sbin/tg-health.sh
 curl -fsSL -o /etc/systemd/system/tg-health.service $B/deploy/adguard-vpn/tg-health.service

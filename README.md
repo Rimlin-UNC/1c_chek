@@ -144,7 +144,7 @@ docker compose up -d --build
 
 ```bash
 ssh root@ВАШ_IP
-curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 sudo bash deploy.sh                       # код с GitHub + Nginx + UFW + fail2ban
 sudo bash deploy.sh --update              # обновление версии
 sudo bash deploy.sh --with-ssl=домен.ru   # + HTTPS

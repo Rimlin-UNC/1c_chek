@@ -660,6 +660,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('Источник обновлений') &&
      bundle.includes('ambiguous argument'),
      'v1.70.17: обновление на другую ветку — fetch явным refspec (без «ambiguous argument»)');
+  ok(bundle.includes("'1.70.18':") && bundle.includes('placeholder="main"') &&
+     !bundle.includes('placeholder="arena/01a0caaa-1c-chek"'),
+     'v1.70.18: канал обновлений — main (подсказка поля «Ветка»)');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

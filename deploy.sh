@@ -6,7 +6,7 @@
 #
 # БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru = 94.183.236.179):
 #   ssh root@94.183.236.179
-#   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+#   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
 #   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
@@ -30,7 +30,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Rimlin-UNC/1c_chek.git}"
-BRANCH="${BRANCH:-arena/01a0caaa-1c-chek}"
+BRANCH="${BRANCH:-main}"   # v1.70.18: канал обновлений — main
 APP_DIR="/opt/ymaster-check"
 APP_USER="ymaster"
 SERVICE="ymaster-check"
