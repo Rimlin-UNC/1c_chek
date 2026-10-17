@@ -14,9 +14,11 @@
 #    • версии/журнал/What’s New/харнесс синхронны.
 #  ООО «Ямастер» | ymaster.ru | info@ymaster.ru
 # ==============================================================================
+import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 
@@ -25,6 +27,7 @@ import pytest
 sys.path.insert(0, os.getcwd())
 
 from app.config import settings
+from app.services import adguard_setup as ag
 
 HELPER = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
 RESOLUTION = 'BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"'
@@ -205,12 +208,18 @@ class TestNoLocalCrossReference:
 # ==============================================================================
 #  Живой прогон настоящей фазы install-rule
 # ==============================================================================
-def _helper_driver(tmp_path, app_dir, visudo_rc=0):
+def _helper_driver(tmp_path, app_dir, visudo_rc=0, stub_visudo=True):
     """Драйвер: НАСТОЯЩИЙ текст помощника (без вызова main) + заглушки для
-    root-операций и подменные пути. Логика фазы не пересказывается."""
+    root-операций и подменные пути. Логика фазы не пересказывается.
+
+    stub_visudo=False — проверка правила выполняется НАСТОЯЩИМ visudo (как на
+    сервере): иначе синтаксически неверное sudoers-правило прошло бы тесты, но
+    на боевой машине помощник удалил бы его и отказал.
+    """
     src = _read(HELPER)
     body = src[:src.rindex('main "$@"')]          # без автозапуска
     driver = tmp_path / "driver.sh"
+    visudo_stub = f'visudo() {{ return {visudo_rc}; }}\n' if stub_visudo else ""
     driver.write_text(
         "#!/usr/bin/env bash\n"
         "set -u\n"                                  # как в помощнике
@@ -221,7 +230,7 @@ def _helper_driver(tmp_path, app_dir, visudo_rc=0):
         f'SUDOERS_FILE="{tmp_path / "sudoers.d" / "ymaster-adguard"}"\n'
         'need_root() { :; }\n'                      # uid != 0 в песочнице
         'chown() { :; }\n'
-        f'visudo() {{ return {visudo_rc}; }}\n'
+        + visudo_stub +
         # GNU install с -o root недоступен без root — эмулируем cp+chmod
         'install() {\n'
         '  local mode="" src="" dst=""\n'
@@ -298,6 +307,35 @@ class TestInstallRuleLive:
         owner = app_dir_like_server.stat().st_uid
         import pwd
         assert rule.startswith(f"{pwd.getpwuid(owner).pw_name} ALL=(root)"), rule
+
+    def test_rule_passes_real_visudo(self, tmp_path, app_dir_like_server):
+        """Проверка НАСТОЯЩИМ visudo -c — как на сервере.
+
+        В остальных тестах visudo заглушён, поэтому синтаксически неверное
+        sudoers-правило прошло бы прогон, а на боевой машине помощник удалил бы
+        его и отказал («правило не прошло visudo -c»). Здесь заглушки нет.
+        """
+        visudo = shutil.which("visudo")
+        env = dict(os.environ, PATH=os.environ["PATH"] + ":/usr/sbin")
+        if not visudo:
+            visudo = "/usr/sbin/visudo" if os.path.exists(
+                "/usr/sbin/visudo") else None
+        if not visudo:
+            pytest.skip("visudo недоступен в этой среде")
+        driver = _helper_driver(tmp_path, app_dir_like_server,
+                                stub_visudo=False)
+        r = subprocess.run(["bash", str(driver)], capture_output=True,
+                           text=True, timeout=120, env=env)
+        assert r.returncode == 0, \
+            f"настоящий visudo отверг правило:\n{r.stdout}\n{r.stderr}"
+        assert "Мастер AdGuard работает без пароля" in r.stdout
+        rule = tmp_path / "sudoers.d" / "ymaster-adguard"
+        assert rule.exists(), "при успешной проверке правило не удаляется"
+        # независимая перепроверка тем же visudo, вне логики помощника
+        chk = subprocess.run([visudo, "-cf", str(rule)], capture_output=True,
+                             text=True, timeout=60, env=env)
+        assert chk.returncode == 0, chk.stdout + chk.stderr
+        assert "parsed OK" in chk.stdout
 
     def test_visudo_failure_removes_rule(self, tmp_path, app_dir_like_server):
         """Невалидное правило не должно оставаться в /etc/sudoers.d."""
@@ -518,6 +556,52 @@ class TestBranchLabelLive:
         pull = _sh(["git", "pull", "--ff-only"], clone, check=False)
         assert pull.returncode == 0, (pull.stdout, pull.stderr)
         assert (clone / "MARKER.txt").read_text(encoding="utf-8") == "target-2\n"
+
+
+# ==============================================================================
+#  Изоляция тестов мастера AdGuard (механизм «плавающего» падения)
+# ==============================================================================
+class TestAdGuardStateIsolation:
+    """v1.70.20: setup_status() при не-живом задании читает состояние С ДИСКА,
+    поэтому общий data/adguard_setup.json подменял результат чужого теста —
+    падение test_status_endpoint_exposes_one_time_cmd «плавало» между воркерами
+    xdist. Фикстура fresh_job изолирует _state_path в tmp_path."""
+
+    def test_stale_state_file_overrides_job(self, tmp_path, monkeypatch):
+        """Воспроизводим механизм: чужой «finished»-файл обнуляет one_time_cmd."""
+        stale = tmp_path / "adguard_setup.json"
+        stale.write_text(json.dumps({"finished": True, "running": False,
+                                     "one_time_cmd": ""}), encoding="utf-8")
+        monkeypatch.setattr(ag, "_state_path", lambda: str(stale))
+        ag.job.reset()
+        ag.job.one_time_cmd = ag.one_time_cmd()
+        try:
+            st = ag.setup_status()
+            assert st["one_time_cmd"] == "", st      # ровно то, что видел тест
+        finally:
+            ag.job.reset()
+
+    def test_isolated_state_lets_job_win(self, tmp_path, monkeypatch):
+        """С изоляцией чужого файла нет — состояние задания не подменяется."""
+        monkeypatch.setattr(ag, "_state_path",
+                            lambda: str(tmp_path / "adguard_setup.json"))
+        ag.job.reset()
+        ag.job.one_time_cmd = ag.one_time_cmd()
+        try:
+            st = ag.setup_status()
+            assert "install-rule" in st["one_time_cmd"], st
+        finally:
+            ag.job.reset()
+
+    @pytest.mark.parametrize("path", ("tests/test_v17015.py",
+                                      "tests/test_v17016.py"))
+    def test_fresh_job_fixture_isolates_state(self, path):
+        """Регресс-гард: изоляцию из фикстуры нельзя молча убрать."""
+        src = _read(path)
+        i = src.index("def fresh_job(")
+        block = src[i:src.index("\n\n\n", i)]
+        assert "_state_path" in block, f"{path}: fresh_job не изолирует состояние"
+        assert "tmp_path" in block and "monkeypatch" in block, path
 
 
 # ==============================================================================

@@ -63,7 +63,15 @@ class TestLoginUrl:
 
 
 @pytest.fixture()
-def fresh_job():
+def fresh_job(tmp_path, monkeypatch):
+    """Чистое задание И изолированный файл состояния (v1.70.20).
+
+    Без изоляции `_state_path` тесты писали в общий `data/adguard_setup.json`,
+    а `setup_status()` при не-живом задании читает состояние С ДИСКА — отдавал
+    результат чужого теста (падение «плавало» между воркерами xdist).
+    """
+    monkeypatch.setattr(ag, "_state_path",
+                        lambda: str(tmp_path / "adguard_setup.json"))
     ag.job.reset()
     yield ag.job
     ag.job.reset()

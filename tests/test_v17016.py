@@ -58,7 +58,17 @@ def _adguard_panel(js: str) -> str:
 
 
 @pytest.fixture()
-def fresh_job():
+def fresh_job(tmp_path, monkeypatch):
+    """Чистое задание И изолированный файл состояния (v1.70.20).
+
+    Без изоляции `_state_path` все тесты мастера писали в общий
+    `data/adguard_setup.json`, а `setup_status()` при не-живом задании читает
+    состояние С ДИСКА — поэтому отдавал результат чужого теста. Падение
+    «плавало» между воркерами xdist в зависимости от раскладки файлов
+    (test_status_endpoint_exposes_one_time_cmd видел one_time_cmd="").
+    """
+    monkeypatch.setattr(ag, "_state_path",
+                        lambda: str(tmp_path / "adguard_setup.json"))
     ag.job.reset()
     yield ag.job
     ag.job.reset()
