@@ -131,15 +131,25 @@
    (`sudo adguardvpn-cli disconnect`), иначе служба и ваш сеанс будут
    мешать друг другу.
 6. **Автозапуск туннеля** (юнит `adguard-vpn-telegram.service` —
-   переподключает VPN после перезагрузки сервера). Файлы комплекта
-   берите с GitHub (ветка `main` — канал обновлений с v1.70.18):
+   переподключает VPN после перезагрузки сервера). Файл уже лежит на
+   сервере вместе с программой — берите из комплекта, это не зависит от
+   доступности GitHub и от ветки:
    ```
-   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
-   curl -fsSL -o /etc/systemd/system/adguard-vpn-telegram.service \
-       $B/deploy/adguard-vpn/adguard-vpn-telegram.service
+   K=/opt/ymaster-check/deploy/adguard-vpn
+   sudo install -m 0644 -o root -g root $K/adguard-vpn-telegram.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now adguard-vpn-telegram
    systemctl is-active adguard-vpn-telegram
+   ```
+   То же с GitHub (ветка `main` — канал обновлений с v1.70.18), если
+   комплекта на сервере нет:
+   ```
+   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
+   curl -fsSL -o /tmp/adguard-vpn-telegram.service \
+       $B/deploy/adguard-vpn/adguard-vpn-telegram.service
+   sudo install -m 0644 -o root -g root /tmp/adguard-vpn-telegram.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now adguard-vpn-telegram
    ```
    Юнит запускает CLI от root (`User=root`, `HOME=/root`) — поэтому
    `login` из шага 2 обязательно должен быть выполнен через `sudo`.
@@ -188,18 +198,33 @@
      смены — контрольный замер. Список локаций с пингами запрашивается
      только в этот момент (не тратим трафик в здоровые дни).
 
-**Установка (один раз).** Скачайте три файла автопилота и включите
-таймер (под root `sudo` не нужен; команды можно вставлять блоком —
-вопросов они не задают):
+**Установка (один раз).** Нужен root: файлы пишутся в `/usr/local/sbin`
+и `/etc/systemd/system`. Проще всего взять их из комплекта, который уже
+лежит на сервере вместе с программой (`/opt/ymaster-check/deploy/adguard-vpn/`)
+— тогда не зависит от доступности GitHub и от ветки:
+```
+K=/opt/ymaster-check/deploy/adguard-vpn
+sudo install -m 0755 -o root -g root $K/tg-health.sh /usr/local/sbin/tg-health.sh
+sudo install -m 0644 -o root -g root $K/tg-health.service /etc/systemd/system/
+sudo install -m 0644 -o root -g root $K/tg-health.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tg-health.timer
+systemctl list-timers tg-health.timer --no-pager
+```
+То же самое с GitHub (ветка `main` — канал обновлений с v1.70.18), если
+комплекта на сервере нет:
 ```
 B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
-curl -fsSL -o /usr/local/sbin/tg-health.sh $B/deploy/adguard-vpn/tg-health.sh
-chmod +x /usr/local/sbin/tg-health.sh
-curl -fsSL -o /etc/systemd/system/tg-health.service $B/deploy/adguard-vpn/tg-health.service
-curl -fsSL -o /etc/systemd/system/tg-health.timer $B/deploy/adguard-vpn/tg-health.timer
-systemctl daemon-reload
-systemctl enable --now tg-health.timer
+curl -fsSL -o /tmp/tg-health.sh $B/deploy/adguard-vpn/tg-health.sh
+sudo install -m 0755 -o root -g root /tmp/tg-health.sh /usr/local/sbin/tg-health.sh
+curl -fsSL -o /tmp/tg-health.service $B/deploy/adguard-vpn/tg-health.service
+curl -fsSL -o /tmp/tg-health.timer $B/deploy/adguard-vpn/tg-health.timer
+sudo install -m 0644 -o root -g root /tmp/tg-health.service /tmp/tg-health.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tg-health.timer
 ```
+Автопилот управляет подключением через тот же `sudo`-доступ к CLI, что и
+служба туннеля, поэтому `login` из шага 2 тоже обязан быть root'овым.
 
 **Проверка вручную** (сразу видно результат, не дожидаясь 15:10):
 `systemctl start tg-health.service` и `journalctl -u tg-health.service
