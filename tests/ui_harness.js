@@ -672,6 +672,10 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.21':") && bundle.includes('двух воркеров') &&
      bundle.includes('сирот') && bundle.includes('причина'),
      'v1.70.21: атомарный старт мастера, отмена убивает группу, причина таймаута видна');
+  ok(bundle.includes("'1.70.22':") &&
+     bundle.includes('помечается прерванным') && bundle.includes('pipefail') &&
+     bundle.includes('последней команде'),
+     'v1.70.22: панель не застревает после рестарта, отказ curl не выглядит успехом');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

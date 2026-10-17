@@ -41,8 +41,17 @@ from datetime import datetime
 
 from .updater import APP_DIR
 
-INSTALL_CMD = ("curl -fsSL https://raw.githubusercontent.com/AdguardTeam/"
-               "AdGuardVPNCLI/HEAD/scripts/release/install.sh | sh -s -- -v")
+INSTALL_URL = ("https://raw.githubusercontent.com/AdguardTeam/"
+               "AdGuardVPNCLI/HEAD/scripts/release/install.sh")
+INSTALL_TMP = "/tmp/ymaster-adguard-install.sh"
+# v1.70.22: ДВУМЯ шагами (скачать, затем выполнить), а не `curl … | sh -s --`.
+# В пайплайне код возврата принадлежит ПОСЛЕДНЕЙ команде (sh), поэтому отказ
+# curl (нет сети, DNS, rc 6/35) выглядел как успешная установка, а владелец
+# получал «CLI установлен, но не запускается: » с пустой причиной.
+# `set -o pipefail` здесь не помощник: /bin/sh в Ubuntu/Debian — dash, а в нём
+# это «Illegal option -o pipefail» (проверено).
+INSTALL_CMD = (f"curl -fsSL {INSTALL_URL} -o {INSTALL_TMP} "
+               f"&& sh {INSTALL_TMP} -v")
 CLI_CANDIDATES = ("/usr/local/bin/adguardvpn-cli", "/opt/adguardvpn_cli/adguardvpn-cli")
 LINK_CMD = ("ln -sf /opt/adguardvpn_cli/adguardvpn-cli "
             "/usr/local/bin/adguardvpn-cli")
@@ -232,11 +241,41 @@ def _state_load() -> dict | None:
 
 
 def setup_status() -> dict:
-    """Живое задание → из памяти; после рестарта — последнее с диска."""
+    """Живое задание → из памяти; после рестарта — последнее с диска.
+
+    v1.70.22: сохранённое `running: true` после перезапуска процесса заведомо
+    устарело — поток установки умер вместе с процессом. Раньше панель вечно
+    показывала «установка выполняется», опрос не останавливался, а «Остановить»
+    отвечал 409 (в памяти задания нет): владелец застревал в фантомном
+    состоянии. Сценарий вполне боевой — `deploy.sh --update` перезапускает
+    службу после каждого обновления. Такое состояние помечаем прерванным,
+    журнал сохраняем.
+    """
     if job.running or job.finished:
         return job.public()
     st = _state_load() or {}
-    return st if st.get("finished") or st.get("running") else job.public()
+    if not (st.get("finished") or st.get("running")):
+        return job.public()
+    if st.get("running"):
+        st = dict(st)
+        st["running"] = False
+        st["finished"] = True
+        st["success"] = False
+        st["interrupted"] = True
+        st["error"] = st.get("error") or (
+            "Установка была прервана перезапуском программы — журнал сохранён; "
+            "запустите мастер ещё раз.")
+        steps = []
+        for s in st.get("steps") or []:
+            s = dict(s)
+            if s.get("status") == "active":
+                s["status"] = "failed"          # спиннер не должен крутиться
+            steps.append(s)
+        if steps:
+            st["steps"] = steps
+        st["log"] = list(st.get("log") or []) + \
+            [f"[{_stamp()}] {st['error']}"]
+    return st
 
 
 # ==========================================================================
@@ -285,6 +324,18 @@ def _timeout_text(timeout: float, name: str) -> str:
     а не «Непредвиденная ошибка: » в панели владельца."""
     return (f"timeout ({timeout:g} с): {name} — команда не завершилась "
             f"вовремя и была прервана")
+
+
+def _reason(text: str, limit: int = 300) -> str:
+    """Хвост вывода с гарантией НЕпустоты (v1.70.22).
+
+    Пустая «причина» после двоеточия — ровно та диагностика, которой не хватило
+    на боевом сервере: сообщение есть, а зацепки нет. Если вывод пуст, говорим
+    наиболее вероятное (нет сети до источника) вместо пустой строки.
+    """
+    tail = (text or "").strip()[-limit:]
+    return tail or ("вывод пуст — вероятнее всего, нет доступа к источнику "
+                    "(raw.githubusercontent.com: DNS/файрвол/прокси)")
 
 
 def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
@@ -624,10 +675,10 @@ def _step_cli() -> None:
                            "пропускаю установку.", "skip", 20)
             return
     job.say("cli", "Ставим официальным установщиком (1–2 минуты)…")
-    rc, out = run_cmd(INSTALL_CMD, shell=True)
+    rc, install_out = run_cmd(INSTALL_CMD, shell=True)
     if rc != 0:
         raise RuntimeError("Установщик AdGuard завершился с ошибкой: "
-                           + (out or "").strip()[-300:])
+                           + _reason(install_out))
     cli = _find_cli()
     rc, out = run_cmd([cli, "--version"], timeout=30) if cli else (1, "")
     if rc != 0:
@@ -635,11 +686,18 @@ def _step_cli() -> None:
         if os.path.exists("/opt/adguardvpn_cli/adguardvpn-cli"):
             job.say("cli", "Создаю ссылку /usr/local/bin (установщик не успел).")
             run_cmd(LINK_CMD, shell=True)
-            rc, out = run_cmd(["/usr/local/bin/adguardvpn-cli", "--version"],
-                              timeout=30) if _find_cli() else (1, "")
+            cli = _find_cli()
+            rc, out = run_cmd([cli, "--version"], timeout=30) if cli else (1, "")
     if rc != 0:
-        raise RuntimeError("CLI установлен, но не запускается: "
-                           + (out or "").strip()[-200:])
+        # v1.70.22: причина обязательна и точна. Раньше здесь печаталось
+        # «CLI установлен, но не запускается: » с ПУСТЫМ хвостом: вывод
+        # установщика затирался результатом --version, а самого CLI могло и не
+        # быть. Владелец оставался без единой зацепки.
+        if not cli:
+            raise RuntimeError("CLI не появился после установки: "
+                               + _reason(install_out))
+        raise RuntimeError(f"CLI установлен, но не запускается ({cli}): "
+                           + _reason(out or install_out))
     job.cli_version = (out or "").strip().splitlines()[0][:40] \
         if out.strip() else "установлен"
     job.say("cli", f"CLI готов ({job.cli_version}).", "done", 25)

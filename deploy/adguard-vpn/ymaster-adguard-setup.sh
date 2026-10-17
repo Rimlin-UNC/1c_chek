@@ -39,7 +39,12 @@ CLI_LINK="/usr/local/bin/adguardvpn-cli"
 CLI_REAL="/opt/adguardvpn_cli/adguardvpn-cli"
 TUNNEL_UNIT="adguard-vpn-telegram"
 TIMER_UNIT="tg-health.timer"
-INSTALL_CMD="curl -fsSL https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/release/install.sh | sh -s -- -v"
+# v1.70.22: двумя шагами, а не `curl … | sh`. В пайплайне код возврата — у
+# последней команды (sh), поэтому отказ curl (нет сети/DNS) выглядел как успех;
+# `set -o pipefail` в dash (/bin/sh в Ubuntu/Debian) недоступен.
+INSTALL_URL="https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/release/install.sh"
+INSTALL_TMP="/tmp/ymaster-adguard-install.sh"
+INSTALL_CMD="curl -fsSL $INSTALL_URL -o $INSTALL_TMP && sh $INSTALL_TMP -v"
 # Фазы, доступные из-под приложения (в них и состоит sudoers-правило).
 # install-rule/remove-rule здесь НЕТ: их владелец выполняет вручную.
 ALLOWED_PHASES="preflight rights install login socks units autopilot version status"

@@ -395,30 +395,39 @@ phase_install
 #  Синхронность версии v1.70.21
 # ==============================================================================
 class TestVersions17021:
-    def test_config_version(self):
-        assert settings.APP_VERSION == VER
+    """Пины версии устойчивы к бампу: точную версию проверяет тест СВОЕЙ версии,
+    здесь — «не ниже 1.70.21» и синхронность статики с текущей версией."""
 
-    def test_static_pins(self):
+    def test_version_at_least(self):
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 21)
+
+    def test_static_pins_follow_current_version(self):
+        ver = settings.APP_VERSION
         idx = _read("app/static/index.html")
-        assert len(re.findall(r"\?v=" + re.escape(VER), idx)) == 2
+        assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 2
         sw = _read("app/static/sw.js")
-        assert f"ymaster-check-v{VER}" in sw
-        assert len(re.findall(r"\?v=" + re.escape(VER), sw)) == 2
-        assert f'"version": "{VER}"' in _read("app/static/manifest.webmanifest")
-        assert f"?v={VER}" in _read("app/static/maxapp/index.html")
+        assert f"ymaster-check-v{ver}" in sw
+        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 2
+        assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
+        assert f"?v={ver}" in _read("app/static/maxapp/index.html")
 
-    def test_no_previous_version_left(self):
+    def test_no_stale_previous_version(self):
         for f in ("app/static/index.html", "app/static/sw.js",
-                  "app/static/manifest.webmanifest", "app/static/maxapp/index.html"):
+                  "app/static/manifest.webmanifest",
+                  "app/static/maxapp/index.html"):
             assert "1.70.20" not in _read(f), f
 
     def test_changelog_and_whatsnew(self):
-        assert _read("CHANGELOG.md").startswith(f"## [{VER}]")
+        assert _read("CHANGELOG.md").count(f"## [{VER}]") == 1
         assert f"'{VER}':" in _read(APP_JS)
         assert f"'{VER}':" in _read("tests/ui_harness.js")
 
     def test_changelog_mentions_every_fix(self):
-        top = _read("CHANGELOG.md").split("## [1.70.20]")[0]
+        ch = _read("CHANGELOG.md")
+        i = ch.index(f"## [{VER}]")
+        j = ch.index("## [1.70.20]", i)
+        section = ch[i:j]
         for needle in ("гонка", "сирот", "124", "замка", "_copy_kit",
                        "установщика"):
-            assert needle.lower() in top.lower(), needle
+            assert needle.lower() in section.lower(), needle
