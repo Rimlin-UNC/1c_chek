@@ -278,3 +278,148 @@ class TestHarness17019:
         h = _read("tests/ui_harness.js")
         assert "1.70.19" in h and "OPT_BRANCH" in h \
             and "Ветка задана явно" in h
+
+
+# ==============================================================================
+#  Сквозной живой прогон: конфиг → --branch= → fetch → reset (как на сервере)
+# ==============================================================================
+needs_git = pytest.mark.skipif(
+    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
+    reason="нет git")
+
+
+def _git(args, cwd, check=True):
+    r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                       text=True, timeout=300)
+    if check and r.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)} → {r.returncode}: "
+                             f"{r.stdout}{r.stderr}")
+    return r
+
+
+STALE_BRANCH = "arena/stale-channel"
+TARGET_BRANCH = "arena/target-channel"
+
+
+@pytest.fixture()
+def server_like_clone(tmp_path):
+    """origin с «устаревшим каналом» и «целевой» веткой + клон ТОЛЬКО main
+    (--depth 1 --branch, как ставит deploy.sh) — то есть ровно состояние
+    боевого сервера: один refspec в .git/config."""
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(["init", "-q", "-b", "main", str(origin)], origin.parent)
+    _git(["config", "user.name", "t"], origin)
+    _git(["config", "user.email", "t@t"], origin)
+    (origin / "app").mkdir()
+    (origin / "app" / "config.py").write_text(
+        'APP_VERSION: str = "1.70.15"\n', encoding="utf-8")
+    (origin / "MARKER.txt").write_text("main\n", encoding="utf-8")
+    _git(["add", "."], origin)
+    _git(["commit", "-qm", "main"], origin)
+
+    for branch, marker in ((STALE_BRANCH, "stale"), (TARGET_BRANCH, "target")):
+        _git(["checkout", "-q", "-b", branch], origin)
+        (origin / "MARKER.txt").write_text(marker + "\n", encoding="utf-8")
+        _git(["add", "."], origin)
+        _git(["commit", "-qm", branch], origin)
+    _git(["checkout", "-q", "main"], origin)
+
+    clone = tmp_path / "appdir"
+    # file:// — иначе git игнорирует --depth для локального пути
+    _git(["clone", "-q", "--depth", "1", "--branch", "main",
+          f"file://{origin}", str(clone)], origin.parent)
+    cfg = (clone / ".git" / "config").read_text(encoding="utf-8")
+    assert cfg.count("fetch = ") == 1, "клон обязан отслеживать одну ветку"
+    return origin, clone
+
+
+def _e2e_script(clone, conf_dir):
+    """Настоящий блок разрешений + настоящие команды обновления из deploy.sh.
+    Подменены только пути (APP_DIR/APP_USER/CONF_DIR) и заглушены ok/warn/sudo —
+    текст самого скрипта не пересказывается."""
+    sh = _read("deploy.sh")
+    start = sh.index('REPO_URL="${REPO_URL:-')
+    region = sh[start:sh.index(RESOLUTION) + len(RESOLUTION)]
+    region = region.replace('CONF_DIR="/etc/ymaster-check"',
+                            'CONF_DIR="${PROBE_DIR:?}"')
+    tail = sh[sh.index(RESOLUTION) + len(RESOLUTION):]
+    tail = tail[:tail.index("\nfi\n") + len("\nfi\n")]
+
+    upd_start = sh.index('if [[ -d "$APP_DIR/.git" ]]; then')
+    upd = sh[upd_start:sh.index('ok "обновлено из GitHub', upd_start)]
+    upd = upd.split("\n", 1)[1]                      # без строки «if … ; then»
+
+    return ("#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"                    # как в deploy.sh
+            "ok() { :; }\nwarn() { :; }\nbold() { :; }\n"
+            'sudo() { shift 2; "$@"; }\n'            # sudo -u <user> → команда
+            + region + tail
+            # пути боевого сервера подменяем ПОСЛЕ блока разрешений
+            + f'\nAPP_DIR="{clone}"\nAPP_USER="$(id -un)"\n'
+            + 'echo "RESOLVED_BRANCH=$BRANCH"\n'
+            + upd + "\n")
+
+
+def _run_e2e(tmp_path, clone, conf_branch, args=(), env_extra=None):
+    conf_dir = tmp_path / "etc-ymaster-check"
+    conf_dir.mkdir(exist_ok=True)
+    if conf_branch is not None:
+        (conf_dir / "deploy.conf").write_text(
+            f'DOMAIN="chek.ymaster.ru"\nSSL_DOMAIN=""\n'
+            f'BRANCH="{conf_branch}"\n', encoding="utf-8")
+    driver = tmp_path / "driver.sh"
+    driver.write_text(_e2e_script(clone, conf_dir), encoding="utf-8")
+    env = dict(os.environ, PROBE_DIR=str(conf_dir))
+    if env_extra:
+        env.update(env_extra)
+    r = subprocess.run(["bash", str(driver), *args], capture_output=True,
+                       text=True, timeout=300, env=env)
+    return r, _resolved(r.stdout)
+
+
+@needs_git
+class TestEndToEndBranchSwitch:
+    def test_flag_beats_conf_and_resets_to_target(self, server_like_clone,
+                                                  tmp_path):
+        """Главный сценарий боевого сервера: в deploy.conf запомнена устаревшая
+        ветка, оператор явно просит другую — обновление обязано уйти на явную."""
+        _origin, clone = server_like_clone
+        assert (clone / "MARKER.txt").read_text(encoding="utf-8") == "main\n"
+        r, resolved = _run_e2e(tmp_path, clone, STALE_BRANCH,
+                               ["--update", f"--branch={TARGET_BRANCH}"])
+        assert r.returncode == 0, (r.stdout[-600:], r.stderr[-600:])
+        assert resolved == TARGET_BRANCH
+        assert (clone / "MARKER.txt").read_text(encoding="utf-8") == "target\n"
+        # ref целевой ветки создан — ровно то, чего не хватало в v1.70.17
+        assert _git(["rev-parse", "--verify", "--quiet",
+                     f"origin/{TARGET_BRANCH}"], clone,
+                    check=False).returncode == 0
+
+    def test_env_branch_beats_conf_too(self, server_like_clone, tmp_path):
+        _origin, clone = server_like_clone
+        r, resolved = _run_e2e(tmp_path, clone, STALE_BRANCH, ["--update"],
+                               env_extra={"BRANCH": TARGET_BRANCH})
+        assert r.returncode == 0, (r.stdout[-600:], r.stderr[-600:])
+        assert resolved == TARGET_BRANCH
+        assert (clone / "MARKER.txt").read_text(encoding="utf-8") == "target\n"
+
+    def test_without_flag_conf_branch_is_used(self, server_like_clone,
+                                              tmp_path):
+        """Без явного выбора запомненная ветка применяется — поведение
+        «параметры прошлого запуска» не сломано (и тест не vacuous)."""
+        _origin, clone = server_like_clone
+        r, resolved = _run_e2e(tmp_path, clone, STALE_BRANCH, ["--update"])
+        assert r.returncode == 0, (r.stdout[-600:], r.stderr[-600:])
+        assert resolved == STALE_BRANCH
+        assert (clone / "MARKER.txt").read_text(encoding="utf-8") == "stale\n"
+
+    def test_no_conf_defaults_to_main_and_succeeds(self, server_like_clone,
+                                                   tmp_path):
+        """Чистая машина без deploy.conf: ветка main, обновление проходит
+        (single-branch клон больше не роняет деплой)."""
+        _origin, clone = server_like_clone
+        r, resolved = _run_e2e(tmp_path, clone, None, ["--update"])
+        assert r.returncode == 0, (r.stdout[-600:], r.stderr[-600:])
+        assert resolved == "main"
+        assert "ambiguous argument" not in (r.stdout + r.stderr)
