@@ -187,8 +187,9 @@ class TestInstallCommandPropagatesFailure:
     def test_helper_uses_same_two_step_command(self):
         src = _read(HELPER_SH)
         assert "INSTALL_URL=" in src and "INSTALL_TMP=" in src
-        assert 'INSTALL_CMD="curl -fsSL $INSTALL_URL -o $INSTALL_TMP ' \
-               '&& sh $INSTALL_TMP -v"' in src
+        # v1.70.23: флаг автоответа `-a y` вместо `-v` (verbose)
+        assert re.search(r'INSTALL_CMD="curl -fsSL \$INSTALL_URL '
+                         r'-o \$INSTALL_TMP && sh \$INSTALL_TMP -a y"', src)
         install_line = [l for l in src.split("\n")
                         if "$INSTALL_CMD" in l and "sh -c" in l]
         assert install_line, "строка запуска установщика не найдена"
@@ -281,17 +282,22 @@ class TestStepCliMessages:
 #  Синхронность версии v1.70.22
 # ==============================================================================
 class TestVersions17022:
-    def test_config_version(self):
-        assert settings.APP_VERSION == VER
+    """Пины устойчивы к бампу: точную версию проверяет тест СВОЕЙ версии,
+    здесь — «не ниже 1.70.22» и синхронность статики с текущей версией."""
 
-    def test_static_pins(self):
+    def test_version_at_least(self):
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 22)
+
+    def test_static_pins_follow_current_version(self):
+        ver = settings.APP_VERSION
         idx = _read("app/static/index.html")
-        assert len(re.findall(r"\?v=" + re.escape(VER), idx)) == 2
+        assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 2
         sw = _read("app/static/sw.js")
-        assert f"ymaster-check-v{VER}" in sw
-        assert len(re.findall(r"\?v=" + re.escape(VER), sw)) == 2
-        assert f'"version": "{VER}"' in _read("app/static/manifest.webmanifest")
-        assert f"?v={VER}" in _read("app/static/maxapp/index.html")
+        assert f"ymaster-check-v{ver}" in sw
+        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 2
+        assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
+        assert f"?v={ver}" in _read("app/static/maxapp/index.html")
 
     def test_no_previous_version_left(self):
         for f in ("app/static/index.html", "app/static/sw.js",
@@ -300,7 +306,7 @@ class TestVersions17022:
             assert "1.70.21" not in _read(f), f
 
     def test_changelog_and_whatsnew(self):
-        assert _read("CHANGELOG.md").startswith(f"## [{VER}]")
+        assert _read("CHANGELOG.md").count(f"## [{VER}]") == 1
         assert f"'{VER}':" in _read(APP_JS)
         assert f"'{VER}':" in _read("tests/ui_harness.js")
 

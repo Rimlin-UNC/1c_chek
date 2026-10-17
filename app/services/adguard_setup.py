@@ -50,11 +50,21 @@ INSTALL_TMP = "/tmp/ymaster-adguard-install.sh"
 # получал «CLI установлен, но не запускается: » с пустой причиной.
 # `set -o pipefail` здесь не помощник: /bin/sh в Ubuntu/Debian — dash, а в нём
 # это «Illegal option -o pipefail» (проверено).
+#
+# v1.70.23: `-a y` — автоответ «да» на вопрос установщика «create a link in
+# /usr/local/bin? [y/N]». Раньше стоял `-v`, но по исходнику установщика
+# (getopts 'vho:uV:p:a:') `-v` — это verbose, и он УЖЕ включён по умолчанию
+# (verbose='1'), на вопросы он не отвечает. Без автоответа ask_user() читает
+# `read -r response < /dev/tty`; у службы tty нет → ответ пустой → установщик
+# создаёт файл .nosymlink и ссылка НЕ появляется. Кроме того, create_symlink()
+# сразу делает return 0, если /usr/local/bin не входит в PATH (у юнита
+# программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin — его там нет).
 INSTALL_CMD = (f"curl -fsSL {INSTALL_URL} -o {INSTALL_TMP} "
-               f"&& sh {INSTALL_TMP} -v")
-CLI_CANDIDATES = ("/usr/local/bin/adguardvpn-cli", "/opt/adguardvpn_cli/adguardvpn-cli")
-LINK_CMD = ("ln -sf /opt/adguardvpn_cli/adguardvpn-cli "
-            "/usr/local/bin/adguardvpn-cli")
+               f"&& sh {INSTALL_TMP} -a y")
+CLI_LINK = "/usr/local/bin/adguardvpn-cli"
+CLI_REAL = "/opt/adguardvpn_cli/adguardvpn-cli"
+CLI_CANDIDATES = (CLI_LINK, CLI_REAL)
+LINK_CMD = f"ln -sf {CLI_REAL} {CLI_LINK}"
 DEPLOY_DIR = os.path.join(APP_DIR, "deploy", "adguard-vpn")
 ETC_DIR = "/etc/systemd/system"          # юниты systemd
 SBIN_DIR = "/usr/local/sbin"             # сценарий автопилота
@@ -643,6 +653,30 @@ def sys_platform_linux() -> bool:
     return os.uname().sysname.lower().startswith("linux")
 
 
+def _ensure_cli_link() -> None:
+    """Ссылка /usr/local/bin/adguardvpn-cli обязана существовать (v1.70.23).
+
+    На этот путь жёстко прописаны `ExecStart=` юнита adguard-vpn-telegram и
+    `CLI=` в tg-health.sh, а официальный установщик ссылку не создаёт, если:
+      • нет терминала для вопроса «create a link in /usr/local/bin? [y/N]»
+        (у службы tty нет → ответ пустой → создаётся `.nosymlink`, который
+        отключает вопрос и при всех последующих запусках);
+      • /usr/local/bin не входит в PATH — тогда create_symlink() молча
+        делает return 0 (у юнита программы PATH короткий).
+    Поэтому обеспечиваем ссылку сами и ВСЕГДА, когда её нет, а бинарник в
+    /opt есть — в том числе на пути «CLI уже установлен», где раньше происходил
+    ранний выход и установка ломалась на следующем шаге.
+    """
+    if os.path.exists(CLI_LINK) or not os.path.exists(CLI_REAL):
+        return
+    job.say("cli", "Создаю ссылку /usr/local/bin/adguardvpn-cli "
+                   "(её требуют служба туннеля и автопилот).")
+    rc, out = run_cmd(LINK_CMD, shell=True)
+    if rc != 0:
+        raise RuntimeError("Не создать ссылку " + CLI_LINK + ": "
+                           + _reason(out))
+
+
 def _step_cli() -> None:
     job.say("cli", "Проверяем AdGuard VPN CLI…", "active", 12)
     if job.sudo_mode == "helper":
@@ -669,6 +703,11 @@ def _step_cli() -> None:
     if cli:
         rc, out = run_cmd([cli, "--version"], timeout=30)
         if rc == 0:
+            # v1.70.23: _find_cli() находит и /opt/adguardvpn_cli/adguardvpn-cli,
+            # поэтому проверка версии проходила и шаг завершался РАНЬШЕ, чем
+            # создавалась ссылка /usr/local/bin — а без неё следующий шаг
+            # (юнит туннеля с ExecStart=/usr/local/bin/…) падал.
+            _ensure_cli_link()
             job.cli_version = (out or "").strip().splitlines()[0][:40] \
                 if out.strip() else "установлен"
             job.say("cli", f"CLI уже установлен ({job.cli_version}) — "
@@ -679,11 +718,12 @@ def _step_cli() -> None:
     if rc != 0:
         raise RuntimeError("Установщик AdGuard завершился с ошибкой: "
                            + _reason(install_out))
+    _ensure_cli_link()
     cli = _find_cli()
     rc, out = run_cmd([cli, "--version"], timeout=30) if cli else (1, "")
     if rc != 0:
         # известный случай: вопрос установщика про ссылку остался без ответа
-        if os.path.exists("/opt/adguardvpn_cli/adguardvpn-cli"):
+        if os.path.exists(CLI_REAL):
             job.say("cli", "Создаю ссылку /usr/local/bin (установщик не успел).")
             run_cmd(LINK_CMD, shell=True)
             cli = _find_cli()

@@ -676,6 +676,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('помечается прерванным') && bundle.includes('pipefail') &&
      bundle.includes('последней команде'),
      'v1.70.22: панель не застревает после рестарта, отказ curl не выглядит успехом');
+  ok(bundle.includes("'1.70.23':") && bundle.includes('.nosymlink') &&
+     bundle.includes('ExecStart') && bundle.includes('tg-health.sh'),
+     'v1.70.23: установщику AdGuard передаётся -a y, ссылка /usr/local/bin создаётся безусловно');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

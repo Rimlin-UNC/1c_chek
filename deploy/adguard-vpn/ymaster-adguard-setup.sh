@@ -44,7 +44,7 @@ TIMER_UNIT="tg-health.timer"
 # `set -o pipefail` в dash (/bin/sh в Ubuntu/Debian) недоступен.
 INSTALL_URL="https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/release/install.sh"
 INSTALL_TMP="/tmp/ymaster-adguard-install.sh"
-INSTALL_CMD="curl -fsSL $INSTALL_URL -o $INSTALL_TMP && sh $INSTALL_TMP -v"
+INSTALL_CMD="curl -fsSL $INSTALL_URL -o $INSTALL_TMP && sh $INSTALL_TMP -a y"
 # Фазы, доступные из-под приложения (в них и состоит sudoers-правило).
 # install-rule/remove-rule здесь НЕТ: их владелец выполняет вручную.
 ALLOWED_PHASES="preflight rights install login socks units autopilot version status"
@@ -60,6 +60,23 @@ cli_path() {
   if [ -x "$CLI_LINK" ]; then printf '%s' "$CLI_LINK"; return 0; fi
   if [ -x "$CLI_REAL" ]; then printf '%s' "$CLI_REAL"; return 0; fi
   command -v adguardvpn-cli 2>/dev/null || return 1
+}
+
+# v1.70.23: ссылка $CLI_LINK обязательна — на неё ЖЁСТКО прописаны ExecStart=
+# юнита adguard-vpn-telegram.service и CLI= в tg-health.sh. Официальный
+# установщик её не создаёт в двух случаях: (1) нет терминала для вопроса
+# «create a link in /usr/local/bin? [y/N]» — пустой ответ понимается как «нет»
+# и создаётся файл .nosymlink, отключающий вопрос навсегда; (2) /usr/local/bin
+# не входит в PATH — тогда create_symlink() молча делает return 0 (у юнита
+# программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin — его там нет).
+# Поэтому обеспечиваем ссылку сами и на пути «CLI уже установлен» тоже:
+# cli_path() находит и $CLI_REAL, и без этой страховки фаза units падала.
+ensure_link() {
+  if [ -x "$CLI_REAL" ] && [ ! -e "$CLI_LINK" ]; then
+    ln -sf "$CLI_REAL" "$CLI_LINK" \
+      && say "создана ссылка $CLI_LINK" \
+      || die "не создать ссылку $CLI_LINK (нужна службе туннеля и автопилоту)"
+  fi
 }
 
 need_root() {
@@ -173,15 +190,24 @@ phase_install() {
   local cli
   if cli=$(cli_path); then
     if "$cli" --version >/dev/null 2>&1; then
+      # v1.70.23: ссылку обеспечиваем и на пути «CLI уже установлен».
+      # cli_path() находит и $CLI_REAL, поэтому раньше фаза завершалась без
+      # ссылки, а phase_units ставил юнит с ExecStart=$CLI_LINK.
+      ensure_link
       say "CLI уже установлен: $("$cli" --version 2>&1 | head -n1)"
       return 0
     fi
   fi
   say "Ставим AdGuard VPN CLI официальным установщиком (1–2 минуты)…"
-  # -v: без вопросов; установщик сам отвечает «y» на ссылку /usr/local/bin
-  # v1.70.21: вывод установщика больше НЕ глушим. `>/dev/null 2>&1` прятал
-  # причину (нет сети, DNS, GitHub недоступен), и владелец видел лишь «CLI не
-  # появился после установки» — тот же класс дефекта, что в deploy.sh до v1.70.20.
+  # v1.70.23: `-a y` — автоответ «да» на вопрос установщика про ссылку
+# /usr/local/bin. Стоявший здесь `-v` — это verbose (по умолчанию уже включён),
+# на вопросы он не отвечает: без tty установщик получал пустой ответ, создавал
+# .nosymlink и ссылку НЕ делал. Кроме того, create_symlink() сразу выходит, если
+# /usr/local/bin не в PATH (у юнита программы его там нет). Ссылка обязательна:
+# на неё жёстко прописаны ExecStart юнита туннеля и CLI= в tg-health.sh.
+# v1.70.21: вывод установщика больше НЕ глушим. `>/dev/null 2>&1` прятал
+# причину (нет сети, DNS, GitHub недоступен), и владелец видел лишь «CLI не
+# появился после установки» — тот же класс дефекта, что в deploy.sh до v1.70.20.
   local install_out
   local install_rc=0
   install_out=$(sh -c "$INSTALL_CMD" </dev/null 2>&1) || install_rc=$?
@@ -191,9 +217,7 @@ phase_install() {
       printf '%s\n' "$install_out" | tail -n 5 | sed 's/^/       причина: /'
     fi
   fi
-  if [ -x "$CLI_REAL" ] && [ ! -x "$CLI_LINK" ]; then
-    ln -sf "$CLI_REAL" "$CLI_LINK" && say "создана ссылка $CLI_LINK"
-  fi
+  ensure_link
   cli=$(cli_path) || die "CLI не появился после установки"
   "$cli" --version >/dev/null 2>&1 || die "CLI установлен, но не запускается: $cli"
   say "CLI готов: $("$cli" --version 2>&1 | head -n1)"
@@ -216,6 +240,9 @@ phase_socks() {
 phase_units() {
   need_root "units"
   local f
+  # v1.70.23: юнит туннеля и tg-health.sh прописаны на $CLI_LINK жёстко —
+  # без ссылки systemctl restart упадёт с «служба туннеля не запустилась».
+  ensure_link
   for f in "${UNITS_ETC[@]}"; do
     [ -f "$KIT_DIR/$f" ] || die "в $KIT_DIR нет $f — выполните install-rule"
     install -m 0644 -o root -g root "$KIT_DIR/$f" "/etc/systemd/system/$f"
