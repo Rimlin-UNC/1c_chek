@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ямастер Чек — мини-приложение</title>
+<script src="https://st.max.ru/js/max-web-app.js"></script>
+<script src="/maxapp/jsQR.js"></script>
+<style>
+:root { --bg: var(--tg-theme-bg-color, #f5f1ea); --fg: var(--tg-theme-text-color, #2b2347);
+        --accent: var(--tg-theme-button-color, #e8721c); --accent-fg: var(--tg-theme-button-text-color, #fff);
+        --hint: var(--tg-theme-hint-color, #7d7693); --card: var(--tg-theme-secondary-bg-color, #fff); }
+* { box-sizing: border-box; margin: 0; }
+body { font: 16px/1.45 -apple-system, 'Segoe UI', Roboto, sans-serif;
+       background: var(--bg); color: var(--fg); padding: 14px 14px 90px; }
+h1 { font-size: 20px; margin: 4px 0 12px; }
+.card { background: var(--card); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+.big { font-size: 34px; font-weight: 800; }
+.hint { color: var(--hint); font-size: 13px; }
+.btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 15px;
+       font-size: 17px; font-weight: 700; background: var(--accent); color: var(--accent-fg); }
+.btn.secondary { background: transparent; color: var(--accent); border: 2px solid var(--accent); }
+.btn:disabled { opacity: .5; }
+input { width: 100%; border: 1px solid var(--hint); border-radius: 10px;
+        padding: 12px; font-size: 16px; background: var(--bg); color: var(--fg); }
+.row { display: flex; gap: 8px; }
+nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex;
+      background: var(--card); padding-bottom: env(safe-area-inset-bottom); }
+nav button { flex: 1; border: 0; background: none; padding: 12px 0; font-size: 15px; color: var(--hint); }
+nav button.active { color: var(--accent); font-weight: 700; }
+.hidden { display: none; }
+.rrow { display: flex; justify-content: space-between; padding: 8px 0;
+        border-bottom: 1px solid var(--hint); font-size: 14px; }
+.status { font-weight: 700; }
+#msg { min-height: 20px; margin: 10px 0; font-weight: 600; }
+code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
+</style>
+</head>
+<body>
+<div id="view-loading" class="card"><p>Подключаемся к MAX…</p></div>
+
+<div id="view-app" class="hidden">
+  <h1>Ямастер Чек</h1>
+
+  <section id="tab-scan">
+    <div class="card" style="text-align:center">
+      <div class="big" id="points">…</div>
+      <div class="hint">моих баллов</div>
+    </div>
+    <button class="btn" id="btn-scan">📷 Сканировать QR чека</button>
+    <div style="height:8px"></div>
+    <button class="btn secondary" id="btn-cam">🎥 Камера в окне</button>
+    <div style="height:8px"></div>
+    <div class="card">
+      <div class="hint" style="margin-bottom:6px">Или вставьте строку QR:</div>
+      <input id="qr-input" placeholder="t=…&s=…&fn=…&i=…&fp=…&n=…">
+      <div style="height:8px"></div>
+      <button class="btn secondary" id="btn-send">Сдать чек</button>
+      <div style="height:8px"></div>
+      <button class="btn secondary" id="btn-photo">📷 Фото с QR-кодом</button>
+      <input type="file" id="qr-file" accept="image/*" class="hidden">
+    </div>
+    <div id="msg"></div>
+  </section>
+
+  <section id="tab-receipts" class="hidden">
+    <div class="card"><div class="hint">Последние чеки</div><div id="receipts">…</div></div>
+  </section>
+
+  <section id="tab-profile" class="hidden">
+    <div class="card">
+      <div class="hint">Ваш код приглашения</div>
+      <code id="ref-code">—</code>
+      <div style="height:8px"></div>
+      <button class="btn secondary" id="btn-share">🎁 Позвать друга (+баллы)</button>
+    </div>
+    <div class="card hint" id="profile-extra"></div>
+  </section>
+</div>
+
+<div id="view-service" class="hidden">
+  <h1 id="service-title">…</h1>
+  <div class="card" id="service-body"></div>
+</div>
+
+<nav>
+  <button data-tab="scan" class="active">📷 Сканер</button>
+  <button data-tab="receipts">🧾 Чеки</button>
+  <button data-tab="profile">⭐ Профиль</button>
+</nav>
+
+<script src="/maxapp/maxapp.js?v=1.70.15"></script>
+</body>
+</html>

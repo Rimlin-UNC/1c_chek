@@ -1,0 +1,554 @@
+# -*- coding: utf-8 -*-
+"""
+Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+
+Разработчик и владелец идеи: ООО «Ямастер»
+Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+
+ORM-модели: чеки, позиции, маппинг, пользователи, аудит, журнал ФНС.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import (
+    BigInteger, Boolean, DateTime, Float, ForeignKey, Index,
+    Integer, String, Text, UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .database import Base
+
+
+def uid() -> str:
+    """Генерация UUID-строки (первичный ключ)."""
+    return str(uuid.uuid4())
+
+
+def utcnow() -> datetime:
+    """Текущее UTC-время."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def iso_z(dt: datetime | None) -> str | None:
+    """v1.60.0: момент времени → ISO-строка UTC с «Z».
+
+    В БД моменты хранятся наивным UTC (utcnow()); API ОБЯЗАНО помечать
+    их «Z», чтобы браузер показывал время в местной зоне пользователя —
+    приложение открывают из любой страны и города. Бизнес-времена
+    (дата/время чека с кассы, даты для 1С, оси графиков) остаются
+    без «Z» намеренно: они показываются как есть, по кассе.
+    """
+    return dt.isoformat() + "Z" if dt else None
+
+
+# --------------------------------------------------------------------------
+#  v1.11.0: Компании (мультикомпанийность — аутсорсинг бухгалтерии)
+#  Пространство клиента: ООО/ИП со своими сотрудниками, чеками и отчётами.
+#  Администратор платформы видит все компании; сотрудники — только свою.
+# --------------------------------------------------------------------------
+class Company(Base):
+    __tablename__ = "companies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    # v1.22.0: сокращённое наименование из карточки ЕГРЮЛ/ЕГРИП (НаимСокр) —
+    # показывается в списках и селекторах; полное — в карточке
+    short_name: Mapped[str] = mapped_column(String(200), default="",
+                                            server_default="")
+    inn: Mapped[str] = mapped_column(String(20), default="")     # ИНН организации/ИП
+    note: Mapped[str] = mapped_column(String(500), default="")   # памятка (договор, контакт)
+    # --- v1.62.0: политика расходов (лимиты и комплаенс) ---
+    limit_per_check: Mapped[float | None] = mapped_column(Float, nullable=True)
+    limit_per_month: Mapped[float | None] = mapped_column(Float, nullable=True)
+    forbidden_categories: Mapped[str] = mapped_column(String(1000), default="",
+                                                      server_default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # v1.13.0: карточка компании — данные ЕГРЮЛ/ЕГРИП (JSON из Checko)
+    card_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    card_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "short_name": self.short_name or "",
+            "display_name": self.short_name or self.name,   # v1.22.0: для списков
+            "inn": self.inn,
+            "note": self.note,
+            "limit_per_check": self.limit_per_check,
+            "limit_per_month": self.limit_per_month,
+            "forbidden_categories": [s.strip() for s in
+                                     (self.forbidden_categories or "").split(",")
+                                     if s.strip()],
+            "is_active": self.is_active,
+            "created_at": iso_z(self.created_at),
+        }
+
+
+# --------------------------------------------------------------------------
+#  Пользователи
+# --------------------------------------------------------------------------
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    password_hash: Mapped[str] = mapped_column(String(255))
+    organization: Mapped[str] = mapped_column(String(200), default="")
+    # Роли: admin (единственный, вне компаний) | accountant | user
+    role: Mapped[str] = mapped_column(String(20), default="user", index=True)
+    # v1.11.0: пространство клиента. NULL — платформенный уровень (админ).
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id"), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # v1.16.0: Telegram-уведомления (chat_id после привязки бота по коду)
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # v1.66.0: ассистент MAX — id пользователя для уведомлений
+    max_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "username": self.username,
+            "full_name": self.full_name,
+            "organization": self.organization,
+            "role": self.role,
+            "company_id": self.company_id,
+            "is_active": self.is_active,
+            "must_change_password": self.must_change_password,
+            "created_at": iso_z(self.created_at),
+            "last_login_at": iso_z(self.last_login_at),
+        }
+
+
+# --------------------------------------------------------------------------
+#  Приглашения (регистрация только по ссылке от администратора)
+# --------------------------------------------------------------------------
+class Invite(Base):
+    __tablename__ = "invites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(20), default="user")   # user | accountant
+    note: Mapped[str] = mapped_column(String(200), default="")      # для кого (памятка)
+    # v1.11.0: в какую компанию попадёт приглашённый (NULL — без компании)
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id"), nullable=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "token": self.token,
+            "role": self.role,
+            "note": self.note,
+            "company_id": self.company_id,
+            "created_at": iso_z(self.created_at),
+            "expires_at": iso_z(self.expires_at),
+            "max_uses": self.max_uses,
+            "used_count": self.used_count,
+            "revoked": self.revoked,
+            "valid": self.is_valid,
+        }
+
+    @property
+    def is_valid(self) -> bool:
+        if self.revoked or self.used_count >= self.max_uses:
+            return False
+        if self.expires_at and self.expires_at < utcnow():
+            return False
+        return True
+
+
+# --------------------------------------------------------------------------
+#  Чеки (54-ФЗ)
+# --------------------------------------------------------------------------
+class Receipt(Base):
+    __tablename__ = "receipts"
+    __table_args__ = (
+        UniqueConstraint("fn", "fd", "fp", name="uq_receipt_fnfd_fp"),
+        Index("idx_receipts_date", "receipt_date"),
+        Index("idx_receipts_status", "status"),
+        Index("idx_receipts_company", "company_id"),   # v1.11.0: изоляция компаний
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    qr_data: Mapped[str] = mapped_column(Text)                    # исходная строка QR
+    # Фискальные реквизиты
+    fn: Mapped[str] = mapped_column(String(20), index=True)       # ФН — заводской номер фискального накопителя
+    fd: Mapped[str] = mapped_column(String(20), index=True)       # ФД — номер фискального документа
+    fp: Mapped[str] = mapped_column(String(20), index=True)       # ФП/ФПД — фискальный признак
+    # v1.11.0: пространство клиента, которому принадлежит чек (индекс ниже)
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id"), nullable=True)
+    receipt_date: Mapped[datetime] = mapped_column(DateTime)      # дата и время расчёта
+    total_sum: Mapped[float] = mapped_column(Float, default=0.0)  # сумма расчёта, ₽
+    operation: Mapped[int] = mapped_column(Integer, default=1)    # 1 — приход, 2 — возврат прихода
+    # Статусы
+    status: Mapped[str] = mapped_column(String(20), default="new", index=True)
+    #   new → verifying → verified / failed
+    fns_status: Mapped[str] = mapped_column(String(20), default="unknown")
+    #   unknown | valid | invalid | not_found
+    fns_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fns_message: Mapped[str] = mapped_column(Text, default="")
+    # Интеграция с 1С
+    exported: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Источник
+    source: Mapped[str] = mapped_column(String(20), default="web")  # web | mobile | camera | image | manual | api
+    created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    # Для бухгалтерии: подотчётное лицо (сотрудник) и комментарий
+    assignee: Mapped[str] = mapped_column(String(200), default="")
+    # v1.25.1: нормализованный сотрудник (casefold) — регистронезависимый фильтр
+    # и поиск по кириллице (lower()/ilike в SQLite не работает с кириллицей)
+    assignee_lc: Mapped[str] = mapped_column(String(200), server_default="", default="")
+    # v1.8.0: личные покупки в чеке (не для учёта) — к учёту = total_sum - personal_sum
+    personal_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    comment: Mapped[str] = mapped_column(Text, default="")
+    raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
+    ext_json: Mapped[str] = mapped_column(Text, default="")          # v1.55.0: расширенные поля источника (JSON)
+    # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
+    # v1.23.0: полные данные чека получены из сервиса проверки (позиции,
+    # магазин, наличные/безнал) — список показывает это, кнопка запроса скрыта
+    full_data: Mapped[bool] = mapped_column(Boolean, default=False,
+                                            server_default="0")
+    merchant_name: Mapped[str] = mapped_column(String(500), default="")     # наименование магазина/ИП
+    merchant_inn: Mapped[str] = mapped_column(String(20), default="")       # ИНН продавца
+    merchant_address: Mapped[str] = mapped_column(String(500), default="")  # адрес места расчёта
+    cashier: Mapped[str] = mapped_column(String(200), default="")           # оператор/кассир
+    cash_sum: Mapped[float] = mapped_column(Float, default=0.0)             # оплата наличными
+    ecash_sum: Mapped[float] = mapped_column(Float, default=0.0)            # оплата безналичными
+    details_source: Mapped[str] = mapped_column(String(30), default="")     # fns_api|proverkacheka|custom|manual_edit
+    details_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)          # флаг «Уведомляю бухгалтерию» от сотрудника
+    category: Mapped[str] = mapped_column(String(100), default="")          # v1.4.0: статья расходов
+    category_lc: Mapped[str] = mapped_column(String(100), default="", index=True)  # нормализованная (регистр/кириллица)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # v1.62.0: нарушения политики расходов (коды через запятую:
+    # limit_check | limit_month | forbidden_category) — мягкая пометка,
+    # статус чека не меняет
+    policy_flags: Mapped[str] = mapped_column(String(200), default="",
+                                              server_default="")
+    image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    items: Mapped[list["ReceiptItem"]] = relationship(
+        back_populates="receipt", cascade="all, delete-orphan", lazy="selectin"
+    )
+    user: Mapped[User | None] = relationship(lazy="joined")
+
+    def to_dict(self, with_items: bool = False) -> dict:
+        # v1.57.1: расширенные поля источника (proverkacheka: место расчётов,
+        # касса/смена, налог, свойства заказа, итоги НДС, ФФД…) — в интерфейс
+        try:
+            import json as _json
+            _ext = _json.loads(self.ext_json) if self.ext_json else None
+        except ValueError:
+            _ext = None
+        d = {
+            "id": self.id,
+            "qr_data": self.qr_data,
+            "fn": self.fn,
+            "fd": self.fd,
+            "fp": self.fp,
+            "company_id": self.company_id,          # v1.11.0: пространство клиента
+            "receipt_date": self.receipt_date.isoformat() if self.receipt_date else None,
+            "total_sum": self.total_sum,
+            "personal_sum": self.personal_sum or 0.0,
+            "operation": self.operation,
+            "full_data": bool(self.full_data),
+            "status": self.status,
+            "fns_status": self.fns_status,
+            "fns_checked_at": iso_z(self.fns_checked_at),
+            "fns_message": self.fns_message,
+            "exported": self.exported,
+            "exported_at": iso_z(self.exported_at),
+            "source": self.source,
+            "assignee": self.assignee or "",
+            "comment": self.comment or "",
+            "created_by": (self.user.username if self.user else None),
+            "created_by_id": self.created_by,
+            "created_at": iso_z(self.created_at),
+            "items_count": len(self.items),
+            # v1.2.0: данные источников и уведомления — во всех представлениях
+            "merchant_name": self.merchant_name, "merchant_inn": self.merchant_inn,
+            "merchant_address": self.merchant_address, "cashier": self.cashier,
+            "cash_sum": self.cash_sum, "ecash_sum": self.ecash_sum,
+            "details_source": self.details_source,
+            "details_fetched_at": (self.details_fetched_at.isoformat() + "Z"
+                                   if self.details_fetched_at else None),
+            "notified": self.notified,
+            "ext": _ext,                      # v1.57.1: полные данные источника
+            "policy_flags": [f for f in (self.policy_flags or "").split(",")
+                             if f],          # v1.62.0: нарушения политики
+            "category": self.category or "",
+            # v1.12.3: кто добавил чек (ФИО/логин автора скана) —
+            # user подгружен joined, доп. запроса нет
+            "created_by_name": ((self.user.full_name or self.user.username)
+                                if self.user else None),
+        }
+        if with_items:
+            d["items"] = [it.to_dict() for it in self.items]
+        return d
+
+
+class ReceiptItem(Base):
+    __tablename__ = "receipt_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    receipt_id: Mapped[str] = mapped_column(String(36), ForeignKey("receipts.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    quantity: Mapped[float] = mapped_column(Float, default=1.0)
+    price: Mapped[float] = mapped_column(Float, default=0.0)
+    total: Mapped[float] = mapped_column(Float, default=0.0)
+    vat_rate: Mapped[str] = mapped_column(String(10), default="none")  # none|0|10|20|10/110|20/120
+    vat_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    receipt: Mapped[Receipt] = relationship(back_populates="items")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "quantity": self.quantity,
+            "price": self.price,
+            "total": self.total,
+            "vat_rate": self.vat_rate,
+            "vat_sum": self.vat_sum,
+        }
+
+
+# --------------------------------------------------------------------------
+#  v1.63.0: самообучающийся маппинг — правила поставщиков («запомнить
+#  для поставщика ИНН»). Ключ — компания + ИНН + поле; автозаполнение
+#  только ПУСТЫХ полей. Отдельная таблица: настройки 1С-маппинга
+#  (mapping_settings) не трогает.
+# --------------------------------------------------------------------------
+class MerchantRule(Base):
+    __tablename__ = "merchant_rules"
+    __table_args__ = (
+        UniqueConstraint("company_id", "merchant_inn", "field",
+                         name="uq_merchant_rule"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    merchant_inn: Mapped[str] = mapped_column(String(20), index=True)
+    merchant_name: Mapped[str] = mapped_column(String(500), default="",
+                                               server_default="")
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True)
+    field: Mapped[str] = mapped_column(String(30))   # category | assignee | comment
+    value: Mapped[str] = mapped_column(String(2000), default="")
+    applied_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "merchant_inn": self.merchant_inn,
+            "merchant_name": self.merchant_name or "",
+            "company_id": self.company_id,
+            "field": self.field,
+            "value": self.value or "",
+            "applied_count": int(self.applied_count or 0),
+            "created_at": iso_z(self.created_at),
+        }
+
+
+# --------------------------------------------------------------------------
+#  Настройки маппинга реквизитов чека → документы 1С
+# --------------------------------------------------------------------------
+class MappingSetting(Base):
+    __tablename__ = "mapping_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    source_field: Mapped[str] = mapped_column(String(100))     # поле чека, напр. total_sum
+    target_object: Mapped[str] = mapped_column(String(100))    # документ 1С, напр. ПоступлениеТоваровУслуг
+    target_field: Mapped[str] = mapped_column(String(100))     # реквизит 1С, напр. СуммаДокумента
+    transform: Mapped[str] = mapped_column(String(50), default="direct")
+    #   direct | sum100 | date_iso | operation_sign | constant
+    transform_param: Mapped[str] = mapped_column(String(200), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "source_field": self.source_field,
+            "target_object": self.target_object,
+            "target_field": self.target_field,
+            "transform": self.transform,
+            "transform_param": self.transform_param,
+            "is_active": self.is_active,
+            "position": self.position,
+        }
+
+
+# --------------------------------------------------------------------------
+#  Журнал аудита
+# --------------------------------------------------------------------------
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    # v1.18.0 (исправление): в SQLite автоинкрементирует только INTEGER
+    # PRIMARY KEY — «голый» BigInteger делал запись в журнал невозможной
+    # (тихий сбой NOT NULL id). with_variant даёт BIGINT на прочих СУБД.
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    username: Mapped[str] = mapped_column(String(100), default="")
+    company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # v1.11.0
+    action: Mapped[str] = mapped_column(String(50))
+    entity_type: Mapped[str] = mapped_column(String(50), default="")
+    entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    details: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "username": self.username,
+            "action": self.action,
+            "entity_type": self.entity_type,
+            "entity_id": self.entity_id,
+            "details": self.details,
+            "created_at": iso_z(self.created_at),
+        }
+
+
+# --------------------------------------------------------------------------
+#  Журнал обращений к API ФНС (аудит проверок)
+# --------------------------------------------------------------------------
+class FnsLog(Base):
+    __tablename__ = "fns_log"
+
+    # v1.18.0: как в AuditLog — INTEGER PRIMARY KEY для SQLite
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True)
+    receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    request_data: Mapped[str] = mapped_column(Text, default="")
+    response_data: Mapped[str] = mapped_column(Text, default="")
+    provider: Mapped[str] = mapped_column(String(20), default="mock")
+    ok: Mapped[bool] = mapped_column(Boolean, default=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# --------------------------------------------------------------------------
+#  Настройки приложения (key-value, для значений изменяемых через UI)
+# --------------------------------------------------------------------------
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+
+
+# --------------------------------------------------------------------------
+#  v1.43.0: Быстрый вход (WebAuthn / passkey) — отпечаток пальца, лицо
+#  или PIN устройства. Биометрия НЕ хранится на сервере: остаётся в
+#  защищённом чипе устройства; у нас только публичный ключ ключа-пароля.
+# --------------------------------------------------------------------------
+class WebauthnCredential(Base):
+    """Зарегистрированный ключ устройства (passkey)."""
+    __tablename__ = "webauthn_credentials"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+        # id = base64url(credential_id) — уникален по спецификации WebAuthn
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), index=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(100), default="Устройство")
+    public_key: Mapped[str] = mapped_column(Text, default="")   # b64url COSE
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    transports: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "label": self.label,
+            "created_at": iso_z(self.created_at),
+            "last_used_at": iso_z(self.last_used_at),
+        }
+
+
+class WebauthnChallenge(Base):
+    """Одноразовый challenge церемонии (регистрация/вход), 3 минуты."""
+    __tablename__ = "webauthn_challenges"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    challenge: Mapped[str] = mapped_column(String(80), default="")  # b64url
+    purpose: Mapped[str] = mapped_column(String(16), default="auth")  # auth|register
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class WebhookLog(Base):
+    """Исходящий вебхук (v1.67.0): запись очереди доставки наружу.
+
+    Событие «чек verified» → POST JSON на URL администратора с подписью
+    HMAC-SHA256 и повторами 60/300/900 с (attempt/next_attempt_at).
+    Успех — любой 2xx (delivered_at); исчерпание попыток — запись
+    остаётся с last_error для разбора. Лимит очереди — 50 записей."""
+    __tablename__ = "webhook_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    event_type: Mapped[str] = mapped_column(String(50), default="receipt_verified",
+                                            index=True)
+    receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True,
+                                                   index=True)
+    company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    url: Mapped[str] = mapped_column(String(500), default="")
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str] = mapped_column(String(300), default="")
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow,
+                                                 index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "event_type": self.event_type,
+            "receipt_id": self.receipt_id, "url": self.url,
+            "attempt": self.attempt, "last_status": self.last_status,
+            "last_error": self.last_error,
+            "delivered_at": iso_z(self.delivered_at),
+            "created_at": iso_z(self.created_at),
+        }
+
+
+class MaxLoginCode(Base):
+    """v1.70.0: одноразовые коды входа/регистрации через MAX (веб).
+    Код хранится только хэшем (sha256); подтверждение — подписанный
+    контур MAX (мини-приложение: подпись initData, или сообщение боту).
+    max_user_id заполнен → код подтверждён; used_at → код погашен."""
+
+    __tablename__ = "max_login_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(20), default="web")
+    max_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    max_username: Mapped[str] = mapped_column(String(100), default="")
+    max_name: Mapped[str] = mapped_column(String(200), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -1,0 +1,13 @@
+# ======================================================================
+# Ямастер Чек — jail для fail2ban (ООО «Ямастер», ymaster.ru)
+# 12 «плохих» ответов за 2 минуты → бан IP на 15 минут.
+# ======================================================================
+[ymaster-check]
+enabled  = true
+port     = http,https
+filter   = ymaster-check
+logpath  = /var/log/nginx/ymaster-check.access.log
+maxretry = 12
+findtime = 120
+bantime  = 900
+action   = iptables-multiport[name=ymaster-check, port="http,https", protocol=tcp]

@@ -1,0 +1,51 @@
+{
+  "name": "Ямастер Чек — сканирование чеков и загрузка в 1С",
+  "short_name": "Ямастер Чек",
+  "description": "Сканирование QR-кодов кассовых чеков (54-ФЗ), проверка в ФНС и выгрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)",
+  "lang": "ru",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f5",
+  "theme_color": "#ff7a00",
+  "icons": [
+    {
+      "src": "/img/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/img/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "version": "1.70.15",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "shortcuts": [
+    {
+      "name": "Сканер чека",
+      "url": "/#/scan",
+      "icons": [
+        {
+          "src": "/img/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "База чеков",
+      "url": "/#/receipts",
+      "icons": [
+        {
+          "src": "/img/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

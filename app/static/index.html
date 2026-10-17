@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<!--
+  Ямастер Чек — веб-клиент системы сканирования кассовых чеков и интеграции с 1С
+  Разработчик и владелец идеи: ООО «Ямастер»
+  Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+-->
+<meta charset="UTF-8">
+<!-- v1.25.0: тема одна — светлая («Ямастер»), переключатель и предустановка
+     до отрисовки больше не нужны: цвет meta theme-color статичный -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#f5f5f5">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
+<meta name="description" content="Ямастер Чек — сканирование кассовых чеков и загрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)">
+<title>Ямастер Чек — сканирование чеков и загрузка в 1С</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/img/icon-192.png">
+<link rel="stylesheet" href="/css/app.css?v=1.70.15">
+</head>
+<body>
+  <!-- Анимированный фон -->
+  <div class="bg-aurora" aria-hidden="true">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <!-- Экран входа -->
+  <div id="login-screen" class="login-screen hidden">
+    <div class="land-wrap">
+    <div class="land-left">
+      <span class="land-badge" id="land-badge">Чек-Пул уже работает</span>
+      <h1 class="land-h1">Сканируйте чеки —<br>получайте <span class="land-accent">баллы и кэшбэк</span></h1>
+      <p class="land-lead">Каждый кассовый чек — баллы в открытой базе «Чек-Пул»
+      и кэшбэк у партнёров. Для первого чека регистрация не нужна:
+      навели камеру — балл засчитан.</p>
+      <div class="land-stats" id="land-stats">
+        <span class="land-stat"><b>—</b><small>чеков в базе</small></span>
+        <span class="land-stat"><b>—</b><small>проверено</small></span>
+        <span class="land-stat"><b>+1</b><small>балл за чек</small></span>
+      </div>
+      <div class="land-cta">
+        <a class="btn btn-primary" href="#/public?cam=1">📸 Сканировать чек</a>
+        <a class="btn" href="#land-how" id="land-how-link">Как это работает</a>
+      </div>
+      <ol class="land-steps" id="land-how">
+        <li><img src="/img/manual/scan.jpg" alt="Сканирование QR-кода чека" loading="lazy">
+          <div><b>1. Отсканируйте QR-код чека</b><span>Камерой телефона или фотографией — код распознаётся автоматически.</span></div></li>
+        <li><img src="/img/manual/report.jpg" alt="Данные чека" loading="lazy">
+          <div><b>2. Мы проверяем чек по официальным источникам</b><span>данные приходят из официальной базы ФНС; реквизиты, магазин и сумма берутся из чека.</span></div></li>
+        <li><div class="land-step-noimg"><b>3. Получайте баллы</b><span>Баллы копятся в кабинете, кэшбэк — у партнёров. Укажите e-mail ниже — пришлём разбор чека.</span></div></li>
+      </ol>
+      <form id="land-lead" class="land-lead-form" novalidate>
+        <label class="field"><span>E-mail для разбора чека и писем пула</span>
+          <input type="email" id="land-email" placeholder="you@mail.ru" autocomplete="email"></label>
+        <input type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off"
+               style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="land-consent" style="width:auto;margin-top:2px">
+          <span>Согласен на обработку e-mail для разбора чека и писем пула
+          (152-ФЗ; отписаться можно в любом письме)</span></label>
+        <button class="btn btn-primary btn-block" id="land-lead-btn" type="submit">Прислать разбор чека</button>
+        <div id="land-lead-msg" class="form-hint" style="margin-top:6px"></div>
+      </form>
+      <div class="land-faq">
+        <details><summary>Это законно и безопасно?</summary>
+          <p>Мы принимаем только фискальные реквизиты чека (ФН, ФД, ФП) — они напечатаны
+          на самом чеке. Из персональных данных — только e-mail и только по вашему
+          согласию (152-ФЗ). В публичных списках имя скрыто: видны город и число чеков.</p></details>
+        <details><summary>Нужна ли регистрация?</summary>
+          <p>Для первого чека — нет. Баллы сохранятся в этом браузере, а при регистрации
+          в кабинете присоединятся к аккаунту.</p></details>
+        <details><summary>Сколько можно получить?</summary>
+          <p>1 чек — 1 балл, чеки партнёров — до 100 баллов кэшбэка. Лимит — 50 чеков
+          в сутки с одного устройства.</p></details>
+        <details><summary>А для компаний?</summary>
+          <p>Сотрудники сканируют авансовые и командировочные чеки телефоном,
+          бухгалтер видит их в базе и выгружает в 1С одной кнопкой.</p></details>
+      </div>
+      <p class="land-note">ООО «Ямастер» · ymaster.ru · info@ymaster.ru</p>
+    </div>
+    <div class="land-right">
+    <div class="login-card glass">
+      <div class="login-logo">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64">
+        <h1>Ямастер <span class="grad-text">Чек</span></h1>
+        <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
+      </div>
+      <form id="login-form" autocomplete="on">
+        <label class="field">
+          <span>Логин</span>
+          <input type="text" id="login-username" required minlength="2" placeholder="admin">
+        </label>
+        <label class="field">
+          <span>Пароль</span>
+          <input type="password" id="login-password" required minlength="4" placeholder="••••••••">
+        </label>
+        <div id="login-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="login-submit">
+          Войти в систему
+        </button>
+        <div id="login-passkey-wrap" class="hidden" style="margin-top:10px">
+          <div style="display:flex;align-items:center;gap:10px;margin:2px 0 6px">
+            <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+            <span class="form-hint" style="white-space:nowrap">или</span>
+            <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+          </div>
+          <button type="button" class="btn btn-block" id="login-passkey">
+            🔑 Войти по отпечатку пальца / Face ID
+          </button>
+          <div class="form-hint" style="margin-top:6px;text-align:center">
+            устройство само подтвердит вас — пароль не вводится</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 10px">
+          <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+          <span class="form-hint" style="white-space:nowrap">или</span>
+          <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+        </div>
+        <button type="button" class="btn btn-block" id="login-max">🛡 Войти или зарегистрироваться через MAX</button>
+        <div class="form-hint" style="margin-top:6px;text-align:center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
+      </form>
+      <div class="login-footer">
+        ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a><br>
+        <a href="#/public">🧾 Сдать чек в Чек-Пул</a> — без входа в систему
+      </div>
+    </div>
+    </div>
+    </div>
+  </div>
+
+  <!-- Экран регистрации по приглашению -->
+  <div id="register-screen" class="login-screen hidden">
+    <div class="login-card glass">
+      <div class="login-logo">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <h1 style="font-size:24px">Приглашение в <span class="grad-text">Ямастер Чек</span></h1>
+        <div id="reg-invite-badge" class="chip new" style="margin:10px auto 0;display:inline-flex"><span class="dot"></span>—</div>
+      </div>
+      <form id="register-form" autocomplete="on">
+        <label class="field">
+          <span>Ваше имя (ФИО)</span>
+          <input type="text" id="reg-fullname" placeholder="Иванова Анна Петровна">
+        </label>
+        <label class="field">
+          <span>Логин</span>
+          <input type="text" id="reg-username" required minlength="2" placeholder="ivanova">
+        </label>
+        <label class="field">
+          <span>Придумайте пароль (мин. 6 символов)</span>
+          <input type="password" id="reg-password" required minlength="6" placeholder="••••••••">
+        </label>
+        <div id="register-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="register-submit">
+          Создать аккаунт
+        </button>
+      </form>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" id="reg-back-to-login" style="font-size:13.5px">← У меня уже есть аккаунт — войти</a>
+      </div>
+      <div class="login-footer">
+        Регистрация возможна только по приглашению администратора · ООО «Ямастер» ·
+        <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- v1.31.0: публичная страница «Сдать чек в Чек-Пул» (гость, без входа) -->
+  <div id="public-screen" class="login-screen hidden">
+    <div class="login-card glass" style="max-width:660px;width:100%">
+      <div class="login-logo">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <h1 style="font-size:24px">Сдать чек в <span class="grad-text">Чек-Пул</span></h1>
+        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Проверяем чек по официальным источникам и начисляем
+        баллы. Регистрация не нужна.</p>
+      </div>
+      <div id="public-root"></div>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" id="public-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      </div>
+      <div class="login-footer">
+        ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- v1.32.0: кабинет участника «Чек-Пула» (доступен без входа в программу) -->
+  <div id="pool-account-screen" class="login-screen hidden">
+    <div class="login-card glass" style="max-width:660px;width:100%">
+      <div class="login-logo">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <h1 style="font-size:24px">Кабинет <span class="grad-text">Чек-Пула</span></h1>
+        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Баллы, мои чеки и профиль участника открытой базы.</p>
+      </div>
+      <div id="pool-account-root"></div>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" id="pool-to-public" style="font-size:13.5px;margin-right:18px">🧾 Сдать чек</a>
+        <a href="#" id="pool-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      </div>
+      <div class="login-footer">
+        ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Основная оболочка -->
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <button class="btn-icon sb-close" id="sb-close" aria-label="Закрыть меню" type="button">✕</button>
+        <img src="/img/logo.svg" alt="" width="36" height="36">
+        <div>
+          <div class="brand-name">Ямастер <span class="grad-text">Чек</span></div>
+          <div class="brand-sub"><span id="brand-version">v—</span> · ООО «Ямастер»</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav" id="main-nav">
+        <div class="nav-group">Основное</div>
+        <a href="#/dashboard" data-view="dashboard" class="nav-item">
+          <span class="nav-icon" data-icon="dashboard"></span>Дашборд
+        </a>
+        <a href="#/scan" data-view="scan" class="nav-item">
+          <span class="nav-icon" data-icon="scan"></span>Сканирование
+          <span class="nav-badge hidden" id="nav-queue-badge">0</span>
+        </a>
+        <div class="nav-group pool-only">Чек-Пул</div>
+        <a href="#/public" data-view="public" class="nav-item pool-only">
+          <span class="nav-icon" data-icon="scan"></span>Сдать чек в пул
+        </a>
+        <a href="#/my" data-view="my" class="nav-item pool-only">
+          <span class="nav-icon" data-icon="list"></span>Мой Чек-Пул
+        </a>
+        <a href="#/partners" data-view="partners" class="nav-item pool-only">
+          <span class="nav-icon" data-icon="export"></span>Партнёры и кэшбэк
+        </a>
+        <a href="#/pooladmin" data-view="pooladmin" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="settings"></span>Чек-Пул: модерация
+        </a>
+        <a href="#/fraud" data-view="fraud" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="scan"></span>Чек-Пул: антифрод
+        </a>
+        <a href="#/poolpeople" data-view="poolpeople" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="users"></span>Чек-Пул: участники
+        </a>
+        <div class="nav-group">Чеки и учёт</div>
+        <a href="#/receipts" data-view="receipts" class="nav-item">
+          <span class="nav-icon" data-icon="list"></span>Чеки
+          <span class="nav-badge" id="nav-receipts-badge">0</span>
+        </a>
+        <a href="#/export" data-view="export" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="export"></span>Выгрузка в 1С
+        </a>
+        <a href="#/mapping" data-view="mapping" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="mapping"></span>Маппинг
+        </a>
+        <a href="#/poolpick" data-view="poolpick" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="list"></span>Подбор из пула
+        </a>
+        <a href="#/boss" data-view="boss" class="nav-item boss-only hidden">
+          <span class="nav-icon" data-icon="boss"></span>Отчёт руководителя
+        </a>
+        <div class="nav-group admin-only hidden">Администрирование</div>
+        <a href="#/companies" data-view="companies" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="users"></span>Компании
+        </a>
+        <a href="#/users" data-view="users" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="users"></span>Пользователи
+        </a>
+        <a href="#/audit" data-view="audit" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="audit"></span>Журнал
+        </a>
+        <a href="#/settings" data-view="settings" class="nav-item">
+          <span class="nav-icon" data-icon="settings"></span>Настройки
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="btn btn-sm btn-block" id="btn-manual" title="Инструкция по приложению">
+          📖 Инструкция</button>
+        <button class="btn btn-sm btn-block pwa-install" id="pwa-install-btn" title="Установить на устройство">
+          📲 Установить приложение</button>
+        <div class="live-status" id="ws-status" style="margin-top:10px">
+          <span class="live-dot"></span> <span id="ws-status-text">Подключение…</span>
+        </div>
+        <div class="vendor-line">© ООО «Ямастер» · ymaster.ru</div>
+      </div>
+    </aside>
+    <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+
+    <div class="main-area">
+      <header class="topbar">
+        <button class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <h2 class="page-title" id="page-title">Дашборд</h2>
+        <div class="topbar-right">
+          <select id="company-filter" class="company-select admin-only hidden"
+                  title="Пространство: все компании или одна (администратор)"></select>
+          <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
+            ⚡ Офлайн
+          </div>
+          <div class="user-chip" id="user-chip" role="button" tabindex="0"
+               title="Профиль и переключение просмотра (v1.18.0)" aria-haspopup="true" aria-expanded="false">
+            <div class="avatar" id="user-avatar">A</div>
+            <div class="user-meta">
+              <div class="user-name" id="user-name">—</div>
+              <div class="user-role" id="user-role">—</div>
+            </div>
+            <!-- v1.18.0: режим просмотра — меню переключения профилей -->
+            <span class="chip-caret" id="chip-caret" aria-hidden="true">▾</span>
+            <button class="btn-icon" id="btn-logout" title="Выйти">⎋</button>
+          </div>
+          <div class="persona-menu glass hidden" id="persona-menu" role="menu"
+               aria-label="Переключение профиля"></div>
+        </div>
+      </header>
+      <!-- v1.18.0: режим просмотра — постоянная полоса возврата -->
+      <div class="viewas-bar hidden" id="viewas-bar">
+        <span class="viewas-eye" aria-hidden="true">👁</span>
+        <div class="viewas-text" id="viewas-text"></div>
+        <button class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
+      </div>
+      <main class="content" id="view-container"></main>
+      <footer class="app-footer">
+        Ямастер Чек <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
+        <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a> ·
+        <a href="/api/docs" target="_blank" rel="noopener">API-документация</a>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Контейнеры уведомлений и модалок -->
+  <div class="toast-container" id="toast-container"></div>
+  <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
+
+  <script src="/js/vendor/jsQR.js"></script>
+  <script type="module" src="/js/app.js?v=1.70.15"></script>
+</body>
+</html>

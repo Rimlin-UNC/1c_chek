@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2100 2970" width="2100" height="2970">
+  <!-- Ямастер Чек — фирменный бланк A4 (шаблон). ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+  <defs>
+    <linearGradient id="ymTileB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.5" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <rect width="2100" height="2970" fill="#FFFFFF"/>
+  <!-- шапка: знак + название -->
+  <g transform="translate(140,130) scale(0.41)">
+    <rect width="512" height="512" rx="115" fill="url(#ymTileB)"/>
+    <path d="M170 118h172a14 14 0 0 1 14 14v198l-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22V132a14 14 0 0 1 14-14z" fill="#FFFFFF"/>
+    <g fill="#0E2A47">
+      <path fill-rule="evenodd" d="M185 180h46v46h-46zM197 192h22v22h-22zM202 197h12v12h-12z"/>
+      <path fill-rule="evenodd" d="M281 180h46v46h-46zM293 192h22v22h-22zM298 197h12v12h-12z"/>
+    </g>
+    <path d="M203 254q53 56 106 0" stroke="#FF7A00" stroke-width="26" stroke-linecap="round" fill="none"/>
+    <circle cx="352" cy="130" r="46" fill="#FF7A00" stroke="#FFFFFF" stroke-width="10"/>
+    <path d="M330 130l16 17 30-34" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <text x="380" y="256" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="118" font-weight="800" fill="#0E2A47">Ямастер Чек</text>
+  <text x="384" y="322" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="46" font-weight="400" fill="#5B6472">сервис проверки и загрузки чеков в 1С</text>
+  <text x="1960" y="256" text-anchor="end" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="46" font-weight="700" fill="#FF7A00">chek.ymaster.ru</text>
+  <!-- оранжевая линейка -->
+  <rect x="140" y="386" width="1820" height="10" rx="5" fill="#FF7A00"/>
+  <!-- область текста документа -->
+  <text x="140" y="560" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="52" font-weight="700" fill="#0E2A47">Исх. № ____ от «____» ____________ 20___ г.</text>
+  <g fill="#E3E6EC">
+    <rect x="140" y="700" width="1820" height="16" rx="8"/>
+    <rect x="140" y="790" width="1820" height="16" rx="8"/>
+    <rect x="140" y="880" width="1560" height="16" rx="8"/>
+    <rect x="140" y="970" width="1820" height="16" rx="8"/>
+    <rect x="140" y="1060" width="1700" height="16" rx="8"/>
+  </g>
+  <!-- подпись -->
+  <g fill="#E3E6EC">
+    <rect x="140" y="1500" width="700" height="16" rx="8"/>
+    <rect x="140" y="1590" width="560" height="16" rx="8"/>
+  </g>
+  <!-- подвал -->
+  <rect x="140" y="2760" width="1820" height="6" rx="3" fill="#E3E6EC"/>
+  <text x="140" y="2850" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="40" fill="#5B6472">ООО «Ямастер» · info@ymaster.ru · ymaster.ru</text>
+  <text x="1960" y="2850" text-anchor="end" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="40" font-weight="600" fill="#FF7A00">chek.ymaster.ru</text>
+</svg>

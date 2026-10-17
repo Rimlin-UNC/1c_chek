@@ -1,0 +1,26 @@
+# ======================================================================
+# Ямастер Чек — автозапуск AdGuard VPN CLI в режиме SOCKS5 (v1.70.13)
+# Требования: adguardvpn-cli установлен (/usr/local/bin), вход выполнен
+# (`sudo adguardvpn-cli login`), режим задан (`adguardvpn-cli config
+# set-mode SOCKS`). Установка:
+#   sudo cp adguard-vpn-telegram.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now adguard-vpn-telegram
+# Проверка: curl -x socks5h://127.0.0.1:1080 https://api.telegram.org/ -m 10
+# Логи: journalctl -u adguard-vpn-telegram -f
+# Локацию можно закрепить флагом: ExecStart=... connect -l "Нидерланды" --no-fork
+# ======================================================================
+[Unit]
+Description=AdGuard VPN CLI (SOCKS5 for Ymaster Check Telegram bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/root
+ExecStart=/usr/local/bin/adguardvpn-cli connect --no-fork
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

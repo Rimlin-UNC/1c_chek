@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Ямастер Чек — одноцветная версия (печати, факсы, ч/б печать). ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+  <rect width="512" height="512" rx="115" fill="#0E2A47"/>
+  <path d="M170 118h172a14 14 0 0 1 14 14v198l-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22V132a14 14 0 0 1 14-14z" fill="#FFFFFF"/>
+  <g fill="#0E2A47">
+    <path fill-rule="evenodd" d="M185 180h46v46h-46zM197 192h22v22h-22zM202 197h12v12h-12z"/>
+    <path fill-rule="evenodd" d="M281 180h46v46h-46zM293 192h22v22h-22zM298 197h12v12h-12z"/>
+  </g>
+  <path d="M203 254q53 56 106 0" stroke="#0E2A47" stroke-width="26" stroke-linecap="round" fill="none"/>
+  <circle cx="352" cy="130" r="46" fill="#FFFFFF" stroke="#0E2A47" stroke-width="10"/>
+  <path d="M330 130l16 17 30-34" stroke="#0E2A47" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -1,0 +1,1130 @@
+# -*- coding: utf-8 -*-
+# ======================================================================
+# Ямастер Чек — механизм самообновления (v1.4.0)
+# Разработчик и владелец идеи: ООО «Ямастер»
+# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+#
+# Обновление «как в профессиональных программах»:
+#   1. Проверка: сравнение локальной версии (app/config.py) с версией
+#      на GitHub-ветке — качается ОДИН маленький файл, не весь репозиторий.
+#   2. Применение (дифференциально — git скачивает ТОЛЬКО изменения):
+#        а) авто-бэкап базы (data/backups, хранятся последние 5);
+#        б) git fetch + reset --hard origin/<branch> + git clean
+#           (удалённые из проекта файлы НЕ остаются и не глючат);
+#           БД (.gitignore: data/*.db) и секреты (.env) не трогаются;
+#        в) если requirements.txt изменился — установка зависимостей;
+#           при первой установке ставится всё необходимое;
+#        г) ПРОВЕРКА ЦЕЛОСТНОСТИ: импорт приложения в отдельном процессе
+#           и применение миграций БД; при сбое — автоматический ОТКАТ
+#           на предыдущий коммит;
+#        д) рестарт сервиса (systemd в проде) + подтверждение версии.
+#   3. Журнал обновлений хранится в БД (AppSetting → update_history).
+# ======================================================================
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+import time
+from datetime import datetime, timezone
+
+import httpx
+
+from ..config import settings
+
+# v1.60.0: метки журнала хода обновления — UTC ISO с «Z»: приложение
+# открывают из любой страны и города, локальную зону выбирает браузер
+# при показе (updLogLine в app.js). Наивный datetime.now() (до v1.59.6)
+# шёл по поясу сервера и расходился с карточками обновления.
+def _utc_stamp() -> str:
+    """Метка журнала обновления: момент времени в UTC с «Z»."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+RAW_BASE = "https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+BACKUPS_TO_KEEP = 5
+
+
+# ==========================================================================
+#  Состояние задания обновления (в памяти процесса; API отдаёт статус)
+# ==========================================================================
+class UpdateJob:
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.action = "update"       # v1.46.0: update | rollback
+        self.old_commit = ""
+        self.running = False
+        self.step = ""
+        self.progress = 0            # 0..100
+        self.log: list[str] = []
+        self.error = ""
+        self.finished = False
+        self.success = False
+        self.needs_restart = False
+        self.rolled_back = False
+        self.from_version = settings.APP_VERSION
+        self.to_version = ""
+        self.started_at = 0.0
+        # v1.50.0: фазы, время, объём загрузки — всё видно в отчёте
+        self.finished_at = 0.0
+        self.elapsed_s = 0
+        self.downloaded_bytes = 0
+        self.backup_file = ""
+        self.blocks_changed: list[dict] = []
+        self.phases: dict = {}
+        self._last_flush = 0.0
+        self.changed_count = 0
+        self.restart_required = True     # до анализа — безопасное «да»
+        self.last_activity = 0.0
+        self._lock = threading.Lock()
+
+    def _phase_enter(self, phase: str, message: str, now: float) -> None:
+        """v1.50.0: предыдущая активная фаза → done, новая → active."""
+        prev = self.phases.get(self.step) if self.step else None
+        if isinstance(prev, dict) and prev.get("status") == "active":
+            prev["status"] = "done"
+            prev["finished_at"] = now
+        self.phases[phase] = {"status": "active", "started_at": now,
+                              "message": message}
+
+    def say(self, step: str, progress: int | None = None, message: str = "") -> None:
+        flush = False
+        with self._lock:
+            phase = PHASE_ALIAS.get(step, step)
+            if phase in PHASE_ORDER and phase != self.step:
+                self._phase_enter(phase, message, time.time())
+            elif phase in self.phases and message:
+                self.phases[phase]["message"] = message
+            self.step = step
+            if progress is not None:
+                self.progress = max(self.progress, min(100, progress))
+            if message:
+                stamp = _utc_stamp()          # v1.60.0: UTC+«Z», зону выбирает браузер
+                self.log.append(f"[{stamp}] {message}")
+            now = time.time()
+            self.last_activity = now          # v1.53.0: пульс активности
+            if now - self._last_flush >= 1.0:
+                self._last_flush = now
+                flush = True
+        if flush:
+            _state_write()   # v1.50.0: состояние переживает рестарт
+
+    def note_failure(self) -> None:
+        """v1.50.0: текущая фаза помечается как упавшая (для отчёта)."""
+        with self._lock:
+            cur = self.phases.get(self.step)
+            if isinstance(cur, dict) and cur.get("status") == "active":
+                cur["status"] = "failed"
+                cur["finished_at"] = time.time()
+        _state_write()
+
+    def prepare(self, action: str = "update", to_version: str = "") -> None:
+        """v1.50.0: атомарная подготовка задания (под лока́ в start_apply)."""
+        self.reset()
+        self.action = action
+        self.running = True
+        self.to_version = to_version
+        self.started_at = time.time()
+        self.phases = {"prepare": {"status": "done",
+                                   "started_at": self.started_at,
+                                   "finished_at": self.started_at,
+                                   "message": "Запуск"}}
+        self.step = "prepare"
+
+    def public(self) -> dict:
+        with self._lock:
+            return {
+                "action": getattr(self, "action", "update"),
+                "running": self.running, "step": self.step,
+                "progress": self.progress, "log": self.log[-40:],
+                "error": self.error, "finished": self.finished,
+                "success": self.success, "needs_restart": self.needs_restart,
+                "rolled_back": self.rolled_back,
+                "from_version": self.from_version, "to_version": self.to_version,
+                # v1.50.0: информативный статус
+                "started_at": self.started_at, "finished_at": self.finished_at,
+                "elapsed_s": self.elapsed_s,
+                "downloaded_bytes": self.downloaded_bytes,
+                "backup_file": self.backup_file,
+                "blocks_changed": self.blocks_changed,
+                "phases": self.phases,
+                # v1.53.0: решение о перезагрузке и признаки живого процесса
+                "restart_required": bool(self.restart_required),
+                "changed_count": self.changed_count,
+                "last_activity": self.last_activity,
+            }
+
+
+job = UpdateJob()
+
+# ==========================================================================
+#  v1.50.0: единый авторитетный статус обновления
+#  Фазы строго по порядку; состояние пишется на диск (data/update_state.json)
+#  и переживает рестарт — UI отображает его, а не придумывает своё.
+# ==========================================================================
+PHASE_ORDER = ["prepare", "backup", "fetch", "download", "install", "deps",
+               "verify", "restart", "done"]
+PHASE_ALIAS = {"checkout": "install", "rollback": "install", "error": ""}
+STATE_FLUSH_S = 1.0          # троттлинг записи на диск (не грузим сервер)
+
+
+def update_state_path() -> str:
+    return os.path.join(APP_DIR, "data", "update_state.json")
+
+
+def _state_write() -> None:
+    """Атомарно сохранить текущее состояние обновления на диск."""
+    try:
+        path = update_state_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = job.public()
+        data["saved_at"] = datetime.utcnow().isoformat() + "Z"
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass                                    # не критично
+
+
+def load_update_state() -> dict | None:
+    try:
+        with open(update_state_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def job_status() -> dict:
+    """Единственная точка статуса: живое задание → из памяти, иначе —
+    последнее сохранённое состояние (после рестарта процесс новый)."""
+    if job.running or job.finished:
+        return job.public()
+    st = load_update_state() or {}
+    return st if st.get("finished") or st.get("error") else job.public()
+
+
+def read_blocks(path: str) -> dict:
+    """Реестр блоков из файла (ast, без импорта — файл может быть любым)."""
+    import ast
+    tree = ast.parse(open(path, encoding="utf-8").read())
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "BLOCKS":
+            return {str(k): str(v) for k, v in ast.literal_eval(node.value).items()}
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "BLOCKS":
+            return {str(k): str(v) for k, v in ast.literal_eval(node.value).items()}
+    return {}
+
+
+def diff_blocks(old: dict, new: dict) -> list[dict]:
+    """Что изменилось: блок добавился или сменил версию (старая → новая)."""
+    out = []
+    for name, ver in new.items():
+        was = old.get(name)
+        if was != ver:
+            out.append({"name": name, "from": was or "", "to": ver})
+    return out
+
+
+def _parse_fetch_progress(line: str) -> tuple[int | None, int | None]:
+    """git fetch --progress: «Receiving objects:  45% (123/273), 55.00 KiB».
+    Возвращает (процент|None, байт|None)."""
+    m = re.search(r"Receiving objects:\s+(\d+)%", line)
+    pct = int(m.group(1)) if m else None
+    m2 = re.search(r"([\d.]+)\s+(KiB|MiB)", line)
+    nbytes = None
+    if m2:
+        val = float(m2.group(1))
+        nbytes = int(val * 1024 * (1024 if m2.group(2) == "MiB" else 1))
+    return pct, nbytes
+
+
+def _git_fetch_progress(branch: str) -> tuple[int, str, int]:
+    """git fetch с живым прогрессом загрузки (байты — в job.downloaded_bytes).
+    v1.52.1: git пишет прогресс «кареткой» (\r), построчное чтение блокировалось
+    до конца загрузки и выглядело как зависание. Читаем по байтам (select),
+    режем по \r и \n, обновляем статус не чаще раза в 0.7 с."""
+    import select as _select
+    cmd = ["git", "fetch", "--progress", "origin", branch]
+    total = 0
+    tail: list[str] = []                # последние строки — для отчёта об ошибке
+    last_say = 0.0
+    p = None
+    try:
+        p = subprocess.Popen(cmd, cwd=APP_DIR, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE)
+        assert p.stderr is not None
+        fd = p.stderr.fileno()
+        buf = b""
+        deadline = time.time() + 300
+        while True:
+            rl, _, _ = _select.select([fd], [], [], 1.0)
+            if rl:
+                chunk = os.read(fd, 8192)
+                if not chunk:
+                    break                        # конец потока (процесс закрыл stderr)
+                buf += chunk
+                parts = re.split(rb"[\r\n]", buf)
+                buf = parts.pop()                # незавершённый кусок — в следующий раз
+                for raw in parts:
+                    line = raw.decode("latin-1", "ignore").strip()
+                    if not line:
+                        continue
+                    tail.append(line[-120:])
+                    pct, nbytes = _parse_fetch_progress(line)
+                    if nbytes:
+                        total = max(total, nbytes)
+                    now = time.time()
+                    if pct is not None and now - last_say >= 0.7:
+                        last_say = now
+                        job.say("download", 25 + pct // 5,
+                                f"Загрузка изменений: {max(1, total // 1024)} КБ ({pct}%)")
+            elif p.poll() is not None and not buf:
+                break
+            if time.time() > deadline:
+                p.kill()
+                return 124, "timeout: git fetch", total
+        rc = p.wait(timeout=15)
+        return rc, (" | ".join(tail[-6:]) if rc else "")[-2000:], total
+    except FileNotFoundError:
+        return 127, "не найдено: git", total
+    except Exception as e:                       # noqa: BLE001
+        return 1, f"{e.__class__.__name__}: {e}", total
+    finally:
+        if p is not None and p.stderr:
+            try:
+                p.stderr.close()
+            except OSError:
+                pass
+
+
+_DOC_FILE = re.compile(r"^(docs?/|\.github/|[^/]*\.md$|license|code_of_conduct|security\b)",
+                       re.I)
+
+
+def _needs_restart(changed: list[str]) -> bool:
+    """v1.53.0: нужен ли перезапуск сервиса после обновления.
+    Менялся код, зависимости или скрипты развёртывания — да.
+    Менялась только документация (md, картинки репозитория, метаданные
+    GitHub) — нет: программа обновляет данные и продолжает работу."""
+    if not changed:
+        return True                       # неизвестно — перезапускаем (безопасно)
+    return any(not _DOC_FILE.match(f) for f in changed)
+
+
+def _changed_files(old_commit: str, target_ref: str) -> list[str]:
+    """Список файлов между текущим коммитом и целью обновления."""
+    rc, out = _git(["diff", "--name-only", f"{old_commit}..{target_ref}"],
+                   timeout=60)
+    if rc != 0:
+        return []
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+def _run_stream(cmd: list[str], phase: str, base: int, span: int,
+                timeout: int = 900, label: str = "") -> tuple[int, str]:
+    """v1.53.0: запуск команды с живым журналом (установка зависимостей) —
+    строки команды транслируются в статус обновления с троттлингом,
+    онлайн видно, что происходит. Возвращает (rc, хвост вывода)."""
+    tail: list[str] = []
+    last_say = 0.0
+    n = 0
+    p = subprocess.Popen(cmd, cwd=APP_DIR, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, errors="ignore")
+    deadline = time.time() + timeout
+    try:
+        assert p.stdout is not None
+        for line in p.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            tail.append(line[-160:])
+            n += 1
+            now = time.time()
+            if now - last_say >= 1.0:
+                last_say = now
+                frac = min(0.9, n / 40.0)
+                job.say(phase, base + int(span * frac),
+                        (label + " " if label else "") + line[-110:])
+            if time.time() > deadline:
+                p.kill()
+                return 124, " | ".join(tail[-6:])
+        rc = p.wait(timeout=30)
+        return rc, " | ".join(tail[-6:])
+    except Exception as e:                       # noqa: BLE001
+        return 1, f"{e.__class__.__name__}: {e}"
+    finally:
+        if p.stdout:
+            try:
+                p.stdout.close()
+            except OSError:
+                pass
+
+
+# ==========================================================================
+#  Вспомогательные: git, pip, версия с GitHub
+# ==========================================================================
+def _run(cmd: list[str], cwd: str | None = None, timeout: int = 180,
+         input_text: str | None = None) -> tuple[int, str]:
+    # v1.8.0: cwd разрешается В МОМЕНТ ВЫЗОВА (иначе значение APP_DIR
+    # фиксируется при импорте и не следует за тестами/переконфигурацией)
+    cwd = cwd or APP_DIR
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout, input=input_text)
+        return p.returncode, (p.stdout + p.stderr).strip()[-2000:]
+    except subprocess.TimeoutExpired:
+        return 124, f"timeout: {' '.join(cmd)}"
+    except FileNotFoundError:
+        return 127, f"не найдено: {cmd[0]}"
+
+
+def _git(args: list[str], timeout: int = 180) -> tuple[int, str]:
+    return _run(["git"] + args, timeout=timeout)
+
+
+def _git_ready() -> bool:
+    """v1.16.0: каталог приложения — рабочий git-репозиторий? Установки через
+    install.sh/rsync приходят БЕЗ .git — обновление из приложения на них
+    падало на «git fetch: not a git repository»."""
+    if not os.path.isdir(os.path.join(APP_DIR, ".git")):
+        return False
+    rc, _o = _git(["rev-parse", "--is-inside-work-tree"], timeout=15)
+    return rc == 0
+
+
+def _ensure_git_repo(repo: str, branch: str, remote_url: str | None = None) -> tuple[bool, str]:
+    """v1.16.0: самовосстановление репозитория — приложение чинит себя само.
+    Если .git отсутствует/сломан: git init + remote + fetch ветки. БД (.env,
+    data/) не затрагиваются. Возвращает (ок, сообщение)."""
+    if _git_ready():
+        # origin должен указывать на нужный репозиторий
+        rc, out = _git(["remote", "get-url", "origin"], timeout=15)
+        url = remote_url or f"https://github.com/{repo}.git"
+        if rc != 0 or _normalize_repo(out) != _normalize_repo(url):
+            _git(["remote", "remove", "origin"], timeout=15)
+            _git(["remote", "add", "origin", url], timeout=15)
+        return True, "git-репозиторий в порядке"
+    url = remote_url or f"https://github.com/{repo}.git"
+    _run(["git", "init", "-q"], timeout=30)
+    rc, out = _git(["remote", "add", "origin", url], timeout=15)
+    if rc != 0:
+        _git(["remote", "set-url", "origin", url], timeout=15)
+    fcode, ferr = _git(["fetch", "--depth=1", "origin", branch], timeout=300)
+    if fcode != 0:
+        return False, f"git fetch при восстановлении: {ferr[:200]}"
+    # reset --hard, а не checkout: в каталоге установки полно незатреканных
+    # файлов приложения (rsync-установка) — checkout откажется их перезаписать.
+    # reset --hard выравнивает файлы с GitHub; data/.env игнорируются git'ом
+    # и остаются нетронутыми.
+    rc, out = _git(["reset", "--hard", "FETCH_HEAD"], timeout=60)
+    if rc != 0:
+        return False, f"git reset при восстановлении: {out[:200]}"
+    _git(["checkout", "-q", "-B", branch], timeout=30)
+    return True, "git-репозиторий восстановлен автоматически (init + fetch)"
+
+
+def _local_commit() -> str:
+    code, out = _git(["rev-parse", "--short", "HEAD"], timeout=20)
+    return out if code == 0 else "unknown"
+
+
+def _pip_cmd() -> list[str]:
+    """pip целевого окружения: venv (прод) или системный python (песочница)."""
+    venv_pip = os.path.join(APP_DIR, "venv", "bin", "pip")
+    if os.path.exists(venv_pip):
+        return [venv_pip, "install", "--quiet", "-r",
+                os.path.join(APP_DIR, "requirements.txt")]
+    return ["python3", "-m", "pip", "install", "--quiet", "-r",
+            os.path.join(APP_DIR, "requirements.txt")]
+
+
+def _file_sha256(path: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# v1.6.0: три канала доступа к GitHub. raw.githubusercontent.com периодически
+# блокируется провайдерами РФ — поэтому сначала api.github.com, затем raw,
+# затем git-протокол (github.com:443), который работает даже при блокировке raw.
+_GH_CANONICAL = (
+    ("api.github.com", "_gh_api_raw"),
+    ("raw.githubusercontent.com", "_gh_raw"),
+    ("git (github.com:443)", "_gh_git"),
+)
+
+
+def _short_err(e: Exception) -> str:
+    return (str(e) or e.__class__.__name__).strip().split("\n")[0][:90]
+
+
+def _parse_ver(v: str) -> tuple[int, ...]:
+    """'1.6.0' → (1, 6, 0); нечисловые части → 0."""
+    parts = []
+    for x in str(v).strip().split("."):
+        try:
+            parts.append(int(x))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts) or (0, 0, 0)
+
+
+def _is_newer(remote: str, current: str) -> bool:
+    """Обновление только вперёд: remote строго больше current (1.10 > 1.9)."""
+    a, b = _parse_ver(remote), _parse_ver(current)
+    n = max(len(a), len(b))
+    a, b = a + (0,) * (n - len(a)), b + (0,) * (n - len(b))
+    return a > b
+
+
+def _gh_api_raw(repo: str, branch: str, path: str) -> str:
+    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+    resp = httpx.get(url, timeout=10, headers={
+        "User-Agent": "YmasterCheck-Updater",
+        "Accept": "application/vnd.github.raw+json"})
+    if resp.status_code != 200:
+        raise FileNotFoundError(f"HTTP {resp.status_code}")   # 404 = нет файла
+    return resp.text
+
+
+def _gh_raw(repo: str, branch: str, path: str) -> str:
+    url = RAW_BASE.format(repo=repo, branch=branch, path=path)
+    resp = httpx.get(url, timeout=10, headers={"User-Agent": "YmasterCheck-Updater"})
+    if resp.status_code != 200:
+        raise FileNotFoundError(f"HTTP {resp.status_code}")
+    return resp.text
+
+
+def _run_full(cmd: list[str], cwd: str | None = None, timeout: int = 60) -> tuple[int, str]:
+    """Как _run, но БЕЗ обрезки хвоста на 2000 символов — для содержимого файлов
+    (config.py ~2 КБ, CHANGELOG десятки КБ; _run режет хвост и ломает парсинг)."""
+    p = subprocess.run(cmd, cwd=cwd or APP_DIR, capture_output=True, text=True,
+                       timeout=timeout)
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def _gh_git(repo: str, branch: str, path: str) -> str:
+    """Третий канал: git-протокол по 443 — самый живучий при блокировках."""
+    fcode, ferr = _run(["git", "fetch", "--depth=1",
+                        f"https://github.com/{repo}.git", branch], timeout=60)
+    if fcode != 0:
+        raise RuntimeError(f"git fetch: {ferr[:120]}")
+    code, out = _run_full(["git", "show", f"FETCH_HEAD:{path}"], timeout=30)
+    if code != 0 or not out.strip():
+        raise RuntimeError(_short_err(RuntimeError(out)) or "git show пуст")
+    return out
+
+
+def _fetch_remote_file(repo: str, branch: str, path: str) -> tuple[str, str]:
+    """Файл с GitHub через 3 канала. Возвращает (текст, источник)."""
+    errors = []
+    for name, fname in _GH_CANONICAL:
+        try:
+            return globals()[fname](repo, branch, path), name
+        except Exception as e:                               # noqa: BLE001
+            errors.append(f"{name}: {_short_err(e)}")
+    # v1.16.0: все каналы ответили «нет файла» → ветка не содержит приложение
+    if errors and all("404" in e for e in errors):
+        raise RuntimeError(
+            f"В ветке «{branch}» нет файла {path} — проверьте ветку обновлений "
+            "в настройках (должна быть ветка приложения, например "
+            f"{getattr(settings, 'DEFAULT_BRANCH', '')})")
+    raise RuntimeError(
+        "GitHub недоступен с сервера — перепробованы все каналы ("
+        + "; ".join(errors) + "). Возможна блокировка провайдером: "
+        "обновите вручную — sudo bash deploy.sh --update")
+
+
+def _remote_version(repo: str, branch: str) -> dict:
+    """Текущая версия на GitHub: качаем только app/config.py (~3 КБ)."""
+    text, source = _fetch_remote_file(repo, branch, "app/config.py")
+    m = re.search(r'APP_VERSION: str = "([^"]+)"', text)
+    if not m:
+        raise RuntimeError("Не удалось прочитать APP_VERSION из config.py на GitHub")
+    return {"version": m.group(1), "source": source,
+            "checked_at": datetime.utcnow().isoformat() + "Z"}
+
+
+def _remote_changelog(repo: str, branch: str) -> str:
+    try:
+        text, _src = _fetch_remote_file(repo, branch, "CHANGELOG.md")
+        return text
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def _history(db) -> list[dict]:
+    from ..models import AppSetting
+    row = db.get(AppSetting, "update_history")
+    try:
+        return json.loads(row.value) if row and row.value else []
+    except ValueError:
+        return []
+
+
+def _append_history(db, entry: dict) -> None:
+    from ..models import AppSetting
+    hist = _history(db)
+    hist.insert(0, entry)
+    row = db.get(AppSetting, "update_history")
+    if row is None:
+        db.add(AppSetting(key="update_history",
+                          value=json.dumps(hist[:30], ensure_ascii=False)))
+    else:
+        row.value = json.dumps(hist[:30], ensure_ascii=False)
+    db.commit()
+
+
+# ==========================================================================
+#  Проверка обновлений
+# ==========================================================================
+_check_cache: dict = {}
+CHECK_TTL_S = 120     # v1.50.0: кэш проверки — меньше запросов к GitHub
+
+
+def check_update(db, force: bool = False) -> dict:
+    now = time.time()
+    if not force and _check_cache and now - _check_cache.get("at", 0) < CHECK_TTL_S:
+        return _check_cache["result"]
+    from . import appsettings
+    repo = _normalize_repo(appsettings.get_setting(db, "repo_url", "")) or _guess_repo()
+    branch = appsettings.get_setting(db, "repo_branch", "") or settings.DEFAULT_BRANCH
+    remote = _remote_version(repo, branch)
+    # v1.6.0: только обновление вперёд (семвер-сравнение)
+    available = _is_newer(remote["version"], settings.APP_VERSION)
+    result = {
+        "current_version": settings.APP_VERSION,
+        "remote_version": remote["version"],
+        "update_available": available,
+        "branch": branch,
+        "local_commit": _local_commit(),
+        "checked_at": remote["checked_at"],
+        "source": remote.get("source", ""),
+        "changelog_excerpt": "",
+    }
+    if available:
+        ch = _remote_changelog(repo, branch)
+        result["changelog_excerpt"] = ch[:4000]
+    _append_history(db, {
+        "action": "check", "current": settings.APP_VERSION,
+        "remote": remote["version"], "available": available,
+        "at": remote["checked_at"]})
+    _check_cache.clear()
+    _check_cache.update({"at": now, "result": result})
+    return result
+
+
+DEFAULT_REPO = "Rimlin-UNC/1c_chek"
+
+
+def _normalize_repo(repo: str) -> str:
+    """Любой вид ссылки → 'owner/repo':
+    https://github.com/o/r.git | git@github.com:o/r.git | o/r → o/r.
+    v1.6.0: из-за полного URL клона адреса GitHub API собирались неверно
+    (api.github.com/repos/https://...) — проверка обновлений не работала ВЕЗДЕ,
+    а не только при блокировках. Это и есть главная причина «ничего не произошло»."""
+    r = (repo or "").strip()
+    r = re.sub(r"^https?://[^/]+/", "", r)
+    r = re.sub(r"^git@[^:]+:", "", r)
+    r = re.sub(r"\.git$", "", r).strip("/")
+    return r if re.fullmatch(r"[\w.\-]+/[\w.\-]+", r) else ""
+
+
+def _guess_repo() -> str:
+    """owner/repo из git remote, либо значение по умолчанию."""
+    code, out = _git(["remote", "get-url", "origin"], timeout=15)
+    return _normalize_repo(out) or DEFAULT_REPO
+
+
+# ==========================================================================
+#  Применение обновления
+# ==========================================================================
+def _backup_database() -> str:
+    """Совместимость: ручная копия через сервис бэкапов (v1.5.0)."""
+    from .backups import create_backup
+    return create_backup("manual") or ""
+
+
+def _py_bin() -> str:
+    """v1.8.3: python ЦЕЛЕВОГО окружения для проверок обновления.
+    На проде зависимости стоят в venv — системный python3 не имеет fastapi,
+    и проверка целостности могла ложно провалиться (обновление откатилось бы
+    даже при исправном коде). venv есть → берём его, иначе системный python3."""
+    venv_py = os.path.join(APP_DIR, "venv", "bin", "python3")
+    return venv_py if os.path.exists(venv_py) else "python3"
+
+
+def _health_check() -> tuple[bool, str]:
+    """Целостность после обновления: импорт приложения и миграции БД
+    в ОТДЕЛЬНОМ процессе (как это увидит uvicorn при рестарте)."""
+    code = (
+        "import sys; sys.path.insert(0, r'{app}');"
+        "from app.main import app;"
+        "from app.database import init_db;"
+        "init_db();"
+        "from app.config import settings;"
+        "print(settings.APP_VERSION)"
+    ).format(app=APP_DIR)
+    rc, out = _run([_py_bin(), "-c", code], timeout=120)
+    if rc != 0:
+        return False, out or "импорт приложения не удался"
+    return True, out.strip()
+
+
+def _last_update_path() -> str:
+    return os.path.join(APP_DIR, "data", "last_update.json")
+
+
+def write_last_update(payload: dict) -> None:
+    """v1.8.1: маркер успешного обновления на диске. После рестарта процесс
+    новый, in-memory job пуст — фронтенд по маркеру показывает успех."""
+    try:
+        path = _last_update_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except OSError:
+        pass                                    # не критично
+
+
+def load_last_update() -> dict | None:
+    try:
+        with open(_last_update_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _reexec_allowed() -> bool:
+    """v1.17.0: разрешён ли самоперезапуск (re-exec). Запрещён в тестах
+    (YM_NO_REEXEC=1) и при выключенном SELF_REEXEC в конфиге."""
+    import sys as _sys
+    if os.environ.get("YM_NO_REEXEC") == "1":
+        return False
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    import sys as _sys2
+    return bool(settings.SELF_REEXEC) and len(_sys2.argv) > 0
+
+
+def _self_reexec() -> bool:
+    """v1.17.0: заменить собственный процесс тем же запуском — Python под
+    тем же интерпретатором загрузит УЖЕ обновлённый код. PID сохраняется
+    (systemd видит тот же работающий сервис), сокет освобождается
+    (close-on-exec) и переоткрывается. Прав root НЕ требуется — обновление
+    из приложения работает без пароля и без sudoers-правил.
+
+    Вызывается только из фонового потока после записи маркера успеха."""
+    import logging as _logging
+    import os as _os
+    import sys as _sys
+    try:
+        for h in _logging.getLogger().handlers:
+            try:
+                h.flush()
+            except Exception:                                # noqa: BLE001
+                pass
+        argv = [_sys.executable] + list(_sys.argv)
+        _os.execv(_sys.executable, argv)     # не возвращает
+        return True
+    except OSError as e:
+        job.say("restart", None, f"Самоперезапуск не удался: {e}")
+        return False
+
+
+def _restart_mode() -> tuple[bool, str]:
+    """v1.9.1: есть ли право перезапустить сервис. Проверяем БЕЗВРЕДНОЙ командой
+    `systemctl is-active` (разрешена sudoers-правилом вместе с restart):
+    rc 0/3 — команда доступна (0=active, 3=inactive)."""
+    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", "ymaster-check"], timeout=15)
+    if rc in (0, 3):
+        return True, "sudoers"
+    rc, _o = _run(["systemctl", "is-active", "ymaster-check"], timeout=15)
+    if rc in (0, 3):
+        return True, "systemctl"
+    return False, ""
+
+
+def pre_flight(db) -> dict:
+    """v1.9.1: готовность к обновлению из приложения. Всё, что должно быть
+    истинным ДО старта — иначе обновление не начинаем (никаких полу-состояний)."""
+    can_restart, mode = _restart_mode()
+    reexec_ok = _reexec_allowed()  # v1.17.0: самоперезапуск без прав root
+    can_restart = can_restart or reexec_ok
+    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
+    db_ok = os.path.exists(db_path)
+    git_ok = _git_ready()          # v1.16.0: иначе apply сам восстановит репозиторий
+    github_ok, github_err = False, ""
+    try:
+        from . import appsettings
+        repo = appsettings.get_setting(db, "repo_url", "") or _guess_repo()
+        branch = appsettings.get_setting(db, "repo_branch", "") or settings.DEFAULT_BRANCH
+        _remote_version(repo, branch)
+        github_ok = True
+    except Exception as e:                                   # noqa: BLE001
+        github_err = str(e)[:200]
+    return {
+        "can_restart": can_restart,
+        "restart_mode": mode or ("reexec" if reexec_ok else ""),
+        "reexec_ok": reexec_ok,
+        "db_backup_ok": db_ok,
+        "github_ok": github_ok,
+        "github_error": github_err,
+        "git_ok": git_ok,
+        "ready": can_restart and db_ok and github_ok,
+    }
+
+
+def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
+    """v1.8.1/v1.17.0: приложение само перезапускается после обновления.
+    Цепочка: 1) sudoers NOPASSWD (ставит deploy.sh);
+    2) САМОПЕРЕЗАПУСК re-exec — замена собственного процесса (без прав
+    root; главный способ без sudoers-правила);
+    3) plain systemctl (dev); 4) sudo -S с паролем.
+    Примечание к паролю: sudo проверяет пароль СЛУЖЕБНОГО пользователя
+    приложения, а не администратора — поэтому пароль из терминала в
+    приложении не срабатывает; re-exec решает это без пароля вовсе."""
+    rc, _o = _run(["sudo", "-n", "systemctl", "restart", "ymaster-check"], timeout=60)
+    if rc == 0:
+        return True, "Сервис перезапущен (sudoers) — новая версия уже работает"
+    if _reexec_allowed():
+        job.say("restart", 96, "Перезапуск без прав root (re-exec)…")
+        time.sleep(1.0)          # дать WS-кадру «сервер обновляется» уйти
+        if _self_reexec():
+            return True, "Перезапущено (re-exec)"   # процесс уже заменён
+    if sudo_password:
+        rc, out = _run(["sudo", "-S", "-p", "", "systemctl", "restart",
+                        "ymaster-check"], timeout=60,
+                       input_text=sudo_password + "\n")
+        if rc == 0:
+            return True, "Сервис перезапущен (по паролю служебного пользователя)"
+        if "incorrect password" in (out or "").lower():
+            job.say("restart", 96,
+                    "Пароль отклонён: приложение работает под другим "
+                    "пользователем — включён самоперезапуск…")
+    rc, _o = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
+    if rc == 0:
+        return True, "Сервис перезапущен — новая версия уже работает"
+    return False, ("Автоперезапуск недоступен — выполните на сервере: "
+                   "sudo systemctl restart ymaster-check (данные сохранены)")
+
+
+def _do_apply(target_version: str, repo: str, branch: str,
+              sudo_password: str | None = None) -> None:
+    """Основной конвейер обновления (выполняется в фоновом потоке)."""
+    try:
+        # v1.50.0: задание подготовлено в start_apply (под лока́)
+        job.old_commit = _local_commit()
+        old_commit = job.old_commit
+        req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+        # v1.50.0: версии блоков ДО обновления — из работающего кода
+        try:
+            from .blocks import BLOCKS as _blocks_before
+            blocks_before = dict(_blocks_before)
+        except Exception:                                    # noqa: BLE001
+            blocks_before = {}
+
+        # v1.46.0: запускающий код прямо сейчас работает — фиксируем его
+        # как «последнюю рабочую версию» ДО любых изменений
+        try:
+            from .releases import mark_healthy
+            mark_healthy(settings.APP_VERSION, old_commit or _local_commit(),
+                         note="работала до обновления")
+        except Exception:                                    # noqa: BLE001
+            pass
+        job.say("backup", 10, "Резервная копия базы данных…")
+        from .backups import create_backup
+        backup = create_backup("preupdate")
+        if backup:
+            job.backup_file = os.path.basename(backup)
+            job.say("backup", 15, f"Бэкап: {job.backup_file}")
+
+        job.say("fetch", 20, "Проверка git-репозитория…")
+        git_ok, git_msg = _ensure_git_repo(repo, branch)
+        job.say("fetch", 22, git_msg)
+        if not git_ok:
+            raise RuntimeError(git_msg)
+
+        job.say("fetch", 25, "Получение изменений с GitHub (только дельта)…")
+        rc, out, nbytes = _git_fetch_progress(branch)
+        if rc != 0:
+            # второй шанс: восстановить репозиторий и повторить
+            _ensure_git_repo(repo, branch)
+            job.say("download", 30, "Повторная загрузка изменений…")
+            rc, out, nbytes = _git_fetch_progress(branch)
+        if rc != 0:
+            raise RuntimeError(f"git fetch: {out}")
+        job.downloaded_bytes = nbytes
+        job.say("download", 40, (f"Загружено изменений: {nbytes // 1024} КБ"
+                                 if nbytes else "Загрузка изменений завершена"))
+
+        # v1.53.0: что изменилось — нужен ли перезапуск сервиса
+        changed = _changed_files(old_commit, f"origin/{branch}")
+        job.changed_count = len(changed)
+        job.restart_required = _needs_restart(changed)
+        job.say("install", 43, f"Изменённых файлов: {job.changed_count} — "
+                + ("перезапуск потребуется"
+                   if job.restart_required else
+                   "только документация, перезапуск не потребуется"))
+
+        job.say("checkout", 45, f"Обновление файлов до {target_version}…")
+        rc, out = _git(["reset", "--hard", f"origin/{branch}"], timeout=60)
+        if rc != 0:
+            raise RuntimeError(f"git reset: {out}")
+        # Удалённые из проекта файлы не должны оставаться (без -x: БД/.env/venv целы)
+        rc, out = _git(["clean", "-fd", "-e", "data", "-e", ".env",
+                        "-e", "venv", "-e", "*.db"], timeout=60)
+        job.say("checkout", 55, "Лишние/удалённые файлы вычищены")
+
+        # v1.50.0: какие блоки изменились (версия блока: старая → новая)
+        try:
+            blocks_after = read_blocks(
+                os.path.join(APP_DIR, "app", "services", "blocks.py"))
+            job.blocks_changed = diff_blocks(blocks_before, blocks_after)
+            if job.blocks_changed:
+                names = ", ".join(
+                    f"{b['name']} v{b['from']}→v{b['to']}"
+                    for b in job.blocks_changed)
+                job.say("install", 58, "Изменённые блоки: " + names)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+        new_req = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+        if new_req != req_hash_before:
+            job.say("deps", 65, "Зависимости изменились — установка (ход в журнале)…")
+            pip_cmd = [a for a in _pip_cmd() if a != "--quiet"] \
+                + ["--progress-bar", "off"]
+            rc, out = _run_stream(pip_cmd, "deps", 58, 14, timeout=900,
+                                  label="pip:")
+            if rc != 0:
+                raise RuntimeError(f"pip: {out}")
+        else:
+            job.say("deps", 65, "Зависимости не менялись — пропущено")
+
+        job.say("verify", 80, "Проверка целостности (импорт + миграции БД)…")
+        ok, msg = _health_check()
+        if not ok:
+            raise RuntimeError(f"Проверка целостности не пройдена: {msg}")
+
+        # v1.9.1: предупреждаем всех подключённых — их клиенты сами перезагрузятся
+        try:
+            from .events import broadcast
+            broadcast("server_update", {"to": target_version})
+        except Exception:                                    # noqa: BLE001
+            pass
+        # v1.8.1: маркер успеха пишем ДО рестарта — после него процесс новый
+        write_last_update({
+            "from": getattr(job, "from_version", "") or "",
+            "to": target_version,
+            "at": datetime.utcnow().isoformat() + "Z",
+            "backup": os.path.basename(backup) if backup else ""})
+        # v1.52.1: итог (статус, история) фиксируем ДО перезапуска.
+        # Самоперезапуск заменяет процесс через execv и НЕ возвращает
+        # управление: всё, что после рестарта, не выполнялось никогда —
+        # на диске оставалось «зависшее» незавершённое обновление, и
+        # интерфейс после рестарта показывал ошибку вместо успеха.
+        job.success = True
+        job.needs_restart = False
+        job.finished = True
+        job.progress = 100
+        job.say("done", 100, f"Готово: v{settings.APP_VERSION} → v{target_version}")
+        job.finished_at = time.time()
+        job.elapsed_s = max(1, int(job.finished_at - job.started_at))
+
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            _append_history(db, {
+                "action": "apply", "from": settings.APP_VERSION,
+                "to": target_version, "commit_before": old_commit,
+                "commit_after": _local_commit(),
+                # v1.8.0: backup может быть None (например, БД ещё не создана) —
+                # обновление всё равно успешно, не роняем запись истории
+                "backup": os.path.basename(backup) if backup else "",
+                "at": datetime.utcnow().isoformat() + "Z", "ok": True,
+                "duration_s": job.elapsed_s,
+                "downloaded_bytes": job.downloaded_bytes,
+                "blocks": job.blocks_changed,
+                "restart_planned": job.restart_required})
+        finally:
+            db.close()
+        _state_write()
+
+        if job.restart_required:
+            job.say("restart", 92, "Перезапуск сервиса (самоперезапуск без пароля)…")
+            _state_write()
+            restarted, rmsg = _restart_service(sudo_password)
+            if not restarted:
+                # управление вернулось — рестарт недоступен, просим вручную
+                job.needs_restart = True
+                job.say("restart", 95, rmsg)
+                _state_write()
+            # при успешном рестарте процесс заменён — код ниже не выполняется
+        else:
+            # v1.53.0: менялась только документация — код не менялся,
+            # перезапуск не нужен: данные обновлены, работа продолжается
+            job.needs_restart = False
+            job.say("restart", 96, "Перезапуск не потребовался — программа продолжает работу")
+            _state_write()
+    except Exception as e:                                   # noqa: BLE001
+        job.error = str(e)
+        job.finished = True
+        job.say("error", None, f"ОШИБКА: {e}")
+        job.note_failure()
+        job.finished_at = time.time()
+        job.elapsed_s = max(1, int(job.finished_at - job.started_at))
+        _state_write()
+        # Автоматический откат на предыдущий коммит — система продолжает работать
+        if job.old_commit and job.old_commit != "unknown":
+            rc, out = _git(["reset", "--hard", job.old_commit], timeout=60)
+            job.rolled_back = (rc == 0)
+            job.say("rollback", None,
+                    "Откат на предыдущую версию выполнен — система работает как прежде")
+        else:
+            job.rolled_back = False
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            _append_history(db, {
+                "action": "apply_failed", "target": job.to_version,
+                "error": str(e)[:500], "rolled_back": True,
+                "at": datetime.utcnow().isoformat() + "Z"})
+        finally:
+            db.close()
+    finally:
+        job.running = False
+
+
+_apply_lock = threading.Lock()      # v1.50.0: двойной запуск невозможен
+
+
+def start_apply(target_version: str, repo: str, branch: str,
+                sudo_password: str | None = None) -> None:
+    with _apply_lock:
+        if job.running:
+            raise RuntimeError("Обновление уже выполняется")
+        job.prepare("update", to_version=target_version)
+    t = threading.Thread(target=_do_apply,
+                         args=(target_version, repo, branch, sudo_password),
+                         daemon=True, name="ymaster-updater")
+    t.start()
+
+
+# ==========================================================================
+#  v1.46.0: ОТКАТ К ПОСЛЕДНЕЙ РАБОЧЕЙ ВЕРСИИ
+#  Зеркало _do_apply, но git reset --hard на коммит рабочей версии.
+#  База данных НЕ трогается (миграции только добавляющие — старый код
+#  работает с новой базой); копия базы делается на всякий случай.
+# ==========================================================================
+def _commit_exists(commit: str) -> bool:
+    rc, _o = _git(["cat-file", "-e", f"{commit}^{{commit}}"], timeout=20)
+    return rc == 0
+
+
+def _do_rollback(target_version: str, commit: str) -> None:
+    try:
+        job.prepare("rollback", to_version=target_version)   # v1.50.0
+        job.old_commit = _local_commit()
+        old_commit = job.old_commit
+        req_hash_before = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+
+        job.say("backup", 10, "Резервная копия базы данных…")
+        from .backups import create_backup
+        backup = create_backup("preupdate")
+        if backup:
+            job.say("backup", 15, f"Бэкап: {os.path.basename(backup)}")
+
+        job.say("fetch", 25, f"Возврат файлов к рабочей версии v{target_version}…")
+        rc, out = _git(["reset", "--hard", commit], timeout=60)
+        if rc != 0:
+            raise RuntimeError(f"git reset: {out}")
+        rc, out = _git(["clean", "-fd", "-e", "data", "-e", ".env",
+                        "-e", "venv", "-e", "*.db"], timeout=60)
+        job.say("fetch", 40, "Лишние файлы вычищены (данные и секреты целы)")
+
+        new_req = _file_sha256(os.path.join(APP_DIR, "requirements.txt"))
+        if new_req != req_hash_before:
+            job.say("deps", 55, "Зависимости изменились — установка (ход в журнале)…")
+            pip_cmd = [a for a in _pip_cmd() if a != "--quiet"] \
+                + ["--progress-bar", "off"]
+            rc, out = _run_stream(pip_cmd, "deps", 50, 12, timeout=900,
+                                  label="pip:")
+            if rc != 0:
+                raise RuntimeError(f"pip: {out}")
+        else:
+            job.say("deps", 60, "Зависимости не менялись — пропущено")
+
+        job.say("verify", 75, "Проверка целостности (импорт + миграции БД)…")
+        ok, msg = _health_check()
+        if not ok:
+            raise RuntimeError(f"Проверка целостности не пройдена: {msg}")
+
+        try:
+            from .events import broadcast
+            broadcast("server_update", {"to": target_version})
+        except Exception:                                    # noqa: BLE001
+            pass
+        job.say("restart", 92, "Перезапуск сервиса…")
+        restarted, rmsg = _restart_service()
+        job.needs_restart = not restarted
+        job.say("restart", 95, rmsg)
+
+        job.success = True
+        job.finished = True
+        job.progress = 100
+        job.say("done", 100,
+                f"Готово: откат к v{target_version} ({commit[:8]})")
+
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            _append_history(db, {
+                "action": "rollback", "to": target_version,
+                "commit": commit, "commit_before": old_commit,
+                "backup": os.path.basename(backup) if backup else "",
+                "at": datetime.utcnow().isoformat() + "Z", "ok": True})
+        finally:
+            db.close()
+    except Exception as e:                                   # noqa: BLE001
+        job.error = str(e)
+        job.finished = True
+        job.say("error", None, f"ОШИБКА ОТКАТА: {e}")
+        # возвращаем ровно то состояние, что было до попытки отката
+        if old_commit and old_commit != "unknown":
+            rc, _o = _git(["reset", "--hard", old_commit], timeout=60)
+            job.rolled_back = (rc == 0)
+            job.say("rollback", None,
+                    "Состояние до отката восстановлено — ничего не изменилось")
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            _append_history(db, {
+                "action": "rollback_failed", "target": target_version,
+                "error": str(e)[:500], "rolled_back": True,
+                "at": datetime.utcnow().isoformat() + "Z"})
+        finally:
+            db.close()
+    finally:
+        job.running = False
+
+
+def start_rollback(target_version: str, commit: str) -> None:
+    with _apply_lock:                    # v1.50.0: двойной запуск невозможен
+        if job.running:
+            raise RuntimeError("Обновление/откат уже выполняется")
+        job.prepare("rollback", to_version=target_version)
+    t = threading.Thread(target=_do_rollback, args=(target_version, commit),
+                         daemon=True, name="ymaster-rollback")
+    t.start()
