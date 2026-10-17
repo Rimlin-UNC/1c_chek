@@ -5124,6 +5124,38 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.23': [
+    { icon: '🔗', title: 'Мастер AdGuard: установка больше не остаётся без ссылки /usr/local/bin',
+      text: 'Проверка по исходнику официального установщика AdGuard показала, что программа передавала ему неверный флаг. Стоял -v в расчёте на «без вопросов», но -v это подробный вывод, и он уже включён по умолчанию; на вопросы он не отвечает. Установщик спрашивает «create a link in /usr/local/bin? [y/N]» и читает ответ с терминала, а у службы терминала нет — пустой ответ он понимает как «нет» и навсегда создаёт файл .nosymlink. Ссылка же обязательна: на /usr/local/bin/adguardvpn-cli жёстко прописаны ExecStart службы туннеля и путь CLI в автопилоте. Второй случай — установщик вообще не задаёт вопрос и не создаёт ссылку, если /usr/local/bin не входит в PATH, а у службы программы PATH короткий. Страховка в программе срабатывала только когда проверка версии проваливалась, но бинарник в /opt/adguardvpn_cli работает и проверка проходила — поэтому ссылка так и не появлялась, и установка ломалась на следующем шаге («Служба туннеля не запустилась»). Теперь установщику передаётся -a y, а ссылка создаётся безусловно, когда её нет. Попутно исправлена инструкция ручной установки: команды нужно выполнять через sudo, потому что служба запускает CLI от root, а вход и настройки хранятся в домашнем каталоге — login под обычным пользователем оставлял туннель без лицензии.' },
+  ],
+  '1.70.22': [
+    { icon: '🩺', title: 'Мастер AdGuard: панель больше не застревает, а причина отказа не теряется',
+      text: 'Найдено живым прогоном приложения. Первое: если программа перезапустилась во время установки AdGuard (а deploy.sh --update перезапускает службу после каждого обновления), панель вечно показывала «установка выполняется» — опрос не останавливался, а кнопка «Остановить» отвечала «Установка не выполняется», потому что в памяти задания уже не было. Сохранённое состояние «выполняется» после рестарта заведомо устарело: теперь оно помечается прерванным, журнал сохраняется, а владелец видит понятный текст и может запустить мастер заново. Второе: команда установки CLI была пайплайном curl … | sh, а код возврата пайплайна принадлежит последней команде — поэтому отказ curl (нет сети или DNS) выглядел как успешная установка, и мастер сообщал «CLI установлен, но не запускается:» с пустой причиной: вывод установщика затирался результатом проверки версии. Обойти это через pipefail нельзя — /bin/sh в Ubuntu/Debian это dash, где такой опции нет. Установка идёт двумя шагами, отказ загрузки больше не прячется, а текст различает «CLI не появился» и «CLI не запускается», показывая настоящую ошибку curl.' },
+  ],
+  '1.70.21': [
+    { icon: '🛡', title: 'Мастер AdGuard: закрыты гонка запуска, сирота при отмене и «Непредвиденная ошибка»',
+      text: 'Проверка на устойчивость нашла четыре дефекта в мастере. Первый — гонка: проверка «установка уже выполняется» и занятие задания разделялись окном, поэтому два одновременных запроса (двойной клик или повторный запрос из двух вкладок) поднимали двух воркеров, которые параллельно ставили CLI, перезапускали службы и писали в один журнал; воспроизведено 7 раз из 60 при 16 одновременных вызовах. Занятие задания теперь атомарно, а маршрут отвечает 409 вместо 500. Второй — отмена во время входа убивала только sudo, а привилегированный adguardvpn-cli login оставался висеть сиротой от root и продолжал ждать подтверждение: теперь убивается вся группа процессов. Третий — таймаут команды вылетал наружу исключением, и владелец видел «Непредвиденная ошибка: » без причины; теперь это код 124 и понятный текст, как в окне обновления. Четвёртый — сброс задания подменял объект замка, из-за чего поток отменённой установки терял взаимное исключение. Попутно: копирование комплекта юнитов больше не игнорирует коды возврата (отказ cp всплывал позже как «служба туннеля не запустилась»), а помощник не глушит вывод установщика AdGuard — при отказе видна «причина: …», а не только «CLI не появился».' },
+  ],
+  '1.70.20': [
+    { icon: '🛠', title: 'Мастер AdGuard снова ставится без пароля — причина отказа теперь видна',
+      text: 'Найдено на боевом сервере: фаза install-rule помощника ymaster-adguard-setup падала на «app_dir: unbound variable», поэтому sudoers-правило не устанавливалось и мастер просил команду в терминале. Причина — обе переменные объявлялись одним local: bash раскрывает слова до присваиваний в local, и при set -u вторая переменная ссылалась на ещё не существующую. Объявили двумя строками — install-rule проходит, правило ставится. deploy.sh больше не глушит вывод помощника (>/dev/null 2>&1): при отказе в логе печатается «причина: …», а не только общее предупреждение. Заодно метка локальной ветки выравнивается по каналу обновлений (git checkout -q -B после reset --hard) — раньше после смены канала HEAD оставался на прежней ветке, и git pull на сервере тянул бы старый канал.' },
+  ],
+  '1.70.19': [
+    { icon: '🎯', title: 'deploy.sh: --branch= больше не игнорируется молча',
+      text: 'Флаг --branch= писал значение прямо в BRANCH, а ниже по скрипту source /etc/ymaster-check/deploy.conf перезаписывал его запомненной веткой; страховка ${OPT_BRANCH:-$BRANCH} не работала, потому что OPT_BRANCH никто не выставлял (в отличие от OPT_DOMAIN и OPT_SSL). То же касалось BRANCH= из окружения. В итоге на любом сервере, где деплой уже запускался, «sudo bash deploy.sh --update --branch=нужная» молча обновлялся на запомненную — возможно, устаревшую — ветку. Теперь приоритет явный и проверен тестами: --branch= > BRANCH= (окружение) > deploy.conf > main; значение из окружения запоминается отдельно до чтения конфига, а подмену видно в логе («ℹ Ветка задана явно …»). Удачный запуск с --branch= запоминает эту ветку в deploy.conf, и --help теперь печатает шапку целиком.' },
+  ],
+  '1.70.18': [
+    { icon: '🌿', title: 'Канал обновлений — ветка main',
+      text: 'Веткой обновлений по умолчанию стала main (была временная рабочая ветка арены, которая после слияния остаётся на старой версии). Изменились DEFAULT_BRANCH в настройках программы и BRANCH в deploy.sh, а также все ссылки комплекта: быстрый старт, README, docs/DEPLOYMENT.md, docs/update_playbook.md, deploy/adguard-vpn/README.md и подсказка поля «Ветка» в окне обновления. Если источник задан явно (repo_branch в настройках или --branch= у deploy.sh) — он по-прежнему важнее значения по умолчанию. С v1.70.17 смена ветки источника не требует похода в SSH: fetch идёт явным refspec’ом, поэтому переход на main безопасен на уже развёрнутых серверах.' },
+  ],
+  '1.70.17': [
+    { icon: '🔄', title: 'Обновление на другую ветку больше не падает',
+      text: 'Если в «🎛 Источник обновлений» указать ветку, отличную от ветки установки, обновление заканчивалось ошибкой «git reset: fatal: ambiguous argument origin/…: unknown revision» и откатом. Причина в клоне «--depth 1 --branch»: git отслеживает только свою ветку, поэтому fetch чужой ветки проходил успешно (rc 0), но ref origin/<ветка> не создавался — на нём и падал reset. Теперь fetch идёт явным refspec’ом (+refs/heads/<ветка>:refs/remotes/origin/<ветка>), ветка дописывается в настройки origin, цель для reset проверяется заранее (origin/<ветка> → запасной FETCH_HEAD → понятная ошибка), а строка «Изменённых файлов: 0» больше не появляется при сбое сравнения. deploy.sh для свежих установок разрешает все ветки сразу.' },
+  ],
+  '1.70.16': [
+    { icon: '🔓', title: 'Мастер AdGuard — без пароля сервера',
+      text: 'Поле «🔑 Пароль сервера (sudo)» из панели AdGuard VPN убрано: мастер больше не принимает пароли вовсе. Привилегированные шаги (установка CLI, вход, SOCKS5, службы, автопилот) делает один помощник /usr/local/sbin/ymaster-adguard-setup, разрешённый узким правилом /etc/sudoers.d/ymaster-adguard на фиксированные фазы — произвольные команды от root из приложения не выполняются. deploy.sh ставит помощник и правило сам; на сервере, где их ещё нет, панель показывает ОДНУ готовую команду (кнопка «📋 Скопировать») — выполнили в SSH, нажали «Проверить снова», мастер пошёл дальше без пароля.' },
+  ],
   '1.70.15': [
     { icon: '🛡', title: 'AdGuard VPN ставится из программы — в один клик',
       text: 'Кнопка «🛡 AdGuard VPN» в карточке Telegram теперь всё делает сама: установит CLI, покажет ссылку для подтверждения входа (открыли — установка идёт дальше сама), пропишет автоподключение и суточный автопилот, подставит прокси и проверит путь. Весь процесс виден живым журналом, в конце — «завершено успешно» либо понятная ошибка.' },
@@ -8121,7 +8153,7 @@ async function viewSettings(container) {
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
           <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
-          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, службы, прокси, проверка пути (v1.70.15). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
+          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, службы, прокси, проверка пути — <b>без пароля сервера</b> (v1.70.16). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
         </div>
         <div id="ag-setup" class="hidden" style="border:2px solid #d8d4ec;border-radius:10px;padding:10px 12px;margin:0 0 10px;background:rgba(59,42,126,.04)">
           <div id="ag-steps" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px"></div>
@@ -8131,11 +8163,14 @@ async function viewSettings(container) {
             <span class="form-hint" id="ag-state"></span>
           </div>
           <pre id="ag-setup-log" style="max-height:170px;overflow:auto;font-size:12px;background:#fff;border:1px solid #d8d4ec;border-radius:8px;padding:8px;margin:0 0 8px"></pre>
-          <label class="field hidden" id="ag-sudo-row" style="margin:0 0 8px"><span>🔑 Пароль сервера (sudo)</span>
-            <input type="password" id="ag-sudo-pw" autocomplete="off" placeholder="пароль служебного пользователя программы">
-            <span class="form-hint">программа работает без root, а sudo просит пароль — как в окне обновления: sudo проверяет пароль служебного пользователя приложения, не ваш. Используется только на время установки и нигде не сохраняется.</span></label>
+          <div class="field hidden" id="ag-rule-row" style="margin:0 0 8px"><span>🔓 Правило для помощника — одна команда, один раз</span>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="ag-cmd" readonly autocomplete="off" style="flex:1 1 320px;min-width:220px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px" value="">
+              <button type="button" class="btn btn-sm" id="ag-copy-cmd">📋 Скопировать</button>
+            </div>
+            <span class="form-hint">мастер AdGuard <b>не спрашивает пароль сервера</b>: привилегированные шаги делает помощник <code>/usr/local/sbin/ymaster-adguard-setup</code>, разрешённый узким правилом <code>/etc/sudoers.d/ymaster-adguard</code>. Откройте SSH, выполните команду один раз (deploy.sh ставит её сам при установке/обновлении) и нажмите «Проверить снова» — дальше мастер пойдёт без пароля.</span></div>
           <div style="display:flex;gap:8px">
-            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-start">Установить</button>
+            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-recheck">Проверить снова</button>
             <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
             <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
           </div>
@@ -8404,7 +8439,7 @@ async function viewSettings(container) {
             <label class="field"><span>Репозиторий (owner/repo)</span>
               <input id="upd-repo" placeholder="Rimlin-UNC/1c_chek"></label>
             <label class="field"><span>Ветка</span>
-              <input id="upd-branch-input" placeholder="arena/01a0caaa-1c-chek"></label>
+              <input id="upd-branch-input" placeholder="main"></label>
           </div>
           <button class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
         </details>
@@ -9221,6 +9256,11 @@ async function viewSettings(container) {
       if (st.finished && st.success) {
         const prx = $('#tg-proxy');
         if (prx && !prx.value) prx.value = 'socks5://127.0.0.1:1080';
+        agHideRule();
+      }
+      // v1.70.16: остановились на правах — показываем одну команду (без пароля)
+      if (st.finished && !st.success && st.one_time_cmd) {
+        agNeedRule({ one_time_cmd: st.one_time_cmd }, '');
       }
       const cancel = $('#ag-cancel');
       if (cancel) cancel.classList.toggle('hidden', !st.running);
@@ -9240,42 +9280,70 @@ async function viewSettings(container) {
     };
     const agClose = $('#ag-close');
     if (agClose) agClose.onclick = () => { agStop(); const b = $('#ag-setup'); if (b) b.classList.add('hidden'); };
-    async function agLaunch(extra) {
+    // v1.70.16: мастер БЕЗ пароля — никаких полей пароля, только одна
+    // команда для терминала (её ставит deploy.sh) и кнопка «Проверить снова».
+    async function agLaunch() {
       const r = await api.post('/api/v1/settings/telegram/adguard/setup',
-        Object.assign({ action: 'start' }, extra || {}));
+        { action: 'start' });
+      if (r && r.warning) toast(r.warning, 'warn', '\ud83d\udd13');
       toast(r.message || 'Установка запущена', 'ok', '\ud83d\udee1 AdGuard');
-      const row = $('#ag-sudo-row'), st = $('#ag-start');
-      if (row) row.classList.add('hidden');
-      if (st) st.classList.add('hidden');
+      agHideRule();
       agStop(); agPoll(); agTimer = setInterval(agPoll, 1500);
     }
-    function agNeedPassword(msg) {
-      const row = $('#ag-sudo-row'), st = $('#ag-start');
+    function agHideRule() {
+      const row = $('#ag-rule-row'), rc = $('#ag-recheck');
+      if (row) row.classList.add('hidden');
+      if (rc) rc.classList.add('hidden');
+    }
+    function agNeedRule(pf, msg) {
+      const row = $('#ag-rule-row'), rc = $('#ag-recheck');
+      const cmd = (pf && pf.one_time_cmd) || '';
       if (row) row.classList.remove('hidden');
-      if (st) st.classList.remove('hidden');
+      if (rc) rc.classList.remove('hidden');
+      const inp = $('#ag-cmd');
+      if (inp) inp.value = cmd;
       const box = $('#ag-setup');
       if (box) box.classList.remove('hidden');
       const state = $('#ag-state');
-      if (state) state.textContent = 'нужен пароль сервера (sudo) — введите ниже и нажмите «Установить»';
-      toast(msg || 'Нужен пароль сервера (sudo) — как в окне обновления', 'warn', '\ud83d\udee1');
+      if (state) state.textContent = 'нужно правило помощника: выполните команду в SSH один раз и нажмите «Проверить снова» (пароль сервера мастер не спрашивает)';
+      toast(msg || 'Нужна одна команда в терминале — после неё мастер работает без пароля', 'warn', '\ud83d\udd13');
     }
+    const agCopy = $('#ag-copy-cmd');
+    if (agCopy) agCopy.onclick = async () => {
+      const inp = $('#ag-cmd');
+      const txt = inp && inp.value ? inp.value : '';
+      if (!txt) { toast('Команда пуста — откройте панель кнопкой «🛡 AdGuard VPN»', 'warn'); return; }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
+        else { if (inp) { inp.select(); document.execCommand('copy'); } }
+        toast('Команда скопирована — выполните её в SSH один раз', 'ok', '\ud83d\udccb');
+      } catch (e) { toast('Скопируйте команду вручную (выделите поле)', 'warn'); }
+    };
     if (tga) tga.onclick = async () => {
       try {
         let pf = null;
         try { pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight'); } catch (e) { pf = null; }
-        if (pf && pf.need_password) { agNeedPassword(pf.hint); return; }
-        await agLaunch({});
+        if (pf && pf.ready === false) { agNeedRule(pf, pf.hint); return; }
+        if (pf && pf.need_password) { agNeedRule(pf, pf.hint); return; }
+        await agLaunch();
       } catch (e) {
-        if (/root|sudo|парол/i.test(e.message || '')) agNeedPassword(e.message);
+        if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
         else toast(e.message, 'err');
       }
     };
-    const agStart = $('#ag-start');
-    if (agStart) agStart.onclick = async () => {
-      const pwEl = $('#ag-sudo-pw');
-      const pw = pwEl && pwEl.value ? pwEl.value : '';
-      try { await agLaunch(pw ? { sudo_password: pw } : {}); }
-      catch (e) { toast(e.message, 'err'); }
+    const agRecheck = $('#ag-recheck');
+    if (agRecheck) agRecheck.onclick = async () => {
+      agRecheck.disabled = true;
+      try {
+        const pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight');
+        if (pf && pf.ready) {
+          toast('Права есть (' + (pf.mode || 'helper') + ') — запускаю мастер', 'ok', '\u2705');
+          await agLaunch();
+        } else {
+          agNeedRule(pf, 'Правило ещё не видно: выполните команду в SSH и повторите');
+        }
+      } catch (e) { toast(e.message, 'err'); }
+      agRecheck.disabled = false;
     };
     // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
     api.get('/api/v1/settings/telegram/adguard/setup').then(r => {

@@ -664,15 +664,10 @@ def adguard_setup_status(admin: User = Depends(require_admin)):
 @router.get("/telegram/adguard/setup/preflight",
             summary="Готовность сервера к автоустановке AdGuard (админ)")
 def adguard_setup_preflight(admin: User = Depends(require_admin)):
+    """v1.70.16: мастер без пароля. Готов — запускаем; не готов — отдаём
+    ОДНУ команду для терминала (one_time_cmd), пароль не запрашиваем."""
     from ..services import adguard_setup as ag
-    pf = ag.preflight()
-    if pf["need_password"]:
-        pf["hint"] = ("Программа работает без root, а sudo просит пароль — "
-                      "введите пароль сервера в панели установки (как в "
-                      "окне обновления; sudo проверяет пароль служебного "
-                      "пользователя программы). Используется только на "
-                      "время установки и нигде не сохраняется.")
-    return pf
+    return ag.preflight()
 
 
 @router.post("/telegram/adguard/setup",
@@ -691,11 +686,23 @@ def adguard_setup_action(body: dict, db: Session = Depends(get_db),
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Установка уже выполняется — смотрите журнал "
                             "в карточке Telegram")
-    # пароль — только в память задания (sudo -S на время установки)
-    ag.start_setup(db, sudo_password=(body or {}).get("sudo_password") or "")
+    # v1.70.16: пароль сервера больше не принимается вовсе — привилегированные
+    # шаги делает помощник (sudoers NOPASSWD). Старый клиент мог прислать поле
+    # sudo_password из кэша: молча игнорируем и говорим об этом в ответе.
+    ignored_pw = bool((body or {}).get("sudo_password"))
+    try:
+        ag.start_setup(db)
+    except RuntimeError as e:
+        # v1.70.21: гонка двух одновременных запусков — это 409, а не 500.
+        # Проверка выше не атомарна, поэтому страховка обязана быть здесь.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     log_action(admin, "adguard_setup_start")
     return {"ok": True,
-            "message": "Установка запущена — следите за процессом в карточке"}
+            "message": "Установка запущена — следите за процессом в карточке",
+            "passwordless": True,
+            **({"warning": "Пароль не использован: с v1.70.16 мастер AdGuard "
+                           "работает без пароля (обновите страницу, чтобы "
+                           "убрать устаревшее поле)."} if ignored_pw else {})}
 
 
 @router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")

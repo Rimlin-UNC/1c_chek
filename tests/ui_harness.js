@@ -643,9 +643,42 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('settings/telegram/ping'),
      'v1.70.14: пинг пути Telegram в карточке (3 запроса, среднее)');
   ok(bundle.includes('/telegram/adguard/setup') && bundle.includes('ag-setup-log') &&
-     bundle.includes('ag-sudo-pw') && bundle.includes('adguard/setup/preflight') &&
-     bundle.includes("'1.70.15':"),
-     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + sudo-пароль + живой журнал)');
+     bundle.includes('adguard/setup/preflight') && bundle.includes("'1.70.15':"),
+     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + живой журнал)');
+  ok(bundle.includes("'1.70.16':") && bundle.includes('ag-cmd') &&
+     bundle.includes('ag-copy-cmd') && bundle.includes('ag-recheck') &&
+     bundle.includes('one_time_cmd') && bundle.includes('ymaster-adguard-setup') &&
+     bundle.includes('/etc/sudoers.d/ymaster-adguard'),
+     'v1.70.16: мастер AdGuard без пароля — одна команда для терминала и «Проверить снова»');
+  // Пароль окна обновления (своя механика, v1.17.0) остаётся — проверяем,
+  // что из панели AdGuard исчезли ЕЁ идентификаторы пароля.
+  ok(!bundle.includes('ag-sudo-pw') && !bundle.includes('ag-sudo-row') &&
+     !bundle.includes('agNeedPassword') &&
+     !/agLaunch\([^)]*sudo_password/.test(bundle),
+     'v1.70.16: поле пароля сервера (sudo) из панели AdGuard удалено');
+  ok(bundle.includes("'1.70.17':") && bundle.includes('refspec') &&
+     bundle.includes('Источник обновлений') &&
+     bundle.includes('ambiguous argument'),
+     'v1.70.17: обновление на другую ветку — fetch явным refspec (без «ambiguous argument»)');
+  ok(bundle.includes("'1.70.18':") && bundle.includes('placeholder="main"') &&
+     !bundle.includes('placeholder="arena/01a0caaa-1c-chek"'),
+     'v1.70.18: канал обновлений — main (подсказка поля «Ветка»)');
+  ok(bundle.includes("'1.70.19':") && bundle.includes('OPT_BRANCH') &&
+     bundle.includes('deploy.conf') && bundle.includes('Ветка задана явно'),
+     'v1.70.19: deploy.sh — приоритет --branch= > BRANCH= > deploy.conf > main');
+  ok(bundle.includes("'1.70.20':") && bundle.includes('unbound variable') &&
+     bundle.includes('install-rule') && bundle.includes('причина'),
+     'v1.70.20: помощник AdGuard ставится (install-rule), причина отказа видна в логе');
+  ok(bundle.includes("'1.70.21':") && bundle.includes('двух воркеров') &&
+     bundle.includes('сирот') && bundle.includes('причина'),
+     'v1.70.21: атомарный старт мастера, отмена убивает группу, причина таймаута видна');
+  ok(bundle.includes("'1.70.22':") &&
+     bundle.includes('помечается прерванным') && bundle.includes('pipefail') &&
+     bundle.includes('последней команде'),
+     'v1.70.22: панель не застревает после рестарта, отказ curl не выглядит успехом');
+  ok(bundle.includes("'1.70.23':") && bundle.includes('.nosymlink') &&
+     bundle.includes('ExecStart') && bundle.includes('tg-health.sh'),
+     'v1.70.23: установщику AdGuard передаётся -a y, ссылка /usr/local/bin создаётся безусловно');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

@@ -1,9 +1,18 @@
 # ==============================================================================
-#  Ямастер Чек — автоустановка AdGuard VPN из программы (v1.70.15)
+#  Ямастер Чек — автоустановка AdGuard VPN из программы (v1.70.15, v1.70.16)
 #  Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru
 # ==============================================================================
+#  v1.70.16 — мастер БЕЗ пароля: пароль сервера (sudo) из браузера больше не
+#  спрашивается вовсе. Привилегированные шаги делает один помощник
+#  /usr/local/sbin/ymaster-adguard-setup (deploy/adguard-vpn), разрешённый
+#  узким sudoers-правилом /etc/sudoers.d/ymaster-adguard на фиксированные фазы.
+#  Правило ставит deploy.sh при установке/обновлении; на сервере, где его ещё
+#  нет, панель мастера показывает ОДНУ готовую команду для терминала (копируется
+#  кнопкой) — после неё мастер работает сам и паролей не просит.
 #  Владелец нажимает «🛡 AdGuard VPN» в карточке Telegram — программа сама:
-#    precheck   проверяет сервер (linux, systemd, curl, права root/sudo);
+#    precheck   проверяет сервер (linux, systemd, curl) и права: root,
+#               sudo без пароля либо помощник (sudoers-правило) — пароль
+#               сервера НЕ спрашивается никогда;
 #    cli        ставит AdGuard VPN CLI официальным установщиком (пропускает,
 #               если уже стоит; сама чинит ссылку /usr/local/bin);
 #    login      запускает `adguardvpn-cli login` и отдаёт владельцу ссылку
@@ -18,11 +27,13 @@
 #  Механика повторяет механизм обновления: фазы по порядку, живой журнал,
 #  состояние на диске (data/adguard_setup.json) — переживает рестарт.
 #  Безопасность: команды фиксированные (нет пользовательского ввода в шелле);
-#  всё админ-онли; ссылка входа видна только админу.
+#  привилегированные шаги — только через помощника с явными фазами (sudo -n);
+#  всё админ-онли; ссылка входа видна только админу; пароли не принимаются.
 # ==============================================================================
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -30,11 +41,30 @@ from datetime import datetime
 
 from .updater import APP_DIR
 
-INSTALL_CMD = ("curl -fsSL https://raw.githubusercontent.com/AdguardTeam/"
-               "AdGuardVPNCLI/HEAD/scripts/release/install.sh | sh -s -- -v")
-CLI_CANDIDATES = ("/usr/local/bin/adguardvpn-cli", "/opt/adguardvpn_cli/adguardvpn-cli")
-LINK_CMD = ("ln -sf /opt/adguardvpn_cli/adguardvpn-cli "
-            "/usr/local/bin/adguardvpn-cli")
+INSTALL_URL = ("https://raw.githubusercontent.com/AdguardTeam/"
+               "AdGuardVPNCLI/HEAD/scripts/release/install.sh")
+INSTALL_TMP = "/tmp/ymaster-adguard-install.sh"
+# v1.70.22: ДВУМЯ шагами (скачать, затем выполнить), а не `curl … | sh -s --`.
+# В пайплайне код возврата принадлежит ПОСЛЕДНЕЙ команде (sh), поэтому отказ
+# curl (нет сети, DNS, rc 6/35) выглядел как успешная установка, а владелец
+# получал «CLI установлен, но не запускается: » с пустой причиной.
+# `set -o pipefail` здесь не помощник: /bin/sh в Ubuntu/Debian — dash, а в нём
+# это «Illegal option -o pipefail» (проверено).
+#
+# v1.70.23: `-a y` — автоответ «да» на вопрос установщика «create a link in
+# /usr/local/bin? [y/N]». Раньше стоял `-v`, но по исходнику установщика
+# (getopts 'vho:uV:p:a:') `-v` — это verbose, и он УЖЕ включён по умолчанию
+# (verbose='1'), на вопросы он не отвечает. Без автоответа ask_user() читает
+# `read -r response < /dev/tty`; у службы tty нет → ответ пустой → установщик
+# создаёт файл .nosymlink и ссылка НЕ появляется. Кроме того, create_symlink()
+# сразу делает return 0, если /usr/local/bin не входит в PATH (у юнита
+# программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin — его там нет).
+INSTALL_CMD = (f"curl -fsSL {INSTALL_URL} -o {INSTALL_TMP} "
+               f"&& sh {INSTALL_TMP} -a y")
+CLI_LINK = "/usr/local/bin/adguardvpn-cli"
+CLI_REAL = "/opt/adguardvpn_cli/adguardvpn-cli"
+CLI_CANDIDATES = (CLI_LINK, CLI_REAL)
+LINK_CMD = f"ln -sf {CLI_REAL} {CLI_LINK}"
 DEPLOY_DIR = os.path.join(APP_DIR, "deploy", "adguard-vpn")
 ETC_DIR = "/etc/systemd/system"          # юниты systemd
 SBIN_DIR = "/usr/local/sbin"             # сценарий автопилота
@@ -45,6 +75,15 @@ UNIT_MAP = {  # комплект -> (каталог назначения, пра
     "tg-health.sh": ("sbin", 0o755),
 }
 DEST_DIRS = {"etc": ETC_DIR, "sbin": SBIN_DIR}
+# v1.70.16: привилегированный помощник — единственная команда, которую
+# разрешает sudoers-правило; фазы фиксированные, аргументов из приложения нет.
+HELPER_NAME = "ymaster-adguard-setup"
+HELPER_PATH = "/usr/local/sbin/" + HELPER_NAME
+HELPER_SRC = "ymaster-adguard-setup.sh"          # в deploy/adguard-vpn
+HELPER_RULE = "/etc/sudoers.d/ymaster-adguard"   # правило NOPASSWD
+HELPER_PHASES = ("preflight", "rights", "install", "login", "socks", "units",
+                 "autopilot", "version", "status")
+RIGHTS_MODES = ("root", "nopass", "helper")      # «pass» в v1.70.16 удалён
 SETT_PROXY = "telegram_proxy"
 PROXY_VALUE = "socks5://127.0.0.1:1080"
 STEP_ORDER = ["precheck", "cli", "login", "socks", "tunnel",
@@ -86,14 +125,17 @@ class SetupJob:
         self.login_url = ""
         self.cli_version = ""
         self.ping_ms = None
-        self.sudo_mode = "none"      # none|root|nopass|pass (после precheck)
-        self._sudo_pass = ""         # только память: не в public() и не на диск
+        self.sudo_mode = "none"      # none|root|nopass|helper (после precheck)
+        self.one_time_cmd = ""       # v1.70.16: команда для терминала (1 раз)
         self.started_at = 0.0
         self.finished_at = 0.0
         self.elapsed_s = 0
         self.cancel_requested = False
         self._last_flush = 0.0
-        self._lock = threading.Lock()
+        # v1.70.21: замок создаётся ОДИН раз. Подмена объекта замка в reset()
+        # лишала взаимного исключения поток, который ещё держал старый замок
+        # (воркер отменённой установки продолжал писать в чужое задание).
+        self._lock = getattr(self, "_lock", None) or threading.Lock()
 
     def __init__(self) -> None:
         self.reset()
@@ -150,10 +192,29 @@ class SetupJob:
                 "cli_version": self.cli_version,
                 "ping_ms": self.ping_ms,
                 "sudo_mode": self.sudo_mode,
+                "one_time_cmd": self.one_time_cmd,
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
                 "elapsed_s": self.elapsed_s,
             }
+
+
+    def try_start(self) -> bool:
+        """v1.70.21: атомарно занять задание под замком.
+
+        Раньше `if job.running` и `job.running = True` разделяло окно, поэтому
+        два одновременных запроса успевали пройти проверку оба и поднимали двух
+        воркеров: параллельно ставили CLI, перезапускали службы и писали в одно
+        задание. Доказано экспериментом: 7 двойных стартов из 60 раундов при 16
+        одновременных вызовах (sys.setswitchinterval(1e-9)).
+        """
+        with self._lock:
+            if self.running:
+                return False
+            self.reset()
+            self.running = True
+            self.started_at = time.time()
+            return True
 
 
 job = SetupJob()
@@ -190,28 +251,59 @@ def _state_load() -> dict | None:
 
 
 def setup_status() -> dict:
-    """Живое задание → из памяти; после рестарта — последнее с диска."""
+    """Живое задание → из памяти; после рестарта — последнее с диска.
+
+    v1.70.22: сохранённое `running: true` после перезапуска процесса заведомо
+    устарело — поток установки умер вместе с процессом. Раньше панель вечно
+    показывала «установка выполняется», опрос не останавливался, а «Остановить»
+    отвечал 409 (в памяти задания нет): владелец застревал в фантомном
+    состоянии. Сценарий вполне боевой — `deploy.sh --update` перезапускает
+    службу после каждого обновления. Такое состояние помечаем прерванным,
+    журнал сохраняем.
+    """
     if job.running or job.finished:
         return job.public()
     st = _state_load() or {}
-    return st if st.get("finished") or st.get("running") else job.public()
+    if not (st.get("finished") or st.get("running")):
+        return job.public()
+    if st.get("running"):
+        st = dict(st)
+        st["running"] = False
+        st["finished"] = True
+        st["success"] = False
+        st["interrupted"] = True
+        st["error"] = st.get("error") or (
+            "Установка была прервана перезапуском программы — журнал сохранён; "
+            "запустите мастер ещё раз.")
+        steps = []
+        for s in st.get("steps") or []:
+            s = dict(s)
+            if s.get("status") == "active":
+                s["status"] = "failed"          # спиннер не должен крутиться
+            steps.append(s)
+        if steps:
+            st["steps"] = steps
+        st["log"] = list(st.get("log") or []) + \
+            [f"[{_stamp()}] {st['error']}"]
+    return st
 
 
 # ==========================================================================
 #  Запуск/отмена
 # ==========================================================================
-def start_setup(db, sudo_password: str = "") -> None:
+def start_setup(db) -> None:
     """Запустить установку (409-контроль на маршруте; здесь — страховка).
 
-    sudo_password — пароль служебного пользователя программы (как в окне
-    обновления): живёт только в памяти задания, используется лишь для
-    `sudo -S` на время установки и нигде не сохраняется."""
-    if job.running:
+    v1.70.16: паролей мастер не принимает вовсе — привилегированные шаги
+    идут через помощника (sudoers NOPASSWD) либо от root/sudo без пароля.
+    Если прав нет, precheck честно останавливается и показывает ОДНУ
+    команду для терминала (job.one_time_cmd).
+
+    v1.70.21: занятие задания атомарно (job.try_start()) — проверка
+    «не выполняется ли уже» и установка running=True больше не разделены
+    окном, поэтому одновременные запросы не поднимают двух воркеров."""
+    if not job.try_start():
         raise RuntimeError("Установка уже выполняется")
-    job.reset()
-    job._sudo_pass = sudo_password or ""
-    job.running = True
-    job.started_at = time.time()
     _state_write()
     t = threading.Thread(target=_worker, args=(db,), daemon=True,
                          name="adguard-setup")
@@ -230,26 +322,126 @@ def cancel_setup() -> bool:
 # ==========================================================================
 #  Исполнение команд (фиксированные строки, без пользовательского ввода)
 # ==========================================================================
+def _cmd_name(cmd) -> str:
+    """Человекочитаемое имя команды для сообщений (список или строка shell)."""
+    if isinstance(cmd, str):
+        return cmd.strip().split(" ")[0][:60] or cmd[:60]
+    return str(cmd[0]) if cmd else ""
+
+
+def _timeout_text(timeout: float, name: str) -> str:
+    """v1.70.21: таймаут — понятный исход (код 124, как в updater._run),
+    а не «Непредвиденная ошибка: » в панели владельца."""
+    return (f"timeout ({timeout:g} с): {name} — команда не завершилась "
+            f"вовремя и была прервана")
+
+
+def _reason(text: str, limit: int = 300) -> str:
+    """Хвост вывода с гарантией НЕпустоты (v1.70.22).
+
+    Пустая «причина» после двоеточия — ровно та диагностика, которой не хватило
+    на боевом сервере: сообщение есть, а зацепки нет. Если вывод пуст, говорим
+    наиболее вероятное (нет сети до источника) вместо пустой строки.
+    """
+    tail = (text or "").strip()[-limit:]
+    return tail or ("вывод пуст — вероятнее всего, нет доступа к источнику "
+                    "(raw.githubusercontent.com: DNS/файрвол/прокси)")
+
+
 def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
             shell: bool = False, input_text: str = "") -> tuple[int, str]:
     """Выполнить команду, вернуть (код, вывод).
 
     Права — по режиму из precheck: root — как есть; nopass — `sudo -n`;
-    pass — `sudo -S -p ""` с паролем служебного пользователя через stdin
-    (пароль не попадает ни в аргументы процессов, ни в журнал)."""
-    if job.sudo_mode in ("nopass", "pass"):
+    helper — произвольные команды от root НЕ выполняются вовсе, работает
+    только run_helper() с фиксированной фазой (v1.70.16).
+    Режим `pass` (пароль служебного пользователя через stdin) в v1.70.16
+    удалён: мастер пароли не принимает."""
+    if job.sudo_mode == "helper":
+        raise RuntimeError("В режиме помощника произвольные команды от root "
+                           "не выполняются — только run_helper(фаза).")
+    if job.sudo_mode == "nopass":
         inner = ["sh", "-c", cmd] if shell else list(cmd)
-        full = (["sudo", "-n"] if job.sudo_mode == "nopass"
-                else ["sudo", "-S", "-p", ""]) + inner
-        if job.sudo_mode == "pass" and not input_text:
-            input_text = (job._sudo_pass or "") + "\n"
+        full = ["sudo", "-n"] + inner
         shell = False
     else:
         full = cmd
-    p = subprocess.run(full, shell=shell, capture_output=True,
-                       text=True, timeout=timeout,
-                       input=input_text or None)
+    try:
+        p = subprocess.run(full, shell=shell, capture_output=True,
+                           text=True, timeout=timeout,
+                           input=input_text or None)
+    except subprocess.TimeoutExpired:
+        # v1.70.21: как в updater._run — таймаут это понятный исход (код 124),
+        # а не «Непредвиденная ошибка» в панели.
+        return 124, _timeout_text(timeout, _cmd_name(full))
+    except FileNotFoundError:
+        return 127, f"Команда не найдена: {_cmd_name(full)}"
     return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def run_helper(phase: str, timeout: float = CMD_TIMEOUT,
+               stream: bool = False) -> tuple[int, str]:
+    """v1.70.16: привилегированный шаг через помощника — `sudo -n <helper> <фаза>`.
+
+    Фаза — только из HELPER_PHASES (фиксированный набор, аргументов нет):
+    ровно эти команды разрешает sudoers-правило /etc/sudoers.d/ymaster-adguard.
+    В режиме root помощник не нужен — выполняем фазу тем же сценарием напрямую
+    (он лежит в комплекте), а в режиме nopass — через `sudo -n`."""
+    if phase not in HELPER_PHASES:
+        raise RuntimeError(f"Неизвестная фаза помощника: {phase}")
+    argv = helper_argv(phase)
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        # v1.70.21: фаза помощника могла зависнуть (установщик, systemctl) —
+        # возвращаем понятный код и текст, шаг честно падает с причиной.
+        return 124, _timeout_text(timeout, f"помощник {phase}")
+    except FileNotFoundError:
+        return 127, (f"Помощник не найден: {argv[-2] if len(argv) > 1 else ''}"
+                     " — выполните одноразовую команду установки правила")
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def helper_script() -> str:
+    """Путь к сценарию помощника: установленный (root) либо из комплекта."""
+    if os.path.exists(HELPER_PATH):
+        return HELPER_PATH
+    src = os.path.join(DEPLOY_DIR, HELPER_SRC)
+    return src if os.path.exists(src) else ""
+
+
+def helper_argv(phase: str) -> list[str]:
+    """Аргументы вызова помощника по режиму прав (см. run_helper)."""
+    script = HELPER_PATH if os.path.exists(HELPER_PATH) \
+        else os.path.join(DEPLOY_DIR, HELPER_SRC)
+    if job.sudo_mode == "root":
+        return ["bash", script, phase]
+    return ["sudo", "-n", script, phase]
+
+
+def helper_allowed() -> bool:
+    """Разрешён ли помощник через sudoers (безвредная проверка: фаза `rights`).
+
+    Проверяем именно установленный помощник /usr/local/sbin — правило
+    перечисляет этот путь, сценарий из каталога программы sudo не пустит."""
+    if os.geteuid() == 0 or not os.path.exists(HELPER_PATH):
+        return False
+    try:
+        return subprocess.run(["sudo", "-n", HELPER_PATH, "rights"],
+                              capture_output=True, timeout=20,
+                              stdin=subprocess.DEVNULL).returncode == 0
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
+def one_time_cmd() -> str:
+    """Одна команда для терминала: ставит помощник и sudoers-правило.
+
+    Показываем в панели мастера (кнопка «Скопировать») и в тексте ошибки —
+    после неё пароль не нужен ни разу."""
+    return (f"sudo bash {os.path.join(DEPLOY_DIR, HELPER_SRC)} install-rule "
+            f"{APP_DIR}")
 
 
 def _find_cli() -> str:
@@ -286,36 +478,47 @@ def extract_login_url(line: str) -> str:
 
 
 def _login_argv(cli: str) -> list[str]:
-    """Аргументы `login` с учётом режима прав (см. run_cmd)."""
+    """Аргументы `login` с учётом режима прав (см. run_cmd/run_helper)."""
+    if job.sudo_mode == "helper":
+        return helper_argv("login")          # sudo -n <помощник> login
     if job.sudo_mode == "nopass":
         return ["sudo", "-n", cli, "login"]
-    if job.sudo_mode == "pass":
-        return ["sudo", "-S", "-p", "", cli, "login"]
     return [cli, "login"]
+
+
+def _kill_proc(proc) -> None:
+    """v1.70.21: убивать ВСЮ группу процессов, а не одного прямого потомка.
+
+    `login` идёт как `sudo -n <помощник> login`, а помощник делает
+    `exec adguardvpn-cli login`; `proc.kill()` снимал только sudo, и
+    привилегированный CLI оставался висеть сиротой, продолжая ждать
+    подтверждения входа (проверено: внук жив после kill и мёртв после killpg).
+    Процесс стартовал с start_new_session=True, поэтому группа — это он сам.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
 
 
 def _login_worker(cli: str) -> tuple[int, str, str]:
     """`login` с живым журналом: строки пишем в job, ссылку — в job.login_url.
 
     Возвращает (код, вывод, ссылка). Ссылку берём из stdout (OAuth
-    device-code: «You need to authorize … https://auth.adguard.io/…»).
+    device-code: «You need to authorize … https://auth.adguard.io/…» —
+    помощник делает `exec adguardvpn-cli login`, строки идут без буфера).
     Читает отдельный поток — цикл отмены не блокируется молчаливым stdout.
+    v1.70.16: stdin больше не нужен — пароля у мастера нет.
     """
     out: list[str] = []
     url = ""
-    use_pass = job.sudo_mode == "pass"
     proc = subprocess.Popen(
         _login_argv(cli), stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, errors="replace",
-        start_new_session=True,
-        stdin=subprocess.PIPE if use_pass else None)
-    if use_pass and proc.stdin is not None:
-        try:                                    # пароль sudo — сразу в stdin
-            proc.stdin.write((job._sudo_pass or "") + "\n")
-            proc.stdin.flush()
-            proc.stdin.close()
-        except OSError:
-            pass
+        start_new_session=True, stdin=subprocess.DEVNULL)
 
     def _pump() -> None:
         nonlocal url
@@ -341,25 +544,50 @@ def _login_worker(cli: str) -> tuple[int, str, str]:
     try:
         while proc.poll() is None:
             if job.cancel_requested:
-                proc.kill()
+                _kill_proc(proc)                # v1.70.21: вся группа
                 return 130, "\n".join(out), url
             if time.time() > deadline:
-                proc.kill()
+                _kill_proc(proc)
                 return 124, "\n".join(out), url
             time.sleep(0.5)
         pump.join(timeout=5)
     finally:
         if proc.poll() is None:                 # отмена/зависание
-            try:
-                proc.kill()
-            except OSError:
-                pass
+            _kill_proc(proc)
     return proc.returncode or 0, "\n".join(out), url
 
 
 # ==========================================================================
 #  Шаги установки
 # ==========================================================================
+def _detect_rights() -> tuple[str, str]:
+    """Режим прав и человекочитаемая подпись (v1.70.16 — без пароля вовсе).
+
+    Порядок: root → sudo без пароля → помощник (sudoers-правило).
+    Возвращает ("", "") если привилегий нет: мастер честно остановится
+    и покажет одну команду для терминала."""
+    if os.geteuid() == 0:
+        return "root", "Права: root — хорошо."
+    try:
+        if subprocess.run(["sudo", "-n", "true"], capture_output=True,
+                          timeout=15,
+                          stdin=subprocess.DEVNULL).returncode == 0:
+            return "nopass", "Права: sudo без пароля — хорошо."
+    except Exception:                                        # noqa: BLE001
+        pass
+    if helper_allowed():
+        return "helper", ("Права: помощник ymaster-adguard-setup "
+                          "(sudoers-правило) — пароль не нужен.")
+    return "", ""
+
+
+NO_RIGHTS_ERROR = (
+    "Программа работает без прав root, а правило для помощника не "
+    "установлено — пароль мастер больше не спрашивает. Выполните на "
+    "сервере ОДНУ команду (готовая — кнопкой «Скопировать» в панели, "
+    "её же ставит deploy.sh при обновлении) и нажмите «Проверить снова»:")
+
+
 def _step_precheck() -> None:
     job.say("precheck", "Проверяем сервер…", "active", 3)
     if not sys_platform_linux():
@@ -370,81 +598,146 @@ def _step_precheck() -> None:
                            "systemd (Ubuntu/Debian).")
     if not shutil.which("curl"):
         raise RuntimeError("curl не найден: sudo apt install -y curl")
-    if os.geteuid() == 0:
-        job.sudo_mode = "root"
-        job.say("precheck", "Права: root — хорошо.")
-    elif subprocess.run(["sudo", "-n", "true"], capture_output=True,
-                        timeout=15).returncode == 0:
-        job.sudo_mode = "nopass"
-        job.say("precheck", "Права: sudo без пароля — хорошо.")
-    elif job._sudo_pass:
-        ok = subprocess.run(["sudo", "-S", "-p", "", "true"],
-                            input=job._sudo_pass + "\n",
-                            capture_output=True, text=True,
-                            timeout=15).returncode == 0
-        if not ok:
-            raise RuntimeError("Пароль sudo не подошёл. sudo проверяет "
-                               "пароль СЛУЖЕБНОГО пользователя программы, "
-                               "а не ваш пароль из терминала (как в окне "
-                               "обновления).")
-        job.sudo_mode = "pass"
-        job.say("precheck", "Права: sudo с паролем — только на время "
-                            "установки, нигде не сохраняется.")
-    else:
-        raise RuntimeError("Программа работает без прав root, а sudo "
-                           "просит пароль. Введите пароль сервера в "
-                           "панели установки (как в окне обновления) — "
-                           "он используется только на время установки.")
-    job.say("precheck", "Сервер готов к установке.", "done", 8)
+    mode, note = _detect_rights()
+    if not mode:
+        job.one_time_cmd = one_time_cmd()
+        raise RuntimeError(NO_RIGHTS_ERROR + " " + job.one_time_cmd)
+    job.sudo_mode = mode
+    job.say("precheck", note)
+    if mode == "helper":
+        rc, out = run_helper("preflight", timeout=60)
+        if rc != 0:
+            raise RuntimeError("Помощник не готов к установке: "
+                               + (out or "").strip()[-200:])
+        job.say("precheck", "Помощник проверил сервер: "
+                            + (out or "").strip().splitlines()[-1][:80])
+    job.say("precheck", "Сервер готов к установке — пароль не потребуется.",
+            "done", 8)
 
 
 def preflight() -> dict:
-    """Готовность прав ДО старта — UI решает, показывать ли поле пароля."""
+    """Готовность прав ДО старта (v1.70.16): пароль не нужен никогда.
+
+    UI решает: запускать мастер сразу либо показать одну команду для
+    терминала (one_time_cmd) и кнопку «Проверить снова»."""
     root = os.geteuid() == 0
     nopass = False
     if not root:
         try:
             nopass = subprocess.run(["sudo", "-n", "true"],
-                                    capture_output=True,
-                                    timeout=15).returncode == 0
+                                    capture_output=True, timeout=15,
+                                    stdin=subprocess.DEVNULL).returncode == 0
         except Exception:                                # noqa: BLE001
             nopass = False
-    return {"root": root, "sudo_nopass": nopass,
-            "need_password": not root and not nopass}
+    helper = (not root and not nopass) and helper_allowed()
+    mode = "root" if root else ("nopass" if nopass
+                                else ("helper" if helper else "none"))
+    ready = mode in RIGHTS_MODES
+    cmd = "" if ready else one_time_cmd()
+    out = {"root": root, "sudo_nopass": nopass, "helper_ready": helper,
+           "helper_path": HELPER_PATH, "sudoers_rule": HELPER_RULE,
+           "helper_installed": os.path.exists(HELPER_PATH),
+           "mode": mode, "ready": ready,
+           "need_password": False,          # v1.70.16: пароля нет вовсе
+           "one_time_cmd": cmd}
+    if ready:
+        out["hint"] = ("Мастер работает без пароля: привилегированные шаги "
+                       "делает помощник ymaster-adguard-setup (режим «"
+                       + mode + "»).")
+    else:
+        out["hint"] = (NO_RIGHTS_ERROR + " " + cmd)
+    return out
 
 
 def sys_platform_linux() -> bool:
     return os.uname().sysname.lower().startswith("linux")
 
 
+def _ensure_cli_link() -> None:
+    """Ссылка /usr/local/bin/adguardvpn-cli обязана существовать (v1.70.23).
+
+    На этот путь жёстко прописаны `ExecStart=` юнита adguard-vpn-telegram и
+    `CLI=` в tg-health.sh, а официальный установщик ссылку не создаёт, если:
+      • нет терминала для вопроса «create a link in /usr/local/bin? [y/N]»
+        (у службы tty нет → ответ пустой → создаётся `.nosymlink`, который
+        отключает вопрос и при всех последующих запусках);
+      • /usr/local/bin не входит в PATH — тогда create_symlink() молча
+        делает return 0 (у юнита программы PATH короткий).
+    Поэтому обеспечиваем ссылку сами и ВСЕГДА, когда её нет, а бинарник в
+    /opt есть — в том числе на пути «CLI уже установлен», где раньше происходил
+    ранний выход и установка ломалась на следующем шаге.
+    """
+    if os.path.exists(CLI_LINK) or not os.path.exists(CLI_REAL):
+        return
+    job.say("cli", "Создаю ссылку /usr/local/bin/adguardvpn-cli "
+                   "(её требуют служба туннеля и автопилот).")
+    rc, out = run_cmd(LINK_CMD, shell=True)
+    if rc != 0:
+        raise RuntimeError("Не создать ссылку " + CLI_LINK + ": "
+                           + _reason(out))
+
+
 def _step_cli() -> None:
     job.say("cli", "Проверяем AdGuard VPN CLI…", "active", 12)
+    if job.sudo_mode == "helper":
+        # v1.70.16: всё привилегированное — через помощника (одна команда)
+        rc, out = run_helper("version", timeout=30)
+        if rc == 0 and (out or "").strip():
+            job.cli_version = out.strip().splitlines()[0][:40]
+            job.say("cli", f"CLI уже установлен ({job.cli_version}) — "
+                           "пропускаю установку.", "skip", 20)
+            return
+        job.say("cli", "Ставим официальным установщиком (1–2 минуты)…")
+        rc, out = run_helper("install", timeout=CMD_TIMEOUT)
+        if rc != 0:
+            raise RuntimeError("Установщик AdGuard завершился с ошибкой: "
+                               + (out or "").strip()[-300:])
+        rc, out = run_helper("version", timeout=30)
+        if rc != 0:
+            raise RuntimeError("CLI установлен, но не запускается: "
+                               + (out or "").strip()[-200:])
+        job.cli_version = out.strip().splitlines()[0][:40]
+        job.say("cli", f"CLI готов ({job.cli_version}).", "done", 25)
+        return
     cli = _find_cli()
     if cli:
         rc, out = run_cmd([cli, "--version"], timeout=30)
         if rc == 0:
+            # v1.70.23: _find_cli() находит и /opt/adguardvpn_cli/adguardvpn-cli,
+            # поэтому проверка версии проходила и шаг завершался РАНЬШЕ, чем
+            # создавалась ссылка /usr/local/bin — а без неё следующий шаг
+            # (юнит туннеля с ExecStart=/usr/local/bin/…) падал.
+            _ensure_cli_link()
             job.cli_version = (out or "").strip().splitlines()[0][:40] \
                 if out.strip() else "установлен"
             job.say("cli", f"CLI уже установлен ({job.cli_version}) — "
                            "пропускаю установку.", "skip", 20)
             return
     job.say("cli", "Ставим официальным установщиком (1–2 минуты)…")
-    rc, out = run_cmd(INSTALL_CMD, shell=True)
+    rc, install_out = run_cmd(INSTALL_CMD, shell=True)
     if rc != 0:
         raise RuntimeError("Установщик AdGuard завершился с ошибкой: "
-                           + (out or "").strip()[-300:])
+                           + _reason(install_out))
+    _ensure_cli_link()
     cli = _find_cli()
     rc, out = run_cmd([cli, "--version"], timeout=30) if cli else (1, "")
     if rc != 0:
         # известный случай: вопрос установщика про ссылку остался без ответа
-        if os.path.exists("/opt/adguardvpn_cli/adguardvpn-cli"):
+        if os.path.exists(CLI_REAL):
             job.say("cli", "Создаю ссылку /usr/local/bin (установщик не успел).")
             run_cmd(LINK_CMD, shell=True)
-            rc, out = run_cmd(["/usr/local/bin/adguardvpn-cli", "--version"],
-                              timeout=30) if _find_cli() else (1, "")
+            cli = _find_cli()
+            rc, out = run_cmd([cli, "--version"], timeout=30) if cli else (1, "")
     if rc != 0:
-        raise RuntimeError("CLI установлен, но не запускается: "
-                           + (out or "").strip()[-200:])
+        # v1.70.22: причина обязательна и точна. Раньше здесь печаталось
+        # «CLI установлен, но не запускается: » с ПУСТЫМ хвостом: вывод
+        # установщика затирался результатом --version, а самого CLI могло и не
+        # быть. Владелец оставался без единой зацепки.
+        if not cli:
+            raise RuntimeError("CLI не появился после установки: "
+                               + _reason(install_out))
+        raise RuntimeError(f"CLI установлен, но не запускается ({cli}): "
+                           + _reason(out or install_out))
     job.cli_version = (out or "").strip().splitlines()[0][:40] \
         if out.strip() else "установлен"
     job.say("cli", f"CLI готов ({job.cli_version}).", "done", 25)
@@ -473,8 +766,11 @@ def _step_login() -> None:
 def _step_socks() -> None:
     job.say("socks", "Включаем режим SOCKS5 (только локальный прокси)…",
             "active", 50)
-    cli = _find_cli()
-    rc, out = run_cmd([cli, "config", "set-mode", "SOCKS"], timeout=60)
+    if job.sudo_mode == "helper":
+        rc, out = run_helper("socks", timeout=90)
+    else:
+        cli = _find_cli()
+        rc, out = run_cmd([cli, "config", "set-mode", "SOCKS"], timeout=60)
     if rc != 0:
         raise RuntimeError("set-mode SOCKS не удался: "
                            + (out or "").strip()[-200:])
@@ -497,13 +793,35 @@ def _copy_kit() -> None:
             shutil.copyfile(src, dst)
             os.chmod(dst, mode)
         else:
-            run_cmd(["cp", src, dst], timeout=30)
-            run_cmd(["chmod", f"{mode:o}", dst], timeout=15)
+            # v1.70.21: коды возврата больше не игнорируются. Раньше отказ cp
+            # всплывал позже как «Служба туннеля не запустилась» — владелец
+            # искал причину не там.
+            rc, out = run_cmd(["cp", src, dst], timeout=30)
+            if rc != 0:
+                raise RuntimeError(f"Не скопировать {name} в {dst}: "
+                                   + (out or "").strip()[-200:])
+            rc, out = run_cmd(["chmod", f"{mode:o}", dst], timeout=15)
+            if rc != 0:
+                raise RuntimeError(f"Не выставить права {mode:o} на {dst}: "
+                                   + (out or "").strip()[-200:])
 
 
 def _step_tunnel() -> None:
     job.say("tunnel", "Ставим службу туннеля (автоподключение после "
                       "перезагрузки)…", "active", 60)
+    if job.sudo_mode == "helper":
+        # v1.70.16: помощник сам раскладывает комплект (он уже root-владелец
+        # копии в /usr/local/share/ymaster-adguard), делает daemon-reload,
+        # enable+restart и ждёт активного туннеля до 20 с.
+        rc, out = run_helper("units", timeout=180)
+        if rc != 0:
+            raise RuntimeError("Служба туннеля не запустилась: "
+                               + (out or "").strip()[-300:])
+        job.say("tunnel", (out or "").strip().splitlines()[-1][:80]
+                if out.strip() else "Туннель подключён.")
+        job.say("tunnel", "Туннель подключён, служба активна "
+                          "(переживает перезагрузку).", "done", 68)
+        return
     _copy_kit()
     rc, out = run_cmd(["systemctl", "daemon-reload"], timeout=30)
     if rc != 0:
@@ -530,6 +848,14 @@ def _step_tunnel() -> None:
 def _step_autopilot() -> None:
     job.say("autopilot", "Ставим автопилот (замер 15:00, смена локации "
                          "15:10)…", "active", 74)
+    if job.sudo_mode == "helper":
+        rc, out = run_helper("autopilot", timeout=90)
+        if rc != 0:
+            raise RuntimeError("Таймер автопилота не включился: "
+                               + (out or "").strip()[-200:])
+        job.say("autopilot", "Автопилот включён: каждый день 15:10 по "
+                             "серверному времени (= МСК).", "done", 80)
+        return
     rc, out = run_cmd(["systemctl", "daemon-reload"], timeout=30)
     if rc != 0:
         raise RuntimeError("daemon-reload не удался: " + (out or "")[-200:])

@@ -4,7 +4,7 @@
 поднимать отдельную машину для моста. Сервер считается одним устройством
 лицензии; трафик Telegram-бота крошечный.
 
-## Быстрый путь — кнопка в программе (v1.70.15)
+## Быстрый путь — кнопка в программе (v1.70.15, с v1.70.16 — без пароля)
 
 Больше ничего копировать не нужно: **Настройки → Telegram → кнопка
 «🛡 AdGuard VPN»**. Программа на сервере сама:
@@ -21,6 +21,39 @@
 успешно» либо понятная ошибка. Ручные шаги ниже — полный контроль,
 если хочется всё сделать самому.
 
+### Пароль сервера не нужен (v1.70.16)
+
+Мастер **не спрашивает пароль sudo** — ни в браузере, ни где-либо ещё.
+Привилегированные шаги выполняет один помощник
+`ymaster-adguard-setup.sh` из этого каталога, установленный в
+`/usr/local/sbin/ymaster-adguard-setup` (root:root, 0755) и разрешённый
+узким правилом `/etc/sudoers.d/ymaster-adguard` на фиксированные фазы:
+
+    sudo -n /usr/local/sbin/ymaster-adguard-setup preflight|install|login|socks|units|autopilot|version|status|rights
+
+`deploy.sh` ставит помощник и правило сам — при установке и при каждом
+`--update`. Если сервер развёрнут раньше (или правило сняли), панель
+мастера покажет **одну** команду: выполните её в SSH один раз и нажмите
+«Проверить снова»:
+
+    sudo bash /opt/ymaster-check/deploy/adguard-vpn/ymaster-adguard-setup.sh install-rule /opt/ymaster-check
+
+Что делает команда: раскладывает комплект юнитов в root-каталог
+`/usr/local/share/ymaster-adguard`, ставит помощника в `/usr/local/sbin`,
+пишет правило NOPASSWD на перечисленные фазы для служебного пользователя
+программы (берётся из `User=` юнита `ymaster-check`, иначе — владелец
+каталога программы) и проверяет его через `visudo -c`. Служебный
+пользователь может помощник **запустить**, но не может изменить — поэтому
+правило не даёт ему произвольного root.
+
+Откат (убрать правило, помощника и root-копию комплекта):
+
+    sudo /usr/local/sbin/ymaster-adguard-setup remove-rule
+
+Проверка, что правило работает (от имени служебного пользователя):
+
+    sudo -u ymaster sudo -n /usr/local/sbin/ymaster-adguard-setup rights   # → ok
+
 ## Как это работает
 
     Ямастер Чек ──socks5://127.0.0.1:1080──▶ AdGuard VPN CLI
@@ -34,59 +67,90 @@
 
 ## Установка на сервере (Ubuntu)
 
-1. **Установите CLI** (официальный установщик). ВАЖНО: вставляйте
-   команды **по одной** — установщик в середине задаёт вопрос
-   «create a link in /usr/local/bin? [y/N]», и если следующая строка
-   из скопированного блока прилетит в этот момент, она уйдёт в вопрос
-   как ответ («Invalid response»), а ссылка создана не будет:
+> **Главное правило ручной установки: всё — от одного пользователя.**
+> Вход и настройки CLI хранятся в `$HOME/.local/share/adguardvpn-cli`,
+> а юнит туннеля запускает CLI от root (`User=root`, `HOME=/root`).
+> Если сделать `login` под обычным пользователем, а службу запустить от
+> root — туннель поднимется без лицензии и сразу отвалится. Поэтому все
+> команды ниже выполняются через `sudo`.
+
+1. **Установите CLI** (официальный установщик). Флаг **`-a y`** отвечает
+   «да» на единственный вопрос установщика — «create a link in
+   /usr/local/bin? [y/N]». Ссылка обязательна: на неё жёстко прописаны
+   `ExecStart=` юнита туннеля и `CLI=` в автопилоте.
    ```
-   curl -fsSL https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/release/install.sh | sh -s -- -v
+   curl -fsSL https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/release/install.sh \
+       -o /tmp/adguard-install.sh
+   sudo sh /tmp/adguard-install.sh -a y
    ```
-   Если ссылка всё же не создалась (пишет `adguardvpn-cli: command
-   not found`) — создайте её вручную одной командой:
+   Двумя командами, а не через `| sh`: в пайплайне код возврата
+   принадлежит последней команде, и отказ `curl` (нет сети, DNS,
+   GitHub недоступен) выглядел бы как успешная установка.
+
+   > `-v` — это **verbose**, а не «без вопросов» (и он уже включён по
+   > умолчанию). Без `-a y` установщик читает ответ с терминала; если
+   > терминала нет, ответ считается пустым, создаётся файл
+   > `.nosymlink` — и ссылка не появляется вовсе.
+
+   Проверка:
    ```
-   ln -sf /opt/adguardvpn_cli/adguardvpn-cli /usr/local/bin/adguardvpn-cli
+   adguardvpn-cli --version
    ```
-   Проверка: `adguardvpn-cli --version` — должен ответить версией.
-2. **Войдите в аккаунт с лицензией** (один раз):
+   Если пишет `command not found` — установщик не стал делать ссылку
+   (так бывает, когда `/usr/local/bin` не входит в `PATH`): создайте её
+   вручную.
    ```
-   adguardvpn-cli login
+   sudo ln -sf /opt/adguardvpn_cli/adguardvpn-cli /usr/local/bin/adguardvpn-cli
+   ```
+2. **Войдите в аккаунт с лицензией** (один раз, обязательно через `sudo`):
+   ```
+   sudo adguardvpn-cli login
    ```
    CLI покажет ссылку — откройте её на любом удобном устройстве
    (компьютер/телефон) и войдите. Сервер запомнит вход.
 3. **Включите режим SOCKS5** (только локальный прокси):
    ```
-   adguardvpn-cli config set-mode SOCKS
+   sudo adguardvpn-cli config set-mode SOCKS
    ```
    Порт по умолчанию — 1080; при желании смените:
-   `adguardvpn-cli config set-socks-port 1080`.
+   `sudo adguardvpn-cli config set-socks-port 1080`.
 4. **Выберите локацию**, где Telegram доступен:
    ```
-   adguardvpn-cli list-locations
+   sudo adguardvpn-cli list-locations
    ```
 5. **Подключитесь и проверьте путь**:
    ```
-   adguardvpn-cli connect -l "<локация из списка>"
-   adguardvpn-cli status
+   sudo adguardvpn-cli connect -l "<локация из списка>"
+   sudo adguardvpn-cli status
    curl -x socks5h://127.0.0.1:1080 https://api.telegram.org/ -m 10
    ```
    Любой ответ HTTP (200/302/404) — путь жив; «таймаут» — попробуйте
    другую локацию (шаги 4–5).
+
+   Перед включением службы из шага 6 остановите это ручное подключение
+   (`sudo adguardvpn-cli disconnect`), иначе служба и ваш сеанс будут
+   мешать друг другу.
 6. **Автозапуск туннеля** (юнит `adguard-vpn-telegram.service` —
    переподключает VPN после перезагрузки сервера). Файлы комплекта
-   берите с GitHub (ветка с v1.70.14; после merge в main замените
-   `arena/01a0caaa-1c-chek` на `main`):
+   берите с GitHub (ветка `main` — канал обновлений с v1.70.18):
    ```
-   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek
+   B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
    curl -fsSL -o /etc/systemd/system/adguard-vpn-telegram.service \
        $B/deploy/adguard-vpn/adguard-vpn-telegram.service
-   systemctl daemon-reload
-   systemctl enable --now adguard-vpn-telegram
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now adguard-vpn-telegram
+   systemctl is-active adguard-vpn-telegram
    ```
-   ВАЖНО: вход CLI хранится в домашнем каталоге пользователя. Юнит
-   запускает CLI от root — если делали `login` не под root, выполните
-   один раз `sudo adguardvpn-cli login` (либо поправьте `User=`/`HOME=`
-   в юните под своего пользователя).
+   Юнит запускает CLI от root (`User=root`, `HOME=/root`) — поэтому
+   `login` из шага 2 обязательно должен быть выполнен через `sudo`.
+   Если вход делали под другим пользователем, повторите
+   `sudo adguardvpn-cli login` (либо поправьте `User=`/`HOME=` в юните).
+
+   Проверка, что туннель действительно поднялся:
+   ```
+   systemctl status adguard-vpn-telegram --no-pager
+   curl -x socks5h://127.0.0.1:1080 https://api.telegram.org/ -m 10
+   ```
 7. **В программе**: «Настройки → Telegram» → кнопка «🛡 AdGuard VPN»
    подставит `socks5://127.0.0.1:1080` → «🔍 Диагностика» (через прокси
    должно стать ✅) → «💾 Сохранить и запустить».
@@ -128,7 +192,7 @@
 таймер (под root `sudo` не нужен; команды можно вставлять блоком —
 вопросов они не задают):
 ```
-B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek
+B=https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main
 curl -fsSL -o /usr/local/sbin/tg-health.sh $B/deploy/adguard-vpn/tg-health.sh
 chmod +x /usr/local/sbin/tg-health.sh
 curl -fsSL -o /etc/systemd/system/tg-health.service $B/deploy/adguard-vpn/tg-health.service
