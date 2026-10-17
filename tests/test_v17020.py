@@ -88,7 +88,9 @@ def _pins_that_are_substrings_of_current_version() -> list:
 # ==============================================================================
 class TestVersions17020:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.20"
+        # v1.70.21: пин ослаблен (точную версию проверяет свой тест версии)
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 20)
 
     def test_changelog(self):
         ch = _read("CHANGELOG.md")

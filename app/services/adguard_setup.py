@@ -33,6 +33,7 @@
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -112,7 +113,10 @@ class SetupJob:
         self.elapsed_s = 0
         self.cancel_requested = False
         self._last_flush = 0.0
-        self._lock = threading.Lock()
+        # v1.70.21: замок создаётся ОДИН раз. Подмена объекта замка в reset()
+        # лишала взаимного исключения поток, который ещё держал старый замок
+        # (воркер отменённой установки продолжал писать в чужое задание).
+        self._lock = getattr(self, "_lock", None) or threading.Lock()
 
     def __init__(self) -> None:
         self.reset()
@@ -176,6 +180,24 @@ class SetupJob:
             }
 
 
+    def try_start(self) -> bool:
+        """v1.70.21: атомарно занять задание под замком.
+
+        Раньше `if job.running` и `job.running = True` разделяло окно, поэтому
+        два одновременных запроса успевали пройти проверку оба и поднимали двух
+        воркеров: параллельно ставили CLI, перезапускали службы и писали в одно
+        задание. Доказано экспериментом: 7 двойных стартов из 60 раундов при 16
+        одновременных вызовах (sys.setswitchinterval(1e-9)).
+        """
+        with self._lock:
+            if self.running:
+                return False
+            self.reset()
+            self.running = True
+            self.started_at = time.time()
+            return True
+
+
 job = SetupJob()
 
 
@@ -226,12 +248,13 @@ def start_setup(db) -> None:
     v1.70.16: паролей мастер не принимает вовсе — привилегированные шаги
     идут через помощника (sudoers NOPASSWD) либо от root/sudo без пароля.
     Если прав нет, precheck честно останавливается и показывает ОДНУ
-    команду для терминала (job.one_time_cmd)."""
-    if job.running:
+    команду для терминала (job.one_time_cmd).
+
+    v1.70.21: занятие задания атомарно (job.try_start()) — проверка
+    «не выполняется ли уже» и установка running=True больше не разделены
+    окном, поэтому одновременные запросы не поднимают двух воркеров."""
+    if not job.try_start():
         raise RuntimeError("Установка уже выполняется")
-    job.reset()
-    job.running = True
-    job.started_at = time.time()
     _state_write()
     t = threading.Thread(target=_worker, args=(db,), daemon=True,
                          name="adguard-setup")
@@ -250,6 +273,20 @@ def cancel_setup() -> bool:
 # ==========================================================================
 #  Исполнение команд (фиксированные строки, без пользовательского ввода)
 # ==========================================================================
+def _cmd_name(cmd) -> str:
+    """Человекочитаемое имя команды для сообщений (список или строка shell)."""
+    if isinstance(cmd, str):
+        return cmd.strip().split(" ")[0][:60] or cmd[:60]
+    return str(cmd[0]) if cmd else ""
+
+
+def _timeout_text(timeout: float, name: str) -> str:
+    """v1.70.21: таймаут — понятный исход (код 124, как в updater._run),
+    а не «Непредвиденная ошибка: » в панели владельца."""
+    return (f"timeout ({timeout:g} с): {name} — команда не завершилась "
+            f"вовремя и была прервана")
+
+
 def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
             shell: bool = False, input_text: str = "") -> tuple[int, str]:
     """Выполнить команду, вернуть (код, вывод).
@@ -268,9 +305,16 @@ def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
         shell = False
     else:
         full = cmd
-    p = subprocess.run(full, shell=shell, capture_output=True,
-                       text=True, timeout=timeout,
-                       input=input_text or None)
+    try:
+        p = subprocess.run(full, shell=shell, capture_output=True,
+                           text=True, timeout=timeout,
+                           input=input_text or None)
+    except subprocess.TimeoutExpired:
+        # v1.70.21: как в updater._run — таймаут это понятный исход (код 124),
+        # а не «Непредвиденная ошибка» в панели.
+        return 124, _timeout_text(timeout, _cmd_name(full))
+    except FileNotFoundError:
+        return 127, f"Команда не найдена: {_cmd_name(full)}"
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -285,8 +329,16 @@ def run_helper(phase: str, timeout: float = CMD_TIMEOUT,
     if phase not in HELPER_PHASES:
         raise RuntimeError(f"Неизвестная фаза помощника: {phase}")
     argv = helper_argv(phase)
-    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                       stdin=subprocess.DEVNULL)
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        # v1.70.21: фаза помощника могла зависнуть (установщик, systemctl) —
+        # возвращаем понятный код и текст, шаг честно падает с причиной.
+        return 124, _timeout_text(timeout, f"помощник {phase}")
+    except FileNotFoundError:
+        return 127, (f"Помощник не найден: {argv[-2] if len(argv) > 1 else ''}"
+                     " — выполните одноразовую команду установки правила")
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -373,6 +425,24 @@ def _login_argv(cli: str) -> list[str]:
     return [cli, "login"]
 
 
+def _kill_proc(proc) -> None:
+    """v1.70.21: убивать ВСЮ группу процессов, а не одного прямого потомка.
+
+    `login` идёт как `sudo -n <помощник> login`, а помощник делает
+    `exec adguardvpn-cli login`; `proc.kill()` снимал только sudo, и
+    привилегированный CLI оставался висеть сиротой, продолжая ждать
+    подтверждения входа (проверено: внук жив после kill и мёртв после killpg).
+    Процесс стартовал с start_new_session=True, поэтому группа — это он сам.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 def _login_worker(cli: str) -> tuple[int, str, str]:
     """`login` с живым журналом: строки пишем в job, ссылку — в job.login_url.
 
@@ -413,19 +483,16 @@ def _login_worker(cli: str) -> tuple[int, str, str]:
     try:
         while proc.poll() is None:
             if job.cancel_requested:
-                proc.kill()
+                _kill_proc(proc)                # v1.70.21: вся группа
                 return 130, "\n".join(out), url
             if time.time() > deadline:
-                proc.kill()
+                _kill_proc(proc)
                 return 124, "\n".join(out), url
             time.sleep(0.5)
         pump.join(timeout=5)
     finally:
         if proc.poll() is None:                 # отмена/зависание
-            try:
-                proc.kill()
-            except OSError:
-                pass
+            _kill_proc(proc)
     return proc.returncode or 0, "\n".join(out), url
 
 
@@ -628,8 +695,17 @@ def _copy_kit() -> None:
             shutil.copyfile(src, dst)
             os.chmod(dst, mode)
         else:
-            run_cmd(["cp", src, dst], timeout=30)
-            run_cmd(["chmod", f"{mode:o}", dst], timeout=15)
+            # v1.70.21: коды возврата больше не игнорируются. Раньше отказ cp
+            # всплывал позже как «Служба туннеля не запустилась» — владелец
+            # искал причину не там.
+            rc, out = run_cmd(["cp", src, dst], timeout=30)
+            if rc != 0:
+                raise RuntimeError(f"Не скопировать {name} в {dst}: "
+                                   + (out or "").strip()[-200:])
+            rc, out = run_cmd(["chmod", f"{mode:o}", dst], timeout=15)
+            if rc != 0:
+                raise RuntimeError(f"Не выставить права {mode:o} на {dst}: "
+                                   + (out or "").strip()[-200:])
 
 
 def _step_tunnel() -> None:

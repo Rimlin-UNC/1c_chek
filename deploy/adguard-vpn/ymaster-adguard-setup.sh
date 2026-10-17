@@ -174,8 +174,17 @@ phase_install() {
   fi
   say "Ставим AdGuard VPN CLI официальным установщиком (1–2 минуты)…"
   # -v: без вопросов; установщик сам отвечает «y» на ссылку /usr/local/bin
-  if ! sh -c "$INSTALL_CMD" </dev/null >/dev/null 2>&1; then
-    say "установщик завершился с ошибкой — пробую продолжить (мог остаться вопрос про ссылку)"
+  # v1.70.21: вывод установщика больше НЕ глушим. `>/dev/null 2>&1` прятал
+  # причину (нет сети, DNS, GitHub недоступен), и владелец видел лишь «CLI не
+  # появился после установки» — тот же класс дефекта, что в deploy.sh до v1.70.20.
+  local install_out
+  local install_rc=0
+  install_out=$(sh -c "$INSTALL_CMD" </dev/null 2>&1) || install_rc=$?
+  if [ "$install_rc" -ne 0 ]; then
+    say "установщик завершился с ошибкой (код $install_rc) — пробую продолжить (мог остаться вопрос про ссылку)"
+    if [ -n "$install_out" ]; then
+      printf '%s\n' "$install_out" | tail -n 5 | sed 's/^/       причина: /'
+    fi
   fi
   if [ -x "$CLI_REAL" ] && [ ! -x "$CLI_LINK" ]; then
     ln -sf "$CLI_REAL" "$CLI_LINK" && say "создана ссылка $CLI_LINK"

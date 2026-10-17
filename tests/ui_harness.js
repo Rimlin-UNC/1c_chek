@@ -669,6 +669,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.20':") && bundle.includes('unbound variable') &&
      bundle.includes('install-rule') && bundle.includes('причина'),
      'v1.70.20: помощник AdGuard ставится (install-rule), причина отказа видна в логе');
+  ok(bundle.includes("'1.70.21':") && bundle.includes('двух воркеров') &&
+     bundle.includes('сирот') && bundle.includes('причина'),
+     'v1.70.21: атомарный старт мастера, отмена убивает группу, причина таймаута видна');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

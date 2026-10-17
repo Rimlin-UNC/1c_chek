@@ -690,7 +690,12 @@ def adguard_setup_action(body: dict, db: Session = Depends(get_db),
     # шаги делает помощник (sudoers NOPASSWD). Старый клиент мог прислать поле
     # sudo_password из кэша: молча игнорируем и говорим об этом в ответе.
     ignored_pw = bool((body or {}).get("sudo_password"))
-    ag.start_setup(db)
+    try:
+        ag.start_setup(db)
+    except RuntimeError as e:
+        # v1.70.21: гонка двух одновременных запусков — это 409, а не 500.
+        # Проверка выше не атомарна, поэтому страховка обязана быть здесь.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     log_action(admin, "adguard_setup_start")
     return {"ok": True,
             "message": "Установка запущена — следите за процессом в карточке",
