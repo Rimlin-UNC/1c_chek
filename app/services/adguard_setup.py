@@ -18,11 +18,14 @@
 #    login      запускает `adguardvpn-cli login` и отдаёт владельцу ссылку
 #               подтверждения (OAuth device-code, живёт ~30 мин) — после
 #               подтверждения в браузере шаг завершается сам;
-#    socks      включает режим SOCKS5 (локальный прокси 127.0.0.1:1080,
-#               маршруты и DNS системы не меняются);
+#    tun        включает режим TUN + selective-исключения: через VPN идёт
+#               ТОЛЬКО Telegram (api.telegram.org и его поддомены), весь
+#               прочий трафик сервера остаётся прямым. DNS тоже уходит в
+#               туннель, поэтому отравление DNS больше не ломает бота;
 #    tunnel     ставит юнит adguard-vpn-telegram (автоподключение туннеля);
 #    autopilot  ставит автопилот tg-health (замер 15:00 + смена локации 15:10);
-#    proxy      подставляет socks5://127.0.0.1:1080 в настройки программы;
+#    proxy      УБИРАЕТ прокси из настроек программы: в TUN-режиме локального
+#               SOCKS-слушателя нет, трафик идёт прозрачно;
 #    verify     3 коротких запроса до Telegram через готовый путь (ping_proxy).
 #  Механика повторяет механизм обновления: фазы по порядку, живой журнал,
 #  состояние на диске (data/adguard_setup.json) — переживает рестарт.
@@ -81,21 +84,28 @@ HELPER_NAME = "ymaster-adguard-setup"
 HELPER_PATH = "/usr/local/sbin/" + HELPER_NAME
 HELPER_SRC = "ymaster-adguard-setup.sh"          # в deploy/adguard-vpn
 HELPER_RULE = "/etc/sudoers.d/ymaster-adguard"   # правило NOPASSWD
-HELPER_PHASES = ("preflight", "rights", "install", "login", "socks", "units",
-                 "autopilot", "version", "status")
+HELPER_PHASES = ("preflight", "rights", "install", "login", "socks", "tun",
+                 "units", "autopilot", "version", "status")
 RIGHTS_MODES = ("root", "nopass", "helper")      # «pass» в v1.70.16 удалён
 SETT_PROXY = "telegram_proxy"
-PROXY_VALUE = "socks5://127.0.0.1:1080"
-STEP_ORDER = ["precheck", "cli", "login", "socks", "tunnel",
+# v1.70.24: в режиме TUN трафик до Telegram уходит в туннель ПРОЗРАЧНО
+# (selective-исключение на api.telegram.org), а локального SOCKS-слушателя
+# 127.0.0.1:1080 больше нет. Оставь мы там прежний socks5://… — бот ходил бы
+# в несуществующий прокси и молчал. Поэтому мастер прокси НЕ подставляет,
+# а очищает поле: пустое значение = прямое соединение = и есть путь через
+# туннель. Замер пинга (ping_proxy) при пустом прокси измеряет ровно тот
+# путь, которым реально пользуется бот.
+PROXY_VALUE = ""
+STEP_ORDER = ["precheck", "cli", "login", "tun", "tunnel",
               "autopilot", "proxy", "verify", "done"]
 STEP_TITLE = {
     "precheck": "Проверка сервера",
     "cli": "Установка AdGuard VPN CLI",
     "login": "Вход в аккаунт AdGuard (ссылка-подтверждение)",
-    "socks": "Режим SOCKS5 (локальный прокси)",
+    "tun": "Режим TUN: через VPN только Telegram",
     "tunnel": "Туннель и автоподключение",
     "autopilot": "Автопилот: пинг 15:00, смена локации 15:10",
-    "proxy": "Настройка программы (прокси в карточке)",
+    "proxy": "Настройка программы (прокси не нужен — убираем)",
     "verify": "Проверка пути до Telegram",
     "done": "Готово",
 }
@@ -763,19 +773,38 @@ def _step_login() -> None:
         job.say("login", "Вход подтверждён ✔", "done", 45)
 
 
-def _step_socks() -> None:
-    job.say("socks", "Включаем режим SOCKS5 (только локальный прокси)…",
+def _step_tun() -> None:
+    """v1.70.24: TUN + selective — через VPN идёт только Telegram.
+
+    Шаг исторически назывался «socks» (режим SOCKS5, локальный прокси
+    127.0.0.1:1080). От него отказались по двум причинам:
+
+      • httpx/socksio не поддерживают socks5h — имя api.telegram.org
+        резолвилось ЛОКАЛЬНЫМ DNS сервера. При отравлении DNS бот получал
+        подменённый адрес и не подключался, хотя сам прокси был жив;
+      • в TUN-режиме DNS уходит в туннель, а selective-исключения оставляют
+        весь прочий трафик сервера прямым — то есть цель «VPN только для
+        Telegram» достигается штатным механизмом AdGuard.
+
+    Самодельная маршрутизация по CIDR (режим SCRIPT) не используется:
+    AdguardTeam/AdGuardVPNCLI#69 и #190 — «Unknown error», не подключается.
+
+    Фаза помощника вызывается по-прежнему «socks»: именно это имя перечислено
+    в уже установленных на серверах sudoers-правилах, а обновление из
+    приложения install-rule не перезапускает. Помощник принимает и «tun».
+    """
+    job.say("tun", "Включаем TUN и правило «через VPN только Telegram»…",
             "active", 50)
-    if job.sudo_mode == "helper":
-        rc, out = run_helper("socks", timeout=90)
-    else:
-        cli = _find_cli()
-        rc, out = run_cmd([cli, "config", "set-mode", "SOCKS"], timeout=60)
+    # run_helper сам выбирает обёртку по режиму прав (root — bash, nopass и
+    # helper — sudo -n), поэтому ветвление по sudo_mode здесь не нужно.
+    rc, out = run_helper("socks", timeout=120)
     if rc != 0:
-        raise RuntimeError("set-mode SOCKS не удался: "
-                           + (out or "").strip()[-200:])
-    job.say("socks", "SOCKS5 включён: socks5://127.0.0.1:1080 "
-                     "(остальные службы сервера не затронуты).", "done", 55)
+        raise RuntimeError("Не включить режим TUN с selective-исключениями: "
+                           + _reason(out))
+    tail = (out or "").strip().splitlines()
+    job.say("tun", (tail[-1][:90] if tail else
+                    "TUN + selective: через VPN идёт только Telegram."),
+            "done", 55)
 
 
 def _copy_kit() -> None:
@@ -870,11 +899,33 @@ def _step_autopilot() -> None:
 
 
 def _step_proxy(db) -> None:
-    job.say("proxy", "Подставляем прокси в настройки программы…", "active", 85)
+    """v1.70.24: в TUN-режиме прокси программе НЕ нужен — убираем его.
+
+    Трафик до api.telegram.org уходит в туннель прозрачно (selective-
+    исключение), поэтому бот должен ходить напрямую. Оставь мы в карточке
+    прежний socks5://127.0.0.1:1080 — бот стучался бы в порт, который в
+    TUN-режиме больше никто не слушает, и молчал. Пустое значение настройки
+    = прямое соединение = и есть настоящий путь через туннель; замер пинга
+    (ping_proxy) при пустом прокси измеряет ровно его.
+    """
+    job.say("proxy", "Убираем прокси из настроек программы (в TUN он не "
+                     "нужен)…", "active", 85)
     from . import appsettings
+    before = appsettings.get_setting(db, SETT_PROXY, "")
     appsettings.set_setting(db, SETT_PROXY, PROXY_VALUE)
-    job.say("proxy", f"Прокси {PROXY_VALUE} записан в карточку Telegram.",
-            "done", 90)
+    if before:
+        job.say("proxy", f"Прежний прокси ({before}) убран: трафик идёт "
+                         "прозрачно через туннель.", "done", 90)
+    else:
+        job.say("proxy", "Прокси не задан — так и должно быть: трафик идёт "
+                         "прозрачно через туннель.", "done", 90)
+    # env TELEGRAM_PROXY переопределяет пустую настройку (get_proxy) — если он
+    # задан, честнее сказать об этом сразу, чем искать «почему бот молчит».
+    from ..config import settings
+    if settings.TELEGRAM_PROXY:
+        job.say("proxy", "Внимание: в окружении задан TELEGRAM_PROXY="
+                         f"{settings.TELEGRAM_PROXY} — он переопределит "
+                         "пустое поле; уберите его из .env для TUN-режима.")
 
 
 def _step_verify(db) -> None:
@@ -883,11 +934,15 @@ def _step_verify(db) -> None:
     from . import telegram_bot as tg
     r = tg.ping_proxy(db, samples=3, scheduled=False)
     if not r.get("ok"):
-        raise RuntimeError("Путь до Telegram не отвечает через прокси — "
-                           "проверьте вход/лицензию AdGuard; локацию подберёт "
-                           "автопилот в 15:10 или кнопка «📏 Пинг».")
+        raise RuntimeError("Путь до Telegram не отвечает через туннель — "
+                           "проверьте вход/лицензию AdGuard и что "
+                           "api.telegram.org попал в selective-исключения "
+                           "(`adguardvpn-cli site-exclusions show`); локацию "
+                           "подберёт автопилот в 15:10 или кнопка «📏 Пинг».")
     job.ping_ms = r.get("ms")
-    job.say("verify", f"Путь жив: средний пинг {r.get('ms')} мс.", "done", 97)
+    job.say("verify", f"Путь жив: средний пинг {r.get('ms')} мс "
+                      "(замерен напрямую — в TUN это и есть путь через "
+                      "туннель).", "done", 97)
 
 
 def _worker(db=None) -> None:
@@ -918,7 +973,7 @@ def _run_steps(db) -> None:
     _step_login()
     if job.cancel_requested:
         raise RuntimeError("Отменено владельцем.")
-    _step_socks()
+    _step_tun()
     _step_tunnel()
     _step_autopilot()
     _step_proxy(db)

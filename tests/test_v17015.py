@@ -134,6 +134,13 @@ def _patch_happy(monkeypatch, kit_dir, calls, tmp_path=None):
         return 0, "ok"
 
     monkeypatch.setattr(ag, "run_cmd", fake_run)
+    # v1.70.24: шаг режима (TUN + selective) унифицирован — он всегда идёт
+    # через помощника, во всех режимах прав (root — `bash <сценарий> <фаза>`,
+    # nopass/helper — `sudo -n`). Раньше в root/nopass команда `set-mode`
+    # выполнялась напрямую через run_cmd, поэтому фикстура его и не ставила.
+    monkeypatch.setattr(ag, "run_helper",
+                        lambda phase, timeout=ag.CMD_TIMEOUT, stream=False:
+                        (calls.append("helper:" + phase) or (0, "ok\nготово")))
     monkeypatch.setattr(ag, "_login_worker",
                         lambda cli: (0, "Successfully logged in", ""))
     monkeypatch.setattr(tg, "ping_proxy",

@@ -36,7 +36,12 @@ class TestAdguardKit:
         # v1.70.14: README — страница скачивания комплекта с GitHub
         # (файлов нет на сервере, пока их не скачали командами отсюда).
         assert "raw.githubusercontent.com/Rimlin-UNC/1c_chek" in rd_txt
-        assert "curl -fsSL -o /usr/local/sbin/tg-health.sh" in rd_txt
+        # v1.70.23: комплект скачивается в /tmp и ставится через `sudo install
+        # -m 0755 -o root -g root`, а не записью curl прямо в
+        # /usr/local/sbin — без root тот zapis всё равно падал, а с root
+        # оставлял файл без нужных владельца/прав.
+        assert "curl -fsSL -o /tmp/tg-health.sh" in rd_txt
+        assert "install -m 0755 -o root -g root" in rd_txt
         assert "ln -sf /opt/adguardvpn_cli/adguardvpn-cli" in rd_txt
 
     def test_unit(self):

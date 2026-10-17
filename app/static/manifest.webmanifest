@@ -21,7 +21,7 @@
       "purpose": "any maskable"
     }
   ],
-  "version": "1.70.23",
+  "version": "1.70.24",
   "display_override": [
     "standalone",
     "minimal-ui"

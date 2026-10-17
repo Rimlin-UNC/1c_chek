@@ -13,16 +13,33 @@
 # ======================================================================
 set -u
 CLI="${CLI:-/usr/local/bin/adguardvpn-cli}"
-PROXY="socks5h://127.0.0.1:1080"
 TARGET="${TARGET_MS:-30}"                # целевой пинг, мс
 CHECK_URL="https://api.telegram.org/"
+
+# v1.70.24: режим TUN + selective — трафик до api.telegram.org уходит в
+# туннель ПРОЗРАЧНО (по доменному исключению), локального SOCKS-слушателя
+# больше нет. Замер с `-x socks5h://127.0.0.1:1080` в таком режиме давал бы
+# -1 («путь мёртв») и автопилот ежедневно дёргал бы локацию на рабочем
+# туннеле. Поэтому режим определяем сами: порт 1080 слушается — значит
+# сервер ещё в SOCKS5 (старая схема), меряем через прокси; не слушается —
+# меряем напрямую, что в TUN и есть настоящий путь бота.
+PROXY="${TG_PROXY:-}"
+if [ -z "$PROXY" ] && (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null; then
+  PROXY="socks5h://127.0.0.1:1080"
+  exec 3>&- 2>/dev/null || true
+fi
 
 # --- 1) замер: 3 запроса, среднее целыми мс; -1 = путь мёртв ----------
 measure() {
   local t sum=0 n=0
   for _ in 1 2 3; do
-    t=$(curl -x "$PROXY" -o /dev/null -s --max-time 10 \
-              -w '%{time_total}' "$CHECK_URL" 2>/dev/null) || { sleep 0.3; continue; }
+    if [ -n "$PROXY" ]; then
+      t=$(curl -x "$PROXY" -o /dev/null -s --max-time 10 \
+                -w '%{time_total}' "$CHECK_URL" 2>/dev/null) || { sleep 0.3; continue; }
+    else
+      t=$(curl -o /dev/null -s --max-time 10 \
+                -w '%{time_total}' "$CHECK_URL" 2>/dev/null) || { sleep 0.3; continue; }
+    fi
     [ -n "$t" ] && sum=$(awk -v a="$sum" -v b="$t" 'BEGIN{print a+b}') && n=$((n+1))
     sleep 0.3
   done

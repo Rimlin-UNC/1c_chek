@@ -377,17 +377,23 @@ class TestManualInstructions:
 #  Синхронность версии v1.70.23
 # ==============================================================================
 class TestVersions17023:
-    def test_config_version(self):
-        assert settings.APP_VERSION == VER
+    """Пины устойчивы к бампу: точную версию проверяет тест СВОЕЙ версии,
+    здесь — «не ниже 1.70.23» и синхронность статики с текущей версией.
+    (Приём v1.70.22: жёсткий `== VER` ронял файл на каждом следующем bump.)"""
 
-    def test_static_pins(self):
+    def test_version_at_least(self):
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 23)
+
+    def test_static_pins_follow_current_version(self):
+        ver = settings.APP_VERSION
         idx = _read("app/static/index.html")
-        assert len(re.findall(r"\?v=" + re.escape(VER), idx)) == 2
+        assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 2
         sw = _read("app/static/sw.js")
-        assert f"ymaster-check-v{VER}" in sw
-        assert len(re.findall(r"\?v=" + re.escape(VER), sw)) == 2
-        assert f'"version": "{VER}"' in _read("app/static/manifest.webmanifest")
-        assert f"?v={VER}" in _read("app/static/maxapp/index.html")
+        assert f"ymaster-check-v{ver}" in sw
+        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 2
+        assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
+        assert f"?v={ver}" in _read("app/static/maxapp/index.html")
 
     def test_no_previous_version_left(self):
         for f in ("app/static/index.html", "app/static/sw.js",
@@ -396,7 +402,7 @@ class TestVersions17023:
             assert "1.70.22" not in _read(f), f
 
     def test_changelog_and_whatsnew(self):
-        assert _read("CHANGELOG.md").startswith(f"## [{VER}]")
+        assert _read("CHANGELOG.md").count(f"## [{VER}]") == 1
         assert f"'{VER}':" in _read(APP_JS)
         assert f"'{VER}':" in _read("tests/ui_harness.js")
 

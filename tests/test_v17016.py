@@ -282,7 +282,9 @@ class TestHelperScript:
     def test_root_only_phases_guarded(self):
         sh = _read(HELPER_SH)
         assert "need_root" in sh
-        for phase in ("install", "login", "socks", "units", "autopilot"):
+        # v1.70.24: фаза «socks» стала синонимом «tun» (TUN + selective
+        # вместо локального SOCKS-прокси), поэтому guard стоит на «tun».
+        for phase in ("install", "login", "tun", "units", "autopilot"):
             assert re.search(rf"need_root \"{phase}\"", sh), phase
 
     def test_kit_copied_from_repo_not_from_app_runtime(self):
@@ -663,12 +665,15 @@ class TestStepsInHelperMode:
             ag._step_cli()
         assert "Установщик AdGuard" in str(ei.value)
 
-    def test_socks_through_helper(self, monkeypatch, fresh_job, tmp_path):
+    def test_tun_through_helper(self, monkeypatch, fresh_job, tmp_path):
+        # v1.70.24: шаг режима называется «tun» (TUN + selective вместо
+        # SOCKS5), а фазу помощника по-прежнему зовут «socks» — это имя
+        # перечислено в уже установленных на серверах sudoers-правилах.
         calls = []
         _patch_helper_mode(monkeypatch, tmp_path, calls)
-        ag._step_socks()
+        ag._step_tun()
         assert calls == ["helper:socks"]
-        assert fresh_job.steps["socks"]["status"] == "done"
+        assert fresh_job.steps["tun"]["status"] == "done"
 
     def test_tunnel_through_helper(self, monkeypatch, fresh_job, tmp_path):
         calls = []

@@ -10,8 +10,12 @@
 #
 #   sudo -n /usr/local/sbin/ymaster-adguard-setup <фаза>
 #
-# Фазы: preflight | install | login | socks | units | autopilot |
+# Фазы: preflight | install | login | socks | tun | units | autopilot |
 #       version | status | rights | install-rule | remove-rule
+#
+# v1.70.24: фаза «socks» теперь включает режим TUN + selective-исключения
+# (через VPN идёт только Telegram). Имя сохранено ради уже установленных
+# sudoers-правил; «tun» принято как синоним.
 #
 # Одноразовая установка правила (владелец в терминале, один раз):
 #   sudo bash /opt/ymaster-check/deploy/adguard-vpn/ymaster-adguard-setup.sh install-rule
@@ -47,7 +51,25 @@ INSTALL_TMP="/tmp/ymaster-adguard-install.sh"
 INSTALL_CMD="curl -fsSL $INSTALL_URL -o $INSTALL_TMP && sh $INSTALL_TMP -a y"
 # Фазы, доступные из-под приложения (в них и состоит sudoers-правило).
 # install-rule/remove-rule здесь НЕТ: их владелец выполняет вручную.
-ALLOWED_PHASES="preflight rights install login socks units autopilot version status"
+# v1.70.24: «tun» добавлено как синоним «socks» (см. phase_tun). «socks»
+# остаётся в списке ОБЯЗАТЕЛЬНО: уже установленные на серверах правила его
+# перечисляют, а обновление из приложения install-rule не перезапускает.
+ALLOWED_PHASES="preflight rights install login socks tun units autopilot version status"
+
+# v1.70.24: домены Telegram для selective-исключений — через VPN идёт только
+# они, весь прочий трафик сервера остаётся прямым. Поддомены AdGuard сам не
+# наследует (AdguardTeam/AdGuardVPNCLI#148), поэтому wildcards перечислены
+# явно и в кавычках (иначе «*.t.me» раскроет шелл).
+TG_DOMAINS=(
+  "api.telegram.org"      # Bot API — обязательно, на нём держится бот
+  "core.telegram.org"
+  "telegram.org"
+  "*.telegram.org"
+  "t.me"
+  "*.t.me"
+  "telegram.me"
+  "telegram.dog"
+)
 
 # Комплект: имя файла -> куда класть и с какими правами
 UNITS_ETC=("adguard-vpn-telegram.service" "tg-health.service" "tg-health.timer")
@@ -230,11 +252,62 @@ phase_login() {
   exec "$cli" login
 }
 
-phase_socks() {
-  need_root "socks"
+# v1.70.24: режим TUN + selective-исключения — через VPN идёт ТОЛЬКО Telegram.
+#
+# Почему не SOCKS5 (как было до v1.70.24):
+#   • httpx/socksio не поддерживают socks5h — имя api.telegram.org
+#     резолвилось ЛОКАЛЬНЫМ DNS сервера. При отравлении DNS прокси не спасал:
+#     бот получал подменённый адрес и не подключался вовсе.
+#   • в TUN-режиме DNS уходит в туннель, поэтому эта проблема исчезает.
+# Почему не SCRIPT-маршрутизация (самодельный скрипт по CIDR Telegram):
+#   • AdguardTeam/AdGuardVPNCLI#69 и #190: «Routing mode SCRIPT cause
+#     "Unknown error" and won't connect» — режим не работает.
+#   • список подсетей AS62041 приходится поддерживать вручную, а доменные
+#     исключения AdGuard обновляет сам.
+# Почему AUTO, а не NONE: AUTO сам держит маршруты при реконнектах и смене
+# локации; в паре с selective в туннель попадают только перечисленные домены.
+#
+# Имя фазы — ИСТОРИЧЕСКОЕ «socks». Именно оно записано в уже установленные
+# sudoers-правила /etc/sudoers.d/ymaster-adguard (правило перечисляет фазы
+# явно, а обновление из приложения install-rule не перезапускает). Поэтому
+# программа по-прежнему вызывает фазу «socks», а «tun» принято как синоним.
+phase_tun() {
+  need_root "tun"
+  [ -e /dev/net/tun ] || die "нет /dev/net/tun — TUN-режим недоступен (контейнер без NET_ADMIN?)"
   local cli; cli=$(cli_path) || die "CLI не найден"
-  "$cli" config set-mode SOCKS || die "set-mode SOCKS не удался"
-  say "SOCKS5 включён: socks5://127.0.0.1:1080"
+  "$cli" config set-mode TUN || die "set-mode TUN не удался"
+  "$cli" config set-tun-routing-mode AUTO \
+    || die "set-tun-routing-mode AUTO не удался"
+  "$cli" site-exclusions mode selective \
+    || die "site-exclusions mode selective не удался"
+
+  # Домены Telegram. api.telegram.org — обязателен (Bot API); поддомены
+  # AdGuard сам не наследует (issue #148), поэтому wildcards добавлены
+  # отдельно и в кавычках — иначе их раскроет шелл.
+  # v1.70.24: идемпотентность обеспечиваем САМИ — уже присутствующие домены
+  # не добавляем повторно, а не надеемся на поведение CLI при повторном add.
+  # Вывод `show` нормализуем в один токен на строку: там могут быть отступы,
+  # маркеры списка и разделители.
+  local d added=0 failed="" have
+  have=$("$cli" site-exclusions show 2>/dev/null | tr -s ' \t,' '\n' || true)
+  for d in "${TG_DOMAINS[@]}"; do
+    if printf '%s\n' "$have" | grep -qxF -- "$d"; then
+      continue
+    fi
+    if "$cli" site-exclusions add "$d" >/dev/null 2>&1; then
+      added=$((added + 1))
+    else
+      # не ошибка: wildcard мог не поддержаться — критичен только Bot API,
+      # его наличие проверяется ниже отдельно
+      failed="$failed $d"
+    fi
+  done
+  # критичен именно Bot API: без него туннель бессмыслен
+  "$cli" site-exclusions show 2>/dev/null | grep -q "api.telegram.org" \
+    || die "api.telegram.org не попал в selective-исключения — трафик бота не пойдёт через VPN"
+  say "TUN + selective: через VPN идёт только Telegram (добавлено исключений: $added)"
+  [ -n "$failed" ] && say "уже были/не добавились:$failed"
+  say "остальной трафик сервера идёт напрямую, помимо VPN"
 }
 
 phase_units() {
@@ -283,7 +356,12 @@ main() {
     status)       phase_status ;;
     install)      phase_install ;;
     login)        phase_login ;;
-    socks)        phase_socks ;;
+    # v1.70.24: обе фазы настраивают TUN + selective. «socks» — историческое
+    # имя: оно перечислено в уже установленных на серверах sudoers-правилах,
+    # а обновление из приложения install-rule не перезапускает. «tun» — новое
+    # понятное имя, добавлено в правило при следующем install-rule.
+    socks)        phase_tun ;;
+    tun)          phase_tun ;;
     units)        phase_units ;;
     autopilot)    phase_autopilot ;;
     install-rule) phase_install_rule "${1:-$DEFAULT_APP_DIR}" ;;

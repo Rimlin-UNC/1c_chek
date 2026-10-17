@@ -679,6 +679,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.23':") && bundle.includes('.nosymlink') &&
      bundle.includes('ExecStart') && bundle.includes('tg-health.sh'),
      'v1.70.23: установщику AdGuard передаётся -a y, ссылка /usr/local/bin создаётся безусловно');
+  // v1.70.24: SOCKS5 → TUN + selective. Прокси в карточке больше не
+  // подставляется (в TUN нет слушателя 1080), а шаг режима его очищает.
+  ok(bundle.includes("'1.70.24':") && bundle.includes('selective') &&
+     bundle.includes('socks5h'),
+     'v1.70.24: AdGuard переведён на TUN + selective — через VPN только Telegram');
+  ok(!bundle.includes("prx.value = 'socks5://127.0.0.1:1080'"),
+     'v1.70.24: после установки прокси socks5://127.0.0.1:1080 не подставляется');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
