@@ -316,6 +316,86 @@ class TestDeployTracksAllBranches:
         assert "ambiguous argument" in block
         assert "v1.70.17" in block
 
+    def test_update_path_uses_refspec_before_reset(self):
+        """--update: дописка ветки и явный refspec ДО reset --hard, иначе
+        set -e роняет деплой на «ambiguous argument» при смене ветки."""
+        sh = _read("deploy.sh")
+        start = sh.index('if [[ -d "$APP_DIR/.git" ]]; then')
+        block = sh[start:sh.index('ok "обновлено из GitHub', start)]
+        i_track = block.index('remote set-branches --add origin "$BRANCH"')
+        i_fetch = block.index("+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH")
+        i_reset = block.index('reset --hard "origin/$BRANCH"')
+        assert i_track < i_fetch < i_reset, (i_track, i_fetch, i_reset)
+        # прежнего «голого» fetch без refspec на этом пути не осталось
+        assert 'fetch origin "$BRANCH"' not in block
+
+    def test_init_on_place_path_uses_refspec(self):
+        sh = _read("deploy.sh")
+        start = sh.index("каталог занят без .git")
+        block = sh[start:sh.index("ok \"код получен", start)]
+        assert "remote set-branches origin '*'" in block
+        assert "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" in block
+        assert 'reset --hard "origin/$BRANCH"' in block
+
+
+@needs_git
+class TestDeployUpdateBlockLive:
+    """Прогон НАСТОЯЩЕГО блока deploy.sh (извлечение из файла, не пересказ)
+    на клоне «--depth 1 --branch»: смена ветки обязана пройти."""
+
+    def _update_block(self) -> str:
+        sh = _read("deploy.sh")
+        start = sh.index('if [[ -d "$APP_DIR/.git" ]]; then')
+        block = sh[start:sh.index('ok "обновлено из GitHub', start)]
+        return block.split("\n", 1)[1]           # без строки «if … ; then»
+
+    def _run_block(self, tmp_path, clone, branch):
+        driver = tmp_path / "driver.sh"
+        driver.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"                       # как в deploy.sh
+            f'APP_DIR="{clone}"\n'
+            f'APP_USER="$(id -un)"\n'
+            f'BRANCH="{branch}"\n'
+            "ok() { :; }\nwarn() { :; }\n"
+            "sudo() { shift 2; \"$@\"; }\n"              # sudo -u <user> → команда
+            + self._update_block() + "\n",
+            encoding="utf-8")
+        return subprocess.run(["bash", str(driver)], capture_output=True,
+                              text=True, timeout=300)
+
+    def test_switch_branch_through_deploy_block(self, server_like_clone,
+                                                tmp_path):
+        origin, clone = server_like_clone
+        assert 'APP_VERSION: str = "1.70.15"' in \
+            (clone / "app" / "config.py").read_text(encoding="utf-8")
+        r = self._run_block(tmp_path, clone, "arena/new-branch")
+        assert r.returncode == 0, (r.stdout + r.stderr)[:800]
+        assert "ambiguous argument" not in (r.stdout + r.stderr)
+        assert 'APP_VERSION: str = "1.70.17"' in \
+            (clone / "app" / "config.py").read_text(encoding="utf-8")
+        assert (clone / "NEW_FILE.txt").exists()
+
+    def test_same_branch_still_updates(self, server_like_clone, tmp_path):
+        origin, clone = server_like_clone
+        r = self._run_block(tmp_path, clone, "main")
+        assert r.returncode == 0, (r.stdout + r.stderr)[:800]
+
+    def test_old_sequence_would_fail(self, server_like_clone, tmp_path):
+        """Контроль: прежняя последовательность (fetch без refspec + reset)
+        на том же клоне падает — тест выше чинит именно это."""
+        origin, clone = server_like_clone
+        driver = tmp_path / "old.sh"
+        driver.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            f'git -C "{clone}" fetch -q origin arena/new-branch\n'
+            f'git -C "{clone}" reset --hard origin/arena/new-branch\n',
+            encoding="utf-8")
+        r = subprocess.run(["bash", str(driver)], capture_output=True,
+                           text=True, timeout=300)
+        assert r.returncode != 0
+        assert "ambiguous argument" in (r.stdout + r.stderr)
+
 
 # ==============================================================================
 #  UI-харнесс

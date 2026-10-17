@@ -235,7 +235,14 @@ bold "3/9 Код с GitHub ($REPO_URL, ветка $BRANCH)"
 # не вынуждает к «чистой» переустановке с потерей данных.
 if [[ -d "$APP_DIR/.git" ]]; then
   OLD_SCRIPT_MD5=$(md5sum "$APP_DIR/deploy.sh" 2>/dev/null | cut -d" " -f1 || true)
-  sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin "$BRANCH"
+  # v1.70.17: клон «--depth 1 --branch» отслеживает ТОЛЬКО свою ветку, поэтому
+  # при --update --branch=<другая ветка> fetch проходил (rc 0), но ref
+  # origin/$BRANCH не создавался — и reset --hard ронял весь деплой (set -e)
+  # на «fatal: ambiguous argument 'origin/<ветка>'». Дописываем ветку в
+  # настройки origin и тянем явным refspec'ом.
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote set-branches --add origin "$BRANCH" >/dev/null 2>&1 || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin \
+    "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
   ok "обновлено из GitHub (данные не тронуты)"
   # v1.6.2: deploy.sh обновил сам себя — bash уже загрузил СТАРЫЙ текст в
@@ -254,8 +261,12 @@ elif [[ -d "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
   sudo -u "$APP_USER" git -C "$APP_DIR" init -q
   sudo -u "$APP_USER" git -C "$APP_DIR" remote remove origin 2>/dev/null || true
   sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL"
-  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin "$BRANCH"
-  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard FETCH_HEAD
+  # v1.70.17: сразу отслеживаем все ветки — иначе смена источника обновлений
+  # в программе снова упрётся в отсутствующий ref origin/<ветка>
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote set-branches origin '*' >/dev/null 2>&1 || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin \
+    "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" clean -fd \
     -e data -e .env -e venv -e '*.db' -e '*.db-*' -e backups >/dev/null || true
   ok "код получен; data/, .env, venv и база не тронуты"
