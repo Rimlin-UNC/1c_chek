@@ -750,6 +750,15 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('Unable to fetch locations'),
      'v1.70.30: отказ туннеля объяснён журналом и документированными причинами');
 
+  // v1.70.31: отказ туннеля откатывается — сервер не остаётся без сети, а
+  // настоящая причина (CLI v1.7.12, TUN auto, собственный трафик в tun0)
+  // названа по открытому обращению AdGuard #161.
+  ok(bundle.includes("'1.70.31':") && bundle.includes('#161') &&
+     bundle.includes('Failed to start the VPN service in the background'),
+     'v1.70.31: причина отказа туннеля названа по обращению AdGuard #161');
+  ok(bundle.includes('disconnect') && bundle.includes('чёрной дырой'),
+     'v1.70.31: отказ туннеля откатывается, сервер не остаётся без сети');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

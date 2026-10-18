@@ -418,7 +418,24 @@ phase_units() {
           if [ -n "$jl" ]; then say "  | $jl"; fi
         done
     fi
-    die "туннель не поднялся за 60 с. Документированные причины и их проверки (сверьтесь с журналом выше): (1) нет активной лицензии — sudo adguardvpn-cli license; (2) провайдер блокирует UDP, в журнале ошибки UDP_SOCKET — sudo adguardvpn-cli config set-protocol http2; (3) IPv6 в сети не работает, а CLI пробует IPv6-конечные точки (AdguardTeam/AdGuardVPNCLI#176) — сравните с adguardvpn-cli connect -4; (4) бэкенд AdGuard недоступен из этой сети — «Unable to fetch locations. Backend error: Timed out»"
+    # v1.70.31: отказ туннеля НЕ ДОЛЖЕН оставлять сервер поломанным. К этому
+    # моменту служба уже выполнила `connect --no-fork`: в TUN-режиме это
+    # создаёт tun0, правит маршруты и — при «Change system DNS: on» — уводит
+    # DNS сервера в НЕПОДНЯТЫЙ туннель. Вдобавок у службы Restart=always и мы
+    # только что включили её в автозапуск: сервер остался бы с чёрной дырой
+    # вместо сети и получил бы её же после перезагрузки. Владелец сформулировал
+    # приоритет прямо: «главное не сломай нашу программу это важнее». Поэтому
+    # откатываемся: сначала гасим службу (иначе она перезапустит connect и
+    # снова поднимет tun0), затем документированный disconnect убирает
+    # интерфейс, маршруты и правки DNS.
+    say "откатываю туннель, чтобы отказ AdGuard не оставил сервер без сети"
+    systemctl disable --now "$TUNNEL_UNIT" >/dev/null 2>&1 || true
+    local cli
+    if cli="$(cli_path 2>/dev/null)"; then
+      "$cli" disconnect >/dev/null 2>&1 || true
+    fi
+    say "туннель остановлен и убран из автозапуска — сеть сервера в прежнем состоянии"
+    die "туннель не поднялся за 60 с; выполнение откатано, сервер работает как раньше. Документированные причины и их проверки (сверьтесь с журналом выше): (1) нет активной лицензии — sudo adguardvpn-cli license; (2) провайдер блокирует UDP, в журнале ошибки UDP_SOCKET — sudo adguardvpn-cli config set-protocol http2; (3) IPv6 в сети не работает, а CLI пробует IPv6-конечные точки (AdguardTeam/AdGuardVPNCLI#176) — сравните с adguardvpn-cli connect -4; (4) бэкенд AdGuard недоступен из этой сети — «Unable to fetch locations. Backend error: Timed out»; (5) известная неисправность CLI v1.7.12 в режиме TUN с маршрутизацией auto: собственный трафик CLI уходит в tun0, конечные точки недоступны, итог «Failed to start the VPN service in the background: Disconnected» (AdguardTeam/AdGuardVPNCLI#161, обращение ОТКРЫТО; в release-канале новее v1.7.12 сборок нет, более свежие есть в каналах beta и nightly)"
   fi
   # v1.70.27: слушатель на 1080 — ПРЕДУПРЕЖДЕНИЕ, а не отказ. Порт может быть
   # занят посторонним сервисом, и блокировать из-за этого запуск VPN нельзя.

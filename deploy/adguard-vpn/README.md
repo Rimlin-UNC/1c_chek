@@ -144,6 +144,62 @@ URL и владелец получил бы нерабочий адрес.
 | `ERROR … UDP_SOCKET …` | провайдер блокирует UDP (QUIC) | `sudo adguardvpn-cli config set-protocol http2` |
 | `Network unreachable`, попытки IPv6 | IPv6 в сети не работает, а CLI пробует IPv6-конечные точки ([#176](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/176)) | сравнить с `adguardvpn-cli connect -4` |
 | `Unable to fetch locations. Backend error: Timed out` | бэкенд AdGuard недоступен из этой сети | `adguardvpn-cli export-logs` и обращение в поддержку AdGuard |
+| `Failed to start the VPN service in the background: Disconnected` | собственная неисправность CLI **v1.7.12** в режиме TUN с маршрутизацией `auto` | см. ниже |
+
+#### Известная неисправность v1.7.12: собственный трафик CLI уходит в tun0
+
+Открытое обращение
+[#161](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/161) описывает ровно
+эту картину: вход выполнен, лицензия PREMIUM действительна, а `connect` в
+режиме TUN с `Tunnel routing mode: auto` завершается строкой
+**«Failed to start the VPN service in the background: Disconnected»**.
+
+Механизм по журналу из того обращения: CLI поднимает `tun0`, но **не исключает
+из него собственный трафик**, поэтому свои же соединения к конечным точкам он
+видит пришедшими из туннеля и отбрасывает —
+`Rejecting connection redirected to endpoint we're not connected to`, затем
+`None of the endpoints are available`.
+
+Важно для выбора действий:
+
+- лицензия и вход здесь **ни при чём** — они в том обращении тоже были в
+  порядке;
+- `config set-tun-routing-mode none` **не помог**; маршрутизация `script`
+  сломана отдельно ([#69](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/69));
+- в **release**-канале новее `v1.7.12` (2026-04-06) сборок нет — `check-update`
+  честно отвечает «вы используете последнюю версию». Более свежие сборки
+  существуют только в каналах **beta** (`v1.8.1-rc.2`, 2026-09-28) и **nightly**
+  (`v1.8.2-nightly.7`, 2026-10-08) и ставятся своими скриптами — для beta:
+
+      curl -fsSL -o /tmp/adguard-beta-install.sh \
+        https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/HEAD/scripts/beta/install.sh \
+        && sudo sh /tmp/adguard-beta-install.sh -a y
+
+  Приём тот же, что и для release-канала выше: **сначала скачать в файл, потом
+  запускать с `-a y`**. Пайплайн `curl … | sh` применять нельзя — он прячет
+  отказ `curl` (установка продолжится на пустом или старом файле) и оставляет
+  установщик ждать ответа с терминала, которого у мастера нет. Для nightly тот
+  же вид с путём `scripts/nightly/install.sh`.
+
+  Ставить beta/nightly на боевой сервер — решение владельца; возврат на
+  release делается тем же способом через `scripts/release/install.sh`.
+
+#### Откат при отказе: сервер не остаётся без сети (v1.70.31)
+
+К моменту, когда мастер понимает, что туннель не поднялся, служба уже успела
+выполнить `connect --no-fork`. В TUN-режиме это создаёт `tun0`, правит маршруты
+и — при `Change system DNS: on` — уводит DNS сервера в **неподнятый** туннель.
+У службы `Restart=always`, и она включена в автозапуск, поэтому сервер остался
+бы с чёрной дырой вместо сети и получил бы её же после перезагрузки.
+
+Поэтому при отказе мастер откатывается: сначала гасит службу
+(`systemctl disable --now`, иначе она перезапустит `connect` и снова поднимет
+`tun0`), затем выполняет документированный `disconnect`, убирающий интерфейс,
+маршруты и правки DNS. Порядок здесь важен — это тот же класс ошибок, что и при
+выключении: сначала останавливаем то, что может воскресить туннель.
+
+Отказ AdGuard VPN не должен стоить владельцу работающего сервера: программа
+важнее, чем VPN.
 
 Программа намеренно **не меняет** протокол и не принуждает IPv4 сама: и
 `set-protocol`, и `-4` документированы, но выбирать между ними вслепую — значит
