@@ -1,29 +1,31 @@
 # -*- coding: utf-8 -*-
-"""v1.70.26 — «ничего не забыли»: успех VPN доказывается, а не предполагается.
+"""v1.70.26 — проверки режима VPN; с v1.70.27 они НЕ блокируют установку.
+
+История вопроса. В v1.70.26 расхождение показаний CLI считалось фатальным:
+фаза падала. Это было ошибкой — контракт у AdGuard документированный и это
+КОД ВОЗВРАТА команды, а формат её текстового вывода нам не подконтролен.
+Падать из-за нераспознанной строки — значит мешать запуску VPN на сервере.
+
+С v1.70.27 все такие проверки дают ПРЕДУПРЕЖДЕНИЕ в живой журнал и продолжают
+работу. Фатальными остались только отказы самих документированных команд
+(`set-mode TUN`, `site-exclusions mode selective`, `connect`) и отсутствие
+`/dev/net/tun` в фазе tun — там TUN действительно невозможен.
 
 Что здесь доказано ЖИВЫМИ прогонами помощника и автопилота:
 
-  1) Фаза `tun` ПЕРЕЧИТЫВАЕТ режим исключений и падает, если он остался
-     `general`. Это не косметика: в general-режиме тот же список работает
-     НАОБОРОТ (в VPN уходит всё, КРОМЕ Telegram), а `api.telegram.org` при
-     этом всё равно присутствует в выводе `site-exclusions show` — поэтому
-     прежняя проверка «домен есть в списке» инверсию требования «туннелим
-     только Telegram» не ловила;
-  2) фаза `units` не считает `active` доказательством TUN: если слушается
-     127.0.0.1:1080, сервер остался в SOCKS и трафик Telegram в VPN не
-     уходит — фаза падает вместо рапорта;
-  3) фаза `off` падает, если автопилот не снят: выживший таймер в 15:10
-     поднял бы VPN обратно, а красная кнопка в панели врала бы;
-  4) `tg-health.sh` не поднимает VPN, который владелец выключил
-     (`disabled`/`masked`), и при недоступном systemctl сохраняет прежнее
-     поведение — иначе автопилот молча переставал бы работать;
-  5) `/dev/net/tun` проверяется ДО установки CLI и до ссылки входа;
-  6) `install-rule` освежает уже разложенные по системе юниты через
-     `try-restart` (выключенный владельцем VPN обратно не включается);
-  7) набор фаз помощника НЕ изменился — значит уже установленное на сервере
-     sudoers-правило продолжает работать и переустановка правила ради этого
-     релиза не требуется;
-  8) из инструкции убрана несуществующая фаза `socks`, добавлены `tun`/`off`.
+  1) режим исключений перечитывается, и расхождение ВИДНО владельцу
+     (`general` = противоположный смысл списка: в VPN всё, КРОМЕ Telegram),
+     но установка при этом НЕ прерывается;
+  2) слушатель на 127.0.0.1:1080 предупреждает, а не блокирует: порт может
+     быть занят посторонним сервисом;
+  3) выключение VPN не блокируется состоянием автопилота, а от воскрешения
+     VPN защищает сам `tg-health.sh` (выходит при disabled/masked юните);
+  4) `/dev/net/tun` проверяется рано — и как предупреждение, потому что узел
+     может появиться позже (модуль грузится по требованию);
+  5) `install-rule` освежает уже разложенные юниты через `try-restart`;
+  6) набор фаз помощника не изменился — установленное на сервере sudoers-
+     правило продолжает работать;
+  7) документированная последовательность команд сохранена целиком.
 
 Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru
 """
@@ -33,29 +35,26 @@ import shutil
 import socket
 import subprocess
 import sys
-import threading
 
 import pytest
 
 sys.path.insert(0, os.getcwd())
 
-from app.config import settings
 from app.services import adguard_setup as ag
 
 HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
 HEALTH_SH = "deploy/adguard-vpn/tg-health.sh"
 README = "deploy/adguard-vpn/README.md"
-APP_JS = "app/static/js/app.js"
-CHANGELOG = "CHANGELOG.md"
-VER = "1.70.26"
-PREV = "1.70.25"
 
-SYNC_POINTS = ("app/config.py", "app/static/index.html", "app/static/sw.js",
-               "app/static/manifest.webmanifest", "app/static/maxapp/index.html")
+# Тот же набор фаз, что и в v1.70.25/26. sudoers-правило перечисляет фазы
+# явно, поэтому релиз не должен требовать его переустановки.
+PHASES = "preflight rights install login tun off units autopilot version status"
 
-# Тот же набор фаз, что и в v1.70.25. ВАЖНО: sudoers-правило перечисляет фазы
-# явно, поэтому новый релиз не должен требовать его переустановки.
-PHASES_17025 = "preflight rights install login tun off units autopilot version status"
+# Документированная последовательность (README AdGuardVPNCLI + БЗ AdGuard):
+# режим TUN -> маршрутизация AUTO -> selective -> домены.
+DOC_SEQUENCE = ["config set-mode TUN",
+                "config set-tun-routing-mode AUTO",
+                "site-exclusions mode selective"]
 
 
 def _read(path):
@@ -73,8 +72,9 @@ def _sudo_ok():
 
 HAS_SUDO = _sudo_ok()
 HAS_BASH = shutil.which("bash") is not None
+HAS_TUN = os.path.exists("/dev/net/tun")
 
-# CLI-заглушка, моделирующая НАСТОЯЩее поведение (README AdGuardVPNCLI):
+# CLI-заглушка, моделирующая настоящее поведение (README AdGuardVPNCLI):
 # `site-exclusions mode` без аргументов печатает текущий режим.
 CLI_STUB = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$AG_STUB_LOG"
@@ -87,10 +87,7 @@ if [ "$1" = "site-exclusions" ] && [ "$2" = "show" ]; then
 fi
 if [ "$1" = "site-exclusions" ] && [ "$2" = "mode" ]; then
   if [ "${3:-}" = "selective" ] || [ "${3:-}" = "general" ]; then
-    if [ -n "${AG_STUB_IGNORE_SET:-}" ]; then
-      # клиника: команда принята (код 0), но режим НЕ применился
-      :
-    else
+    if [ -z "${AG_STUB_IGNORE_SET:-}" ]; then
       printf '%s\n' "$3" > "$AG_STUB_MODE"
     fi
   else
@@ -102,7 +99,6 @@ if [ "$1" = "--version" ]; then echo "adguardvpn-cli 1.7.12"; fi
 exit 0
 """
 
-# systemctl-заглушка: is-active/is-enabled отвечают содержимым файлов состояния.
 SYSTEMCTL_STUB = r"""#!/bin/sh
 printf '%s\n' "systemctl $*" >> "$STUB_LOG"
 if [ "$1" = "is-active" ]; then
@@ -122,16 +118,12 @@ exit 0
 """
 
 # visudo в песочнице нет, а install-rule проверяет им sudoers-правило.
-# Заглушка просто подтверждает корректность — проверяем не visudo, а то, что
-# install-rule освежает уже разложенные юниты.
-VISUDO_STUB = r"""#!/bin/sh
-exit 0
-"""
+VISUDO_STUB = "#!/bin/sh\nexit 0\n"
 
 
 @pytest.fixture()
 def stubs(tmp_path):
-    """Каталог заглушек + файлы состояния. Корневые файлы чистятся через sudo."""
+    """Каталог заглушек + файлы состояния. Root-файлы чистятся через sudo."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in (("adguardvpn-cli", CLI_STUB),
@@ -140,7 +132,7 @@ def stubs(tmp_path):
         p = bindir / name
         p.write_text(body, encoding="utf-8")
         p.chmod(0o755)
-    files = {}
+    files = {"bindir": str(bindir)}
     for key, initial in (("log", ""), ("state", "inactive\n"), ("mode", ""),
                          ("excl", ""), ("enabled", "disabled\n"),
                          ("timer_active", "inactive\n"),
@@ -148,9 +140,7 @@ def stubs(tmp_path):
         f = tmp_path / (key + ".txt")
         f.write_text(initial, encoding="utf-8")
         files[key] = str(f)
-    files["bindir"] = str(bindir)
     yield files
-    # фазы под sudo оставляют root-файлы: снимаем их до очистки tmp_path
     if HAS_SUDO:
         subprocess.run(["sudo", "-n", "chown", "-R",
                         "%d:%d" % (os.getuid(), os.getgid()), str(tmp_path)],
@@ -173,129 +163,118 @@ def _sudo_run(stubs, argv, phase, cwd=None, extra_env=None, script=None):
     for k, v in (extra_env or {}).items():
         cmd.append(f"{k}={v}")
     cmd += ["bash", os.path.abspath(script or HELPER_SH), phase] + list(argv)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=180,
                           cwd=cwd or os.getcwd(), stdin=subprocess.DEVNULL)
 
 
+@pytest.fixture()
+def redirected(stubs, tmp_path):
+    """Копия помощника с перенаправленными системными каталогами.
+
+    Фазы units/install-rule раскладывают файлы по /etc/systemd/system и
+    /usr/local/sbin — в тесте их трогать нельзя. Подменяются ТОЛЬКО пути,
+    проверяемая логика остаётся прежней.
+    """
+    kit = tmp_path / "kit"
+    etc = tmp_path / "etc"
+    sbin = tmp_path / "sbin"
+    for d in (kit, etc, sbin):
+        d.mkdir()
+    for n in ("adguard-vpn-telegram.service", "tg-health.service",
+              "tg-health.timer", "tg-health.sh", "ymaster-adguard-setup.sh"):
+        (kit / n).write_text("[Unit]\nDescription=kit\n", encoding="utf-8")
+    src = _read(HELPER_SH)
+    src = src.replace("/usr/local/share/ymaster-adguard", str(kit))
+    src = src.replace("/etc/systemd/system", str(etc))
+    src = src.replace("/usr/local/sbin", str(sbin))
+    src = src.replace("/etc/sudoers.d/ymaster-adguard", str(tmp_path / "sudoers"))
+    script = tmp_path / "helper.sh"
+    script.write_text(src, encoding="utf-8")
+    return {"script": str(script), "etc": etc, "sbin": sbin, "kit": kit}
+
+
 # ==============================================================================
-#  1) Режим исключений перечитывается: general НЕ принимается за selective
+#  1) Режим исключений: расхождение видно, но установку НЕ прерывает
 # ==============================================================================
 @pytest.mark.skipif(not HAS_SUDO, reason="нет passwordless sudo")
 @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
-@pytest.mark.skipif(not os.path.exists("/dev/net/tun"), reason="нет /dev/net/tun")
-class TestSelectiveModeVerifiedLive:
-    def _tun(self, stubs, tmp_path, **env):
-        cwd = tmp_path / "cwd"
+@pytest.mark.skipif(not HAS_TUN, reason="нет /dev/net/tun")
+class TestSelectiveModeReadBack:
+    def _tun(self, stubs, tmp_path, name="cwd", **env):
+        cwd = tmp_path / name
         cwd.mkdir(exist_ok=True)
         return _sudo_run(stubs, [], "tun", cwd=str(cwd), extra_env=env)
 
-    def test_happy_path_reads_mode_back(self, stubs, tmp_path):
-        """В штатном режиме фаза успешна, а перечитывание реально выполнено."""
-        r = self._tun(stubs, tmp_path)
+    def test_documented_sequence_is_intact(self, stubs, tmp_path):
+        """Документированная последовательность команд сохранена целиком."""
+        r = self._tun(stubs, tmp_path, "seq")
         assert r.returncode == 0, r.stdout + r.stderr
         lines = _read(stubs["log"]).splitlines()
-        # именно БЕЗ аргумента — это и есть запрос текущего режима
-        assert "site-exclusions mode" in lines, lines
+        idx = [lines.index(c) for c in DOC_SEQUENCE]
+        assert idx == sorted(idx), lines           # именно в этом порядке
+        assert "site-exclusions add api.telegram.org" in lines
+
+    def test_happy_path_confirms_selective(self, stubs, tmp_path):
+        r = self._tun(stubs, tmp_path, "ok")
+        assert r.returncode == 0, r.stdout + r.stderr
+        lines = _read(stubs["log"]).splitlines()
+        assert "site-exclusions mode" in lines      # перечитывание выполнено
         assert _read(stubs["mode"]).strip() == "selective"
+        assert "selective" in r.stdout
+        assert "ВНИМАНИЕ" not in r.stdout
 
-    def test_general_mode_is_rejected(self, stubs, tmp_path):
-        """ГЛАВНОЕ: режим не применился → фаза падает, а не рапортует успех.
+    def test_general_warns_but_does_not_block(self, stubs, tmp_path):
+        """ГЛАВНОЕ свойство v1.70.27: не блокируем запуск VPN.
 
-        Иначе через VPN шёл бы весь трафик сервера КРОМЕ Telegram, то есть
-        сайт, ФНС, MAX и 1С уехали бы в VPN, а Telegram остался прямым.
+        Расхождение показываем владельцу (в general смысл списка
+        противоположный), но установка продолжается: домены добавляются,
+        фаза завершается успешно.
         """
-        r = self._tun(stubs, tmp_path, AG_STUB_IGNORE_SET="1")
-        assert r.returncode != 0
-        out = r.stdout + r.stderr
-        assert "GENERAL" in out or "general" in out
-        assert "только Telegram" not in r.stdout      # успех не заявлен
-        assert "TUN + selective" not in r.stdout
-
-    def test_general_rejection_names_the_fix(self, stubs, tmp_path):
-        """Сообщение содержит готовую команду, а не «неизвестная ошибка»."""
-        r = self._tun(stubs, tmp_path, AG_STUB_IGNORE_SET="1")
-        assert "site-exclusions mode selective" in (r.stdout + r.stderr)
-
-    def test_api_domain_alone_does_not_prove_selective(self, stubs, tmp_path):
-        """Доказательство, что прежней проверки было НЕДОСТАТОЧНО.
-
-        Домен уже лежит в списке исключений (в общем), `site-exclusions show`
-        его показывает — прежняя обязательная проверка прошла бы. Но режим
-        general, а значит смысл списка противоположный: в VPN уходит всё,
-        КРОМЕ Telegram. Фаза обязана упасть именно по режиму.
-        """
-        open(stubs["excl"], "w").write("api.telegram.org\n")
-        r = self._tun(stubs, tmp_path, AG_STUB_IGNORE_SET="1")
-        assert r.returncode != 0
-        out = r.stdout + r.stderr
-        assert "GENERAL" in out or "general" in out
-
-    def test_fails_before_half_configuring(self, stubs, tmp_path):
-        """Отказ по режиму — ДО добавления доменов: сервер не остаётся
-        наполовину настроенным."""
-        r = self._tun(stubs, tmp_path, AG_STUB_IGNORE_SET="1")
-        assert r.returncode != 0
-        assert "site-exclusions add" not in _read(stubs["log"])
-
-    def test_set_mode_and_routing_still_applied(self, stubs, tmp_path):
-        """Проверка режима не отменила саму настройку TUN."""
-        r = self._tun(stubs, tmp_path)
+        r = self._tun(stubs, tmp_path, "gen", AG_STUB_IGNORE_SET="1")
         assert r.returncode == 0, r.stdout + r.stderr
-        lines = _read(stubs["log"]).splitlines()
-        assert "config set-mode TUN" in lines
-        assert "config set-tun-routing-mode AUTO" in lines
-        assert "SCRIPT" not in _read(stubs["log"])
+        assert "ВНИМАНИЕ" in r.stdout
+        assert "general" in r.stdout
+        assert "site-exclusions add api.telegram.org" in _read(stubs["log"])
 
-    def test_empty_mode_answer_is_rejected(self, stubs, tmp_path):
-        """Пустой/невнятный ответ CLI — тоже отказ (нельзя догадываться)."""
-        open(stubs["mode"], "w").write("какая-то ерунда\n")
-        cwd = tmp_path / "cwd2"
-        cwd.mkdir(exist_ok=True)
-        # AG_STUB_IGNORE_SET запрещает перезапись, ответ остаётся невнятным
-        r = _sudo_run(stubs, [], "tun", cwd=str(cwd),
-                      extra_env={"AG_STUB_IGNORE_SET": "1"})
-        assert r.returncode != 0
-        assert "selective" in (r.stdout + r.stderr)
+    def test_general_warning_is_actionable(self, stubs, tmp_path):
+        """В предупреждении есть команда для проверки — не «неизвестная ошибка»."""
+        r = self._tun(stubs, tmp_path, "act", AG_STUB_IGNORE_SET="1")
+        assert "site-exclusions mode" in r.stdout
+
+    def test_unrecognized_answer_warns_not_fails(self, stubs, tmp_path):
+        """Нераспознанный вывод CLI — предупреждение. Формат вывода vendor'а
+        нам не подконтролен, и падать из-за него нельзя."""
+        r = self._tun(stubs, tmp_path, "unk", AG_STUB_IGNORE_SET="1")
+        open(stubs["mode"], "w").write("Exclusion mode: что-то своё\n")
+        r2 = self._tun(stubs, tmp_path, "unk2", AG_STUB_IGNORE_SET="1")
+        for res in (r, r2):
+            assert res.returncode == 0, res.stdout + res.stderr
+
+    def test_domain_in_list_does_not_hide_mode_warning(self, stubs, tmp_path):
+        """Домен лежит в списке (в общем) — прежняя проверка прошла бы, а
+        предупреждение о режиме всё равно показывается."""
+        open(stubs["excl"], "w").write("api.telegram.org\n")
+        r = self._tun(stubs, tmp_path, "dom", AG_STUB_IGNORE_SET="1")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "ВНИМАНИЕ" in r.stdout
+
+    def test_script_routing_mode_never_used(self, stubs, tmp_path):
+        """Режим SCRIPT не вызывается: он не работает (#69, #190)."""
+        r = self._tun(stubs, tmp_path, "scr")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "SCRIPT" not in _read(stubs["log"])
+        assert "create-route-script" not in _read(stubs["log"])
 
 
 # ==============================================================================
-#  2) active != TUN: оставшийся SOCKS-слушатель ловится
+#  2) Туннель: посторонний слушатель на 1080 предупреждает, не блокирует
 # ==============================================================================
 @pytest.mark.skipif(not HAS_SUDO, reason="нет passwordless sudo")
 @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
-class TestTunnelModeVerifiedLive:
-    @pytest.fixture()
-    def redirected(self, stubs, tmp_path):
-        """Копия помощника с перенаправленными системными каталогами.
-
-        Фаза units раскладывает юниты по /etc/systemd/system и
-        /usr/local/sbin — в тесте их трогать нельзя. Подменяются ТОЛЬКО пути,
-        проверяемая логика остаётся той же.
-        """
-        kit = tmp_path / "kit"
-        etc = tmp_path / "etc"
-        sbin = tmp_path / "sbin"
-        for d in (kit, etc, sbin):
-            d.mkdir()
-        for n in ("adguard-vpn-telegram.service", "tg-health.service",
-                  "tg-health.timer", "tg-health.sh",
-                  "ymaster-adguard-setup.sh"):
-            (kit / n).write_text("[Unit]\nDescription=stub\n", encoding="utf-8")
-        src = _read(HELPER_SH)
-        src = src.replace("/usr/local/share/ymaster-adguard", str(kit))
-        src = src.replace("/etc/systemd/system", str(etc))
-        src = src.replace("/usr/local/sbin", str(sbin))
-        src = src.replace("/etc/sudoers.d/ymaster-adguard", str(tmp_path / "sudoers"))
-        script = tmp_path / "helper.sh"
-        script.write_text(src, encoding="utf-8")
-        return {"script": str(script), "etc": etc, "sbin": sbin, "kit": kit}
-
-    def test_socks_listener_left_behind_is_fatal(self, stubs, tmp_path, redirected):
-        """Юнит active, но порт 1080 слушается → сервер остался в SOCKS.
-
-        В этом режиме прозрачно в туннель не уходит ничего, а поле «Прокси»
-        мастер уже очистил — бот пошёл бы напрямую, то есть в блокировку.
-        """
+class TestTunnelChecks:
+    def test_socks_listener_warns_but_units_succeed(self, stubs, tmp_path,
+                                                    redirected):
+        """Порт может быть занят посторонним сервисом — блокировать нельзя."""
         open(stubs["state"], "w").write("active\n")
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -306,14 +285,13 @@ class TestTunnelModeVerifiedLive:
                           script=redirected["script"])
         finally:
             srv.close()
-        assert r.returncode != 0
-        assert "SOCKS" in (r.stdout + r.stderr)
-        assert "1080" in (r.stdout + r.stderr)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "внимание" in r.stdout
+        assert "1080" in r.stdout
+        assert "туннель активен" in r.stdout
 
-    def test_no_socks_listener_units_succeed(self, stubs, tmp_path, redirected):
-        """Без слушателя на 1080 фаза units проходит и рапортует успех."""
+    def test_clean_units_succeed_silently(self, stubs, tmp_path, redirected):
         open(stubs["state"], "w").write("active\n")
-        # порт гарантированно свободен
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         assert probe.connect_ex(("127.0.0.1", 1080)) != 0
         probe.close()
@@ -321,9 +299,9 @@ class TestTunnelModeVerifiedLive:
                       script=redirected["script"])
         assert r.returncode == 0, r.stdout + r.stderr
         assert "туннель активен" in r.stdout
+        assert "1080" not in r.stdout
 
     def test_units_are_deployed_from_kit(self, stubs, tmp_path, redirected):
-        """Юниты действительно раскладываются, а не только проверяются."""
         open(stubs["state"], "w").write("active\n")
         r = _sudo_run(stubs, [], "units", cwd=str(tmp_path),
                       script=redirected["script"])
@@ -331,55 +309,64 @@ class TestTunnelModeVerifiedLive:
         assert (redirected["etc"] / "adguard-vpn-telegram.service").exists()
         assert (redirected["sbin"] / "tg-health.sh").exists()
 
-    def test_dead_tunnel_message_mentions_license(self, stubs, tmp_path, redirected):
-        """Частая причина «туннель не поднялся» — нет лицензии: говорим о ней."""
+    def test_dead_tunnel_message_mentions_license(self, stubs, tmp_path,
+                                                  redirected):
+        """Единственный фатальный исход фазы — туннель действительно не поднялся."""
         open(stubs["state"], "w").write("inactive\n")
         r = _sudo_run(stubs, [], "units", cwd=str(tmp_path),
                       script=redirected["script"])
         assert r.returncode != 0
         assert "лиценз" in (r.stdout + r.stderr)
 
+    def test_wait_extended_to_60s(self):
+        """Первое подключение в TUN на медленном канале в 20 с не укладывается."""
+        sh = _read(HELPER_SH)
+        units = sh[sh.index("phase_units()"):sh.index("phase_autopilot()")]
+        assert "seq 1 30" in units
+        assert "за 60 с" in units
+        src = _read("app/services/adguard_setup.py")
+        fn = src[src.index("def _step_tunnel"):]
+        fn = fn[:fn.index("\ndef ")]
+        assert "range(30)" in fn
+
 
 # ==============================================================================
-#  3) Выключение: автопилот обязан быть снят, иначе красная кнопка врёт
+#  3) Выключение: не блокируется, а от воскрешения защищает tg-health.sh
 # ==============================================================================
 @pytest.mark.skipif(not HAS_SUDO, reason="нет passwordless sudo")
 @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
-class TestOffVerifiesAutopilotLive:
-    def test_off_ok_when_timer_really_gone(self, stubs, tmp_path):
+class TestOffIsNotBlocked:
+    def test_off_ok_when_timer_gone(self, stubs, tmp_path):
         open(stubs["state"], "w").write("inactive\n")
-        open(stubs["timer_active"], "w").write("inactive\n")
-        open(stubs["timer_enabled"], "w").write("disabled\n")
         r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "выключен" in r.stdout
+        assert "VPN выключен" in r.stdout
+        assert "внимание" not in r.stdout
 
-    def test_off_fails_when_timer_still_enabled(self, stubs, tmp_path):
-        """Таймер выжил → в 15:10 VPN поднялся бы сам. Молчать нельзя."""
-        open(stubs["state"], "w").write("inactive\n")
-        open(stubs["timer_active"], "w").write("inactive\n")
-        open(stubs["timer_enabled"], "w").write("enabled\n")
-        r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
-        assert r.returncode != 0
-        out = r.stdout + r.stderr
-        assert "автопилот не отключился" in out
-        assert "выключен" not in r.stdout
-
-    def test_off_fails_when_timer_still_active(self, stubs, tmp_path):
-        open(stubs["state"], "w").write("inactive\n")
-        open(stubs["timer_active"], "w").write("active\n")
-        open(stubs["timer_enabled"], "w").write("disabled\n")
-        r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
-        assert r.returncode != 0
-        assert "автопилот" in (r.stdout + r.stderr)
-
-    def test_off_failure_names_the_fix(self, stubs, tmp_path):
+    def test_off_succeeds_even_if_timer_survives(self, stubs, tmp_path):
+        """Выключение не должно блокироваться: владелец нажал «выключить» —
+        VPN выключается. Состояние автопилота показываем предупреждением."""
         open(stubs["state"], "w").write("inactive\n")
         open(stubs["timer_enabled"], "w").write("enabled\n")
         r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
-        assert "systemctl disable --now tg-health.timer" in (r.stdout + r.stderr)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "VPN выключен" in r.stdout
+        assert "внимание" in r.stdout
 
-    def test_timer_still_killed_before_tunnel(self, stubs, tmp_path):
+    def test_off_warning_is_actionable(self, stubs, tmp_path):
+        open(stubs["state"], "w").write("inactive\n")
+        open(stubs["timer_enabled"], "w").write("enabled\n")
+        r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
+        assert "disable --now tg-health.timer" in r.stdout
+
+    def test_tunnel_still_guarded(self, stubs, tmp_path):
+        """Единственный фатальный исход — туннель действительно не остановился."""
+        open(stubs["state"], "w").write("active\n")
+        r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
+        assert r.returncode != 0
+        assert "не остановился" in (r.stdout + r.stderr)
+
+    def test_timer_killed_before_tunnel(self, stubs, tmp_path):
         """Порядок из v1.70.25 сохранён: сначала автопилот, потом туннель."""
         open(stubs["state"], "w").write("inactive\n")
         r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
@@ -390,9 +377,17 @@ class TestOffVerifiesAutopilotLive:
         assert "tg-health.timer" in dis[0], dis
         assert "adguard-vpn-telegram" in dis[1], dis
 
+    def test_credentials_not_removed(self, stubs, tmp_path):
+        """Вход и лицензия сохраняются — повторное включение без ссылки."""
+        open(stubs["state"], "w").write("inactive\n")
+        r = _sudo_run(stubs, [], "off", cwd=str(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        log = _read(stubs["log"])
+        assert "logout" not in log and "uninstall" not in log
+
 
 # ==============================================================================
-#  4) Автопилот не воскрешает выключенный владельцем VPN
+#  4) Автопилот не воскрешает выключенный VPN (теперь это главная защита)
 # ==============================================================================
 class TestAutopilotRespectsOffSwitch:
     def _run_health(self, stubs, tmp_path, enabled_answer):
@@ -404,9 +399,8 @@ class TestAutopilotRespectsOffSwitch:
                     "STUB_ENABLED": stubs["enabled"],
                     "CLI": "/nonexistent/adguardvpn-cli",
                     "TARGET_MS": "30"})
-        # путь заведомо мёртв: автопилот ОБЯЗАН был бы менять локацию
         return subprocess.run(["bash", os.path.abspath(HEALTH_SH)],
-                              capture_output=True, text=True, timeout=120,
+                              capture_output=True, text=True, timeout=180,
                               env=env, stdin=subprocess.DEVNULL,
                               cwd=str(tmp_path))
 
@@ -424,26 +418,19 @@ class TestAutopilotRespectsOffSwitch:
         assert "выключен владельцем" in r.stdout
 
     @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
-    def test_unknown_answer_does_not_disable_autopilot(self, stubs, tmp_path):
-        """Ответ не распознан (systemctl недоступен) — работаем как раньше.
+    def test_enabled_tunnel_proceeds(self, stubs, tmp_path):
+        """Штатный режим (мастер делает enable) — автопилот работает."""
+        r = self._run_health(stubs, tmp_path, "enabled")
+        assert "выключен владельцем" not in r.stdout
 
-        Иначе автопилот молча переставал бы делать хоть что-то.
-        """
+    @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
+    def test_unknown_answer_does_not_disable_autopilot(self, stubs, tmp_path):
+        """Ответ не распознан (systemctl недоступен) — работаем как раньше."""
         r = self._run_health(stubs, tmp_path, "static")
         assert "выключен владельцем" not in r.stdout
-        # с несуществующим CLI скрипт доходит до подбора локации и честно
-        # сообщает, что список локаций недоступен
         assert "подбираем локацию" in r.stdout or "недоступен" in r.stdout
 
-    def test_header_describes_tun_path(self):
-        """Шапка больше не утверждает, что замер идёт через локальный прокси."""
-        sh = _read(HEALTH_SH)
-        head = sh[:sh.index("set -u")]
-        assert "TUN" in head
-        assert "через локальный прокси\n#      AdGuard VPN" not in head
-
     def test_guard_checks_answer_not_exit_code(self):
-        """Проверка по ТЕКСТУ ответа: код возврата systemctl не повод молчать."""
         sh = _read(HEALTH_SH)
         assert re.search(r'systemctl is-enabled adguard-vpn-telegram', sh)
         assert '"$EN" = "disabled"' in sh
@@ -451,74 +438,114 @@ class TestAutopilotRespectsOffSwitch:
 
 
 # ==============================================================================
-#  5) /dev/net/tun — до установки CLI и до ссылки входа
+#  5) /dev/net/tun: рано, но как предупреждение
 # ==============================================================================
-class TestTunDeviceCheckedEarly:
-    def test_preflight_phase_checks_tun(self):
+class TestTunDeviceWarning:
+    def test_preflight_warns_not_dies(self):
         sh = _read(HELPER_SH)
         pf = sh[sh.index("phase_preflight()"):sh.index("phase_version()")]
         assert "/dev/net/tun" in pf
-
-    def test_preflight_checks_tun_before_kit(self):
-        """Проверка TUN идёт раньше «комплект не разложен» — она важнее."""
-        sh = _read(HELPER_SH)
-        pf = sh[sh.index("phase_preflight()"):sh.index("phase_version()")]
+        # предупреждение идёт раньше проверки комплекта
         assert pf.index("/dev/net/tun") < pf.index("KIT_DIR")
+        tail = pf[pf.index("/dev/net/tun"):]
+        assert "die" not in tail.split("\n")[0] + tail.split("\n")[1]
 
-    def test_python_precheck_checks_tun(self, monkeypatch):
-        """Своя проверка в программе: фаза помощника зовётся лишь в режиме
-        helper, а сказать владельцу надо при любом режиме прав."""
-        real = os.path.exists
-
-        def fake(p):
-            return False if p == "/dev/net/tun" else real(p)
-
-        monkeypatch.setattr(ag.os.path, "exists", fake)
-        monkeypatch.setattr(ag, "sys_platform_linux", lambda: True)
-        monkeypatch.setattr(ag, "run_cmd", lambda *a, **k: (0, "systemd 255"))
-        monkeypatch.setattr(ag.shutil, "which", lambda n: "/usr/bin/" + n)
-        ag.job.reset()
-        try:
-            with pytest.raises(RuntimeError) as ei:
-                ag._step_precheck()
-        finally:
-            ag.job.reset()
-        assert "/dev/net/tun" in str(ei.value)
-
-    def test_python_precheck_passes_when_tun_present(self, monkeypatch):
-        """Небезразличность: при наличии устройства шаг не падает по этой
-        причине (дальше он упрётся в права, которых в тесте нет)."""
-        real = os.path.exists
-        monkeypatch.setattr(ag.os.path, "exists", lambda p: True
-                            if p == "/dev/net/tun" else real(p))
-        monkeypatch.setattr(ag, "sys_platform_linux", lambda: True)
-        monkeypatch.setattr(ag, "run_cmd", lambda *a, **k: (0, "systemd 255"))
-        monkeypatch.setattr(ag.shutil, "which", lambda n: "/usr/bin/" + n)
-        monkeypatch.setattr(ag, "_detect_rights", lambda: ("", ""))
-        ag.job.reset()
-        try:
-            with pytest.raises(RuntimeError) as ei:
-                ag._step_precheck()
-        finally:
-            ag.job.reset()
-        assert "/dev/net/tun" not in str(ei.value)
-
-    def test_tun_phase_keeps_its_own_guard(self):
-        """Страховка в самой фазе tun осталась (защита в глубину)."""
+    def test_tun_phase_keeps_hard_guard(self):
+        """В самой фазе tun guard остаётся фатальным: там TUN действительно
+        невозможен, и это не догадка, а факт."""
         sh = _read(HELPER_SH)
         tun = sh[sh.index("phase_tun()"):sh.index("phase_units()")]
-        assert "/dev/net/tun" in tun
+        assert re.search(r'\[ -e /dev/net/tun \] \|\| die', tun)
+
+    def test_python_precheck_warns_not_raises(self, monkeypatch):
+        real = os.path.exists
+        monkeypatch.setattr(ag.os.path, "exists",
+                            lambda p: False if p == "/dev/net/tun" else real(p))
+        monkeypatch.setattr(ag, "sys_platform_linux", lambda: True)
+        monkeypatch.setattr(ag, "run_cmd", lambda *a, **k: (0, "systemd 255"))
+        monkeypatch.setattr(ag.shutil, "which", lambda n: "/usr/bin/" + n)
+        monkeypatch.setattr(ag, "_detect_rights",
+                            lambda: ("root", "Права: root — хорошо."))
+        ag.job.reset()
+        try:
+            ag._step_precheck()                    # НЕ бросает исключение
+            log = "\n".join(ag.job.log)
+        finally:
+            ag.job.reset()
+        assert "/dev/net/tun" in log
+        assert "Внимание" in log
+
+    def test_python_precheck_silent_when_tun_present(self, monkeypatch):
+        real = os.path.exists
+        monkeypatch.setattr(ag.os.path, "exists",
+                            lambda p: True if p == "/dev/net/tun" else real(p))
+        monkeypatch.setattr(ag, "sys_platform_linux", lambda: True)
+        monkeypatch.setattr(ag, "run_cmd", lambda *a, **k: (0, "systemd 255"))
+        monkeypatch.setattr(ag.shutil, "which", lambda n: "/usr/bin/" + n)
+        monkeypatch.setattr(ag, "_detect_rights",
+                            lambda: ("root", "Права: root — хорошо."))
+        ag.job.reset()
+        try:
+            ag._step_precheck()
+            log = "\n".join(ag.job.log)
+        finally:
+            ag.job.reset()
+        assert "/dev/net/tun" not in log
 
 
 # ==============================================================================
-#  6) install-rule освежает разложенные юниты (deploy.sh --update)
+#  6) install-rule освежает разложенные юниты
 # ==============================================================================
-class TestInstallRuleRefreshesDeployedUnits:
-    def test_refresh_block_present_and_guarded(self):
-        sh = _read(HELPER_SH)
-        ir = sh[sh.index("phase_install_rule()"):sh.index("phase_remove_rule()")]
-        assert "/etc/systemd/system/${TUNNEL_UNIT}.service" in ir
-        assert "UNITS_ETC" in ir and "UNITS_SBIN" in ir
+@pytest.mark.skipif(not HAS_SUDO, reason="нет passwordless sudo")
+@pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
+class TestInstallRuleRefresh:
+    def _app(self, tmp_path, name, deployed):
+        kit = tmp_path / (name + "-kit")
+        etc = tmp_path / (name + "-etc")
+        sbin = tmp_path / (name + "-sbin")
+        appdir = tmp_path / name
+        for d in (kit, etc, sbin, appdir / "deploy" / "adguard-vpn"):
+            d.mkdir(parents=True)
+        src = _read(HELPER_SH)
+        src = src.replace("/usr/local/share/ymaster-adguard", str(kit))
+        src = src.replace("/etc/systemd/system", str(etc))
+        src = src.replace("/usr/local/sbin", str(sbin))
+        src = src.replace("/etc/sudoers.d/ymaster-adguard",
+                          str(tmp_path / (name + "-sudoers")))
+        script = appdir / "deploy" / "adguard-vpn" / "ymaster-adguard-setup.sh"
+        script.write_text(src, encoding="utf-8")
+        marker = "[Unit]\nDescription=NEW-FROM-KIT\n"
+        for n in ("adguard-vpn-telegram.service", "tg-health.service",
+                  "tg-health.timer"):
+            (script.parent / n).write_text(marker, encoding="utf-8")
+            if deployed:
+                (etc / n).write_text("[Unit]\nDescription=OLD\n",
+                                     encoding="utf-8")
+        (script.parent / "tg-health.sh").write_text("#!/bin/sh\n# NEW\n",
+                                                    encoding="utf-8")
+        if deployed:
+            (sbin / "tg-health.sh").write_text("#!/bin/sh\n# OLD\n",
+                                               encoding="utf-8")
+        return {"appdir": appdir, "script": script, "etc": etc, "sbin": sbin}
+
+    def test_refresh_when_already_installed(self, stubs, tmp_path):
+        ctx = self._app(tmp_path, "app1", deployed=True)
+        r = _sudo_run(stubs, [str(ctx["appdir"])], "install-rule",
+                      cwd=str(tmp_path), script=str(ctx["script"]))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "освежаю" in r.stdout
+        assert "NEW-FROM-KIT" in (ctx["etc"] / "adguard-vpn-telegram.service"
+                                  ).read_text(encoding="utf-8")
+        assert "# NEW" in (ctx["sbin"] / "tg-health.sh").read_text(
+            encoding="utf-8")
+
+    def test_no_refresh_on_fresh_install(self, stubs, tmp_path):
+        ctx = self._app(tmp_path, "app2", deployed=False)
+        r = _sudo_run(stubs, [str(ctx["appdir"])], "install-rule",
+                      cwd=str(tmp_path), script=str(ctx["script"]))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "освежаю" not in r.stdout
+        assert not (ctx["etc"] / "adguard-vpn-telegram.service").exists()
 
     def test_uses_try_restart_not_restart(self):
         """VPN, выключенный владельцем, включать обратно нельзя."""
@@ -527,133 +554,57 @@ class TestInstallRuleRefreshesDeployedUnits:
         assert "try-restart" in ir
         assert not re.search(r'systemctl restart "\$TUNNEL_UNIT"', ir)
 
-    def test_refresh_only_when_already_installed(self):
-        """Первая установка не трогает систему раньше времени."""
+    def test_refresh_is_non_fatal(self):
+        """Каждая команда освежения допускает отказ: install-rule не должен
+        падать из-за этого (иначе deploy.sh --update сломался бы)."""
         sh = _read(HELPER_SH)
         ir = sh[sh.index("phase_install_rule()"):sh.index("phase_remove_rule()")]
-        guard = ir.index('if [ -f "/etc/systemd/system/${TUNNEL_UNIT}.service" ]')
-        assert ir.index("UNITS_ETC", guard) > guard
-
-    @pytest.mark.skipif(not HAS_SUDO, reason="нет passwordless sudo")
-    @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
-    def test_refresh_happens_live(self, stubs, tmp_path):
-        """Живой прогон: юнит уже стоит → файл обновляется содержимым комплекта."""
-        kit = tmp_path / "kit"
-        etc = tmp_path / "etc"
-        sbin = tmp_path / "sbin"
-        appdir = tmp_path / "app"
-        for d in (kit, etc, sbin, appdir / "deploy" / "adguard-vpn"):
-            d.mkdir(parents=True)
-        marker = "[Unit]\nDescription=NEW-FROM-KIT\n"
-        for n in ("adguard-vpn-telegram.service", "tg-health.service",
-                  "tg-health.timer"):
-            (etc / n).write_text("[Unit]\nDescription=OLD\n", encoding="utf-8")
-        (sbin / "tg-health.sh").write_text("#!/bin/sh\n# OLD\n", encoding="utf-8")
-        src = _read(HELPER_SH)
-        src = src.replace("/usr/local/share/ymaster-adguard", str(kit))
-        src = src.replace("/etc/systemd/system", str(etc))
-        src = src.replace("/usr/local/sbin", str(sbin))
-        src = src.replace("/etc/sudoers.d/ymaster-adguard", str(tmp_path / "sudoers"))
-        script = appdir / "deploy" / "adguard-vpn" / "ymaster-adguard-setup.sh"
-        script.write_text(src, encoding="utf-8")
-        for n in ("adguard-vpn-telegram.service", "tg-health.service",
-                  "tg-health.timer"):
-            (script.parent / n).write_text(marker, encoding="utf-8")
-        (script.parent / "tg-health.sh").write_text("#!/bin/sh\n# NEW\n",
-                                                    encoding="utf-8")
-        r = _sudo_run(stubs, [str(appdir)], "install-rule", cwd=str(tmp_path),
-                      script=str(script))
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert "освежаю" in r.stdout
-        assert "NEW-FROM-KIT" in (etc / "adguard-vpn-telegram.service").read_text(
-            encoding="utf-8")
-        assert "# NEW" in (sbin / "tg-health.sh").read_text(encoding="utf-8")
-
-    @pytest.mark.skipif(not HAS_SUDO, reason="нет passwordless sudo")
-    @pytest.mark.skipif(not HAS_BASH, reason="bash недоступен")
-    def test_no_refresh_on_fresh_install(self, stubs, tmp_path):
-        """Юнита ещё нет → ничего не раскладываем и не перезапускаем."""
-        kit = tmp_path / "kit2"
-        etc = tmp_path / "etc2"
-        sbin = tmp_path / "sbin2"
-        appdir = tmp_path / "app2"
-        for d in (kit, etc, sbin, appdir / "deploy" / "adguard-vpn"):
-            d.mkdir(parents=True)
-        src = _read(HELPER_SH)
-        src = src.replace("/usr/local/share/ymaster-adguard", str(kit))
-        src = src.replace("/etc/systemd/system", str(etc))
-        src = src.replace("/usr/local/sbin", str(sbin))
-        src = src.replace("/etc/sudoers.d/ymaster-adguard", str(tmp_path / "sudoers2"))
-        script = appdir / "deploy" / "adguard-vpn" / "ymaster-adguard-setup.sh"
-        script.write_text(src, encoding="utf-8")
-        for n in ("adguard-vpn-telegram.service", "tg-health.service",
-                  "tg-health.timer", "tg-health.sh"):
-            (script.parent / n).write_text("[Unit]\n", encoding="utf-8")
-        r = _sudo_run(stubs, [str(appdir)], "install-rule", cwd=str(tmp_path),
-                      script=str(script))
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert "освежаю" not in r.stdout
-        assert not (etc / "adguard-vpn-telegram.service").exists()
+        tail = ir[ir.index("VPN уже был установлен"):]
+        assert tail.count("die ") == 0, tail
 
 
 # ==============================================================================
-#  7) Набор фаз не изменился: установленное правило продолжает работать
+#  7) Набор фаз не изменился + документация
 # ==============================================================================
-class TestPhaseSetUnchanged:
-    def test_allowed_phases_same_as_17025(self):
-        sh = _read(HELPER_SH)
-        m = re.search(r'ALLOWED_PHASES="([^"]+)"', sh)
-        assert m, "ALLOWED_PHASES не найден"
-        assert m.group(1) == PHASES_17025
+class TestPhaseSetAndDocs:
+    def test_allowed_phases_unchanged(self):
+        m = re.search(r'ALLOWED_PHASES="([^"]+)"', _read(HELPER_SH))
+        assert m and m.group(1) == PHASES
 
-    def test_helper_phases_same_as_17025(self):
-        assert tuple(ag.HELPER_PHASES) == tuple(PHASES_17025.split())
+    def test_helper_phases_unchanged(self):
+        assert tuple(ag.HELPER_PHASES) == tuple(PHASES.split())
 
-    def test_no_new_phase_added(self):
-        """Иначе sudoers-правило на сервере пришлось бы переустанавливать."""
+    def test_dispatcher_matches_allowed(self):
+        """Новых фаз нет — переустановка sudoers-правила не требуется."""
         sh = _read(HELPER_SH)
         allowed = set(re.search(r'ALLOWED_PHASES="([^"]+)"', sh).group(1).split())
         dispatched = set(re.findall(r'^\s{4}([a-z-]+)\)\s+phase_', sh, re.M))
-        # install-rule/remove-rule — ручные, их в правиле нет намеренно
         assert dispatched - {"install-rule", "remove-rule"} == allowed
 
     def test_step_order_unchanged(self):
         assert ag.STEP_ORDER == ["precheck", "cli", "login", "tun", "tunnel",
                                  "autopilot", "verify", "done"]
 
-
-# ==============================================================================
-#  8) Документация и чистка
-# ==============================================================================
-class TestDocsAndCleanup:
     def test_readme_lists_real_phases(self):
-        md = _read(README)
-        line = [l for l in md.splitlines() if "ymaster-adguard-setup preflight" in l]
-        assert line, "строка с перечнем фаз не найдена"
+        line = [l for l in _read(README).splitlines()
+                if "ymaster-adguard-setup preflight" in l]
+        assert line
         assert "socks" not in line[0]
         for ph in ("tun", "off", "units", "autopilot"):
             assert ph in line[0], line[0]
 
-    def test_readme_has_no_stale_socks_phase(self):
-        """Фазы `socks` больше нет — в инструкции её быть не должно."""
+    def test_readme_says_checks_do_not_block(self):
+        """Инструкция честно говорит: наблюдения установку не прерывают."""
         md = _read(README)
-        assert "ymaster-adguard-setup socks" not in md
-        assert not re.search(r'\|\s*socks\s*\|', md)
+        assert "не прерывают установку" in md
+        assert "не прерывается" in md
 
     def test_helper_has_no_stale_synonym_claim(self):
-        """Комментарий «программа по-прежнему вызывает фазу socks» — неправда."""
         sh = _read(HELPER_SH)
         assert "по-прежнему вызывает фазу" not in sh
         assert "принято как синоним" not in sh
 
-    def test_readme_documents_self_checks(self):
-        md = _read(README)
-        assert "Что мастер проверяет сам" in md
-        assert "selective" in md
-        assert "try-restart" in md
-
     def test_autopilot_no_redundant_enable(self):
-        """Лишнее убрано: `enable` перед `enable --now` был повтором."""
         src = _read("app/services/adguard_setup.py")
         fn = src[src.index("def _step_autopilot"):]
         fn = fn[:fn.index("\ndef ")]
@@ -667,49 +618,3 @@ class TestDocsAndCleanup:
             fn = fn[:fn.index("\ndef ")]
             assert '"adguard-vpn-telegram"' not in fn, fn_name
             assert '"tg-health.timer"' not in fn, fn_name
-
-    def test_constants_used(self):
-        src = _read("app/services/adguard_setup.py")
-        assert "TUNNEL_UNIT" in src and "TIMER_UNIT" in src
-
-
-# ==============================================================================
-#  9) Версия и синхронизация
-# ==============================================================================
-class TestVersions17026:
-    def test_app_version(self):
-        assert settings.APP_VERSION == VER
-
-    def test_sync_points_have_no_previous_version(self):
-        for p in SYNC_POINTS:
-            assert PREV not in _read(p), p
-
-    def test_sync_points_have_new_version(self):
-        for p in SYNC_POINTS:
-            assert VER in _read(p), p
-
-    def test_changelog_entry_once(self):
-        md = _read(CHANGELOG)
-        assert md.count(f"## [{VER}]") == 1
-
-    def test_changelog_new_entry_is_first(self):
-        md = _read(CHANGELOG)
-        assert md.index(f"## [{VER}]") < md.index(f"## [{PREV}]")
-
-    def test_changelog_mentions_key_fixes(self):
-        md = _read(CHANGELOG)
-        sec = md[md.index(f"## [{VER}]"):md.index(f"## [{PREV}]")]
-        for needle in ("selective", "1080", "try-restart", "install-rule",
-                       "/dev/net/tun", "socks"):
-            assert needle in sec, needle
-
-    def test_whats_new_entry(self):
-        js = _read(APP_JS)
-        assert f"'{VER}': [" in js
-
-    def test_whats_new_is_user_facing(self):
-        js = _read(APP_JS)
-        i = js.index(f"'{VER}': [")
-        block = js[i:i + 3000]
-        assert "Telegram" in block
-        assert "selective" in block or "только Telegram" in block

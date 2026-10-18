@@ -620,16 +620,15 @@ def _step_precheck() -> None:
                            "systemd (Ubuntu/Debian).")
     if not shutil.which("curl"):
         raise RuntimeError("curl не найден: sudo apt install -y curl")
-    # v1.70.26: /dev/net/tun проверяем ДО установки CLI и ДО ссылки входа.
-    # Без TUN вся схема «VPN только для Telegram» невозможна, а раньше отказ
-    # всплывал лишь в шаге tun — то есть после 1–2 минут установки и после
-    # того, как владелец открыл и подтвердил ссылку входа. Помощник проверяет
-    # то же в фазе preflight, но она вызывается только в режиме helper,
-    # поэтому здесь проверка своя, работающая при любом режиме прав.
+    # v1.70.27: /dev/net/tun — ПРЕДУПРЕЖДЕНИЕ в журнале, а не отказ. Узел
+    # устройства может появиться позже (модуль tun грузится по требованию), а
+    # авторитетный вердикт выносит сам CLI: если TUN невозможен, `config
+    # set-mode TUN` и `connect` упадут со своим сообщением. Блокировать
+    # установку из-за собственной догадки — значит мешать запуску VPN.
     if not os.path.exists("/dev/net/tun"):
-        raise RuntimeError("Нет /dev/net/tun — TUN-режим недоступен "
-                           "(сервер в контейнере без NET_ADMIN?). Без него "
-                           "поднять VPN только для Telegram не получится.")
+        job.say("precheck", "Внимание: /dev/net/tun не найден — если TUN-режим "
+                            "не включится, причина в этом (модуль: modprobe "
+                            "tun). Продолжаю: вердикт вынесет сам CLI.")
     mode, note = _detect_rights()
     if not mode:
         job.one_time_cmd = one_time_cmd()
@@ -958,15 +957,18 @@ def _step_tunnel() -> None:
     if rc != 0:
         raise RuntimeError("Служба туннеля не запустилась: "
                            + (out or "").strip()[-300:])
-    for _ in range(10):                        # до 20 с на подключение
+    # v1.70.27: до 60 с вместо 20 — первое подключение в TUN-режиме на
+    # медленном канале в 20 с не укладывается (как и в помощнике).
+    for _ in range(30):
         rc, _ = run_cmd(["systemctl", "is-active", TUNNEL_UNIT],
                         timeout=15)
         if rc == 0:
             break
         time.sleep(2)
     if rc != 0:
-        raise RuntimeError("Туннель не поднялся за 20 с — смотрите "
-                           "journalctl -u adguard-vpn-telegram.")
+        raise RuntimeError("Туннель не поднялся за 60 с — смотрите "
+                           "journalctl -u " + TUNNEL_UNIT + " (частая "
+                           "причина: нет активной лицензии AdGuard).")
     job.say("tunnel", "Туннель подключён, служба активна "
                       "(переживает перезагрузку).", "done", 68)
 
@@ -1004,10 +1006,11 @@ def _step_verify(db) -> None:
     r = tg.ping_proxy(db, samples=3, scheduled=False)
     if not r.get("ok"):
         raise RuntimeError("Путь до Telegram не отвечает через туннель — "
-                           "проверьте вход/лицензию AdGuard и что "
-                           "api.telegram.org попал в selective-исключения "
-                           "(`adguardvpn-cli site-exclusions show`); локацию "
-                           "подберёт автопилот в 15:10 или кнопка «📏 Пинг».")
+                           "проверьте вход/лицензию AdGuard (`adguardvpn-cli "
+                           "license`), что режим исключений selective "
+                           "(`site-exclusions mode`), а api.telegram.org в "
+                           "списке (`site-exclusions show`); локацию подберёт "
+                           "автопилот в 15:10 или кнопка «📏 Пинг».")
     job.ping_ms = r.get("ms")
     job.say("verify", f"Путь жив: средний пинг {r.get('ms')} мс "
                       "(замерен напрямую — в TUN это и есть путь через "

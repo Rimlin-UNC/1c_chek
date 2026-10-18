@@ -701,6 +701,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.26: режим «через VPN только Telegram» перечитывается, а не предполагается');
   ok(bundle.includes('1080') && bundle.includes('КРОМЕ Telegram'),
      'v1.70.26: владельцу объяснены инверсия general-режима и остаточный SOCKS-порт');
+  // v1.70.27: проверки вне документации AdGuard больше не прерывают установку —
+  // только предупреждения. Фатальны коды возврата документированных команд.
+  ok(bundle.includes("'1.70.27':") && bundle.includes('документаци') &&
+     bundle.includes('60 секунд'),
+     'v1.70.27: AdGuard VPN — документированная последовательность, ожидание туннеля 60 с');
+  ok(bundle.includes('предупреждени') && bundle.includes('selective'),
+     'v1.70.27: расхождение показаний CLI — предупреждение, а не отказ');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

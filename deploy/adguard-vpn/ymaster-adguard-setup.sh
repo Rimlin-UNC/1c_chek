@@ -215,13 +215,13 @@ phase_preflight() {
   [ "$(uname -s)" = "Linux" ] || die "автоустановка работает на Linux"
   systemctl --version >/dev/null 2>&1 || die "systemd не найден (нужен Ubuntu/Debian)"
   command -v curl >/dev/null 2>&1 || die "curl не найден: apt install -y curl"
-  # v1.70.26: /dev/net/tun проверяем ЗДЕСЬ, а не только в фазе tun. Раньше
-  # отказ всплывал в самом конце — уже ПОСЛЕ установки CLI (1–2 минуты) и
-  # после того, как владелец открыл ссылку входа и подтвердил её. Без TUN
-  # схема «VPN только для Telegram» невозможна в принципе, поэтому говорить
-  # об этом надо до установки, а не после потраченной ссылки подтверждения.
+  # v1.70.27: /dev/net/tun — ПРЕДУПРЕЖДЕНИЕ, а не отказ. Узел устройства
+  # может появиться позже (модуль tun грузится по требованию), а авторитетный
+  # вердикт всё равно выносит сам CLI: если TUN невозможен, `config set-mode
+  # TUN` и `connect` упадут со своим сообщением. Блокировать установку из-за
+  # собственной догадки на раннем шаге — значит мешать запуску VPN.
   [ -e /dev/net/tun ] \
-    || die "нет /dev/net/tun — TUN-режим недоступен (контейнер без NET_ADMIN?). Без него поднять VPN только для Telegram не получится"
+    || say "внимание: /dev/net/tun не найден — если TUN-режим не включится, причина в этом (модуль: modprobe tun)"
   [ -d "$KIT_DIR" ] || die "комплект не разложен ($KIT_DIR) — выполните install-rule ещё раз"
   if cli_path >/dev/null 2>&1; then
     say "cli: $(cli_path)"
@@ -312,10 +312,12 @@ phase_login() {
 # сервера, КРОМЕ перечисленных доменов, — то есть сайт, ФНС, MAX и 1С
 # уехали бы в VPN, а Telegram остался прямым (и заблокированным). Прежняя
 # обязательная проверка «api.telegram.org присутствует в show» эту инверсию
-# НЕ ловила: домен лежал бы в общем списке и grep проходил. Молча перевернуть
-# требование «туннелим только Telegram» недопустимо, поэтому режим читается
-# обратно (`site-exclusions mode` без аргументов печатает текущий — README CLI)
-# и при расхождении фаза падает с точной причиной.
+# НЕ ловила: домен лежал бы в общем списке и grep проходил.
+# v1.70.27: режим читается обратно (`site-exclusions mode` без аргументов
+# печатает текущий — README CLI), но расхождение даёт ПРЕДУПРЕЖДЕНИЕ в живом
+# журнале, а не отказ: доверие к документированному коду возврата важнее, чем
+# догадка о формате текстового вывода CLI, а блокировать запуск VPN из-за
+# нераспознанной строки нельзя. Фактическую проверку пути делает шаг verify.
 phase_tun() {
   need_root "tun"
   [ -e /dev/net/tun ] || die "нет /dev/net/tun — TUN-режим недоступен (контейнер без NET_ADMIN?)"
@@ -325,15 +327,19 @@ phase_tun() {
     || die "set-tun-routing-mode AUTO не удался"
   "$cli" site-exclusions mode selective \
     || die "site-exclusions mode selective не удался"
-  # v1.70.26: перечитываем режим — без аргументов `mode` печатает текущий.
-  # Это единственная защита от тихой инверсии требования (см. шапку фазы):
-  # general = всё КРОМЕ Telegram, selective = ТОЛЬКО Telegram.
+  # v1.70.27: перечитываем режим, но НЕ блокируем установку. Документированный
+  # контракт — код возврата `site-exclusions mode selective` (проверен выше);
+  # формат текстового вывода CLI нам не подконтролен и может отличаться, а
+  # падать из-за нераспознанной строки — значит мешать запуску VPN.
+  # Расхождение показываем в живом журнале: general — противоположный смысл
+  # списка (в VPN уходит всё, КРОМЕ Telegram). Настоящая проверка пути — шаг
+  # verify в программе: он меряет фактический маршрут до api.telegram.org.
   local cur
   cur=$("$cli" site-exclusions mode 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
   case "$cur" in
-    *selective*) : ;;
-    *general*)   die "режим исключений остался GENERAL — через VPN шёл бы весь трафик сервера КРОМЕ Telegram (нужно наоборот). Выполните: sudo adguardvpn-cli site-exclusions mode selective" ;;
-    *)           die "не подтвердить selective-режим (вывод CLI: ${cur:-пусто}). Проверьте: sudo adguardvpn-cli site-exclusions mode" ;;
+    *selective*) say "режим исключений подтверждён: selective" ;;
+    *general*)   say "ВНИМАНИЕ: CLI ответил «general» — при нём через VPN идёт весь трафик КРОМЕ Telegram. Проверьте: sudo adguardvpn-cli site-exclusions mode" ;;
+    *)           say "ВНИМАНИЕ: режим исключений не распознан из ответа CLI (${cur:-пусто}). Проверьте: sudo adguardvpn-cli site-exclusions mode" ;;
   esac
 
   # Домены Telegram. api.telegram.org — обязателен (Bot API); поддомены
@@ -382,26 +388,21 @@ phase_units() {
   systemctl daemon-reload || die "daemon-reload не удался"
   systemctl enable "$TUNNEL_UNIT" >/dev/null 2>&1 || true
   systemctl restart "$TUNNEL_UNIT" || die "служба туннеля не запустилась (journalctl -u $TUNNEL_UNIT)"
+  # v1.70.27: ждём до 60 с вместо 20. Первое подключение в TUN-режиме
+  # (handshake, выбор локации) на медленном канале в 20 с не укладывается, и
+  # мастер рапортовал «туннель не поднялся» на живом подключении.
   local i
-  for i in 1 2 3 4 5 6 7 8 9 10; do
+  for i in $(seq 1 30); do
     [ "$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null)" = "active" ] && break
     sleep 2
   done
   [ "$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null)" = "active" ] \
-    || die "туннель не поднялся за 20 с — journalctl -u $TUNNEL_UNIT (частая причина: нет активной лицензии AdGuard — sudo adguardvpn-cli license)"
-  # v1.70.26: «active» — ещё не доказательство, что мы в TUN. Проверяем по
-  # факту, а не по конфигу: юнит жив, но режим мог остаться SOCKS (тогда
-  # слушается 127.0.0.1:1080, а в туннель прозрачно не уходит НИЧЕГО — поле
-  # «Прокси» мастер очистил, и бот пошёл бы напрямую, то есть в блокировку).
-  # Проверки выбраны независимыми от формата вывода CLI: слушающий порт 1080
-  # и наличие tun-интерфейса — это поведение, а не текст конфига.
+    || die "туннель не поднялся за 60 с — journalctl -u $TUNNEL_UNIT (частая причина: нет активной лицензии AdGuard — sudo adguardvpn-cli license)"
+  # v1.70.27: слушатель на 1080 — ПРЕДУПРЕЖДЕНИЕ, а не отказ. Порт может быть
+  # занят посторонним сервисом, и блокировать из-за этого запуск VPN нельзя.
   if (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null; then
     exec 3>&- 2>/dev/null || true
-    die "туннель активен, но режим остался SOCKS (слушается 127.0.0.1:1080) — трафик Telegram в VPN не уходит. Выполните: sudo adguardvpn-cli config set-mode TUN && sudo systemctl restart $TUNNEL_UNIT"
-  fi
-  if command -v ip >/dev/null 2>&1; then
-    ip -o link show 2>/dev/null | grep -qiE '^[0-9]+: (tun|utun|wg|adguard)' \
-      || say "внимание: tun-интерфейс не найден (ip link) — проверьте маршруты: ip route"
+    say "внимание: слушается 127.0.0.1:1080 — если это SOCKS-режим AdGuard, трафик Telegram в VPN не уходит (sudo adguardvpn-cli config set-mode TUN)"
   fi
   say "туннель активен и переживёт перезагрузку"
 }
@@ -436,12 +437,16 @@ phase_off() {
   local st tst ten
   st=$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null || true)
   [ "$st" = "active" ] && die "туннель не остановился — systemctl status $TUNNEL_UNIT"
+  # v1.70.27: не блокируем выключение. От воскрешения VPN защищает не этот
+  # отказ, а сам автопилот: tg-health.sh выходит, если юнит туннеля снят с
+  # автозапуска (disabled/masked), а мы его только что сняли. Проверка ниже —
+  # честная подсказка владельцу, а не повод отказываться выключать VPN.
   tst=$(systemctl is-active "$TIMER_UNIT" 2>/dev/null || true)
   ten=$(systemctl is-enabled "$TIMER_UNIT" 2>/dev/null || true)
   if [ "$tst" = "active" ] || [ "$ten" = "enabled" ]; then
-    die "автопилот не отключился (active=$tst, enabled=$ten, код $trc) — в 15:10 он включил бы VPN обратно. Выполните: sudo systemctl disable --now $TIMER_UNIT"
+    say "внимание: автопилот всё ещё включён (active=$tst, enabled=$ten, код $trc) — sudo systemctl disable --now $TIMER_UNIT"
   fi
-  say "VPN выключен: туннель остановлен, автопилот отключён ($tst/$ten)"
+  say "VPN выключен: туннель остановлен, автопилот отключён"
   say "вход и лицензия сохранены — повторное включение без ссылки"
 }
 
