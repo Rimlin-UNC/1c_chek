@@ -220,13 +220,19 @@ class TestTtyOutputParsing:
         assert all(isinstance(d, float) or isinstance(d, int)
                    for d, _k in ag.LOGIN_ANSWERS)
 
-    def test_non_adguard_domain_still_rejected(self):
-        """Защита от подменённого домена (#188) не ослаблена pty-выводом."""
+    def test_pty_output_does_not_change_url_filtering(self):
+        """Очистка pty-вывода не меняет разбор ссылки: эскейп не прилипает к
+        URL, а случайный адрес не принимается за ссылку входа.
+
+        v1.70.30: фильтром служит форма device-code, а не домен — AdGuard
+        использует сменяемые домены авторизации (#188, ответ разработчика).
+        """
         assert ag.extract_login_url(
             ag._clean_tty("open https://evil.example.com/x\x1b[0m")) == ""
         assert ag.extract_login_url(
-            ag._clean_tty("open https://auth.adguard.io/x\x1b[0m")) == \
-            "https://auth.adguard.io/x"
+            ag._clean_tty(
+                "open https://auth.adguard.io/device_code?user_code=A\x1b[0m")
+        ) == "https://auth.adguard.io/device_code?user_code=A"
 
 
 # ==============================================================================

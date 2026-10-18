@@ -142,15 +142,26 @@ class TestVersions17020:
         assert not offenders, "\n".join(offenders)
 
     def test_guard_catches_the_original_bug(self):
-        """Гард не vacuous: исходную строку дефекта он бы поймал."""
-        ver = settings.APP_VERSION
-        markers = _version_markers(ver)
+        """Гард не vacuous: исходную строку дефекта он бы поймал.
+
+        v1.70.30: демонстрация больше НЕ привязана к текущему номеру версии.
+        Раньше тест требовал, чтобы версия содержала «1.70.2» (тогда «?v=1.70.2»
+        оказывался префиксом «?v=1.70.20»); на версии 1.70.30 это перестало
+        быть правдой, и тест падал, хотя сам гард исправно работал. Ловушка
+        воспроизводится на синтетической паре версий — той самой, что и была
+        причиной исходного сбоя.
+        """
         # «?v=1.70.2» ⊂ «?v=1.70.20» — ровно то, что сломало прогон
-        assert "1.70.2" in ver and any(
-            "?v=1.70.2" in m for m in markers), markers
+        trap = _version_markers("1.70.20")
+        assert any("?v=1.70.2" in m for m in trap), trap
         # безопасные (заякоренные) формы подстрокой не являются
         for safe in ('?v=1.70.2"', "-v1.70.2'", '?v=1.70.1"'):
-            assert not any(safe in m for m in markers), safe
+            assert not any(safe in m for m in trap), safe
+        # а на ТЕКУЩЕЙ версии маркеры строятся тем же способом — именно их
+        # сканирует гард test_no_test_pin_is_substring_of_current_version
+        cur = _version_markers(settings.APP_VERSION)
+        assert f"?v={settings.APP_VERSION}" in cur
+        assert settings.APP_VERSION in cur
 
 
 # ==============================================================================

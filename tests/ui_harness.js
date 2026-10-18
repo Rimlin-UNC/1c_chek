@@ -740,6 +740,16 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('заполнитель') && bundle.includes('это не команда'),
      'v1.70.29: владельцу объяснено, что заполнитель в инструкции — не команда');
 
+  // v1.70.30: ссылка входа со сменяемого домена AdGuard принимается — ответ
+  // разработчика в #188: в странах, блокирующих VPN, это штатный механизм.
+  // Белый список доменов молча отбрасывал рабочую ссылку.
+  ok(bundle.includes("'1.70.30':") && bundle.includes('guidedeficit.blog') &&
+     bundle.includes('сменяемые домены'),
+     'v1.70.30: сменяемые домены авторизации AdGuard — штатно, ссылка не отбрасывается');
+  ok(bundle.includes('set-protocol http2') && bundle.includes('#176') &&
+     bundle.includes('Unable to fetch locations'),
+     'v1.70.30: отказ туннеля объяснён журналом и документированными причинами');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

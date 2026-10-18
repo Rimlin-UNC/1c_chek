@@ -54,12 +54,25 @@ class TestLoginUrl:
         assert ag.extract_login_url(line) == \
             "https://auth.adguard.io/device_code?user_code=ABCD-1234"
 
-    def test_foreign_link_rejected(self):
-        # защита от подмены домена (issue #188: CLI мог вернуть чужой домен)
+    def test_rotating_domain_accepted_random_url_rejected(self):
+        """v1.70.30: #188 оказался не подменой домена, а штатным механизмом.
+
+        Разработчик AdGuard (sfionov) в #188 ответил, что в странах, где VPN
+        блокируют, AdGuard НАМЕРЕННО использует сменяемые домены авторизации —
+        «this is expected behaviour». Значит `auctionassociation.space` из того
+        обращения — рабочая ссылка, а прежний отказ по белому списку ломал
+        установку: панель не показывала ссылку вовсе, и мастер ждал
+        подтверждения до таймаута.
+
+        Фильтром осталась ФОРМА ссылки (OAuth device-code): случайные URL из
+        журнала по-прежнему не принимаются за ссылку входа.
+        """
         assert ag.extract_login_url(
             "open https://auctionassociation.space/device_code?user_code=X"
-        ) == ""
+        ) == "https://auctionassociation.space/device_code?user_code=X"
         assert ag.extract_login_url("no link here") == ""
+        assert ag.extract_login_url(
+            "инструкция: https://example.com/README.md") == ""
 
 
 @pytest.fixture()

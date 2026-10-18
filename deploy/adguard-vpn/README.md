@@ -83,9 +83,78 @@
 check») и повторно `b`, если ссылка ещё не пришла. Это в точности воспроизводит
 сеанс SSH, в котором вход работал. Вывод очищается от ANSI-эскейпов и `\r` до
 того, как попасть в журнал и в разбор ссылки: иначе эскейп прилипал бы к концу
-URL и владелец получил бы нерабочий адрес. Домен ссылки по-прежнему проверяется
-по списку AdGuard — подменённый домен не показывается
-([#188](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/188)).
+URL и владелец получил бы нерабочий адрес.
+
+### Ссылка приходит со сменяемого домена — это штатно (v1.70.30)
+
+На живом сервере ссылка входа выглядела так:
+
+    You need to authorize in your browser. The following link will be
+    available for 1799 seconds:
+    https://guidedeficit.blog/device_code?user_code=NKHD-WXSR
+
+Домен `guidedeficit.blog` не похож на AdGuard, и раньше программа такую ссылку
+**молча отбрасывала**: панель не показывала ничего, а мастер ждал подтверждения
+входа до таймаута. То есть белый список доменов ломал ровно тех, кому VPN
+нужнее всего.
+
+Оказалось, это штатный механизм AdGuard. Дословный ответ разработчика AdGuard
+(`sfionov`) в обращении
+[#188](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/188):
+
+> «AdGuard VPN can not use main domains in countries which may block VPNs (they
+> are either blocked, or will be blocked if used by AG VPN), so some rotating
+> ones are used. If you are in one of such countries, this is expected
+> behaviour.»
+
+То есть в странах, где VPN блокируют, AdGuard **намеренно** использует
+сменяемые домены авторизации — основные там заблокированы или будут
+заблокированы. В самом #188 таким доменом был `auctionassociation.space`.
+
+Поэтому признаком ссылки теперь служит её **форма** (OAuth device-code:
+`/device_code?user_code=…`), одинаковая у официального вида, у #188 и у живого
+сервера, а не домен. Форма отсекает случайные URL из журнала (например, ссылку
+на инструкцию в выводе установщика). Домен при этом показывается владельцу, и
+если он не из известных AdGuard — программа поясняет, что это норма, и просит
+сверить код в ссылке с кодом в журнале. Решение открыть ссылку остаётся за
+владельцем: молча подставлять адрес неизвестного домена в кнопку было бы
+неправильно, но и прятать рабочую ссылку нельзя.
+
+### Туннель не поднимается: «Unable to fetch locations» (v1.70.30)
+
+Вход может пройти успешно, а `connect` — нет. На живом сервере это выглядело
+так:
+
+    adguardvpn-cli list-locations
+    Failed to get locations list
+
+    adguardvpn-cli connect
+    ERROR [549263] UDP_SOCKET udp_so…
+    ERROR [549255] LocationManager f…
+    Failed to start the VPN service in the background:
+      Unable to fetch locations. Backend error: Timed out. Timed out
+
+Это **не** поломка программы: CLI не может достучаться до бэкенда AdGuard.
+Мастер теперь показывает в панели **журнал службы туннеля** (последние 25
+строк) вместе с документированными причинами, чтобы не искать их в SSH:
+
+| Признак в журнале | Причина | Документированная проверка |
+|---|---|---|
+| сообщение про лицензию/подписку | нет активной лицензии | `sudo adguardvpn-cli license` |
+| `ERROR … UDP_SOCKET …` | провайдер блокирует UDP (QUIC) | `sudo adguardvpn-cli config set-protocol http2` |
+| `Network unreachable`, попытки IPv6 | IPv6 в сети не работает, а CLI пробует IPv6-конечные точки ([#176](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/176)) | сравнить с `adguardvpn-cli connect -4` |
+| `Unable to fetch locations. Backend error: Timed out` | бэкенд AdGuard недоступен из этой сети | `adguardvpn-cli export-logs` и обращение в поддержку AdGuard |
+
+Программа намеренно **не меняет** протокол и не принуждает IPv4 сама: и
+`set-protocol`, и `-4` документированы, но выбирать между ними вслепую — значит
+маскировать настоящую причину. Мастер показывает журнал и точную команду, а
+решает владелец.
+
+Список исключений на эту ошибку **не влияет**: он управляет маршрутизацией
+трафика, а не доступностью бэкенда AdGuard. Но путать их нельзя — пустой список
+в режиме selective даёт другую, тихую поломку: **через VPN не идёт ничего,
+включая Telegram**, при внешне правильной конфигурации. Поэтому мастер
+добавляет домены Telegram до подъёма туннеля.
 
 Если CLI всё же отвечает `Failed to get auth link` — это не наша поломка, а
 дефект самого AdGuard VPN CLI:

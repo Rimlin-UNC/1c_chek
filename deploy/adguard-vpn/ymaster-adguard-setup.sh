@@ -404,8 +404,22 @@ phase_units() {
     [ "$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null)" = "active" ] && break
     sleep 2
   done
-  [ "$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null)" = "active" ] \
-    || die "туннель не поднялся за 60 с — journalctl -u $TUNNEL_UNIT (частая причина: нет активной лицензии AdGuard — sudo adguardvpn-cli license)"
+  if [ "$(systemctl is-active "$TUNNEL_UNIT" 2>/dev/null)" != "active" ]; then
+    # v1.70.30: причина отказа видна в журнале службы — показываем её в панели
+    # сразу, а не отправляем владельца в SSH. На живом сервере там были строки
+    # «ERROR … UDP_SOCKET …» и «Unable to fetch locations. Backend error:
+    # Timed out»: CLI не достучался до бэкенда AdGuard. Без журнала это
+    # выглядело как «туннель не поднялся» без внятной причины, и поиск
+    # превращался в переписку с сервером.
+    say "туннель не активен — показываю журнал службы (последние 25 строк)"
+    if command -v journalctl >/dev/null 2>&1; then
+      journalctl -u "$TUNNEL_UNIT" -n 25 --no-pager 2>/dev/null |
+        while IFS= read -r jl; do
+          if [ -n "$jl" ]; then say "  | $jl"; fi
+        done
+    fi
+    die "туннель не поднялся за 60 с. Документированные причины и их проверки (сверьтесь с журналом выше): (1) нет активной лицензии — sudo adguardvpn-cli license; (2) провайдер блокирует UDP, в журнале ошибки UDP_SOCKET — sudo adguardvpn-cli config set-protocol http2; (3) IPv6 в сети не работает, а CLI пробует IPv6-конечные точки (AdguardTeam/AdGuardVPNCLI#176) — сравните с adguardvpn-cli connect -4; (4) бэкенд AdGuard недоступен из этой сети — «Unable to fetch locations. Backend error: Timed out»"
+  fi
   # v1.70.27: слушатель на 1080 — ПРЕДУПРЕЖДЕНИЕ, а не отказ. Порт может быть
   # занят посторонним сервисом, и блокировать из-за этого запуск VPN нельзя.
   if (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null; then

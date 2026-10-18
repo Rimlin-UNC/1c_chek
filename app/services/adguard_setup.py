@@ -479,24 +479,79 @@ def _find_cli() -> str:
 ADGUARD_DOMAINS = ("adguard.io", "adguard.com", "adguard-vpn.com",
                    "adguardaccount.com")
 
+# v1.70.30: AdGuard НАМЕРЕННО использует сменяемые домены авторизации в
+# странах, где VPN блокируют. Дословный ответ разработчика AdGuard (sfionov) в
+# AdguardTeam/AdGuardVPNCLI#188:
+#
+#   «AdGuard VPN can not use main domains in countries which may block VPNs
+#    (they are either blocked, or will be blocked if used by AG VPN), so some
+#    rotating ones are used. If you are in one of such countries, this is
+#    expected behaviour.»
+#
+# На живом сервере владельца ссылка пришла с guidedeficit.blog, в самом #188 —
+# с auctionassociation.space. Прежний белый список отбрасывал обе, то есть
+# ломал ровно тех, кому VPN нужнее всего: панель не показывала ссылку вовсе, а
+# мастер ждал подтверждения до таймаута. Подмена домена, от которой этот список
+# должен был защищать, оказалась штатным механизмом AdGuard.
+#
+# Поэтому признаком ссылки служит её документированная ФОРМА (OAuth
+# device-code), одинаковая у всех трёх независимых источников:
+#   https://auth.adguard.io/device_code?user_code=ABCD-1234    (официальный вид)
+#   https://auctionassociation.space/device_code?user_code=X   (#188)
+#   https://guidedeficit.blog/device_code?user_code=NKHD-WXSR  (живой сервер)
+DEVICE_CODE_MARKERS = ("device_code", "user_code")
+
+ROTATING_DOMAIN_NOTE = (
+    "Домен ссылки не входит в известный список AdGuard — это ШТАТНОЕ "
+    "поведение: AdGuard намеренно использует сменяемые домены авторизации в "
+    "странах, где VPN блокируют (ответ разработчика AdGuard в обращении "
+    "AdguardTeam/AdGuardVPNCLI#188). Сверьте код в ссылке с кодом в строке "
+    "выше и открывайте её.")
+
+
+def is_adguard_domain(host: str) -> bool:
+    """Известный домен AdGuard. v1.70.30: это СПРАВКА, а не фильтр —
+    сменяемые домены авторизации в него не попадают и попадать не должны."""
+    host = (host or "").lower()
+    return any(host == d or host.endswith("." + d) for d in ADGUARD_DOMAINS)
+
+
+def login_url_host(url: str) -> str:
+    """Домен ссылки входа (для пояснения владельцу, что он открывает)."""
+    from urllib.parse import urlsplit
+    try:
+        return (urlsplit(url or "").hostname or "").lower()
+    except ValueError:
+        return ""
+
 
 def extract_login_url(line: str) -> str:
-    """Ссылка подтверждения из строки stdout (OAuth device-code AdGuard).
+    """Ссылка подтверждения входа из строки вывода CLI (OAuth device-code).
 
-    Официальный вид: https://auth.adguard.io/device_code?user_code=XXXX.
-    Принимаем ТОЛЬКО домены AdGuard: CLI на скомпрометированной сети мог
-    получить подменённый домен (issue AdguardTeam/AdGuardVPNCLI #188) —
-    такую ссылку владельцу не показываем, шаг честно упадёт по таймауту.
+    Официальный вид: `https://auth.adguard.io/device_code?user_code=XXXX`,
+    но домен может быть любым сменяемым (см. DEVICE_CODE_MARKERS) — в
+    блокирующих VPN странах AdGuard основные домены не использует.
+
+    v1.70.30: домен больше НЕ фильтр. Фильтр — форма ссылки: схема http(s),
+    наличие хоста и маркера device-code. Это отсекает случайные URL из
+    журнала (например, ссылку на инструкцию в выводе установщика), но
+    пропускает настоящую ссылку входа с любого домена AdGuard.
     """
     from urllib.parse import urlsplit
     m = LOGIN_URL_RE.search(line or "")
     if not m:
         return ""
     u = m.group(0)
-    host = (urlsplit(u).hostname or "").lower()
-    if any(host == d or host.endswith("." + d) for d in ADGUARD_DOMAINS):
-        return u
-    return ""
+    try:
+        sp = urlsplit(u)
+    except ValueError:
+        return ""
+    if sp.scheme not in ("http", "https") or not sp.hostname:
+        return ""
+    low = u.lower()
+    if not any(k in low for k in DEVICE_CODE_MARKERS):
+        return ""           # случайный URL в выводе — это не ссылка входа
+    return u
 
 
 def _login_argv(cli: str) -> list[str]:
@@ -537,7 +592,19 @@ def _kill_proc(proc) -> None:
 # подтверждения не появлялась вовсе. В SSH-терминале (как в v1.70.13) владелец
 # нажимал `b` руками, поэтому там всё работало. Теперь команде даётся
 # настоящий псевдотерминал и мастер отвечает сам.
-LOGIN_ANSWERS = ((0.7, "b"), (8.0, "s"), (8.0, "b"))
+# v1.70.30: порядок ответов исправлен по живому выводу CLI. Настоящий
+# `adguardvpn-cli login` печатает ссылку ДО меню:
+#
+#   You need to authorize in your browser. The following link will be
+#   available for 1799 seconds: https://…/device_code?user_code=…
+#   b - Open link in browser
+#   s - Speed up check
+#   x - Cancel
+#
+# Поэтому отвечать надо независимо от того, увидели мы ссылку или нет, а «s»
+# («speed up check») уместно повторять, пока владелец подтверждает вход в
+# браузере — ровно для этого он и описан в документации.
+LOGIN_ANSWERS = ((0.7, "b"), (8.0, "s"), (20.0, "s"), (45.0, "s"))
 LOGIN_ANSWER_HINT = ("CLI завершился без ссылки входа. Если VPN не поднимется "
                      "на следующем шаге, выполните в SSH: sudo adguardvpn-cli "
                      "login и нажмите «b» — ссылка появится в терминале.")
@@ -594,6 +661,11 @@ def _login_worker(cli: str) -> tuple[int, str, str]:
                         "Ссылка для регистрации сервера: " + u +
                         " — откройте её и войдите в аккаунт AdGuard; "
                         "установка продолжится сама.")
+                # v1.70.30: сменяемый домен пугает владельца и выглядит как
+                # подделка. Поясняем сразу, что это норма, и просим сверить
+                # код — иначе ссылку не откроют, и вход сорвётся по таймауту.
+                if not is_adguard_domain(login_url_host(u)):
+                    job.say("login", ROTATING_DOMAIN_NOTE)
 
     argv = _login_argv(cli)
     stop = threading.Event()
@@ -644,9 +716,15 @@ def _login_worker(cli: str) -> tuple[int, str, str]:
                     _feed(line)
 
         def _answer() -> None:
+            # v1.70.30: выход по «url уже есть» был ошибкой. Ссылка появляется
+            # РАНЬШЕ меню, поэтому такой выход оставлял меню без ответа: CLI
+            # висел в ожидании выбора, а мастер ждал его до LOGIN_TIMEOUT
+            # (15 минут) и сообщал об отказе входа на полностью рабочем
+            # сервере. Прерываем ответы только по отмене или по завершению
+            # процесса.
             for delay, key in LOGIN_ANSWERS:
                 time.sleep(delay)
-                if stop.is_set() or url or proc.poll() is not None:
+                if stop.is_set() or proc.poll() is not None:
                     return
                 try:
                     os.write(master, (key + "\r").encode())
