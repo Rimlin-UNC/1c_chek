@@ -551,13 +551,15 @@ class TestDocs:
 
 class TestVersion:
     def test_app_version(self):
+        # Без жёсткого пина: следующий выпуск закономерно поднимает версию,
+        # и «ровно VER» ломалось бы на каждом bump (проверено на 1.70.29).
         assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= \
             (1, 70, 28)
-        assert settings.APP_VERSION == VER
 
     @pytest.mark.parametrize("path", SYNC_POINTS)
     def test_sync_point_has_new_version(self, path):
-        assert VER in _read(path), path
+        # Синхронность точек с ТЕКУЩЕЙ версией: рассинхрон ломает кэш браузера.
+        assert settings.APP_VERSION in _read(path), path
 
     @pytest.mark.parametrize("path", SYNC_POINTS)
     def test_sync_point_has_no_previous_version(self, path):

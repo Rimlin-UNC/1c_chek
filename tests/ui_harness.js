@@ -729,6 +729,17 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes("busy ? 'mid' : (known ? (agVpnOn ? 'right' : 'left') : 'mid')"),
      'v1.70.28: влево — выключено, вправо — включено, середина — неизвестно/идёт');
 
+  // v1.70.29: «вход уже выполнен» — не ошибка (CLI на привязанном аккаунте
+  // может вернуть ненулевой код); обе ловушки ручной инструкции описаны.
+  ok(bundle.includes("'1.70.29':") && bundle.includes('вход уже выполнен') &&
+     bundle.includes('Unit file does not exist'),
+     'v1.70.29: привязанный аккаунт не останавливает мастер; ловушки инструкции закрыты');
+  // Сам заполнитель в бандле остаётся — но только внутри объяснения ловушки
+  // («что нового»). Отсутствие его в КОМАНДАХ инструкции проверяет
+  // tests/test_v17029.py::test_no_placeholder_domain_command по README.
+  ok(bundle.includes('заполнитель') && bundle.includes('это не команда'),
+     'v1.70.29: владельцу объяснено, что заполнитель в инструкции — не команда');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

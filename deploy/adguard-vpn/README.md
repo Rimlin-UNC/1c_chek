@@ -117,11 +117,31 @@ sudo update-ca-certificates
     adguardvpn-cli config set-mode TUN                     # режим TUN
     adguardvpn-cli config set-tun-routing-mode AUTO        # маршруты ведёт сам CLI
     adguardvpn-cli site-exclusions mode selective          # только перечисленное — в VPN
-    adguardvpn-cli site-exclusions add <домены Telegram>
+    adguardvpn-cli site-exclusions add api.telegram.org    # + остальные домены ниже
     systemctl enable --now adguard-vpn-telegram            # connect --no-fork
 
 Фатальны только отказы **этих** команд, отсутствие `/dev/net/tun` в фазе `tun`
 (там TUN действительно невозможен) и реально не поднявшийся туннель.
+
+> **Две ловушки ручного повтора этого списка** (v1.70.29, обе встречены на
+> живом сервере):
+>
+> 1. `site-exclusions add` принимает **конкретные домены**, а не описание
+>    «домены Telegram». Полный список — в разделе «Установка на сервере» и в
+>    `TG_DOMAINS` помощника. Wildcards обязательны **в кавычках**
+>    (`"*.telegram.org"`): без кавычек их раскроет шелл
+>    ([#148](https://github.com/AdguardTeam/AdGuardVPNCLI/issues/148)).
+>    Пустой список в режиме selective означает, что **через VPN не идёт
+>    ничего**, включая Telegram.
+> 2. Юнита `adguard-vpn-telegram.service` не существует, пока его не положил
+>    мастер (шаг `units` берёт файлы из комплекта
+>    `/usr/local/share/ymaster-adguard`, разложенного `install-rule`). Ранняя
+>    команда `systemctl enable --now` отвечает «Unit file … does not exist» —
+>    это не поломка, а порядок шагов.
+>
+> Обе ловушки исчезают, если не повторять список руками, а включить VPN
+> переключателем в блоке «🛡 AdGuard VPN на сервере»: мастер выполняет эти
+> команды сам, в правильном порядке и с настоящими доменами.
 
 Всё остальное — **наблюдения, которые не прерывают установку**. Формат
 текстового вывода CLI нам не подконтролен и может отличаться от ожидаемого,
