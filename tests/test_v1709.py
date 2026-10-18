@@ -66,7 +66,10 @@ class TestSettingsMenuStructure:
             r'<div class="glass card"(?: id="([\w-]+)")?'
             r'(?: data-sec="(\w+)")? style="order:(\d+)', seg)
         with_sec = [(cid, sec, order) for cid, sec, order in cards if sec]
-        assert len(with_sec) == 26, with_sec
+        # v1.70.28: карточек 27 — у AdGuard VPN появился собственный блок
+        # st-adguard в разделе «Устройство и служебное».
+        assert len(with_sec) == 27, with_sec
+        assert ("st-adguard", "device", "49") in with_sec
         assert all(cid and cid.startswith(("st-", "wa-", "mail-"))
                    for cid, _s, _o in with_sec)
         secs = {s for _c, s, _o in with_sec}
@@ -74,7 +77,10 @@ class TestSettingsMenuStructure:
 
     def test_expected_distribution(self):
         js = self.js()
-        expect = {"data": 4, "checks": 6, "integr": 6, "personal": 6, "device": 4}
+        # v1.70.28: device 4 -> 5 (блок AdGuard VPN); из карточки
+        # Telegram-бота он удалён, но сама карточка st-tgbot осталась в integr.
+        expect = {"data": 4, "checks": 6, "integr": 6, "personal": 6,
+                  "device": 5}
         for sec, n in expect.items():
             assert f'data-sec="{sec}"' in js
             assert js.count(f'data-sec="{sec}"') == n, sec

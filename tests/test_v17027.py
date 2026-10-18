@@ -248,11 +248,17 @@ class TestVerifyIsTheRealCheck:
 # ==============================================================================
 class TestVersions17027:
     def test_app_version(self):
-        assert settings.APP_VERSION == VER
+        # Без жёсткого пина: каждое следующее издание закономерно поднимает
+        # версию, и проверка «ровно 1.70.27» ломалась бы на каждом bump
+        # (так и вышло на 1.70.28). Смысл контракта — «не ниже этого выпуска».
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= \
+            (1, 70, 27)
 
     @pytest.mark.parametrize("path", SYNC_POINTS)
     def test_sync_point_has_new_version(self, path):
-        assert VER in _read(path), path
+        # Проверяем СИНХРОННОСТЬ точек с текущей версией, а не конкретное
+        # число: именно рассинхрон ломает кэш браузера после обновления.
+        assert settings.APP_VERSION in _read(path), path
 
     @pytest.mark.parametrize("path", SYNC_POINTS)
     def test_sync_point_has_no_previous_version(self, path):

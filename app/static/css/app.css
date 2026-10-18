@@ -1620,3 +1620,59 @@ body.guest-scroll { height: auto; min-height: 100%;
    на узких экранах; таблица приглашений — 6 колонок вместо 8 */
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .row-actions .btn { flex: 0 1 auto; white-space: nowrap; }
+
+/* --- v1.70.28: блок AdGuard VPN — трёхпозиционный переключатель -------- */
+/* Управление AdGuard VPN переехало из карточки Telegram-бота в собственный
+   блок раздела «Устройство и служебное». Переключатель трёхпозиционный:
+   из среднего положения ВЛЕВО — выключить VPN, ВПРАВО — включить. Среднее
+   положение честно означает «состояние неизвестно» или «операция идёт»:
+   раньше кнопка красилась в «выключен» до первого опроса сервера и врала.
+   Положение задаёт JS атрибутом data-pos на контейнере. */
+.ag-sw { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr;
+  align-items: stretch; padding: 6px; border-radius: 14px; overflow: hidden;
+  border: 1px solid #d8d4ec; background: rgba(59,42,126,.05); }
+.ag-sw-zone { position: relative; z-index: 2; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px; min-width: 0;
+  padding: 10px 6px; border: 0; background: transparent; cursor: pointer;
+  font: inherit; color: #4b4566; border-radius: 10px;
+  transition: color .15s ease, opacity .15s ease; }
+.ag-sw-zone:hover:not(:disabled) { color: #2b2440; }
+.ag-sw-zone:disabled { cursor: default; opacity: .4; }
+.ag-sw-ico { font-size: 18px; line-height: 1; }
+.ag-sw-lbl { font-size: 12px; font-weight: 600; line-height: 1.2; }
+.ag-sw-knob { position: absolute; z-index: 1; top: 6px; bottom: 6px;
+  left: calc(6px + (100% - 12px) / 3); width: calc((100% - 12px) / 3);
+  border-radius: 10px; background: #fff; border: 1px solid #cfc9e6;
+  box-shadow: 0 1px 3px rgba(31,26,54,.18);
+  transition: left .18s ease, background .18s ease, border-color .18s ease; }
+.ag-sw[data-pos="left"] .ag-sw-knob { left: 6px; background: #fdeeec;
+  border-color: rgba(217,83,79,.55); }
+.ag-sw[data-pos="right"] .ag-sw-knob { left: calc(6px + 2 * (100% - 12px) / 3);
+  background: #eaf7f1; border-color: rgba(46,139,87,.55); }
+.ag-sw[data-pos="left"] .ag-sw-left { color: var(--bad); }
+.ag-sw[data-pos="right"] .ag-sw-right { color: var(--ok); }
+/* пока операция идёт, рукоятка дышит в среднем положении — видно, что
+   переключатель не «залип», а ждёт ответа сервера */
+.ag-sw-busy .ag-sw-knob { animation: ag-sw-pulse 1.1s ease-in-out infinite; }
+@keyframes ag-sw-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) {
+  .ag-sw-knob { transition: none; }
+  .ag-sw-busy .ag-sw-knob { animation: none; opacity: .7; }
+}
+
+/* ссылка регистрации сервера — главный элемент блока: она приходит сюда
+   после первого включения и обязана быть заметной */
+.ag-linkbox { margin: 12px 0 0; padding: 12px 14px; border-radius: 12px;
+  background: #f3f0fb; border: 1px solid #cbb8f0; }
+.ag-linkbox-title { font-weight: 700; margin: 0 0 8px; }
+.ag-linkbox .btn { margin-bottom: 6px; }
+.ag-linkurl { margin-top: 4px; word-break: break-all; font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.ag-panel { margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  border: 2px solid #d8d4ec; background: rgba(59,42,126,.04); }
+.ag-steps { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.ag-steps > div { display: flex; gap: 8px; align-items: baseline; }
+.ag-steps > div > span:first-child { width: 20px; text-align: center; flex: none; }
+.ag-log { max-height: 190px; overflow: auto; font-size: 12px; background: #fff;
+  border: 1px solid #d8d4ec; border-radius: 8px; padding: 8px; margin: 0 0 8px; }

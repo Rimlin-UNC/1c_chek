@@ -526,56 +526,174 @@ def _kill_proc(proc) -> None:
             pass
 
 
-def _login_worker(cli: str) -> tuple[int, str, str]:
-    """`login` с живым журналом: строки пишем в job, ссылку — в job.login_url.
+# v1.70.28: `adguardvpn-cli login` — ИНТЕРАКТИВНАЯ команда. По документации
+# AdGuardVPNCLI (раздел «Log in and log out») она показывает меню и ждёт выбора:
+#
+#     b - Open link in browser
+#     s - Speed up check
+#     x - Cancel
+#
+# Мастер запускал CLI с stdin=/dev/null — меню получало EOF, и ссылка
+# подтверждения не появлялась вовсе. В SSH-терминале (как в v1.70.13) владелец
+# нажимал `b` руками, поэтому там всё работало. Теперь команде даётся
+# настоящий псевдотерминал и мастер отвечает сам.
+LOGIN_ANSWERS = ((0.7, "b"), (8.0, "s"), (8.0, "b"))
+LOGIN_ANSWER_HINT = ("CLI завершился без ссылки входа. Если VPN не поднимется "
+                     "на следующем шаге, выполните в SSH: sudo adguardvpn-cli "
+                     "login и нажмите «b» — ссылка появится в терминале.")
+AUTH_LINK_ERROR = "failed to get auth link"
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]")
 
-    Возвращает (код, вывод, ссылка). Ссылку берём из stdout (OAuth
-    device-code: «You need to authorize … https://auth.adguard.io/…» —
-    помощник делает `exec adguardvpn-cli login`, строки идут без буфера).
-    Читает отдельный поток — цикл отмены не блокируется молчаливым stdout.
-    v1.70.16: stdin больше не нужен — пароля у мастера нет.
+
+def _clean_tty(text: str) -> str:
+    """Вывод псевдотерминала: снять ANSI-эскейпы и возвраты каретки."""
+    return ANSI_RE.sub("", text or "").replace("\r", "")
+
+
+def _login_worker(cli: str) -> tuple[int, str, str]:
+    """`login` под псевдотерминалом: строки идут в живой журнал, ссылка — в
+    `job.login_url`. Возвращает (код, вывод, ссылка).
+
+    v1.70.28 — корень проблемы «ссылка не пришла»: команде нужен терминал и
+    ответ на меню (см. LOGIN_ANSWERS). Даём pty с окном 80×24 и выключенным
+    эхом ввода, отвечаем `b` (документированный выбор), затем `s`
+    («speed up check») и повторно `b`, если ссылка ещё не пришла. Это в
+    точности воспроизводит сеанс SSH, в котором вход работал.
+
+    Если pty недоступен, остаётся запасной путь: канал, в который «b\n»
+    записывается сразу (всё равно лучше, чем /dev/null).
     """
     out: list[str] = []
     url = ""
-    proc = subprocess.Popen(
-        _login_argv(cli), stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, text=True, errors="replace",
-        start_new_session=True, stdin=subprocess.DEVNULL)
+    lock = threading.Lock()
 
-    def _pump() -> None:
+    def _feed(line: str) -> None:
         nonlocal url
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            line = line.rstrip()
-            if not line:
-                continue
+        line = _clean_tty(line).strip()
+        if not line:
+            return
+        with lock:
             out.append(line)
-            job.say("login", line)
-            if not url:
-                url = extract_login_url(line)
-                if url:
-                    job.login_url = url
-                    job.say("login",
-                            "Ссылка для подтверждения входа: " + url +
-                            " — откройте её и войдите в аккаунт AdGuard; "
-                            "установка продолжится сама.")
+        job.say("login", line)
+        if not url:
+            u = extract_login_url(line)
+            if u:
+                url = u
+                job.login_url = u
+                job.say("login",
+                        "Ссылка для регистрации сервера: " + u +
+                        " — откройте её и войдите в аккаунт AdGuard; "
+                        "установка продолжится сама.")
 
-    pump = threading.Thread(target=_pump, daemon=True)
-    pump.start()
+    argv = _login_argv(cli)
+    stop = threading.Event()
+    tail = [""]
+    master = slave = -1
+    try:
+        import pty
+        master, slave = pty.openpty()
+    except Exception:                                        # noqa: BLE001
+        master = slave = -1
+
+    if master >= 0:
+        try:
+            import fcntl
+            import struct
+            import termios
+            # размер окна обязателен: без него CLI может не отрисовать меню
+            fcntl.ioctl(master, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", 24, 80, 0, 0))
+            attrs = termios.tcgetattr(master)
+            attrs[3] = attrs[3] & ~termios.ECHO   # наш ввод не попадает в журнал
+            termios.tcsetattr(master, termios.TCSANOW, attrs)
+        except Exception:                                    # noqa: BLE001
+            pass
+        proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave,
+                                start_new_session=True, close_fds=True)
+        os.close(slave)
+        slave = -1
+
+        def _reader() -> None:
+            import select
+            while not stop.is_set():
+                try:
+                    r, _, _ = select.select([master], [], [], 0.4)
+                except (OSError, ValueError):
+                    return
+                if not r:
+                    continue
+                try:
+                    data = os.read(master, 4096)
+                except OSError:
+                    return                 # EIO — потомок закрыл терминал
+                if not data:
+                    return
+                tail[0] += _clean_tty(data.decode("utf-8", "replace"))
+                while "\n" in tail[0]:
+                    line, tail[0] = tail[0].split("\n", 1)
+                    _feed(line)
+
+        def _answer() -> None:
+            for delay, key in LOGIN_ANSWERS:
+                time.sleep(delay)
+                if stop.is_set() or url or proc.poll() is not None:
+                    return
+                try:
+                    os.write(master, (key + "\r").encode())
+                except OSError:
+                    return
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        answer = threading.Thread(target=_answer, daemon=True)
+        reader.start()
+        answer.start()
+    else:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True,
+                                errors="replace", start_new_session=True)
+        try:
+            assert proc.stdin is not None
+            proc.stdin.write("b\n")
+            proc.stdin.flush()
+        except (OSError, ValueError, AssertionError):
+            pass
+
+        def _pump() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                _feed(line)
+
+        reader = threading.Thread(target=_pump, daemon=True)
+        reader.start()
+
     deadline = time.time() + LOGIN_TIMEOUT
     try:
         while proc.poll() is None:
             if job.cancel_requested:
+                stop.set()
                 _kill_proc(proc)                # v1.70.21: вся группа
                 return 130, "\n".join(out), url
             if time.time() > deadline:
+                stop.set()
                 _kill_proc(proc)
                 return 124, "\n".join(out), url
-            time.sleep(0.5)
-        pump.join(timeout=5)
+            time.sleep(0.3)
     finally:
+        stop.set()
         if proc.poll() is None:                 # отмена/зависание
             _kill_proc(proc)
+        try:
+            reader.join(timeout=3)
+        except Exception:                                        # noqa: BLE001
+            pass
+        if master >= 0:
+            if tail[0].strip():
+                _feed(tail[0])
+            try:
+                os.close(master)
+            except OSError:
+                pass
     return proc.returncode or 0, "\n".join(out), url
 
 
@@ -841,11 +959,34 @@ def _step_login() -> None:
         raise RuntimeError("Отменено владельцем.")
     if rc != 0:
         tail = (out or "").strip()[-300:]
+        # v1.70.28: «Failed to get auth link» — болезнь самого CLI, а не наша.
+        # AdguardTeam/AdGuardVPNCLI#142 (исправлен в VPN Client v0.19.35) и
+        # открытый #169 на Ubuntu 24.04 с CLI 1.7.12: причина в недоступных
+        # корневых сертификатах, и лечится одной командой на сервере. Без этой
+        # подсказки владелец видит «вход не завершён» и не понимает, что делать.
+        if AUTH_LINK_ERROR in (out or "").lower():
+            raise RuntimeError(
+                "CLI не получил ссылку входа («Failed to get auth link»). Это "
+                "дефект самого AdGuard VPN CLI: #142 (исправлен в VPN Client "
+                "v0.19.35) и открытый #169 на Ubuntu 24.04 с CLI 1.7.12 — "
+                "причина в недоступных корневых сертификатах. Выполните на "
+                "сервере: sudo apt install -y ca-certificates && sudo "
+                "update-ca-certificates, затем повторите включение. Вывод CLI: "
+                + (tail or "пуст"))
         raise RuntimeError("Вход не завершён (код " + str(rc) + "): "
                            + (tail or "ссылка не подтверждена или истекла — "
                                       "запустите установку ещё раз."))
     if not url:
-        job.say("login", "Вход уже выполнен — подтверждение не нужно.", "skip")
+        # v1.70.28: раньше здесь всегда писалось «вход уже выполнен». Но ссылки
+        # могло не быть и по другой причине — CLI не ответил на меню. Врать
+        # владельцу нельзя, поэтому различаем: подтверждение входа видно по
+        # тексту CLI («Successfully logged in» — документированный признак).
+        low = (out or "").lower()
+        if "logged in" in low or "authorized" in low:
+            job.say("login", "Вход уже выполнен — подтверждение не нужно.",
+                    "skip")
+        else:
+            job.say("login", LOGIN_ANSWER_HINT, "skip")
     else:
         job.say("login", "Вход подтверждён ✔", "done", 45)
 

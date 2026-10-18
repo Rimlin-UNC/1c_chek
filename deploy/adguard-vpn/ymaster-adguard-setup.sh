@@ -222,6 +222,14 @@ phase_preflight() {
   # собственной догадки на раннем шаге — значит мешать запуску VPN.
   [ -e /dev/net/tun ] \
     || say "внимание: /dev/net/tun не найден — если TUN-режим не включится, причина в этом (модуль: modprobe tun)"
+  # v1.70.28: корневые сертификаты. «Failed to get auth link» — известный
+  # отказ самого CLI (AdguardTeam/AdGuardVPNCLI#142, исправлен в VPN Client
+  # v0.19.35; #169 открыт на Ubuntu 24.04 с CLI 1.7.12): без CA-сертификатов
+  # CLI не может получить ссылку входа. Предупреждаем заранее — это
+  # единственная причина «ссылка не пришла», которую владелец лечит сам.
+  if [ ! -f /etc/ssl/certs/ca-certificates.crt ]; then
+    say "внимание: нет /etc/ssl/certs/ca-certificates.crt — CLI может ответить «Failed to get auth link». Лечится: apt install -y ca-certificates && update-ca-certificates"
+  fi
   [ -d "$KIT_DIR" ] || die "комплект не разложен ($KIT_DIR) — выполните install-rule ещё раз"
   if cli_path >/dev/null 2>&1; then
     say "cli: $(cli_path)"

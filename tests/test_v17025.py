@@ -427,18 +427,33 @@ class TestUi:
         assert "function agPaint(" in js
         assert "let agVpnOn" in js
 
-    def test_button_colored_by_state(self):
+    def test_switch_position_by_state(self):
+        """v1.70.28: вместо раскраски кнопки — положение переключателя.
+
+        Влево = VPN выключен, вправо = включён, середина = состояние
+        неизвестно или операция идёт. Раньше до первого опроса сервера
+        кнопка рисовалась «выключен» и врала на работающем туннеле.
+        """
         js = _read(APP_JS)
-        assert "b.classList.toggle('btn-ok', agVpnOn && !busy)" in js
-        assert "b.classList.toggle('btn-bad', !agVpnOn && !busy)" in js
+        assert "sw.setAttribute('data-pos'," in js
+        assert "busy ? 'mid' : (known ? (agVpnOn ? 'right' : 'left') : 'mid')" in js
 
     def test_unknown_state_is_labeled_honestly(self):
         js = _read(APP_JS)
         assert "состояние неизвестно" in js
 
     def test_click_branches_on_state(self):
+        """v1.70.28: две стороны переключателя — два разных действия.
+
+        Вправо — включить (мастер установки, первый раз со ссылкой
+        регистрации), влево — выключить. Одна кнопка «в оба конца» требовала
+        угадывать текущее состояние; стороны переключателя однозначны.
+        """
         js = _read(APP_JS)
-        assert "if (agVpnOn) { await agTurnOff(); return; }" in js
+        assert "const agOn = $('#ag-sw-on'), agOff = $('#ag-sw-off');" in js
+        assert "agOn.onclick" in js and "agOff.onclick" in js
+        assert "await agTurnOff();" in js
+        assert "await agLaunch();" in js
         assert "async function agTurnOff()" in js
         assert "{ action: 'off' }" in js
 
@@ -459,8 +474,8 @@ class TestUi:
         js = _read(APP_JS)
         assert "async function agRefreshVpn()" in js
         off = js[js.index("async function agTurnOff()"):
-                 js.index("if (tga) tga.onclick")]
-        # ни одна ветка отказа не красит кнопку угаданным состоянием
+                 js.index("const agOn = $('#ag-sw-on')")]
+        # ни одна ветка отказа не красит переключатель угаданным состоянием
         assert "{ on: true, known: true }" not in off
         assert "agPaint(null, false)" not in off
         # обе ветки отказа перечитывают фактическое состояние
@@ -475,7 +490,7 @@ class TestUi:
         """Ответ старого сервера может не содержать `vpn` — не угадываем."""
         js = _read(APP_JS)
         off = js[js.index("async function agTurnOff()"):
-                 js.index("if (tga) tga.onclick")]
+                 js.index("const agOn = $('#ag-sw-on')")]
         assert "if (r && r.vpn) agPaint(r.vpn, false); else await agRefreshVpn();" in off
 
     def test_no_proxy_prefill(self):
@@ -503,9 +518,18 @@ class TestUi:
 # ==============================================================================
 class TestDocs:
     def test_readme_describes_toggle(self):
+        """v1.70.28: в README описан трёхпозиционный переключатель.
+
+        Кнопки-переключателя больше нет: у AdGuard VPN собственный блок, а
+        стороны переключателя однозначны (влево — отключить, вправо —
+        включить), поэтому угадывать состояние для выбора действия не нужно.
+        """
         rd = _read(README)
-        assert "кнопка-переключатель" in rd
-        assert "выключить" in rd and "включить" in rd
+        assert "трёхпозиционный переключатель" in rd
+        # стороны переключателя описаны словами владельца: влево — отключить,
+        # вправо — включить
+        assert "отключить" in rd and "включить" in rd
+        assert "влево" in rd and "вправо" in rd
 
     def test_readme_explains_off_order(self):
         rd = _read(README)

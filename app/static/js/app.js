@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.28': [
+    { icon: '🛡', title: 'AdGuard VPN: собственный блок, переключатель вместо кнопки — и ссылка регистрации теперь действительно приходит',
+      text: 'Главное — найдена и устранена причина, по которой ссылка для регистрации сервера не появлялась. Команда входа AdGuard VPN интерактивная: по её документации она показывает меню «b — открыть ссылку в браузере / s — ускорить проверку / x — отмена» и ждёт выбора. Программа запускала эту команду с закрытым входом, меню получало конец файла, и ссылка не выдавалась вовсе. В терминале SSH всё работало именно потому, что там «b» нажимали вы. Теперь команде даётся настоящий псевдотерминал, и программа отвечает «b» сама — ровно как в сеансе SSH. Ссылка показывается в блоке сразу, как только CLI её выдал, и больше не исчезает, если задание остановилось: она живёт около 30 минут, и терять её из-за перезапуска страницы неправильно. Второе: у AdGuard VPN появился собственный блок «🛡 AdGuard VPN на сервере» в разделе «Устройство и служебное» — из карточки Telegram-бота он удалён, там ему не место. Кнопка заменена трёхпозиционным переключателем: из среднего положения влево — выключить VPN, вправо — включить. Среднее положение честно означает «состояние неизвестно» или «операция идёт»; раньше до первого опроса сервера кнопка могла показывать «выключен» на работающем туннеле. Вправо — зелёный (VPN работает, через туннель идёт только Telegram), влево — красный (выключен, трафик напрямую). Третье: если CLI всё же отвечает «Failed to get auth link», программа прямо говорит, что это дефект самого AdGuard VPN CLI (обращения #142 и #169: причина в недоступных корневых сертификатах) и какой командой это лечится на сервере; отсутствие сертификатов видно предупреждением ещё до установки. Пароль сервера по-прежнему не спрашивается.' },
+  ],
   '1.70.27': [
     { icon: '🧭', title: 'AdGuard VPN: убрано всё, что могло помешать запуску — только документированная последовательность команд',
       text: 'Программа выполняет ровно то, что описано в документации AdGuard: вход по ссылке подтверждения, режим TUN, маршрутизация AUTO, selective-исключения с доменами Telegram и служба автоподключения. Этим командам мастер верит по коду возврата — как и положено. Всё, что в прошлом выпуске вышло за рамки документации, переведено из отказов в предупреждения живого журнала: перечитанный режим исключений, слушатель на порту 1080, отсутствие /dev/net/tun на раннем шаге проверки и состояние автопилота при выключении. Причина простая: формат текстового ответа AdGuard нам не подконтролен, а прерывать установку из-за нераспознанной строки — значит мешать VPN запуститься. Предупреждения при этом видно: если режим исключений вдруг окажется general (тогда смысл списка противоположный — в VPN уходит всё, кроме Telegram), вы узнаете об этом сразу, но установка не оборвётся. От воскрешения выключенного VPN защищает автопилот: он не трогает VPN, снятый с автозапуска. И главное, что действительно мешало запуску: ожидание поднятия туннеля увеличено с 20 до 60 секунд — первое подключение в TUN-режиме на медленном канале в 20 секунд не укладывается, и мастер сообщал «туннель не поднялся» на живом подключении. Настоящая проверка пути осталась за последним шагом: он меряет фактический маршрут до api.telegram.org тем же способом, которым ходит бот.' },
@@ -5182,7 +5186,7 @@ const WHATS_NEW = {
   ],
   '1.70.13': [
     { icon: '🛡', title: 'Telegram через AdGuard VPN — второй сервер не нужен',
-      text: 'Если есть лицензия AdGuard VPN: её CLI ставится прямо на этот сервер, режим SOCKS5 поднимает локальный прокси socks5://127.0.0.1:1080, а бот отправляет через него напоминания и ответы (кнопка-пресет «🛡 AdGuard VPN» в настройках Telegram). Готовая пошаговая инструкция и автозапуск — deploy/adguard-vpn. Мост и канал MAX остаются как запасные пути.' },
+      text: 'Если есть лицензия AdGuard VPN: её CLI ставится прямо на этот сервер, и напоминания с ответами бота идут через туннель. Готовая пошаговая инструкция и автозапуск — deploy/adguard-vpn. Мост и канал MAX остаются как запасные пути. (С выпуска 1.70.28 управление VPN живёт в отдельном блоке «🛡 AdGuard VPN на сервере» в разделе «Устройство и служебное».)' },
   ],
   '1.70.12': [
     { icon: '🛰', title: 'Telegram-бот работает даже там, где Telegram заблокирован',
@@ -8167,30 +8171,6 @@ async function viewSettings(container) {
         <label class="field" style="margin-bottom:10px"><span>Прокси для Telegram
           ${tgSet.proxy_configured ? '(задан: ' + esc(tgSet.proxy_masked || '•••') + ')' : '(не задан — классический способ обхода блокировки)'}</span>
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
-          <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
-          <span class="form-hint" id="tg-adguard-hint">одна кнопка: <b>включить</b> — программа сама поставит CLI, покажет ссылку входа (первый раз это регистрация сервера), переведёт VPN в режим «через него только Telegram» и проверит путь; <b>выключить</b> — остановит туннель и автопилот, вход и лицензия сохранятся. Пароль сервера не спрашивается. Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
-        </div>
-        <div id="ag-setup" class="hidden" style="border:2px solid #d8d4ec;border-radius:10px;padding:10px 12px;margin:0 0 10px;background:rgba(59,42,126,.04)">
-          <div id="ag-steps" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px"></div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-            <a id="ag-link" class="btn btn-sm hidden" target="_blank" rel="noopener" href="#">🔗 Подтвердить вход в AdGuard</a>
-            <span class="form-hint hidden" id="ag-link-hint">ссылка действует ~30 минут — откройте, войдите, установка продолжится сама</span>
-            <span class="form-hint" id="ag-state"></span>
-          </div>
-          <pre id="ag-setup-log" style="max-height:170px;overflow:auto;font-size:12px;background:#fff;border:1px solid #d8d4ec;border-radius:8px;padding:8px;margin:0 0 8px"></pre>
-          <div class="field hidden" id="ag-rule-row" style="margin:0 0 8px"><span>🔓 Правило для помощника — одна команда, один раз</span>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <input type="text" id="ag-cmd" readonly autocomplete="off" style="flex:1 1 320px;min-width:220px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px" value="">
-              <button type="button" class="btn btn-sm" id="ag-copy-cmd">📋 Скопировать</button>
-            </div>
-            <span class="form-hint">мастер AdGuard <b>не спрашивает пароль сервера</b>: привилегированные шаги делает помощник <code>/usr/local/sbin/ymaster-adguard-setup</code>, разрешённый узким правилом <code>/etc/sudoers.d/ymaster-adguard</code>. Откройте SSH, выполните команду один раз (deploy.sh ставит её сам при установке/обновлении) и нажмите «Проверить снова» — дальше мастер пойдёт без пароля.</span></div>
-          <div style="display:flex;gap:8px">
-            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-recheck">Проверить снова</button>
-            <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
-            <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
-          </div>
-        </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px">
           <button type="button" class="btn btn-sm" id="tg-ping" title="3 коротких запроса, среднее">📏 Пинг</button>
           <span class="form-hint" id="tg-ping-out">${tgSet.ping_ms != null && tgSet.ping_ms !== '' ? ('последний замер: ' + tgSet.ping_ms + ' мс · ' + esc(tgSet.ping_at || '') + (tgSet.ping_ok ? '' : ' · ⚠ путь недоступен — tg-health.sh сменит локацию')) : 'ещё не измерялся — автоматически в 15:00 МСК или кнопкой'}</span>
@@ -8602,6 +8582,58 @@ async function viewSettings(container) {
           <dt>Лимиты запросов</dt><dd>включены (защита от перебора и DoS)</dd>
         </dl>
       </div>
+
+      ${isAdmin() ? `
+      <div class="glass card" id="st-adguard" data-sec="device" style="order:49">
+        <div class="card-title">🛡 AdGuard VPN на сервере <span class="form-hint">(v1.70.28)</span></div>
+        <p class="form-hint" style="margin-bottom:12px">Через туннель идёт <b>только Telegram</b>,
+        остальной трафик сервера — напрямую. Переключатель из среднего положения:
+        <b>влево — выключить</b>, <b>вправо — включить</b>. При первом включении программа сама
+        поставит CLI, покажет здесь ссылку для регистрации сервера, переведёт VPN в режим
+        «через него только Telegram» и проверит путь. Вводить пароль не нужно: привилегированные
+        шаги делает помощник, разрешённый узким правилом.</p>
+        <div class="ag-sw" id="ag-switch" data-pos="mid" role="group" aria-label="AdGuard VPN на сервере">
+          <button type="button" class="ag-sw-zone ag-sw-left" id="ag-sw-off"
+                  title="Выключить AdGuard VPN" aria-label="Выключить AdGuard VPN">
+            <span class="ag-sw-ico" aria-hidden="true">⏻</span>
+            <span class="ag-sw-lbl">выключить</span></button>
+          <span class="ag-sw-knob" id="ag-sw-knob" aria-hidden="true"></span>
+          <button type="button" class="ag-sw-zone ag-sw-right" id="ag-sw-on"
+                  title="Включить AdGuard VPN" aria-label="Включить AdGuard VPN">
+            <span class="ag-sw-ico" aria-hidden="true">🛡</span>
+            <span class="ag-sw-lbl">включить</span></button>
+        </div>
+        <div class="form-hint" id="ag-sw-state" style="margin:10px 0 0">состояние VPN выясняется…</div>
+        <div id="ag-link-box" class="ag-linkbox hidden">
+          <div class="ag-linkbox-title">🔗 Ссылка для регистрации сервера</div>
+          <a id="ag-link" class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="#">Подтвердить вход в AdGuard</a>
+          <div class="form-hint" id="ag-link-hint">Откроется страница входа AdGuard: войдите в свой
+          аккаунт или создайте его. Ссылка действует около 30 минут — после подтверждения установка
+          продолжится сама, ничего нажимать больше не нужно.</div>
+          <div class="form-hint ag-linkurl" id="ag-link-url"></div>
+        </div>
+        <div id="ag-setup" class="hidden ag-panel">
+          <div id="ag-steps" class="ag-steps"></div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <span class="form-hint" id="ag-state"></span>
+          </div>
+          <pre id="ag-setup-log" class="ag-log"></pre>
+          <div class="field hidden" id="ag-rule-row" style="margin:0 0 8px"><span>🔓 Правило для помощника — одна команда, один раз</span>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="ag-cmd" readonly autocomplete="off" style="flex:1 1 320px;min-width:220px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px" value="">
+              <button type="button" class="btn btn-sm" id="ag-copy-cmd">📋 Скопировать</button>
+            </div>
+            <span class="form-hint">мастер AdGuard <b>не спрашивает пароль сервера</b>: привилегированные шаги делает помощник <code>/usr/local/sbin/ymaster-adguard-setup</code>, разрешённый узким правилом <code>/etc/sudoers.d/ymaster-adguard</code>. Откройте SSH, выполните команду один раз (deploy.sh ставит её сам при установке/обновлении) и нажмите «Проверить снова» — дальше мастер пойдёт без пароля.</span></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-recheck">Проверить снова</button>
+            <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
+            <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
+          </div>
+        </div>
+        <p class="form-hint" style="margin:12px 0 0">Автопилот: трижды в сутки замер скорости
+        (Германия → самая быстрая локация, порог 30 мс). Руками —
+        <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a>.</p>
+      </div>` : ''}
 
       <div class="glass card" id="st-about" data-sec="device" style="order:53">
         <div class="card-title">О системе</div>
@@ -9243,7 +9275,9 @@ async function viewSettings(container) {
       } catch (e) { toast(e.message, 'err'); }
       tts.disabled = false;
     };
-    const tga = $('#tg-adguard');                     // v1.70.15: автоустановка AdGuard
+    // v1.70.28: управление AdGuard VPN переехало в собственный блок
+    // «🛡 AdGuard VPN на сервере» (раздел «Устройство и служебное») — в
+    // карточке Telegram-бота ему больше не место.
     let agTimer = 0;
     const AG_ICONS = { done: '\u2705', active: '\u23f3', failed: '\u274c', skip: '\u2796', pending: '\u00b7' };
     function agRender(st) {
@@ -9256,12 +9290,19 @@ async function viewSettings(container) {
         '<span style="width:20px;text-align:center;flex:none">' + (AG_ICONS[s.status] || '\u00b7') + '</span>' +
         '<span>' + esc(s.title) + (s.message ? ' — <span class="form-hint">' + esc(s.message) + '</span>' : '') + '</span></div>'
       ).join('');
-      const link = $('#ag-link'), hint = $('#ag-link-hint');
-      if (link && hint) {
-        if (st.login_url && st.running) {
+      // v1.70.28: ссылка для регистрации сервера живёт В БЛОКЕ AdGuard VPN и
+      // показывается сразу, как только CLI её выдал. Раньше её скрывало
+      // условие «login_url && running»: стоило заданию остановиться (ошибка,
+      // отмена, перезапуск страницы) — и владелец терял ссылку, хотя она живёт
+      // ещё около 30 минут. Прячем только после успешного завершения.
+      const lbox = $('#ag-link-box'), link = $('#ag-link'),
+            lurl = $('#ag-link-url');
+      if (lbox && link) {
+        if (st.login_url && !(st.finished && st.success)) {
           link.href = st.login_url;
-          link.classList.remove('hidden'); hint.classList.remove('hidden');
-        } else { link.classList.add('hidden'); hint.classList.add('hidden'); }
+          if (lurl) lurl.textContent = st.login_url;
+          lbox.classList.remove('hidden');
+        } else { lbox.classList.add('hidden'); }
       }
       const log = $('#ag-setup-log');
       if (log) { log.textContent = (st.log || []).join('\n'); log.scrollTop = log.scrollHeight; }
@@ -9287,28 +9328,33 @@ async function viewSettings(container) {
       const cancel = $('#ag-cancel');
       if (cancel) cancel.classList.toggle('hidden', !st.running);
     }
-    // v1.70.25: одна кнопка-переключатель. Зелёная = VPN работает (нажатие
-    // выключает), красная = выключен (нажатие включает: первый раз — со
-    // ссылкой регистрации сервера). Цвет берётся из фактического состояния
-    // юнита туннеля, а не из факта «установка когда-то завершилась успешно»:
-    // туннель могли остановить руками или он мог упасть.
+    // v1.70.28: трёхпозиционный переключатель вместо кнопки. Среднее
+    // положение — состояние неизвестно или операция идёт; влево — VPN
+    // выключен (нажатие выключает), вправо — VPN включён (нажатие включает:
+    // первый раз — со ссылкой регистрации сервера прямо в этом блоке).
+    // Положение берётся из ФАКТИЧЕСКОГО состояния юнита туннеля, а не из
+    // факта «установка когда-то завершилась успешно»: туннель могли
+    // остановить руками или он мог упасть.
     let agVpnOn = false;
     function agPaint(vpn, busy) {
-      const b = $('#tg-adguard');
-      if (!b) return;
+      const sw = $('#ag-switch');
+      if (!sw) return;
       agVpnOn = !!(vpn && vpn.on);
       const known = !!(vpn && vpn.known);
-      b.classList.toggle('btn-ok', agVpnOn && !busy);
-      b.classList.toggle('btn-bad', !agVpnOn && !busy);
-      b.disabled = !!busy;
-      b.textContent = busy ? '⏳ AdGuard VPN…'
-        : (agVpnOn ? '🛡 AdGuard VPN: включить → выключить'
-          : (known ? '🛡 AdGuard VPN: включить'
-            : '🛡 AdGuard VPN: включить (состояние неизвестно)'));
-      const h = $('#tg-adguard-hint');
-      if (h && known) h.innerHTML = agVpnOn
-        ? 'VPN <b>включён</b>: через туннель идёт только Telegram, остальной трафик сервера прямой. Нажмите кнопку, чтобы выключить — вход и лицензия сохранятся, повторное включение пойдёт без ссылки.'
-        : 'VPN <b>выключен</b>. Нажмите кнопку: программа сама поставит CLI, покажет ссылку входа (первый раз это регистрация сервера), включит режим «через VPN только Telegram» и проверит путь. Пароль не спрашивается.';
+      sw.setAttribute('data-pos',
+        busy ? 'mid' : (known ? (agVpnOn ? 'right' : 'left') : 'mid'));
+      sw.classList.toggle('ag-sw-busy', !!busy);
+      const off = $('#ag-sw-off'), on = $('#ag-sw-on');
+      if (off) off.disabled = !!busy || !agVpnOn;
+      if (on) on.disabled = !!busy || agVpnOn;
+      const stt = $('#ag-sw-state');
+      if (stt) stt.innerHTML = busy
+        ? '\u23f3 <b>работаю\u2026</b> \u2014 пока идёт операция переключатель в среднем положении'
+        : (known
+          ? (agVpnOn
+            ? '\ud83d\udfe2 VPN <b>включён</b>: через туннель идёт только Telegram, остальной трафик сервера прямой. Переключите влево, чтобы выключить \u2014 вход и лицензия сохранятся, повторное включение пойдёт без ссылки.'
+            : '\ud83d\udd34 VPN <b>выключен</b>: трафик сервера идёт напрямую. Переключите вправо, чтобы включить \u2014 при первом включении здесь появится ссылка для регистрации сервера.')
+          : '\u26aa состояние VPN неизвестно (сервер не ответил или туннель ещё не ставили). Переключение вправо запустит установку.');
     }
     async function agPoll() {
       try {
@@ -9358,7 +9404,7 @@ async function viewSettings(container) {
     if (agCopy) agCopy.onclick = async () => {
       const inp = $('#ag-cmd');
       const txt = inp && inp.value ? inp.value : '';
-      if (!txt) { toast('Команда пуста — откройте панель кнопкой «🛡 AdGuard VPN»', 'warn'); return; }
+      if (!txt) { toast('Команда пуста — откройте блок «🛡 AdGuard VPN на сервере»', 'warn'); return; }
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
         else { if (inp) { inp.select(); document.execCommand('copy'); } }
@@ -9398,17 +9444,27 @@ async function viewSettings(container) {
         await agRefreshVpn();
       }
     }
-    if (tga) tga.onclick = async () => {
-      if (agVpnOn) { await agTurnOff(); return; }
+    // v1.70.28: вправо — включить (мастер установки), влево — выключить.
+    // Состояние «неизвестно» не блокирует включение: мастер сам разберётся,
+    // а вот выключать несуществующий туннель нечего.
+    const agOn = $('#ag-sw-on'), agOff = $('#ag-sw-off');
+    if (agOn) agOn.onclick = async () => {
+      if (agOn.disabled) return;
+      agPaint(null, true);
       try {
         let pf = null;
         try { pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight'); } catch (e) { pf = null; }
-        if (pf && pf.ready === false) { agNeedRule(pf, pf.hint); return; }
+        if (pf && pf.ready === false) { agNeedRule(pf, pf.hint); await agRefreshVpn(); return; }
         await agLaunch();
       } catch (e) {
         if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
         else toast(e.message, 'err');
+        await agRefreshVpn();
       }
+    };
+    if (agOff) agOff.onclick = async () => {
+      if (agOff.disabled) return;
+      await agTurnOff();
     };
     const agRecheck = $('#ag-recheck');
     if (agRecheck) agRecheck.onclick = async () => {

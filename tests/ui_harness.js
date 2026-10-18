@@ -636,9 +636,10 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.10: возврат из «Все настройки» всегда виден');
   ok(bundle.includes("'1.70.12':") && bundle.includes('tg-apibase'),
      'v1.70.12: Telegram — сменный адрес API (мост/шлюз)');
-  ok(bundle.includes("'1.70.13':") && bundle.includes('tg-adguard') &&
-     bundle.includes('socks5://127.0.0.1:1080'),
-     'v1.70.13: пресет AdGuard VPN для Telegram');
+  // v1.70.13 ставил в карточку Telegram кнопку-пресет; с v1.70.28 управление
+  // живёт в собственном блоке, поэтому проверяем только след в истории.
+  ok(bundle.includes("'1.70.13':") && bundle.includes('deploy/adguard-vpn'),
+     'v1.70.13: пресет AdGuard VPN для Telegram (с 1.70.28 — отдельный блок)');
   ok(bundle.includes("'1.70.14':") && bundle.includes('tg-ping') &&
      bundle.includes('settings/telegram/ping'),
      'v1.70.14: пинг пути Telegram в карточке (3 запроса, среднее)');
@@ -690,9 +691,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes("'1.70.25':") && bundle.includes('agPaint') &&
      bundle.includes('agTurnOff') && bundle.includes("action: 'off'"),
      'v1.70.25: AdGuard VPN — кнопка-переключатель включить/выключить');
-  ok(bundle.includes('btn-ok') && bundle.includes('btn-bad') &&
-     bundle.includes('agVpnOn'),
-     'v1.70.25: цвет кнопки берётся из фактического состояния VPN');
+  ok(bundle.includes('agVpnOn') && bundle.includes("sw.setAttribute('data-pos',") &&
+     bundle.includes("busy ? 'mid'"),
+     'v1.70.25: состояние берётся с сервера (с 1.70.28 — положение переключателя)');
   // v1.70.26: успех доказывается по факту, а не по коду возврата. Режим
   // исключений перечитывается (general = смысл списка наоборот), поддержка TUN
   // проверяется до установки CLI и до ссылки входа.
@@ -708,6 +709,25 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.27: AdGuard VPN — документированная последовательность, ожидание туннеля 60 с');
   ok(bundle.includes('предупреждени') && bundle.includes('selective'),
      'v1.70.27: расхождение показаний CLI — предупреждение, а не отказ');
+
+  // v1.70.28: AdGuard VPN — собственный блок в «Устройство и служебное» с
+  // трёхпозиционным переключателем; из карточки Telegram-бота удалён. Ссылка
+  // регистрации приходит В БЛОК и не прячется при остановке задания: условие
+  // «login_url && running» и было причиной «ссылка не пришла».
+  ok(bundle.includes("'1.70.28':") && bundle.includes('st-adguard') &&
+     bundle.includes('data-sec="device"') && bundle.includes('ag-switch') &&
+     bundle.includes('ag-sw-off') && bundle.includes('ag-sw-on') &&
+     bundle.includes('ag-sw-knob'),
+     'v1.70.28: собственный блок AdGuard VPN с трёхпозиционным переключателем');
+  ok(!bundle.includes('tg-adguard'),
+     'v1.70.28: из карточки Telegram-бота AdGuard VPN удалён');
+  ok(bundle.includes('ag-link-box') &&
+     bundle.includes('Ссылка для регистрации сервера') &&
+     !/st\.login_url && st\.running/.test(bundle),
+     'v1.70.28: ссылка регистрации приходит в блок и не скрывается при остановке');
+  ok(bundle.includes('ag-sw-left') && bundle.includes('ag-sw-right') &&
+     bundle.includes("busy ? 'mid' : (known ? (agVpnOn ? 'right' : 'left') : 'mid')"),
+     'v1.70.28: влево — выключено, вправо — включено, середина — неизвестно/идёт');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

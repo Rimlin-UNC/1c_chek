@@ -47,10 +47,16 @@ def _adguard_panel(js: str) -> str:
     """Куски app.js про панель AdGuard: разметка + обработчики кнопок.
 
     Пароль окна обновления (своя механика, v1.17.0) сюда не попадает —
-    проверяем только то, что относится к мастеру AdGuard."""
+    проверяем только то, что относится к мастеру AdGuard.
+
+    v1.70.28: блок переехал из карточки Telegram-бота в собственный
+    (`st-adguard`, раздел «Устройство и служебное»), поэтому якоря другие.
+    Прежний «от ag-setup до tg-ping» больше не сходится: замер пинга остался в
+    карточке Telegram и теперь идёт РАНЬШЕ панели по файлу, а `const tga`
+    удалён вместе с кнопкой."""
     parts = []
-    for pat in (r'<div id="ag-setup".*?id="tg-ping"',
-                r"const tga = \$\('#tg-adguard'\).*?const tgp = \$\('#tg-ping'\)"):
+    for pat in (r'<div class="glass card" id="st-adguard".*?id="st-about"',
+                r"function agRender\(st\).*?const tgp = \$\('#tg-ping'\)"):
         m = re.search(pat, js, re.S)
         assert m, f"панель AdGuard не найдена в app.js: {pat[:40]}"
         parts.append(m.group(0))
@@ -487,13 +493,22 @@ class TestRunHelper:
         argv = ag._login_argv("/usr/local/bin/adguardvpn-cli")
         assert argv == ["sudo", "-n", ag.HELPER_PATH, "login"]
 
-    def test_login_worker_closes_stdin(self, monkeypatch, fresh_job):
-        """Пароль через stdin больше не передаём — stdin закрыт вовсе."""
+    def test_login_worker_gives_cli_a_terminal(self, monkeypatch, fresh_job):
+        """v1.70.28: stdin НЕ закрыт — этот тест раньше закреплял сам баг.
+
+        По документации AdGuardVPNCLI `login` показывает интерактивное меню
+        (b - Open link in browser / s - Speed up check / x - Cancel) и ждёт
+        выбора. С stdin=/dev/null меню получало EOF, и ссылка подтверждения
+        не появлялась вовсе — владелец видел «установка идёт» без ссылки.
+        Пароль при этом по-прежнему никуда не передаётся: мастер отвечает на
+        меню сам (`b`), а не вводит секрет.
+        """
         seen = {}
 
         class P:
             returncode = 0
             stdout = iter([])
+            stdin = None
 
             def poll(self):
                 return 0
@@ -508,7 +523,21 @@ class TestRunHelper:
         monkeypatch.setattr(ag.subprocess, "Popen", fake_popen)
         fresh_job.sudo_mode = "root"
         ag._login_worker("/usr/local/bin/adguardvpn-cli")
-        assert seen["k"]["stdin"] == subprocess.DEVNULL
+        assert seen["k"]["stdin"] != subprocess.DEVNULL, \
+            "меню CLI получит EOF и ссылка входа не появится"
+
+    def test_login_answers_are_documented(self):
+        """Отвечаем на меню документированными клавишами: сначала «b»."""
+        assert ag.LOGIN_ANSWERS
+        assert ag.LOGIN_ANSWERS[0][1] == "b"
+        assert all(k in ("b", "s") for _d, k in ag.LOGIN_ANSWERS)
+
+    def test_clean_tty_strips_ansi_and_cr(self):
+        """Вывод pty приходит с эскейпами и \r — в журнал должен идти текст."""
+        raw = "\x1b[32mb - Open link\x1b[0m\r\nhttps://auth.adguard.io/x"
+        clean = ag._clean_tty(raw)
+        assert "\x1b" not in clean and "\r" not in clean
+        assert "https://auth.adguard.io/x" in clean
 
     def test_one_time_cmd_shape(self):
         cmd = ag.one_time_cmd()
