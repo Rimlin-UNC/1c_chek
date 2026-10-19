@@ -465,12 +465,23 @@ class TestSwitchCss:
             assert pos in css, pos
 
     def test_colors_mean_on_and_off(self):
-        """Зелёный = включён, красный = выключен (требование владельца)."""
+        """Зелёный = включён, красный = выключен (требование владельца).
+
+        v1.70.32: подписи переключателя переведены на текст-токены
+        (--bad-text, --ok-text). Прежние var(--bad)/var(--ok) на рукоятке
+        (#fdeeec и #eaf7f1) давали 3.7:1 и 4.0:1 при 12 px — ниже порога
+        WCAG AA (4.5:1), а тест это закреплял. Семантика сохранена.
+        """
         css = _read(APP_CSS)
-        left = css[css.index('.ag-sw[data-pos="left"]'):]
-        assert "var(--bad)" in left[:600]
+        left = css[css.index('.ag-sw[data-pos="left"] .ag-sw-left'):]
+        assert "color: var(--bad-text)" in left[:120]
         right = css[css.index('.ag-sw[data-pos="right"] .ag-sw-right'):]
-        assert "var(--ok)" in right[:200]
+        assert "color: var(--ok-text)" in right[:120]
+        # рукоятка по-прежнему красная слева и зелёная справа
+        knob_l = css[css.index('.ag-sw[data-pos="left"] .ag-sw-knob'):]
+        assert "#fdeeec" in knob_l[:200]
+        knob_r = css[css.index('.ag-sw[data-pos="right"] .ag-sw-knob'):]
+        assert "#eaf7f1" in knob_r[:200]
 
     def test_respects_reduced_motion(self):
         css = _read(APP_CSS)

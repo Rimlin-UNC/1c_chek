@@ -759,6 +759,15 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('disconnect') && bundle.includes('чёрной дырой'),
      'v1.70.31: отказ туннеля откатывается, сервер не остаётся без сети');
 
+  // v1.70.32: вёрстка и дизайн — мелкий текст читаем (WCAG AA), остатки
+  // тёмной темы убраны, необъявленные токены не ломают правила молча.
+  ok(bundle.includes("'1.70.32':") && bundle.includes('1.69:1') &&
+     bundle.includes('#fca5a5') && bundle.includes('WCAG AA'),
+     'v1.70.32: нечитаемый мелкий текст исправлен, измерение в описании есть');
+  ok(bundle.includes('--ok-text') && bundle.includes('--bad-text') &&
+     bundle.includes('ui_journal.md'),
+     'v1.70.32: текст-токены и журнал интерфейса');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

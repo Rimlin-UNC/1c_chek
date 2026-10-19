@@ -35,9 +35,66 @@ class TestMotionAndContrast:
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert "@media (prefers-reduced-motion: reduce)" in css
 
+    #: текстовые токены темы и фоны, на которых они встречаются
+    TEXT_TOKENS = ("--text", "--text-dim", "--text-faint", "--accent-text",
+                   "--ok-text", "--bad-text", "--warn-text", "--info-text",
+                   "--accent-2")
+    BG_TOKENS = ("--panel", "--bg", "--bg-soft")
+
     def test_text_colors_are_readable(self):
-        """Базовые цвета темы проходят контраст WCAG AA для обычного текста."""
+        """Все текстовые токены темы проходят контраст WCAG AA (4.5:1).
+
+        v1.70.32: раньше проверялась только пара --text/--panel (12.63:1), и
+        потому тест не видел ни одного реального дефекта: фирменные
+        --ok/--bad/--warn/--info и --accent использовались как цвет мелкого
+        текста (11-13 px) с контрастом 2.36-4.25, а .form-error показывал
+        причину неудачного входа при 1.69:1. Теперь пересчитывается контраст
+        каждого текстового токена на каждом фоне темы — заявление «читаемость
+        проверена на контраст (WCAG AA)» в шапке app.css стало проверяемым.
+        """
         css = open("app/static/css/app.css", encoding="utf-8").read()
+
+        def _lum(hexc):
+            hexc = hexc.lstrip("#")
+            r, g, b = (int(hexc[i:i + 2], 16) / 255 for i in (0, 2, 4))
+            lin = lambda c: c / 12.92 if c <= 0.03928 else \
+                ((c + 0.055) / 1.055) ** 2.4
+            return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+        def _contrast(a, b):
+            l1, l2 = sorted((_lum(a), _lum(b)), reverse=True)
+            return (l1 + 0.05) / (l2 + 0.05)
+
+        def _tok(name):
+            m = re.search(re.escape(name) + r":\s*(#[0-9a-fA-F]{6})", css)
+            assert m, f"в app.css нет токена {name}"
+            return m.group(1)
+
+        worst = None
+        for t in self.TEXT_TOKENS:
+            for b in self.BG_TOKENS:
+                r = _contrast(_tok(t), _tok(b))
+                if worst is None or r < worst[0]:
+                    worst = (r, t, b)
+                assert r >= 4.5, \
+                    f"контраст {t} {_tok(t)} на {b} {_tok(b)} = {r:.2f} — ниже WCAG AA"
+        # самый тёмный фон темы — --bg-soft: на нём запас меньше всего
+        assert worst[2] == "--bg-soft", worst
+
+    def test_semantic_colors_are_not_used_as_small_text(self):
+        """Фирменные --ok/--bad/--warn/--info/--accent — не цвет мелкого текста.
+
+        Они дают 2.21-4.25:1 на фонах темы: годятся для границ, подложек и
+        крупного текста (порог 3:1), но не для подписей 11-13 px. Для текста
+        есть отдельные токены --*-text.
+        """
+        css = open("app/static/css/app.css", encoding="utf-8").read()
+        for base in ("--ok", "--bad", "--warn", "--info", "--accent"):
+            pat = re.compile(r"(?<![-\w])color\s*:\s*var\(" +
+                             re.escape(base) + r"\)")
+            hits = pat.findall(css)
+            assert not hits, \
+                f"{base} снова использован как цвет текста — нужен {base}-text"
 
         def _lum(hexc):
             hexc = hexc.lstrip("#")
