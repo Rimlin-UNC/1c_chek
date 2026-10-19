@@ -265,11 +265,11 @@ async function maxLoginFlow(code, isTicket) {
       сообщение</b> с кодом ниже (в чате бота): вход подтвердится и без
       приложения.</span>
       <div class="token-line" style="margin-top:8px"><input readonly
-        value="${esc(code)}" id="mxl-code"><button class="btn btn-sm"
+        value="${esc(code)}" id="mxl-code"><button type="button" class="btn btn-sm"
         id="mxl-copy">копировать</button></div></div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="mxl-open">🛡 Открыть MAX</button></div>`);
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="mxl-open">🛡 Открыть MAX</button></div>`);
   const stop = { v: false };
   const mxcp = slot.querySelector('#mxl-copy');
   if (mxcp) mxcp.onclick = () => {
@@ -496,8 +496,8 @@ async function maybeOfferPasskey(user) {
        <b>лица</b> или PIN этого устройства? Пароль больше не понадобится —
        устройство само подтвердит вас. Биометрия не отправляется на сервер.</p>
        <div class="modal-actions">
-         <button class="btn" id="wa-skip">Не сейчас</button>
-         <button class="btn btn-primary" id="wa-go">Включить</button>
+         <button type="button" class="btn" id="wa-skip">Не сейчас</button>
+         <button type="button" class="btn btn-primary" id="wa-go">Включить</button>
        </div>`);
     $('#wa-skip', slot).onclick = () => {
       try { localStorage.setItem('ymaster-wa-skip-' + user.id, String(Date.now())); }
@@ -548,7 +548,7 @@ function openPoolCameraScan(onText) {
       <div class="camera-overlay" id="poolcam-overlay">
         <span class="big-ico">📷</span>
         <div>Наведите камеру на QR-код чека.<br>Код распознаётся автоматически.</div>
-        <button class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
+        <button type="button" class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
       </div>
     </div>
     <p class="form-hint" style="margin-top:8px">Совет: QR с экрана другого телефона тоже сканируется.
@@ -607,8 +607,8 @@ function poolManualDialog(onQr) {
         <input id="pm-fp" placeholder="1234567890" required></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="pm-send">Собрать QR</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="pm-send">Собрать QR</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#pm-send').onclick = () => {
@@ -639,8 +639,8 @@ function poolEnableBanner() {
   bar.className = 'pool-off-banner';
   bar.innerHTML = '<span>⏸ Приём чеков в Чек-Пул выключен — доноры не могут '
     + 'сдать чек и посмотреть свои баллы.</span>'
-    + '<button class="btn btn-sm" id="pool-off-on">▶ Включить приём чеков</button>'
-    + '<button class="btn btn-sm" id="pool-off-hide" title="Скрыть до следующего входа">Не сейчас</button>';
+    + '<button type="button" class="btn btn-sm" id="pool-off-on">▶ Включить приём чеков</button>'
+    + '<button type="button" class="btn btn-sm" id="pool-off-hide" title="Скрыть до следующего входа">Не сейчас</button>';
   if (typeof shell.insertBefore === 'function') shell.insertBefore(bar, shell.firstChild);
   else shell.appendChild(bar);
   const on = bar.querySelector('#pool-off-on'), hide = bar.querySelector('#pool-off-hide');
@@ -667,9 +667,9 @@ function publicFormHTML() {
   <div class="form-hint" style="margin:2px 0 8px">Подтвердите e-mail в кабинете — чеки автоматически будут уходить
     вашей компании, минуя общий пул.</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-    <button class="btn btn-sm btn-primary" id="pub-cam"
+    <button type="button" class="btn btn-sm btn-primary" id="pub-cam"
             title="Живое сканирование камерой — как в разделе «Сканирование»">📸 Сканировать камерой</button>
-    <button class="btn btn-sm" id="pub-manual"
+    <button type="button" class="btn btn-sm" id="pub-manual"
             title="Резервный способ: QR повреждён — реквизиты с чека">⌨ Ввести вручную</button>
     <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
       <input id="pub-photo" type="file" accept="image/*" capture="environment" class="hidden"></label>
@@ -683,7 +683,7 @@ function publicFormHTML() {
     <span style="font-size:13.5px">Согласен с офертой (<a href="#" id="pub-offerta-link">текст</a>) —
     чек мой, передаю его фискальные данные в открытую базу</span></label>
   <div id="pub-offerta-text" class="info-callout hidden" style="font-size:13px;margin-bottom:10px"></div>
-  <button class="btn btn-primary btn-block" id="pub-submit">Отправить чек — получить балл</button>
+  <button type="button" class="btn btn-primary btn-block" id="pub-submit">Отправить чек — получить балл</button>
   <div id="pub-msg" class="form-error hidden" style="margin-top:8px"></div>
   <div id="pub-leaders" style="margin-top:14px"></div>
   <div id="pub-status" class="hidden" style="margin-top:12px"></div>
@@ -822,8 +822,8 @@ function bindPoolForm(root, opts) {
       <label class="field"><span>E-mail</span>
         <input type="email" id="rcpt-email" required value="${esc(saved)}" autocomplete="email"></label>
       <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="rcpt-send">Отправить</button>
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn btn-primary" id="rcpt-send">Отправить</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#rcpt-send').onclick = async (e) => {
@@ -900,7 +900,7 @@ function bindPoolForm(root, opts) {
       banner.className = 'info-callout';
       banner.innerHTML = '⏸ <b>Приём чеков сейчас на паузе</b> — отправить чек '
         + 'пока нельзя. Загляните позже или проверьте ещё раз.'
-        + '<br><button class="btn btn-sm" id="pub-retry" style="margin-top:8px">🔄 Проверить ещё раз</button>';
+        + '<br><button type="button" class="btn btn-sm" id="pub-retry" style="margin-top:8px">🔄 Проверить ещё раз</button>';
       if (typeof root.insertBefore === 'function') root.insertBefore(banner, root.firstChild);
       else root.appendChild(banner);
       const sbm = $p('pub-submit');
@@ -1021,9 +1021,9 @@ async function poolConsume(kind, raw) {
 function poolAuthHTML() {
   return `
   <div style="display:flex;gap:8px;margin-bottom:12px">
-    <button class="btn btn-sm btn-primary" id="ptab-login">Вход</button>
-    <button class="btn btn-sm" id="ptab-reg">Регистрация</button>
-    <button class="btn btn-sm" id="ptab-magic">Вход по ссылке</button>
+    <button type="button" class="btn btn-sm btn-primary" id="ptab-login">Вход</button>
+    <button type="button" class="btn btn-sm" id="ptab-reg">Регистрация</button>
+    <button type="button" class="btn btn-sm" id="ptab-magic">Вход по ссылке</button>
   </div>
   <form id="pf-login">
     <label class="field"><span>E-mail</span><input id="pl-email" type="email" required autocomplete="email"></label>
@@ -1048,7 +1048,7 @@ function poolAuthHTML() {
 function poolDashHTML() {
   return `
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-    <button class="btn btn-primary btn-sm" id="pool-submit-open"
+    <button type="button" class="btn btn-primary btn-sm" id="pool-submit-open"
             title="Камера, фото или строка QR — как на странице «Сдать чек»">📸 Сдать чек сканером</button>
     <span class="form-hint">камера, фото или вставка строки — баллы зачисляются автоматически</span>
   </div>
@@ -1066,22 +1066,22 @@ function poolDashHTML() {
     <span class="form-hint">(Этап 7 · v1.36.0)</span></div>
   <div id="pool-engage" class="form-hint" style="margin:6px 0">Загружаем…</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
-    <button class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
-    <button class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
+    <button type="button" class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
+    <button type="button" class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
   </div>
   <div class="card-title" style="margin-top:14px">Профиль</div>
   <div class="form-grid" style="margin:8px 0">
     <label class="field"><span>Старый пароль</span><input id="pool-oldp" type="password" autocomplete="current-password"></label>
     <label class="field"><span>Новый пароль (мин. 8 символов)</span><input id="pool-newp" type="password" autocomplete="new-password"></label>
   </div>
-  <button class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
+  <button type="button" class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
   <div class="form-grid" style="margin:8px 0">
     <label class="field"><span>Новый e-mail</span><input id="pool-newemail" type="email"></label>
   </div>
-  <button class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
+  <button type="button" class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
   <div style="display:flex;gap:8px;margin-top:16px">
-    <button class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
-    <button class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
+    <button type="button" class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
+    <button type="button" class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
   </div>
   <div id="pool-msg" class="form-error hidden" style="margin-top:8px"></div>`;
 }
@@ -1136,9 +1136,9 @@ async function poolLoadReceipts(root, page) {
         <td class="num">${r.points ? '+' + r.points : '—'}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="form-hint">Пока пусто — сдайте первый чек на странице «Сдать чек».</p>'}
       ${pages > 1 ? `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-        <button class="btn btn-sm" id="pool-prev" ${page <= 1 ? 'disabled' : ''}>← Назад</button>
+        <button type="button" class="btn btn-sm" id="pool-prev" ${page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">стр. ${page} из ${pages}</span>
-        <button class="btn btn-sm" id="pool-next" ${page >= pages ? 'disabled' : ''}>Вперёд →</button></div>` : ''}`;
+        <button type="button" class="btn btn-sm" id="pool-next" ${page >= pages ? 'disabled' : ''}>Вперёд →</button></div>` : ''}`;
     box.querySelectorAll('tr[data-rid]').forEach(tr => {
       tr.onclick = () => poolShowReceipt(tr.dataset.rid);
     });
@@ -1284,7 +1284,7 @@ function poolLoadInvite(root) {
       плюс 5% с чеков приглашённого — до 200 баллов в месяц.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
       <input id="pool-inv-link" value="${esc(d.link)}" readonly style="max-width:330px">
-      <button class="btn btn-sm" id="pool-inv-copy">📋 Копировать ссылку</button>
+      <button type="button" class="btn btn-sm" id="pool-inv-copy">📋 Копировать ссылку</button>
     </div>
     ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
       <thead><tr><th>Дата</th><th>Кто</th><th>Чеков</th><th>Баллов принес</th></tr></thead>
@@ -1356,7 +1356,7 @@ function renderEcheck(anchor, r) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <input type="email" id="ec-email" class="field-input" placeholder="ваш e-mail"
                autocomplete="email" style="flex:1;min-width:200px">
-        <button class="btn btn-primary btn-sm" id="ec-send">✉ Прислать HTML-чек</button>
+        <button type="button" class="btn btn-primary btn-sm" id="ec-send">✉ Прислать HTML-чек</button>
       </div>
       <div class="form-hint" id="ec-msg" style="margin-top:6px"></div>
     </div>
@@ -1365,7 +1365,7 @@ function renderEcheck(anchor, r) {
       <ul><li>+1 балл за каждый чек, кэшбэк у партнёров — до 100 за чек</li>
       <li>история и статусы всех ваших чеков в одном месте</li>
       <li>кабинет за минуту — по e-mail или временной ссылке входа; чеки этого браузера присоединятся сами</li></ul>
-      <button class="btn btn-sm" id="ec-cabinet">Открыть кабинет →</button>
+      <button type="button" class="btn btn-sm" id="ec-cabinet">Открыть кабинет →</button>
     </div>`;
   anchor.appendChild(wrap);
   const send = wrap.querySelector('#ec-send');
@@ -1426,7 +1426,7 @@ function poolLoadEngage(root) {
       ${wd.can_withdraw ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
         <input id="pool-wd-pts" type="number" min="${wd.min}" max="${wd.points}" value="${wd.min}" style="max-width:110px" aria-label="Сколько баллов вывести">
         <input id="pool-wd-phone" placeholder="+7 900 000-00-00" style="max-width:190px" autocomplete="tel" aria-label="Телефон для выплаты">
-        <button class="btn btn-sm" id="pool-wd-send">Вывести баллы</button></div>
+        <button type="button" class="btn btn-sm" id="pool-wd-send">Вывести баллы</button></div>
         <div class="form-hint">Телефон нужен только для выплаты и хранится только хэшем.</div>` : ''}
       ${poolLeadersHTML(lead, lead.me)}
       ${wd.history.length ? `<div class="form-hint" style="margin-top:6px">Заявки: ${wd.history.map((h) =>
@@ -1470,10 +1470,10 @@ function poolPkShell() {
       <div id="poolpk-quota" class="form-hint" style="flex:1;min-width:260px">Загружаем…</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-      <button class="btn btn-sm ${poolPk.tab === 'search' ? 'btn-primary' : ''}" id="poolpk-tab-search">1 · Найти чеки</button>
-      <button class="btn btn-sm ${poolPk.tab === 'mine' ? 'btn-primary' : ''}" id="poolpk-tab-mine">2 · Мои чеки компании</button>
-      <button class="btn btn-sm ${poolPk.tab === 'auto' ? 'btn-primary' : ''}" id="poolpk-tab-auto">3 · Авто-подбор ±5%</button>
-      <button class="btn btn-sm ${poolPk.tab === 'staff' ? 'btn-primary' : ''}" id="poolpk-tab-staff">Сотрудники</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'search' ? 'btn-primary' : ''}" id="poolpk-tab-search">1 · Найти чеки</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'mine' ? 'btn-primary' : ''}" id="poolpk-tab-mine">2 · Мои чеки компании</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'auto' ? 'btn-primary' : ''}" id="poolpk-tab-auto">3 · Авто-подбор ±5%</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'staff' ? 'btn-primary' : ''}" id="poolpk-tab-staff">Сотрудники</button>
     </div>
     <div id="poolpk-body"></div>
   </div>`;
@@ -1496,7 +1496,7 @@ function poolPkFline(showGo = true) {
     <label class="field" style="max-width:120px"><span>Сумма от</span><input id="pk-smin" type="number" value="${esc(f.sumMin)}"></label>
     <label class="field" style="max-width:120px"><span>до</span><input id="pk-smax" type="number" value="${esc(f.sumMax)}"></label>
     <label class="field" style="max-width:220px"><span>Магазин или товар</span><input id="pk-q" value="${esc(f.q)}"></label>
-    ${showGo ? '<button class="btn btn-sm btn-primary" id="pk-go">🔍 Найти</button>' : ''}
+    ${showGo ? '<button type="button" class="btn btn-sm btn-primary" id="pk-go">🔍 Найти</button>' : ''}
   </div>`;
 }
 
@@ -1537,10 +1537,10 @@ async function poolPkLoadSearch() {
         <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="8">Ничего не найдено — ослабьте фильтры</td></tr>'}</tbody></table></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-        <button class="btn btn-sm" id="pk-prev" ${poolPk.page <= 1 ? 'disabled' : ''}>← Назад</button>
+        <button type="button" class="btn btn-sm" id="pk-prev" ${poolPk.page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.page} из ${pages}</span>
-        <button class="btn btn-sm" id="pk-next" ${poolPk.page >= pages ? 'disabled' : ''}>Вперёд →</button>
-        <button class="btn btn-sm btn-primary" id="pk-assign">🔗 Привязать выбранное (${poolPk.picked.size})</button>
+        <button type="button" class="btn btn-sm" id="pk-next" ${poolPk.page >= pages ? 'disabled' : ''}>Вперёд →</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pk-assign">🔗 Привязать выбранное (${poolPk.picked.size})</button>
       </div>`;
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
       cb.onchange = () => {
@@ -1590,11 +1590,11 @@ async function poolPkLoadMine() {
         <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th><th>Привязан</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="9">Пока пусто — подберите чеки во вкладке «Найти чеки»</td></tr>'}</tbody></table></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
-        <button class="btn btn-sm" id="pk-m-prev" ${poolPk.minePage <= 1 ? 'disabled' : ''}>← Назад</button>
+        <button type="button" class="btn btn-sm" id="pk-m-prev" ${poolPk.minePage <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.minePage} из ${pages}</span>
-        <button class="btn btn-sm" id="pk-m-next" ${poolPk.minePage >= pages ? 'disabled' : ''}>Вперёд →</button>
-        <button class="btn btn-sm" id="pk-csv">⬇️ CSV (АО-1, Excel)</button>
-        <button class="btn btn-sm" id="pk-unassign">↩️ Вернуть в пул (${poolPk.minePicked.size})</button>
+        <button type="button" class="btn btn-sm" id="pk-m-next" ${poolPk.minePage >= pages ? 'disabled' : ''}>Вперёд →</button>
+        <button type="button" class="btn btn-sm" id="pk-csv">⬇️ CSV (АО-1, Excel)</button>
+        <button type="button" class="btn btn-sm" id="pk-unassign">↩️ Вернуть в пул (${poolPk.minePicked.size})</button>
       </div>`;
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
       cb.onchange = () => {
@@ -1628,7 +1628,7 @@ async function poolPkLoadAuto() {
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
       <label class="field" style="max-width:200px"><span>Сумма отчёта, ₽</span>
         <input id="pk-target" type="number" min="100" placeholder="например, 5000"></label>
-      <button class="btn btn-sm btn-primary" id="pk-auto-go">🎯 Подобрать набор ±5%</button>
+      <button type="button" class="btn btn-sm btn-primary" id="pk-auto-go">🎯 Подобрать набор ±5%</button>
     </div>
     <div id="pk-auto-out"></div>`;
   const go = $('#pk-auto-go');
@@ -1649,7 +1649,7 @@ async function poolPkLoadAuto() {
           <thead><tr><th>Дата чека</th><th>Магазин</th><th>Сумма, ₽</th><th>Город</th></tr></thead>
           <tbody>${d.items.map((r) => `<tr><td class="num">${esc(r.date)}</td><td>${esc(r.merchant)}</td>
             <td class="num">${fmtSum(r.sum)}</td><td>${esc(r.city)}</td></tr>`).join('')}</tbody></table></div>
-          <button class="btn btn-primary btn-sm" id="pk-auto-assign" style="margin-top:8px">🔗 Привязать этот набор (${d.count})</button>` : ''}`;
+          <button type="button" class="btn btn-primary btn-sm" id="pk-auto-assign" style="margin-top:8px">🔗 Привязать этот набор (${d.count})</button>` : ''}`;
       const ab = $('#pk-auto-assign');
       if (ab) ab.onclick = async () => {
         try {
@@ -1729,7 +1729,7 @@ async function poolApiKeysLoad() {
         <label class="field" style="max-width:240px"><span>Партнёр</span><input id="pool-api-name" placeholder="ООО «Аналитика»"></label>
         <label class="field" style="max-width:110px"><span>Запросов/час</span><input id="pool-api-rate" type="number" min="1" value="60"></label>
         <label class="field" style="max-width:110px"><span>Квота/мес</span><input id="pool-api-quota" type="number" min="1" value="5000"></label>
-        <button class="btn btn-sm btn-primary" id="pool-api-create">🔑 Выдать ключ</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pool-api-create">🔑 Выдать ключ</button>
       </div>
       <div id="pool-api-newkey"></div>
       ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
@@ -1741,7 +1741,7 @@ async function poolApiKeysLoad() {
           <td class="num">${fmtInt(k.used_month)}</td>
           <td class="num form-hint">${esc(k.last_used_at)}</td>
           <td>${k.active
-            ? `<button class="btn btn-sm" data-revoke="${k.id}">Отозвать</button>`
+            ? `<button type="button" class="btn btn-sm" data-revoke="${k.id}">Отозвать</button>`
             : '<span class="chip failed"><span class="dot"></span>отозван</span>'}</td></tr>`).join('')}
         </tbody></table></div>`
         : '<div class="form-hint">Ключей пока нет — выдайте первый партнёру.</div>'}`;
@@ -1754,7 +1754,7 @@ async function poolApiKeysLoad() {
         $('#pool-api-newkey').innerHTML = `
           <div class="info-callout" style="margin-bottom:8px">🔑 Ключ партнёру (покажите сейчас — полностью он больше не виден):<br>
             <input value="${esc(r.key)}" readonly style="max-width:420px;margin-top:4px">
-            <button class="btn btn-sm" id="pool-api-copy">📋 Копировать</button></div>`;
+            <button type="button" class="btn btn-sm" id="pool-api-copy">📋 Копировать</button></div>`;
         $('#pool-api-copy').onclick = () => {
           try { navigator.clipboard.writeText(r.key); toast('Ключ скопирован', 'ok', '🔑'); }
           catch (e) { toast('Скопируйте вручную', 'warn', '🔑'); }
@@ -1836,8 +1836,8 @@ function bindPoolDashboard(root) {
       Сданные чеки останутся в открытой базе обезличенными (это согласовано офертой).</p>
       <label class="field"><span>Пароль для подтверждения</span><input id="pool-del-pass" type="password"></label>
       <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-sm" data-close>Отмена</button>
-        <button class="btn btn-sm" id="pool-del-go" style="color:#b3261e">Удалить навсегда</button>
+        <button type="button" class="btn btn-sm" data-close>Отмена</button>
+        <button type="button" class="btn btn-sm" id="pool-del-go" style="color:#b3261e">Удалить навсегда</button>
       </div>`);
     slot.querySelector('#pool-del-go').onclick = async () => {
       try {
@@ -1907,8 +1907,8 @@ function poolAdmShell() {
       </select>
       <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="pooladm-mgeo" style="width:auto"> Без региона</label>
       <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="pooladm-mind" style="width:auto"> Без отрасли</label>
-      <button class="btn btn-sm" id="pooladm-enrich">🪄 Разметить недостающее</button>
-      <button class="btn btn-sm" id="pooladm-csv">⬇️ CSV</button>
+      <button type="button" class="btn btn-sm" id="pooladm-enrich">🪄 Разметить недостающее</button>
+      <button type="button" class="btn btn-sm" id="pooladm-csv">⬇️ CSV</button>
     </div>
     <div id="pooladm-table"></div>
   </div>`;
@@ -1956,9 +1956,9 @@ async function poolAdmLoadTable() {
         <td>${r.industry ? esc(inm(r.industry)) : '<span class="form-hint">—</span>'}</td>
         <td>${poolStatusChip(r.status)}</td>
         <td style="white-space:nowrap">
-          ${r.status === 'pending' ? `<button class="btn btn-sm pooladm-ok" data-id="${r.id}" title="Одобрить">✅</button>
-             <button class="btn btn-sm pooladm-no" data-id="${r.id}" title="Отклонить">❌</button>` : ''}
-          <button class="btn btn-sm pooladm-edit" data-id="${r.id}" title="Разметить вручную">✏️</button>
+          ${r.status === 'pending' ? `<button type="button" class="btn btn-sm pooladm-ok" data-id="${r.id}" title="Одобрить">✅</button>
+             <button type="button" class="btn btn-sm pooladm-no" data-id="${r.id}" title="Отклонить">❌</button>` : ''}
+          <button type="button" class="btn btn-sm pooladm-edit" data-id="${r.id}" title="Разметить вручную">✏️</button>
         </td></tr>`).join('')
       : '<tr><td colspan="8" class="form-hint">Ничего не найдено по фильтрам.</td></tr>'}</tbody>
     </table></div>
@@ -1987,8 +1987,8 @@ function poolAdmRejectDialog(id) {
     <label class="field"><span>Причина (необязательно)</span>
       <input id="pooladm-reject-comment" placeholder="например: данные не подтвердились"></label>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-sm" data-close>Отмена</button>
-      <button class="btn btn-sm" id="pooladm-reject-go" style="color:#b3261e">Отклонить</button>
+      <button type="button" class="btn btn-sm" data-close>Отмена</button>
+      <button type="button" class="btn btn-sm" id="pooladm-reject-go" style="color:#b3261e">Отклонить</button>
     </div>`);
   slot.querySelector('#pooladm-reject-go').onclick = () => {
     poolAdmModerate(id, 'reject', slot.querySelector('#pooladm-reject-comment').value);
@@ -2010,8 +2010,8 @@ function poolAdmMarkDialog(id) {
       <select id="pooladm-ed-industry"><option value="">— не задана —</option>
         ${opts(poolAdm.dicts.industries, '')}</select></label>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-sm" data-close>Отмена</button>
-      <button class="btn btn-sm btn-primary" id="pooladm-ed-save">Сохранить</button>
+      <button type="button" class="btn btn-sm" data-close>Отмена</button>
+      <button type="button" class="btn btn-sm btn-primary" id="pooladm-ed-save">Сохранить</button>
     </div>`);
   api.get(`/api/v1/pool-admin/receipts?page=1&page_size=200`).then(d => {
     const r = d.items.find(x => x.id === id);
@@ -2067,7 +2067,7 @@ async function viewPoolPeople(container) {
           <td class="cell-num">${fmtInt(u.points)}</td>
           <td class="cell-num">${fmtInt(u.risk_score)}</td>
           <td class="cell-date">${fmtDate(u.created_at)}</td>
-          <td>${u.is_blocked ? '—' : `<button class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(u.email || u.nickname || u.id)}" title="Открыть кабинет глазами участника">👁</button>`}</td>
+          <td>${u.is_blocked ? '—' : `<button type="button" class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(u.email || u.nickname || u.id)}" title="Открыть кабинет глазами участника">👁</button>`}</td>
         </tr>`).join('')
         : `<tr style="cursor:default"><td colspan="7">${emptyState('🧩', 'Участников не найдено')}</td></tr>`;
       rows.querySelectorAll('.pp-view').forEach(b => {
@@ -2163,10 +2163,10 @@ function fraudShell() {
         <option value="3">S3+ (серьёзные)</option>
         <option value="4">S4+ (критичные)</option>
       </select>
-      <button class="btn btn-sm" id="fraud-bulk-fp" disabled>Ложное срабатывание (выбранные)</button>
-      <button class="btn btn-sm" id="fraud-bulk-confirm" disabled>Подтвердить (выбранные)</button>
-      <button class="btn btn-sm" id="fraud-purge" title="152-ФЗ: техданные храним ≤ 12 месяцев">🧹 Чистка техданных &gt; года</button>
-      <button class="btn btn-sm" id="fraud-graph-btn">🕸 Граф связей</button>
+      <button type="button" class="btn btn-sm" id="fraud-bulk-fp" disabled>Ложное срабатывание (выбранные)</button>
+      <button type="button" class="btn btn-sm" id="fraud-bulk-confirm" disabled>Подтвердить (выбранные)</button>
+      <button type="button" class="btn btn-sm" id="fraud-purge" title="152-ФЗ: техданные храним ≤ 12 месяцев">🧹 Чистка техданных &gt; года</button>
+      <button type="button" class="btn btn-sm" id="fraud-graph-btn">🕸 Граф связей</button>
     </div>
     <div id="fraud-graph" class="hidden" style="margin-bottom:10px"></div>
     <div id="fraud-table"></div>
@@ -2208,8 +2208,8 @@ async function fraudLoadTable() {
         <td class="form-hint" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.details || '—')}</td>
         <td>${esc(x.status)}${x.resolved_by ? '<div class="form-hint">' + esc(x.resolved_by) + '</div>' : ''}</td>
         <td style="white-space:nowrap">
-          <button class="btn btn-sm fraud-fp" data-id="${x.id}" title="Ложное срабатывание">🙂</button>
-          <button class="btn btn-sm fraud-conf" data-id="${x.id}" title="Подтвердить">⚠️</button>
+          <button type="button" class="btn btn-sm fraud-fp" data-id="${x.id}" title="Ложное срабатывание">🙂</button>
+          <button type="button" class="btn btn-sm fraud-conf" data-id="${x.id}" title="Подтвердить">⚠️</button>
         </td></tr>`).join('')
       : '<tr><td colspan="7" class="form-hint">Сигналов нет — честные участники не помечаются.</td></tr>'}</tbody>
     </table></div>
@@ -2259,10 +2259,10 @@ async function fraudUserCard(uid) {
         <tbody>${d.signals.map(x => `<tr><td>${esc(x.code)}</td><td class="num">+${x.points}</td><td>${esc(x.status)}</td></tr>`).join('')}</tbody>
       </table></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        ${u.quarantined ? '<button class="btn btn-sm btn-primary" id="fu-release">Снять карантин</button>' : ''}
-        ${u.points > 0 ? '<button class="btn btn-sm" id="fu-annul" style="color:#b3261e">Аннулировать баллы</button>' : ''}
-        <button class="btn btn-sm" id="fu-trust1">Доверие: 1</button>
-        <button class="btn btn-sm" id="fu-trust0">Доверие: 0</button>
+        ${u.quarantined ? '<button type="button" class="btn btn-sm btn-primary" id="fu-release">Снять карантин</button>' : ''}
+        ${u.points > 0 ? '<button type="button" class="btn btn-sm" id="fu-annul" style="color:#b3261e">Аннулировать баллы</button>' : ''}
+        <button type="button" class="btn btn-sm" id="fu-trust1">Доверие: 1</button>
+        <button type="button" class="btn btn-sm" id="fu-trust0">Доверие: 0</button>
       </div>`);
     const rel = slot.querySelector('#fu-release');
     if (rel) rel.onclick = async () => {
@@ -2309,7 +2309,7 @@ async function viewPartners(container) {
         <td><img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(p.code)}"
              alt="QR партнёра ${esc(p.name)}" width="88" height="88"
              style="border:1px solid #e3e3e3;border-radius:6px;background:#fff"></td>
-        <td><button class="btn btn-sm" data-code="${esc(p.code)}" data-name="${esc(p.name)}">🖨 Печать QR</button></td>
+        <td><button type="button" class="btn btn-sm" data-code="${esc(p.code)}" data-name="${esc(p.name)}">🖨 Печать QR</button></td>
       </tr>`).join('');
     $('#partners-table').innerHTML = `
       <div class="form-hint" style="margin-bottom:6px">QR ведёт на страницу «Сдать чек» — участник сдаёт чек партнёра
@@ -2609,18 +2609,18 @@ function applyViewAsMode() {
   chip.setAttribute('aria-expanded', 'false');
   // v1.42.0: меню профиля/переключения ролей — только администратор
   // (в режиме просмотра — возврат). Бухгалтер и сотрудник меню не видят.
-  if (isAdmin() || viewing) {
-    chip.onclick = (e) => {
-      if (e.target.closest('#btn-logout')) return; // «Выйти» — отдельное действие
-      togglePersonaMenu();
-    };
-    chip.onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePersonaMenu(); }
-    };
-  } else {
-    chip.onclick = null;
-    chip.onkeydown = null;
-  }
+  // v1.70.33: #user-chip стал нативной кнопкой, а «Выйти» — отдельной кнопкой
+  // рядом (не внутри). Отсюда три следствия:
+  //   - обработчик keydown больше не нужен: Enter и Space нативная кнопка сама
+  //     превращает в click, а прежний preventDefault() вместе с ним давал бы
+  //     двойное переключение меню;
+  //   - прежняя проверка «кликнулся ли выход внутри чипа» стала недостижимой:
+  //     «Выйти» больше не потомок #user-chip;
+  //   - неинтерактивное состояние объявляется честно через disabled: элемент не
+  //     выглядит кликабельным и не попадает в порядок обхода клавиатурой.
+  const chipActive = isAdmin() || viewing;
+  chip.disabled = !chipActive;
+  chip.onclick = chipActive ? () => togglePersonaMenu() : null;
 }
 
 function closePersonaMenu() {
@@ -2644,7 +2644,7 @@ async function renderPersonaMenu(m) {
       `<div class="pm-head">👁 Режим просмотра</div>
        <div class="pm-note">Вы вошли как <b>${esc(state.me.full_name || state.me.username)}</b>
        (${roleLabel(state.me.role)}). Действия выполняются от его имени.</div>
-       <button class="pm-item pm-back" id="pm-return">🛡 Вернуться в администратора</button>`;
+       <button type="button" class="pm-item pm-back" id="pm-return">🛡 Вернуться в администратора</button>`;
     $('#pm-return').onclick = stopViewAs;
     return;
   }
@@ -2671,7 +2671,7 @@ async function renderPersonaMenu(m) {
     const mgr = act.filter(u => u.role === 'manager');   // v1.64.0
     const usr = act.filter(u => u.role === 'user');
     const row = (u) =>
-      `<button class="pm-item" data-uid="${esc(u.id)}" role="menuitem">
+      `<button type="button" class="pm-item" data-uid="${esc(u.id)}" role="menuitem">
          <span class="pm-dot ${u.role === 'accountant' ? 'acc' : 'usr'}"></span>
          <span class="pm-name">${esc(u.full_name || u.username)}</span>
          <span class="pm-sub">${esc(u.username)}${u.company_name ? ' · ' + esc(u.company_name) : ''}</span>
@@ -2698,7 +2698,7 @@ async function renderPersonaMenu(m) {
       try {
         const ppl = await api.get('/api/v1/pool-admin/participants?limit=6');
         const prow = (u) =>
-          `<button class="pm-item" data-pid="${esc(u.id)}" role="menuitem">
+          `<button type="button" class="pm-item" data-pid="${esc(u.id)}" role="menuitem">
              <span class="pm-dot ${u.is_blocked ? '' : 'acc'}"></span>
              <span class="pm-name">${esc(u.email || u.nickname || u.id)}</span>
              <span class="pm-sub">${fmtInt(u.points)} баллов · ${fmtInt(u.receipts)} чеков${u.is_blocked ? ' · заблокирован' : ''}</span>
@@ -2707,7 +2707,7 @@ async function renderPersonaMenu(m) {
           (ppl.items.length
             ? ppl.items.map(prow).join('')
             : '<div class="pm-none">участников пока нет</div>') +
-          `<button class="pm-item" id="pm-people-all" role="menuitem">
+          `<button type="button" class="pm-item" id="pm-people-all" role="menuitem">
              <span class="pm-name">Все участники →</span>
              <span class="pm-sub">раздел «Чек-Пул: участники»</span></button>`;
         pb.querySelectorAll('.pm-item[data-pid]').forEach(b => {
@@ -2738,8 +2738,8 @@ async function startViewAs(uid, name) {
      Экран перезагрузится в его профиле; действия будут выполняться от его имени.
      Возврат — кнопка «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
      <div class="modal-actions">
-       <button class="btn" id="va-cancel">Отмена</button>
-       <button class="btn btn-primary" id="va-go">Открыть его профиль</button>
+       <button type="button" class="btn" id="va-cancel">Отмена</button>
+       <button type="button" class="btn btn-primary" id="va-go">Открыть его профиль</button>
      </div>`);
   $('#va-cancel', slot).onclick = close;
   $('#va-go', slot).onclick = async () => {
@@ -2787,8 +2787,8 @@ async function startViewAsPool(pid, name) {
      Действия будут выполняться от его имени. Возврат — кнопка
      «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
      <div class="modal-actions">
-       <button class="btn" id="pv-cancel">Отмена</button>
-       <button class="btn btn-primary" id="pv-go">Открыть кабинет</button>
+       <button type="button" class="btn" id="pv-cancel">Отмена</button>
+       <button type="button" class="btn btn-primary" id="pv-go">Открыть кабинет</button>
      </div>`);
   $('#pv-cancel', slot).onclick = close;
   $('#pv-go', slot).onclick = async () => {
@@ -2844,8 +2844,8 @@ function forcePasswordChange() {
         <label class="field"><span>Повторите новый пароль</span>
           <input type="password" id="fc-new2"></label>
         <div id="fc-error" class="form-error hidden"></div>
-        <button class="btn btn-primary btn-block" id="fc-save">Сохранить пароль</button>
-        <button class="btn btn-block" id="fc-logout">Выйти из системы</button>
+        <button type="button" class="btn btn-primary btn-block" id="fc-save">Сохранить пароль</button>
+        <button type="button" class="btn btn-block" id="fc-logout">Выйти из системы</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -3204,9 +3204,9 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
           <input id="iv-maxlogin" placeholder="username из MAX или цифровой ID"></label>
       </div>
       <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn" id="iv-save">Создать ссылку</button>
-        <button class="btn btn-primary" id="iv-save-max">📨 Создать и отправить в MAX</button>
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn" id="iv-save">Создать ссылку</button>
+        <button type="button" class="btn btn-primary" id="iv-save-max">📨 Создать и отправить в MAX</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     const ivSel = slot.querySelector('#iv-company-select');
@@ -3258,12 +3258,12 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
           <div class="info-callout">Роль: <b>${roleLabel(inv.role)}</b> ·
             использований: ${inv.max_uses} · действует до ${inv.expires_at ? fmtDate(inv.expires_at) : '∞'}</div>
           <div class="token-line"><input readonly value="${esc(url)}" id="iv-url">
-            <button class="btn btn-sm" id="iv-copy">копировать</button>
-            <button class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
+            <button type="button" class="btn btn-sm" id="iv-copy">копировать</button>
+            <button type="button" class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
           <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта)
             или покажите QR-код — ему достаточно навести камеру телефона.
             После перехода он создаст логин и пароль — роль присвоится автоматически.</p>
-          <div class="modal-actions"><button class="btn btn-primary" data-close>Готово</button></div>`);
+          <div class="modal-actions"><button type="button" class="btn btn-primary" data-close>Готово</button></div>`);
         s2.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
         s2.querySelector('#iv-copy').onclick = () => {
           navigator.clipboard && navigator.clipboard.writeText(url);
@@ -3291,9 +3291,9 @@ async function viewCompanies(container) {
   container.innerHTML = `
     <div class="glass card">
       <div class="card-title">🏢 Компании-клиенты <span class="spacer"></span>
-        <button class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button>
-        <button class="btn btn-sm btn-primary" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
-        <button class="btn btn-sm btn-primary" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
+        <button type="button" class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button>
+        <button type="button" class="btn btn-sm btn-primary" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
+        <button type="button" class="btn btn-sm btn-primary" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
       <p class="form-hint" style="margin-bottom:12px">Каждая компания (ООО, ИП) — изолированное пространство:
       свои сотрудники, свои чеки, своя отчётность. Сотрудники видят только свою компанию,
       вы видите всё и можете перемещать чеки между компаниями.</p>
@@ -3308,10 +3308,10 @@ async function viewCompanies(container) {
       <td>${fmtInt(c.receipts)} на ${fmtSum(c.receipts_sum)}</td>
       <td>${c.last_activity ? fmtDate(c.last_activity) : '—'}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-sm cp-card" data-id="${c.id}" title="Карточка компании: ЕГРЮЛ, сотрудники, удаление">🗂</button>
-        <button class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
-        <button class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
-        <button class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
+        <button type="button" class="btn btn-sm cp-card" data-id="${c.id}" title="Карточка компании: ЕГРЮЛ, сотрудники, удаление">🗂</button>
+        <button type="button" class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
+        <button type="button" class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
+        <button type="button" class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
       </td>
     </tr>`).join('');
   $('#cp-table').innerHTML = comps.length ? `
@@ -3373,8 +3373,8 @@ function companyDialog(c = null) {
         <input id="cp-note" value="${esc(c?.note || '')}"></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="cp-save">Сохранить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="cp-save">Сохранить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
 
@@ -3510,16 +3510,16 @@ async function openCompanyCard(id) {
     <div class="form-hint">ИНН: ${esc(c.inn || 'не указан')} · ${c.is_active ? 'активна' : 'в архиве'}</div>
     ${egryl}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-      <button class="btn btn-sm btn-accent" id="cc-reg" title="Свежие данные реестра: сначала официальный сайт ФНС (PDF), затем Checko.ru">⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП</button>
-      <button class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
-      <button class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
-      <button class="btn btn-sm" id="cc-ao">🧾 Авансовый отчёт</button>
-      <button class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
-      ${c.is_active ? '<button class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
+      <button type="button" class="btn btn-sm btn-accent" id="cc-reg" title="Свежие данные реестра: сначала официальный сайт ФНС (PDF), затем Checko.ru">⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП</button>
+      <button type="button" class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
+      <button type="button" class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
+      <button type="button" class="btn btn-sm" id="cc-ao">🧾 Авансовый отчёт</button>
+      <button type="button" class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
+      ${c.is_active ? '<button type="button" class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
     </div>
     <div class="modal-actions" style="justify-content:space-between">
-      <button class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
-      <button class="btn" data-close>Закрыть</button>
+      <button type="button" class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
+      <button type="button" class="btn" data-close>Закрыть</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = close;
   slot.querySelector('#cc-inn').onclick = () => { close(); companyDialog(c); };
@@ -3592,8 +3592,8 @@ function openCompanyDelete(d) {
       <b>Удалить чеки безвозвратно</b> — все ${d.receipts} чеков будут стёрты, сотрудники открепятся
       (других активных компаний нет — переносить некуда)</label>`}
     <div class="modal-actions" style="justify-content:space-between">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-bad" id="dl-go">Удалить компанию</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-bad" id="dl-go">Удалить компанию</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = close;
   slot.querySelector('#dl-go').onclick = async () => {
@@ -3634,8 +3634,8 @@ function openMoveDialog() {
         <input id="mv-assignee" placeholder="Иванов И.И. — оставить как есть, если пусто"></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="mv-save">Переместить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="mv-save">Переместить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#mv-save').onclick = async () => {
@@ -3663,7 +3663,7 @@ function bindShell() {
     document.addEventListener('click', (e) => {
       const m = document.getElementById('persona-menu');
       if (m && !m.classList.contains('hidden') &&
-          !e.target.closest('#persona-menu') && !e.target.closest('#user-chip')) {
+          !e.target.closest('#persona-menu') && !e.target.closest('.user-area')) {
         closePersonaMenu();
       }
     });
@@ -3757,7 +3757,7 @@ async function viewDashboard(container) {
 
   container.innerHTML = `
     <div class="dash-toolbar">
-      <button class="btn btn-sm" id="btn-focus" title="Остаться только на задачах, требующих внимания">🎯 Умный фокус</button>
+      <button type="button" class="btn btn-sm" id="btn-focus" title="Остаться только на задачах, требующих внимания">🎯 Умный фокус</button>
       <span class="form-hint">затемняет всё, кроме задач, требующих внимания · выход — Esc</span>
     </div>
     <div class="grid kpi-grid">
@@ -3796,7 +3796,7 @@ async function viewDashboard(container) {
     <div class="glass card ym-focus-target" id="card-assignee" style="margin-top:16px">
       <div class="card-title">👥 По подотчётным лицам <span class="spacer"></span>
         <span class="form-hint">кто сколько принёс (все чеки)</span>
-        <button class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
+        <button type="button" class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
       <div id="dash-assignee"><div class="skeleton" style="height:80px"></div></div>
     </div>` : ''}
     ${isAdmin() && !companyIdParam() && dashStats.by_company && dashStats.by_company.length ? `
@@ -3807,7 +3807,7 @@ async function viewDashboard(container) {
         <th>Компания</th><th>Чеков</th><th>Сумма, ₽</th><th></th></tr></thead><tbody>
         ${dashStats.by_company.map(c => `<tr>
           <td title="${esc(c.name)}">${esc(compName(c))}</td><td>${fmtInt(c.count)}</td><td>${fmtSum(c.sum)}</td>
-          <td><button class="btn btn-sm c-open" data-id="${c.id}">открыть пространство</button></td></tr>`).join('')}
+          <td><button type="button" class="btn btn-sm c-open" data-id="${c.id}">открыть пространство</button></td></tr>`).join('')}
       </tbody></table></div>
     </div>` : ''}
     <div id="demo-zone"></div>`;
@@ -3891,7 +3891,7 @@ async function viewDashboard(container) {
         <h3 style="margin-bottom:8px">Пустая база — посмотрите систему в действии</h3>
         <p style="color:var(--text-dim);margin-bottom:14px">Загрузите демонстрационные чеки за 14 дней
         (реальные ФН не используются), затем удалите их или начните сканировать свои.</p>
-        <button class="btn btn-primary" id="btn-demo">✨ Загрузить демо-чеки</button>
+        <button type="button" class="btn btn-primary" id="btn-demo">✨ Загрузить демо-чеки</button>
       </div>`;
     $('#btn-demo').onclick = async () => {
       const r = await api.post('/api/v1/dashboard/demo-data?count=32', {});
@@ -4016,7 +4016,7 @@ async function viewBoss(container) {
   const drill = async (title, params) => {
     const { slot } = openModal(`<div class="modal-title">🔍 ${esc(title)}</div>
       <div id="drill-body"><div class="form-hint">Загружаю…</div></div>
-      <div class="modal-actions"><button class="btn" data-close>Закрыть</button></div>`);
+      <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     try {
       const r = await api.get('/api/v1/receipts?page=1&page_size=50&' + params);
@@ -4127,7 +4127,7 @@ async function openBossReceipt(id) {
         ${r.items.map((it) => `<tr><td>${esc(it.name)}</td><td class="num">${it.quantity}</td>
           <td class="num">${fmtSum(it.price)}</td><td class="num">${fmtSum(it.total)}</td></tr>`).join('')}
         </tbody></table></div>` : ''}
-      <div class="modal-actions"><button class="btn" data-close>Закрыть</button></div>`);
+      <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   } catch (e) { toast(e.message, 'err', 'Чек'); }
 }
@@ -4148,15 +4148,15 @@ async function openManual() {
   }
   const { slot, close } = openModal(
     `<div class="manual-shell" id="manual-shell">
-       <button class="btn btn-sm" id="manual-close" style="float:right">✕ Закрыть</button>
+       <button type="button" class="btn btn-sm" id="manual-close" style="float:right">✕ Закрыть</button>
        <div class="card-title font-accent" style="margin-bottom:2px">📖 Инструкция</div>
        <div class="manual-meta">Ямастер Чек · актуально для версии
          <b>v${esc(data.version)}</b> · ${esc(data.vendor || '')}</div>
        ${data.show_tabs ? `<div class="manual-tabs" id="manual-tabs">
-         <button class="manual-tab" data-aud="admin">Администратор</button>
-         <button class="manual-tab" data-aud="accountant">Бухгалтер</button>
-         <button class="manual-tab" data-aud="manager">Руководитель</button>
-         <button class="manual-tab" data-aud="user">Сотрудник</button>
+         <button type="button" class="manual-tab" data-aud="admin">Администратор</button>
+         <button type="button" class="manual-tab" data-aud="accountant">Бухгалтер</button>
+         <button type="button" class="manual-tab" data-aud="manager">Руководитель</button>
+         <button type="button" class="manual-tab" data-aud="user">Сотрудник</button>
        </div>` : ''}
        <div id="manual-body"></div>
        <div class="manual-foot">© ООО «Ямастер» — разработка и идея · ymaster.ru ·
@@ -4207,8 +4207,8 @@ function showLogoutDialog() {
      <p class="modal-text">Вы всегда сможете вернуться — данные и настройки
      сохранятся на сервере.</p>
      <div class="modal-actions">
-       <button class="btn btn-primary" id="lo-stay">Остаться</button>
-       <button class="btn btn-danger" id="lo-exit">Выйти</button>
+       <button type="button" class="btn btn-primary" id="lo-stay">Остаться</button>
+       <button type="button" class="btn btn-danger" id="lo-exit">Выйти</button>
      </div>`);
   const stay = $('#lo-stay', slot);
   const exit = $('#lo-exit', slot);
@@ -4304,15 +4304,15 @@ async function viewScan(container) {
           <div class="camera-overlay" id="camera-overlay">
             <span class="big-ico">📷</span>
             <div>Наведите камеру на QR-код чека.<br>Система распознаёт код автоматически, с антисбливанием.</div>
-            <button class="btn btn-primary" id="btn-camera-start">▶ Включить камеру</button>
+            <button type="button" class="btn btn-primary" id="btn-camera-start">▶ Включить камеру</button>
             <span class="form-hint">или используйте способы ниже</span>
           </div>
         </div>
         <div class="scan-actions">
-          <button class="btn" id="btn-upload">🖼 Загрузить фото чека</button>
-          <button class="btn" id="btn-pdf">📄 Загрузить PDF-чек</button>
-          <button class="btn" id="btn-paste">📋 Вставить QR-текст</button>
-          <button class="btn" id="btn-manual">⌨ Ввести вручную</button>
+          <button type="button" class="btn" id="btn-upload">🖼 Загрузить фото чека</button>
+          <button type="button" class="btn" id="btn-pdf">📄 Загрузить PDF-чек</button>
+          <button type="button" class="btn" id="btn-paste">📋 Вставить QR-текст</button>
+          <button type="button" class="btn" id="btn-manual">⌨ Ввести вручную</button>
           <input type="file" id="file-input" accept="image/*" multiple class="hidden">
           <input type="file" id="pdf-input" accept="image/*,.pdf,application/pdf" class="hidden">
         </div>
@@ -4331,7 +4331,7 @@ async function viewScan(container) {
           <div class="card-title">⚡ Офлайн-очередь: ${queueSize}</div>
           <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
             Эти сканы были сделаны без связи с сервером и ждут синхронизации.</p>
-          <button class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
         </div>` : ''}
         <div class="glass card">
           <div class="card-title">Последние сканы</div>
@@ -4553,7 +4553,7 @@ function openEditReceipt(r, onSaved) {
     </div>
     <div style="margin-top:14px">
       <b style="font-size:13.5px">Позиции чека (${(r.items || []).length})</b>
-      ${r.exported && !isAdminUser ? '' : '<button class="btn btn-sm" id="er-add-item" style="margin-left:8px">+ позиция</button>'}
+      ${r.exported && !isAdminUser ? '' : '<button type="button" class="btn btn-sm" id="er-add-item" style="margin-left:8px">+ позиция</button>'}
       <div id="er-items" style="margin-top:8px"></div>
     </div>
     <label style="display:flex;gap:10px;align-items:center;margin-top:12px;cursor:pointer">
@@ -4561,9 +4561,9 @@ function openEditReceipt(r, onSaved) {
       <span>🔔 Уведомление от сотрудника</span></label>
     ${extBlockHTML(r.ext) ||
       `<div class="info-callout" style="margin-top:12px">🧾 Полные данные чека ещё не получены.
-        <button class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из proverkacheka.com</button>
+        <button type="button" class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из proverkacheka.com</button>
         <div class="form-hint" id="er-fetch-msg" style="margin-top:6px"></div></div>`}
-    ${r.ext ? `<div style="margin-top:8px"><button class="btn btn-sm" id="er-refetch"
+    ${r.ext ? `<div style="margin-top:8px"><button type="button" class="btn btn-sm" id="er-refetch"
         title="Запросить свежие данные из proverkacheka.com; пустые поля заполнятся, ваши правки не затрутся">🔄 Обновить данные из источника</button>
         <span class="form-hint" id="er-fetch-msg" style="margin-left:8px"></span></div>` : ''}
     <details class="manual-check" style="margin-top:12px">
@@ -4593,12 +4593,12 @@ function openEditReceipt(r, onSaved) {
           <input type="checkbox" id="mr-cmt" ${r.comment ? 'checked' : ''} style="width:auto">
           <span>Комментарий</span></label>
       </div>
-      <button class="btn btn-sm" id="er-remember">🧠 Запомнить</button>
+      <button type="button" class="btn btn-sm" id="er-remember">🧠 Запомнить</button>
       <span class="form-hint" id="er-remember-msg" style="margin-left:8px"></span>
     </details>` : ''}
     <div class="modal-actions">
-      <button class="btn btn-primary" id="er-save">💾 Сохранить</button>
-      <button class="btn" id="er-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="er-save">💾 Сохранить</button>
+      <button type="button" class="btn" id="er-cancel">Отмена</button>
     </div>`);
 
   // v1.57.3: «Получить/Обновить данные» прямо в карточке чека — доступно
@@ -4770,8 +4770,8 @@ function openNotifyDialog(r, onSaved) {
     <label class="field"><span>Комментарий к чеку</span>
       <textarea id="nt-comment" rows="3" maxlength="2000" placeholder="например: товар вернули, чек заменяю позже…">${esc(r.comment || '')}</textarea></label>
     <div class="modal-actions">
-      <button class="btn btn-primary" id="nt-send">Отправить</button>
-      <button class="btn" id="nt-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="nt-send">Отправить</button>
+      <button type="button" class="btn" id="nt-cancel">Отмена</button>
     </div>`);
   slot.querySelector('#nt-cancel').onclick = close;
   slot.querySelector('#nt-send').onclick = async () => {
@@ -4833,17 +4833,17 @@ function showInstallDialog() {
       ${win ? `
       <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите <b>Ямастер Чек</b>
       как приложение Windows 11 — работа в своём окне без браузера, иконка в «Пуск» и на панели задач.</p>
-      <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
+      <button type="button" class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
       <p class="form-hint" style="margin-top:10px">Если кнопка не сработала (Microsoft Edge): нажмите
       <b>⊕ / «Установить приложение»</b> в адресной строке, либо меню <b>⋯ → Приложения → Установить
       этот сайт как приложение</b>. Приложение появится в «Пуск» и будет запускаться в своём окне.</p>`
       : `
       <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите приложение
       на устройство — быстрый доступ с иконки, работа на весь экран, офлайн-сканирование.</p>
-      <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
+      <button type="button" class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
       <p class="form-hint" style="margin-top:10px">Если кнопка не сработала: меню браузера →
       «Установить приложение» / «Добавить на главный экран».</p>`}`}
-    <div class="modal-actions"><button class="btn" id="pwa-close">Понятно</button></div>`);
+    <div class="modal-actions"><button type="button" class="btn" id="pwa-close">Понятно</button></div>`);
   const go = document.getElementById('pwa-go');
   if (go) go.onclick = async () => {
     const p = window.__ymInstallPrompt;
@@ -4920,8 +4920,8 @@ function showUpdateDialog(checkInfo) {
       поэтому ваш пароль из терминала тут не работал. Теперь перезапуск идёт без пароля.
       Используется только в момент обновления и нигде не сохраняется.</span></label>
     <div class="modal-actions">
-      <button class="btn" id="upd-close">Позже</button>
-      <button class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
+      <button type="button" class="btn" id="upd-close">Позже</button>
+      <button type="button" class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
     </div>`);
   slot.querySelector('#upd-close').onclick = close;
   slot.querySelector('#upd-apply').onclick = async (e) => {
@@ -4971,7 +4971,7 @@ function openUpdateProgress() {
     <p class="form-hint" id="upd-metrics"><span id="upd-elapsed"></span> <span id="upd-bytes"></span></p>
     <pre class="codeblock" id="upd-log" style="max-height:180px;overflow:auto;font-size:11.5px"></pre>
     <div id="upd-summary" class="hidden" style="margin:10px 0"></div>
-    <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`,
+    <div class="modal-actions"><button type="button" class="btn btn-primary hidden" id="upd-done">Готово</button></div>`,
     { onClose: () => { state.updModalOpen = false; state.updAutoDismissed = autoKey;
                        clearInterval(state.updTimer); clearInterval(updTick); } });
   let finalShown = false;           // v1.50.0: ровно одно финальное уведомление
@@ -5124,6 +5124,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.33': [
+    { icon: '📐', title: 'Вёрстка: разметка проходит валидацию без ошибок, интерактивные элементы больше не вложены друг в друга',
+      text: 'Проверка разметки валидатором html-validate 11.16.4 нашла 64 ошибки в трёх HTML-файлах проекта; сейчас их ноль. Крупнейшая группа — 38 инлайн-стилей в самой разметке (31 в основном интерфейсе и 7 в MAX-приложении): они перенесены в классы-утилиты в конце файла стилей, а сам перенос защищён проверкой, что каждый класс из разметки действительно объявлен в CSS — иначе элемент молча потерял бы оформление, и браузер об этом не сообщил бы. Вторая находка серьёзнее и касается структуры. Переключатель профиля в шапке был псевдокнопкой: div с ролью button и tabindex, внутри которого лежала настоящая кнопка «Выйти». Вложенные интерактивные элементы невалидны и недоступны — скринридер не объявит вложенное действие, а клавиатура попадает в него непредсказуемо; при этом заменить такой div на нативную кнопку было нельзя, получилась бы кнопка внутри кнопки. Теперь переключатель профиля — настоящая кнопка, а «Выйти» стоит рядом с ней в общей обёртке, и оба элемента независимы. Из кода убран обработчик клавиатуры: нативная кнопка сама превращает Enter и Space в нажатие, а прежний preventDefault вместе с этим давал бы двойное переключение меню; неактивное состояние теперь объявляется честно через disabled, поэтому элемент не выглядит кликабельным и не попадает в порядок обхода. По тому же правилу явный тип получили 290 кнопок в шаблонах, которыми рисуется почти все экраны: кнопка без типа внутри формы означает «отправить», и случайный клик по ней отправил бы форму. Кольцо фокуса оказалось невидимым: действующим был фирменный оранжевый --accent с контрастом 2.21:1 на сером фоне и 2.61:1 на белом при пороге 3.00:1 для нетекстовых элементов (WCAG 1.4.11). Правило из блока v1.21.0 перебивало раннее правило с тёмно-синим, поэтому файл выглядел корректным, а фокус терялся; теперь контур рисуется токеном --accent-text — тот же фирменный оранжевый, но тёмный, 5.30–6.26:1. Из того же правила убран border-radius: он применялся к самому сфокусированному элементу и ломал его собственный радиус, карточка в 14px становилась 6px под фокусом. Найдены и два блока тач-целей для сенсорных экранов с противоречивыми числами: пункт меню 44px против 48px, компактная кнопка 40px против 42px — побеждал нижний, а часть верхнего была мертва, и именно эти мёртвые значения закреплял тест. Блок теперь один, с действующими значениями, и тест пинит их. На узких экранах шапка ломалась из-за длинного имени: правый блок шапки был объявлен несжимаемым, поэтому разрешение сжиматься у имени не работало и длинные фамилии выдавливали заголовок; добавлена цепочка сжатия и обрезка многоточием. Поля входа и регистрации получили правильные токены автозаполнения: пароль без парного поля имени менеджеры паролей не связывают, и на телефоне автозаполнение не срабатывает. У нативной кнопки снят системный appearance — иначе iOS Safari рисует её собственной краской. В брендбуке строки таблицы обёрнуты в thead и tbody (иначе браузер вставляет tbody сам, и селекторы строк съезжают), а восемь инлайн-стилей заменены классами, ссылающимися на токены самого брендбука. Фирменная палитра не изменена: #FF7A00, #4B0082, #2E8B57, #D9534F остались собой.' },
+  ],
   '1.70.32': [
     { icon: '🎨', title: 'Интерфейс: нечитаемые подписи исправлены, остатки тёмной темы убраны',
       text: 'Аудит вёрстки и дизайна нашёл системную проблему: фирменные цвета успеха, ошибки, предупреждения и фирменный оранжевый использовались как цвет МЕЛКОГО текста (11–13 px), где стандарт доступности WCAG AA требует контраст 4.5:1, а они дают от 2.36 до 4.25. Хуже всего было сообщение об ошибке входа: светло-розовый текст #fca5a5 на своей же розовой подложке давал 1.69:1 — плашка была практически пустой на вид, и пользователь не понимал, почему вход не получился. Теперь там 4.57:1. Причина оказалась исторической: палитра #fca5a5, #c084fc и наборы rgba(248,113,113), rgba(52,211,153), rgba(96,165,250), rgba(251,191,36), rgba(192,132,252) — это оттенки Tailwind для ТЁМНОЙ темы, оставшиеся в стилях после перехода на единственную светлую тему в v1.25.0; на белом фоне светлые оттенки нечитаемы. Фирменная палитра при этом не тронута: #FF7A00, #4B0082, #2E8B57, #D9534F остались собой, их фиксируют и бренд, и тесты. Вместо изменения цвета исправлено его ИСПОЛЬЗОВАНИЕ — рядом с базовыми токенами добавлены отдельные текстовые оттенки --ok-text #27764a, --bad-text #c22e2a, --warn-text #a24b08, --info-text #217287, подобранные перебором по светлоте в том же тоне: каждый даёт не менее 4.5:1 не только на чистых фонах темы, но и на собственной подкраске поверх серого фона, то есть на худшей реальной подложке. Оранжевый как текст больше не используется нигде — для него в теме уже был правильный токен --accent-text #9a4a00 из v1.58.3, он просто не применялся последовательно, из-за чего иконка кнопки на ховере и номер пункта инструкции почти исчезали (2.36:1 и 2.40:1). Все 26 остатков тёмной палитры переведены на color-mix от токенов темы — приём, который в файле уже основной, поэтому подложки и границы больше не разъезжаются с темой. Исправлено 23 места мелкого текста: плашки статусов чеков, кнопки «успех» и «ошибка», подписи переключателя AdGuard VPN, индикатор «нет сети», тренды, бейджи, тепловая карта сроками. Попутно выяснилось, что три теста закрепляли старые нечитаемые значения дословно; их намерение сохранено, а пин переведён на читаемый оттенок. Заведён журнал интерфейса docs/ui_journal.md: находка записывается только с измерением и способом проверки, ложные срабатывания сканов фиксируются отдельно, а непроверенные кандидаты лежат в бэклоге — например, десять классов, похожих на мёртвые, но требующих проверки на динамическую склейку имени.' },
@@ -5776,7 +5780,7 @@ function showWhatsNew() {
   const { slot, close } = openModal(`
     <div class="modal-title">🎉 Ямастер Чек v${esc(v)} — что нового</div>
     <div class="whats-new">${rows}</div>
-    <div class="modal-actions"><button class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
   slot.querySelector('#wn-ok').onclick = close;
 }
 
@@ -5913,8 +5917,8 @@ function pickVariantDialog(variants) {
     <div class="modal-title">🔎 Найдено несколько чеков</div>
     <p style="color:var(--text-dim);margin-bottom:14px">На изображении распознано несколько разных QR-кодов. Выберите, какие добавить:</p>
     <div id="variants-box"></div>
-    <div class="modal-actions"><button class="btn" data-close>Закрыть</button>
-    <button class="btn btn-primary" id="btn-add-selected">Добавить выбранные</button></div>`);
+    <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button>
+    <button type="button" class="btn btn-primary" id="btn-add-selected">Добавить выбранные</button></div>`);
   slot.querySelector('#variants-box').innerHTML = variants.map((v, i) => `
     <label class="recent-scan-item" style="cursor:pointer">
       <input type="checkbox" class="variant-check" data-i="${i}" checked style="width:auto">
@@ -5941,8 +5945,8 @@ function pasteDialog() {
     <label class="field"><span>Строка QR-кода</span>
       <textarea id="paste-text" rows="4" placeholder="t=...&s=...&fn=...&i=...&fp=...&n=1"></textarea></label>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="btn-paste-send">Отправить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="btn-paste-send">Отправить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#btn-paste-send').onclick = async () => {
@@ -5973,8 +5977,8 @@ function manualDialog() {
         <input id="m-fp" placeholder="1234567890" required></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="btn-manual-send">Добавить чек</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="btn-manual-send">Добавить чек</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#btn-manual-send').onclick = async () => {
@@ -6075,30 +6079,30 @@ async function viewReceipts(container) {
             <option value="true">только уведомления</option></select></label>` : ''}
         <label class="field"><span>С даты</span><input type="date" id="f-from"></label>
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
-        <button class="btn" id="btn-filter">Найти</button>
+        <button type="button" class="btn" id="btn-filter">Найти</button>
       </div>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
-          <button class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
-          <button class="btn btn-sm" id="rc-view-cards" title="Карточки чеков">🗂 Карточки</button>
+          <button type="button" class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
+          <button type="button" class="btn btn-sm" id="rc-view-cards" title="Карточки чеков">🗂 Карточки</button>
         </div>
       </div>
       ${acc ? `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">
-        <button class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
-        <button class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
-        <button class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
-        ${isAdmin() ? '<button class="btn btn-sm" id="btn-bulk-move">🏢 Переместить в компанию</button>' : ''}
-        <button class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
-        <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
-        <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
-        <button class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек</button>
-        <button class="btn btn-sm" id="btn-ao1">🧾 Собрать авансовый отчёт</button>
-        <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
+        <button type="button" class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
+        <button type="button" class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
+        <button type="button" class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
+        ${isAdmin() ? '<button type="button" class="btn btn-sm" id="btn-bulk-move">🏢 Переместить в компанию</button>' : ''}
+        <button type="button" class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
+        <button type="button" class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
+        <button type="button" class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек</button>
+        <button type="button" class="btn btn-sm" id="btn-ao1">🧾 Собрать авансовый отчёт</button>
+        <button type="button" class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
       </div>` : `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-        <button class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек (выбранные)</button>
+        <button type="button" class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек (выбранные)</button>
         <span class="form-hint" style="align-self:center" id="sel-info-user">не выбрано</span>
       </div>
       <p class="form-hint" style="margin-bottom:12px">Режим пользователя: видны только ваши чеки.
@@ -6245,8 +6249,8 @@ async function viewReceipts(container) {
     const pages = Math.max(1, Math.ceil(data.total / data.page_size));
     pager.innerHTML = `
       <span>Стр. ${data.page} из ${pages} · всего ${fmtInt(data.total)} на ${fmtSum(data.total_sum)}</span>
-      <button class="btn btn-sm" id="pg-prev" ${data.page <= 1 ? 'disabled' : ''}>←</button>
-      <button class="btn btn-sm" id="pg-next" ${data.page >= pages ? 'disabled' : ''}>→</button>`;
+      <button type="button" class="btn btn-sm" id="pg-prev" ${data.page <= 1 ? 'disabled' : ''}>←</button>
+      <button type="button" class="btn btn-sm" id="pg-next" ${data.page >= pages ? 'disabled' : ''}>→</button>`;
     $('#pg-prev').onclick = () => { filters.page--; viewReceipts._filters = { ...filters }; load(); };
     $('#pg-next').onclick = () => { filters.page++; viewReceipts._filters = { ...filters }; load(); };
     updateSelInfo();
@@ -6258,7 +6262,7 @@ async function viewReceipts(container) {
       if (el) el.innerHTML = `<div class="empty-state"><span class="big-ico">📡</span>
         <b>Не удалось загрузить чеки</b>
         <span class="form-hint">${esc(e.message || 'нет связи с сервером')}</span>
-        <button class="btn btn-primary" id="rc-retry" style="margin-top:10px">Повторить</button></div>`;
+        <button type="button" class="btn btn-primary" id="rc-retry" style="margin-top:10px">Повторить</button></div>`;
       const rb = $('#rc-retry');
       if (rb) rb.onclick = () => load();
     }
@@ -6277,11 +6281,11 @@ async function viewReceipts(container) {
       ? `<td class="cell-actions" style="white-space:nowrap">
            ${r.full_data
              ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
-             : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
+             : `<button type="button" class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
                 title="Получить полные данные чека из сервиса проверки">📥</button>`}
-           <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
+           <button type="button" class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
          </td>`
-      : (isOwner ? `<td><button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+      : (isOwner ? `<td><button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
             title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button></td>` : '<td></td>');
     return `<tr data-id="${r.id}">
       <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
@@ -6308,11 +6312,11 @@ async function viewReceipts(container) {
     const act = acc
       ? `${r.full_data
           ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
-          : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
+          : `<button type="button" class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
               title="Получить полные данные чека из сервиса проверки">📥 Данные</button>`}
-         <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}"
+         <button type="button" class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}"
            title="Изменить чек и позиции (ручное заполнение)">✏️ Заполнить</button>`
-      : (isOwner ? `<button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+      : (isOwner ? `<button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
             title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button>` : '');
     return `<div class="rc-card" data-id="${r.id}">
       <div class="rc-head"><span class="rc-date">${fmtDate(r.receipt_date)}${r.notified ? ' 🔔' : ''}</span>
@@ -6497,8 +6501,8 @@ async function viewReceipts(container) {
           ${[...new Set([...(viewReceipts._names || [])])].map(n => `<option value="${esc(n)}">`).join('')}
         </datalist></label>
       <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="ba-save">Назначить</button>
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn btn-primary" id="ba-save">Назначить</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#ba-save').onclick = async () => {
@@ -6766,8 +6770,8 @@ async function openAO1Modal(opts = {}) {
         только подтверждённые ФНС</label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="ao-make">🧾 Собрать отчёт</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="ao-make">🧾 Собрать отчёт</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#ao-make').onclick = async (e) => {
@@ -6839,11 +6843,11 @@ function aoShowPreview(slot, rep, meta) {
         <td><b>${sum(rep.total.sum)}</b></td></tr></tbody>
     </table>
     <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
-      <button class="btn" id="ao-back">← Изменить параметры</button>
+      <button type="button" class="btn" id="ao-back">← Изменить параметры</button>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="ao-csv">⬇ CSV (Excel)</button>
-        <button class="btn" id="ao-json" title="Структура документа в стиле 1С — для интеграции">⬇ JSON для 1С</button>
-        <button class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
+        <button type="button" class="btn" id="ao-csv">⬇ CSV (Excel)</button>
+        <button type="button" class="btn" id="ao-json" title="Структура документа в стиле 1С — для интеграции">⬇ JSON для 1С</button>
+        <button type="button" class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
       </div>
     </div>`;
   slot.querySelector('#ao-back').onclick = () => { $('#modal-root').classList.add('hidden'); openAO1Modal(); };
@@ -7175,8 +7179,8 @@ async function openStatementModal() {
     <div class="modal-title">📋 Ведомость подотчётников</div>
     <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px">
       <label class="field"><span>Месяц</span><input type="month" id="st-month" value="${ym}"></label>
-      <button class="btn btn-sm btn-primary" id="st-load">Показать</button>
-      <button class="btn btn-sm" id="st-csv">⬇ CSV</button>
+      <button type="button" class="btn btn-sm btn-primary" id="st-load">Показать</button>
+      <button type="button" class="btn btn-sm" id="st-csv">⬇ CSV</button>
     </div>
     <div id="st-body"><div class="skeleton" style="height:120px"></div></div>
     <p class="form-hint" style="margin-top:8px">«К учёту» = сумма чека минус личные покупки.
@@ -7261,7 +7265,7 @@ async function receiptDrawer(id) {
     <div class="drawer-head">
       <b>Чек ${fmtSum(r.total_sum)}</b>
       ${chip(r.status)} ${chip(r.fns_status)}
-      <button class="btn-icon modal-close" style="margin-left:auto">✕</button>
+      <button type="button" class="btn-icon modal-close" style="margin-left:auto">✕</button>
     </div>
     <div class="drawer-body">
       <div class="qr-box" title="Нажмите, чтобы скопировать">${esc(r.qr_data)}</div>
@@ -7293,9 +7297,9 @@ async function receiptDrawer(id) {
           <td class="cell-sum">${fmtSum(it.price)}</td><td class="cell-sum">${fmtSum(it.total)}</td></tr>`).join('')}</tbody></table>`
         : emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)')}
       <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
-        ${acc ? '<button class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
-        ${acc ? '<button class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
-        ${canDel ? '<button class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
+        ${acc ? '<button type="button" class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
+        ${acc ? '<button type="button" class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
+        ${canDel ? '<button type="button" class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
       </div>
     </div>`;
   document.body.appendChild(drawer);
@@ -7373,8 +7377,8 @@ async function viewExport(container) {
             <option value="xml">EnterpriseData XML</option>
           </select></label>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn btn-primary" id="btn-export-all">⬇ Выгрузить ожидающие (${stats.pending_export})</button>
-          <button class="btn" id="btn-export-verified">⬇ Все проверенные</button>
+          <button type="button" class="btn btn-primary" id="btn-export-all">⬇ Выгрузить ожидающие (${stats.pending_export})</button>
+          <button type="button" class="btn" id="btn-export-verified">⬇ Все проверенные</button>
         </div>
         <p class="form-hint" style="margin-top:12px">После скачивания чеки помечаются как выгруженные.
         Повторная загрузка в 1С не создаст дублей: ключ ФН+ФД+ФП.</p>
@@ -7387,7 +7391,7 @@ async function viewExport(container) {
             В 1С создайте HTTP-соединение к этому серверу: <code class="inline" id="pull-url">/onec/v1/receipts/pull</code></div></div>
           <div class="step"><span class="step-num"></span><div>
             Заголовок авторизации: <code class="inline">X-API-Token: …</code>
-            ${onecSettings ? '<button class="btn btn-sm" id="btn-reveal" style="margin-left:6px">показать токен</button>' : '(токен показывает администратор)'}</div></div>
+            ${onecSettings ? '<button type="button" class="btn btn-sm" id="btn-reveal" style="margin-left:6px">показать токен</button>' : '(токен показывает администратор)'}</div></div>
           <div class="step"><span class="step-num"></span><div>
             Регламентным заданием выполняйте выборку и подтверждение: <code class="inline">/onec/v1/receipts/ack</code></div></div>
           <div class="step"><span class="step-num"></span><div>
@@ -7423,7 +7427,7 @@ async function viewExport(container) {
       const s = await api.get('/api/v1/settings/onec/reveal');
       $('#token-zone').innerHTML =
         `<div class="token-line"><input readonly value="${esc(s.api_token)}" id="token-input">
-         <button class="btn btn-sm" id="btn-copy-token">копировать</button></div>`;
+         <button type="button" class="btn btn-sm" id="btn-copy-token">копировать</button></div>`;
       $('#btn-copy-token').onclick = () => {
         navigator.clipboard && navigator.clipboard.writeText(s.api_token);
         toast('Токен скопирован', 'ok');
@@ -7449,10 +7453,10 @@ async function viewMapping(container) {
     <div class="glass card">
       <div class="card-title">Правила преобразования <span class="spacer"></span>
         <span class="form-hint" id="m-count"></span>
-        ${admin ? '<button class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
+        ${admin ? '<button type="button" class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
       <div id="mapping-rows"></div>
       <div class="modal-actions" style="justify-content:flex-start">
-        ${admin ? '<button class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
+        ${admin ? '<button type="button" class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
       </div>
     </div>
     <div class="grid cards-2-even" style="margin-top:16px">
@@ -7560,7 +7564,7 @@ async function viewUsers(container) {
 
     <div class="glass card" style="margin-bottom:16px">
       <div class="card-title">Приглашения <span class="spacer"></span>
-        <button class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
+        <button type="button" class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>Компания (группа)</th><th>Роль</th><th>Использовано</th><th>Действует до</th>
         <th>Статус</th><th>Действия</th></tr></thead><tbody>
@@ -7572,9 +7576,9 @@ async function viewUsers(container) {
           <td>${i.valid ? '<span class="chip verified"><span class="dot"></span>активно</span>' : '<span class="chip failed"><span class="dot"></span>' + (i.revoked ? 'отозвано' : 'исчерпано') + '</span>'}</td>
           <td>${i.valid
             ? `<div class="row-actions">
-                 <button class="btn btn-sm i-link" data-token="${esc(i.token)}" title="Скопировать ссылку-приглашение">🔗 Ссылка</button>
-                 <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>
-                 <button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}" title="Отозвать — ссылка перестанет работать">Отозвать</button>
+                 <button type="button" class="btn btn-sm i-link" data-token="${esc(i.token)}" title="Скопировать ссылку-приглашение">🔗 Ссылка</button>
+                 <button type="button" class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>
+                 <button type="button" class="btn btn-sm btn-bad i-revoke" data-id="${i.id}" title="Отозвать — ссылка перестанет работать">Отозвать</button>
                </div>` : '—'}</td>
         </tr>`).join('') : `<tr style="cursor:default"><td colspan="6">${emptyState('✉️', 'Приглашений для этой группы нет')}</td></tr>`}
       </tbody></table></div>
@@ -7582,7 +7586,7 @@ async function viewUsers(container) {
 
     <div class="glass card">
       <div class="card-title">Пользователи системы <span class="spacer"></span>
-        <button class="btn btn-sm" id="u-add">+ Создать вручную</button></div>
+        <button type="button" class="btn btn-sm" id="u-add">+ Создать вручную</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>Логин</th><th>ФИО</th><th>Роль</th><th>Компания</th><th>Статус</th>
         <th>Последний вход</th><th></th></tr></thead><tbody>
@@ -7594,12 +7598,12 @@ async function viewUsers(container) {
           <td>${u.is_active ? '<span class="chip verified"><span class="dot"></span>активен</span>' : '<span class="chip failed"><span class="dot"></span>отключён</span>'}</td>
           <td class="cell-date">${fmtDate(u.last_login_at)}</td>
           <td style="white-space:nowrap">
-            ${u.role === 'accountant' && u.is_active ? `<button class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
-            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
-            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
-            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-view" data-id="${u.id}" data-name="${esc(u.full_name || u.username)}" title="Посмотреть приложение глазами сотрудника (режим просмотра)">👁</button>` : ''}
-            ${!u.is_active ? `<button class="btn btn-sm u-unarchive" data-id="${u.id}" data-name="${esc(u.username)}" title="Восстановить из архива">♻</button>` : ''}
-            <button class="btn btn-sm u-edit" title="Изменить данные">✎</button>
+            ${u.role === 'accountant' && u.is_active ? `<button type="button" class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-view" data-id="${u.id}" data-name="${esc(u.full_name || u.username)}" title="Посмотреть приложение глазами сотрудника (режим просмотра)">👁</button>` : ''}
+            ${!u.is_active ? `<button type="button" class="btn btn-sm u-unarchive" data-id="${u.id}" data-name="${esc(u.username)}" title="Восстановить из архива">♻</button>` : ''}
+            <button type="button" class="btn btn-sm u-edit" title="Изменить данные">✎</button>
           </td></tr>`).join('')}
       </tbody></table></div>
     </div>`;
@@ -7642,8 +7646,8 @@ async function viewUsers(container) {
       (сканер QR — камера или «Google Объектив») — откроется страница регистрации,
       роль присвоится автоматически. Ссылка: <span class="mono" style="font-size:11px">${esc(url || '')}</span></p>
       <div class="modal-actions">
-        <button class="btn" data-close>Закрыть</button>
-        <button class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
+        <button type="button" class="btn" data-close>Закрыть</button>
+        <button type="button" class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     const box = slot.querySelector('.invite-qr-box');
@@ -7675,8 +7679,8 @@ async function viewUsers(container) {
           <option value="manager">Руководитель — только просмотр своей компании</option>
         </select></label>
       <div class="modal-actions">
-        <button class="btn" id="ur-cancel">Отмена</button>
-        <button class="btn btn-primary" id="ur-save">Сменить роль</button></div>`);
+        <button type="button" class="btn" id="ur-cancel">Отмена</button>
+        <button type="button" class="btn btn-primary" id="ur-save">Сменить роль</button></div>`);
     slot.querySelector('#ur-cancel').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#ur-save').onclick = async () => {
       const to = slot.querySelector('#ur-role').value;
@@ -7695,7 +7699,7 @@ async function viewUsers(container) {
       openModal(`<div class="modal-title">🔑 Временный пароль для ${esc(btn.dataset.name)}</div>
         <p class="form-hint" style="margin-bottom:10px">Передайте его сотруднику — при входе система потребует сменить пароль.</p>
         <div class="qr-box" style="font-size:16px;justify-content:center">${esc(r.temp_password)}</div>
-        <div class="modal-actions"><button class="btn btn-primary" id="tp-ok">Передал</button></div>`).slot.querySelector('#tp-ok').onclick = function(){ this.closest('.modal-root').classList.add('hidden'); };
+        <div class="modal-actions"><button type="button" class="btn btn-primary" id="tp-ok">Передал</button></div>`).slot.querySelector('#tp-ok').onclick = function(){ this.closest('.modal-root').classList.add('hidden'); };
       route(true);
     } catch (e) { toast(e.message, 'err'); }
   });
@@ -7742,9 +7746,9 @@ async function viewUsers(container) {
           </select></label>` : ''}
       </div>
       <div class="modal-actions">
-        ${u && u.id !== state.me.id ? '<button class="btn btn-bad" id="u-delete">Архивировать</button>' : ''}
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="u-save">Сохранить</button>
+        ${u && u.id !== state.me.id ? '<button type="button" class="btn btn-bad" id="u-delete">Архивировать</button>' : ''}
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn btn-primary" id="u-save">Сохранить</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#u-save').onclick = async () => {
@@ -7811,8 +7815,8 @@ function showUpdateBanner(newVer) {
     `<span class="ub-text">✅ Программа обновилась на сервере` +
     (newVer ? ` — <b>v<span class="ub-ver">${esc(newVer)}</span></b>` : '') +
     `. Можно перезагрузиться, чтобы увидеть новую версию.</span>` +
-    ` <button class="btn btn-sm btn-primary" id="ub-reload">🔄 Перезагрузиться</button>` +
-    ` <button class="btn btn-sm" id="ub-later">Позже</button>`;
+    ` <button type="button" class="btn btn-sm btn-primary" id="ub-reload">🔄 Перезагрузиться</button>` +
+    ` <button type="button" class="btn btn-sm" id="ub-later">Позже</button>`;
   document.body.appendChild(b);
   $('#ub-reload', b).onclick = () => hardReset(false);
   $('#ub-later', b).onclick = () => b.remove();
@@ -8049,9 +8053,9 @@ async function viewSettings(container) {
             <input id="mc-signature" value=""></label>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-          <button class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
+          <button type="button" class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
           <input id="mc-testto" placeholder="куда отправить тест" style="max-width:230px">
-          <button class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
+          <button type="button" class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
         </div>
         <div class="form-hint" style="margin:4px 0 10px">Для доставляемости добавьте в DNS домена
           SPF и DKIM своего почтового сервера: <code>v=spf1 mx ~all</code> и подпись DKIM.</div>
@@ -8063,7 +8067,7 @@ async function viewSettings(container) {
             <span>включён</span></label></div>
         <div id="mc-rules" class="form-hint" style="margin:6px 0">Загружаем…</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
-          <button class="btn btn-sm" id="mc-newrule">+ Новое правило</button>
+          <button type="button" class="btn btn-sm" id="mc-newrule">+ Новое правило</button>
         </div>
         <div id="mc-log" style="margin-top:8px"></div>
       </div>` : ''}
@@ -8080,7 +8084,7 @@ async function viewSettings(container) {
           <span class="form-hint">По умолчанию 10. Подотчётник обязан отчитаться не позднее 3 рабочих
           дней после израсходования (п. 6.3 Указания ЦБ 3210-У) — срок в организации устанавливает
           руководитель приказом; просрочка подсвечивается в «Базе чеков».</span></label>
-        <button class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
+        <button type="button" class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
       </div>` : ''}
 
       ${isAccountant() && pol ? `
@@ -8104,7 +8108,7 @@ async function viewSettings(container) {
           <input id="pol-cats" placeholder="Алкоголь, Табак, Подарки" value="${esc((pol.forbidden_categories || []).join(', '))}">
           <span class="form-hint">Регистр не важен. Статья указывается в чеке
           (поле «Статья расходов»). Чеков с нарушениями сейчас: <b>${pol.flagged || 0}</b>.</span></label>
-        <button class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
+        <button type="button" class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
         <div id="pol-msg" class="form-hint" style="margin-top:6px"></div>
       </div>` : ''}
 
@@ -8123,8 +8127,8 @@ async function viewSettings(container) {
             <td title="${esc(m.value)}">${esc((m.value || '').slice(0, 55))}${(m.value || '').length > 55 ? '…' : ''}</td>
             <td>${m.applied_count || 0}</td>
             <td style="white-space:nowrap">
-              <button class="btn btn-sm mr-backfill" data-id="${m.id}" title="Заполнить пустые поля у старых чеков этого поставщика">⏪ к старым</button>
-              <button class="btn btn-sm mr-del" data-id="${m.id}" title="Удалить правило">🗑</button></td>
+              <button type="button" class="btn btn-sm mr-backfill" data-id="${m.id}" title="Заполнить пустые поля у старых чеков этого поставщика">⏪ к старым</button>
+              <button type="button" class="btn btn-sm mr-del" data-id="${m.id}" title="Удалить правило">🗑</button></td>
           </tr>`).join('')}</tbody></table></div>`
           : '<div class="form-hint">Правил ещё нет. Откройте чек (✏️), заполните статью/сотрудника/комментарий и нажмите «🧠 Запомнить» в блоке «Запомнить для поставщика».</div>'}
         <div id="mr-msg" class="form-hint" style="margin-top:6px"></div>
@@ -8134,8 +8138,8 @@ async function viewSettings(container) {
       <div class="glass card" id="st-fns" data-sec="checks" style="order:20">
         <div class="card-title">Проверка чеков (ФНС)</div>
         <div class="segmented" style="margin-bottom:14px">
-          <button id="seg-mock" class="${fns.provider === 'mock' ? 'active' : ''}">Демо (mock)</button>
-          <button id="seg-fns" class="${fns.provider === 'fns' ? 'active' : ''}">Реальное API ФНС</button>
+          <button type="button" id="seg-mock" class="${fns.provider === 'mock' ? 'active' : ''}">Демо (mock)</button>
+          <button type="button" id="seg-fns" class="${fns.provider === 'fns' ? 'active' : ''}">Реальное API ФНС</button>
         </div>
         <div class="info-callout" id="fns-hint" style="font-size:12.5px">
           ${fns.provider === 'mock'
@@ -8145,7 +8149,7 @@ async function viewSettings(container) {
           <input id="fns-token" type="password" placeholder="вставьте мастер-токен ФНС"></label>
         <label class="field" style="margin-bottom:14px"><span>ClientAppId</span>
           <input id="fns-appid" value="${esc(fns.client_app_id)}"></label>
-        <button class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
+        <button type="button" class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
         <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней (повторная проверка не расходует лимиты).</p>
       </div>` : ''}
 
@@ -8165,9 +8169,9 @@ async function viewSettings(container) {
           <input id="checko-key" type="password" autocomplete="off" spellcheck="false"
                  placeholder="вставьте ключ из личного кабинета"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="checko-save">💾 Сохранить ключ</button>
-          <button class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
-          <button class="btn btn-sm" id="checko-test" title="Живой запрос ЕГРЮЛ по тестовому ИНН — тратит 1 запрос из 100 дневных">🧪 Проверить ключ</button>
+          <button type="button" class="btn btn-primary btn-sm" id="checko-save">💾 Сохранить ключ</button>
+          <button type="button" class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
+          <button type="button" class="btn btn-sm" id="checko-test" title="Живой запрос ЕГРЮЛ по тестовому ИНН — тратит 1 запрос из 100 дневных">🧪 Проверить ключ</button>
         </div>
         <p class="form-hint" id="checko-status" style="margin-top:10px">${esc(checkoSet && checkoSet.hint || '')}</p>
       </div>` : ''}
@@ -8213,10 +8217,10 @@ async function viewSettings(container) {
             <input id="tg-text" value="${esc(tgSet.reminder_text)}"></label>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="tg-save">💾 Сохранить и запустить</button>
-          <button class="btn btn-sm" id="tg-diag">🔍 Диагностика</button>
-          <button class="btn btn-sm" id="tg-test">🧪 Тест себе</button>
-          <button class="btn btn-sm" id="tg-refresh"> ⟳ Обновить данные бота</button>
+          <button type="button" class="btn btn-primary btn-sm" id="tg-save">💾 Сохранить и запустить</button>
+          <button type="button" class="btn btn-sm" id="tg-diag">🔍 Диагностика</button>
+          <button type="button" class="btn btn-sm" id="tg-test">🧪 Тест себе</button>
+          <button type="button" class="btn btn-sm" id="tg-refresh"> ⟳ Обновить данные бота</button>
         </div>
         <p class="form-hint" id="tg-diag-out" style="margin-top:10px"></p>
         <p class="form-hint" style="margin-top:6px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
@@ -8253,9 +8257,9 @@ async function viewSettings(container) {
         <label class="field full" style="margin-top:8px"><span>Публичный ник бота — для ссылок max.ru/ник (вход через MAX, приглашения). Служебный username вида id…_bot из платформы не подходит</span>
           <input id="mx-nick" value="${esc(maxSet.bot_nick || '')}" placeholder="chek.ymaster.bot"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
-          <button class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
-          <button class="btn btn-sm" id="mx-who">🪪 Чей токен?</button>
+          <button type="button" class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
+          <button type="button" class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
+          <button type="button" class="btn btn-sm" id="mx-who">🪪 Чей токен?</button>
         </div>
         <p class="form-hint" style="margin-top:10px">${maxSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'}${maxSet.last_update_ago != null ? ` · события ${maxSet.last_update_ago < 90 ? 'сейчас' : Math.round(maxSet.last_update_ago / 60) + ' мин назад'}` : ''} ·
           статус виден после сохранения</p>
@@ -8289,7 +8293,7 @@ async function viewSettings(container) {
           <input id="pool-pick-limit" type="number" min="0" value="${poolSet.pick_monthly_limit ?? 100}"></label>
         <p class="form-hint" style="margin:8px 0">1 чек = ${poolSet.points_per_receipt} балл ·
           лимит ${poolSet.daily_limit} чеков/сутки с человека · дубль баллов не приносит.</p>
-        <button class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
+        <button type="button" class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
         <div class="card-title" style="margin-top:16px;font-size:15px">🔌 Платное API для внешних клиентов
           <span class="form-hint">(v1.39.0: анонимные агрегаты — не «продажа чеков»)</span></div>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0">
@@ -8316,9 +8320,9 @@ async function viewSettings(container) {
           <input type="checkbox" id="pool-smtp-tls" ${smtpSet.tls ? 'checked' : ''} style="width:auto">
           <span>STARTTLS (обычно включён)</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn btn-primary btn-sm" id="pool-smtp-save">💾 Сохранить почту</button>
+          <button type="button" class="btn btn-primary btn-sm" id="pool-smtp-save">💾 Сохранить почту</button>
           <input id="pool-smtp-test-email" type="email" placeholder="куда прислать тест" style="max-width:230px">
-          <button class="btn btn-sm" id="pool-smtp-test">✉️ Тест письма</button>
+          <button type="button" class="btn btn-sm" id="pool-smtp-test">✉️ Тест письма</button>
         </div>
         ${smtpSet.configured ? '<p class="form-hint" style="margin-top:6px">Почта настроена — вход по ссылке и подтверждение e-mail работают.</p>'
           : '<p class="form-hint" style="margin-top:6px">Без SMTP кабинет работает по паролю: вход по ссылке и письма подтверждения отключены.</p>'}` : ''}
@@ -8330,11 +8334,11 @@ async function viewSettings(container) {
         ${me.telegram_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат привязан — уведомления приходят в Telegram.
                Напоминание приходит, если за день ни одного чека.</div>
-             <button class="btn btn-sm btn-bad" id="tg-unbind">🔌 Отвязать</button>`
+             <button type="button" class="btn btn-sm btn-bad" id="tg-unbind">🔌 Отвязать</button>`
           : `<p class="form-hint" style="margin-bottom:10px">Получайте уведомления о чеках и напоминания.
              Нажмите «Получить код», затем в Telegram отправьте боту: <b>/start КОД</b>.</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-               <button class="btn btn-primary btn-sm" id="tg-code">🔑 Получить код</button>
+               <button type="button" class="btn btn-primary btn-sm" id="tg-code">🔑 Получить код</button>
                <span id="tg-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="tg-code-hint" style="margin-top:8px"></p>`}
@@ -8345,11 +8349,11 @@ async function viewSettings(container) {
         <div class="card-title">🛡 MAX — личное <span class="form-hint">(v1.66.0)</span></div>
         ${me.max_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
-             <button class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
+             <button type="button" class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
           : `<p class="form-hint" style="margin-bottom:10px"><b>Войти через MAX</b> — мини-приложение бота MAX: скан QR и баллы. Для напоминаний здесь — классика: «Получить код» → боту <b>/start КОД</b> (или войдите с логином, совпадающим с username MAX — привяжем сами).</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-               <button class="btn btn-primary btn-sm" id="mx-open">🛡 Войти через MAX</button>
-               <button class="btn btn-sm" id="mx-code">🔑 Получить код</button>
+               <button type="button" class="btn btn-primary btn-sm" id="mx-open">🛡 Войти через MAX</button>
+               <button type="button" class="btn btn-sm" id="mx-code">🔑 Получить код</button>
                <span id="mx-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="mx-code-hint" style="margin-top:8px"></p>`}
@@ -8376,8 +8380,8 @@ async function viewSettings(container) {
           <input type="checkbox" id="wh-ev-verified" ${whSet.events.includes('receipt_verified') ? 'checked' : ''} style="width:auto">
           <span>Событие «чек проверен» (receipt_verified)</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="wh-save">💾 Сохранить</button>
-          <button class="btn btn-sm" id="wh-test">🧪 Тестовый POST</button>
+          <button type="button" class="btn btn-primary btn-sm" id="wh-save">💾 Сохранить</button>
+          <button type="button" class="btn btn-sm" id="wh-test">🧪 Тестовый POST</button>
         </div>
         <p class="form-hint" style="margin-top:10px">В очереди: ${whSet.stats.pending} ждёт ·
           ${whSet.stats.delivered} доставлено · воркер: ${whSet.worker_running ? '✅ запущен' : '⏸ стоит'} ·
@@ -8404,8 +8408,8 @@ async function viewSettings(container) {
           <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
           <span>Автоматически получать данные после сканирования</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="ext-save">💾 Сохранить источники</button>
-          <button class="btn btn-sm" id="ext-test">🧪 Тест контрольным чеком</button>
+          <button type="button" class="btn btn-primary btn-sm" id="ext-save">💾 Сохранить источники</button>
+          <button type="button" class="btn btn-sm" id="ext-test">🧪 Тест контрольным чеком</button>
         </div>
         <p class="form-hint" id="ext-status" style="margin-top:10px"></p>
       </div>` : ''}
@@ -8434,7 +8438,7 @@ async function viewSettings(container) {
         <div id="upd-avail" class="hidden" style="margin:10px 0">
           <div class="info-callout" style="margin-bottom:10px">🆕 Доступна версия <b id="upd-remote">v—</b>.
             <a href="#" id="upd-whats" style="margin-left:6px">Что изменится?</a></div>
-          <button class="btn btn-primary btn-sm" id="btn-apply-update">⬇ Обновить (данные и настройки сохранятся)</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-apply-update">⬇ Обновить (данные и настройки сохранятся)</button>
         </div>
         <p class="form-error hidden" id="upd-err" style="margin:8px 0"></p>
         <div id="upd-manual" class="hidden" style="margin:10px 0">
@@ -8453,12 +8457,12 @@ async function viewSettings(container) {
             <label class="field"><span>Ветка</span>
               <input id="upd-branch-input" placeholder="main"></label>
           </div>
-          <button class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
+          <button type="button" class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
         </details>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-          <button class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
-          <button class="btn btn-sm" id="btn-changelog">📜 История версий</button>
-          <button class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
+          <button type="button" class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
+          <button type="button" class="btn btn-sm" id="btn-changelog">📜 История версий</button>
+          <button type="button" class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
         </div>
         <p class="form-hint" style="margin-top:10px">Обновление ставится прямо отсюда: копия БД → только изменения с GitHub →
         установка зависимостей → проверка целостности → рестарт. При сбое — автоматический откат.
@@ -8479,7 +8483,7 @@ async function viewSettings(container) {
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <input id="rb-commit" class="cell-mono" placeholder="хеш коммита, например 3944e7e"
                    style="max-width:300px" autocomplete="off">
-            <button class="btn btn-sm" id="rb-commit-go">↩ Откатиться к коммиту</button>
+            <button type="button" class="btn btn-sm" id="rb-commit-go">↩ Откатиться к коммиту</button>
           </div>
           <p class="form-hint" style="margin-top:6px">Хеш виден в журнале версий на GitHub
           («история» файла) или на сервере: <span class="cell-mono">git -C /opt/ymaster-check log --oneline -10</span></p>
@@ -8491,8 +8495,8 @@ async function viewSettings(container) {
         <div class="card-title">Интеграция с 1С</div>
         <label class="field" style="margin-bottom:12px"><span>Токен Push-доступа</span>
           <div class="token-line"><input id="onec-token" readonly value="${esc(onec.api_token_masked)}">
-          <button class="btn btn-sm" id="onec-reveal">показать</button></div></label>
-        <button class="btn btn-sm" id="onec-regen" style="margin-bottom:12px">♻ Сгенерировать новый токен</button>
+          <button type="button" class="btn btn-sm" id="onec-reveal">показать</button></div></label>
+        <button type="button" class="btn btn-sm" id="onec-regen" style="margin-bottom:12px">♻ Сгенерировать новый токен</button>
         <div class="info-callout" style="font-size:12.5px;margin-bottom:0">
           Адрес для 1С: <code class="inline">${location.origin}/onec/v1/receipts/pull</code><br>
           Заголовок: <code class="inline">X-API-Token</code>. Подробности — вкладка «Выгрузка в 1С» и
@@ -8522,7 +8526,7 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin-bottom:10px">Если после обновления сервера что-то
         отображается по-старому (иконки, цифры, интерфейс) — сбросьте локальный кэш приложения.
         Обычно сброс происходит автоматически.</p>
-        <button class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
+        <button type="button" class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
       </div>
 
       <div class="glass card" id="st-notify" data-sec="device" style="order:50">
@@ -8530,7 +8534,7 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin-bottom:8px">«Спокойный час» прячет некритичные
         уведомления на выбранный срок; ошибки показываются всегда.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn btn-sm" id="btn-quiet">Отключить</button>
+          <button type="button" class="btn btn-sm" id="btn-quiet">Отключить</button>
           <select id="quiet-dur" class="company-select" style="max-width:150px">
             <option value="30">на 30 минут</option>
             <option value="60" selected>на 1 час</option>
@@ -8545,7 +8549,7 @@ async function viewSettings(container) {
         <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
         полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
         Windows и macOS — без магазина приложений.</p>
-        <button class="btn btn-primary btn-sm" id="btn-pwa" style="margin-top:10px">📲 Установить / как установить</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-pwa" style="margin-top:10px">📲 Установить / как установить</button>
       </div>
 
       ${isAdmin() ? `
@@ -8561,13 +8565,13 @@ async function viewSettings(container) {
             <option value="weekly">Недельная — хранятся 2</option>
             <option value="archive">Месячный архив — хранятся 12</option>
           </select>
-          <button class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
+          <button type="button" class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
           <p class="form-hint" style="margin:8px 0 0">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
           1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
           Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.
           Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит файл и добавит его в список («загруженные», хранятся 10).</p>
-          <button class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
-          <button class="btn btn-sm" id="btn-bk-import"
+          <button type="button" class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
+          <button type="button" class="btn btn-sm" id="btn-bk-import"
                   title="Загрузить копию из файла: .db, .sqlite, .sqlite3">⬆ Загрузить копию</button>
           <input type="file" id="bk-import-file" accept=".db,.sqlite,.sqlite3" style="display:none">
         </div>
@@ -8586,7 +8590,7 @@ async function viewSettings(container) {
           <label class="field"><span>Старый пароль</span><input id="p-old" type="password"></label>
           <label class="field"><span>Новый пароль</span><input id="p-new" type="password"></label>
         </div>
-        <button class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
+        <button type="button" class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
       </div>
 
       <div class="glass card" id="st-security" data-sec="personal" style="order:42">
@@ -8824,9 +8828,9 @@ async function viewSettings(container) {
              <td>${rowsText(b)}</td>
              <td>${b.size_kb} КБ</td>
              <td style="white-space:nowrap">
-               <button class="btn btn-sm" data-verify="${esc(b.name)}"
+               <button type="button" class="btn btn-sm" data-verify="${esc(b.name)}"
                        title="Проверить копию: целостность базы и хеш">🛡</button>
-               <button class="btn btn-sm" data-restore="${esc(b.name)}"
+               <button type="button" class="btn btn-sm" data-restore="${esc(b.name)}"
                        title="Восстановить базу из этой копии">↩ Восстановить</button>
                <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download title="Скачать копию">⬇</a>
              </td>
@@ -8954,7 +8958,7 @@ async function viewSettings(container) {
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
         `<span class="form-hint">Сейчас работает: <b>v${esc(cur ? cur.version : '…')}</b> · ` +
         `в реестре ${relItems.length} из 3</span>` +
-        '<button class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
+        '<button type="button" class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
       if (!relItems.length) {
         relBox.innerHTML = head +
           '<p class="form-hint">Реестр пока пуст. Записи появляются автоматически: ' +
@@ -8979,7 +8983,7 @@ async function viewSettings(container) {
             <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
             <td>${v.current
               ? '<span class="form-hint">—</span>'
-              : `<button class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
+              : `<button type="button" class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
           </tr>`).join('') + '</tbody></table>';
       }
       // откат к версии из реестра
@@ -9194,7 +9198,7 @@ async function viewSettings(container) {
       <div style="margin-bottom:10px">
         <div class="form-hint" style="margin-bottom:4px">${esc(name)}</div>
         <div class="cmd-line"><code>${esc(cmd)}</code>
-          <button class="btn btn-sm cmd-copy" data-cmd="${esc(cmd)}">копировать</button></div>
+          <button type="button" class="btn btn-sm cmd-copy" data-cmd="${esc(cmd)}">копировать</button></div>
       </div>`).join('');
     sc && sc.querySelectorAll('.cmd-copy').forEach(b => {
       b.onclick = () => copyCmd(b.dataset.cmd, b);
@@ -9599,7 +9603,7 @@ async function viewSettings(container) {
             <b>${esc(r.bot)}</b>);<br>
             2) «Сохранить и запустить» — ник обновится из MAX сам;<br>
             3) откройте мини-приложение из чата бота и повторите вход.</p>
-            <div class="modal-actions"><button class="btn btn-primary" data-close>Понятно</button></div>`)
+            <div class="modal-actions"><button type="button" class="btn btn-primary" data-close>Понятно</button></div>`)
             .slot.querySelector('[data-close]').onclick = () =>
               $('#modal-root').classList.add('hidden');
         } else {
@@ -9905,8 +9909,8 @@ async function bindMailCenter() {
               ? (DAY_TITLES[r.schedule] || r.schedule) + ' в ' + esc(r.hh_mm)
               : 'условие: ' + esc(AUD[r.condition_key] || r.condition_key) + ' (' + r.cond_days + ' дн.), после ' + esc(r.hh_mm)}
             · ${esc(r.subject)}${r.last_result ? ' · ' + esc(r.last_result) : ''}</div></div>
-          <button class="btn btn-sm" data-run="${r.id}" title="Запустить сейчас">▶</button>
-          <button class="btn btn-sm btn-bad" data-del="${r.id}" title="Удалить">✕</button>
+          <button type="button" class="btn btn-sm" data-run="${r.id}" title="Запустить сейчас">▶</button>
+          <button type="button" class="btn btn-sm btn-bad" data-del="${r.id}" title="Удалить">✕</button>
         </div>`).join('');
       box.querySelectorAll('[data-rr]').forEach(c => c.onchange = async () => {
         try { await api.patch('/api/v1/mail-admin/rules/' + c.dataset.rr,
@@ -9965,8 +9969,8 @@ async function bindMailCenter() {
           <input id="nr-rcpt" placeholder="dir@company.ru"></label>
       </div>
       <div class="modal-actions">
-        <button class="btn" id="nr-cancel">Отмена</button>
-        <button class="btn btn-primary" id="nr-ok">Создать</button>
+        <button type="button" class="btn" id="nr-cancel">Отмена</button>
+        <button type="button" class="btn btn-primary" id="nr-ok">Создать</button>
       </div>`);
     const trig = slot.querySelector('#nr-trigger');
     trig.onchange = () => {
@@ -10038,10 +10042,10 @@ async function waBindSettingsCard() {
        <span aria-hidden="true">🔑</span>
        <div style="flex:1"><b>${esc(k.label)}</b>
          <div class="form-hint">привязано: ${fmtDate(k.created_at)}${k.last_used_at ? ' · последний вход: ' + fmtDate(k.last_used_at) : ''}</div></div>
-       <button class="btn btn-sm btn-bad" data-wa="${esc(k.id)}" data-name="${esc(k.label)}">Отвязать</button>
+       <button type="button" class="btn btn-sm btn-bad" data-wa="${esc(k.id)}" data-name="${esc(k.label)}">Отвязать</button>
      </div>`).join('')
     : 'Привяжите это устройство — и входить можно будет по отпечатку/лицу, без пароля.';
-  actions.innerHTML = '<button class="btn btn-sm btn-primary" id="wa-add">+ Привязать это устройство</button>';
+  actions.innerHTML = '<button type="button" class="btn btn-sm btn-primary" id="wa-add">+ Привязать это устройство</button>';
   $('#wa-add').onclick = async () => {
     const name = prompt('Название устройства (например, «Телефон Марии»)', '') || '';
     try {

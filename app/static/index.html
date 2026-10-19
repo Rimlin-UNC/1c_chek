@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.70.32">
+<link rel="stylesheet" href="/css/app.css?v=1.70.33">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -57,14 +57,13 @@
       <form id="land-lead" class="land-lead-form" novalidate>
         <label class="field"><span>E-mail для разбора чека и писем пула</span>
           <input type="email" id="land-email" placeholder="you@mail.ru" autocomplete="email"></label>
-        <input type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off"
-               style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
-        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px">
-          <input type="checkbox" id="land-consent" style="width:auto;margin-top:2px">
+        <input class="visually-hidden" type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off">
+        <label class="consent-label">
+          <input class="consent-box" type="checkbox" id="land-consent">
           <span>Согласен на обработку e-mail для разбора чека и писем пула
           (152-ФЗ; отписаться можно в любом письме)</span></label>
         <button class="btn btn-primary btn-block" id="land-lead-btn" type="submit">Прислать разбор чека</button>
-        <div id="land-lead-msg" class="form-hint" style="margin-top:6px"></div>
+        <div id="land-lead-msg" class="form-hint mt-6"></div>
       </form>
       <div class="land-faq">
         <details><summary>Это законно и безопасно?</summary>
@@ -93,35 +92,36 @@
       <form id="login-form" autocomplete="on">
         <label class="field">
           <span>Логин</span>
-          <input type="text" id="login-username" required minlength="2" placeholder="admin">
+          <input type="text" id="login-username" required minlength="2" placeholder="admin"
+               autocomplete="username">
         </label>
         <label class="field">
           <span>Пароль</span>
-          <input type="password" id="login-password" required minlength="4" placeholder="••••••••">
+          <input type="password" id="login-password" required minlength="4" autocomplete="current-password" placeholder="••••••••">
         </label>
         <div id="login-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-block" id="login-submit">
           Войти в систему
         </button>
-        <div id="login-passkey-wrap" class="hidden" style="margin-top:10px">
-          <div style="display:flex;align-items:center;gap:10px;margin:2px 0 6px">
-            <span style="flex:1;height:1px;background:var(--border)"></span>
-            <span class="form-hint" style="white-space:nowrap">или</span>
-            <span style="flex:1;height:1px;background:var(--border)"></span>
+        <div id="login-passkey-wrap" class="hidden mt-10">
+          <div class="alt-row">
+            <span class="alt-line"></span>
+            <span class="form-hint nowrap">или</span>
+            <span class="alt-line"></span>
           </div>
           <button type="button" class="btn btn-block" id="login-passkey">
             🔑 Войти по отпечатку пальца / Face ID
           </button>
-          <div class="form-hint" style="margin-top:6px;text-align:center">
+          <div class="form-hint hint-center">
             устройство само подтвердит вас — пароль не вводится</div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 10px">
-          <span style="flex:1;height:1px;background:var(--border)"></span>
-          <span class="form-hint" style="white-space:nowrap">или</span>
-          <span style="flex:1;height:1px;background:var(--border)"></span>
+        <div class="alt-row-lg">
+          <span class="alt-line"></span>
+          <span class="form-hint nowrap">или</span>
+          <span class="alt-line"></span>
         </div>
         <button type="button" class="btn btn-block" id="login-max">🛡 Войти или зарегистрироваться через MAX</button>
-        <div class="form-hint" style="margin-top:6px;text-align:center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
+        <div class="form-hint hint-center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
       </form>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
@@ -138,29 +138,30 @@
     <div class="login-card glass">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 style="font-size:24px">Приглашение в <span class="grad-text">Ямастер Чек</span></h1>
-        <div id="reg-invite-badge" class="chip new" style="margin:10px auto 0;display:inline-flex"><span class="dot"></span>—</div>
+        <h1 class="screen-title">Приглашение в <span class="grad-text">Ямастер Чек</span></h1>
+        <div id="reg-invite-badge" class="chip new badge-center"><span class="dot"></span>—</div>
       </div>
       <form id="register-form" autocomplete="on">
         <label class="field">
           <span>Ваше имя (ФИО)</span>
-          <input type="text" id="reg-fullname" placeholder="Иванова Анна Петровна">
+          <input type="text" id="reg-fullname" placeholder="Иванова Анна Петровна" autocomplete="name">
         </label>
         <label class="field">
           <span>Логин</span>
-          <input type="text" id="reg-username" required minlength="2" placeholder="ivanova">
+          <input type="text" id="reg-username" required minlength="2" placeholder="ivanova"
+               autocomplete="username">
         </label>
         <label class="field">
           <span>Придумайте пароль (мин. 6 символов)</span>
-          <input type="password" id="reg-password" required minlength="6" placeholder="••••••••">
+          <input type="password" id="reg-password" required minlength="6" autocomplete="new-password" placeholder="••••••••">
         </label>
         <div id="register-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-block" id="register-submit">
           Создать аккаунт
         </button>
       </form>
-      <div style="text-align:center;margin-top:14px">
-        <a href="#" id="reg-back-to-login" style="font-size:13.5px">← У меня уже есть аккаунт — войти</a>
+      <div class="form-foot">
+        <a class="form-link" href="#" id="reg-back-to-login">← У меня уже есть аккаунт — войти</a>
       </div>
       <div class="login-footer">
         Регистрация возможна только по приглашению администратора · ООО «Ямастер» ·
@@ -171,16 +172,16 @@
 
   <!-- v1.31.0: публичная страница «Сдать чек в Чек-Пул» (гость, без входа) -->
   <div id="public-screen" class="login-screen hidden">
-    <div class="login-card glass" style="max-width:660px;width:100%">
+    <div class="login-card glass login-card-wide">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 style="font-size:24px">Сдать чек в <span class="grad-text">Чек-Пул</span></h1>
-        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Проверяем чек по официальным источникам и начисляем
+        <h1 class="screen-title">Сдать чек в <span class="grad-text">Чек-Пул</span></h1>
+        <p class="screen-sub">Проверяем чек по официальным источникам и начисляем
         баллы. Регистрация не нужна.</p>
       </div>
       <div id="public-root"></div>
-      <div style="text-align:center;margin-top:14px">
-        <a href="#" id="public-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      <div class="form-foot">
+        <a class="form-link" href="#" id="public-to-login">Войти в Ямастер Чек →</a>
       </div>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
@@ -191,16 +192,16 @@
 
   <!-- v1.32.0: кабинет участника «Чек-Пула» (доступен без входа в программу) -->
   <div id="pool-account-screen" class="login-screen hidden">
-    <div class="login-card glass" style="max-width:660px;width:100%">
+    <div class="login-card glass login-card-wide">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 style="font-size:24px">Кабинет <span class="grad-text">Чек-Пула</span></h1>
-        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Баллы, мои чеки и профиль участника открытой базы.</p>
+        <h1 class="screen-title">Кабинет <span class="grad-text">Чек-Пула</span></h1>
+        <p class="screen-sub">Баллы, мои чеки и профиль участника открытой базы.</p>
       </div>
       <div id="pool-account-root"></div>
-      <div style="text-align:center;margin-top:14px">
-        <a href="#" id="pool-to-public" style="font-size:13.5px;margin-right:18px">🧾 Сдать чек</a>
-        <a href="#" id="pool-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      <div class="form-foot">
+        <a class="form-link form-link-gap" href="#" id="pool-to-public">🧾 Сдать чек</a>
+        <a class="form-link" href="#" id="pool-to-login">Войти в Ямастер Чек →</a>
       </div>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
@@ -280,11 +281,11 @@
         </a>
       </nav>
       <div class="sidebar-footer">
-        <button class="btn btn-sm btn-block" id="btn-manual" title="Инструкция по приложению">
+        <button type="button" class="btn btn-sm btn-block" id="btn-manual" title="Инструкция по приложению">
           📖 Инструкция</button>
-        <button class="btn btn-sm btn-block pwa-install" id="pwa-install-btn" title="Установить на устройство">
+        <button type="button" class="btn btn-sm btn-block pwa-install" id="pwa-install-btn" title="Установить на устройство">
           📲 Установить приложение</button>
-        <div class="live-status" id="ws-status" style="margin-top:10px">
+        <div class="live-status mt-10" id="ws-status">
           <span class="live-dot"></span> <span id="ws-status-text">Подключение…</span>
         </div>
         <div class="vendor-line">© ООО «Ямастер» · ymaster.ru</div>
@@ -294,7 +295,7 @@
 
     <div class="main-area">
       <header class="topbar">
-        <button class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <button type="button" class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
         <h2 class="page-title" id="page-title">Дашборд</h2>
         <div class="topbar-right">
           <select id="company-filter" class="company-select admin-only hidden"
@@ -302,16 +303,23 @@
           <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
             ⚡ Офлайн
           </div>
-          <div class="user-chip" id="user-chip" role="button" tabindex="0"
-               title="Профиль и переключение просмотра (v1.18.0)" aria-haspopup="true" aria-expanded="false">
-            <div class="avatar" id="user-avatar">A</div>
-            <div class="user-meta">
-              <div class="user-name" id="user-name">—</div>
-              <div class="user-role" id="user-role">—</div>
-            </div>
-            <!-- v1.18.0: режим просмотра — меню переключения профилей -->
-            <span class="chip-caret" id="chip-caret" aria-hidden="true">▾</span>
-            <button class="btn-icon" id="btn-logout" title="Выйти">⎋</button>
+          <div class="user-area">
+            <button type="button" class="user-chip" id="user-chip"
+                    title="Профиль и переключение просмотра (v1.18.0)"
+                    aria-haspopup="true" aria-expanded="false">
+              <span class="avatar" id="user-avatar">A</span>
+              <span class="user-meta">
+                <span class="user-name" id="user-name">—</span>
+                <span class="user-role" id="user-role">—</span>
+              </span>
+              <!-- v1.18.0: режим просмотра — меню переключения профилей -->
+              <span class="chip-caret" id="chip-caret" aria-hidden="true">▾</span>
+            </button>
+            <!-- v1.70.33: «Выйти» вынесена ИЗ переключателя профиля. Раньше она
+                 лежала внутри псевдокнопки (div с ролью button) — вложенные
+                 интерактивные элементы невалидны и недоступны, а заменить тот div
+                 на нативную кнопку было нельзя: вышла бы кнопка внутри кнопки. -->
+            <button type="button" class="btn-icon" id="btn-logout" title="Выйти">⎋</button>
           </div>
           <div class="persona-menu glass hidden" id="persona-menu" role="menu"
                aria-label="Переключение профиля"></div>
@@ -321,7 +329,7 @@
       <div class="viewas-bar hidden" id="viewas-bar">
         <span class="viewas-eye" aria-hidden="true">👁</span>
         <div class="viewas-text" id="viewas-text"></div>
-        <button class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
+        <button type="button" class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
       </div>
       <main class="content" id="view-container"></main>
       <footer class="app-footer">
@@ -338,6 +346,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.70.32"></script>
+  <script type="module" src="/js/app.js?v=1.70.33"></script>
 </body>
 </html>

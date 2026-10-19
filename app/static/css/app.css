@@ -75,7 +75,16 @@ a:hover { text-decoration: underline; }
 .hidden { display: none !important; }
 
 ::selection { background: rgba(255, 122, 0, 0.25); }   /* v1.25.0: оранжевая подсветка */
-:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 6px; }
+/* v1.70.33: ЕДИНСТВЕННАЯ глобальная фокус-индикация.
+   Цвет --accent-2 здесь перебивался правилом из блока v1.21.0, и действующим
+   оказывался оранжевый --accent: 2.21:1 на --bg и 2.61:1 на --panel — ниже
+   порога 3.00:1 для нетекстового контраста (WCAG 1.4.11), кольцо фокуса
+   сливалось с фоном. Берём --accent-text (тот же фирменный оранжевый, но
+   тёмный): 5.30:1 на --bg-soft … 6.26:1 на --panel.
+   border-radius убран: он применялся к САМОМУ сфокусированному элементу и
+   ломал его собственный радиус (карточка 14px становилась 6px под фокусом),
+   а контур и без того повторяет радиус элемента. */
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 
 /* --- Скроллбары --------------------------------------------------- */
 *::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -261,7 +270,9 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   flex: 1 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex: 0 0 auto; min-width: 0; }
+/* v1.70.33: flex-shrink 1 вместо 0 — иначе блок не сжимался, min-width: 0
+   не работал, и длинная фамилия выдавливала шапку на экранах 700–1000px. */
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex: 0 1 auto; min-width: 0; }
 .offline-indicator {
   background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
   color: var(--warn-text); font-size: 12.5px; font-weight: 700;
@@ -272,8 +283,16 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   width: 38px; height: 38px; border-radius: 12px; background: var(--grad);
   display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff;
 }
-.user-name { font-size: 13.5px; font-weight: 700; }
-.user-role { font-size: 11px; color: var(--text-faint); }
+/* v1.70.33: имя и роль стали <span> внутри нативной кнопки — им нужен
+   блочный контекст, иначе они выстроятся в одну строку. */
+.user-meta { display: block; min-width: 0; }
+/* v1.70.33: цепочка сжатия .topbar-right → .user-area → .user-chip
+   (min-width: 0) → имя и роль обрезаются многоточием. Без этого длинные
+   имена ломали шапку: .user-meta уже имел min-width: 0, но обрезать было
+   нечего — текст не выходил за границу, а раздвигал её. */
+.user-name, .user-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-name { display: block; font-size: 13.5px; font-weight: 700; }
+.user-role { display: block; font-size: 11px; color: var(--text-faint); }
 
 .content { flex: 1; overflow-y: auto; padding: 22px; scroll-behavior: smooth; }
 .app-footer {
@@ -344,7 +363,7 @@ table.data tbody tr { transition: background var(--speed); cursor: pointer; }
 table.data tbody tr:hover { background: rgba(255,122,0,.07); }        /* v1.25.0: оранжевая наводка */
 table.data tbody tr.selected { background: rgba(255,122,0,.14); }
 table.data tbody tr.row-open { background: rgba(255,122,0,.12);
-  box-shadow: inset 3px 0 0 var(--accent, #FF7A00); }   /* v1.28.0: открытый чек */
+  box-shadow: inset 3px 0 0 var(--accent); }   /* v1.28.0: открытый чек */
 .cell-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; color: var(--text-dim); }
 .cell-sum { font-weight: 750; font-variant-numeric: tabular-nums; }
 .cell-date { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -610,16 +629,12 @@ pre.codeblock {
   table.data tbody tr.selected { background: rgba(255,122,0,.14); }   /* v1.25.0 */
 }
 
-/* v1.56.0: сенсорные экраны — цели касания не меньше 44px (ТЗ адаптива);
-   компактные кнопки в таблицах — 40px, чтобы не раздувать строки */
-@media (pointer: coarse) {
-  .btn { min-height: 44px; }
-  .btn-sm { min-height: 40px; }
-  .btn-icon { width: 44px; height: 44px; }
-  .nav-item { min-height: 44px; }
-  .segmented button { min-height: 44px; }
-  .filter-bar .btn { min-height: 44px; }
-}
+/* v1.56.0 → v1.70.33: блок тач-целей объединён с таким же блоком внизу
+   файла. Их было два, с противоречивыми числами (.nav-item 44px против 48px,
+   .btn-sm 40px против 42px) — нижний побеждал по порядку каскада, поэтому
+   часть верхнего была мертва и вводила в заблуждение. Действующие значения
+   не изменились; правила .segmented button и .filter-bar .btn перенесены
+   туда же, вниз. */
 
 /* Узкие экраны — телефоны */
 @media (max-width: 640px) {
@@ -954,8 +969,26 @@ tr.archived-row td { opacity: .55; }
    v1.18.0: Режим просмотра — меню переключения профилей + полоса возврата
    ========================================================================== */
 .topbar-right { position: relative; }   /* якорь для .persona-menu */
-.user-chip { cursor: pointer; border-radius: 12px; padding: 4px 6px; position: relative; }
-.user-chip:hover { background: var(--panel-strong, rgba(128,128,128,.12)); }
+.user-chip {
+  /* v1.70.33: сброс оформления нативной <button> — иначе у кнопки появятся
+     своя рамка, фон и центровка текста, а профиль в топбаре поедет. */
+  border: 0; background: transparent; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; border-radius: 12px; padding: 4px 6px;
+  position: relative; min-width: 0;
+  /* iOS Safari рисует <button> собственной краской, пока не снят appearance */
+  appearance: none; -webkit-appearance: none;
+}
+/* Профиль и кнопка «Выйти» — два ОТДЕЛЬНЫХ интерактивных элемента рядом.
+   Раньше «Выйти» лежала ВНУТРИ div[role="button"]: вложенные интерактивные
+   элементы невалидны и недоступны, а заменить тот div на <button> было нельзя
+   — получилась бы кнопка внутри кнопки. */
+.user-area { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
+/* v1.70.33: --panel-strong объявлен как #ffffff, поэтому запасное значение
+   rgba(128,128,128,.12) никогда не применялось и ховер рисовался белым по
+   белому — интерактивный элемент не давал отклика. Берём штатный токен
+   ховера темы. */
+.user-chip:hover:not(:disabled) { background: var(--hover-bg); }
+.user-chip:disabled { cursor: default; }
 .chip-caret { font-size: 11px; opacity: .6; transition: transform .15s; }
 .user-chip[aria-expanded="true"] .chip-caret { transform: rotate(180deg); }
 
@@ -974,7 +1007,7 @@ tr.archived-row td { opacity: .55; }
   background: transparent; border: 0; border-radius: 10px; padding: 9px 10px;
   font: inherit; color: inherit; cursor: pointer;
 }
-.pm-item:hover { background: var(--panel-strong, rgba(128,128,128,.14)); }
+.pm-item:hover { background: var(--hover-bg); }   /* v1.70.33: та же мёртвая запасная */
 .pm-item.pm-self { cursor: default; }
 .pm-item.pm-self:hover { background: transparent; }
 .pm-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
@@ -986,7 +1019,7 @@ tr.archived-row td { opacity: .55; }
 .pm-group { font-size: 11px; opacity: .5; margin: 10px 4px 4px; text-transform: uppercase; letter-spacing: .05em; }
 .pm-none { padding: 8px 10px; font-size: 13px; opacity: .6; }
 .pm-note { font-size: 13px; opacity: .8; padding: 0 4px 8px; line-height: 1.45; }
-.pm-back { justify-content: center; font-weight: 600; border: 1px solid var(--border, rgba(128,128,128,.3)); }
+.pm-back { justify-content: center; font-weight: 600; border: 1px solid var(--border-strong); }   /* v1.70.33: запасное значение мертво — --border объявлен */
 
 .viewas-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -1162,8 +1195,10 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
    диалог выхода. Проверка контраста WCAG AA во всех темах.
    ========================================================================== */
 
-/* --- Фокус с клавиатуры — заметный, фирменный --- */
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* --- Фокус с клавиатуры — заметный, фирменный ---
+   v1.70.33: правило удалено. Оно дублировало глобальное :focus-visible из
+   начала файла и перебивало его цвет на --accent (2.21:1 на --bg — ниже
+   3.00:1 по WCAG 1.4.11). Действующая индикация объявлена там, вверху. */
 
 /* --- Кнопка «Выйти» в диалоге (терракота) --- */
 .btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
@@ -1522,12 +1557,17 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   bottom: calc(18px + env(safe-area-inset-bottom));
 }
 
-/* --- Тач-цели ≥44px на сенсорных устройствах (HIG/Material) --- */
+/* --- ЕДИНСТВЕННЫЙ блок тач-целей для сенсорных устройств (HIG/Material).
+   v1.56.0 + v1.70.33. .btn-sm — 42px: действующее значение (прежние 40px из
+   верхнего блока были перебиты), компактные кнопки в таблицах не раздувают
+   строки. Подробности — docs/ui_journal.md, запись v1.70.33. --- */
 @media (pointer: coarse) {
   .btn { min-height: 44px; }
-  .btn-sm { min-height: 42px; min-width: 42px; padding: 9px 14px; }
-  .btn-icon { min-width: 44px; min-height: 44px; }
+  .btn-icon { width: 44px; height: 44px; }
   .nav-item { min-height: 48px; }
+  .segmented button { min-height: 44px; }
+  .filter-bar .btn { min-height: 44px; }
+  .btn-sm { min-height: 42px; min-width: 42px; padding: 9px 14px; }
   input[type="checkbox"] { width: 22px; height: 22px; }
   select, .company-select { min-height: 44px; }
   .modal-close { min-width: 44px; min-height: 44px; }
@@ -1690,3 +1730,48 @@ body.guest-scroll { height: auto; min-height: 100%;
 .ag-steps > div > span:first-child { width: 20px; text-align: center; flex: none; }
 .ag-log { max-height: 190px; overflow: auto; font-size: 12px; background: #fff;
   border: 1px solid #d8d4ec; border-radius: 8px; padding: 8px; margin: 0 0 8px; }
+
+
+/* ======================================================================
+   v1.70.33: КЛАССЫ ВМЕСТО INLINE-СТИЛЕЙ
+   Inline-стиль не участвует в медиазапросах и не переопределяется из CSS,
+   поэтому разметка не адаптировалась под разные устройства: значение,
+   зашитое в атрибут style, перебивало любое правило экрана. Все 38
+   inline-стилей из index.html и maxapp/index.html переведены сюда.
+   ====================================================================== */
+
+/* «или» — линия с подписью посередине (экраны входа) */
+.alt-row    { display: flex; align-items: center; gap: 10px; margin: 2px 0 6px; }
+.alt-row-lg { display: flex; align-items: center; gap: 10px; margin: 12px 0 10px; }
+.alt-line   { flex: 1; height: 1px; background: var(--border); }
+
+/* Экраны входа и публичные экраны */
+.screen-title    { font-size: 24px; }
+.screen-sub      { font-size: 13.5px; color: var(--text-dim); margin: 6px 0 0; }
+.login-card-wide { max-width: 660px; width: 100%; }
+.form-foot       { text-align: center; margin-top: 14px; }
+.form-link       { font-size: 13.5px; }
+.form-link-gap   { margin-right: 18px; }
+.badge-center    { margin: 10px auto 0; display: inline-flex; }
+.hint-center    { margin-top: 6px; text-align: center; }
+
+/* Согласие на обработку и ввод e-mail на посадочной */
+.consent-label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 13px; }
+.consent-box   { width: auto; margin-top: 2px; }
+
+/* Доступное скрытие: элемент остаётся в дереве доступности для скринридера,
+   но не занимает места и не порождает прокрутку. Прежний способ
+   (left:-9999px) уводил элемент за пределы экрана — при фокусе браузер
+   прокручивал страницу к невидимой метке. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* Небольшие промежутки — вместо зашитых в разметку margin */
+.mt-6  { margin-top: 6px; }
+.mt-10 { margin-top: 10px; }
+.mb-6  { margin-bottom: 6px; }
+.gap-8 { height: 8px; }
+.nowrap      { white-space: nowrap; }
+.text-center { text-align: center; }

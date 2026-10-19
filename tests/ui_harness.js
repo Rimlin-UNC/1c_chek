@@ -768,6 +768,25 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      bundle.includes('ui_journal.md'),
      'v1.70.32: текст-токены и журнал интерфейса');
 
+  // v1.70.33: вёрстка — валидные форматы и структура под устройства.
+  // Разметку целиком проверяет tests/test_v17033.py и внешний html-validate;
+  // здесь — то, что видно в клиентском коде: явные type у кнопок шаблонов,
+  // последствия превращения #user-chip в нативную кнопку и описание выпуска.
+  const btnTags = bundle.match(/<button\b[^>]*>/g) || [];
+  const btnNoType = btnTags.filter(t => !/\btype\s*=/.test(t));
+  ok(btnTags.length > 250 && btnNoType.length === 0,
+     `v1.70.33: все ${btnTags.length} кнопок шаблонов с явным type ` +
+     `(без type: ${btnNoType.length}) — иначе кнопка в форме означает submit`);
+  ok(bundle.includes("chip.disabled = !chipActive") &&
+     !bundle.includes('chip.onkeydown') &&
+     !bundle.includes("closest('#btn-logout')"),
+     'v1.70.33: #user-chip — нативная кнопка; убран двойной keydown и мёртвая ветка');
+  ok(bundle.includes(".user-area"),
+     'v1.70.33: «Выйти» вынесена из переключателя профиля в соседнюю обёртку');
+  ok(bundle.includes("'1.70.33':") && bundle.includes('1.4.11') &&
+     bundle.includes('Вложенные интерактивные элементы невалидны'),
+     'v1.70.33: выпуск описан, порог контраста кольца фокуса назван');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

@@ -57,14 +57,24 @@ class TestNoHorizontalScroll:
 
 class TestTouchAndInputs:
     def test_touch_targets_44px(self):
+        """v1.70.33: блок тач-целей в файле ОДИН. Раньше их было два, с
+        противоречивыми числами (.nav-item 44px против 48px, .btn-sm 40px
+        против 42px): нижний перебивал верхний по порядку каскада, поэтому
+        прежние проверки 44px/40px пинили МЁРТВЫЕ объявления — тесты были
+        зелёные, а действовали совсем другие значения. Теперь пинится то, что
+        действительно применяется, а одиночество блока защищено отдельно."""
         css = open("app/static/css/app.css", encoding="utf-8").read()
+        assert css.count("@media (pointer: coarse)") == 1, \
+            "блок тач-целей снова продублирован — значения разъедутся"
         coarse = css.split("@media (pointer: coarse)")[1][:500]
         assert ".btn { min-height: 44px; }" in coarse
         assert ".btn-icon { width: 44px; height: 44px; }" in coarse
-        assert ".nav-item { min-height: 44px; }" in coarse
         assert ".segmented button { min-height: 44px; }" in coarse
-        # компактные кнопки в таблицах — 40px, строки не раздуваются
-        assert ".btn-sm { min-height: 40px; }" in coarse
+        assert ".filter-bar .btn { min-height: 44px; }" in coarse
+        # пункт меню крупнее кнопки: по нему попадают вслепую большим пальцем
+        assert ".nav-item { min-height: 48px; }" in coarse
+        # компактные кнопки в таблицах — 42px, строки не раздуваются
+        assert ".btn-sm { min-height: 42px; min-width: 42px; padding: 9px 14px; }" in coarse
 
     def test_inputs_16px_on_phone(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()

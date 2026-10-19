@@ -395,11 +395,17 @@ class TestCssIsValid:
 
     def test_markup_dividers_use_theme_border(self):
         """Разделители в разметке жили на --line с запасным #e5e7eb — оттенок
-        Tailwind, а не граница темы."""
+        Tailwind, а не граница темы. v1.70.33: инлайн-стили из разметки убраны
+        целиком, те же четыре разделителя переехали в класс .alt-line, поэтому
+        токен теперь проверяется в CSS, а в разметке — что класс действительно
+        применён (иначе разделители молча пропали бы при переносе)."""
         html = read("app/static/index.html")
         assert "--line" not in html
         assert "#e5e7eb" not in html
-        assert html.count("var(--border)") >= 4
+        assert html.count("alt-line") >= 4, "разделители потеряны при переносе в классы"
+        css = read(APP_CSS)
+        assert re.search(r"\.alt-line\s*\{[^}]*background:\s*var\(--border\)", css), \
+            ".alt-line больше не рисует разделитель границей темы"
 
     def test_loaded_webfonts_are_actually_used(self):
         """index.html грузит Inter, JetBrains Mono и Caveat; каждый обязан

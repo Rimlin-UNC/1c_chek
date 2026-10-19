@@ -66,7 +66,7 @@ async function boot() {
       '<p class="hint">Откройте чат вашего бота в MAX и запустите ' +
       'приложение кнопкой в чате.</p>' +
       '<div style="height:8px"></div>' +
-      '<button class="btn" id="mx-retry">Повторить</button>';
+      '<button type="button" class="btn" id="mx-retry">Повторить</button>';
     $('mx-retry').onclick = () => { location.reload(); };
     return;
   }
@@ -276,7 +276,7 @@ async function scanCamera() {
     '<p class="hint" style="margin-top:8px">Наведите камеру на QR чека — ' +
     'распознаётся автоматически</p>' +
     '<div style="height:8px"></div>' +
-    '<button class="btn secondary" id="cam-photo">🖼 Не считывается — выбрать фото</button>',
+    '<button type="button" class="btn secondary" id="cam-photo">🖼 Не считывается — выбрать фото</button>',
     closeCam);
   const v = $('cam-v');
   v.srcObject = stream;
@@ -314,7 +314,7 @@ async function showLoginConfirm(code) {
     '<p class="hint">Подтвердите — на сайте всё произойдёт автоматически. ' +
     'Если это не вы открывали сайт — просто закройте этот экран.</p>' +
     '<div style="height:10px"></div>' +
-    '<button class="btn" id="svc-confirm">Подтвердить вход</button>' +
+    '<button type="button" class="btn" id="svc-confirm">Подтвердить вход</button>' +
     '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>');
   $('svc-confirm').onclick = async () => {
     try {
@@ -344,7 +344,7 @@ async function showInvite(token) {
       (d.expires_at ? '<br><span class="hint">действует до ' +
         esc(d.expires_at) + '</span>' : '') + '</p>' +
       '<div style="height:10px"></div>' +
-      '<button class="btn" id="svc-accept">Принять и открыть сайт</button>' +
+      '<button type="button" class="btn" id="svc-accept">Принять и открыть сайт</button>' +
       '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>';
     $('svc-accept').onclick = async () => {
       try {

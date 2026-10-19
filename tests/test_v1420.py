@@ -81,9 +81,14 @@ class TestMenuAdminOnly:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         # не-админ: только свой профиль + пояснение
         assert "Переключение между профилями доступно только администратору." in js
-        # клик по карточке активирует меню только у админа/в режиме просмотра
-        assert "if (isAdmin() || viewing) {" in js
-        assert "chip.onclick = null;" in js
+        # клик по карточке активирует меню только у админа/в режиме просмотра.
+        # v1.70.33: чип стал нативной кнопкой («Выйти» вынесена наружу, вложенные
+        # интерактивные элементы невалидны), поэтому условие то же, но неактивное
+        # состояние объявляется честно через disabled — элемент выпадает из
+        # порядка обхода, а не только теряет обработчик.
+        assert "const chipActive = isAdmin() || viewing;" in js
+        assert "chip.disabled = !chipActive;" in js
+        assert "chip.onclick = chipActive ? () => togglePersonaMenu() : null;" in js
         # раздел «Посмотреть глазами» в шаблоне один и только у админа
         assert js.count('Посмотреть глазами <span class="pm-hint">пароль не нужен</span>') == 1
 

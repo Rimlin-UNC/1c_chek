@@ -43,21 +43,21 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   <h1>Ямастер Чек</h1>
 
   <section id="tab-scan">
-    <div class="card" style="text-align:center">
+    <div class="card text-center">
       <div class="big" id="points">…</div>
       <div class="hint">моих баллов</div>
     </div>
-    <button class="btn" id="btn-scan">📷 Сканировать QR чека</button>
-    <div style="height:8px"></div>
-    <button class="btn secondary" id="btn-cam">🎥 Камера в окне</button>
-    <div style="height:8px"></div>
+    <button type="button" class="btn" id="btn-scan">📷 Сканировать QR чека</button>
+    <div class="gap-8"></div>
+    <button type="button" class="btn secondary" id="btn-cam">🎥 Камера в окне</button>
+    <div class="gap-8"></div>
     <div class="card">
-      <div class="hint" style="margin-bottom:6px">Или вставьте строку QR:</div>
-      <input id="qr-input" placeholder="t=…&s=…&fn=…&i=…&fp=…&n=…">
-      <div style="height:8px"></div>
-      <button class="btn secondary" id="btn-send">Сдать чек</button>
-      <div style="height:8px"></div>
-      <button class="btn secondary" id="btn-photo">📷 Фото с QR-кодом</button>
+      <div class="hint mb-6">Или вставьте строку QR:</div>
+      <input type="text" id="qr-input" placeholder="t=…&s=…&fn=…&i=…&fp=…&n=…">
+      <div class="gap-8"></div>
+      <button type="button" class="btn secondary" id="btn-send">Сдать чек</button>
+      <div class="gap-8"></div>
+      <button type="button" class="btn secondary" id="btn-photo">📷 Фото с QR-кодом</button>
       <input type="file" id="qr-file" accept="image/*" class="hidden">
     </div>
     <div id="msg"></div>
@@ -71,8 +71,8 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
     <div class="card">
       <div class="hint">Ваш код приглашения</div>
       <code id="ref-code">—</code>
-      <div style="height:8px"></div>
-      <button class="btn secondary" id="btn-share">🎁 Позвать друга (+баллы)</button>
+      <div class="gap-8"></div>
+      <button type="button" class="btn secondary" id="btn-share">🎁 Позвать друга (+баллы)</button>
     </div>
     <div class="card hint" id="profile-extra"></div>
   </section>
@@ -84,11 +84,11 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
 </div>
 
 <nav>
-  <button data-tab="scan" class="active">📷 Сканер</button>
-  <button data-tab="receipts">🧾 Чеки</button>
-  <button data-tab="profile">⭐ Профиль</button>
+  <button type="button" data-tab="scan" class="active">📷 Сканер</button>
+  <button type="button" data-tab="receipts">🧾 Чеки</button>
+  <button type="button" data-tab="profile">⭐ Профиль</button>
 </nav>
 
-<script src="/maxapp/maxapp.js?v=1.70.32"></script>
+<script src="/maxapp/maxapp.js?v=1.70.33"></script>
 </body>
 </html>

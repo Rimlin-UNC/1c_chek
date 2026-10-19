@@ -67,7 +67,7 @@ export function openModal(html, { onClose } = {}) {
   root.classList.remove('hidden');
   const slot = root.querySelector('.modal-slot');
   slot.className = 'modal-slot glass';
-  slot.innerHTML = `<button class="btn-icon modal-close" title="Закрыть">✕</button>` + html;
+  slot.innerHTML = `<button type="button" class="btn-icon modal-close" title="Закрыть">✕</button>` + html;
   const close = () => { root.classList.add('hidden'); slot.innerHTML = ''; onClose && onClose(); };
   root.querySelector('.modal-backdrop').onclick = close;
   slot.querySelector('.modal-close').onclick = close;
