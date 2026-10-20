@@ -685,7 +685,9 @@ class TestExternalValidator:
 # 13. Версия, журнал, changelog
 # ==========================================================================
 class TestRelease:
-    VERSION = "1.70.33"
+    # v1.70.34: выпуск отгружен, точки синхронизации живут дальше.
+    # Проверку «своя версия везде» для 1.70.34 ведёт test_v17034.
+    VERSION = "1.70.34"
 
     def test_all_sync_points(self):
         points = [
@@ -703,11 +705,14 @@ class TestRelease:
         assert f"/css/app.css?v={self.VERSION}" in html
 
     def test_whats_new_entry(self):
+        """v1.70.34: запись выпуска остаётся в истории WHATS_NEW.
+
+        Требование «своя версия — первая» снято: оно по смыслу принадлежит
+        текущему выпуску и проверяется в test_v17034, а здесь означало бы, что
+        каждый следующий релиз обязан править этот тест.
+        """
         js = read(APP_JS)
-        assert f"'{self.VERSION}'" in js
-        newest = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert newest and newest.group(1) == self.VERSION, \
-            "в WHATS_NEW новая версия не первая"
+        assert "'1.70.33'" in js, "запись v1.70.33 пропала из истории WHATS_NEW"
 
     def test_changelog_entry(self):
         md = read(ROOT / "CHANGELOG.md")

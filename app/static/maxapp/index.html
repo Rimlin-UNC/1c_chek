@@ -8,8 +8,19 @@
 <script src="/maxapp/jsQR.js"></script>
 <style>
 :root { --bg: var(--tg-theme-bg-color, #f5f1ea); --fg: var(--tg-theme-text-color, #2b2347);
-        --accent: var(--tg-theme-button-color, #e8721c); --accent-fg: var(--tg-theme-button-text-color, #fff);
-        --hint: var(--tg-theme-hint-color, #7d7693); --card: var(--tg-theme-secondary-bg-color, #fff); }
+        /* v1.70.34: запасные значения — корпоративные. --accent был #e8721c
+           (не фирменный #ff7a00), а белый текст на нём давал 3.06:1 — ниже
+           4.5:1. Тёмный #1a1a1a на корпоративном оранжевом даёт 6.66:1.
+           Значения из темы хоста (--tg-theme-*) по-прежнему в приоритете:
+           это контракт Mini App, свои цвета мы ему не навязываем. */
+        --accent: var(--tg-theme-button-color, #ff7a00); --accent-fg: var(--tg-theme-button-text-color, #1a1a1a);
+        /* Оранжевый КАК ТЕКСТ — отдельный оттенок: один цвет не может быть и
+           фоном кнопки с тёмным текстом (светлота ≥0.22), и текстом на светлом
+           фоне (≤0.18). Примешиваем цвет текста темы, поэтому оттенок читается
+           и в светлой, и в тёмной теме хоста: 6.80:1 на --card, 6.04:1 на --bg. */
+        --accent-text: color-mix(in srgb, var(--accent) 45%, var(--fg));
+        /* подсказка 13 px: #7d7693 давал 3.82:1 на --bg, стало 4.64:1 */
+        --hint: var(--tg-theme-hint-color, #6f6983); --card: var(--tg-theme-secondary-bg-color, #fff); }
 * { box-sizing: border-box; margin: 0; }
 body { font: 16px/1.45 -apple-system, 'Segoe UI', Roboto, sans-serif;
        background: var(--bg); color: var(--fg); padding: 14px 14px 90px; }
@@ -19,7 +30,7 @@ h1 { font-size: 20px; margin: 4px 0 12px; }
 .hint { color: var(--hint); font-size: 13px; }
 .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 15px;
        font-size: 17px; font-weight: 700; background: var(--accent); color: var(--accent-fg); }
-.btn.secondary { background: transparent; color: var(--accent); border: 2px solid var(--accent); }
+.btn.secondary { background: transparent; color: var(--accent-text); border: 2px solid var(--accent-text); }
 .btn:disabled { opacity: .5; }
 input { width: 100%; border: 1px solid var(--hint); border-radius: 10px;
         padding: 12px; font-size: 16px; background: var(--bg); color: var(--fg); }
@@ -27,7 +38,7 @@ input { width: 100%; border: 1px solid var(--hint); border-radius: 10px;
 nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex;
       background: var(--card); padding-bottom: env(safe-area-inset-bottom); }
 nav button { flex: 1; border: 0; background: none; padding: 12px 0; font-size: 15px; color: var(--hint); }
-nav button.active { color: var(--accent); font-weight: 700; }
+nav button.active { color: var(--accent-text); font-weight: 700; }
 .hidden { display: none; }
 .rrow { display: flex; justify-content: space-between; padding: 8px 0;
         border-bottom: 1px solid var(--hint); font-size: 14px; }
@@ -89,6 +100,6 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   <button type="button" data-tab="profile">⭐ Профиль</button>
 </nav>
 
-<script src="/maxapp/maxapp.js?v=1.70.33"></script>
+<script src="/maxapp/maxapp.js?v=1.70.34"></script>
 </body>
 </html>

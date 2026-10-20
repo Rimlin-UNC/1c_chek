@@ -73,16 +73,51 @@ class TestLightOnly:
         assert "background:#f5f5f5" in js
 
     def test_no_light_on_light(self):
-        """Скандинавский аудит: цветных «пар» светлый-на-светлом быть не должно."""
-        css = open(CSS, encoding="utf-8").read()
-        # белый текст допустим ТОЛЬКО на градиенте/акценте/графите/терракоте
+        """Скандинавский аудит: цветных «пар» светлый-на-светлом быть не должно.
+
+        v1.70.34: прежняя версия разрешала белый текст по СПИСКУ СОСЕДНИХ СЛОВ
+        («--grad», «--accent», «#333333», «btn-primary», «nav-badge»,
+        «step-num»…), то есть закрепляла ровно тот дефект, который должна была
+        ловить: белый на фирменном оранжевом даёт 2.11–2.61:1, а графитовая
+        .btn-primary была остатком отменённой тёмной темы. Теперь контраст
+        каждой пары считается из токенов и обязан быть ≥ 4.5:1 (WCAG AA).
+        """
         import re
-        for m in re.finditer(r"color:\s*#fff\b", css):
-            ctx = css[max(0, m.start() - 220):m.start()]
-            allowed = any(k in ctx for k in (
-                "--grad", "--accent", "#333333", "--bad", "btn-danger",
-                "btn-primary", "nav-badge", "step-num", "toastIn"))
-            assert allowed, f"белый текст на неизвестном фоне: …{ctx[-120:]!r}"
+        css = open(CSS, encoding="utf-8").read()
+        body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        tokens = dict(re.findall(r"(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})", body))
+
+        def _lum(hx):
+            hx = hx.lstrip("#")
+            ch = []
+            for i in (0, 2, 4):
+                c = int(hx[i:i + 2], 16) / 255
+                ch.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+            return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+
+        def _ratio(a, b):
+            la, lb = _lum(a), _lum(b)
+            hi, lo = max(la, lb), min(la, lb)
+            return (hi + 0.05) / (lo + 0.05)
+
+        grad_stops = ("#ff7a00", "#ff9a3d")   # --grad 135deg, видимая часть
+        pairs = 0
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", body):
+            sel, dec = m.group(1).strip(), m.group(2)
+            if not re.search(r"color:\s*#fff\b|color:\s*#ffffff\b", dec):
+                continue
+            bg = re.search(r"(?<![-\w])background(?:-color)?\s*:\s*([^;]+)", dec)
+            assert bg, f"{sel}: белый текст без фона в том же правиле — не проверить"
+            backs = list(grad_stops) if "--grad" in bg.group(1) else []
+            for t in re.findall(r"var\((--[\w-]+)\)", bg.group(1)):
+                assert t in tokens, f"{sel}: фон ссылается на необъявленный {t}"
+                backs.append(tokens[t])
+            backs += re.findall(r"#[0-9a-fA-F]{6}", bg.group(1))
+            for b in backs:
+                pairs += 1
+                r = _ratio("#ffffff", b)
+                assert r >= 4.5, f"{sel}: белый текст на {b} — {r:.2f}:1, нужно ≥ 4.5:1"
+        assert pairs >= 1, "белых текстов не найдено вовсе — проверка выродилась"
 
     def test_index_meta_static(self):
         idx = open(IDX, encoding="utf-8").read()

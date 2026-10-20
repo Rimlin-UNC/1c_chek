@@ -84,9 +84,16 @@ class TestListCardsToggle:
         assert "border-top: 1px dashed var(--border);" in css
 
     def test_toggle_style(self):
+        """Переключатель вида «Список / Карточки» остаётся фирменно-оранжевым.
+
+        v1.70.34: активный пункт был оранжевым с БЕЛЫМ текстом — 2.61:1 при
+        пороге 4.5:1, то есть подпись выбранного вида читалась хуже всего.
+        Подложка не изменилась (тот же var(--accent)), текст стал тёмным —
+        приём, уже закреплённый для .btn-accent в test_v1210.
+        """
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert ".seg { display: inline-flex;" in css
-        assert ".seg .btn.active { background: var(--accent); color: #fff; }" in css
+        assert ".seg .btn.active { background: var(--accent); color: #1a1a1a; }" in css
 
 
 class TestMskTime:

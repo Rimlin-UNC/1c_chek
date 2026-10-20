@@ -64,7 +64,7 @@ body {
   overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-main);       /* v1.70.34: был тот же стек литералом */
   font-size: 15px;
   line-height: 1.5;
   overflow: hidden;
@@ -140,7 +140,11 @@ a:hover { text-decoration: underline; }
 .btn:active { transform: translateY(0); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .btn-primary {
-  background: var(--grad); border: none; color: #fff;
+  /* v1.70.34: текст тёмный, а не белый. Белый на фирменном оранжевом давал
+     2.61:1 (на светлом стопе градиента #ff9a3d — 2.11:1) при пороге 4.5:1;
+     #1a1a1a даёт 6.66:1 и 8.24:1. Тот же приём, что закреплён для .btn-accent
+     тестом test_v1210::test_accent_button_dark_text. */
+  background: var(--grad); border: none; color: #1a1a1a;
   box-shadow: 0 8px 24px -8px rgba(255,122,0,.5);
 }
 .btn-primary:hover { background: var(--grad); filter: brightness(1.12); box-shadow: 0 10px 28px -8px rgba(255,122,0,.6); }
@@ -244,7 +248,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   font-size: 11px; font-weight: 700; color: var(--text-dim);
   padding: 1px 8px; border-radius: 20px;
 }
-.nav-badge.accent { background: var(--grad); color: #fff; border: none; }
+.nav-badge.accent { background: var(--grad); color: #1a1a1a; border: none; }   /* v1.70.34: было 2.11–2.61:1 */
 .sidebar-footer { padding: 14px 16px; border-top: 1px solid var(--border); }
 .live-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); }
 .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 8px var(--warn); transition: background .3s; }
@@ -281,7 +285,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .user-chip { display: flex; align-items: center; gap: 10px; }
 .avatar {
   width: 38px; height: 38px; border-radius: 12px; background: var(--grad);
-  display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff;
+  display: flex; align-items: center; justify-content: center; font-weight: 800; color: #1a1a1a;   /* v1.70.34: буква на оранжевом градиенте — было 2.11–2.61:1 */
 }
 /* v1.70.33: имя и роль стали <span> внутри нативной кнопки — им нужен
    блочный контекст, иначе они выстроятся в одну строку. */
@@ -530,7 +534,7 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
   background: transparent; border: none; color: var(--text-dim); padding: 9px 18px;
   font: inherit; font-weight: 700; cursor: pointer; transition: background var(--speed), color var(--speed);
 }
-.segmented button.active { background: var(--grad); color: #fff; }
+.segmented button.active { background: var(--grad); color: #1a1a1a; }   /* v1.70.34: было 2.11–2.61:1 */
 .token-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }   /* v1.59.4 */
 .token-line input { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
   flex: 1 1 200px; min-width: 0; }
@@ -546,7 +550,7 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
 .step { display: flex; gap: 14px; padding: 10px 0; align-items: flex-start; }
 .step-num {
   counter-increment: step; min-width: 28px; height: 28px; border-radius: 50%;
-  background: var(--grad); color: #fff; font-weight: 800; font-size: 13px;
+  background: var(--grad); color: #1a1a1a; font-weight: 800; font-size: 13px;   /* v1.70.34: было 2.11–2.61:1 */
   display: flex; align-items: center; justify-content: center;
 }
 .step-num::before { content: counter(step); }
@@ -559,7 +563,11 @@ pre.codeblock {
 }
 
 /* --- Пустые состояния / загрузка ------------------------------------------------------ */
-.empty-state { text-align: center; padding: 48px 20px; color: var(--text-faint); }
+/* v1.70.34: padding и text-align отсюда были мёртвыми — ниже, в разделе
+   иллюстраций пустых состояний, то же правило задаёт display: flex и
+   padding: 18px 10px, и оно побеждало по порядку. Оставлен только цвет,
+   которого там нет. */
+.empty-state { color: var(--text-faint); }
 .empty-state .big-ico { font-size: 44px; display: block; margin-bottom: 10px; }
 .skeleton { position: relative; overflow: hidden; background: rgba(51,51,51,.06); border-radius: 10px; min-height: 40px; }   /* v1.25.0 */
 .skeleton::after {
@@ -665,10 +673,13 @@ pre.codeblock {
                -webkit-overflow-scrolling: touch; }
 }
 
-/* Средние экраны: 3 колонки формы ужимаем в 2 */
-@media (max-width: 860px) {
-  .form-grid { grid-template-columns: 1fr 1fr; }
-}
+/* v1.70.34: здесь стоял блок «Средние экраны: 3 колонки формы ужимаем в 2»
+   с .form-grid { grid-template-columns: 1fr 1fr } при том же max-width: 860px,
+   что и мобильный блок выше. Он был написан, когда базовое правило давало три
+   колонки, но база давно 1fr 1fr, поэтому блок только глушил мобильное
+   .form-grid { grid-template-columns: 1fr } — форма не становилась
+   одноколоночной ни на одной ширине, в том числе на телефоне 360 px.
+   Блок удалён: >860px — две колонки из базы, ≤860px — одна из мобильного. */
 
 /* --- v1.4.0: прогресс обновления ------------------------------------ */
 .progress-outer { height: 10px; border-radius: 10px; background: rgba(51,51,51,.08); overflow: hidden; margin: 12px 0 8px; }
@@ -1063,12 +1074,11 @@ tr.archived-row td { opacity: .55; }
 
 /* v1.25.0: тёмная и переключаемая темы удалены — единственная светлая
    задана в :root (см. шапку файла). */
-/* --- 4. Типографика: размеры, интервалы, табличные цифры --- */
-body {
-  font-family: var(--font-main);
-  font-size: 15px;                     /* минимум 14 px — не экономить */
-  line-height: 1.5;                    /* 1.4–1.6 для основного текста */
-}
+/* --- 4. Типографика: размеры, интервалы, табличные цифры ---
+   v1.70.34: здесь было второе правило body с font-family: var(--font-main),
+   font-size: 15px и line-height: 1.5 — ровно те же значения, что в базовом
+   body в шапке файла. Дубль удалён, стек перенесён в базовое правило, чтобы
+   шрифт задавался токеном в одном месте. */
 table { font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
 table td, table th { line-height: 1.35; }
 .tnum, .feed-time, .audit-time, .audit-day, .rs-sub,
@@ -1094,12 +1104,12 @@ h1, h2, h3, .card-title { color: var(--indigo); }
 }
 #page-title { font-family: var(--font-accent); font-size: 26px; font-weight: 600; }
 
-/* --- 5. Кнопки: primary — тёмная, accent — оранжевая, ghost — серая --- */
-/* v1.25.0: primary-кнопка — графитовая, текст белый (контраст AA) */
-.btn-primary {
-  background: #333333; border-color: #333333; color: #ffffff;
-}
-.btn-primary:hover { background: #454545; }
+/* --- 5. Кнопки: primary и accent — корпоративный оранжевый и его оттенки --- */
+/* v1.70.34: графитовая primary (#333333, ховер #454545) удалена. Это был
+   остаток тёмной темы, отменённой в v1.25.0: правило стояло НИЖЕ фирменного
+   .btn-primary из начала файла и перебивало его, поэтому основная кнопка
+   программы (92 применения) рисовалась чёрной, хотя в файле был объявлен
+   оранжевый градиент. Теперь действует правило на строке ~142. */
 .btn-accent {
   background: var(--accent); border-color: var(--accent); color: #1a1a1a;
   font-weight: 600;
@@ -1201,7 +1211,12 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
    3.00:1 по WCAG 1.4.11). Действующая индикация объявлена там, вверху. */
 
 /* --- Кнопка «Выйти» в диалоге (терракота) --- */
-.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+/* v1.70.34: фон — тёмная терракота --bad-text, а не --bad. Белый текст на
+   --bad #d9534f давал 3.96:1 (провал AA), а тёмный на нём — 4.39:1, тоже
+   провал: сам --bad для этого слишком светлый. На --bad-text #c22e2a белый
+   даёт 5.65:1. Кнопка остаётся насыщенной и узнаваемо «опасной», токен палитры
+   не изменён — взят уже существовавший тёмный оттенок из v1.70.32. */
+.btn-danger { background: var(--bad-text); border-color: var(--bad-text); color: #fff; font-weight: 600; }
 .btn-danger:hover { filter: brightness(1.06); }
 
 /* --- Сворачиваемые блоки настроек (заголовок виден всегда) --- */
@@ -1621,7 +1636,7 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .seg { display: inline-flex; border: 1px solid var(--border-strong);
   border-radius: 10px; overflow: hidden; background: var(--panel); }
 .seg .btn { border: 0; border-radius: 0; }
-.seg .btn.active { background: var(--accent); color: #fff; }
+.seg .btn.active { background: var(--accent); color: #1a1a1a; }   /* v1.70.34: было 2.61:1 */
 
 /* Карточки чеков: кнопки действий — ВНИЗУ карточки */
 .rc-cards { display: grid; gap: 12px;
