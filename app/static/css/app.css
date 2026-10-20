@@ -1447,15 +1447,27 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .land-cta { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 20px; }
 .land-cta .btn { font-size: 0.9375rem; padding: 11px 20px; }
 .land-steps { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 12px; }
+/* v1.70.36: картинки шагов крупные и видны на всех устройствах.
+   Раньше они УМЕНЬШАЛИСЬ именно там, где нужнее всего: 84×62 на десктопе,
+   62×46 на планшете и 54×40 на телефоне — на телефоне иллюстрацию было не
+   разглядеть. Теперь размер задаёт clamp(): минимум 96px на самом узком
+   экране и до 156px на широком, пропорцию держит aspect-ratio, кадрирует
+   object-fit: cover. Текст поднят к верхнему краю карточки
+   (align-items: flex-start): при высокой картинке он больше не висит
+   по центру и не «уезжает» вниз. Третий шаг получил иллюстрацию в той же
+   стилизации, поэтому класс-заглушка .land-step-noimg удалён. */
 .land-steps li {
-  display: flex; gap: 14px; align-items: center;
+  display: flex; gap: 16px; align-items: flex-start;
   background: rgba(255, 255, 255, .6); border: 1px solid var(--border);
-  border-radius: 14px; padding: 10px 14px;
+  border-radius: 14px; padding: 12px 14px;
 }
-.land-steps img { width: 84px; height: 62px; object-fit: cover; border-radius: 10px; flex: 0 0 auto; }
+.land-steps img {
+  width: clamp(96px, 14vw, 156px); aspect-ratio: 4 / 3; height: auto;
+  object-fit: cover; border-radius: 12px; flex: 0 0 auto;
+}
+.land-steps li > div { min-width: 0; }
 .land-steps b { display: block; font-size: 0.90625rem; }
 .land-steps span { display: block; color: var(--text-dim); font-size: 0.84375rem; margin-top: 2px; line-height: 1.45; }
-.land-step-noimg { padding-left: 4px; }
 .land-lead-form {
   background: rgba(255, 255, 255, .6); border: 1px solid var(--border);
   border-radius: 14px; padding: 14px 16px; margin: 0 0 18px; position: relative;
@@ -1480,8 +1492,7 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   .land-right { order: -1; }
   .land-h1 { font-size: 1.375rem; }
   .land-lead { font-size: 0.875rem; }
-  .land-steps li { padding: 8px 10px; gap: 10px; }
-  .land-steps img { width: 62px; height: 46px; }
+  .land-steps li { padding: 10px 12px; gap: 12px; }
   .land-stats { gap: 16px; }
   .land-stat b { font-size: 1.1875rem; }
   .login-card { padding: 26px 20px 18px; }
@@ -1506,8 +1517,7 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   .land-cta .btn { flex: 1 1 100%; justify-content: center; }
   .land-stats { gap: 12px; }
   .land-stat b { font-size: 1.0625rem; }
-  .land-steps li { padding: 8px; gap: 8px; }
-  .land-steps img { width: 54px; height: 40px; }
+  .land-steps li { padding: 10px; gap: 10px; }
   .land-steps b { font-size: 0.84375rem; }
   .land-steps span { font-size: 0.78125rem; }
   .land-lead-form { padding: 12px; }

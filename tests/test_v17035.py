@@ -788,7 +788,9 @@ class TestNoDeadCss:
 # 8. Релиз
 # ==========================================================================
 class TestRelease:
-    VERSION = "1.70.35"
+    # v1.70.36: точки синхронизации живут дальше, свою версию проверяет
+    # test_v17036; здесь остаётся соответствие файлов друг другу.
+    VERSION = "1.70.36"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",
@@ -801,10 +803,12 @@ class TestRelease:
         assert f"maxapp.js?v={self.VERSION}" in read(MAXAPP)
 
     def test_whats_new_is_first_and_names_the_numbers(self):
+        """v1.70.36: требование «своя версия первая» принадлежит текущему
+        выпуску и проверяется в test_v17036; здесь остаётся запись в истории
+        и её измеренные числа."""
         js = read(APP_JS)
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == self.VERSION
-        entry = js[js.index(f"'{self.VERSION}':"):][:12000]
+        assert "'1.70.35':" in js, "запись v1.70.35 пропала из истории"
+        entry = js[js.index("'1.70.35':"):][:12000]
         for needle in ("1.18", "1.67", "stylelint"):
             assert needle in entry, f"в описании выпуска нет {needle!r}"
 

@@ -689,7 +689,9 @@ class TestExternalValidator:
 class TestRelease:
     # v1.70.35: выпуск отгружен, точки синхронизации живут дальше.
     # Проверку «своя версия везде» для текущего выпуска ведёт test_v17035.
-    VERSION = "1.70.35"
+    # v1.70.36: точки синхронизации живут дальше; свою версию и «первую
+    # запись WHATS_NEW» проверяет test_v17036.
+    VERSION = "1.70.36"
 
     def test_all_sync_points(self):
         points = [

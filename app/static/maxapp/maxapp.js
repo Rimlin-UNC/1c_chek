@@ -86,8 +86,19 @@ async function boot() {
     if (sp.indexOf('login_') === 0) showLoginConfirm(sp);
     else if (sp.indexOf('inv_') === 0) showInvite(sp);
   } catch (e) {
+    // v1.70.36: если сессия не поднялась (подпись initData, устаревшая
+    // сессия), человек не должен остаться без входа: вход на сайт устроен
+    // как device-code и подтверждается кодом сообщением боту — подпись для
+    // него не нужна. Даём короткий путь на сайт прямо отсюда.
     $('view-loading').innerHTML = '<p>' + esc(e.message) + '</p>' +
-      '<p class="hint">Закройте и откройте приложение из чата бота заново.</p>';
+      '<p class="hint">Закройте и откройте приложение из чата бота заново.</p>' +
+      '<p class="hint">Войти или зарегистрироваться можно и без ' +
+      'мини-приложения: на сайте нажмите «Войти через MAX» и подтвердите ' +
+      'вход кодом — сообщением этому боту в чате.</p>' +
+      '<p style="margin-top:10px"><button type="button" class="btn" ' +
+      'id="mx-site">Открыть сайт</button></p>';
+    const sb = $('mx-site');
+    if (sb) sb.onclick = () => { location.href = 'https://chek.ymaster.ru/'; };
   }
 }
 

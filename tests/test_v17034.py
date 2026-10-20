@@ -537,7 +537,7 @@ class TestDuplicateRules:
 class TestRelease:
     # v1.70.35: точки синхронизации живут дальше, свою версию проверяет
     # test_v17035; здесь остаётся соответствие файлов друг другу.
-    VERSION = "1.70.35"
+    VERSION = "1.70.36"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

@@ -50,8 +50,12 @@ def build_init_data(user_id: int, token: str = BOT_TOKEN,
     secret = hmac_mod.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     sig = hmac_mod.new(secret, launch.encode(), hashlib.sha256).hexdigest()
     pairs.append(("hash", sig))
-    return "&".join(f"{k}={urllib.parse.quote(str(v), safe='')}"
-                    for k, v in pairs)
+    # v1.70.36: кодируем КАК ПЛАТФОРМА — urlencode (пробел → «+»). Прежняя
+    # фикстура писала quote(safe=''), то есть «%20», и старая реализация с
+    # нераскрытым «+» на ней проходила, а на боевых initData — нет: тесты
+    # были зелёные, вход через MAX не работал. Регресс закреплён ниже обоими
+    # видами кодирования.
+    return urllib.parse.urlencode(pairs)
 
 
 # ------------------------------------------------------------------ версии
@@ -114,6 +118,35 @@ class TestInitDataValidation:
         user, err = ma.validate_init_data(data, BOT_TOKEN)
         assert user is None and err == "expired"
 
+    def test_plus_and_percent20_both_validate(self):
+        """Регресс v1.70.36: платформа кодирует пробелы знаком «+», а
+        urllib.parse.unquote его НЕ раскрывает (раскрывает только
+        unquote_plus / parse_qsl). JSON в user всегда с пробелами, поэтому
+        прежняя строка подписи собиралась с «+» и HMAC не сходился ни на
+        одном боевом initData — вход и регистрация через MAX были
+        невозможны. Проверяем оба вида кодирования и «сырой» вид."""
+        import hashlib as _hl
+        import hmac as _hm
+        from app.services import maxapp as ma
+        data = {"auth_date": str(int(time.time())),
+                "query_id": "q-regress",
+                "user": json.dumps({"id": 777, "first_name": "Плюс Плюс",
+                                    "username": "plus"}, ensure_ascii=False)}
+        pairs = sorted(data.items())
+        launch = "\n".join(f"{k}={v}" for k, v in pairs)
+        sec = _hm.new(b"WebAppData", BOT_TOKEN.encode(), _hl.sha256).digest()
+        sig = _hm.new(sec, launch.encode(), _hl.sha256).hexdigest()
+        full = dict(pairs, hash=sig)
+        plus = urllib.parse.urlencode(full)                 # пробел → «+»
+        pct = "&".join(f"{k}={urllib.parse.quote(str(v), safe='')}"
+                       for k, v in full.items())           # пробел → %20
+        raw = "&".join(f"{k}={v}" for k, v in full.items()) # без кодирования
+        dbl = urllib.parse.quote(plus, safe="")            # строка целиком ещё раз
+        for name, variant in (("urlencode/+ ", plus), ("quote/%20 ", pct),
+                              ("сырой       ", raw), ("двойной энкод", dbl)):
+            user, err = ma.validate_init_data(variant, BOT_TOKEN)
+            assert err is None and user["id"] == 777, f"{name}: {err}"
+
     def test_garbage_rejected(self):
         from app.services import maxapp as ma
         assert ma.validate_init_data("", BOT_TOKEN)[1] == "format"
@@ -121,7 +154,11 @@ class TestInitDataValidation:
         no_hash = build_init_data(1).split("&hash=")[0]
         assert ma.validate_init_data(no_hash, BOT_TOKEN)[1] == "format"
         double = build_init_data(1) + "&hash=deadbeef"
-        assert ma.validate_init_data(double, BOT_TOKEN)[1] == "format"
+        # v1.70.36: пары читаются как dict(parse_qsl(...)) — последний hash
+        # побеждает и не сходится, поэтому отказ приходит как bad_hash.
+        # Смысл проверки — дубль НЕ должен проходить, код причины вторичен.
+        assert ma.validate_init_data(double, BOT_TOKEN)[1] in ("format",
+                                                                "bad_hash")
 
     def test_no_token_configured(self):
         from app.services import maxapp as ma
