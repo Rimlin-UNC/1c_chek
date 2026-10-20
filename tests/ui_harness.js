@@ -796,6 +796,27 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('#1a1a1a') && bundle.includes('6.66:1'),
      'v1.70.34: тёмный текст на корпоративном оранжевом и его контраст указаны');
 
+  // v1.70.35: текст на сайте читаем — цвета графиков и шаблонов переведены на
+  // токены темы, остатки тёмной темы в charts.js убраны.
+  // Проверяется именно модуль графиков, а не весь бандл: описание выпуска в
+  // WHATS_NEW законно цитирует прежние значения, иначе проверка ловила бы свой
+  // же текст (та же ошибка, что с литералами в комментариях CSS).
+  const chartsFrom = bundle.indexOf('лёгкие SVG-графики');
+  const chartsTo = bundle.indexOf('Ямастер Чек —', chartsFrom + 10);
+  const charts = bundle.slice(chartsFrom, chartsTo > chartsFrom ? chartsTo : undefined);
+  ok(chartsFrom > 0 && charts.length > 500,
+     'v1.70.35: модуль графиков найден в бандле (иначе проверка пуста)');
+  ok(!charts.includes('#e8ecf8') && !charts.includes('#6b7494') &&
+     !charts.includes('rgba(255,255,255,.0') && !charts.includes('#6366f1'),
+     'v1.70.35: в графиках не осталось цветов отменённой тёмной темы');
+  ok(bundle.includes('chart-center') && bundle.includes('chart-grid') &&
+     bundle.includes('#4b0082') && bundle.includes('#2e8b57'),
+     'v1.70.35: цвета графиков вынесены в классы CSS, палитра серий фирменная');
+  ok(bundle.includes("var(--ok-text)") && !/color:\s*var\(--ok\)/.test(bundle),
+     'v1.70.35: зелёный как текст — через --ok-text (4.25:1 у --ok не проходит)');
+  ok(bundle.includes('1.18:1') && bundle.includes('1.67:1') && bundle.includes('stylelint'),
+     'v1.70.35: в описании выпуска названы измеренные значения и валидатор');
+
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);
   process.exit(fails.length ? 1 : 0);

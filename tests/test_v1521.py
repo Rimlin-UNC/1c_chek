@@ -132,7 +132,10 @@ class TestTrackingRestoreUI:
         assert "autoKey = st.started_at || autoKey;" in js
         assert "state.updAutoDismissed = autoKey;" in js
         # активные фазы после успеха отображаются завершёнными
-        assert 'if (st.success) return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;' in js
+        # v1.70.35: зелёный здесь — ТЕКСТ, поэтому --ok-text. Прежний var(--ok)
+        # как цвет текста давал 4.25:1 при пороге 4.5 (см. test_v17035);
+        # намерение строки — отметка «фаза завершена» — сохранено.
+        assert 'if (st.success) return `<div style="color:var(--ok-text)">✓ ${title}${dtxt}</div>`;' in js
         # журнал прокручивается
         assert 'id="upd-log" style="max-height:180px;overflow:auto' in js
 

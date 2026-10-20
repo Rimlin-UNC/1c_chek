@@ -57,15 +57,28 @@ class TestBlockImages:
 
 class TestLandingRem:
     def test_landing_typography_in_rem(self):
+        """Типографика лендинга задана в rem на трёх breakpoint'ах.
+
+        v1.70.35: значение 1.5625rem было МЁРТВЫМ — его глушил соседний блок с
+        тем же max-width: 920px, где .land-h1 задан как 1.375rem. То есть тест
+        фиксировал размер, который никогда не применялся. Два соседних блока
+        одного breakpoint'а слиты в один, действующая шкала сохранена.
+        """
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert "font-size: 1.9375rem" in css          # .land-h1 базовый
-        assert "font-size: 1.5625rem" in css          # .land-h1 ≤920
         assert "font-size: 1.375rem" in css           # .land-h1 ≤920 (v1.55)
         assert "font-size: 1.25rem" in css            # .land-h1 ≤520
         assert "font-size: 0.96875rem" in css         # .land-lead
         assert "font-size: 1.875rem" in css           # .login-logo h1
+        # мёртвый дубль не вернулся; смотрим на код без комментариев, иначе
+        # проверка находит собственное объяснение правки
+        code = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        assert "1.5625rem" not in code
+        # breakpoint лендинга объявлен ровно один раз: два соседних блока с
+        # одинаковым max-width и породили мёртвое значение
+        assert css.count("@media (max-width: 920px) {") == 1
         # соизмеримо: rem-объявлений на лендинге/входе достаточно много
-        assert css.count("rem;") >= 24
+        assert css.count("rem;") >= 22
 
     def test_inputs_stay_px(self):
         """Поля ввода — жёсткие 16px: если пользователь уменьшит базовый

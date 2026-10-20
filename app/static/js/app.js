@@ -223,7 +223,7 @@ function bindLanding() {
         });
         try { localStorage.setItem('ymaster-lead-email', $('#land-email').value.trim()); } catch (err) {}
         msg.textContent = r.message || 'Заявка принята';
-        msg.style.color = 'var(--ok)';
+        msg.style.color = 'var(--ok-text)';
         btn.textContent = 'Заявка принята';
       } catch (err) {
         msg.textContent = err.message || 'Не получилось — попробуйте ещё раз';
@@ -1197,7 +1197,7 @@ function poolPrintList(root) {
       'th{background:#f5f5f5}.num{text-align:right;font-variant-numeric:tabular-nums}</style></head><body>' +
       '<h1>Ямастер Чек-Пул — мои чеки</h1>' +
       '<table><thead><tr><th>Дата</th><th>Магазин</th><th>ФН</th><th>Сумма</th><th>Статус</th><th>Баллы</th></tr></thead>' +
-      `<tbody>${rows}</tbody></table><p style="font-size:12px;color:#777">ООО «Ямастер» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>` +
+      `<tbody>${rows}</tbody></table><p style="font-size:12px;color:#6b6b6b">ООО «Ямастер» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>` +
       '</body></html>');
     w.document.close();
     w.focus();
@@ -1378,7 +1378,7 @@ function renderEcheck(anchor, r) {
         { fn: r.fn || '', email, hp: '' });
       try { localStorage.setItem('ymaster-lead-email', email); } catch (e) {}
       if (msg) { msg.textContent = resp.message || 'Отправлено — проверьте почту';
-                 msg.style.color = 'var(--ok)'; }
+                 msg.style.color = 'var(--ok-text)'; }
       toast(resp.message, 'ok', '✉ Чек-Пул');
     } catch (err) {
       if (msg) { msg.textContent = err.message || 'Не удалось отправить'; msg.style.color = ''; }
@@ -1418,8 +1418,8 @@ function poolLoadEngage(root) {
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px">${chips}</div>
       <div class="form-hint" style="margin:2px 0">🎯 Цель вывода: <b>${fmtInt(wd.points)}</b> из
         <b>${fmtInt(wd.goal)}</b> баллов · минимум заявки — ${wd.min}.</div>
-      <div style="background:#e8e8e8;border-radius:6px;height:10px;max-width:360px;overflow:hidden;margin:6px 0">
-        <div style="background:#e5770f;height:100%;width:${pct}%"></div></div>
+      <div style="background:var(--bg-soft);border-radius:6px;height:10px;max-width:360px;overflow:hidden;margin:6px 0">
+        <div style="background:var(--accent-text);height:100%;width:${pct}%"></div></div>
       ${wd.active ? `<div class="form-hint">Активная заявка на ${fmtInt(wd.active.points)} баллов —
         статус «${wd.active.status === 'pending_sms' ? 'ожидает SMS-подтверждение' : 'принята'}».
         ${wd.active.sms_required ? 'Первый вывод подтверждается по SMS: код придёт, когда подключим шлюз.' : ''}</div>` : ''}
@@ -2326,7 +2326,7 @@ async function viewPartners(container) {
           <h2>${esc(b.dataset.name)}</h2>
           <p>Сдайте чек в «Чек-Пул» — получите кэшбэк баллами</p>
           <img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(b.dataset.code)}" width="320" height="320" style="margin:0 auto">
-          <p style="color:#777;font-size:12px">ООО «Ямастер» · ymaster.ru</p>
+          <p style="color:#6b6b6b;font-size:12px">ООО «Ямастер» · ymaster.ru</p>
           </body></html>`);
         w.document.close();
         w.focus();
@@ -2367,7 +2367,11 @@ async function viewFraud(container) {
 }
 
 // v1.38.0: граф связей — SVG-кластеры участников (устройство/подсеть/реферал)
-const FRAUD_EDGE_COLORS = { device: '#c0392b', subnet: '#e5770f', referral: '#2471a3' };
+// v1.70.35: цвета графа переведены на токены темы и на style= вместо
+// атрибута, чтобы var() гарантированно разрешался. Прежняя пара
+// #e5770f (2.88:1 на канве) и запасной #999 (2.73:1) не дотягивали до 3:1
+// для графики; #c0392b, #2471a3 и #4a7f4a проходили, но были вне палитры.
+const FRAUD_EDGE_COLORS = { device: 'var(--bad-text)', subnet: 'var(--warn)', referral: 'var(--info)' };
 
 async function fraudLoadGraph(box) {
   box.innerHTML = '<div class="form-hint">Строим граф…</div>';
@@ -2406,21 +2410,21 @@ async function fraudLoadGraph(box) {
     const byId = {}; d.nodes.forEach((n) => byId[n.id] = n);
     const lines = edges.map((e) => {
       const [x1, y1] = pos[e.a], [x2, y2] = pos[e.b];
-      const c = FRAUD_EDGE_COLORS[e.kind] || '#999';
-      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${c}" stroke-width="1.6" stroke-opacity="0.75"><title>${e.kind === 'device' ? 'общее устройство' : e.kind === 'subnet' ? 'общая подсеть /24' : 'реферальная пара'}</title></line>`;
+      const c = FRAUD_EDGE_COLORS[e.kind] || 'var(--text-faint)';
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" style="stroke:${c}" stroke-width="1.6" stroke-opacity="0.75"><title>${e.kind === 'device' ? 'общее устройство' : e.kind === 'subnet' ? 'общая подсеть /24' : 'реферальная пара'}</title></line>`;
     }).join('');
     const dots = d.nodes.map((n) => {
       const [x, y] = pos[n.id];
-      const fill = n.quarantined ? '#c0392b' : n.risk >= 40 ? '#e5770f' : '#4a7f4a';
+      const fill = n.quarantined ? 'var(--bad-text)' : n.risk >= 40 ? 'var(--warn)' : 'var(--ok)';
       return `<g class="fraud-node" data-uid="${n.id}" style="cursor:pointer">
-        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" fill="${fill}" stroke="#fff" stroke-width="1.5"><title>${esc(n.label)} · риск ${n.risk}${n.quarantined ? ' · карантин' : ''}</title></circle>
-        <text x="${x.toFixed(1)}" y="${(y + 24).toFixed(1)}" text-anchor="middle" font-size="10" fill="#555">${esc(n.label.slice(0, 16))}</text></g>`;
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" style="fill:${fill}" stroke="#fff" stroke-width="1.5"><title>${esc(n.label)} · риск ${n.risk}${n.quarantined ? ' · карантин' : ''}</title></circle>
+        <text x="${x.toFixed(1)}" y="${(y + 24).toFixed(1)}" text-anchor="middle" font-size="10" fill="#5c5c5c">${esc(n.label.slice(0, 16))}</text></g>`;
     }).join('');
     box.innerHTML = `
       <div class="info-callout" style="margin-bottom:6px">Группы участников за ${d.days} дн. Цвет точки: красный — карантин, оранжевый — риск ≥ 40, зелёный — норма.
-        Рёбра: <span style="color:#c0392b">■</span> общее устройство · <span style="color:#e5770f">■</span> общая подсеть · <span style="color:#2471a3">■</span> реферальная пара.
+        Рёбра: <span style="color:var(--bad-text)">■</span> общее устройство · <span style="color:var(--warn)">■</span> общая подсеть · <span style="color:var(--info)">■</span> реферальная пара.
         Нажмите на участника — карточка. Групп: <b>${comps.length}</b>.</div>
-      <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="${Math.min(W, 900)}" height="${H * Math.min(W, 900) / W}" style="background:#fafafa;border:1px solid #e3e3e3;border-radius:8px">${lines}${dots}</svg></div>`;
+      <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="${Math.min(W, 900)}" height="${H * Math.min(W, 900) / W}" style="background:var(--bg);border:1px solid #e3e3e3;border-radius:8px">${lines}${dots}</svg></div>`;
     box.querySelectorAll('.fraud-node').forEach((g) => {
       g.onclick = () => fraudUserCard(g.dataset.uid);
     });
@@ -3458,9 +3462,14 @@ async function openCompanyCard(id) {
   const k = d.card || {};
   // v1.16.0: светофор контрагента
   const RISK = {
-    green: { icon: '🟢', label: 'Риск не выявлен', color: 'var(--ok, #34d399)' },
-    yellow: { icon: '🟡', label: 'Требует внимания', color: '#fbbf24' },
-    red: { icon: '🔴', label: 'ВЫСОКИЙ РИСК', color: '#f87171' },
+    // v1.70.35: цвет идёт в border-left: 4px solid — это нетекстовый
+    // индикатор состояния, порог 3:1 (WCAG 1.4.11). Жёлтый #fbbf24 давал
+    // 1.67:1, красный #f87171 — 2.77:1, то есть полоса «ВЫСОКИЙ РИСК»
+    // почти не читалась. Запасное значение в var(--ok, …) убрано: --ok
+    // объявлен в :root, а запасной Tailwind-зелёный лишь прятал бы ошибку.
+    green: { icon: '🟢', label: 'Риск не выявлен', color: 'var(--ok)' },
+    yellow: { icon: '🟡', label: 'Требует внимания', color: 'var(--warn)' },
+    red: { icon: '🔴', label: 'ВЫСОКИЙ РИСК', color: 'var(--bad)' },
     none: { icon: '⚪', label: 'Нет данных ЕГРЮЛ', color: 'var(--text-faint)' },
   };
   const rk = RISK[(d.risk && d.risk.level) || 'none'] || RISK.none;
@@ -3482,8 +3491,8 @@ async function openCompanyCard(id) {
       ${k.okpo ? `<div>ОКПО: ${esc(k.okpo)}</div>` : ''}
       ${k.region ? `<div>Регион: ${esc(k.region)}</div>` : ''}
       ${k.reg_date ? `<div>Зарегистрирован(о): ${esc(k.reg_date)}</div>` : ''}
-      ${k.address_invalid ? `<div style="color:#f87171">⚠ Адрес признан недостоверным (ЕГРЮЛ)${k.address_invalid_note ? ': ' + esc(k.address_invalid_note) : ''}</div>` : ''}
-      ${(k.mass_address_count || 0) >= 10 ? `<div style="color:#fbbf24">⚠ Массовый адрес: ещё ${k.mass_address_count} организаций по тому же адресу</div>` : ''}
+      ${k.address_invalid ? `<div style="color:var(--bad-text)">⚠ Адрес признан недостоверным (ЕГРЮЛ)${k.address_invalid_note ? ': ' + esc(k.address_invalid_note) : ''}</div>` : ''}
+      ${(k.mass_address_count || 0) >= 10 ? `<div style="color:var(--warn-text)">⚠ Массовый адрес: ещё ${k.mass_address_count} организаций по тому же адресу</div>` : ''}
       ${(k.founders_count || 0) ? `<div>Учредителей: ${k.founders_count}</div>` : ''}
       ${(k.branches_count || 0) ? `<div>Филиалов/представительств: ${k.branches_count}</div>` : ''}
       ${k.director ? `<div>Руководитель: ${esc(k.director)}${k.management_post ? ' (' + esc(k.management_post) + ')' : ''}</div>` : ''}
@@ -3863,10 +3872,14 @@ async function viewDashboard(container) {
 
   barChart($('#chart-daily'), stats.daily);
   donutChart($('#chart-fns'), [
-    { label: 'Действителен', value: stats.by_fns.valid || 0, color: '#34d399' },
-    { label: 'Не найден', value: stats.by_fns.not_found || 0, color: '#fbbf24' },
-    { label: 'Недействителен', value: stats.by_fns.invalid || 0, color: '#f87171' },
-    { label: 'Не проверен', value: stats.by_fns.unknown || 0, color: '#6b7494' },
+    // v1.70.35: цвета сегментов — значения тех же токенов, что у статусных
+    // чипов в списке чеков (--ok, --warn, --bad, --text-faint): язык цвета
+    // теперь один и там, и там. Прежние #34d399, #fbbf24, #f87171 из палитры
+    // Tailwind давали 1.67–2.77:1 на белой карточке при пороге 3:1 для графики.
+    { label: 'Действителен', value: stats.by_fns.valid || 0, color: '#2e8b57' },
+    { label: 'Не найден', value: stats.by_fns.not_found || 0, color: '#b45309' },
+    { label: 'Недействителен', value: stats.by_fns.invalid || 0, color: '#d9534f' },
+    { label: 'Не проверен', value: stats.by_fns.unknown || 0, color: '#6b6b6b' },
   ], { centerTitle: fmtInt(stats.total), centerSub: 'всего чеков' });
 
   const srcLabels = { camera: 'Камера (PWA)', image: 'Изображение', web: 'Веб-вставка', manual: 'Вручную', api: 'API', mobile: 'Мобильный' };
@@ -4903,7 +4916,7 @@ function showUpdateDialog(checkInfo) {
     <div class="modal-title">🔄 Обновление системы</div>
     <dl class="kv" style="font-size:13.5px">
       <dt>Текущая версия</dt><dd>v${esc(r.current_version)}</dd>
-      <dt>Доступна</dt><dd><b style="color:var(--ok)">v${esc(r.remote_version)}</b></dd>
+      <dt>Доступна</dt><dd><b style="color:var(--ok-text)">v${esc(r.remote_version)}</b></dd>
       <dt>Ветка</dt><dd><code class="inline">${esc(r.branch)}</code></dd>
     </dl>
     <details style="margin:10px 0"><summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">📋 Что изменится в новой версии</summary>
@@ -4991,10 +5004,10 @@ function openUpdateProgress() {
       const dur = p.finished_at && p.started_at
         ? Math.max(1, Math.round(p.finished_at - p.started_at)) : 0;
       const dtxt = dur ? ` · ${dur} с` : '';
-      if (p.status === 'done') return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
+      if (p.status === 'done') return `<div style="color:var(--ok-text)">✓ ${title}${dtxt}</div>`;
       if (p.status === 'failed') return `<div class="form-error">✗ ${title}${dtxt}</div>`;
       // после успеха активных фаз не бывает: рестарт мог не успеть закрыться
-      if (st.success) return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
+      if (st.success) return `<div style="color:var(--ok-text)">✓ ${title}${dtxt}</div>`;
       const live = p.started_at
         ? ` · ${Math.max(1, Math.round((Date.now() - p.started_at * 1000) / 1000))} с` : '';
       return `<div style="color:var(--brand)"><span class="upd-active">●</span> ${title}${dtxt}${live}…</div>`;
@@ -5124,6 +5137,14 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.35': [
+    { icon: '👁', title: 'Текст на сайте стало видно: найдено семнадцать мест, где надписи не читались, в том числе невидимое число «всего чеков» на дашборде',
+      text: 'Проверили не отдельные места, а каждое объявление цвета в стилях и каждый цвет, который подставляют шаблоны, — всего 180 пар «текст и подложка», контраст считали по формулам WCAG. Порог для текста 4.5:1, для крупного текста 3:1, для графики и индикаторов состояния 3:1. Нашлось семнадцать мест ниже порога. Самое заметное: графики на дашборде были размечены ещё под тёмную тему, отменённую в версии 1.25.0, а рисуются они на белой карточке. Сетка графика белым цветом прозрачностью семь процентов и кольцо пончика белым шесть процентов на белом не видны вовсе — 1.00:1, а число в центре пончика («всего чеков») было набрано цветом #e8ecf8 — 1.18:1, то есть прочесть его было нельзя. Подписи осей #6b7494 давали 4.61:1 и были вне палитры. Все цвета графиков перенесены из скрипта в таблицу стилей: теперь до них дотягивается и тема, и проверка контраста, а число в центре пончика читается с контрастом 12.6:1. Второе заметное место — подсказка «Наведите камеру на QR-код чека» над видоискателем: тёмный текст на тёмной плашке, 1.26:1. Плашка полупрозрачная и лежит то на тёмном видоискателе, то на светлом кадре с камеры, поэтому текст сделан белым — он проходит в обоих крайних случаях (20.1:1 и 5.4:1). Третье — подвал программы был залит тёмно-синим rgba(10,14,30,.4), остатком базового цвета той же тёмной темы; на светлой теме получалась серая полоса, на которой подпись «ООО «Ямастер» · ymaster.ru» давала 2.01:1. Подложка переведена на белую панель — 5.33:1. Дальше восемь мест в стилях: предупреждение «этот пользователь ещё не сменил временный пароль» было янтарным #f59e0b — 2.15:1, самый нечитаемый текст в программе; подписи «подпись» и «расшифровка подписи» в акте оказания услуг — серым #8a8a8a размером 9.5 пикселя, 3.45:1 (цвет заменён на токен, размер поднят до 10.5); чернила электронного чека #8a7a5e на кремовой бумаге — 4.11:1; плашка на главной и заголовок чека — 4.17:1 и 4.94:1; счётчик в меню настроек держался на 4.51:1 при пороге 4.5, то есть на запасе в одну сотую. И девять мест в шаблонах, куда проверка стилей не заглядывала вовсе: предупреждения из ЕГРЮЛ «Адрес признан недостоверным» (2.77:1) и «Массовый адрес» (1.67:1) — практически невидимый текст о рисках контрагента; зелёный var(--ok) как текст в пяти местах (4.25:1) — сообщение «Заявка принята», «Доступна новая версия», отметки выполненных шагов обновления; в графе связей мошенников оранжевое ребро 2.88:1 и запасной цвет 2.73:1; полоса прогресса баллов против дорожки 2.6:1; подписи в двух автономных документах печати 4.48:1. Все переведены на токены темы, худшее место теперь 4.91:1. Отдельно проверены индикаторы состояния: точки в меню профиля, показывающие роль и блокировку пользователя, были янтарной #f59e0b (2.15:1) и зелёной #22c55e (2.28:1) из палитры Tailwind — при пороге 3:1 для графики обе не проходили, заменены на фирменные --warn и --ok. Палитра графиков и графа связей тоже была палитрой Tailwind: шесть цветов из семи ниже 3:1. Теперь это значения фирменных токенов, и язык цвета один и в графиках, и в статусных чипах списка чеков.' },
+    { icon: '🟠', title: 'Галочки во всём приложении стали фирменными оранжевыми: правило существовало, но не применялось никогда',
+      text: 'В версии 1.70.32 чекбоксы в окнах переводили с браузерной синей отметки на фирменную оранжевую и даже написали проверку. Правило было таким: .modal label > input[type="radio"], .modal label > input[type="checkbox"]. Проблема в том, что элемента с классом .modal в приложении нет: окно называется .modal-slot, а его содержимое лежит прямо в нём. Правило не применялось ни разу, поэтому все 36 чекбоксов и три радиокнопки в программе остались с синей браузерной отметкой — в настройках, в списке правил рассылки, в карточке быстрого входа, в сопоставлении реквизитов. Проверка при этом проходила: она искала в файле строку «accent-color: var(--accent)», а не применение правила. Строка в файле была. Правило сделано общим для всех чекбоксов и радиокнопок сразу: фирменная оранжевая отметка везде, плюс width: auto, чтобы галочка не растягивалась на всю ширину поля. Увеличенные цели касания на сенсорных экранах (22 пикселя) и крупные чекбоксы в сопоставлении реквизитов остались в силе — у них выше удельный вес селектора. Проверка версии 1.70.32 усилена структурным стражем: она больше не примет правило, привязанное к классу, которого нет в разметке. Тем же поиском найдено и удалено второе мёртвое правило .modal { max-height: 94vh } — ограничение высоты окна давно живёт в .modal-slot.' },
+    { icon: '🧾', title: 'Стили проверены внешним валидатором и приведены в соответствие с разметкой: 21 замечание, десять мёртвых объявлений и одиннадцать мёртвых классов убраны',
+      text: 'Как в прошлом выпуске для разметки (html-validate), для таблицы стилей подключён внешний валидатор — stylelint 16 с конфигом .stylelintrc.json, который лежит в репозитории. В конфиг включены только правила корректности, а не вкуса: неверный hex, неизвестное свойство или единица измерения, неизвестный at-rule или функция, пустой блок, отсутствие родового шрифта в стеке, переопределение длинного свойства сокращением и дубли свойств внутри одного правила. Было 21 замечание, стало 0 — и во встроенных стилях приложения для MAX, и в брендбуке тоже 0. Дубль свойств внутри блока разрешён только как фолбэк с разными значениями: min-height: 100vh; min-height: 100dvh — это приём для браузеров без dvh, он закреплён проверкой версии 1.55.1, и «чинить» его было бы ошибкой. Сокращение overflow в body глушило стоящее выше overflow-x: hidden из версии 1.56.0 — заменено на overflow-y: вычисленное значение то же, но намерение каждого объявления видно. Правило no-duplicate-selectors в конфиг НЕ включено, и это осознанно: слияние дублей небезопасно, потому что решает положение правила относительно media-блоков. Пример из этого же файла: у .topbar в шапке задан padding, в конце файла в блоке safe-area — padding-left и padding-right с env(), а между ними media-блок ≤860px с padding: 0 12px. Перенеси safe-area наверх — и сокращение padding из media-блока перебьёт env() на телефоне, «чёлка» iPhone наедет на содержимое. Вместо слияния проверяется отсутствие противоречий: их было четырнадцать, в прошлом выпуске стало одиннадцать, теперь ноль — и скан следит ещё и за тем, чтобы media-правило не глушилось безусловным правилом ниже (так в прошлом выпуске умерли отступы тостов на телефоне). Удалены десять мёртвых объявлений и одиннадцать классов, которые не встречаются ни в разметке, ни в шаблонах, ни в серверном коде: .mapping-grid вместе с тремя своими правилами в media-блоках, .mapping-head, .mg-label, .catalog-grid, .ao-preview, .cc-actions, .manual-hero, .print-cut, .rcpt .r-sum, .rcpt-totals и .filter-bar .grow. Два соседних блока @media (max-width: 920px) у главной слиты в один: верхний целиком перекрывался нижним, из-за чего размер заголовка 1.5625rem был мёртвым, а проверка версии 1.56.1 его фиксировала. Двадцать объявлений цвета текста были заданы литералом, равным токену (#333 двенадцать раз, #333333 восемь раз, #6b6b6b, #4B0082) — палитра жила в двух местах, и правка токена не дошла бы до экрана. Переведены на токены, значения те же, поэтому вид не изменился. Обратное соответствие тоже проверено: каждый класс из таблицы стилей применяется, а каждый класс из разметки имеет правило или объявлен крючком для скрипта. Три места в скриптах использовали переменную с запасным значением, и два из них прятали необъявленный токен --line: в стилях приложения его нет вовсе, он объявлен только в брендбуке, а запасное значение молча подставляло чужой цвет. Запасные значения убраны.' },
+  ],
   '1.70.34': [
     { icon: '🟠', title: 'Чёрных кнопок больше нет: основная кнопка вернула корпоративный оранжевый, а белый текст на оранжевом стал читаемым',
       text: 'Основная кнопка программы рисовалась чёрной, и это не было замыслом. Правило .btn-primary встречалось в файле стилей дважды: в начале — фирменный оранжевый градиент, ниже — графит #333333 с ховером #454545 и пометкой «v1.25.0: primary-кнопка — графитовая, текст белый». Нижнее правило побеждало по порядку каскада, поэтому все 92 применения основной кнопки (4 в разметке и 88 в шаблонах экранов) были чёрными, хотя фирменный градиент в том же файле был объявлен. Графит — остаток тёмной темы, отменённой в v1.25.0: в десятке строк ниже стоял комментарий «тёмная тема удалена», а сама кнопка осталась. Правило удалено, действует фирменный градиент #ff7a00 → #ff9a3d. Вместе с ним пришлось исправить текст: белый на фирменном оранжевом даёт 2.61:1, а на светлом стопе градиента 2.11:1 при пороге 4.5:1 — то есть чёрная кнопка была ещё и читаемее оранжевой. Текст стал тёмным #1a1a1a: 6.66:1 на оранжевом и 8.24:1 на светлом стопе. Приём не новый — для кнопки .btn-accent он уже был закреплён тестом с пометкой «был #fff (2.3:1)», просто применялся непоследовательно. Тем же тёмным текстом на оранжевом исправлены ещё пять мест, которые аудит белого текста нашёл по всему файлу: номер пункта инструкции, значок-счётчик в боковом меню, буква аватара в шапке, активный пункт переключателя «Список / Карточки» и активный пункт сегментированного переключателя — все они рисовали белое на оранжевом градиенте и все проваливали 4.5:1. Кнопка опасного действия «Выйти» была белым по терракоте --bad #d9534f — 3.96:1; тёмный текст на том же фоне дал бы 4.39:1, тоже провал, потому что сам --bad для текста кнопки слишком светлый. Фон переведён на тёмный оттенок той же терракоты, --bad-text #c22e2a, который уже существовал с прошлого выпуска: белый на нём даёт 5.65:1, насыщенность и узнаваемо опасный вид сохранены, а красный не подменён оранжевым — это семантика действия, а не оформление. Фирменная палитра не изменена: #FF7A00, #4B0082, #2E8B57, #D9534F остались собой, исправлено их применение. Отдельно проверено приложение для MAX: запасным оранжевым там был #e8721c — свой оттенок, не корпоративный, и белый текст на нём давал 3.06:1, а оранжевый как текст на карточке 3.06:1 и на фоне 2.72:1. Запасные значения приведены к фирменным (#ff7a00 и тёмный текст #1a1a1a), а для оранжевого как текста добавлен отдельный оттенок, выведенный примесью цвета текста темы — так он читается и в светлой, и в тёмной теме мессенджера. Приоритет темы хоста (--tg-theme-*) сохранён полностью: это контракт Mini App, свои цвета мы ему не навязываем. Подсказка 13 px в том же приложении давала 3.82:1 на фоне, стала 4.64:1. Трёхпозиционный переключатель AdGuard VPN не тронут: он светлый (трек — пять процентов индиго, рукоятка белая, красная или зелёная), а его цвета — требование владельца «зелёный значит включён, красный выключен».' },
@@ -8259,7 +8280,7 @@ async function viewSettings(container) {
             <input type="checkbox" id="mx-digest" ${maxSet.digest_enabled ? 'checked' : ''} style="width:auto">
             <span>Утренний дайджест бухгалтеру и администратору (в 08:00)</span></label>
         </div>
-        <p class="form-hint" style="margin:0 0 6px">Токен принадлежит боту: <b>${esc(maxSet.token_bot || '—')}</b>${maxSet.token_mismatch ? ' — <b style="color:#c0392b">служебное имя не совпадает с публичным ником: подписи/ссылки работают только у бота из токена. Вставьте токен бота из публичного ника.</b>' : ''}</p>
+        <p class="form-hint" style="margin:0 0 6px">Токен принадлежит боту: <b>${esc(maxSet.token_bot || '—')}</b>${maxSet.token_mismatch ? ' — <b style="color:var(--bad-text)">служебное имя не совпадает с публичным ником: подписи/ссылки работают только у бота из токена. Вставьте токен бота из публичного ника.</b>' : ''}</p>
         <label class="field full" style="margin-top:8px"><span>Публичный ник бота — для ссылок max.ru/ник (вход через MAX, приглашения). Служебный username вида id…_bot из платформы не подходит</span>
           <input id="mx-nick" value="${esc(maxSet.bot_nick || '')}" placeholder="chek.ymaster.bot"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -9908,7 +9929,7 @@ async function bindMailCenter() {
         '(условие, аудитория «без подтверждённого e-mail», 3 дня) — бот сам напишет каждому.';
     } else {
       box.innerHTML = rules.map(r => `
-        <div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line,#eef0f4)">
+        <div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">
           <input type="checkbox" data-rr="${r.id}" ${r.enabled ? 'checked' : ''} style="width:auto" title="включено">
           <div style="flex:1"><b>${esc(r.name)}</b>
             <div class="form-hint">${r.trigger === 'schedule'
@@ -10044,7 +10065,7 @@ async function waBindSettingsCard() {
   try { items = (await api.get('/api/v1/auth/passkeys')).items; }
   catch (e) { list.textContent = e.message || 'Не удалось загрузить'; return; }
   list.innerHTML = items.length ? items.map(k =>
-    `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#eef0f4)">
+    `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
        <span aria-hidden="true">🔑</span>
        <div style="flex:1"><b>${esc(k.label)}</b>
          <div class="form-hint">привязано: ${fmtDate(k.created_at)}${k.last_used_at ? ' · последний вход: ' + fmtDate(k.last_used_at) : ''}</div></div>

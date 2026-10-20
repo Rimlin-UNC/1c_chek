@@ -372,10 +372,23 @@ class TestCssIsValid:
 
     def test_modal_checkbox_uses_brand_accent(self, css):
         """--primary не объявлен — accent-color откатывался к браузерной
-        норме (синий) вместо фирменного оранжевого."""
+        норме (синий) вместо фирменного оранжевого.
+
+        v1.70.35: прежняя проверка искала строку «accent-color: var(--accent)»
+        в файле и проходила, хотя правило было написано для несуществующего
+        класса .modal (окно называется .modal-slot) и не применялось никогда.
+        Добавлен структурный страж: правило обязано быть общим и не ссылаться
+        на класс, которого нет в разметке.
+        """
         body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
         assert "var(--primary)" not in body
         assert "accent-color: var(--accent)" in body
+        assert ".modal label" not in body, "правило снова привязано к .modal"
+        m = re.search(r"([^{}]*accent-color:\s*var\(--accent\)[^{}]*)", body)
+        assert m, "accent-color не найден"
+        rule = body[:m.start()].rsplit("}", 1)[-1] + "{" + m.group(1)
+        assert re.search(r'^\s*input\[type="checkbox"\],\s*input\[type="radio"\]',
+                         rule.strip()), f"правило не общее: {rule.strip()[:90]!r}"
 
     def test_command_line_uses_theme_tokens(self, css):
         """Блок «Сервер и команды»: серые оттенки Tailwind с запасными

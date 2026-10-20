@@ -430,7 +430,9 @@ class TestFocusRing:
 # ==========================================================================
 class TestTouchTargets:
     def coarse(self):
-        css = read(APP_CSS)
+        # v1.70.35: по коду БЕЗ комментариев — пояснение к общему правилу
+        # чекбоксов называет этот блок, иначе проверка падает на своём же тексте
+        css = re.sub(r"/\*.*?\*/", "", read(APP_CSS), flags=re.S)
         assert css.count("@media (pointer: coarse)") == 1, \
             "блоков тач-целей снова несколько — значения разъедутся"
         return re.search(r"@media \(pointer: coarse\)\s*\{([\s\S]*?)\n\}", css).group(1)
@@ -460,7 +462,7 @@ class TestTouchTargets:
     def test_no_conflicting_touch_rules_outside_the_block(self):
         """Вне блока тач-целей не должно быть правил, перебивающих min-height
         у тех же селекторов, иначе «единый блок» снова станет фикцией."""
-        css = read(APP_CSS)
+        css = re.sub(r"/\*.*?\*/", "", read(APP_CSS), flags=re.S)
         i = css.index("@media (pointer: coarse)")
         j = css.index("\n}", i)
         outside = css[:i] + css[j:]
@@ -685,9 +687,9 @@ class TestExternalValidator:
 # 13. Версия, журнал, changelog
 # ==========================================================================
 class TestRelease:
-    # v1.70.34: выпуск отгружен, точки синхронизации живут дальше.
-    # Проверку «своя версия везде» для 1.70.34 ведёт test_v17034.
-    VERSION = "1.70.34"
+    # v1.70.35: выпуск отгружен, точки синхронизации живут дальше.
+    # Проверку «своя версия везде» для текущего выпуска ведёт test_v17035.
+    VERSION = "1.70.35"
 
     def test_all_sync_points(self):
         points = [

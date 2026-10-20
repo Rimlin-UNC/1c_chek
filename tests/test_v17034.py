@@ -519,37 +519,25 @@ class TestDuplicateRules:
         assert fams == ["var(--font-main)"], fams
 
     def test_conflict_ratchet(self):
-        """Трещотка: новые противоречивые дубли правил не появляются.
+        """Трещотка: противоречивых дублей правил в одном контексте нет вовсе.
 
-        Оставшиеся 11 — мёртвые РАННИЕ объявления, где нижнее правило является
-        осознанным уточнением (clamp()-размеры заголовков, safe-area у тостов,
-        полноэкранная шторка модалки на телефоне, правки лендинга при 920px).
-        Они не меняют поведение, поэтому оставлены как есть: правка одиннадцати
-        мест ради порядка рискованнее, чем запись в журнале.
+        В v1.70.34 одиннадцать таких пар были записаны как допустимые (мёртвые
+        ранние объявления, где нижнее правило осознанно уточняет верхнее).
+        В v1.70.35 все одиннадцать вычищены, поэтому допуск сужен до нуля:
+        новое противоречие уронит тест. Именно этот класс дефекта трижды давал
+        реальные баги — цвет кольца фокуса, мёртвые тач-цели и чёрная кнопка.
         """
-        known = {
-            (".card-title", "font-size"),
-            (".toast-container", "right"),
-            (".toast-container", "bottom"),
-            (".modal-title", "font-size"),
-            (".settings-grid", "grid-template-columns"),
-            (".modal-slot", "margin"),
-            (".modal-slot", "width"),
-            (".modal-slot", "padding"),
-            ("#page-title", "font-size"),
-            ("#login-screen .land-wrap", "gap"),
-            (".land-h1", "font-size"),
-        }
         got = {(sel, prop) for sel, prop, _ctx, _a, _b in conflicts()}
-        assert got <= known, f"новые противоречивые дубли: {sorted(got - known)}"
-        assert len(known - got) <= 2, "список известных дублей устарел — обновите его"
+        assert not got, f"противоречивые дубли правил: {sorted(got)}"
 
 
 # ==========================================================================
 # 5. Релиз
 # ==========================================================================
 class TestRelease:
-    VERSION = "1.70.34"
+    # v1.70.35: точки синхронизации живут дальше, свою версию проверяет
+    # test_v17035; здесь остаётся соответствие файлов друг другу.
+    VERSION = "1.70.35"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",
@@ -562,13 +550,15 @@ class TestRelease:
         assert f"maxapp.js?v={self.VERSION}" in read(MAXAPP)
 
     def test_whats_new_is_first(self):
+        """v1.70.35: требование «своя версия первая» снято — оно принадлежит
+        текущему выпуску и проверяется в test_v17035, а здесь означало бы, что
+        каждый следующий релиз обязан править этот тест. Запись остаётся."""
         js = read(APP_JS)
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == self.VERSION
+        assert "'1.70.34'" in js, "запись v1.70.34 пропала из истории WHATS_NEW"
 
     def test_whats_new_names_the_defect(self):
         js = read(APP_JS)
-        entry = js[js.index(f"'{self.VERSION}':"):][:6000]
+        entry = js[js.index("'1.70.34':"):][:6000]
         for needle in ("чёрной", "333333", "6.66"):
             assert needle in entry, f"в описании выпуска нет {needle!r}"
 

@@ -50,7 +50,9 @@ class TestLightOnly:
         i0 = css.index(".toast {")
         seg = css[i0:css.index("}", i0)]
         assert "background: #ffffff" in seg        # было rgba(17,23,48,.92)
-        assert "color: #333333" in seg
+        # v1.70.35: тёмный текст тоста теперь через токен --text (тот же
+        # #333333). Намерение прежнее: тост светлый, текст на нём тёмный.
+        assert "color: var(--text)" in seg
         assert "border-left-color: var(--ok)" in css
         assert "border-left-color: var(--bad)" in css
         assert "border-left-color: var(--warn)" in css
