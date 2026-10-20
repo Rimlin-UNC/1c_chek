@@ -40,8 +40,33 @@ nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex;
 nav button { flex: 1; border: 0; background: none; padding: 12px 0; font-size: 15px; color: var(--hint); }
 nav button.active { color: var(--accent-text); font-weight: 700; }
 .hidden { display: none; }
+/* v1.70.37: эти классы-отступы используются в разметке с v1.69.0, но не были
+   объявлены в стилях — отступы просто не работали (в том числе на экране
+   согласия). Объявляем: CSS должен соответствовать разметке. */
+.gap-8 { height: 8px; }
+.mb-6 { margin-bottom: 6px; }
+.text-center { text-align: center; }
 .rrow { display: flex; justify-content: space-between; padding: 8px 0;
         border-bottom: 1px solid var(--hint); font-size: 14px; }
+/* v1.70.37: согласие 152-ФЗ — текст длинный, поэтому прокручиваемый блок;
+   цвета только из переменных темы, чтобы читалось и в светлой, и в тёмной. */
+.consent-box { max-height: 44vh; overflow-y: auto; font-size: 14px; line-height: 1.5; }
+.consent-sec { margin-bottom: 10px; }
+.consent-sec-title { font-weight: 700; margin-bottom: 3px; }
+.consent-sec li { margin: 0 0 3px 18px; }
+.consent-lead { margin-bottom: 10px; }
+.consent-check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.consent-check input { width: auto; flex: 0 0 auto; margin-top: 3px; }
+.me-row { display: flex; gap: 10px; align-items: center; }
+.me-photo { width: 52px; height: 52px; border-radius: 50%; object-fit: cover;
+            flex: 0 0 auto; background: var(--bg); }
+.me-name { font-size: 18px; font-weight: 800; }
+/* Метка канала регистрации: тёмный текст на корпоративном оранжевом — 6.66:1,
+   как у кнопок (v1.70.34); в тёмной теме хоста цвета приходят из --accent. */
+.src-max { display: inline-block; padding: 1px 7px; border-radius: 999px;
+           font-size: 11px; font-weight: 800; letter-spacing: .4px;
+           background: var(--accent); color: var(--accent-fg);
+           vertical-align: 1px; }
 .status { font-weight: 700; }
 #msg { min-height: 20px; margin: 10px 0; font-weight: 600; }
 code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
@@ -49,6 +74,31 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
 </head>
 <body>
 <div id="view-loading" class="card"><p>Подключаемся к MAX…</p></div>
+
+<div id="view-consent" class="hidden">
+  <h1 id="consent-title">Согласие на обработку данных</h1>
+  <div class="card consent-box" id="consent-body"></div>
+  <div class="card">
+    <label class="consent-check">
+      <input type="checkbox" id="consent-agree">
+      <span id="consent-agree-text">Я ознакомлен(а) с текстом выше и даю
+        согласие на обработку моих данных из MAX (редакция
+        <b id="consent-ver">—</b>).</span>
+    </label>
+    <div class="gap-8"></div>
+    <button type="button" class="btn" id="btn-consent-ok" disabled>
+      Согласен — заполнить профиль</button>
+    <div class="gap-8"></div>
+    <button type="button" class="btn secondary" id="btn-consent-skip">
+      Не сейчас — продолжить без профиля</button>
+    <div class="gap-8"></div>
+    <p class="hint" id="consent-note">Без согласия сервис хранит только ваш
+      идентификатор MAX — он нужен, чтобы начислять баллы. Имя, фамилия, ник,
+      фото и язык не сохраняются. Согласие можно дать или отозвать в любой
+      момент во вкладке «Профиль».</p>
+    <div id="consent-msg" class="hint"></div>
+  </div>
+</div>
 
 <div id="view-app" class="hidden">
   <h1>Ямастер Чек</h1>
@@ -79,6 +129,25 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   </section>
 
   <section id="tab-profile" class="hidden">
+    <div class="card" id="me-card">
+      <div class="me-row">
+        <!-- src — прозрачная заглушка 1×1: html-validate требует атрибут, а
+             реальную ссылку на фото подставляет renderMe() только при наличии
+             согласия (152-ФЗ). width/height — против скачка вёрстки. -->
+        <img id="me-photo" class="me-photo hidden" width="52" height="52"
+             src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+             alt="Фото профиля MAX">
+        <div>
+          <div class="me-name" id="me-name">Участник</div>
+          <div class="hint"><span class="src-max">MAX</span>
+            <span id="me-src">регистрация через мини-приложение MAX</span></div>
+        </div>
+      </div>
+      <div class="gap-8"></div>
+      <div class="hint" id="me-consent">…</div>
+      <div class="gap-8"></div>
+      <button type="button" class="btn secondary" id="btn-consent-toggle">…</button>
+    </div>
     <div class="card">
       <div class="hint">Ваш код приглашения</div>
       <code id="ref-code">—</code>
@@ -100,6 +169,6 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   <button type="button" data-tab="profile">⭐ Профиль</button>
 </nav>
 
-<script src="/maxapp/maxapp.js?v=1.70.36"></script>
+<script src="/maxapp/maxapp.js?v=1.70.37"></script>
 </body>
 </html>

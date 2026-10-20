@@ -30,7 +30,9 @@ BOT_TOKEN = "700001.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk"
 def build_init_data(user_id: int, token: str = BOT_TOKEN,
                     first_name: str = "Максим",
                     auth_date: int | None = None,
-                    start_param: str = "") -> str:
+                    start_param: str = "",
+                    photo_url: str | None = None,
+                    last_name: str = "Тестов") -> str:
     """initData по доке MAX: пары + hash = HMAC(secret, launch_params),
     secret = HMAC("WebAppData", token)."""
     auth_date = auth_date or int(time.time())
@@ -39,8 +41,8 @@ def build_init_data(user_id: int, token: str = BOT_TOKEN,
         ("query_id", f"q{user_id}-{auth_date}"),
         ("user", json.dumps({
             "id": user_id, "first_name": first_name,
-            "last_name": "Тестов", "username": f"u{user_id}",
-            "language_code": "ru", "photo_url": None},
+            "last_name": last_name, "username": f"u{user_id}",
+            "language_code": "ru", "photo_url": photo_url},
             ensure_ascii=False)),
     ]
     if start_param:

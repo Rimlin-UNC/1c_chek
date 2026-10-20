@@ -321,6 +321,11 @@ def process_pool_message(db: Session, chat_id: str, from_id: str | None,
         return "ℹ Приём чеков в «Чек-Пул» сейчас выключен. Попробуйте позже."
     user = pool.get_or_create_user(db, tg_user_id=from_id or chat_id,
                                    tg_username=from_username)
+    # v1.70.37: канал регистрации участника — администратор видит, откуда он
+    # пришёл (Telegram-бот, а не мини-приложение MAX).
+    if not (user.reg_source or ""):
+        user.reg_source = "tg"
+        db.commit()
     if user.is_blocked:
         return "⛔ Приём чеков от этого аккаунта остановлен."
     res = pool.ingest_receipt(db, text.strip(), "telegram_bot", user)

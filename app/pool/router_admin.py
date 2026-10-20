@@ -476,15 +476,24 @@ def participants(q: str = "", limit: int = Query(50, ge=1, le=200),
     rows = (db.query(PoolUser)
               .order_by(PoolUser.created_at.desc())
               .limit(500).all())
+    from ..services import consent as consent_svc
     ql = (q or "").strip().lower()          # кириллица: сравнение в Python
     items = []
     for u in rows:
         email = u.email or ""
-        nick = u.tg_username or ""
-        if ql and ql not in email.lower() and ql not in nick.lower():
+        # v1.70.37: имя/ник видны только если участник согласился на обработку
+        # данных из MAX (152-ФЗ); иначе карточка пустая и в списке тоже.
+        prof = consent_svc.profile_dict(u)
+        nick = prof["first_name"] and " ".join(
+            x for x in (prof["first_name"], prof["last_name"]) if x
+        ) or (u.tg_username or "")
+        hay = " ".join((email, nick, prof["last_name"],
+                        u.tg_username or "")).lower()
+        if ql and ql not in hay:
             continue
         rcpt = db.query(func.count(PoolReceipt.id)).filter(
             PoolReceipt.pool_user_id == u.id).scalar() or 0
+        cs = consent_svc.consent_state(u)
         items.append({
             "id": u.id, "email": email,
             "email_verified": bool(u.email_verified),
@@ -493,6 +502,14 @@ def participants(q: str = "", limit: int = Query(50, ge=1, le=200),
             "is_blocked": bool(u.is_blocked),
             "risk_score": int(u.risk_score or 0),
             "created_at": (iso_z(u.created_at)),
+            # v1.70.37: метка канала регистрации (max | tg | web | "") и
+            # состояние согласия — администратор видит, кто пришёл через MAX
+            # и дал ли он согласие на данные профиля.
+            "reg_source": u.reg_source or "",
+            "first_name": prof["first_name"], "last_name": prof["last_name"],
+            "photo_url": prof["photo_url"],
+            "consent_given": cs["given"], "consent_version": cs["version"],
+            "consent_at": cs["at"], "consent_stale": cs["stale"],
         })
         if len(items) >= limit:
             break
@@ -515,9 +532,24 @@ def impersonate_pool_start(pid: str, db: Session = Depends(get_db),
     db.commit()                    # аудит отдельной сессией — коммитим заранее
     log_action(admin, "impersonate_pool_start",
                details={"participant_id": u.id, "email": u.email})
+    from ..services import consent as consent_svc
+    prof = consent_svc.profile_dict(u)
+    cs = consent_svc.consent_state(u)
     return {"ok": True,
             "pool_token": issue_pool_token(u.id),
-            "user": {"id": u.id, "email": u.email, "points": int(u.points or 0)},
+            "user": {"id": u.id, "email": u.email, "points": int(u.points or 0),
+                     # v1.70.37: профиль кабинета — с меткой канала MAX
+                     "reg_source": u.reg_source or "",
+                     "nickname": u.tg_username or "",
+                     "first_name": prof["first_name"],
+                     "last_name": prof["last_name"],
+                     "photo_url": prof["photo_url"],
+                     "name": (prof["first_name"] and " ".join(
+                         x for x in (prof["first_name"], prof["last_name"]) if x)
+                         or (u.tg_username or "") or (u.email or "")),
+                     "consent_given": cs["given"],
+                     "consent_version": cs["version"],
+                     "consent_at": cs["at"]},
             "act": {"sub": admin.id, "username": admin.username},
             "message": ("Режим просмотра: кабинет участника "
                         + (u.email or u.id))}

@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.70.36">
+<link rel="stylesheet" href="/css/app.css?v=1.70.37">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -89,6 +89,29 @@
         <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64">
         <h1>Ямастер <span class="grad-text">Чек</span></h1>
         <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
+      </div>
+      <!-- v1.70.37: первый визит — два способа сделать всё в MAX.
+           Показывается один раз (отметка в localStorage), закрывается
+           крестиком, сам никуда не ведёт и ничего не отправляет: кнопки
+           открывают MAX по нажатию человека. -->
+      <div class="max-intro hidden" id="max-intro" role="note"
+           aria-labelledby="max-intro-title">
+        <div class="max-intro-head">
+          <span class="max-intro-title" id="max-intro-title">Первый раз здесь? Проще всего в MAX</span>
+          <button type="button" class="max-intro-close" id="max-intro-close"
+                  title="Скрыть подсказку" aria-label="Скрыть подсказку">✕</button>
+        </div>
+        <p>Регистрация в один нажим — без пароля и письма с подтверждением.
+        Чек сдаёте камерой MAX или фотографией QR-кода. Имя и фото из MAX
+        попадут в карточку участника только после вашего согласия (152-ФЗ).</p>
+        <div class="max-intro-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="max-intro-reg">
+            🛡 Регистрация через MAX</button>
+          <button type="button" class="btn btn-sm" id="max-intro-scan">
+            📷 Сдать чек в MAX</button>
+          <button type="button" class="btn btn-sm" id="max-intro-doc">
+            📖 Инструкция</button>
+        </div>
       </div>
       <form id="login-form" autocomplete="on">
         <label class="field">
@@ -347,6 +370,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.70.36"></script>
+  <script type="module" src="/js/app.js?v=1.70.37"></script>
 </body>
 </html>

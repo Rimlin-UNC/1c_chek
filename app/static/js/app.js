@@ -256,6 +256,48 @@ function showScreen(...ids) {
 
 // v1.70.0: вход/регистрация через MAX — одноразовый код, подтверждение
 // в MAX (мини-приложение бота или сообщение боту), затем сессия сайта.
+// ==========================================================================
+// v1.70.37: подсказка первого визита — два способа сделать всё в MAX.
+// Показываем один раз: отметка в localStorage (не в cookie — на сервер ничего
+// не уходит). Любое действие человека (крестик или одна из кнопок) гасит
+// подсказку навсегда: она не должна мешать при следующих входах.
+// ==========================================================================
+const MAX_INTRO_KEY = 'ymaster_max_intro_seen';
+
+function maxBotLink(startParam) {
+  return 'https://max.ru/' + (window.MXBOT || 'chek.ymaster.bot')
+    + '?startapp=' + encodeURIComponent(startParam);
+}
+
+function initMaxIntro() {
+  const box = $('#max-intro');
+  if (!box) return;
+  let seen = '';
+  try { seen = localStorage.getItem(MAX_INTRO_KEY) || ''; } catch (e) { seen = '1'; }
+  if (seen) return;                       // уже показывали — не мешаем
+  box.classList.remove('hidden');
+  const hide = (remember) => {
+    box.classList.add('hidden');
+    if (remember) {
+      try { localStorage.setItem(MAX_INTRO_KEY, new Date().toISOString()); } catch (e) {}
+    }
+  };
+  const close = $('#max-intro-close');
+  if (close) close.onclick = () => hide(true);
+  const reg = $('#max-intro-reg');
+  if (reg) reg.onclick = () => {
+    window.open(maxBotLink('reg_site'), '_blank', 'noopener');
+    hide(true);
+  };
+  const scan = $('#max-intro-scan');
+  if (scan) scan.onclick = () => {
+    window.open(maxBotLink('scan_site'), '_blank', 'noopener');
+    hide(true);
+  };
+  const doc = $('#max-intro-doc');
+  if (doc) doc.onclick = () => { openManual(); hide(true); };
+}
+
 async function maxLoginFlow(code, isTicket) {
   const { slot } = openModal(`
     <div class="modal-title">🛡 Вход через MAX</div>
@@ -314,6 +356,12 @@ function showLogin() {
   bindLanding();                            // v1.54.0: лендинг на главной
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   // v1.70.0: кнопка входа/регистрации через MAX на форме входа
+  // v1.70.37: подсказка при первом визите — «регистрация через MAX» и
+  // «сдать чек в MAX» (камера или фото QR). Безопасно и ненавязчиво: блок
+  // показывается один раз на браузер (отметка в localStorage), ничего сам не
+  // открывает и не отправляет, закрывается крестиком; обе кнопки ведут в MAX
+  // по явному нажатию человека, третья — в инструкцию приложения.
+  initMaxIntro();
   const lm = $('#login-max');
   if (lm) lm.onclick = async () => {
     try {
@@ -1095,10 +1143,19 @@ async function poolLoadSummary(root) {
   try {
     const d = await poolApi('GET', '/api/v1/pool-my/summary');
     const box = root.querySelector('#pool-summary');
-    if (box) box.innerHTML = `Кабинет: <b>${esc(d.email)}</b>
-      ${d.email_verified ? '<span class="chip exported"><span class="dot"></span>e-mail подтверждён</span>'
-      : `<span class="chip new"><span class="dot"></span>e-mail не подтверждён</span>
-         <a href="#" id="pool-resend-verify">Подтвердить</a>`}`;
+    if (box) {
+      // v1.70.37: у участника из MAX может не быть e-mail — тогда показываем
+      // имя из MAX (если дано согласие) и метку канала; чип про e-mail имеет
+      // смысл только когда e-mail действительно привязан.
+      const nm = d.display_name || d.email || 'участник';
+      box.innerHTML = `Кабинет: ${srcBadge(d.reg_source)}<b>${esc(nm)}</b>
+      ${d.email
+        ? (d.email_verified ? '<span class="chip exported"><span class="dot"></span>e-mail подтверждён</span>'
+          : `<span class="chip new"><span class="dot"></span>e-mail не подтверждён</span>
+             <a href="#" id="pool-resend-verify">Подтвердить</a>`)
+        : `<span class="chip verified"><span class="dot"></span>${d.consent_given
+            ? 'данные из MAX (согласие 152-ФЗ)' : 'без e-mail'}</span>`}`;
+    }
     const rv = root.querySelector('#pool-resend-verify');
     if (rv) rv.onclick = async (e) => {
       e.preventDefault();
@@ -2047,7 +2104,7 @@ async function viewPoolPeople(container) {
     Ядро-логин администратора при этом не прерывается.</div>
     <div class="glass card">
       <div class="card-title">Участники <span class="spacer"></span>
-        <input id="pp-q" placeholder="Поиск по e-mail" style="max-width:240px" value=""></div>
+        <input id="pp-q" placeholder="Поиск по e-mail или имени" style="max-width:240px" value=""></div>
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>E-mail</th><th>Статус</th><th>Чеков</th><th>Баллов</th><th>Риск</th><th>В пуле с</th><th></th>
       </tr></thead><tbody id="pp-rows"><tr style="cursor:default"><td colspan="7"><span class="spinner"></span></td></tr></tbody></table></div>
@@ -2058,8 +2115,13 @@ async function viewPoolPeople(container) {
     try {
       const d = await api.get('/api/v1/pool-admin/participants?limit=200'
         + (qv ? '&q=' + encodeURIComponent(qv) : ''));
-      rows.innerHTML = d.items.length ? d.items.map(u => `<tr data-id="${esc(u.id)}" style="cursor:default">
-          <td><b>${esc(u.email || '—')}</b>${u.nickname ? `<div class="form-hint">${esc(u.nickname)}</div>` : ''}${u.email_verified ? '' : ' <span class="chip unknown mono">e-mail не подтверждён</span>'}</td>
+      rows.innerHTML = d.items.length ? d.items.map(u => {
+        // v1.70.37: значок MAX перед именем + имя из MAX, если участник дал
+        // согласие (152-ФЗ); без согласия карточка пуста и в списке тоже.
+        const nm = participantName(u);
+        const sub = nm && nm !== u.email ? u.email : (u.nickname || '');
+        return `<tr data-id="${esc(u.id)}" style="cursor:default">
+          <td>${srcBadge(u.reg_source)}<b>${esc(nm || '—')}</b>${sub ? `<div class="form-hint">${esc(sub)}</div>` : ''}${u.email ? (u.email_verified ? '' : ' <span class="chip unknown mono">e-mail не подтверждён</span>') : ''}${u.reg_source === 'max' && !u.consent_given ? ' <span class="chip unknown">согласие 152-ФЗ не дано</span>' : ''}</td>
           <td>${u.is_blocked
             ? '<span class="chip failed"><span class="dot"></span>заблокирован</span>'
             : '<span class="chip verified"><span class="dot"></span>активен</span>'}</td>
@@ -2067,11 +2129,13 @@ async function viewPoolPeople(container) {
           <td class="cell-num">${fmtInt(u.points)}</td>
           <td class="cell-num">${fmtInt(u.risk_score)}</td>
           <td class="cell-date">${fmtDate(u.created_at)}</td>
-          <td>${u.is_blocked ? '—' : `<button type="button" class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(u.email || u.nickname || u.id)}" title="Открыть кабинет глазами участника">👁</button>`}</td>
-        </tr>`).join('')
+          <td>${u.is_blocked ? '—' : `<button type="button" class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(nm || u.id)}" data-src="${esc(u.reg_source || '')}" data-consent="${esc(u.consent_at || '')}" title="Открыть кабинет глазами участника">👁</button>`}</td>
+        </tr>`;
+      }).join('')
         : `<tr style="cursor:default"><td colspan="7">${emptyState('🧩', 'Участников не найдено')}</td></tr>`;
       rows.querySelectorAll('.pp-view').forEach(b => {
-        b.onclick = () => startViewAsPool(b.dataset.id, b.dataset.name);
+        b.onclick = () => startViewAsPool(b.dataset.id, b.dataset.name,
+                                          b.dataset.src, b.dataset.consent);
       });
     } catch (e) {
       rows.innerHTML = `<tr style="cursor:default"><td colspan="7">${esc(e.message || 'Не удалось загрузить')}</td></tr>`;
@@ -2560,6 +2624,23 @@ function logout() {
 // ==========================================================================
 const VIEWAS_TOK = 'ymaster_viewas_master_token';   // админ-токен на время просмотра
 const VIEWAS_NAME = 'ymaster_viewas_admin_name';    // имя администратора для полосы
+// v1.70.37: метка канала регистрации участника. Участник, который пришёл
+// через мини-приложение MAX, помечается значком MAX перед именем — и в списке
+// участников, и в кабинете (в том числе когда администратор смотрит кабинет
+// «глазами участника»). Метка — факт о способе входа, не персональные данные.
+function srcBadge(src) {
+  if (src !== 'max') return '';
+  return `<span class="src-max" role="img" title="Регистрация через мини-приложение MAX" ` +
+    `aria-label="Зарегистрировался через MAX">MAX</span> `;
+}
+
+// Имя участника для списков: имя из MAX (если дано согласие 152-ФЗ), иначе
+// e-mail, иначе ник. До согласия имя не хранится — показывать нечего.
+function participantName(u) {
+  const full = [u.first_name, u.last_name].filter(Boolean).join(' ');
+  return full || u.email || u.nickname || '';
+}
+
 // v1.41.0: просмотр кабинета участника Чек-Пула (ядро-логин админа не меняется)
 const VIEWAS_POOL = 'ymaster_viewas_pool';            // {id, name} участника
 const VIEWAS_POOL_PREV = 'ymaster_viewas_pool_prev';  // прежний токен кабинета
@@ -2597,8 +2678,14 @@ function applyViewAsMode() {
     const info = viewAsPoolInfo();
     $('#viewas-text').innerHTML =
       `Вы смотрите <b>кабинет Чек-Пула</b> глазами участника ` +
+      `${srcBadge(info && info.src)}` +
       `<b>${esc((info && info.name) || '')}</b> ` +
-      `<span class="viewas-role">(участник пула)</span>`;
+      `<span class="viewas-role">(участник пула)</span>` +
+      (info && info.src === 'max'
+        ? ` <span class="viewas-role">${info.consent
+            ? 'согласие 152-ФЗ от ' + esc(fmtDate(info.consent))
+            : 'согласие 152-ФЗ не дано — профиль пуст'}</span>`
+        : '');
     $('#btn-viewas-back').onclick = stopViewAsPool;
   }
   if (viewing) {
@@ -2782,11 +2869,11 @@ async function stopViewAs() {
 
 // v1.41.0: просмотр кабинета участника Чек-Пула глазами самого участника.
 // Ядро-логин администратора сохраняется; кабинету выдаётся его pool-токен.
-async function startViewAsPool(pid, name) {
+async function startViewAsPool(pid, name, src, consentAt) {
   closePersonaMenu();
   const { slot, close } = openModal(
     `<div class="modal-title">👁 Режим просмотра · Чек-Пул</div>
-     <p class="modal-text">Открыть <b>кабинет участника</b> глазами <b>${esc(name)}</b>?<br>
+     <p class="modal-text">Открыть <b>кабинет участника</b> глазами ${srcBadge(src)}<b>${esc(name)}</b>?<br>
      Вы увидите его чеки, баллы и настройки пула ровно так, как видит их он.
      Действия будут выполняться от его имени. Возврат — кнопка
      «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
@@ -2800,7 +2887,8 @@ async function startViewAsPool(pid, name) {
       const r = await api.post(`/api/v1/pool-admin/impersonate-pool/${pid}`);
       try {
         sessionStorage.setItem(VIEWAS_POOL_PREV, pGet());
-        sessionStorage.setItem(VIEWAS_POOL, JSON.stringify({ id: pid, name }));
+        sessionStorage.setItem(VIEWAS_POOL, JSON.stringify(
+          { id: pid, name, src: src || '', consent: consentAt || '' }));
       } catch (e) {}
       pSet(r.pool_token);
       close();
@@ -5137,6 +5225,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.37': [
+    { icon: '🛡', title: 'Участника из MAX теперь видно: значок MAX перед именем в списке участников, в кабинете и в полосе режима просмотра',
+      text: 'Раньше в карточке участника не было никакого признака того, откуда человек пришёл: идентификатор MAX и идентификатор Telegram-бота хранились в одном поле, и в списке «Чек-Пул: участники» оба выглядели одинаково. Добавлено отдельное поле канала регистрации — max, tg, web или пусто для гостя, — и на его основе рисуется значок MAX: оранжевая плашка с тёмным текстом (6.66:1, тот же приём, что у кнопок с версии 1.70.34) ставится перед именем в списке участников, в кабинете участника и в жёлтой полосе режима просмотра, когда администратор смотрит кабинет «глазами участника». Значок самодостаточен: у него собственный фон, поэтому контраст не зависит от подложки строки таблицы. Рядом в списке появилось состояние согласия: если участник из MAX согласия не давал, в строке стоит пометка «согласие 152-ФЗ не дано», а если давал — в полосе просмотра видна дата согласия. Поиск в списке участников теперь работает и по имени, а не только по e-mail: у участника из MAX e-mail может не быть вовсе. Существующие базы обновляются безопасно: колонки добавляются при запуске, прежние участники получают пустой канал и пустое согласие — задним числом ничего не приписывается.' },
+    { icon: '⚖️', title: 'Согласие на обработку данных по 152-ФЗ: карточка участника заполняется из MAX только после того, как человек согласился',
+      text: 'Мини-приложение технически может прочитать профиль MAX — имя, фамилию, ник, язык и ссылку на фото. По статье 9 Федерального закона 152-ФЗ обрабатывать эти данные можно только с согласия субъекта, данного свободно, своей волей и в своём интересе, поэтому порядок изменён: при первом входе приложение показывает экран согласия, и до нажатия «Согласен» в карточке не сохраняется ничего, кроме идентификатора MAX — он нужен, чтобы начислять баллы (пункт 5 части 1 статьи 6: исполнение условий сервиса). Текст согласия версионируется и содержит всё, что требует часть 4 статьи 9: оператора с реквизитами, цели обработки, перечень данных, действия с данными и способ обработки (только территория России, трансграничной передачи нет), срок действия, порядок отзыва и права субъекта, включая обжалование в Роскомнадзор или суд. Отдельно сказано, что остаётся вне этого согласия: технические данные обрабатываются в целях безопасности, а реквизиты чеков персональными данными участника не являются. Кнопка «Не сейчас» пропускает шаг без последствий: чеки и баллы работают как обычно, профиль остаётся пустым, а дать согласие можно позже во вкладке «Профиль». Согласие принимается только вместе с initData, подписанной платформой, и сервер сверяет идентификатор: согласиться за другого человека нельзя. Если редакция текста изменится, приложение предложит согласие заново, а старая пометка станет видимой администратору как устаревшая. Отзыв согласия — во вкладке «Профиль», в два нажатия, чтобы не стереть профиль случайно: после отзыва имя, фамилия, ник, фото и язык удаляются из карточки (статьи 14 и 21), а баллы и история чеков сохраняются обезличенными — обязательства перед участником не теряются. Фотографию сервер не скачивает и не хранит: в карточке остаётся только ссылка, и принята она будет лишь по https.' },
+    { icon: '👋', title: 'Первый визит на сайт: подсказка с двумя способами сделать всё в MAX — регистрация и сдача чека камерой или фото',
+      text: 'Новичок на странице входа видел форму логина и пароль, хотя самое короткое его действие лежит в MAX. Добавлена подсказка «Первый раз здесь? Проще всего в MAX» с двумя кнопками: «Регистрация через MAX» — откроется мини-приложение, где регистрация происходит в один нажим и без письма с подтверждением, и «Сдать чек в MAX» — то же приложение, где чек принимается нативным сканером MAX, камерой в окне или фотографией QR-кода, если сканер недоступен. Третья кнопка открывает инструкцию приложения. Подсказка устроена безопасно и ненавязчиво: это не модальное окно и не редирект — она ничего не отправляет на сервер и никуда не ведёт сама, MAX открывается только по нажатию человека, а отметка о показе хранится в localStorage браузера (не в cookie), поэтому подсказка показывается один раз и больше не мешает. Крестик скрывает её навсегда. На узком экране кнопки становятся во всю ширину — попасть пальцем легко. Инструкция дополнена разделом о согласии, метке MAX и о том, что именно видит администратор.' },
+    { icon: '🧩', title: 'Починены отступы в приложении MAX: три класса использовались в разметке, но не были объявлены в стилях',
+      text: 'Проверка соответствия стилей разметке дошла и до мини-приложения MAX. Классы .gap-8 (вертикальный отступ), .mb-6 и .text-center применялись в разметке с версии 1.69.0 — десять, одно и одно использование, — но в таблице стилей объявлены не были: отступы просто не работали, и блоки слипались. Все три объявлены, в том числе потому, что на них опирается новый экран согласия. Новых цветов не добавлено: экран согласия и плашка MAX пользуются переменными темы хоста (--tg-theme-*), как и всё приложение, поэтому текст читается и в светлой, и в тёмной теме MAX; запасные значения — корпоративные.' },
+  ],
   '1.70.36': [
     { icon: '🖼', title: 'Картинки «Как это работает» стали крупными и читаются с телефона, текст поднят, у третьего шага появилась своя иллюстрация',
       text: 'Иллюстрации шагов на стартовой странице раньше уменьшались именно там, где нужнее всего: 84 пикселя на десктопе, 62 на планшете и 54 на телефоне — на телефоне рисунок было не разглядеть. Теперь размер задаёт clamp: минимум 96 пикселей на самом узком экране и до 156 на широком, пропорцию держит aspect-ratio 4:3, кадрирует object-fit cover. То есть на телефоне картинка стала почти вдвое больше, а на десктопе — почти вдвое крупнее прежнего. Текст поднят к верхнему краю карточки: при высокой картинке он больше не висит по центру и не уезжает вниз. У третьего шага («Получайте баллы») картинки не было вовсе: стояла заглушка, из-за которой его текст ещё и съезжал влево относительно первых двух шагов. Добавлена иллюстрация в той же стилизации, что первые две — светло-серый фон, индиговые контуры, оранжевые и зелёные акценты: телефон с карточкой баллов, монеты, подарок и кошелёк. Структура карточек, порядок шагов и сами тексты не менялись: нить и стиль сохранены.' },

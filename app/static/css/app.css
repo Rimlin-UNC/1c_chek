@@ -359,6 +359,31 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   border: 1px solid; white-space: nowrap;
 }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+/* v1.70.37: значок канала регистрации — участник пришёл через мини-приложение
+   MAX. Тёмный текст на корпоративном оранжевом: 6.66:1 при пороге 4.5:1
+   (тот же приём, что закреплён для кнопок в v1.70.34). Значок самодостаточен:
+   у него свой фон, поэтому контраст не зависит от подложки строки таблицы. */
+.src-max {
+  display: inline-block; padding: 1px 7px; border-radius: 999px;
+  background: var(--accent); color: #1a1a1a;
+  font-size: 11px; font-weight: 800; letter-spacing: .4px; line-height: 1.5;
+  vertical-align: 1px; white-space: nowrap;
+}
+/* v1.70.37: подсказка при первом визите — «войти через MAX» и «сканировать
+   в MAX». Не модальное окно: не мешает, закрывается и больше не показывается. */
+.max-intro {
+  margin: 0 0 14px; padding: 14px 16px; border-radius: 14px;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.max-intro-head { display: flex; align-items: flex-start; gap: 8px; }
+.max-intro-title { font-weight: 800; color: var(--text); flex: 1; }
+.max-intro-close {
+  border: 0; background: none; cursor: pointer; padding: 2px 6px;
+  color: var(--text-dim); font-size: 16px; line-height: 1; border-radius: 8px;
+}
+.max-intro-close:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.max-intro p { margin: 6px 0 10px; color: var(--text-dim); font-size: 14px; }
+.max-intro-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip.new { color: var(--info-text); border-color: color-mix(in srgb, var(--info) 35%, transparent); background: color-mix(in srgb, var(--info) 9%, transparent); }
 .chip.verifying { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: color-mix(in srgb, var(--warn) 9%, transparent); }
 .chip.verified { color: var(--ok-text); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: color-mix(in srgb, var(--ok) 9%, transparent); }
@@ -1515,6 +1540,9 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   .land-h1 { font-size: 1.25rem; }
   .land-lead { font-size: 0.84375rem; }
   .land-cta .btn { flex: 1 1 100%; justify-content: center; }
+  /* v1.70.37: на узком экране кнопки подсказки «сделать в MAX» — во всю
+     ширину, как у .land-cta: попасть пальцем легко, ничего не обрезается */
+  .max-intro-actions .btn { flex: 1 1 100%; justify-content: center; }
   .land-stats { gap: 12px; }
   .land-stat b { font-size: 1.0625rem; }
   .land-steps li { padding: 10px; gap: 10px; }

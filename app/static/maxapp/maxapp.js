@@ -78,13 +78,16 @@ async function boot() {
                         {init_data: app.initData});
     TOKEN = d.access_token;
     ME = Object.assign(ME, d.me);
-    $('view-loading').classList.add('hidden');
-    $('view-app').classList.remove('hidden');
-    await loadSummary();
     // v1.70.0: вход с сайта (login_…) и приглашения (inv_…)
     const sp = (app.initDataUnsafe && app.initDataUnsafe.start_param) || '';
-    if (sp.indexOf('login_') === 0) showLoginConfirm(sp);
-    else if (sp.indexOf('inv_') === 0) showInvite(sp);
+    // v1.70.37 (152-ФЗ): при первом входе — текст согласия, и карточка
+    // заполняется данными MAX только после явного «согласен». Подтверждение
+    // входа с сайта (login_…) не задерживаем: это другая задача человека.
+    if (d.consent_doc && sp.indexOf('login_') !== 0 && sp.indexOf('inv_') !== 0) {
+      showConsent(d.consent_doc, afterBoot);
+      return;
+    }
+    await afterBoot(sp);
   } catch (e) {
     // v1.70.36: если сессия не поднялась (подпись initData, устаревшая
     // сессия), человек не должен остаться без входа: вход на сайт устроен
@@ -102,6 +105,160 @@ async function boot() {
   }
 }
 
+async function afterBoot(sp) {
+  $('view-loading').classList.add('hidden');
+  $('view-app').classList.remove('hidden');
+  await loadSummary();
+  if (!sp) {
+    const app = wa();
+    sp = (app && app.initDataUnsafe && app.initDataUnsafe.start_param) || '';
+  }
+  if (sp.indexOf('login_') === 0) showLoginConfirm(sp);
+  else if (sp.indexOf('inv_') === 0) showInvite(sp);
+}
+
+// ---- v1.70.37: согласие на обработку данных из MAX (152-ФЗ) ---------
+// До согласия сервер хранит только идентификатор MAX: имя, фамилия, ник,
+// фото и язык в карточку не пишутся. Экран показывает действующую редакцию
+// текста (GET /api/v1/maxapp/consent), а «согласен» уходит вместе с
+// initData — подпись платформы подтверждает, кто именно согласился.
+let REVOKE_ARMED = false;
+
+function consentMsg(text, ok) {
+  const m = $('consent-msg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.style.color = ok === false ? '#c0392b' : 'var(--accent-text)';
+}
+
+function renderConsent(doc) {
+  $('consent-title').textContent = doc.title || 'Согласие на обработку данных';
+  $('consent-ver').textContent = doc.version || '—';
+  const parts = ['<p class="consent-lead">' + esc(doc.lead || '') + '</p>'];
+  (doc.sections || []).forEach(sec => {
+    parts.push('<div class="consent-sec"><div class="consent-sec-title">' +
+      esc(sec.title) + '</div><ul>' +
+      (sec.items || []).map(i => '<li>' + esc(i) + '</li>').join('') +
+      '</ul></div>');
+  });
+  parts.push('<p class="hint">Оператор: ' + esc(doc.operator || '') +
+    '. Вопросы и отзыв согласия: ' + esc(doc.contact || '') + '</p>');
+  $('consent-body').innerHTML = parts.join('');
+}
+
+function showConsent(doc, next) {
+  window._consentNext = next || null;
+  renderConsent(doc);
+  const nav = document.querySelector('nav');
+  if (nav) nav.classList.add('hidden');
+  $('view-loading').classList.add('hidden');
+  $('view-app').classList.add('hidden');
+  $('view-consent').classList.remove('hidden');
+  const box = $('consent-agree'), ok = $('btn-consent-ok');
+  box.checked = false;
+  ok.disabled = true;
+  consentMsg('');
+  box.onchange = () => { ok.disabled = !box.checked; };
+  ok.onclick = giveConsent;
+  $('btn-consent-skip').onclick = () => closeConsent();
+}
+
+function closeConsent() {
+  $('view-consent').classList.add('hidden');
+  const nav = document.querySelector('nav');
+  if (nav) nav.classList.remove('hidden');
+  const cb = window._consentNext;
+  window._consentNext = null;
+  if (cb) { try { cb(); } catch (e) {} }
+}
+
+async function giveConsent() {
+  const app = wa();
+  if (!app || !app.initData) {
+    consentMsg('MAX не передал данные входа — закройте и откройте приложение ' +
+      'заново', false);
+    return;
+  }
+  const ok = $('btn-consent-ok');
+  ok.disabled = true;
+  consentMsg('Сохраняем согласие…');
+  try {
+    const d = await api('POST', '/api/v1/maxapp/consent', {init_data: app.initData});
+    ME = Object.assign(ME, d.me || {});
+    consentMsg('Готово: профиль заполнен данными MAX ✓');
+    renderMe();
+    setTimeout(closeConsent, 400);
+  } catch (e) {
+    consentMsg(e.message, false);
+    ok.disabled = !$('consent-agree').checked;
+  }
+}
+
+async function openConsentScreen() {
+  try {
+    const doc = await api('GET', '/api/v1/maxapp/consent');
+    showConsent(doc, () => {
+      $('view-app').classList.remove('hidden');
+      loadSummary();
+    });
+  } catch (e) { say(e.message, false); }
+}
+
+async function toggleConsent() {
+  const cs = ME.consent || {};
+  if (!cs.given) { openConsentScreen(); return; }
+  // отзыв — в два нажатия: случайно стереть профиль нельзя
+  if (!REVOKE_ARMED) {
+    REVOKE_ARMED = true;
+    renderMe();
+    setTimeout(() => { if (REVOKE_ARMED) { REVOKE_ARMED = false; renderMe(); } }, 5000);
+    return;
+  }
+  REVOKE_ARMED = false;
+  try {
+    const d = await api('POST', '/api/v1/maxapp/consent/revoke');
+    ME = Object.assign(ME, d.me || {});
+    renderMe();
+    say(d.message || 'Согласие отозвано — профиль очищен');
+  } catch (e) { say(e.message, false); }
+}
+
+function consentDate(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? m[3] + '.' + m[2] + '.' + m[1] : '';
+}
+
+function renderMe() {
+  const nameEl = $('me-name');
+  if (!nameEl) return;
+  const full = [ME.first_name, ME.last_name].filter(Boolean).join(' ');
+  nameEl.textContent = full || ME.name || 'Участник';
+  const ph = $('me-photo');
+  if (ME.photo_url) { ph.src = ME.photo_url; ph.classList.remove('hidden'); }
+  else { ph.removeAttribute('src'); ph.classList.add('hidden'); }
+  const srcText = ME.reg_source === 'tg'
+    ? 'регистрация через бота Telegram'
+    : (ME.reg_source === 'web' ? 'регистрация на сайте'
+      : 'регистрация через мини-приложение MAX');
+  $('me-src').textContent = srcText;
+  const badge = document.querySelector('#me-card .src-max');
+  if (badge) badge.classList.toggle('hidden', ME.reg_source !== 'max');
+  const cs = ME.consent || {};
+  const btn = $('btn-consent-toggle');
+  if (cs.given) {
+    $('me-consent').textContent = 'Согласие на обработку данных (редакция ' +
+      (cs.version || '') + ') дано ' + (consentDate(cs.at) || '—') +
+      '. Имя, фамилия, ник и фото взяты из MAX. Отозвать можно здесь же.';
+    btn.textContent = REVOKE_ARMED ? 'Точно отозвать — очистить профиль'
+      : 'Отозвать согласие';
+  } else {
+    $('me-consent').textContent = 'Профиль пуст: согласие на обработку данных ' +
+      'из MAX не дано. Сервис хранит только ваш идентификатор MAX — он нужен, ' +
+      'чтобы начислять баллы.';
+    btn.textContent = 'Дать согласие и заполнить профиль';
+  }
+}
+
 async function loadSummary() {
   try {
     const d = await api('GET', '/api/v1/maxapp/summary');
@@ -113,6 +270,7 @@ async function loadSummary() {
       '</span><span>' + esc(r.sum ? r.sum.toFixed(2) + ' ₽' : '') +
       ' <span class="status">' + esc(statusRu(r.status)) + '</span></span></div>'
     ).join('') || '<p class="hint">Пока нет чеков — отсканируйте первый!</p>';
+    renderMe();
     $('profile-extra').textContent =
       'Всего чеков: ' + ((ME.receipts || []).length) +
       '. За каждый проверенный чек — балл. Приглашённому другу и вам — бонус.';
@@ -210,6 +368,7 @@ $('btn-send').onclick = () => {
 $('btn-cam').onclick = scanCamera;
 $('btn-photo').onclick = pickPhoto;
 $('qr-file').onchange = uploadPhoto;
+$('btn-consent-toggle').onclick = toggleConsent;
 $('btn-share').onclick = () => {
   const app = wa();
   const link = ME.ref_link || 'https://max.ru/chek.ymaster.bot?startapp=ref_' + (ME.ref_code || '');
@@ -329,7 +488,10 @@ async function showLoginConfirm(code) {
     '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>');
   $('svc-confirm').onclick = async () => {
     try {
-      await api('POST', '/api/v1/maxapp/confirm-login', {code: code});
+      // v1.70.37: initData — чтобы сервер взял username MAX из подписанного
+      // payload: в карточке участника имени до согласия (152-ФЗ) нет.
+      await api('POST', '/api/v1/maxapp/confirm-login',
+                {code: code, init_data: (wa() && wa().initData) || ''});
       $('svc-msg').textContent = 'Готово! Вернитесь на сайт — вход выполнится сам.';
       $('svc-confirm').disabled = true;
     } catch (e) { $('svc-msg').textContent = e.message; }
@@ -360,7 +522,10 @@ async function showInvite(token) {
     $('svc-accept').onclick = async () => {
       try {
         const r = await api('POST', '/api/v1/maxapp/invite/accept',
-                            {token: token});
+                            // v1.70.37: initData — username MAX для учётной
+                            // записи сайта берётся из подписанного payload
+                            {token: token,
+                             init_data: (wa() && wa().initData) || ''});
         $('svc-msg').textContent = 'Готово! Открываем сайт…';
         $('svc-accept').disabled = true;
         setTimeout(() => openLink(r.web_link), 600);

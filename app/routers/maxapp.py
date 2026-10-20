@@ -26,7 +26,7 @@ from ..models import Company, Invite, User
 from ..pool import ingest
 from ..pool import referral as pool_referral
 from ..pool.accounts import issue_pool_token, require_pool_user
-from ..services import maxapp
+from ..services import consent, maxapp
 
 log = logging.getLogger("ymaster.maxapp")
 
@@ -34,6 +34,12 @@ router = APIRouter(prefix="/api/v1/maxapp", tags=["Мини-приложение
 
 
 class SessionBody(BaseModel):
+    init_data: str = Field(min_length=16, max_length=8192)
+
+
+class ConsentBody(BaseModel):
+    """Согласие 152-ФЗ принимается только по проверенной сессии MAX:
+    initData подписан платформой, поэтому мы уверены, кто именно согласился."""
     init_data: str = Field(min_length=16, max_length=8192)
 
 
@@ -67,13 +73,20 @@ def _bind_assistant(db: Session, max_username: str, max_id: str) -> None:
 def _me_dict(db: Session, user) -> dict:
     code = (pool_referral.get_or_create_code(db, user)
             if not user.is_blocked else "")
+    prof = consent.profile_dict(user)
     return {
         "max_id": user.tg_user_id or "",
-        "name": user.tg_username or "",
+        "name": prof["first_name"] and (
+            " ".join(x for x in (prof["first_name"], prof["last_name"]) if x)
+        ) or (user.tg_username or ""),
         "points": int(user.points or 0),
         "blocked": bool(user.is_blocked),
         "trust_level": int(getattr(user, "trust_level", 0) or 0),
         "ref_code": code,
+        # v1.70.37: профиль из MAX — пустой, пока не дано согласие (152-ФЗ)
+        **prof,
+        "reg_source": user.reg_source or "",
+        "consent": consent.consent_state(user),
     }
 
 
@@ -138,9 +151,14 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
     existing = (db.query(_PoolUserModel)
                 .filter(_PoolUserModel.tg_user_id == max_id).first())
     is_new = existing is None
-    user = ingest.get_or_create_user(
-        db, tg_user_id=max_id, tg_username=username
-        or (user_raw.get("first_name") or ""))
+    # v1.70.37 (152-ФЗ): до согласия в карточку НЕ пишутся имя, фамилия, ник
+    # и фото из MAX — сохраняется только идентификатор, без которого невозможно
+    # начислять баллы (п. 5 ч. 1 ст. 6 152-ФЗ — исполнение условий сервиса).
+    user = ingest.get_or_create_user(db, tg_user_id=max_id, tg_username="")
+    if not (user.reg_source or ""):
+        user.reg_source = "max"          # факт канала регистрации
+    if user.consent_at:                  # согласие уже есть — профиль свежий
+        consent.fill_profile(user, user_raw)
     if not user.is_blocked:
         ref = maxapp.parse_start_param(_start_param(body.init_data))
         if ref.get("ref"):
@@ -148,9 +166,14 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
     db.commit()
 
     _bind_assistant(db, username, max_id)
-    return {"access_token": issue_pool_token(user.id),
-            "token_type": "bearer", "is_new": is_new,
-            "me": _me_dict(db, user)}
+    me = _me_dict(db, user)
+    resp = {"access_token": issue_pool_token(user.id),
+            "token_type": "bearer", "is_new": is_new, "me": me}
+    # v1.70.37: первый вход (или смена редакции согласия) — клиент обязан
+    # показать текст и получить явное «согласен» ДО заполнения карточки.
+    if not me["consent"]["given"] or me["consent"]["stale"]:
+        resp["consent_doc"] = consent.consent_payload()
+    return resp
 
 
 @router.get("/me", summary="Профиль мини-приложения (баллы, чеки)")
@@ -158,6 +181,54 @@ def me(db: Session = Depends(get_db), user=Depends(require_pool_user)):
     d = _me_dict(db, user)
     d["receipts"] = _last_receipts(db, user)
     return d
+
+
+# ==========================================================================
+#  Согласие на обработку персональных данных из MAX (152-ФЗ, v1.70.37)
+# ==========================================================================
+
+@router.get("/consent", summary="Текст согласия на обработку данных из MAX")
+def consent_doc():
+    """Публичная редакция согласия: оператор, цели, перечень данных, срок,
+    порядок отзыва и права субъекта (ч. 4 ст. 9 152-ФЗ)."""
+    return consent.consent_payload()
+
+
+@router.post("/consent",
+             summary="Дать согласие и заполнить карточку данными из MAX")
+def consent_give(body: ConsentBody, db: Session = Depends(get_db)):
+    """Принимает согласие только по подписанной платформой initData:
+    иначе за участника мог бы согласиться кто угодно. После проверки
+    подписи фиксируются редакция согласия, момент и канал, и лишь затем
+    карточка заполняется именем, фамилией, ником, фото и языком."""
+    user_raw, err = maxapp.validate_init_data(body.init_data,
+                                              maxapp.bot_token(db))
+    if err is not None or user_raw is None:
+        raise HTTPException(401, "Согласие не принято: сессию MAX не удалось "
+                                 "проверить — закройте и откройте приложение "
+                                 "заново, затем повторите")
+    max_id = str(user_raw["id"])
+    user = ingest.get_or_create_user(db, tg_user_id=max_id, tg_username="")
+    if not (user.reg_source or ""):
+        user.reg_source = "max"
+    res = consent.record_consent(db, user, consent.SOURCE_MAXAPP, user_raw)
+    res["me"] = _me_dict(db, user)
+    log.info("maxapp consent ok: max_id=%s версия=%s", max_id,
+             consent.CONSENT_VERSION)
+    return res
+
+
+@router.post("/consent/revoke",
+             summary="Отозвать согласие: профиль очищается (ст. 21 152-ФЗ)")
+def consent_revoke(db: Session = Depends(get_db),
+                   user=Depends(require_pool_user)):
+    """Отзыв согласия: имя, фамилия, ник, фото и язык удаляются из карточки,
+    баллы и история чеков сохраняются обезличенными — обязательства перед
+    участником не теряются."""
+    res = consent.revoke_consent(db, user)
+    res["me"] = _me_dict(db, user)
+    log.info("maxapp consent revoked: участник %s", user.id)
+    return res
 
 
 def _launch_ingest(user, qr_raw: str, parsed, fast: bool) -> dict:
@@ -251,10 +322,40 @@ from ..pool.models import PoolUser as _PoolUserModel  # noqa: E402
 # ==========================================================================
 class ConfirmLoginBody(BaseModel):
     code: str = Field(min_length=16, max_length=160)
+    # v1.70.37: initData — необязательна. Нужна, чтобы взять username MAX
+    # напрямую из подписанного платформой payload для ВХОДА НА САЙТ: в
+    # карточке участника имени до согласия (152-ФЗ) нет.
+    init_data: str = Field(default="", max_length=8192)
 
 
 class InviteTokenBody(BaseModel):
     token: str = Field(min_length=8, max_length=64)
+    init_data: str = Field(default="", max_length=8192)   # см. выше
+
+
+def _max_identity(db: Session, user, init_data: str) -> tuple[str, str]:
+    """(username, display) для учётной записи САЙТА по данным MAX.
+
+    v1.70.37: карточка участника до согласия пустая, поэтому имя берём из
+    проверенной initData — той же подписи платформы, которой доверяет вход.
+    initData чужого участника не принимается: идентификатор сверяется.
+    """
+    nick = (user.tg_username or "").strip()
+    if nick:
+        return nick, nick
+    raw = None
+    if (init_data or "").strip():
+        candidate, err = maxapp.validate_init_data(init_data,
+                                                   maxapp.bot_token(db))
+        if err is None and candidate is not None and \
+                str(candidate.get("id")) == str(user.tg_user_id or ""):
+            raw = candidate
+    if raw is None:
+        return "", ""
+    uname = str(raw.get("username") or "").strip()
+    full = " ".join(x for x in (str(raw.get("first_name") or "").strip(),
+                               str(raw.get("last_name") or "").strip()) if x)
+    return (uname or full), (full or uname)
 
 
 @router.post("/confirm-login",
@@ -264,9 +365,9 @@ def confirm_login(body: ConfirmLoginBody, db: Session = Depends(get_db),
     """Вызывается мини-приложением, когда открыто по диплинку
     startapp=login_<код> с сайта: пул-JWT уже доказывает личность MAX."""
     from ..services import max_login
+    uname, disp = _max_identity(db, user, body.init_data)
     ok = max_login.confirm(db, body.code, str(user.tg_user_id or ""),
-                           username=user.tg_username or "",
-                           display=user.tg_username or "")
+                           username=uname, display=disp)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             "Код не найден, устарел или уже подтверждён")
@@ -315,11 +416,10 @@ def invite_accept(body: InviteTokenBody, db: Session = Depends(get_db),
     if inv.company_id:
         _c = db.query(Company).filter(Company.id == inv.company_id).first()
         comp_name = _c.name if _c else ""
+    uname, disp = _max_identity(db, user, body.init_data)
     if existing is not None and existing.company_id:
         if inv.company_id and existing.company_id == inv.company_id:
-            code = max_login.make_webticket(db, max_id,
-                                            user.tg_username or "",
-                                            user.tg_username or "")
+            code = max_login.make_webticket(db, max_id, uname, disp)
             return {"status": "ok", "action": "already",
                     "username": existing.username,
                     "company_name": comp_name,
@@ -327,10 +427,8 @@ def invite_accept(body: InviteTokenBody, db: Session = Depends(get_db),
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Эта учётная запись уже привязана к другой "
                             "компании — войдите на сайт под своим логином")
-    u = max_login.login_or_register(db, max_id, user.tg_username or "",
-                                    user.tg_username or "", invite=inv)
-    code = max_login.make_webticket(db, max_id, user.tg_username or "",
-                                    user.tg_username or "")
+    u = max_login.login_or_register(db, max_id, uname, disp, invite=inv)
+    code = max_login.make_webticket(db, max_id, uname, disp)
     return {"status": "ok",
             "action": "upgraded" if existing is not None else "registered",
             "username": u.username, "company_name": comp_name,

@@ -155,7 +155,11 @@ class TestNoBlackButtons:
         """Не-вакуумность: кнопка основная, её видят на каждом экране."""
         html = read(INDEX)
         js = read(APP_JS)
-        assert html.count("btn-primary") == 4
+        # v1.70.37: на странице входа появилась пятая основная кнопка —
+        # «Регистрация через MAX» в подсказке первого визита. Смысл проверки —
+        # не-вакуумность (основная кнопка реально встречается в разметке),
+        # поэтому точное количество больше не фиксируем.
+        assert html.count("btn-primary") >= 4
         assert js.count("btn-primary") >= 80
 
     @pytest.mark.parametrize("sel", [
@@ -537,7 +541,9 @@ class TestDuplicateRules:
 class TestRelease:
     # v1.70.35: точки синхронизации живут дальше, свою версию проверяет
     # test_v17035; здесь остаётся соответствие файлов друг другу.
-    VERSION = "1.70.36"
+    # v1.70.37: точки синхронизации живут дальше; свою версию и
+    # требование «своя запись первая» проверяет test_v17037.
+    VERSION = "1.70.37"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

@@ -255,7 +255,9 @@ class TestMaxSignature:
 # 3. Релиз
 # ==========================================================================
 class TestRelease:
-    VERSION = "1.70.36"
+    # v1.70.37: точки синхронизации живут дальше; свою версию и
+    # требование «своя запись первая» проверяет test_v17037.
+    VERSION = "1.70.37"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",
@@ -270,11 +272,13 @@ class TestRelease:
         mx = (ROOT / "app/static/maxapp/index.html").read_text(encoding="utf-8")
         assert f"maxapp.js?v={self.VERSION}" in mx
 
-    def test_whats_new_is_first(self):
+    def test_whats_new_entry_is_in_history(self):
+        """v1.70.37: требование «своя запись первая» принадлежит текущему
+        выпуску и проверяется в test_v17037; здесь остаётся наличие записи
+        v1.70.36 в истории и её числа — они не должны теряться при правках."""
         js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == self.VERSION
-        entry = js[js.index(f"'{self.VERSION}':"):][:9000]
+        assert "'1.70.36':" in js, "запись v1.70.36 пропала из истории"
+        entry = js[js.index("'1.70.36':"):][:9000]
         for needle in ("плюс", "clamp", "подпись"):
             assert needle in entry, f"в описании выпуска нет {needle!r}"
 

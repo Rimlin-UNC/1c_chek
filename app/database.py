@@ -159,6 +159,27 @@ def _ensure_schema() -> None:
             ("forbidden_categories",
              "ALTER TABLE companies ADD COLUMN forbidden_categories VARCHAR(1000) DEFAULT ''"),
         ],
+        "pool_users": [
+            # v1.70.37: канал регистрации и метка «пришёл через MAX»
+            ("reg_source",
+             "ALTER TABLE pool_users ADD COLUMN reg_source VARCHAR(16) DEFAULT ''"),
+            # v1.70.37: профиль из MAX — заполняется только после согласия
+            ("first_name",
+             "ALTER TABLE pool_users ADD COLUMN first_name VARCHAR(64) DEFAULT ''"),
+            ("last_name",
+             "ALTER TABLE pool_users ADD COLUMN last_name VARCHAR(64) DEFAULT ''"),
+            ("photo_url",
+             "ALTER TABLE pool_users ADD COLUMN photo_url VARCHAR(512) DEFAULT ''"),
+            ("language",
+             "ALTER TABLE pool_users ADD COLUMN language VARCHAR(8) DEFAULT ''"),
+            # v1.70.37: согласие 152-ФЗ на данные из MAX (момент/версия/канал)
+            ("consent_at",
+             "ALTER TABLE pool_users ADD COLUMN consent_at DATETIME NULL"),
+            ("consent_version",
+             "ALTER TABLE pool_users ADD COLUMN consent_version VARCHAR(16) DEFAULT ''"),
+            ("consent_source",
+             "ALTER TABLE pool_users ADD COLUMN consent_source VARCHAR(16) DEFAULT ''"),
+        ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
         ],
