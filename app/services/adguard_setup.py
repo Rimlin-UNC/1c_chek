@@ -46,7 +46,14 @@ from .updater import APP_DIR
 
 INSTALL_URL = ("https://raw.githubusercontent.com/AdguardTeam/"
                "AdGuardVPNCLI/HEAD/scripts/release/install.sh")
-INSTALL_TMP = "/tmp/ymaster-adguard-install.sh"
+# v1.70.38 (bandit B108): скрипт установщика больше НЕ лежит в общем /tmp.
+# Предсказуемое имя в мировом каталоге позволяло любому локальному
+# пользователю заранее создать на этом пути симлинк — и тогда curl писал бы
+# в произвольный файл, а `sh` под sudo выполнил бы подменённый скрипт с
+# правами root. Теперь это приватный каталог приложения (0700), а файл перед
+# скачиванием удаляется: ни подсунуть симлинк, ни оставить чужой скрипт.
+INSTALL_TMP_DIR = os.path.join(APP_DIR, "data", "tmp")
+INSTALL_TMP = os.path.join(INSTALL_TMP_DIR, "adguard-install.sh")
 # v1.70.22: ДВУМЯ шагами (скачать, затем выполнить), а не `curl … | sh -s --`.
 # В пайплайне код возврата принадлежит ПОСЛЕДНЕЙ команде (sh), поэтому отказ
 # curl (нет сети, DNS, rc 6/35) выглядел как успешная установка, а владелец
@@ -62,7 +69,9 @@ INSTALL_TMP = "/tmp/ymaster-adguard-install.sh"
 # создаёт файл .nosymlink и ссылка НЕ появляется. Кроме того, create_symlink()
 # сразу делает return 0, если /usr/local/bin не входит в PATH (у юнита
 # программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin — его там нет).
-INSTALL_CMD = (f"curl -fsSL {INSTALL_URL} -o {INSTALL_TMP} "
+INSTALL_CMD = (f"mkdir -p {INSTALL_TMP_DIR} && chmod 700 {INSTALL_TMP_DIR} "
+               f"&& rm -f {INSTALL_TMP} "
+               f"&& curl -fsSL {INSTALL_URL} -o {INSTALL_TMP} "
                f"&& sh {INSTALL_TMP} -a y")
 CLI_LINK = "/usr/local/bin/adguardvpn-cli"
 CLI_REAL = "/opt/adguardvpn_cli/adguardvpn-cli"
@@ -361,6 +370,15 @@ def _reason(text: str, limit: int = 300) -> str:
                     "(raw.githubusercontent.com: DNS/файрвол/прокси)")
 
 
+# v1.70.38: shell=True оставлен ТОЛЬКО для двух константных команд этого
+# модуля — установщика AdGuard и создания ссылки. Чтобы будущая правка не
+# протянула в оболочку пользовательские данные (код активации, путь, имя
+# файла), список разрешённых команд закрытый: любая другая команда с
+# shell=True отклоняется ДО выполнения. Так безопасность становится
+# конструктивной, а не случайной (bandit B602, high severity).
+_SHELL_ALLOWED = frozenset({INSTALL_CMD, LINK_CMD})
+
+
 def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
             shell: bool = False, input_text: str = "") -> tuple[int, str]:
     """Выполнить команду, вернуть (код, вывод).
@@ -370,6 +388,10 @@ def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
     только run_helper() с фиксированной фазой (v1.70.16).
     Режим `pass` (пароль служебного пользователя через stdin) в v1.70.16
     удалён: мастер пароли не принимает."""
+    if shell and (not isinstance(cmd, str) or cmd not in _SHELL_ALLOWED):
+        # v1.70.38: см. _SHELL_ALLOWED — оболочка только для своих констант
+        raise RuntimeError("Команда не из белого списка: shell=True разрешён "
+                           "только для установщика и ссылки AdGuard")
     if job.sudo_mode == "helper":
         raise RuntimeError("В режиме помощника произвольные команды от root "
                            "не выполняются — только run_helper(фаза).")
@@ -380,7 +402,11 @@ def run_cmd(cmd: list[str] | str, timeout: float = CMD_TIMEOUT,
     else:
         full = cmd
     try:
-        p = subprocess.run(full, shell=shell, capture_output=True,
+        # nosec B602,B604,B606,B607: shell=True возможен только для команд из
+        # закрытого списка _SHELL_ALLOWED (проверка выше), пользовательские
+        # данные в них не подставляются — INSTALL_URL/INSTALL_TMP/CLI_*
+        # являются константами модуля.
+        p = subprocess.run(full, shell=shell, capture_output=True,  # nosec B602 — константы модуля + белый список _SHELL_ALLOWED
                            text=True, timeout=timeout,
                            input=input_text or None)
     except subprocess.TimeoutExpired:
@@ -964,7 +990,7 @@ def _ensure_cli_link() -> None:
         return
     job.say("cli", "Создаю ссылку /usr/local/bin/adguardvpn-cli "
                    "(её требуют служба туннеля и автопилот).")
-    rc, out = run_cmd(LINK_CMD, shell=True)
+    rc, out = run_cmd(LINK_CMD, shell=True)  # nosec B604 — константа модуля, пользовательских данных нет
     if rc != 0:
         raise RuntimeError("Не создать ссылку " + CLI_LINK + ": "
                            + _reason(out))
@@ -1007,7 +1033,7 @@ def _step_cli() -> None:
                            "пропускаю установку.", "skip", 20)
             return
     job.say("cli", "Ставим официальным установщиком (1–2 минуты)…")
-    rc, install_out = run_cmd(INSTALL_CMD, shell=True)
+    rc, install_out = run_cmd(INSTALL_CMD, shell=True)  # nosec B604 — константа модуля, пользовательских данных нет
     if rc != 0:
         raise RuntimeError("Установщик AdGuard завершился с ошибкой: "
                            + _reason(install_out))
@@ -1018,7 +1044,7 @@ def _step_cli() -> None:
         # известный случай: вопрос установщика про ссылку остался без ответа
         if os.path.exists(CLI_REAL):
             job.say("cli", "Создаю ссылку /usr/local/bin (установщик не успел).")
-            run_cmd(LINK_CMD, shell=True)
+            run_cmd(LINK_CMD, shell=True)  # nosec B604 — константа модуля, пользовательских данных нет
             cli = _find_cli()
             rc, out = run_cmd([cli, "--version"], timeout=30) if cli else (1, "")
     if rc != 0:

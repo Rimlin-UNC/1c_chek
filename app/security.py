@@ -134,10 +134,18 @@ class LoginGuard:
     MAX_FAILS = 5
     WINDOW_S = 15 * 60
     BLOCK_S = 15 * 60
+    # v1.70.38: память под контролем (как в SlidingWindowLimiter выше).
+    # Ключи (IP, логин) приходят из интернета: без чистки словари росли
+    # вечно, и перебор с подставными IP/логинами превращался в медленный
+    # отказ обслуживания по памяти — защита от перебора сама становилась
+    # вектором атаки.
+    MAX_KEYS = 5000
+    PRUNE_EVERY = 512
 
     def __init__(self):
         self._fails: dict[tuple, collections.deque] = {}
         self._blocked_until: dict[tuple, float] = {}
+        self._calls = 0
 
     def check(self, key: tuple) -> None:
         until = self._blocked_until.get(key)
@@ -147,9 +155,22 @@ class LoginGuard:
                 status.HTTP_429_TOO_MANY_REQUESTS,
                 f"Слишком много неудачных попыток входа. Повторите через {minutes} мин.",
             )
+        if until:
+            self._blocked_until.pop(key, None)   # истёк — освобождаем память
+
+    def _prune(self, now: float) -> None:
+        """Убирает протухшие ключи: и пустые окна неудач, и истёкшие блокировки."""
+        for k in [k for k, dq in self._fails.items()
+                  if not dq or dq[-1] <= now - self.WINDOW_S]:
+            self._fails.pop(k, None)
+        for k in [k for k, until in self._blocked_until.items() if until <= now]:
+            self._blocked_until.pop(k, None)
 
     def record_fail(self, key: tuple) -> None:
         now = time.monotonic()
+        self._calls += 1
+        if self._calls % self.PRUNE_EVERY == 0:
+            self._prune(now)
         dq = self._fails.setdefault(key, collections.deque())
         dq.append(now)
         while dq and dq[0] <= now - self.WINDOW_S:
@@ -157,6 +178,12 @@ class LoginGuard:
         if len(dq) >= self.MAX_FAILS:
             self._blocked_until[key] = now + self.BLOCK_S
             dq.clear()
+        if len(self._fails) > self.MAX_KEYS:
+            self._prune(now)
+            if len(self._fails) > self.MAX_KEYS:
+                # крайний случай (все ключи «свежие»): память важнее истории —
+                # активные блокировки при этом сохраняются
+                self._fails.clear()
 
     def record_ok(self, key: tuple) -> None:
         self._fails.pop(key, None)
@@ -181,4 +208,14 @@ async def security_headers_middleware(request: Request, call_next) -> Response:
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(), microphone=()")
+    # v1.70.38 (чек-лист API-безопасности: HSTS в списке обязательных
+    # заголовков) — но ТОЛЬКО когда запрос действительно пришёл по HTTPS:
+    # схема или X-Forwarded-Proto от локального nginx (та же логика, что у
+    # Secure-флага cookie в app/auth.py::cookie_secure). Отдать HSTS на голом
+    # http — значит заставить браузер навсегда ходить на этот хост по https,
+    # и локальное превью/ LAN перестанут открываться.
+    if (request.url.scheme == "https"
+            or (request.headers.get("x-forwarded-proto") or "").lower() == "https"):
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response

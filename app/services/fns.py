@@ -138,12 +138,41 @@ def ET_tostring_compat(el) -> str:
     return ET.tostring(el, encoding="unicode")
 
 
+# ---------------------------------------------------------------------------
+#  v1.70.38: безопасный разбор XML
+#  Ответы ФНС — ВНЕШНИЕ данные, а штатный xml.etree раскрывает сущности:
+#  493 байта «billion laughs» превращались в 1.6 МБ текста (×3200), а ещё
+#  пара уровней вложенности убивала единственный воркер uvicorn по памяти
+#  (DoS всего приложения). Плюс внешние сущности — чтение локальных файлов.
+#  Поэтому разбор идёт через defusedxml — готовую библиотеку, которую
+#  рекомендует документация Python (раздел «XML vulnerabilities»).
+#  Политика МЯГКАЯ: безобидный <!DOCTYPE> без сущностей остаётся рабочим,
+#  чтобы не сломать боевой обмен; запрещены только сущности и внешние ссылки.
+# ---------------------------------------------------------------------------
+def safe_fromstring(xml_text: str):
+    """Разбор XML без сущностей и внешних связей. Ошибка → ValueError."""
+    try:
+        from defusedxml.ElementTree import fromstring as _defused
+    except ImportError:                                  # pragma: no cover
+        # библиотеки нет — отклоняем хотя бы объявленные сущности
+        if "<!ENTITY" in (xml_text or "")[:65536].upper():
+            raise ValueError("XML с сущностями отклонён: нет defusedxml")
+        import xml.etree.ElementTree as ET
+        # nosec B314: запасная ветка на случай отсутствия defusedxml;
+        # объявления сущностей отсеиваются проверкой выше
+        return ET.fromstring(xml_text)  # nosec B314 — сущности отклоняются safe_fromstring
+    return _defused(xml_text, forbid_dtd=False,
+                    forbid_entities=True, forbid_external=True)
+
+
 def _xml_findtext_ns(xml_text: str, local_name: str) -> str | None:
     """Текст ПЕРВОГО элемента с заданным ЛОКАЛЬНЫМ именем (без NS)."""
     import xml.etree.ElementTree as ET
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
+        root = safe_fromstring(xml_text)
+    except (ET.ParseError, ValueError):
+        # v1.70.38: ValueError ловит DefusedXmlException — атака/мусор
+        # превращаются в «нет данных», а не в 500 или в смерть воркера.
         return None
     for el in root.iter():
         if el.tag.rsplit('}', 1)[-1] == local_name and (el.text or '').strip():
@@ -155,8 +184,8 @@ def _xml_find_element_ns(xml_text: str, local_name: str):
     """Первый элемент с заданным ЛОКАЛЬНЫМ именем (без NS) или None."""
     import xml.etree.ElementTree as ET
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
+        root = safe_fromstring(xml_text)          # v1.70.38: без сущностей
+    except (ET.ParseError, ValueError):
         return None
     for el in root.iter():
         if el.tag.rsplit('}', 1)[-1] == local_name:

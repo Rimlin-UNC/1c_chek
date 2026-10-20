@@ -602,11 +602,12 @@ def _send_digest(db: Session) -> None:
         lines.append(f"🪝 Вебхуки: {_stuck} недоставлено (исчерпаны "
                      "повторы) — проверьте приёмник в «Настройках»")
     text = "\n".join(lines)
-    staff = [u for u in db.query(User).filter(
+    # v1.70.38: .all() и так возвращает список — копия в генераторе лишняя
+    staff = db.query(User).filter(
         User.is_active.is_(True),
         User.telegram_chat_id.isnot(None),
         User.telegram_chat_id != "",
-        User.role.in_(("admin", "accountant"))).all()]
+        User.role.in_(("admin", "accountant"))).all()
     proxy = get_proxy(db)
     base = get_api_base(db)                              # v1.70.12
     sent = 0

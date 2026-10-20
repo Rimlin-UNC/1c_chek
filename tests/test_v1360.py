@@ -99,9 +99,17 @@ def _user(db, uid):
     return db.get(PoolUser, uid)
 
 
+# v1.70.38: счётчик вынесен из аргументов — список по умолчанию создаётся
+# ОДИН раз и молча становился общим состоянием всех вызовов и тестов
+# (ruff/bandit B006). Поведение прежнее: номера растут.
+_VRECEIPT_N = [0]
+
+
 def _vreceipt(db, user, region="78", city="Санкт-Петербург",
-              industry="food", at=None, total=300.0, n=[0]):
+              industry="food", at=None, total=300.0, n=None):
     """Верифицированный чек с гео/отраслью (юнит-посев)."""
+    if n is None:
+        n = _VRECEIPT_N
     n[0] += 1
     r = PoolReceipt(pool_user_id=user.id, source="web",
                     fn=f"7700000099{n[0]:04d}", fd="1", fp=str(n[0]),

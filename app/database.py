@@ -30,7 +30,6 @@ def _utcnow() -> "object":
 
 class Base(DeclarativeBase):
     """Базовый класс всех ORM-моделей."""
-    pass
 
 
 _connect_args = {}
