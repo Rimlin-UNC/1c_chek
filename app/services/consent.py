@@ -29,12 +29,24 @@ log = logging.getLogger(__name__)
 #: должен дать согласие заново, если условия обработки изменились.
 CONSENT_VERSION = "1.0"
 
-#: Оператор персональных данных (реквизиты из ЕГРЮЛ).
-CONSENT_OPERATOR = ("ООО «Ямастер», ИНН 5501280595, ОГРН 1245500017062, "
-                    "адрес: 644085, г. Омск, пр-кт Мира, д. 183, корп. 2, кв. 27")
+#: Оператор персональных данных. В коде — только то, что подтверждается
+#: самим репозиторием (наименование, сайт, почта: они есть в README, в подвале
+#: сайта и в `settings.VENDOR`). ИНН, ОГРН и юридический адрес — юридические
+#: факты, которые знает владелец; выдуманные реквизиты в тексте согласия были бы
+#: дефектом хуже пустого поля, поэтому они берутся ИЗ НАСТРОК (Настройки →
+#: «Согласие 152-ФЗ: реквизиты оператора») и по умолчанию не заполнены.
+OPERATOR_NAME = "ООО «Ямастер»"
+OPERATOR_SITE = "https://ymaster.ru"
 
 #: Куда писать по вопросам персональных данных и для отзыва согласия.
-CONSENT_CONTACT = "privacy@ymaster.ru"
+#: По умолчанию — почта из репозитория; владелец может задать отдельный ящик.
+CONSENT_CONTACT_DEFAULT = "info@ymaster.ru"
+
+#: Ключи настроек с реквизитами оператора.
+KEY_INN = "consent_operator_inn"
+KEY_OGRN = "consent_operator_ogrn"
+KEY_ADDRESS = "consent_operator_address"
+KEY_CONTACT = "consent_contact"
 
 #: Каналы, которыми согласие может быть получено/отозвано.
 SOURCE_MAXAPP = "max-miniapp"
@@ -49,13 +61,17 @@ CONSENT_LEAD = (
 
 #: Разделы согласия: цель, перечень данных, действия, срок, права, отзыв.
 #: Состав соответствует ч. 4 ст. 9 152-ФЗ (содержание согласия).
+#: Шаблоны разделов: `{operator}` подставляется из настроек при выдаче текста.
 CONSENT_SECTIONS = (
     {
         "title": "Оператор и основание",
         "items": (
-            f"Оператор персональных данных: {CONSENT_OPERATOR}.",
+            "Оператор персональных данных: {operator}.",
             "Основание обработки: ст. 9 Федерального закона от 27.07.2006 "
             "№ 152-ФЗ «О персональных данных» (согласие субъекта).",
+            "Обработка осуществляется оператором самостоятельно, без передачи "
+            "третьим лицам по поручению, кроме случаев, указанных в перечне "
+            "действий ниже.",
         ),
     },
     {
@@ -97,7 +113,7 @@ CONSENT_SECTIONS = (
             "согласие действует до его отзыва;",
             "отозвать согласие можно в любой момент: кнопкой «Отозвать "
             "согласие» в кабинете мини-приложения либо письмом на адрес "
-            f"{CONSENT_CONTACT};",
+            "{contact};",
             "после отзыва обработка прекращается, а персональные данные "
             "профиля (имя, фамилия, ник, фото, язык) удаляются из карточки "
             "участника (ст. 14, 21 152-ФЗ);",
@@ -137,24 +153,78 @@ CONSENT_SECTIONS = (
 PROFILE_FIELDS = ("first_name", "last_name", "photo_url", "language")
 
 
-def consent_payload() -> dict:
+def requisites(db=None) -> dict:
+    """Реквизиты оператора из настроек (заполняет администратор).
+
+    `db` может быть None — тогда возвращаются значения по умолчанию: текст
+    согласия остаётся полным по составу, а вместо реквизитов указывается
+    общеизвестный источник (ЕГРЮЛ) и почта для запроса.
+    """
+    def get(key: str) -> str:
+        if db is None:
+            return ""
+        from . import appsettings
+        return (appsettings.get_setting(db, key, "") or "").strip()
+
+    return {
+        "inn": get(KEY_INN)[:20],
+        "ogrn": get(KEY_OGRN)[:20],
+        "address": get(KEY_ADDRESS)[:300],
+        "contact": get(KEY_CONTACT)[:120] or CONSENT_CONTACT_DEFAULT,
+    }
+
+
+def operator_line(db=None) -> str:
+    """Строка «Оператор: …» — из настроек, без выдуманных значений."""
+    r = requisites(db)
+    parts = [OPERATOR_NAME]
+    if r["inn"]:
+        parts.append("ИНН " + r["inn"])
+    if r["ogrn"]:
+        parts.append("ОГРН " + r["ogrn"])
+    line = ", ".join(parts)
+    if r["address"]:
+        return line + ", адрес: " + r["address"]
+    # адреса в настройках нет: не выдумываем, а честно указываем источник
+    return (f"{line} ({OPERATOR_SITE}); адрес оператора опубликован в ЕГРЮЛ "
+            f"и предоставляется по запросу на {r['contact']}")
+
+
+def requisites_complete(db=None) -> bool:
+    """Полнота по п. 2 ч. 4 ст. 9 152-ФЗ: наименование, адрес и реквизиты."""
+    r = requisites(db)
+    return bool(r["inn"] and r["ogrn"] and r["address"])
+
+
+def sections(db=None) -> list[dict]:
+    """Разделы согласия с подставленными реквизитами и почтой."""
+    r = requisites(db)
+    op = operator_line(db)
+    return [{"title": s["title"],
+             "items": [i.format(operator=op, contact=r["contact"])
+                       for i in s["items"]]}
+            for s in CONSENT_SECTIONS]
+
+
+def consent_payload(db=None) -> dict:
     """Структура согласия для клиента (мини-приложение, документация, тесты)."""
+    r = requisites(db)
     return {
         "version": CONSENT_VERSION,
         "title": CONSENT_TITLE,
         "lead": CONSENT_LEAD,
-        "operator": CONSENT_OPERATOR,
-        "contact": CONSENT_CONTACT,
-        "sections": [{"title": s["title"], "items": list(s["items"])}
-                     for s in CONSENT_SECTIONS],
-        "text": full_text(),
+        "operator": operator_line(db),
+        "contact": r["contact"],
+        "requisites_complete": requisites_complete(db),
+        "sections": sections(db),
+        "text": full_text(db),
     }
 
 
-def full_text() -> str:
+def full_text(db=None) -> str:
     """Плоский текст согласия — для журнала, выгрузки и сверки редакции."""
     parts = [CONSENT_TITLE, f"Редакция {CONSENT_VERSION}", "", CONSENT_LEAD]
-    for s in CONSENT_SECTIONS:
+    for s in sections(db):
         parts.append("")
         parts.append(s["title"] + ":")
         parts.extend("— " + i + ";" for i in s["items"])

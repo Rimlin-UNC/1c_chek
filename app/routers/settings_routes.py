@@ -9,7 +9,10 @@
 """
 from __future__ import annotations
 
+import re
 import secrets
+
+from pydantic import BaseModel, Field
 
 from fastapi import (APIRouter, Depends, HTTPException, Query,
                      Request, status)
@@ -193,6 +196,78 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
         "auto_verify": body.auto_verify,
         "advance_deadline_days": body.advance_deadline_days})
     return {"ok": True, "message": "Настройки сохранены"}
+
+
+# --------------------------------------------------------------------------
+#  v1.70.37: реквизиты оператора в тексте согласия на обработку персональных
+#  данных (152-ФЗ). Текст согласия живёт в services.consent; здесь — только те
+#  сведения, которые знает владелец: ИНН, ОГРН, юридический адрес и почта для
+#  связи по персональным данным. В коде намеренно нет «значений по умолчанию»
+#  для реквизитов: выдуманные юридические факты в согласии — дефект хуже
+#  пустого поля, поэтому пока они не заполнены, в тексте вместо адреса
+#  указывается общеизвестный источник (ЕГРЮЛ) и почта для запроса, а
+#  администратор видит пометку о неполноте (п. 2 ч. 4 ст. 9 152-ФЗ).
+# --------------------------------------------------------------------------
+class ConsentRequisitesPatch(BaseModel):
+    # запас по длине — на ввод с проборами и дефисами («55 01-28 0595»):
+    # цифры извлекаются на сервере, в настройку пишется только число
+    inn: str | None = Field(default=None, max_length=32)
+    ogrn: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=300)
+    contact: str | None = Field(default=None, max_length=120)
+
+
+@router.get("/consent", summary="Реквизиты оператора в согласии 152-ФЗ (админ)")
+def get_consent_settings(db: Session = Depends(get_db),
+                         user: User = Depends(require_admin)):
+    from ..services import consent
+    r = consent.requisites(db)
+    return {**r,
+            "complete": consent.requisites_complete(db),
+            "version": consent.CONSENT_VERSION,
+            "operator_line": consent.operator_line(db)}
+
+
+@router.put("/consent", summary="Сохранить реквизиты оператора (админ)")
+def put_consent_settings(body: ConsentRequisitesPatch,
+                         db: Session = Depends(get_db),
+                         user: User = Depends(require_admin)):
+    from ..services import consent
+    if body.inn is not None:
+        inn = re.sub(r"\D", "", body.inn)
+        if inn and len(inn) not in (10, 12):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "ИНН: 10 цифр для юридического лица, 12 — для ИП")
+        appsettings.set_setting(db, consent.KEY_INN, inn)
+    if body.ogrn is not None:
+        ogrn = re.sub(r"\D", "", body.ogrn)
+        if ogrn and len(ogrn) not in (13, 15):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "ОГРН: 13 цифр (ОГРНИП — 15)")
+        appsettings.set_setting(db, consent.KEY_OGRN, ogrn)
+    if body.address is not None:
+        appsettings.set_setting(db, consent.KEY_ADDRESS,
+                                body.address.strip()[:300])
+    if body.contact is not None:
+        contact = body.contact.strip()[:120]
+        if contact and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Почта для связи по персональным данным: "
+                                "адрес вида privacy@ymaster.ru")
+        appsettings.set_setting(db, consent.KEY_CONTACT, contact)
+    log_action(user, "consent_requisites_updated", details={
+        "inn": body.inn, "ogrn": body.ogrn,
+        "address_set": bool((body.address or "").strip()),
+        "contact": body.contact})
+    complete = consent.requisites_complete(db)
+    return {"ok": True, "complete": complete,
+            "operator_line": consent.operator_line(db),
+            "message": ("Реквизиты сохранены — текст согласия обновлён"
+                        if complete else
+                        "Сохранено. Для полноты по п. 2 ч. 4 ст. 9 152-ФЗ "
+                        "укажите ИНН, ОГРН и юридический адрес: пока в тексте "
+                        "согласия вместо адреса — ссылка на ЕГРЮЛ и почта для "
+                        "запроса")}
 
 
 # --------------------------------------------------------------------------

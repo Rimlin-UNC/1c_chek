@@ -90,8 +90,29 @@ class TestConsentText:
         from app.services import consent
         txt = consent.full_text()
         assert "152-ФЗ" in txt
-        assert "ООО «Ямастер»" in txt and "5501280595" in txt
-        assert "@" in consent.CONSENT_CONTACT
+        assert "ООО «Ямастер»" in txt
+        assert "@" in consent.CONSENT_CONTACT_DEFAULT
+
+    def test_no_invented_requisites_in_code(self):
+        """Юридические факты не выдумываются: в коде нет «значений по
+        умолчанию» для ИНН, ОГРН и адреса — их заполняет владелец."""
+        src = read("app/services/consent.py")
+        assert not re.search(r"ИНН\s*\d{6,}", src), "в коде зашит ИНН"
+        assert not re.search(r"ОГРН\s*\d{6,}", src), "в коде зашит ОГРН"
+        assert not re.search(r"адрес:\s*\d{6}", src), "в коде зашит адрес"
+        # а вот что в коде есть — только подтверждённое репозиторием
+        assert 'OPERATOR_NAME = "ООО «Ямастер»"' in src
+        assert 'OPERATOR_SITE = "https://ymaster.ru"' in src
+        assert 'CONSENT_CONTACT_DEFAULT = "info@ymaster.ru"' in src
+
+    def test_default_operator_line_is_honest(self):
+        """Без реквизитов в настройках текст не придумывает адрес, а указывает
+        общеизвестный источник и почту для запроса."""
+        from app.services import consent
+        line = consent.operator_line()
+        assert "ООО «Ямастер»" in line and "ymaster.ru" in line
+        assert "ЕГРЮЛ" in line and consent.CONSENT_CONTACT_DEFAULT in line
+        assert consent.requisites_complete() is False
 
     def test_text_has_every_mandatory_element(self):
         from app.services import consent
@@ -122,6 +143,136 @@ class TestConsentText:
         txt = consent.full_text()
         assert "имя и фамилия" in txt and "фотографию профиля" in txt \
             and "код языка" in txt and "ник" in txt
+
+
+class TestOperatorRequisites:
+    """Реквизиты оператора — настройка администратора, а не константа в коде."""
+
+    INN = "5501280595"
+    OGRN = "1245500017062"
+    ADDR = "644085, г. Омск, пр-кт Мира, д. 183, офис 27"
+    MAIL = "privacy@ymaster.ru"
+
+    def _put(self, client, hdr, **kw):
+        return client.put("/api/v1/settings/consent", headers=hdr, json=kw)
+
+    def _reset(self, client, hdr):
+        self._put(client, hdr, inn="", ogrn="", address="", contact="")
+
+    def test_admin_fills_requisites_and_text_updates(self, client):
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        try:
+            before = client.get("/api/v1/settings/consent", headers=hdr).json()
+            assert before["complete"] is False
+            r = self._put(client, hdr, inn=self.INN, ogrn=self.OGRN,
+                          address=self.ADDR, contact=self.MAIL)
+            assert r.status_code == 200, r.text
+            d = r.json()
+            assert d["ok"] is True and d["complete"] is True
+            assert self.INN in d["operator_line"] and self.ADDR in d["operator_line"]
+            # текст согласия (публичный и в сессии мини-приложения) обновился
+            doc = client.get("/api/v1/maxapp/consent").json()
+            assert doc["requisites_complete"] is True
+            assert self.INN in doc["operator"] and self.ADDR in doc["operator"]
+            assert self.MAIL in doc["text"]
+            assert "ЕГРЮЛ" not in doc["operator"], "осталась ссылка вместо адреса"
+            st = client.get("/api/v1/settings/consent", headers=hdr).json()
+            assert st["inn"] == self.INN and st["ogrn"] == self.OGRN
+            assert st["address"] == self.ADDR and st["contact"] == self.MAIL
+        finally:
+            self._reset(client, hdr)
+        assert client.get("/api/v1/settings/consent",
+                          headers=hdr).json()["complete"] is False
+
+    def test_digits_are_extracted_from_noisy_input(self, client):
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        try:
+            r = self._put(client, hdr, inn=" 55 01-28 0595 ", ogrn="1 2 4 5 5 0 0 0 1 7 0 6 2")
+            assert r.status_code == 200, r.text
+            st = client.get("/api/v1/settings/consent", headers=hdr).json()
+            assert st["inn"] == self.INN and st["ogrn"] == self.OGRN
+        finally:
+            self._reset(client, hdr)
+
+    def test_bad_requisites_are_refused(self, client):
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        try:
+            assert self._put(client, hdr, inn="12345").status_code == 422
+            assert self._put(client, hdr, ogrn="12345").status_code == 422
+            r = self._put(client, hdr, contact="не почта")
+            assert r.status_code == 422 and "privacy@" in r.json()["detail"]
+            # отказ ничего не записал
+            st = client.get("/api/v1/settings/consent", headers=hdr).json()
+            assert st["inn"] == "" and st["contact"] == "info@ymaster.ru"
+        finally:
+            self._reset(client, hdr)
+
+    def test_partial_fill_is_allowed_but_marked(self, client):
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        try:
+            r = self._put(client, hdr, inn=self.INN)
+            assert r.status_code == 200
+            d = r.json()
+            assert d["complete"] is False
+            assert "п. 2 ч. 4 ст. 9 152-ФЗ" in d["message"]
+            assert self.INN in d["operator_line"] and "ЕГРЮЛ" in d["operator_line"]
+        finally:
+            self._reset(client, hdr)
+
+    def test_requires_admin(self, client):
+        """Реквизиты оператора — только администратор. Проверяем СВЕЖИМ
+        клиентом: общий `client` несёт cookie прежнего входа, и с ней запрос
+        оказался бы авторизованным не потому, что так задумано."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as anon:
+            assert anon.get("/api/v1/settings/consent").status_code in (401, 403)
+            assert anon.put("/api/v1/settings/consent",
+                            json={"inn": self.INN}).status_code in (401, 403)
+
+    def test_action_is_written_to_audit(self, client, monkeypatch):
+        """Изменение реквизитов оператора — событие журнала действий: кто и
+        когда поправил текст согласия, должно быть доказуемо.
+
+        Проверяем сам факт вызова `log_action`, а не строку в таблице: журнал
+        пишет отдельной сессией и сам назначает `id = max + 1`, поэтому при
+        параллельном прогоне (`-n 2`) возможна гонка идентификаторов — это
+        известное свойство журнала (см. журнал UI, v1.18.0), а не поведение
+        настроек согласия."""
+        from tests.conftest import login
+        # `log_action` импортирован в модуль настроек на уровне файла, поэтому
+        # подменяем имя именно там: патч исходного модуля не подействовал бы.
+        import app.routers.settings_routes as sr
+        calls = []
+        monkeypatch.setattr(
+            sr, "log_action",
+            lambda user, action, **kw: calls.append((action, kw)))
+        hdr = login(client, "admin", "admin123")
+        calls.clear()                       # вход сам пишется в журнал
+        try:
+            self._put(client, hdr, inn=self.INN, address=self.ADDR)
+            assert calls, "сохранение реквизитов не попало в журнал"
+            action, kw = calls[0]
+            assert action == "consent_requisites_updated"
+            assert self.INN in str(kw.get("details")), "в журнале нет ИНН"
+        finally:
+            self._reset(client, hdr)
+
+    def test_settings_card_exists(self):
+        js = read(APP_JS)
+        assert 'id="st-consent"' in js
+        assert "'/api/v1/settings/consent'" in js
+        for i in ("cs-inn", "cs-ogrn", "cs-address", "cs-contact",
+                  "cs-save", "cs-preview"):
+            assert f"#{i}" in js or f'id="{i}"' in js, f"нет элемента {i}"
+        assert "п. 2 ч. 4 ст. 9 152-ФЗ" in js
+        assert "CONSENT_VERSION" in js, "не сказано, как поднять редакцию"
+        # программа не заполняет реквизиты за владельца
+        assert "не выдумывает юридические факты" in js
 
 
 # ------------------------------------------------------------------ сессия

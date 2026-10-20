@@ -172,7 +172,7 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
     # v1.70.37: первый вход (или смена редакции согласия) — клиент обязан
     # показать текст и получить явное «согласен» ДО заполнения карточки.
     if not me["consent"]["given"] or me["consent"]["stale"]:
-        resp["consent_doc"] = consent.consent_payload()
+        resp["consent_doc"] = consent.consent_payload(db)
     return resp
 
 
@@ -188,10 +188,11 @@ def me(db: Session = Depends(get_db), user=Depends(require_pool_user)):
 # ==========================================================================
 
 @router.get("/consent", summary="Текст согласия на обработку данных из MAX")
-def consent_doc():
+def consent_doc(db: Session = Depends(get_db)):
     """Публичная редакция согласия: оператор, цели, перечень данных, срок,
-    порядок отзыва и права субъекта (ч. 4 ст. 9 152-ФЗ)."""
-    return consent.consent_payload()
+    порядок отзыва и права субъекта (ч. 4 ст. 9 152-ФЗ). Реквизиты оператора
+    подставляются из настроек (Настройки → «Согласие 152-ФЗ»)."""
+    return consent.consent_payload(db)
 
 
 @router.post("/consent",

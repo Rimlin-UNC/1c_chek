@@ -68,7 +68,11 @@ class TestSettingsMenuStructure:
         with_sec = [(cid, sec, order) for cid, sec, order in cards if sec]
         # v1.70.28: карточек 27 — у AdGuard VPN появился собственный блок
         # st-adguard в разделе «Устройство и служебное».
-        assert len(with_sec) == 27, with_sec
+        # v1.70.37: карточек 28 — добавлен блок st-consent «Согласие 152-ФЗ:
+        # данные участников из MAX» в разделе «Интеграции» (реквизиты оператора
+        # для текста согласия, который показывается в мини-приложении MAX).
+        assert len(with_sec) == 28, with_sec
+        assert ("st-consent", "integr", "38") in with_sec
         assert ("st-adguard", "device", "49") in with_sec
         assert all(cid and cid.startswith(("st-", "wa-", "mail-"))
                    for cid, _s, _o in with_sec)
@@ -79,7 +83,8 @@ class TestSettingsMenuStructure:
         js = self.js()
         # v1.70.28: device 4 -> 5 (блок AdGuard VPN); из карточки
         # Telegram-бота он удалён, но сама карточка st-tgbot осталась в integr.
-        expect = {"data": 4, "checks": 6, "integr": 6, "personal": 6,
+        # v1.70.37: integr 6 -> 7 — карточка реквизитов оператора в согласии.
+        expect = {"data": 4, "checks": 6, "integr": 7, "personal": 6,
                   "device": 5}
         for sec, n in expect.items():
             assert f'data-sec="{sec}"' in js
