@@ -315,6 +315,31 @@ async function uploadPhoto(ev) {
   finally { $('qr-file').value = ''; }
 }
 
+// v1.70.39: нативный сканер MAX возвращает ОБЪЕКТ с полем value, а не строку.
+// Документация MAX SDK: «const { value } = await openCodeReader()», тип моста —
+// Promise<{value?: unknown}>; сам max-web-app.js шлёт хосту запрос
+// WebAppOpenCodeReader и отдаёт его ответ как есть. Раньше результат
+// оборачивался в String(qr), поэтому на сервер уходило «[object Object]» —
+// 15 символов, проверка длины их пропускала, и человек получал «Не похоже на
+// чек: нет обязательных реквизитов», хотя камера честно находила код.
+// Здесь текст достаётся из любой известной формы ответа, а если его нет —
+// возвращаем пустую строку и честно говорим об этом, не отправляя мусор.
+function qrFromScan(raw) {
+  if (raw == null) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw !== 'object') return '';
+  const keys = ['value', 'result', 'data', 'text', 'code', 'qr', 'qr_data'];
+  for (const k of keys) {
+    const v = raw[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (v && typeof v === 'object') {
+      const deep = qrFromScan(v);          // вложенный ответ моста
+      if (deep) return deep;
+    }
+  }
+  return '';
+}
+
 async function scanQr() {
   const app = wa();
   if (!app || !app.openCodeReader) {
@@ -324,19 +349,30 @@ async function scanQr() {
   try {
     if (app.requestScreenMaxBrightness) { try { await app.requestScreenMaxBrightness(); } catch (e) {} }
     const raw = await app.openCodeReader(false);   // камера; true — +галерея
-    if (raw) await submit(raw);
+    const text = qrFromScan(raw);                  // v1.70.39: объект → строка
+    if (!text) {
+      say('Сканер MAX не вернул текст кода. Повторите попытку или сдайте чек ' +
+          'фотографией — кнопка «Фото QR».', false);
+      return;
+    }
+    await submit(text);
   } catch (e) {
     scanCamera();                    // v1.70.7: камера, если MAX не открыл сканер
   }
 }
 
 async function submit(qr) {
+  // v1.70.39: на сервер уходит ТОЛЬКО текст QR. Строка из поля ввода и
+  // code.data своей камеры проходят как есть, объект из нативного сканера
+  // раскрывается в value — «[object Object]» больше не может улететь на сервер.
+  const text = qrFromScan(qr).slice(0, 4000);
+  if (!text) { say('Не удалось прочитать текст QR-кода — повторите', false); return; }
   const btn = $('btn-send') || $('btn-scan');
   if (btn) btn.disabled = true;
   say('Проверяем чек…');
   try {
     const d = await api('POST', '/api/v1/maxapp/scan',
-                        {qr: String(qr).slice(0, 4000), form_ms: 5000});
+                        {qr: text, form_ms: 5000});
     refresh(d);
     if (d.accepted === false && d.result === 'duplicate') {
       say('Этот чек уже в пуле — спасибо!');

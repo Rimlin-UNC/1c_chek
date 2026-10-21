@@ -187,8 +187,16 @@ class TestMailBot:
         # повторный запуск: адрес подавлен → письма нет
         res2 = client.post(f"/api/v1/mail-admin/rules/{rid}/run",
                            headers=adm).json()
-        assert res2["sent"] == 0 and res2["skipped"] == 0  # вне аудитории
-        assert len(SENT) == 1                              # писем не прибавилось
+        # v1.70.39: суть проверки — подавленному адресату письмо НЕ уходит.
+        # Требование «skipped == 0» означало «аудитория пуста», но в общем
+        # прогоне в аудиторию правила попадают пользователи, созданные другими
+        # тестами, и они честно оказываются в skipped: падение зависело от
+        # порядка запуска, а не от поведения рассылки.
+        assert res2["sent"] == 0, res2
+        # писем не прибавилось: в журнале отправки осталось единственное —
+        # то самое, отправленное ДО отписки (SENT накапливается в рамках теста)
+        assert len(SENT) == 1
+        assert SENT[0]["To"] == "inactive@test.ru"
         sup = client.get("/api/v1/mail-admin/suppressed",
                          headers=adm).json()
         assert "inactive@test.ru" in sup["items"]

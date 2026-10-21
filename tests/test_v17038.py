@@ -50,10 +50,10 @@ MX_HTML = "app/static/maxapp/index.html"
 
 # ------------------------------------------------------------------ версии
 class TestVersion17038:
-    """Ритуал выпуска: точки синхронизации текущего выпуска живут здесь.
+    """v1.70.39: выпуск 1.70.38 отгружен.
 
-    Файлы прошлых выпусков (test_v17033…test_v17037) следят за ТЕКУЩЕЙ версией
-    через свой VERSION, а свои записи проверяют в истории.
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведёт test_v17039, а
+    здесь остаётся запись выпуска в истории (как сделано для 1.70.37).
     """
 
     VERSION = "1.70.38"
@@ -63,25 +63,13 @@ class TestVersion17038:
                         _read("app/config.py")).group(1)
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 38)
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read("app/config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read("app/static/sw.js")
-        assert f'"version": "{self.VERSION}"' in _read("app/static/manifest.webmanifest")
-        idx = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in idx
-        assert f"app.js?v={self.VERSION}" in idx
-        assert f"maxapp.js?v={self.VERSION}" in _read(MX_HTML)
-
-    def test_cache_busters_in_service_worker(self):
-        """sw.js кэширует те же адреса с той же версией, что и index.html."""
-        sw = _read("app/static/sw.js")
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_release_record_stays_in_history(self):
+        assert f"## [{self.VERSION}]" in _read("CHANGELOG.md")
+        assert f"'{self.VERSION}': [" in _read(APP_JS)
+        assert f"## v{self.VERSION} —" in _read("docs/ui_journal.md")
+        # инструменты аудита остались в репозитории
+        assert (ROOT / "tests" / "load" / "fuzz_sweep.py").exists()
+        assert (ROOT / "docs" / "qa_audit_v17038.md").exists()
 
     def test_whats_new_entry(self):
         js = _read(APP_JS)
@@ -776,8 +764,12 @@ GATE = ("E9,F63,F7,F82,W605,B002,B006,B011,B012,B015,B016,B018,B020,B024,B025,"
 
 # Реестр долга: сколько замечаний каждого правила осталось в проекте.
 # Числа — верхняя граница: расти не должно (смысл «храповика»), уменьшаться — можно.
+# UP009 (объявление кодировки) — соглашение репозитория: строка
+# «# -*- coding: utf-8 -*-» стоит в каждом файле, поэтому новый файл теста
+# добавляет единицу. В v1.70.39 потолок поднят со 181 до 182, при этом общий
+# итог не вырос (2 569 → 2 568): в том же выпуске убраны осиротевшие имя и импорт.
 DEBT = {
-    "SIM115": 1101, "B008": 412, "ARG001": 261, "I001": 190, "UP009": 181,
+    "SIM115": 1101, "B008": 412, "ARG001": 261, "I001": 190, "UP009": 182,
     "F401": 123, "DTZ003": 111, "PLW1510": 82, "F841": 38, "S110": 32,
     "F811": 21, "BLE001": 13, "DTZ004": 2,
 }

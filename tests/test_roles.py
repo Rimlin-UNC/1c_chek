@@ -116,8 +116,12 @@ class TestRolePermissions:
         # пользователь не видит чужой чек
         items = client.get("/api/v1/receipts", headers=hdr_user).json()["items"]
         assert all(True for _ in items)  # свои пусто или только свои
-        # а админ видит
-        items_admin = client.get("/api/v1/receipts", headers=hdr_admin).json()["items"]
+        # а админ видит. v1.70.39: ищем по ФД (q), а не надеемся, что чек
+        # попадёт в первые 50 строк: к моменту выполнения теста в общем сеансе
+        # БД уже сотни чеков от других проверок, и плавающее падение зависело
+        # лишь от порядка запуска.
+        items_admin = client.get("/api/v1/receipts", params={"q": "60001"},
+                                 headers=hdr_admin).json()["items"]
         assert any(r["fd"] == "60001" for r in items_admin)
 
     def test_user_cannot_verify_or_export(self, client):

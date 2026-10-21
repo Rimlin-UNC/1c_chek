@@ -29,7 +29,7 @@ import os
 import string
 
 import pytest
-from hypothesis import HealthCheck, assume, example, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from app.auth import hash_password, verify_password
@@ -60,7 +60,6 @@ SLOW = settings(max_examples=8, deadline=None,
 # «мусор»: текст любой длины, включая управляющие символы, nul, суррогаты,
 # emoji и обрезанный UTF-8 — то, что реально прилетает с касс и из интерфейса
 JUNK = st.text(min_size=0, max_size=200)
-DIGITS = st.text(alphabet=string.digits, min_size=1, max_size=30)
 
 
 # --------------------------------------------------------------------------
@@ -107,20 +106,36 @@ def test_parse_qr_never_crashes(raw):
 
 
 @FAST
-@given(padding=st.text(min_size=3990, max_size=4500))
+@given(padding=st.text(min_size=0, max_size=60))
 def test_parse_qr_rejects_overlong(padding):
-    """Строка длиннее 4000 символов отвергается до разбора (гигиена ЦП)."""
-    raw = "t=20260115T101530&s=10.00&fn=9900000000016902&i=1&fp=2&n=1" + padding
-    assume(len(raw) > 4000)
+    """Строка длиннее 4000 символов отвергается до разбора (гигиена ЦП).
+
+    v1.70.39: хвост сделан ПОСТОЯННЫМ, а случайной осталась только короткая
+    добавка. Раньше хвост генерировался случайным текстом длиной 3990–4500
+    символов, и hypothesis время от времени отказывался работать:
+    FailedHealthCheck «Generated inputs routinely consumed more than the
+    maximum allowed entropy» — плавающее падение на ровном месте. Правило
+    проверяется то же самое, энтропии на пример теперь в сотни раз меньше.
+    """
+    raw = ("t=20260115T101530&s=10.00&fn=9900000000016902&i=1&fp=2&n=1"
+           + "0" * 4000 + padding)
+    assert len(raw) > 4000
     with pytest.raises(QRParseError):
         parse_qr(raw)
 
 
 @FAST
-@given(fn=DIGITS, fd=DIGITS, fp=DIGITS)
+@given(fn=st.text(alphabet=string.digits, min_size=8, max_size=20),
+       fd=st.text(alphabet=string.digits, min_size=1, max_size=10),
+       fp=st.text(alphabet=string.digits, min_size=1, max_size=10))
 def test_parse_qr_url_form_matches_key_value_form(fn, fd, fp):
-    """QR в виде ссылки (его печатают некоторые ОФД) разбирается так же."""
-    assume(8 <= len(fn) <= 20 and 1 <= len(fd) <= 10 and 1 <= len(fp) <= 10)
+    """QR в виде ссылки (его печатают некоторые ОФД) разбирается так же.
+
+    v1.70.39: длины генерируются сразу в допустимых пределах, без assume().
+    Раньше значения брались из общего набора 1–30 цифр и отсеивались через
+    assume — hypothesis время от времени отвечал FailedHealthCheck
+    «filtering out a lot of inputs», и тест падал плавающим образом.
+    """
     kv = parse_qr(f"t=20260115T101530&s=10.00&fn={fn}&i={fd}&fp={fp}&n=1")
     url = parse_qr(f"https://ofd.ru/receipt?fn={fn}&i={fd}&fp={fp}&s=10.00")
     assert (kv.fn, kv.fd, kv.fp) == (url.fn, url.fd, url.fp)

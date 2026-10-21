@@ -73,12 +73,26 @@ class TestBotUsername:
 
     def test_fallback_when_unknown(self, client, monkeypatch):
         from app.database import SessionLocal
-        from app.services import max_bot
+        from app.services import appsettings, max_bot
         monkeypatch.setattr(max_bot, "refresh_username", lambda db: "")
         s = SessionLocal()
         try:
-            # v1.70.2: служебный id-ник игнорируется — публичный по умолчанию
-            assert max_bot.bot_username(s, refresh=False) == "chek.ymaster.bot"
+            # v1.70.39: «имя неизвестно» надо подготовить — соседний тест
+            # (test_login_deep_link_uses_real_username) сохраняет в настройках
+            # «myshop_bot», и на общем сеансе БД fallback не срабатывал:
+            # проверка получала чужое имя вместо «chek.ymaster.bot».
+            saved = appsettings.get_setting(s, "max_bot_username", "") or ""
+            saved_cache = getattr(max_bot, "_username_cache", "")
+            appsettings.set_setting(s, "max_bot_username", "")
+            max_bot._username_cache = ""
+            s.commit()
+            try:
+                # v1.70.2: служебный id-ник игнорируется — публичный по умолчанию
+                assert max_bot.bot_username(s, refresh=False) == "chek.ymaster.bot"
+            finally:
+                appsettings.set_setting(s, "max_bot_username", saved)
+                max_bot._username_cache = saved_cache
+                s.commit()
         finally:
             s.rollback(); s.close()
 

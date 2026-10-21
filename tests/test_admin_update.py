@@ -150,16 +150,36 @@ class TestAdminUserActions:
     def test_transfer_receipts(self, client):
         from tests.test_external import _scan  # хелпер со случайным ФП
         hdr_admin = login(client, "admin", "admin123")
-        hdr_a, uid_a, _, _uha = _mk_user(client, "user")
-        hdr_b, uid_b, _, _uhb = _mk_user(client, "user")
-        receipt = _scan(client, hdr_a)
+        hdr_a, uid_a, _, uha = _mk_user(client, "user")
+        hdr_b, uid_b, _, uhb = _mk_user(client, "user")
+        # v1.70.39: чек создаёт САМ сотрудник (uha), а не админ. Первый
+        # возвращаемый _mk_user заголовок — админский, поэтому раньше и чек,
+        # и проверка видимости шли от имени админа: админ видит все чеки,
+        # значит проверка «получатель видит чек» была пустой, а падала она
+        # лишь тогда, когда чек не попадал в первые 50 строк общего списка.
+        receipt = _scan(client, uha)
         r = client.post(f"/api/v1/admin/users/{uid_a}/transfer-receipts",
                         json={"to_user_id": uid_b}, headers=hdr_admin)
         assert r.status_code == 200, r.text
-        # чек должен быть виден получателю (у role=user — только свои)
-        mine = client.get("/api/v1/receipts", headers=hdr_b).json()
+        # чек должен быть виден получателю (у role=user — только свои).
+        # v1.70.39: запрашиваем именно этот чек (ids), а не первую страницу
+        # списка — иначе результат зависел от того, сколько чеков накопилось
+        # в общем сеансе БД и в каком порядке тесты выполнялись.
+        # Изоляция пространства при этом проверяется: ids не отменяет scope.
+        mine = client.get("/api/v1/receipts", params={"ids": receipt["id"]},
+                          headers=uhb).json()
         assert any(x["id"] == receipt["id"] for x in mine["items"]), \
             "после передачи чек виден новому владельцу"
+        # прежний владелец чек больше не видит (role=user → только свои)
+        gone = client.get("/api/v1/receipts", params={"ids": receipt["id"]},
+                          headers=uha).json()
+        assert not any(x["id"] == receipt["id"] for x in gone["items"]), \
+            "после передачи чек не виден прежнему владельцу"
+        # админ по-прежнему видит чек и знает, кому он теперь принадлежит
+        both = client.get("/api/v1/receipts", params={"ids": receipt["id"]},
+                          headers=hdr_admin).json()
+        assert any(x["id"] == receipt["id"] for x in both["items"])
+        assert hdr_a and hdr_b  # заголовки админа использованы выше
 
 
 class TestCategory:

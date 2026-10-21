@@ -317,9 +317,45 @@ class TestWebhookEmission:
     def test_verify_flow_enqueues(self, client, monkeypatch):
         from app.database import SessionLocal
         from app.models import Receipt, WebhookLog
+        from app.services import appsettings
         from app.services import fns as fns_svc
         from app.services import webhooks as wh
         from tests.conftest import login
+
+        # v1.70.39: тест готовит своё состояние сам и убирает за собой.
+        # Раньше он молча полагался на то, что предыдущий тест оставил URL
+        # вебхука настроенным: эмиссия не происходит без URL (webhooks._enqueue
+        # возвращает None при пустом webhook_url), поэтому на свежей базе или
+        # после теста, который URL очищает, проверка падала — порядкозависимость.
+        def _url_session():
+            sess = SessionLocal()
+            return sess
+
+        def _get_url():
+            sess = _url_session()
+            try:
+                return appsettings.get_setting(sess, "webhook_url", "") or ""
+            finally:
+                sess.rollback(); sess.close()
+
+        def _set_url(value: str):
+            sess = _url_session()
+            try:
+                appsettings.set_setting(sess, "webhook_url", value)
+                sess.commit()
+            finally:
+                sess.rollback(); sess.close()
+
+        prev_url = _get_url()
+        _set_url("http://127.0.0.1:9/hook")
+        try:
+            self._verify_flow_body(client, monkeypatch, SessionLocal, Receipt,
+                                   WebhookLog, fns_svc, wh, login)
+        finally:
+            _set_url(prev_url)
+
+    def _verify_flow_body(self, client, monkeypatch, SessionLocal, Receipt,
+                          WebhookLog, fns_svc, wh, login):
 
         def _fake_check(fn, fd, fp, total_sum, receipt_date,
                         fns_status="", fns_checked_at=None, **kw):
