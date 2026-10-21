@@ -23,7 +23,11 @@ from sqlalchemy.orm import Session
 from ..services.qr import QRParseError, parse_qr
 
 SETT_ENABLED = "pool_enabled"
-DAILY_LIMIT = 50                # чеков в сутки на пользователя (антифрод, слой 5)
+# v1.70.40: решение владельца — суточный лимит поднят с 50 до 100, чтобы
+# сдача пачкой (рубеж сессии BATCH.SESSION_CAP = 100) не упиралась в потолок
+# на 51-м чеке. Антифрод-слой сохранён: лимит по-прежнему считается на
+# участника в сутки, отказ machine-readable (result="flood") и пишется в журнал.
+DAILY_LIMIT = 100               # чеков в сутки на пользователя (антифрод, слой 5)
 ANOMALY_SUM = 500_000.0         # сумма-аномалия → ручная проверка (план, разд. 4)
 POINTS_PER_RECEIPT = 1          # 1 чек = 1 балл (план, разд. 2)
 OFFERTA_VERSION = "2026-10"     # v1.31.0: редакция оферты для журнала согласий
@@ -79,12 +83,35 @@ def _fetch_details(db: Session, qr_raw: str, fn: str, fd: str, fp: str,
     return engine.fetch(db, qr_raw, fn, fd, fp, total_rub, date_time)
 
 
+def today_count(db: Session, user) -> int:
+    """Сколько чеков участник сдал сегодня (антифрод-счётчик, v1.70.40)."""
+    from ..models import utcnow
+    from .models import PoolReceipt
+    if user is None:
+        return 0
+    day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return (db.query(PoolReceipt)
+            .filter(PoolReceipt.pool_user_id == user.id,
+                    PoolReceipt.created_at >= day_start).count())
+
+
+def limit_info(db: Session, user) -> dict:
+    """Прозрачность лимита: сдано сегодня / потолок / сколько осталось.
+
+    v1.70.40: донор видит приближение к суточному лимиту ЗАДОЛГО до отказа —
+    информативность вместо неожиданного «Лимит: не больше N чеков в сутки».
+    """
+    today = today_count(db, user)
+    return {"today": today, "limit": DAILY_LIMIT,
+            "left": max(0, DAILY_LIMIT - today)}
+
+
 def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
     """Быстрые проверки ДО обращения к источникам (v1.31.0): включённость,
     разбор QR, дедуп, суточный лимит. Возвращает (parsed, None) либо
     (None, result_dict) — машиночитаемый отказ. Не пишет в БД."""
-    from .models import PoolReceipt
     from ..models import utcnow
+    from .models import PoolReceipt
 
     if not pool_enabled(db):
         return None, {"result": "disabled", "message": "Пул выключен",
@@ -106,10 +133,7 @@ def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
     # 3) лимит на пользователя в сутки (антифрод, минимум; user может
     #    отсутствовать в претесте «а парсится ли строка вообще»)
     if user is not None:
-        day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        today = (db.query(PoolReceipt)
-                 .filter(PoolReceipt.pool_user_id == user.id,
-                         PoolReceipt.created_at >= day_start).count())
+        today = today_count(db, user)
         if today >= DAILY_LIMIT:
             return None, {"result": "flood",
                           "message": f"Лимит: не больше {DAILY_LIMIT} чеков в сутки",
@@ -121,8 +145,8 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
                   fast: bool = False) -> dict:
     """Движок источников → строки в БД → статус и баллы. Фоновая часть
     веб-приёма (v1.31.0); вызывается и синхронно из ingest_receipt."""
-    from .models import PoolItem, PoolReceipt
     from ..models import utcnow
+    from .models import PoolItem, PoolReceipt
 
     # 4) данные чека из движка источников (ФНС GetTicket → ЧЗ → …)
     try:
@@ -264,6 +288,7 @@ def ingest_receipt(db: Session, qr_raw: str, source: str, user) -> dict:
 def overview(db: Session) -> dict:
     """Счётчики для админ-панели (Этап 1: минимальный дашборд)."""
     from sqlalchemy import func
+
     from .models import PoolPoint, PoolReceipt, PoolUser
     q = db.query(PoolReceipt)
     total = q.count()

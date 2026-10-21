@@ -622,6 +622,121 @@ function openPoolCameraScan(onText) {
   };
 }
 
+// ==========================================================================
+//  v1.70.40: сдача чеков пачкой (до 100 за сессию) — сайт и мини-приложение
+//  MAX работают по одному сценарию: каждый чек проверяется сразу, дубликат
+//  не принимается, статусы уточняются опросом, счётчики перекрашиваются.
+//
+//  Цвета (фирменная палитра): оранжевый — принят после проверки, голубой —
+//  на модерации, терракота — не принят (дубликат или отказ источника).
+//
+//  Ниже — чистые помощники (без DOM): их проверяют юнит-тесты на node,
+//  поэтому логика счётчиков и итога сессии не зависит от вёрстки.
+// ==========================================================================
+const PUB_BATCH_CAP = 100;        // рубеж сессии = суточный лимит антифрода
+const PUB_BATCH_POLL_MS = 2500;   // интервал опроса статусов
+const PUB_BATCH_POLL_MAX = 40;    // ~100 с: дальше статусы видны в списке «мои чеки»
+const PUB_BATCH_ROWS = 8;         // сколько последних чеков показывать в панели
+
+function pubBatchKey(fn, fd, fp) {
+  return `${fn || ''}|${fd || ''}|${fp || ''}`;
+}
+
+// состояние чека в сессии: 'pend' (синий) → 'ok' (оранжевый) | 'bad' (красный)
+function pubBatchState(status) {
+  if (status === 'verified') return 'ok';
+  if (status === 'pending') return 'pend';
+  if (status === 'rejected') return 'bad';
+  return 'pend';
+}
+
+function pubBatchLabel(state) {
+  return state === 'ok' ? 'принят' : (state === 'pend' ? 'на модерации' : 'не принят');
+}
+
+function pubBatchCount(items) {
+  const c = { ok: 0, pend: 0, bad: 0, points: 0 };
+  (items || []).forEach((x) => {
+    if (c[x.state] !== undefined) c[x.state] += 1;
+    c.points += Number(x.points || 0);
+  });
+  return c;
+}
+
+function pubBatchRowHTML(x) {
+  const who = x.fd ? `ФД ${esc(String(x.fd))}` : esc(x.who || 'чек');
+  const sum = x.sum ? ` · ${fmtSum(x.sum)}` : '';
+  return `<div class="brow s-${x.state}"><span class="bdot"></span>`
+    + `<span class="bwho">${who}</span>`
+    + `<span class="bst">${esc(pubBatchLabel(x.state) + sum)}</span></div>`;
+}
+
+function pubBatchDayText(day) {
+  const left = Number(day && day.left);
+  const tail = left > 0 ? ` — осталось ${left}` : ' — суточный лимит исчерпан';
+  return `Сегодня сдано ${day ? day.today : 0} из ${day ? day.limit : PUB_BATCH_CAP}${tail}`;
+}
+
+function pubBatchSummaryText(items, ms) {
+  const c = pubBatchCount(items);
+  const secs = Math.max(1, Math.round((ms || 0) / 1000));
+  const mins = Math.floor(secs / 60);
+  const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
+  return `Итог сдачи: принято ${c.ok}, на модерации ${c.pend}, не принято ${c.bad}`
+    + ` · баллов +${c.points} · время ${dur}`;
+}
+
+// Непрерывная камера для пачки: после каждого чека НЕ закрывается, а счётчики
+// видны прямо в окне — донор не теряет контекст, пока сканирует следующий чек.
+function openPoolCameraBatch(onText, onFinish) {
+  let cam = null;
+  const { slot, close } = openModal(`
+    <div class="modal-title">📦 Сканирование пачкой</div>
+    <div class="camera-viewport" style="max-width:440px">
+      <video id="pbatch-video" playsinline muted></video>
+      <div class="scan-frame" id="pbatch-frame" style="display:none"><span class="corner"></span></div>
+      <div class="scan-line" id="pbatch-line" style="display:none"></div>
+      <div class="camera-overlay" id="pbatch-overlay">
+        <span class="big-ico">📷</span>
+        <div>Наведите камеру на QR-код чека.<br>После каждого чека камера остаётся включённой.</div>
+        <button type="button" class="btn btn-primary" id="pbatch-start">▶ Включить камеру</button>
+      </div>
+    </div>
+    <div class="batch-cam-counts" id="pbatch-counts" role="status" aria-live="polite">принято 0 · на модерации 0 · не принято 0</div>
+    <p class="form-hint" style="margin-top:8px">Каждый чек сразу проверяется на дубликат по ФН+ФД+ФП:
+    уже сданный идёт в красный счётчик и в базу не попадает, новый — в синий «на модерации».
+    Как только официальный источник подтверждает чек, счётчик становится оранжевым, а балл — начисленным.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="pbatch-camoff">⏹ Выключить камеру</button>
+      <button type="button" class="btn btn-primary" id="pbatch-done">✅ Готово — закончить сдачу</button>
+    </div>`,
+    { onClose: () => { if (cam) { cam.stop(); cam = null; } } });
+  const start = slot.querySelector('#pbatch-start');
+  if (start) start.onclick = async () => {
+    const video = slot.querySelector('#pbatch-video');
+    try {
+      cam = new CameraScanner(video, (text) => {
+        const parsed = parseQrClient(text);
+        if (!parsed) {                 // не чековый QR — ждём следующий
+          toast('QR прочитан, но это не чек (нет ФН/ФД/ФП)', 'warn', '📦 Пачка');
+          return;
+        }
+        onText(text, parsed);          // камера остаётся включённой
+      });
+      await cam.start();
+      slot.querySelector('#pbatch-overlay').classList.add('hidden');
+      slot.querySelector('#pbatch-frame').style.display = '';
+      slot.querySelector('#pbatch-line').style.display = '';
+      toast('Камера включена — сканируйте чеки один за другим', 'info', '📦 Пачка');
+    } catch (e) { toast(e.message, 'err', 'Камера недоступна'); }
+  };
+  const off = slot.querySelector('#pbatch-camoff');
+  if (off) off.onclick = () => { if (cam) { cam.stop(); cam = null; } };
+  const done = slot.querySelector('#pbatch-done');
+  if (done) done.onclick = () => { close(); if (onFinish) onFinish(); };
+  return { slot, close, countsEl: slot.querySelector('#pbatch-counts') };
+}
+
 // v1.52.0: ручной ввод реквизитов там же, где сканируют (резерв —
 // QR повреждён). Собирает стандартную строку QR — дальше работает
 // обычная проверка и отправка, ничего дублировать не нужно.
@@ -717,6 +832,8 @@ function publicFormHTML() {
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
     <button type="button" class="btn btn-sm btn-primary" id="pub-cam"
             title="Живое сканирование камерой — как в разделе «Сканирование»">📸 Сканировать камерой</button>
+    <button type="button" class="btn btn-sm btn-primary" id="pub-batch-start"
+            title="Непрерывное сканирование: до 100 чеков за сессию, каждый сразу проверяется на дубликат">📦 Сканировать пачкой</button>
     <button type="button" class="btn btn-sm" id="pub-manual"
             title="Резервный способ: QR повреждён — реквизиты с чека">⌨ Ввести вручную</button>
     <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
@@ -724,6 +841,24 @@ function publicFormHTML() {
     <span class="form-hint" style="align-self:center">фото чека можно просто перетащить на форму</span>
   </div>
   <div id="pub-photo-hint" class="form-hint hidden" style="margin:4px 0 8px"></div>
+  <div id="pub-batch" class="batch-panel hidden">
+    <div class="batch-head">
+      <span class="batch-title">📦 Сдача пачкой</span>
+      <span class="batch-prog" id="pub-batch-prog">0 / 100</span>
+    </div>
+    <div class="batch-counts" role="status" aria-live="polite">
+      <span class="bcount b-ok" id="pub-bc-ok"><b>0</b><i>принято</i></span>
+      <span class="bcount b-pend" id="pub-bc-pend"><b>0</b><i>на модерации</i></span>
+      <span class="bcount b-bad" id="pub-bc-bad"><b>0</b><i>не принято</i></span>
+    </div>
+    <div class="batch-day" id="pub-batch-day">Сегодня сдано 0 из 100</div>
+    <div class="batch-list" id="pub-batch-list"></div>
+    <div class="batch-sum hidden" id="pub-batch-sum"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button type="button" class="btn btn-sm" id="pub-batch-stop">✅ Готово — закончить сдачу</button>
+      <button type="button" class="btn btn-sm" id="pub-batch-hide" title="Панель скрывается, но статусы чеков продолжают уточняться">Скрыть панель</button>
+    </div>
+  </div>
   <input id="pub-hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true"
          style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
   <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin:10px 0">
@@ -891,8 +1026,259 @@ function bindPoolForm(root, opts) {
     };
   };
 
+  // ---- v1.70.40: сдача пачкой (до 100 чеков за сессию) --------------------
+  // Механизм тот же, что в мини-приложении MAX: мгновенная проверка
+  // дубликата, счётчики «принято / на модерации / не принято», анимация
+  // «чек улетает в пул», окно на рубеже 100 чеков и уточнение статусов
+  // опросом /batch-status (приём асинхронный: ответ «принят — проверяем»
+  // приходит сразу, а verified/pending/rejected определяется в фоне).
+  const PB = {
+    active: false, items: [], seen: {}, cap: PUB_BATCH_CAP, tries: 0,
+    timer: 0, t0: Date.now(), camCounts: null, camClose: null,
+    day: { today: 0, limit: PUB_BATCH_CAP, left: PUB_BATCH_CAP },
+  };
+  const pbSetCount = (id, n) => {
+    const el = $p(id);
+    if (el) { const b = el.querySelector('b'); if (b) b.textContent = n; }
+  };
+  const pbRender = () => {
+    const c = pubBatchCount(PB.items);
+    pbSetCount('pub-bc-ok', c.ok);
+    pbSetCount('pub-bc-pend', c.pend);
+    pbSetCount('pub-bc-bad', c.bad);
+    const prog = $p('pub-batch-prog');
+    if (prog) prog.textContent = `${PB.items.length} / ${PB.cap}`;
+    const day = $p('pub-batch-day');
+    if (day) day.textContent = pubBatchDayText(PB.day);
+    const list = $p('pub-batch-list');
+    if (list) {
+      list.innerHTML = PB.items.slice(-PUB_BATCH_ROWS).reverse()
+        .map(pubBatchRowHTML).join('');
+    }
+    if (PB.camCounts) {
+      PB.camCounts.textContent = `принято ${c.ok} · на модерации ${c.pend}`
+        + ` · не принято ${c.bad}`;
+    }
+  };
+  const pbFly = (state) => {
+    const id = state === 'ok' ? 'pub-bc-ok'
+      : (state === 'pend' ? 'pub-bc-pend' : 'pub-bc-bad');
+    const target = $p(id);
+    if (!target) return;
+    target.classList.remove('pulse');
+    void target.offsetWidth;                    // перезапуск импульса
+    target.classList.add('pulse');
+    let reduced = false;
+    try {
+      reduced = window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) { reduced = false; }
+    if (reduced) return;                        // уважение к «меньше движения»
+    const src = $p('pub-batch-start') || target;
+    const a = src.getBoundingClientRect();
+    const b = target.getBoundingClientRect();
+    const chipEl = document.createElement('div');
+    chipEl.className = `fly-chip s-${state}`;
+    chipEl.textContent = state === 'bad' ? '✕' : '🧾';
+    chipEl.style.left = `${Math.round(a.left + a.width / 2 - 14)}px`;
+    chipEl.style.top = `${Math.round(a.top + 4)}px`;
+    chipEl.style.setProperty('--fly-x',
+      `${Math.round(b.left + b.width / 2 - a.left - a.width / 2)}px`);
+    chipEl.style.setProperty('--fly-y', `${Math.round(b.top - a.top)}px`);
+    document.body.appendChild(chipEl);
+    setTimeout(() => { try { chipEl.remove(); } catch (e) { /* уже удалён */ } }, 700);
+  };
+  const pbAdd = (item) => { PB.items.push(item); pbRender(); pbFly(item.state); };
+  const pbSetDay = (d) => {
+    if (d && typeof d.today === 'number') {
+      const limit = d.limit || d.daily_limit || PB.day.limit;
+      PB.day = {
+        today: d.today, limit,
+        left: typeof d.left === 'number' ? d.left : Math.max(0, limit - d.today),
+      };
+    }
+  };
+  const pbPoll = async () => {
+    PB.timer = 0;
+    const pend = PB.items.filter((x) => x.state === 'pend' && x.key);
+    if (!pend.length || PB.tries >= PUB_BATCH_POLL_MAX) return;
+    PB.tries += 1;
+    let d;
+    try {
+      d = await poolApi('POST', '/api/v1/public/pool/batch-status',
+        { keys: pend.map((x) => ({ fn: x.fn, fd: x.fd, fp: x.fp })) });
+    } catch (e) { pbPollSoon(); return; }       // сеть мигнула — попробуем ещё
+    let changed = 0;
+    (d.items || []).forEach((it) => {
+      if (!it || !it.found || !it.status) return;
+      const key = pubBatchKey(it.fn, it.fd, it.fp);
+      const row = PB.items.find((x) => x.key === key);
+      if (!row) return;
+      const st = pubBatchState(it.status);
+      row.sum = it.sum || row.sum || 0;
+      row.points = it.points || 0;
+      if (it.message) row.message = it.message;
+      if (st !== row.state) { row.state = st; changed += 1; pbFly(st); }
+    });
+    pbSetDay(d);
+    if (changed) {
+      pbRender();
+      const c = pubBatchCount(PB.items);
+      toast(`Проверка прошла: принято ${c.ok}, на модерации ${c.pend}, не принято ${c.bad}`,
+        c.bad ? 'warn' : 'ok', '📦 Пачка');
+    }
+    if (PB.items.some((x) => x.state === 'pend')) pbPollSoon();
+  };
+  const pbPollSoon = () => {
+    if (!PB.timer) PB.timer = setTimeout(pbPoll, PUB_BATCH_POLL_MS);
+  };
+  const pbAskMore = () => new Promise((resolve) => {
+    const { slot, close } = openModal(`
+      <div class="modal-title">📦 Сдано ${PB.items.length} чеков</div>
+      <p class="form-hint" style="margin-bottom:12px">Вы отсканировали ${PB.items.length}
+      чеков за эту сессию. Продолжаем сдачу или закончим и посмотрим итог?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="pb-finish">Закончить и посмотреть итог</button>
+        <button type="button" class="btn btn-primary" id="pb-more">Продолжить — ещё ${PUB_BATCH_CAP}</button>
+      </div>`, { onClose: () => resolve(false) });
+    const more = slot.querySelector('#pb-more');
+    const fin = slot.querySelector('#pb-finish');
+    if (more) more.onclick = () => { close(); resolve(true); };
+    if (fin) fin.onclick = () => { close(); resolve(false); };
+  });
+  const pbStop = (reason) => {
+    const was = PB.active;
+    PB.active = false;
+    if (PB.camClose) {
+      const c = PB.camClose; PB.camClose = null; PB.camCounts = null;
+      try { c(); } catch (e) { /* окно уже закрыто */ }
+    }
+    if (PB.timer) { clearTimeout(PB.timer); PB.timer = 0; }
+    const summary = pubBatchSummaryText(PB.items, Date.now() - PB.t0);
+    const sum = $p('pub-batch-sum');
+    if (sum) {
+      let text = `${summary}. ${pubBatchDayText(PB.day)}.`;
+      if (reason === 'flood') {
+        text = `Суточный лимит исчерпан — дальше чеки не принимаются. ${text}`;
+      } else if (reason === 'limit') {
+        text = `Слишком много отправок с этого адреса — сделайте паузу. ${text}`;
+      }
+      sum.textContent = text;
+      sum.classList.remove('hidden');
+    }
+    if (was) {
+      const c = pubBatchCount(PB.items);
+      toast(summary, c.bad ? 'warn' : 'ok', '📦 Пачка');
+    }
+    pbRender();
+    loadMine();
+    // статусы продолжают уточняться и после завершения — опрос начинается заново
+    if (PB.items.some((x) => x.state === 'pend')) { PB.tries = 0; pbPollSoon(); }
+  };
+  const pbHandle = async (text) => {
+    const raw = String(text || '').trim();
+    if (!raw) return;
+    const norm = raw.replace(/\s+/g, '');
+    if (PB.seen[norm]) {
+      // повтор внутри сессии: отвечаем мгновенно, запрос на сервер не уходит
+      pbAdd({ state: 'bad', who: 'повтор в этой сессии' });
+      toast('Этот чек вы уже сдали в этой сессии — дважды он в базу не попадёт',
+        'warn', '📦 Пачка');
+      return;
+    }
+    PB.seen[norm] = true;
+    const offerta = $p('pub-offerta');
+    let d;
+    try {
+      d = await poolApi('POST', '/api/v1/public/pool/check', {
+        qr_text: raw.slice(0, 4000),
+        offerta: !!(offerta && offerta.checked),
+        hp: $p('pub-hp') ? $p('pub-hp').value : '',
+        // время жизни формы, а не одного чека: пачка сдаётся быстро, и честный
+        // form_ms не даёт антифроду принять её за бота (BOT_PATTERN < 800 мс)
+        form_ms: Date.now() - t0,
+        employee_email: $p('pub-emp') ? $p('pub-emp').value.trim() : '',
+      });
+    } catch (e) {
+      PB.seen[norm] = false;                    // не отправлено — можно повторить
+      pbAdd({ state: 'bad', who: 'не отправлено' });
+      toast(e.status === 429 ? 'Слишком много отправок — сделайте паузу'
+        : (e.message || 'Ошибка сети'), 'err', '📦 Пачка');
+      if (e.status === 429) pbStop('limit');
+      return;
+    }
+    if (!d || d.ok === false) {
+      pbAdd({ state: 'bad', who: 'не принято' });
+      toast((d && d.message) || 'Чек не принят', 'err', '📦 Пачка');
+      return;
+    }
+    pbSetDay(d);
+    if (!d.accepted) {
+      const dup = d.result === 'duplicate';
+      pbAdd({ state: 'bad', who: dup ? 'дубликат' : 'не принято', message: d.message || '' });
+      toast(dup ? (d.message || 'Такой чек уже есть в базе — не принят')
+        : (d.message || 'Не принято'), dup ? 'warn' : 'err',
+        dup ? '🧾 Дубликат' : '📦 Пачка');
+      if (d.result === 'flood') pbStop('flood');
+      return;
+    }
+    pbAdd({
+      state: 'pend', fn: d.fn, fd: d.fd, fp: d.fp,
+      key: pubBatchKey(d.fn, d.fd, d.fp), sum: 0, points: 0,
+      message: d.message || 'Чек принят — проверяем',
+    });
+    beep();
+    pbPollSoon();
+    if (PB.items.length >= PB.cap) {
+      // рубеж сессии: камеру закрываем и спрашиваем «продолжаем или закончим?»
+      if (PB.camClose) {
+        const c = PB.camClose; PB.camClose = null; PB.camCounts = null;
+        try { c(); } catch (e) { /* уже закрыто */ }
+      }
+      const more = await pbAskMore();
+      if (more) { PB.cap += PUB_BATCH_CAP; pbRender(); pbStart(true); }
+      else pbStop('cap');
+    }
+  };
+  const pbStart = (resume) => {
+    const offerta = $p('pub-offerta');
+    if (offerta && !offerta.checked) {
+      toast('Отметьте согласие с офертой — без него чек принять нельзя',
+        'warn', '📦 Пачка');
+      return;
+    }
+    if (!PB.active) {
+      PB.active = true; PB.items = []; PB.seen = {}; PB.cap = PUB_BATCH_CAP;
+      PB.tries = 0; PB.t0 = Date.now();
+      const sum = $p('pub-batch-sum');
+      if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+    }
+    show('pub-batch', true);
+    pbRender();
+    if (resume === true && PB.camClose) return;  // камера уже открыта
+    const cam = openPoolCameraBatch((text) => { pbHandle(text); },
+      () => pbStop('manual'));
+    PB.camCounts = cam.countsEl;
+    PB.camClose = cam.close;
+    pbRender();
+  };
+  const pbStartBtn = $p('pub-batch-start');
+  if (pbStartBtn) pbStartBtn.onclick = () => pbStart(false);
+  const pbStopBtn = $p('pub-batch-stop');
+  if (pbStopBtn) pbStopBtn.onclick = () => pbStop('manual');
+  const pbHideBtn = $p('pub-batch-hide');
+  if (pbHideBtn) pbHideBtn.onclick = () => show('pub-batch', false);
+
   const submit = $p('pub-submit');
   if (submit) submit.onclick = async () => {
+    // v1.70.40: во время сдачи пачкой вставка строки и фото идут в общий
+    // конвейер — со счётчиками и проверкой дубликата, без второго пути
+    if (PB.active) {
+      const qrEl = $p('pub-qr');
+      await pbHandle(qrEl ? qrEl.value : '');
+      if (qrEl) qrEl.value = '';
+      return;
+    }
     const msg = $p('pub-msg');
     msg.classList.add('hidden');
     submit.disabled = true;
@@ -3097,6 +3483,7 @@ function handleWsEvent(type, p) {
       if (state.view === 'receipts' || state.view === 'dashboard') scheduleRouteRefresh();
       break;
     case 'receipt_verified': {
+      scanSessNote(p.id, p.status || 'verified', p.fns_status);   // v1.70.40
       const ok = p.fns_status === 'valid';
       toast(`ФНС: чек ФД ${p.fd} — ${statusLabel(p.fns_status)}`, ok ? 'ok' : (p.fns_status === 'invalid' ? 'err' : 'warn'), 'Проверка ФНС');
       refreshBadges();
@@ -4434,6 +4821,26 @@ async function viewScan(container) {
             Эти сканы были сделаны без связи с сервером и ждут синхронизации.</p>
           <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
         </div>` : ''}
+        <div class="glass card" style="margin-bottom:16px">
+          <div class="card-title">📦 Сдача пачкой <span class="spacer"></span>
+            <span class="batch-prog" id="scan-batch-prog">0 / 100</span></div>
+          <div class="batch-counts" role="status" aria-live="polite">
+            <span class="bcount b-ok" id="scan-bc-ok"><b>0</b><i>принято</i></span>
+            <span class="bcount b-pend" id="scan-bc-pend"><b>0</b><i>на проверке</i></span>
+            <span class="bcount b-bad" id="scan-bc-bad"><b>0</b><i>не принято</i></span>
+          </div>
+          <div class="batch-day" id="scan-batch-day">Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи</div>
+          <div class="batch-list" id="scan-batch-list"></div>
+          <div class="batch-sum hidden" id="scan-batch-sum"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button type="button" class="btn btn-sm" id="btn-scan-sess-reset"
+                    title="Обнулить счётчики и начать новую сдачу">🔄 Новая сессия</button>
+          </div>
+          <div class="form-hint" style="margin-top:8px">Каждый чек проверяется сразу:
+          дубликат в базу не попадает и идёт в красный счётчик, новый — в синий «на проверке»,
+          а после подтверждения официальным источником становится оранжевым «принят».
+          На рубеже 100 чеков спросим, продолжать или закончить.</div>
+        </div>
         <div class="glass card">
           <div class="card-title">Последние сканы</div>
           <div id="scan-recents"></div>
@@ -4459,6 +4866,15 @@ async function viewScan(container) {
       ? `Новые чеки попадут в компанию: <b>${esc(c.name)}</b> (меняется селектором в шапке)`
       : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
   }
+  // v1.70.40: сессия сдачи — счётчики живут, пока сотрудник на этом экране
+  if (!scanSess.t0) scanSessReset();
+  scanSessRender();
+  const sessReset = $('#btn-scan-sess-reset');
+  if (sessReset) sessReset.onclick = () => {
+    scanSessReset();
+    toast('Новая сессия сдачи: счётчики обнулены', 'info', '📦 Пачка');
+  };
+
   $('#btn-camera-start').onclick = async () => {
     const video = $('#scan-video');
     try {
@@ -4470,7 +4886,28 @@ async function viewScan(container) {
       const stopBtn = document.createElement('button');
       stopBtn.className = 'btn btn-sm';
       stopBtn.textContent = '⏹ Остановить камеру';
-      stopBtn.onclick = () => { state.camera.stop(); state.camera = null; stopBtn.remove(); route(true); };
+      stopBtn.dataset.camstop = '1';
+      // v1.70.40: остановка без перерисовки экрана — нужна окну рубежа сессии
+      // («продолжаем или закончим?»), чтобы счётчики не пропадали из-под него
+      const doStop = (rerender) => {
+        if (state.camera) { state.camera.stop(); state.camera = null; }
+        const b = document.querySelector('.scan-actions [data-camstop]');
+        if (b) b.remove();
+        const ov = document.getElementById('camera-overlay');
+        if (ov) ov.classList.remove('hidden');
+        const fr = document.getElementById('scan-frame');
+        if (fr) fr.style.display = 'none';
+        const ln = document.getElementById('scan-line');
+        if (ln) ln.style.display = 'none';
+        scanCamStop = null;
+        if (rerender) route(true);
+      };
+      stopBtn.onclick = () => doStop(true);
+      scanCamStop = () => doStop(false);
+      scanCamStart = async () => {
+        const btn = document.getElementById('btn-camera-start');
+        if (btn && btn.onclick) await btn.onclick();
+      };
       $('.scan-actions').appendChild(stopBtn);
       toast('Камера включена — наведите на QR-код чека', 'info');
     } catch (e) {
@@ -4513,10 +4950,246 @@ function renderRecents() {
     </div>`).join('') : emptyState('🧾', 'Пока ничего не отсканировано');
 }
 
-function pushRecent(r) {
+// ==========================================================================
+//  v1.70.40: сессия сдачи на экране «Сканирование» (сотрудники и бухгалтеры)
+//  Те же три счётчика, что у доноров Чек-Пула и в мини-приложении MAX, но по
+//  статусам чеков компании: оранжевый — принят (официальный источник
+//  подтвердил), синий — на проверке, терракота — не принят (дубликат или
+//  ошибка проверки). Каждый чек проверяется сразу: дубликат в базу не
+//  попадает, отправитель видит явное уведомление, счётчик краснеет, а чек
+//  «улетает» в него анимацией.
+// ==========================================================================
+const SCAN_CAP = 100;          // рубеж сессии: «продолжаем или закончим?»
+const SCAN_POLL_MS = 4000;     // опрос статусов (WS сообщает раньше, это резерв)
+const SCAN_POLL_MAX = 30;      // ~2 минуты уточнений
+const SCAN_ROWS = 8;
+const scanSess = {
+  items: [], seen: {}, cap: SCAN_CAP, t0: 0, timer: 0, tries: 0, asking: false,
+};
+let scanCamStop = null;        // выключить камеру на время окна рубежа
+let scanCamStart = null;       // включить снова после «продолжить»
+
+function scanSessKey(fn, fd, fp) {
+  return `${fn || ''}|${fd || ''}|${fp || ''}`;
+}
+
+function scanSessStateOf(r) {
+  const st = String((r && r.status) || '');
+  if (st === 'verified') {
+    return (r && r.fns_status && r.fns_status !== 'valid') ? 'bad' : 'ok';
+  }
+  if (st === 'failed') return 'bad';
+  return 'pend';               // new / verifying — проверка ещё идёт
+}
+
+function scanSessLabel(state) {
+  return state === 'ok' ? 'принят' : (state === 'pend' ? 'на проверке' : 'не принят');
+}
+
+function scanSessCount(items) {
+  const c = { ok: 0, pend: 0, bad: 0, sum: 0 };
+  (items || []).forEach((x) => {
+    if (c[x.state] !== undefined) c[x.state] += 1;
+    c.sum += Number(x.sum || 0);
+  });
+  return c;
+}
+
+function scanSessRowHTML(x) {
+  const who = x.fd ? `ФД ${esc(String(x.fd))}` : esc(x.who || 'чек');
+  const sum = x.sum ? ` · ${fmtSum(x.sum)}` : '';
+  return `<div class="brow s-${x.state}"><span class="bdot"></span>`
+    + `<span class="bwho">${who}</span>`
+    + `<span class="bst">${esc(scanSessLabel(x.state) + sum)}</span></div>`;
+}
+
+function scanSessSummaryText(items, ms) {
+  const c = scanSessCount(items);
+  const secs = Math.max(1, Math.round((ms || 0) / 1000));
+  const mins = Math.floor(secs / 60);
+  const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
+  return `Итог сессии: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`
+    + ` · сумма ${fmtSum(c.sum)} · время ${dur}`;
+}
+
+function scanSessRender() {
+  const c = scanSessCount(scanSess.items);
+  const set = (id, n) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const b = el.querySelector('b');
+    if (b) b.textContent = n;
+  };
+  set('scan-bc-ok', c.ok);
+  set('scan-bc-pend', c.pend);
+  set('scan-bc-bad', c.bad);
+  const prog = document.getElementById('scan-batch-prog');
+  if (prog) prog.textContent = `${scanSess.items.length} / ${scanSess.cap}`;
+  const hint = document.getElementById('scan-batch-day');
+  if (hint) {
+    hint.textContent = scanSess.items.length
+      ? 'Дубликат отсеян и в базу не попал: он учтён в красном счётчике'
+      : 'Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи';
+  }
+  const list = document.getElementById('scan-batch-list');
+  if (list) {
+    list.innerHTML = scanSess.items.slice(-SCAN_ROWS).reverse()
+      .map(scanSessRowHTML).join('');
+  }
+}
+
+function scanSessFly(state) {
+  const id = state === 'ok' ? 'scan-bc-ok'
+    : (state === 'pend' ? 'scan-bc-pend' : 'scan-bc-bad');
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.classList.remove('pulse');
+  void target.offsetWidth;                       // перезапуск импульса
+  target.classList.add('pulse');
+  let reduced = false;
+  try {
+    reduced = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) { reduced = false; }
+  if (reduced) return;
+  const src = document.getElementById('btn-camera-start')
+    || document.getElementById('btn-upload') || target;
+  const a = src.getBoundingClientRect();
+  const b = target.getBoundingClientRect();
+  const chipEl = document.createElement('div');
+  chipEl.className = `fly-chip s-${state}`;
+  chipEl.textContent = state === 'bad' ? '✕' : '🧾';
+  chipEl.style.left = `${Math.round(a.left + a.width / 2 - 14)}px`;
+  chipEl.style.top = `${Math.round(a.top + 4)}px`;
+  chipEl.style.setProperty('--fly-x',
+    `${Math.round(b.left + b.width / 2 - a.left - a.width / 2)}px`);
+  chipEl.style.setProperty('--fly-y', `${Math.round(b.top - a.top)}px`);
+  document.body.appendChild(chipEl);
+  setTimeout(() => { try { chipEl.remove(); } catch (e) { /* уже удалён */ } }, 700);
+}
+
+function scanSessAdd(item) {
+  scanSess.items.push(item);
+  scanSessRender();
+  scanSessFly(item.state);
+  scanSessPollSoon();
+}
+
+// WS-событие уточнило статус чека — перекрашиваем счётчик без опроса
+function scanSessNote(id, status, fnsStatus) {
+  const row = scanSess.items.find((x) => x.id === id);
+  if (!row) return;
+  const st = scanSessStateOf({ status, fns_status: fnsStatus || row.fns || '' });
+  if (st === row.state) return;
+  row.state = st;
+  row.status = status || row.status;
+  scanSessRender();
+  scanSessFly(st);
+  if (st === 'ok') toast('Проверка пройдена: чек принят', 'ok', '🧾 Статус');
+}
+
+function scanSessPollSoon() {
+  const pend = scanSess.items.some((x) => x.state === 'pend' && x.id);
+  if (!pend || scanSess.timer) return;
+  scanSess.timer = setTimeout(scanSessPoll, SCAN_POLL_MS);
+}
+
+// Резервный опрос: если WS недоступен, статусы всё равно уточнятся
+async function scanSessPoll() {
+  scanSess.timer = 0;
+  const ids = scanSess.items.filter((x) => x.state === 'pend' && x.id)
+    .map((x) => x.id).slice(0, 100);
+  if (!ids.length || scanSess.tries >= SCAN_POLL_MAX) return;
+  scanSess.tries += 1;
+  let d;
+  try { d = await api.get(`/api/v1/receipts?ids=${ids.join(',')}`); }
+  catch (e) { scanSessPollSoon(); return; }      // сеть мигнула — попробуем ещё
+  let changed = 0;
+  (d.items || []).forEach((r) => {
+    const row = scanSess.items.find((x) => x.id === r.id);
+    if (!row) return;
+    const st = scanSessStateOf(r);
+    row.status = r.status;
+    row.fns = r.fns_status || row.fns || '';
+    row.sum = r.total_sum || row.sum || 0;
+    if (st !== row.state) { row.state = st; changed += 1; scanSessFly(st); }
+  });
+  if (changed) {
+    scanSessRender();
+    const c = scanSessCount(scanSess.items);
+    toast(`Проверка прошла: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`,
+      c.bad ? 'warn' : 'ok', '🧾 Статусы');
+  }
+  scanSessPollSoon();
+}
+
+// Рубеж сессии: окно «продолжаем или закончим?»
+function scanSessAskMore() {
+  return new Promise((resolve) => {
+    const { slot, close } = openModal(`
+      <div class="modal-title">📦 Отсканировано ${scanSess.items.length} чеков</div>
+      <p class="modal-text" style="margin-bottom:12px">Вы отсканировали
+      ${scanSess.items.length} чеков за эту сессию. Продолжаем или закончим?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="scan-finish">Закончить и посмотреть итог</button>
+        <button type="button" class="btn btn-primary" id="scan-more">Продолжить — ещё ${SCAN_CAP}</button>
+      </div>`, { onClose: () => resolve(false) });
+    const more = slot.querySelector('#scan-more');
+    const fin = slot.querySelector('#scan-finish');
+    if (more) more.onclick = () => { close(); resolve(true); };
+    if (fin) fin.onclick = () => { close(); resolve(false); };
+  });
+}
+
+async function scanSessCheckpoint() {
+  if (scanSess.items.length < scanSess.cap || scanSess.asking) return;
+  scanSess.asking = true;
+  // на время решения камера выключается: иначе она продолжит сыпать чеки
+  const stop = scanCamStop;
+  if (stop) { try { stop(); } catch (e) { /* уже выключена */ } }
+  try {
+    const more = await scanSessAskMore();
+    if (more) {
+      scanSess.cap += SCAN_CAP;
+      scanSessRender();
+      if (scanCamStart) { try { await scanCamStart(); } catch (e) { /* пользователь включит сам */ } }
+    } else {
+      scanSessFinish();
+    }
+  } finally { scanSess.asking = false; }
+}
+
+function scanSessFinish() {
+  if (scanSess.timer) { clearTimeout(scanSess.timer); scanSess.timer = 0; }
+  const text = scanSessSummaryText(scanSess.items, Date.now() - scanSess.t0);
+  const sum = document.getElementById('scan-batch-sum');
+  if (sum) { sum.textContent = text; sum.classList.remove('hidden'); }
+  toast(text, 'ok', '📦 Сессия сдачи');
+  scanSess.tries = 0;
+  scanSessPollSoon();                            // статусы ещё могут уточниться
+}
+
+function scanSessReset() {
+  if (scanSess.timer) { clearTimeout(scanSess.timer); scanSess.timer = 0; }
+  scanSess.items = [];
+  scanSess.seen = {};
+  scanSess.cap = SCAN_CAP;
+  scanSess.t0 = Date.now();
+  scanSess.tries = 0;
+  const sum = document.getElementById('scan-batch-sum');
+  if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+  scanSessRender();
+}
+
+function pushRecent(r, duplicate) {
+  // v1.70.40: дубликат из чужой организации приходит без receipt — раньше
+  // здесь падал TypeError на r.fn (ошибка тонула в async-вызывающем коде,
+  // а отправитель не получал никакого объяснения). Теперь: пустой ответ
+  // просто не попадает в «последние сканы», а флаг дубликата честный.
+  if (!r || typeof r !== 'object') return;
   state.recents.unshift({
     fn: r.fn, fd: r.fd, fp: r.fp, sum: r.total_sum,
-    duplicate: false,
+    duplicate: duplicate === true,
     at: new Date().toISOString(),
   });
   state.recents = state.recents.slice(0, 12);
@@ -5225,6 +5898,18 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.40': [
+    { icon: '📦', title: 'Сдача чеков пачкой: до 100 за одну сессию, на рубеже спрашиваем «продолжаем или закончим?»',
+      text: 'По вашему требованию сканирование стало поточным. В мини-приложении MAX появилась кнопка «Сканировать пачкой»: после каждого чека камера не закрывается, а сдача идёт один за другим, пока вы сами не нажмёте «Готово». Как только набрано 100 чеков, открывается окно «Вы отсканировали 100 чеков — продолжаем или закончим?»: можно продолжить (рубеж сдвигается ещё на 100) или закончить и посмотреть итог сессии. Тот же механизм встроен в форму сдачи чека на сайте (кнопка «Сканировать пачкой» с непрерывной камерой и счётчиками прямо в окне камеры) и в раздел «Сканирование» для сотрудников и бухгалтеров: там сессия считается по всем способам приёма — камера, фото, PDF и вставка текста. Рубеж 100 совпадает с суточным лимитом сдачи, поэтому честная пачка никогда не упирается в отказ.' },
+    { icon: '🧾', title: 'Каждый чек проверяется сразу: дубликат не принимается, новый — принимается, и это видно',
+      text: 'Проверка идёт в момент сканирования, а не «потом где-то». Если чек с такими же реквизитами (ФН, ФД, ФП) уже есть в базе, он не принимается повторно: появляется уведомление «Такой чек уже есть в базе» (для донора Чек-Пула — «Этот чек уже в пуле — спасибо, что проверили!»), строка в списке сессии окрашивается красным, а счётчик «не принято» увеличивается. Если чека в базе нет, он принимается: уведомление «Чек принят — проверяем», звуковой сигнал, синий счётчик «на модерации» и анимация — значок чека летит от кнопки сканирования в счётчик, а сам счётчик вспыхивает. Повтор одного и того же чека внутри сессии отсекается ещё до запроса к серверу: второй раз он не уйдёт и не будет принят. Анимация уважает системную настройку «меньше движения» — в этом случае счётчики обновляются без полёта.' },
+    { icon: '🎨', title: 'Три счётчика фирменными цветами: оранжевый — принят, синий — на модерации, красный — не принят',
+      text: 'Счётчики отвечают ровно на те вопросы, которые вы поставили. Синий — сколько чеков добавлено и сейчас на модерации (у донора Чек-Пула — ручная проверка, у сотрудника — проверка официальным источником). Красный — сколько не принято: дубликаты и отказы проверки. Оранжевый корпоративный — сколько прошло проверку и принято окончательно, с начисленным баллом. Статусы не застывают: приём асинхронный, поэтому панель сама уточняет их опросом (каждые 2,5 секунды в MAX и на сайте, до 40 попыток), а в кабинете сотрудника — ещё и по живому каналу: как только проверка завершается, синий счётчик становится оранжевым или красным без перезагрузки страницы. Рядом показаны прогресс сессии «N / 100», сколько сдано сегодня и сколько осталось из суточного лимита, последние восемь чеков с суммой и итог сессии: принято, на модерации, не принято, начисленные баллы и время сдачи.' },
+    { icon: '⚖️', title: 'Суточный лимит сдачи поднят до 100 чеков, а защита от спама согласована с пачкой',
+      text: 'Лимит сдачи чеков в сутки для участника Чек-Пула поднят с 50 до 100 — как вы и просили, одной константой, без новой настройки в админке: он виден в форме («Сегодня сдано N из 100 — осталось M») и в кабинете участника. Вместе с лимитом согласованы два порога защиты, иначе честная пачка попадала бы под собственные фильтры. Порог «поток чеков» в антифроде равнялся 20 чекам в час и помечал риском каждую пачку из 100 чеков; теперь он равен суточному лимиту, то есть сигнал означает «человек сдал всю суточную норму за один час» — это повод взглянуть модератору, а не блокировать: вес сигнала 30 при пороге изоляции 71, поэтому один он никого не изолирует. Ограничение по числу запросов с одного адреса разделено: для анонимных посетителей оно прежнее — 20 в час (это единственный тормоз против подмены метки посетителя), а для вошедшего участника с действительным токеном — 160, потому что кроме принятых чеков счётчик расходуют и честные повторы.' },
+    { icon: '🛠', title: 'Исправлены два дефекта приёма: тихое падение на дубликате чужой организации и отсутствие объяснения',
+      text: 'Первый дефект нашёлся при разборе потока сдачи. Когда сотрудник сканирует чек, который уже учтён в другой организации, сервер правильно не раскрывает чужие данные и отвечает без чека — а клиентский код добавления в «последние сканы» обращался к полям этого пустого ответа и падал с ошибкой обращения к несуществующему свойству. Ошибка тонула внутри асинхронного вызова: человек видел тишину и не понимал, сохранился чек или нет. Теперь пустой ответ просто не попадает в список последних сканов. Второй дефект — обратная связь: при дубликате звуковой сигнал не подавался, и никакого уведомления отправителю не было, поэтому повторный скан выглядел как «ничего не произошло». Теперь дубликат всегда даёт внятное уведомление с текстом сервера и красный счётчик, а признак дубликата честно сохраняется в списке последних сканов.' },
+  ],
   '1.70.39': [
     { icon: '📷', title: 'Сканер MAX снова сдаёт чек: камера находила код, но данные до сервера не доходили',
       text: 'Владелец сообщил: в мини-приложении MAX при нажатии «Сканировать QR-чек» камера код находит, но чек не сдаётся и появляется сообщение «Не похоже на чек: В QR-коде нет обязательных реквизитов чека (fn, i/фд, fp/фпд)» — тогда как на сайте сканирование работает. Причина оказалась в форме ответа: нативный сканер MAX (openCodeReader) возвращает не строку, а объект { value: «текст QR» } — так описано в документации MAX SDK и так это объявлено в типах сторонних обвязок моста. Программа оборачивала ответ в String(…), поэтому на сервер вместо чека уходила строка «[object Object]»: 15 символов, проверку минимальной длины они проходили, парсер честно отвечал, что реквизитов ФН/ФД/ФП нет, и человек винил камеру или чек. Исправлено в трёх местах сразу: результат нативного сканера раскрывается в текст (принимаются формы value, result, data, text, code, qr, в том числе вложенный ответ моста), пустой результат больше не отправляется на сервер — вместо этого понятный совет повторить или сдать чек фотографией, а в функцию отправки добавлена нормализация, так что и своя камера (jsQR), и поле ручного ввода проходят через ту же проверку. Сервер тоже научился распознавать этот случай: если вместо текста пришёл объект, отказ теперь говорит «Вместо текста QR-кода передан объект — обновите страницу мини-приложения и повторите сканирование», то есть указывает на версию клиента, а не на якобы испорченный чек. На сайте ничего не менялось: приём чека по QR и по фотографии работает как прежде, что проверено отдельными тестами.' },
@@ -5954,10 +6639,21 @@ async function handleScannedText(text, source) {
   }
   if (navigator.onLine && state.wsOk) {
     try {
+      // v1.70.40: повтор внутри сессии отсекаем до запроса к серверу
+      const key = scanSessKey(parsed.fn, parsed.fd, parsed.fp);
+      if (scanSess.seen[key]) {
+        scanSessAdd({
+          state: 'bad', kind: 'duplicate', who: `ФД ${parsed.fd}`,
+          fn: parsed.fn, fd: parsed.fd, fp: parsed.fp, sum: 0,
+        });
+        toast('Этот чек уже отсканирован в текущей сессии — повторно не сохраняем',
+          'warn', '🧾 Дубликат');
+        return;
+      }
       const r = await api.post('/api/v1/receipts/scan',
                                { qr_data: text, source, company_id: scanCompanyId() });
-      pushRecent(r.receipt);
-      if (!r.duplicate) beep();
+      scanSess.seen[key] = true;
+      scanSessNoteServer(r, `ФД ${parsed.fd}`);   // счётчики, дубликат, анимация
       return;
     } catch (e) {
       if (e.status !== 0) { toast(e.message, 'err', 'Сервер отклонил скан'); return; }
@@ -6036,12 +6732,56 @@ function rebuildQrString(p) {
   return `t=${t}&s=${sum.toFixed(2)}&fn=${p.fn}&i=${p.fd}&fp=${p.fp}&n=${p.op}`;
 }
 
+// v1.70.40: ответ серверного приёма (скан камерой, фото, PDF) учитывается в
+// сессии сдачи: дубликат — красный счётчик и внятное уведомление отправителю,
+// новый чек — синий «на проверке» с анимацией «чек улетает в пул».
+function scanSessNoteServer(r, label) {
+  if (!r) return;
+  const name = label || 'чек';
+  const rec = r.receipt;
+  if (r.duplicate) {
+    scanSessAdd({
+      id: rec ? rec.id : 0, state: 'bad', kind: 'duplicate', who: name,
+      fn: rec ? rec.fn : '', fd: rec ? rec.fd : '', fp: rec ? rec.fp : '',
+      sum: rec ? (rec.total_sum || 0) : 0,
+    });
+    // дубликат чужой организации приходит с receipt: null — pushRecent это
+    // переживёт (v1.70.40), а отправитель получит объяснение вместо тишины
+    if (rec) pushRecent(rec, true);
+    refreshBadges();
+    toast(r.message || 'Такой чек уже есть в базе — повторно не сохраняем',
+      'warn', '🧾 Дубликат');
+    scanSessCheckpoint();
+    return;
+  }
+  if (!rec) return;
+  const key = scanSessKey(rec.fn, rec.fd, rec.fp);
+  if (scanSess.seen[key]) {
+    scanSessAdd({
+      state: 'bad', kind: 'duplicate', who: name,
+      fn: rec.fn, fd: rec.fd, fp: rec.fp, sum: rec.total_sum || 0,
+    });
+    toast('Этот чек уже отсканирован в текущей сессии', 'warn', '🧾 Дубликат');
+    return;
+  }
+  scanSess.seen[key] = true;
+  pushRecent(rec);
+  scanSessAdd({
+    id: rec.id, state: scanSessStateOf(rec), who: name,
+    fn: rec.fn, fd: rec.fd, fp: rec.fp, sum: rec.total_sum || 0,
+    status: rec.status, fns: rec.fns_status || '',
+  });
+  beep();
+  refreshBadges();
+  scanSessCheckpoint();
+}
+
 async function serverScanImage(file) {
   const fd = new FormData();
   fd.append('file', file);
   try {
     const r = await api.post('/api/v1/receipts/scan/image', fd);
-    pushRecent(r.receipt);
+    scanSessNoteServer(r, file.name);            // v1.70.40: счётчики сессии
     toast(r.message, 'ok', 'Сервер распознал QR');
   } catch (e) {
     if (e.status === 300) {
@@ -6061,7 +6801,7 @@ async function serverScanPdf(file) {
   fd.append('file', file);
   try {
     const r = await api.post('/api/v1/receipts/scan/pdf', fd);
-    if (r.receipt) pushRecent(r.receipt);
+    scanSessNoteServer(r, file.name);            // v1.70.40: счётчики сессии
     toast(r.message || 'Готово', 'ok', 'Чек из PDF');
   } catch (e) {
     if (e.status === 300) {

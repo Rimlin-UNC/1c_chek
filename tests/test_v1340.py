@@ -6,7 +6,8 @@
 #    MULTI_ACCOUNT_DEVICE, риск растёт;
 #  - сеть: датацентр → DATACENTER_IP; 5+ регистраций из одной /24 → SUBNET_CLUSTER;
 #  - поведение: быстрая форма → BOT_PATTERN; ровные интервалы → EVEN_INTERVALS;
-#    поток 20+/час → RECEIPT_FLOOD; одинаковые суммы → REPEAT_SUMS;
+#    поток (порог = суточный лимит)/час → RECEIPT_FLOOD;
+#    одинаковые суммы → REPEAT_SUMS;
 #  - карантин вместо бана: risk ≥ 71 → чеки сохраняются, баллы приостанавливаются;
 #  - разбор: false_positive снимает риск и карантин; confirmed — аннулирование;
 #  - «ложных блокировок на честных нет»: нормальный участник — 0 сигналов;
@@ -257,15 +258,21 @@ class TestBehaviorLayer:
         assert sig is not None and sig.points == 40
 
     def test_receipt_flood(self, monkeypatch):
-        """20+ чеков за час → RECEIPT_FLOOD (+30)."""
+        """Порог потока + 1 чек за час → RECEIPT_FLOOD (+30).
+
+        v1.70.40: порог согласован с суточным лимитом (FLOOD_PER_HOUR =
+        ingest.DAILY_LIMIT = 100), поэтому число чеков в тесте берётся из
+        константы, а не зашито как 21 — иначе тест расходился бы с кодом
+        при любом изменении лимита.
+        """
         db = _db()
         u = PoolUser(vid="flood-vid")
         db.add(u)
         db.flush()
         now = datetime.utcnow()
-        for i in range(21):
+        for i in range(antifraud.FLOOD_PER_HOUR + 1):
             db.add(PoolReceipt(pool_user_id=u.id, source="web",
-                               fn=f"8800000000{i:04d}", fd="1", fp=str(i),
+                               fn=f"88{i:014d}", fd=str(i + 1), fp=str(i),
                                total_sum=100.0, status="verified",
                                created_at=now - timedelta(minutes=30)))
         uid = u.id

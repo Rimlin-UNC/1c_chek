@@ -342,26 +342,33 @@ class TestOrderIndependence:
 
 # ------------------------------------------------------- ритуал выпуска
 class TestRelease17039:
+    """v1.70.40: выпуск 1.70.39 отгружен.
+
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведут test_v17033…17037
+    и test_v17040, а здесь остаётся запись выпуска в истории (как сделано для
+    1.70.38 в test_v17038). Требование «своя запись первая» по смыслу
+    принадлежит текущему выпуску и проверяется в test_v17040.
+    """
+
     VERSION = "1.70.39"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read("app/config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read("app/static/sw.js")
-        assert f'"version": "{self.VERSION}"' in _read("app/static/manifest.webmanifest")
-        idx = _read("app/static/index.html")
-        assert f"app.css?v={self.VERSION}" in idx
-        assert f"app.js?v={self.VERSION}" in idx
-        assert f"maxapp.js?v={self.VERSION}" in _read("app/static/maxapp/index.html")
+    def test_version_is_release(self):
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read("app/config.py")).group(1)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 39)
 
-    def test_cache_busters_in_service_worker(self):
-        sw = _read("app/static/sw.js")
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
+    def test_release_record_stays_in_history(self):
+        """Запись выпуска не потерялась при последующих релизах."""
+        assert f"## [{self.VERSION}]" in _read("CHANGELOG.md")
+        assert f"'{self.VERSION}': [" in _read("app/static/js/app.js")
+        assert f"## v{self.VERSION} —" in _read("docs/ui_journal.md")
 
-    def test_whats_new_is_first(self):
-        js = _read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_scanner_fix_stays_in_code(self):
+        """Исправление сканера MAX переживает следующие выпуски."""
+        js = _read("app/static/maxapp/maxapp.js")
+        assert "qrFromScan" in js, "функция раскрытия ответа сканера пропала"
+        assert "[object" in _read("app/services/qr.py"), \
+            "серверная защита от строки вместо объекта пропала"
 
     def test_whats_new_entry(self):
         js = _read("app/static/js/app.js")

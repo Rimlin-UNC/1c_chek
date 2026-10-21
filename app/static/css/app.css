@@ -594,6 +594,62 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
   margin-bottom: 16px;
 }
 .info-callout b { color: var(--text); }
+
+/* ==========================================================================
+   v1.70.40: сдача чеков пачкой — счётчики сессии, статусы, анимация «в пул».
+   Цвета — только фирменная палитра: оранжевый (--accent) «принят после
+   проверки», голубой (--info) «на модерации», терракота (--bad) «не принят».
+   Подписи 11–13 px идут текстовыми оттенками (--*-text), контраст которых
+   ≥4.5:1 проверен в v1.70.32. Анимации гасятся общим правилом
+   prefers-reduced-motion в начале файла — счётчики работают и без движения.
+   ========================================================================== */
+.batch-panel {
+  border: 1px solid color-mix(in srgb, var(--info) 28%, transparent);
+  background: color-mix(in srgb, var(--info) 4%, transparent);
+  border-radius: var(--radius); padding: 14px 16px; margin: 12px 0;
+}
+.batch-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.batch-title { font-weight: 700; font-size: 14.5px; color: var(--text); }
+.batch-prog { font-size: 12.5px; font-weight: 700; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.batch-counts { display: flex; gap: 8px; flex-wrap: wrap; }
+.bcount { flex: 1 1 100px; text-align: center; border-radius: var(--radius-sm); padding: 10px 6px; border: 1px solid transparent; }
+.bcount b { display: block; font-size: 24px; font-weight: 800; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.bcount i { display: block; font-style: normal; font-size: 11.5px; font-weight: 700; }
+.bcount.b-ok { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 42%, transparent); color: var(--accent-text); }
+.bcount.b-pend { background: color-mix(in srgb, var(--info) 11%, transparent); border-color: color-mix(in srgb, var(--info) 38%, transparent); color: var(--info-text); }
+.bcount.b-bad { background: color-mix(in srgb, var(--bad) 11%, transparent); border-color: color-mix(in srgb, var(--bad) 38%, transparent); color: var(--bad-text); }
+.bcount.pulse { animation: batchPulse .5s ease; }
+.batch-day { margin-top: 9px; font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.batch-list { margin-top: 10px; max-height: 220px; overflow-y: auto; }
+.brow { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; animation: batchIn .26s ease; }
+.brow:last-child { border-bottom: 0; }
+.bdot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--text-faint); }
+.brow.s-ok .bdot { background: var(--accent); }
+.brow.s-pend .bdot { background: var(--info); }
+.brow.s-bad .bdot { background: var(--bad); }
+.bwho { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.bst { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.brow.s-ok .bst { color: var(--accent-text); }
+.brow.s-pend .bst { color: var(--info-text); }
+.brow.s-bad .bst { color: var(--bad-text); }
+.batch-sum { margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--text); }
+.batch-cam-counts { margin-top: 10px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+/* «чек улетает в пул»: ниже модальных окон (80) и тостов (100), выше контента */
+.fly-chip {
+  position: fixed; z-index: 75; pointer-events: none; font-size: 13px; font-weight: 800;
+  line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--panel);
+  border: 1px solid currentColor; box-shadow: var(--shadow);
+  animation: batchFly .62s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+.fly-chip.s-ok { color: var(--accent-text); }
+.fly-chip.s-pend { color: var(--info-text); }
+.fly-chip.s-bad { color: var(--bad-text); }
+@keyframes batchFly {
+  from { opacity: 1; transform: translate(0, 0) scale(1); }
+  to { opacity: 0; transform: translate(var(--fly-x), var(--fly-y)) scale(.5); }
+}
+@keyframes batchPulse { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes batchIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .steps { counter-reset: step; }
 .step { display: flex; gap: 14px; padding: 10px 0; align-items: flex-start; }
 .step-num {
@@ -1110,6 +1166,13 @@ tr.archived-row td { opacity: .55; }
                "SF Mono", monospace;
   --font-accent: "Caveat", "Segoe Script", cursive;
   --indigo: #4B0082;        /* заголовки, акценты в отчётах (светлая тема) */
+  /* v1.70.40: смещение анимации «чек улетает в пул». Значения ставит скрипт
+     из геометрии кнопок (getBoundingClientRect), здесь — безопасные нули.
+     Замок v1.70.32/v1.70.35 запрещает и необъявленные токены, и запасные
+     значения, поэтому переменные объявлены в :root, а в кадрах анимации
+     используются без fallback-синтаксиса. */
+  --fly-x: 0px;
+  --fly-y: -80px;
   /* v1.70.32: удалён --indigo-soft — он «для тёмного фона», а тёмная тема
      удалена в v1.25.0; токен остался невостребованным */
 }

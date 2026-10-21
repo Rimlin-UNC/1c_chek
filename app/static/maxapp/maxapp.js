@@ -367,6 +367,9 @@ async function submit(qr) {
   // раскрывается в value — «[object Object]» больше не может улететь на сервер.
   const text = qrFromScan(qr).slice(0, 4000);
   if (!text) { say('Не удалось прочитать текст QR-кода — повторите', false); return; }
+  // v1.70.40: во время сдачи пачкой любой способ ввода (сканер, своя камера,
+  // вставка строки) идёт в один конвейер — со счётчиками и проверкой дубликата.
+  if (BATCH.active) { await batchHandle(text); return; }
   const btn = $('btn-send') || $('btn-scan');
   if (btn) btn.disabled = true;
   say('Проверяем чек…');
@@ -569,5 +572,390 @@ async function showInvite(token) {
     };
   } catch (e) { $('service-body').innerHTML = '<p>' + esc(e.message) + '</p>'; }
 }
+
+// ==========================================================================
+//  v1.70.40: сдача чеков пачкой (до 100 за сессию).
+//
+//  Что видит донор:
+//   • «Сканировать пачкой» — после каждого чека сканер открывается сам,
+//     кнопки нажимать не нужно; «Готово» или отмена сканера завершают сдачу;
+//   • каждый чек проверяется СРАЗУ: дубликат (ФН+ФД+ФП уже в базе) — красный
+//     счётчик и сообщение «уже есть в базе», новый чек — синий «на модерации»
+//     и анимация «чек улетает в пул»;
+//   • статусы уточняются опросом /batch-status: синий становится оранжевым
+//     (принят, балл начислен) или красным (не прошёл проверку);
+//   • после каждых 100 чеков — окно «продолжаем или закончим?»;
+//   • суточный лимит антифрода виден заранее: «сегодня сдано N из 100».
+//
+//  Источник истины — сервер: клиентская проверка повторов внутри сессии
+//  экономит запрос и мгновенно отвечает на повторное сканирование того же
+//  чека, но окончательное решение о дубликате принимает precheck_ingest.
+// ==========================================================================
+const BATCH_CAP = 100;          // рубеж сессии = суточный лимит (ingest.DAILY_LIMIT)
+const BATCH_POLL_MS = 2500;     // интервал опроса статусов
+const BATCH_POLL_MAX = 40;      // ~100 с: дальше статусы видны во вкладке «Чеки»
+const BATCH_ROWS = 8;           // сколько последних чеков показывать в панели
+const BATCH = {
+  active: false, items: [], seen: {}, counts: {ok: 0, pend: 0, bad: 0},
+  cap: BATCH_CAP, tries: 0, timer: 0, t0: 0,
+  day: {today: 0, limit: BATCH_CAP, left: BATCH_CAP},
+};
+let _bcam = null;               // непрерывная своя камера (если нет сканера MAX)
+
+function batchKey(fn, fd, fp) {
+  return (fn || '') + '|' + (fd || '') + '|' + (fp || '');
+}
+
+function batchStateRow(x) {
+  const label = x.state === 'ok' ? 'принят' : (x.state === 'pend' ? 'на модерации'
+                                                                   : 'не принят');
+  const sum = x.sum ? ' · ' + Number(x.sum).toFixed(2) + ' ₽' : '';
+  const who = x.fd ? 'ФД ' + x.fd : (x.who || 'чек');
+  return '<div class="brow s-' + x.state + '"><span class="bdot"></span>' +
+    '<span class="bwho">' + esc(who) + '</span>' +
+    '<span class="bst">' + esc(label + sum) + '</span></div>';
+}
+
+function batchRender() {
+  const c = {ok: 0, pend: 0, bad: 0};
+  BATCH.items.forEach((x) => { if (c[x.state] !== undefined) c[x.state] += 1; });
+  BATCH.counts = c;
+  const set = (id, n) => {
+    const el = $(id);
+    if (el) { const b = el.querySelector('b'); if (b) b.textContent = n; }
+  };
+  set('bc-ok', c.ok); set('bc-pend', c.pend); set('bc-bad', c.bad);
+  const prog = $('batch-prog');
+  if (prog) prog.textContent = BATCH.items.length + ' / ' + BATCH.cap;
+  const day = $('batch-day');
+  if (day) {
+    day.textContent = 'Сегодня сдано ' + BATCH.day.today + ' из ' + BATCH.day.limit +
+      (BATCH.day.left > 0 ? ' — осталось ' + BATCH.day.left
+                          : ' — суточный лимит исчерпан');
+  }
+  const list = $('batch-list');
+  if (list) {
+    list.innerHTML = BATCH.items.slice(-BATCH_ROWS).reverse().map(batchStateRow).join('');
+  }
+  const cam = $('cam-counts');
+  if (cam) {
+    cam.textContent = 'принято ' + c.ok + ' · на модерации ' + c.pend +
+      ' · не принято ' + c.bad;
+  }
+}
+
+// «Чек улетает в пул»: короткий полёт к нужному счётчику + импульс счётчика.
+// При настройке «меньше движения» анимация отключена в CSS — счётчики работают.
+function batchFly(state) {
+  const id = state === 'ok' ? 'bc-ok' : (state === 'pend' ? 'bc-pend' : 'bc-bad');
+  const target = $(id);
+  if (!target) return;
+  target.classList.remove('pulse');
+  void target.offsetWidth;                     // перезапуск анимации импульса
+  target.classList.add('pulse');
+  let reduced = false;
+  try {
+    reduced = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) { reduced = false; }
+  if (reduced) return;
+  const src = $('btn-batch') || $('btn-scan') || target;
+  const a = src.getBoundingClientRect();
+  const b = target.getBoundingClientRect();
+  const chip = document.createElement('div');
+  chip.className = 'fly-chip s-' + state;
+  chip.textContent = state === 'bad' ? '✕' : '🧾';
+  chip.style.left = Math.round(a.left + a.width / 2 - 14) + 'px';
+  chip.style.top = Math.round(a.top + 4) + 'px';
+  chip.style.setProperty('--fly-x',
+    Math.round(b.left + b.width / 2 - a.left - a.width / 2) + 'px');
+  chip.style.setProperty('--fly-y', Math.round(b.top - a.top) + 'px');
+  document.body.appendChild(chip);
+  setTimeout(() => { try { chip.remove(); } catch (e) {} }, 700);
+}
+
+function batchAdd(item) {
+  BATCH.items.push(item);
+  batchRender();
+  batchFly(item.state);
+}
+
+function batchSetButtons(busy) {
+  // одиночные способы сдачи на время пачки выключаем — один конвейер, без путаницы
+  ['btn-scan', 'btn-cam', 'btn-photo'].forEach((id) => {
+    const b = $(id);
+    if (b) b.disabled = busy;
+  });
+}
+
+function batchSetDay(d) {
+  if (d && typeof d.today === 'number') {
+    BATCH.day = {today: d.today, limit: d.limit || BATCH.day.limit,
+                 left: (typeof d.left === 'number' ? d.left
+                                                   : Math.max(0, (d.limit || BATCH.day.limit) - d.today))};
+  }
+  if (d && typeof d.user_points === 'number') refresh(d);
+}
+
+// ---- приём одного чека в пачку -------------------------------------------
+async function batchHandle(text) {
+  const norm = String(text || '').replace(/\s+/g, '');
+  if (!norm) return;
+  if (BATCH.seen[norm]) {
+    // повтор внутри сессии: отвечаем мгновенно, запрос на сервер не уходит
+    batchAdd({state: 'bad', who: 'повтор в этой сессии', message: ''});
+    say('Этот чек вы уже сдали в этой сессии — дважды он в базу не попадёт', false);
+    return;
+  }
+  BATCH.seen[norm] = true;
+  let d;
+  try {
+    d = await api('POST', '/api/v1/maxapp/scan',
+                  {qr: String(text).slice(0, 4000), form_ms: 5000});
+  } catch (e) {
+    BATCH.seen[norm] = false;      // не отправлено — можно повторить
+    batchAdd({state: 'bad', who: 'не отправлено', message: e.message || ''});
+    say(e.message || 'Сервер недоступен — чек не отправлен', false);
+    return;
+  }
+  batchSetDay(d);
+  if (d.accepted === false) {
+    const dup = d.result === 'duplicate';
+    batchAdd({state: 'bad', who: dup ? 'дубликат' : 'не принято',
+              message: d.message || ''});
+    say(dup ? (d.message || 'Такой чек уже есть в базе — не принят')
+            : (d.message || 'Не принято'), false);
+    if (d.result === 'flood') stopBatch('flood');
+    return;
+  }
+  batchAdd({state: 'pend', fn: d.fn || '', fd: d.fd || '', fp: d.fp || '',
+            key: batchKey(d.fn, d.fd, d.fp), sum: 0,
+            message: d.message || 'Чек принят — проверяем'});
+  say('Чек добавлен в пул — проверяем ✓');
+  batchPollSoon();
+}
+
+// ---- уточнение статусов (синий → оранжевый/красный) -----------------------
+function batchPollSoon() {
+  if (BATCH.timer) return;
+  BATCH.timer = setTimeout(batchPoll, BATCH_POLL_MS);
+}
+
+async function batchPoll() {
+  BATCH.timer = 0;
+  const pend = BATCH.items.filter((x) => x.state === 'pend' && x.key);
+  if (!pend.length) return;
+  if (BATCH.tries >= BATCH_POLL_MAX) return;
+  BATCH.tries += 1;
+  let d;
+  try {
+    d = await api('POST', '/api/v1/maxapp/batch-status',
+                  {keys: pend.map((x) => ({fn: x.fn, fd: x.fd, fp: x.fp}))});
+  } catch (e) { batchPollSoon(); return; }    // сеть мигнула — попробуем ещё
+  let changed = 0;
+  (d.items || []).forEach((it) => {
+    if (!it || !it.found || !it.status) return;
+    const key = batchKey(it.fn, it.fd, it.fp);
+    const row = BATCH.items.find((x) => x.key === key);
+    if (!row) return;
+    const st = it.status === 'verified' ? 'ok'
+      : (it.status === 'pending' ? 'pend' : 'bad');
+    row.sum = it.sum || row.sum || 0;
+    row.points = it.points || 0;
+    if (it.message) row.message = it.message;
+    if (st !== row.state) { row.state = st; changed += 1; batchFly(st); }
+  });
+  batchSetDay(d);
+  if (changed) {
+    batchRender();
+    const ok = BATCH.counts.ok;
+    say(ok ? 'Принято в пул: ' + ok + ' (баллы начислены)' : 'Есть чеки, которые не прошли проверку',
+        ok ? true : false);
+  }
+  if (BATCH.items.some((x) => x.state === 'pend')) batchPollSoon();
+}
+
+// ---- непрерывная своя камера (когда сканера MAX нет) ----------------------
+function batchCamClose(finish) {
+  if (_bcam) {
+    const ws = _bcam.waiters;
+    _bcam = null;
+    ws.forEach((w) => { try { w(''); } catch (e) {} });
+  }
+  stopCam();
+  const svc = $('view-service');
+  if (svc) svc.classList.add('hidden');
+  const appView = $('view-app');
+  if (appView) appView.classList.remove('hidden');
+  if (finish) stopBatch('manual');
+}
+
+async function batchCamOpen() {
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      {video: {facingMode: 'environment'}});
+  } catch (e) { return false; }
+  _camStream = stream;                  // общий stopCam() останавливает и её
+  showService('Сканер пачки',
+    '<video id="cam-v" autoplay playsinline muted ' +
+    'style="width:100%;border-radius:12px;background:#000"></video>' +
+    '<div class="cam-counts hint" id="cam-counts">принято 0 · на модерации 0 · ' +
+    'не принято 0</div>' +
+    '<p class="hint" style="margin-top:8px">Наводите камеру на QR чеков один за ' +
+    'другим — каждый распознаётся сам и сразу проверяется на дубликат.</p>' +
+    '<div style="height:8px"></div>' +
+    '<button type="button" class="btn secondary" id="cam-done">✅ Готово — ' +
+    'закончить сдачу</button>',
+    () => batchCamClose(true));
+  const v = $('cam-v');
+  v.srcObject = stream;
+  try { await v.play(); } catch (e) {}
+  const done = $('cam-done');
+  if (done) done.onclick = () => batchCamClose(true);
+  _bcam = {waiters: []};
+  batchRender();
+  const cv = document.createElement('canvas');
+  const cx = cv.getContext('2d', {willReadFrequently: true});
+  let last = {text: '', at: 0};
+  const tick = () => {
+    if (!_bcam) return;                          // экран закрыли
+    if (v.videoWidth > 0) {
+      cv.width = v.videoWidth; cv.height = v.videoHeight;
+      cx.drawImage(v, 0, 0);
+      let code = null;
+      try {
+        const img = cx.getImageData(0, 0, cv.width, cv.height);
+        code = window.jsQR(img.data, img.width, img.height);
+      } catch (e) {}
+      if (code && code.data) {
+        const now = Date.now();
+        // антисдвоение: тот же код не чаще раза в 2.5 с (как на сайте)
+        if (!(code.data === last.text && now - last.at < 2500)) {
+          last = {text: code.data, at: now};
+          const w = _bcam.waiters.shift();
+          if (w) { try { w(code.data); } catch (e) {} }
+        }
+      }
+    }
+    setTimeout(tick, 180);
+  };
+  tick();
+  return true;
+}
+
+function cameraBatchOnce() {
+  return new Promise((resolve) => {
+    if (_bcam) { _bcam.waiters.push(resolve); return; }
+    batchCamOpen().then((ok) => {
+      if (!ok || !_bcam) { resolve(''); return; }
+      _bcam.waiters.push(resolve);
+    }).catch(() => resolve(''));
+  });
+}
+
+// один шаг сканирования: сканер MAX первым, своя камера — запасной путь
+async function batchScanOnce() {
+  const app = wa();
+  if (app && typeof app.openCodeReader === 'function') {
+    try {
+      if (app.requestScreenMaxBrightness) {
+        try { await app.requestScreenMaxBrightness(); } catch (e) {}
+      }
+      return qrFromScan(await app.openCodeReader(false));
+    } catch (e) { return ''; }        // отмена или отказ моста — пачка завершается
+  }
+  return cameraBatchOnce();
+}
+
+// ---- окно рубежа «100 чеков» ---------------------------------------------
+function batchAskMore() {
+  return new Promise((resolve) => {
+    const m = $('batch-modal');
+    const more = $('btn-batch-more');
+    const fin = $('btn-batch-finish');
+    const txt = $('batch-modal-text');
+    const title = $('batch-modal-title');
+    if (!m || !more || !fin) { resolve(false); return; }
+    if (title) title.textContent = 'Сдано ' + BATCH.items.length + ' чеков';
+    if (txt) {
+      txt.textContent = 'Вы отсканировали ' + BATCH.items.length +
+        ' чеков. Продолжаем сдачу или закончим и посмотрим итог?';
+    }
+    m.classList.remove('hidden');
+    const done = (val) => {
+      m.classList.add('hidden');
+      more.onclick = null; fin.onclick = null;
+      resolve(val);
+    };
+    more.onclick = () => { BATCH.cap += BATCH_CAP; batchRender(); done(true); };
+    fin.onclick = () => done(false);
+  });
+}
+
+// ---- итог сессии ----------------------------------------------------------
+function batchSummaryText() {
+  const c = BATCH.counts;
+  const secs = Math.max(1, Math.round((Date.now() - BATCH.t0) / 1000));
+  const mins = Math.floor(secs / 60);
+  const dur = mins ? mins + ' мин ' + (secs % 60) + ' с' : secs + ' с';
+  const pts = BATCH.items.reduce((a, x) => a + (x.points || 0), 0);
+  return 'Итог сдачи: принято ' + c.ok + ', на модерации ' + c.pend +
+    ', не принято ' + c.bad + ' · баллов +' + pts + ' · время ' + dur +
+    '. Сегодня сдано ' + BATCH.day.today + ' из ' + BATCH.day.limit + '.';
+}
+
+function stopBatch(reason) {
+  const was = BATCH.active;
+  BATCH.active = false;
+  if (_bcam) batchCamClose(false);
+  batchSetButtons(false);
+  const sum = $('batch-sum');
+  if (sum) {
+    let text = batchSummaryText();
+    if (reason === 'flood') {
+      text = 'Суточный лимит исчерпан — дальше чеки не принимаются. ' + text;
+    } else if (reason === 'empty') {
+      text = 'Ни одного чека не сдано. ' + text;
+    }
+    sum.textContent = text;
+    sum.classList.remove('hidden');
+  }
+  if (was) say(batchSummaryText(), BATCH.counts.bad === 0);
+  loadSummary();
+  if (BATCH.items.some((x) => x.state === 'pend')) batchPollSoon();
+}
+
+async function startBatch() {
+  if (BATCH.active) { say('Пачка уже идёт — сканируйте следующий чек'); return; }
+  BATCH.active = true;
+  BATCH.items = []; BATCH.seen = {}; BATCH.tries = 0; BATCH.t0 = Date.now();
+  BATCH.cap = BATCH_CAP;
+  BATCH.counts = {ok: 0, pend: 0, bad: 0};
+  const sum = $('batch-sum');
+  if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+  const card = $('batch-card');
+  if (card) card.classList.remove('hidden');
+  batchSetButtons(true);
+  batchRender();
+  say('Пачка начата: сканируйте чеки один за другим. «Готово» — закончить.');
+  // цикл сдачи: сканер открывается сам после каждого чека
+  while (BATCH.active) {
+    if (BATCH.items.length >= BATCH.cap) {
+      const more = await batchAskMore();
+      if (!more) break;
+    }
+    let text = '';
+    try { text = await batchScanOnce(); } catch (e) { text = ''; }
+    if (!text) break;                  // отмена сканера = «готово», не ошибка
+    await batchHandle(text);
+  }
+  stopBatch('done');
+}
+
+
+// ---- v1.70.40: кнопки пачки ---------------------------------------
+$('btn-batch').onclick = startBatch;
+$('btn-batch-stop').onclick = () => stopBatch('manual');
 
 boot();

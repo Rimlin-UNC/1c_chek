@@ -27,13 +27,21 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from . import antifraud, engage, ingest, partners, referral
+from . import antifraud, batch, engage, ingest, partners, referral
 
 router = APIRouter(prefix="/api/v1/public/pool", tags=["pool-public"])
 
 VID_COOKIE = "pool_vid"           # анонимная подписанная cookie гостя
 VID_MAX_AGE = 60 * 60 * 24 * 365  # 1 год (152-ФЗ: техданные ≤ 12 мес)
 WEB_IP_HOURLY_LIMIT = 20          # отправок с одного IP в час (nginx дублирует)
+# v1.70.40: сдача пачкой (до 100 чеков за сессию) — штатный сценарий, поэтому
+# для АВТОРИЗОВАННОГО участника кабинета порог согласован с суточным лимитом:
+# 100 принятых + запас на дубликаты и отказы (они тоже считаются отправками).
+# Анонимный трафик остаётся на прежних 20 в час: именно IP-порог сдерживает
+# ротацию vid-куки, когда каждый новый «участник» создаётся одним запросом.
+# Порог повышается только по валидному JWT (typ=pool) — заголовок сам по себе
+# ничего не даёт, токен проверяется подписью и существованием участника.
+WEB_IP_HOURLY_LIMIT_AUTH = ingest.DAILY_LIMIT + 60
 HONEYPOT_MS = 800                 # быстрее — сигнал «быстрая отправка»
 
 # Скользящее окно IP-лимитера (в процессе; в бою дублируется nginx)
@@ -80,15 +88,29 @@ def _client_ip(request: Request) -> str:
 
 
 # --- IP-лимитер ------------------------------------------------------------
-def _ip_allow(ip: str) -> bool:
+def _ip_allow(ip: str, limit: int = WEB_IP_HOURLY_LIMIT) -> bool:
     hits = _IP_HITS.setdefault(ip, deque())
     now = time.monotonic()
     while hits and now - hits[0] > 3600:
         hits.popleft()
-    if len(hits) >= WEB_IP_HOURLY_LIMIT:
+    if len(hits) >= limit:
         return False
     hits.append(now)
     return True
+
+
+def _authed_account(db: Session, request: Request):
+    """Участник кабинета по токену — БЕЗ побочного слияния гостевой истории.
+
+    Нужен, чтобы выбрать порог IP-лимитера до приёма чека: _request_pool_account
+    ещё и приливает историю гостя к аккаунту (v1.32.0), а делать это до отказа
+    429 нельзя — иначе запрос, который мы отвергли, всё равно менял бы данные.
+    """
+    from . import accounts
+    auth = (request.headers.get("authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    return accounts.pool_user_from_token(db, auth[7:].strip())
 
 
 # --- схемы -----------------------------------------------------------------
@@ -192,7 +214,11 @@ def pool_check(body: CheckBody, request: Request, response: Response,
         return {"ok": False, "error": "disabled",
                 "message": "Приём чеков сейчас выключен — загляните позже"}
 
-    if not _ip_allow(ip):
+    # v1.70.40: порог зависит от того, кто отправляет — аноним или участник
+    # кабинета с валидным токеном (сдача пачкой не должна упираться в 429)
+    _lim = (WEB_IP_HOURLY_LIMIT_AUTH if _authed_account(db, request) is not None
+            else WEB_IP_HOURLY_LIMIT)
+    if not _ip_allow(ip, _lim):
         raise HTTPException(429, "Слишком много отправок с этого адреса — попробуйте позже")
 
     qr_raw = (body.qr_text or "").strip()
@@ -266,7 +292,39 @@ def pool_check(body: CheckBody, request: Request, response: Response,
     threading.Thread(target=_bg, name="pool-web-ingest", daemon=True).start()
     return {"ok": True, "accepted": True, "fn": parsed.fn, "fd": parsed.fd,
             "fp": parsed.fp, "message": "Чек принят — проверяем",
-            "points": 0, "user_points": user.points}
+            "points": 0, "user_points": user.points,
+            # v1.70.40: ключ пачки и прозрачность суточного лимита
+            "session_cap": batch.SESSION_CAP, **ingest.limit_info(db, user)}
+
+
+class BatchKey(BaseModel):
+    """Ключ чека пачки — ФН|ФД|ФП (та же тройка, что в UNIQUE-индексе)."""
+    fn: str = Field(default="", max_length=20)
+    fd: str = Field(default="", max_length=10)
+    fp: str = Field(default="", max_length=20)
+
+
+class BatchStatusBody(BaseModel):
+    keys: list[BatchKey] = Field(default_factory=list,
+                                 max_length=batch.KEYS_MAX)
+
+
+@router.post("/batch-status",
+             summary="Чек-Пул: статусы чеков сданной пачки (гость/кабинет)")
+def pool_batch_status(body: BatchStatusBody, request: Request,
+                      response: Response, db: Session = Depends(get_db)):
+    """Один запрос на всю пачку: verified / pending / rejected по ФН+ФД+ФП.
+
+    Доступ — как у /check: гость определяется по подписанному vid-куки,
+    участник кабинета — по Bearer-токену пула. Чужие чеки не отдаются.
+    """
+    vid = _get_or_issue_vid(request, response)
+    user = _request_pool_account(db, request) or _user_by_vid(db, vid)
+    db.commit()
+    res = batch.statuses(db, user, [k.model_dump() for k in body.keys])
+    res["counts"] = batch.count_by_status(res["items"])
+    res["user_points"] = int(user.points or 0) if user is not None else 0
+    return res
 
 
 @router.get("/receipt/{receipt_id}", summary="Чек-Пул: статус своего чека")

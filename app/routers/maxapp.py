@@ -23,6 +23,7 @@ from ..database import get_db
 from ..config import settings
 from ..auth import ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER
 from ..models import Company, Invite, User
+from ..pool import batch as pool_batch
 from ..pool import ingest
 from ..pool import referral as pool_referral
 from ..pool.accounts import issue_pool_token, require_pool_user
@@ -46,6 +47,19 @@ class ConsentBody(BaseModel):
 class ScanBody(BaseModel):
     qr: str = Field(min_length=10, max_length=4000)
     form_ms: int = Field(default=0, ge=0, le=3_600_000)
+
+
+class BatchKey(BaseModel):
+    """Ключ чека пачки — та же тройка, что в UNIQUE-индексе пула."""
+    fn: str = Field(default="", max_length=20)
+    fd: str = Field(default="", max_length=10)
+    fp: str = Field(default="", max_length=20)
+
+
+class BatchStatusBody(BaseModel):
+    """Запрос статусов пачки: не больше KEYS_MAX ключей за раз."""
+    keys: list[BatchKey] = Field(default_factory=list,
+                                 max_length=pool_batch.KEYS_MAX)
 
 
 def _start_param(init_data: str) -> str:
@@ -239,12 +253,26 @@ def consent_revoke(db: Session = Depends(get_db),
     return res
 
 
-def _launch_ingest(user, qr_raw: str, parsed, fast: bool) -> dict:
-    """Общий финал /scan и /scan-image: precheck пройден, уходим в фон."""
+def _launch_ingest(user, qr_raw: str, parsed, fast: bool, db=None) -> dict:
+    """Общий финал /scan и /scan-image: precheck пройден, уходим в фон.
+
+    v1.70.40: сразу возвращаем ФН/ФД/ФП (клиент строит по ним ключ пачки и
+    опрашивает статус) и прозрачность суточного лимита — сколько сдано
+    сегодня, потолок и остаток. Донор видит приближение к лимиту заранее,
+    а не узнаёт о нём из отказа.
+    """
     res = {"result": "pending", "message": "Чек принят — проверяем",
            "accepted": True, "fn": parsed.fn, "fd": parsed.fd,
            "fp": parsed.fp, "points": 0,
-           "user_points": int(user.points or 0)}
+           "user_points": int(user.points or 0),
+           "session_cap": pool_batch.SESSION_CAP}
+    if db is not None:
+        try:
+            res.update(ingest.limit_info(db, user))
+        except Exception as e:                            # noqa: BLE001
+            # счётчик лимита не должен ломать приём чека, но и молча
+            # глотать сбой нельзя: причина уходит в журнал (S110)
+            log.warning("maxapp limit_info %s: %s", user.id, e)
     user_id = user.id
 
     def _bg():
@@ -272,7 +300,7 @@ def scan(body: ScanBody, db: Session = Depends(get_db),
     if pre_err is not None:
         return {**pre_err, "accepted": False}
     fast = (body.form_ms or 0) < 1200        # антифрод: слишком быстрое окно
-    return _launch_ingest(user, body.qr, parsed, fast)
+    return _launch_ingest(user, body.qr, parsed, fast, db)
 
 
 @router.post("/scan-image",
@@ -309,7 +337,24 @@ async def scan_image(file: UploadFile = File(...),
     _, pre_err = ingest.precheck_ingest(db, qr_raw, user)
     if pre_err is not None:
         return {**pre_err, "accepted": False}
-    return _launch_ingest(user, qr_raw, parsed, fast=False)
+    return _launch_ingest(user, qr_raw, parsed, fast=False, db=db)
+
+
+@router.post("/batch-status",
+             summary="Пачка: статусы сданных чеков и суточный лимит")
+def batch_status(body: BatchStatusBody, db: Session = Depends(get_db),
+                 user=Depends(require_pool_user)):
+    """Что стало с чеками пачки: verified / pending / rejected.
+
+    Приём асинхронный (ответ «чек принят — проверяем» уходит сразу), поэтому
+    панель сессии опрашивает этот эндпоинт одним запросом на всю пачку и
+    перекрашивает счётчики: синий «на модерации» → оранжевый «принят» или
+    красный «не принят». Чужие чеки не отдаются: выборка по своему участнику.
+    """
+    res = pool_batch.statuses(db, user, [k.model_dump() for k in body.keys])
+    res["counts"] = pool_batch.count_by_status(res["items"])
+    res["user_points"] = int(user.points or 0)
+    return res
 
 
 @router.get("/summary", summary="Сводка: баллы, чеки, код приглашения")

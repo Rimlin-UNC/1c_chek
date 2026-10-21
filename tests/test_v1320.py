@@ -318,7 +318,7 @@ class TestCabinet:
         assert _wait_row(b["fn"])
         s = c.get("/api/v1/pool-my/summary", headers=H).json()
         assert s["email"] == "cabinet@test.ru" and s["receipts_total"] == 1
-        assert s["today"] == 1 and s["daily_limit"] == 50
+        assert s["today"] == 1 and s["daily_limit"] == pool.DAILY_LIMIT
         lst = c.get("/api/v1/pool-my/receipts", headers=H).json()
         assert lst["total"] == 1 and lst["items"][0]["items_count"] == 1
         # карточка чека с позициями

@@ -169,7 +169,9 @@ class TestPublicCheck:
             _s.close()
         assert info["enabled"] is want
         assert "offerta" in info and info["offerta_version"]
-        assert info["daily_limit"] == 50
+        # v1.70.40: суточный лимит — из кода (поднят до 100 решением владельца),
+        # а не зашитое число: иначе тест расходился бы с ingest.DAILY_LIMIT
+        assert info["daily_limit"] == pool.DAILY_LIMIT >= 50
         db = _db(); _enable(db, True); db.commit(); db.close()
         info = c.get("/api/v1/public/pool/info").json()
         assert info["enabled"] is True
