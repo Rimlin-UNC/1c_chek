@@ -447,6 +447,433 @@ class TestThresholdAlignment:
 
 
 # ======================================================================
+# 4б. Три дефекта приёма, найденные живым прогоном пачки (v1.70.41)
+# ======================================================================
+def _enable_pool(db):
+    from app.services import appsettings
+    appsettings.set_setting(db, "pool_enabled", "1")
+
+
+def _mk_user(db, tag, **kw):
+    _SEQ["n"] += 1
+    u = PoolUser(vid=f"v17040-{tag}-{_SEQ['n']}", **kw)
+    db.add(u)
+    db.flush()
+    return u
+
+
+def _reset_auth_hits():
+    """Сброс счётчика попыток регистрации/входа.
+
+    В полном прогоне воркер накапливает попытки соседних тестов, и без сброса
+    своя регистрация получает честный 429 вместо проверяемого поведения
+    (так же поступают фикстуры test_v1310/test_v1320).
+    """
+    from app.pool import router_auth
+    router_auth._HITS.clear()
+
+
+def _wait_bg(name="pool-web-ingest", timeout=25):
+    """Ждёт завершения фоновых потоков приёма (приём идёт не в запросе)."""
+    import threading
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if not [t for t in threading.enumerate() if t.name == name]:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+class TestGuestMergeIntegrity:
+    """Дефект 22: слияние гостевой истории падало на FOREIGN KEY.
+
+    `merge_guest_into_account` переносила только чеки и баллы, после чего
+    удаляла строку гостя. Но на `pool_users.id` ссылаются десять таблиц:
+    согласия 152-ФЗ, одноразовые токены, отпечатки устройств, журнал IP,
+    сигналы антифрода, рефералы, достижения и выводы средств. Любой гость,
+    успевший получить сигнал антифрода (например REPEAT_SUMS после пяти
+    одинаковых сумм подряд) или достижение, при регистрации давал
+    `sqlite3.IntegrityError: FOREIGN KEY constraint failed`: регистрация,
+    вход и сдача чека из кабинета отвечали 500 — то есть обрывался ровно тот
+    путь, который обещан в шапке модуля аккаунтов.
+    """
+
+    def test_merge_moves_every_dependent_table(self):
+        from app.pool.models import (
+            PoolAchievement,
+            PoolConsent,
+            PoolFingerprint,
+            PoolIpLog,
+            PoolPoint,
+            PoolReferral,
+            PoolSignal,
+            PoolToken,
+            PoolWithdrawal,
+        )
+        db = SessionLocal()
+        try:
+            guest = _mk_user(db, "m22g", points=3)
+            acc = _mk_user(db, "m22a")
+            ref = _mk_user(db, "m22r")
+            other = _mk_user(db, "m22o")
+            fn, fd, fp = _triple()
+            db.add(PoolReceipt(pool_user_id=guest.id, fn=fn, fd=fd, fp=fp,
+                               status="verified", total_sum=10.0,
+                               points_awarded=1))
+            for row in (
+                PoolPoint(user_id=guest.id, delta=1, reason="receipt"),
+                PoolConsent(user_id=guest.id, vid=guest.vid,
+                            offerta_version="2026-10"),
+                PoolToken(user_id=guest.id, token_hash="h22", purpose="magic",
+                          email="m22@test.ru"),
+                PoolFingerprint(user_id=guest.id, visitor_hash="vh22",
+                                ua_hash="uh22"),
+                PoolIpLog(user_id=guest.id, ip="ip22", ip24="24", kind="check"),
+                PoolSignal(user_id=guest.id, code="REPEAT_SUMS", severity=2,
+                           points=20, status="open"),
+                PoolReferral(referrer_id=ref.id, referred_id=guest.id),
+                PoolReferral(referrer_id=guest.id, referred_id=other.id),
+                PoolAchievement(user_id=guest.id, code="first_receipt"),
+                PoolWithdrawal(user_id=guest.id, points=5, status="new"),
+            ):
+                db.add(row)
+            db.commit()
+            gvid = guest.vid
+
+            moved = accounts.merge_guest_into_account(db, acc, gvid)
+            db.commit()
+
+            assert moved == 1, "число перенесённых чеков нужно для письма"
+            assert db.query(PoolUser).filter(PoolUser.vid == gvid).count() == 0
+            for model, col in ((PoolReceipt, "pool_user_id"),
+                               (PoolPoint, "user_id"), (PoolConsent, "user_id"),
+                               (PoolToken, "user_id"),
+                               (PoolFingerprint, "user_id"),
+                               (PoolIpLog, "user_id"), (PoolSignal, "user_id"),
+                               (PoolAchievement, "user_id"),
+                               (PoolWithdrawal, "user_id")):
+                left = (db.query(model)
+                        .filter(getattr(model, col) == guest.id).count())
+                assert left == 0, f"{model.__tablename__}: строки гостя не перенесены"
+            # антифрод-история переживает слияние, а не стирается
+            assert (db.query(PoolSignal)
+                    .filter(PoolSignal.user_id == acc.id).count()) == 1
+            assert (db.query(PoolReferral)
+                    .filter(PoolReferral.referred_id == acc.id).count()) == 1
+            assert (db.query(PoolReferral)
+                    .filter(PoolReferral.referrer_id == acc.id).count()) == 1
+            assert acc.points == 3, "баллы гостя прибавлены к аккаунту"
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_merge_resolves_achievement_code_conflict(self):
+        """UNIQUE(user_id, code): уже полученное аккаунтом не дублируется."""
+        from app.pool.models import PoolAchievement
+        db = SessionLocal()
+        try:
+            guest = _mk_user(db, "m22ach-g")
+            acc = _mk_user(db, "m22ach-a")
+            db.add(PoolAchievement(user_id=acc.id, code="first_receipt"))
+            db.add(PoolAchievement(user_id=guest.id, code="first_receipt"))
+            db.add(PoolAchievement(user_id=guest.id, code="hundred"))
+            db.commit()
+            gvid = guest.vid
+
+            accounts.merge_guest_into_account(db, acc, gvid)
+            db.commit()
+
+            codes = sorted(a.code for a in db.query(PoolAchievement)
+                           .filter(PoolAchievement.user_id == acc.id).all())
+            assert codes == ["first_receipt", "hundred"], codes
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_merge_resolves_referral_conflict(self):
+        """UNIQUE(referred_id): привязка аккаунта побеждает гостевую."""
+        from app.pool.models import PoolReferral
+        db = SessionLocal()
+        try:
+            guest = _mk_user(db, "m22ref-g")
+            acc = _mk_user(db, "m22ref-a")
+            first, second = _mk_user(db, "m22ref-1"), _mk_user(db, "m22ref-2")
+            db.add(PoolReferral(referrer_id=first.id, referred_id=acc.id))
+            db.add(PoolReferral(referrer_id=second.id, referred_id=guest.id))
+            db.commit()
+            gvid = guest.vid
+
+            accounts.merge_guest_into_account(db, acc, gvid)
+            db.commit()
+
+            rows = (db.query(PoolReferral)
+                    .filter(PoolReferral.referred_id == acc.id).all())
+            assert len(rows) == 1, "гостевая привязка не должна затереть свою"
+            assert rows[0].referrer_id == first.id
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_merge_is_wrapped_in_savepoint(self):
+        """Сбой слияния не имеет права ломать регистрацию/вход/приём чека."""
+        src = _func_code(accounts.merge_guest_into_account)
+        assert "db.begin_nested()" in src, "слияние не в SAVEPOINT"
+        assert "sp.rollback()" in src
+        assert "sp.commit()" in src
+        assert "db.flush()" in src, "FK-конфликт проявляется только на сбросе"
+        assert "log.warning" in src, "причина откладывания слияния должна быть в журнале"
+
+    def test_register_with_antifraud_history_is_not_500(self, client):
+        from app.pool.models import PoolSignal
+        db = SessionLocal()
+        try:
+            _enable_pool(db)
+            guest = _mk_user(db, "m22api")
+            db.add(PoolSignal(user_id=guest.id, code="REPEAT_SUMS", severity=2,
+                              points=20, status="open"))
+            db.commit()
+            cookie = {"pool_vid": f"{guest.vid}.{public._sign(guest.vid)}"}
+            public._IP_HITS.clear()
+            _reset_auth_hits()
+            _SEQ["n"] += 1
+            r = client.post("/api/v1/pool-auth/register",
+                            json={"email": f"m22-{_SEQ['n']}@test.ru",
+                                  "password": "parol-1234"},
+                            cookies=cookie)
+            assert r.status_code == 200, r.text[:300]
+            assert "token" in r.json()
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_login_with_achievement_history_is_not_500(self, client):
+        from app.auth import hash_password
+        from app.pool.models import PoolAchievement
+        db = SessionLocal()
+        try:
+            _SEQ["n"] += 1
+            email = f"m22log-{_SEQ['n']}@test.ru"
+            acc = _mk_user(db, "m22login", email=email)
+            acc.password_hash = hash_password("parol-1234")
+            guest = _mk_user(db, "m22loging")
+            db.add(PoolAchievement(user_id=guest.id, code="first_receipt"))
+            db.commit()
+            cookie = {"pool_vid": f"{guest.vid}.{public._sign(guest.vid)}"}
+            _reset_auth_hits()
+            r = client.post("/api/v1/pool-auth/login",
+                            json={"email": email, "password": "parol-1234"},
+                            cookies=cookie)
+            assert r.status_code == 200, r.text[:300]
+        finally:
+            db.rollback()
+            db.close()
+
+
+class TestMergeRace:
+    """Дефект 23: чек терялся, если донор регистрировался во время проверки.
+
+    Приём отвечает «Чек принят — проверяем» сразу, а проверка идёт секунды в
+    фоновом потоке. Если в это окно донор регистрировался, слияние переносило
+    историю и удаляло строку гостя — поток либо падал на FOREIGN KEY, либо
+    получал ObjectDeletedError при перечитывании владельца, и чек исчезал:
+    счётчик донора навсегда оставался синим.
+    """
+
+    def test_merge_inherits_vid(self):
+        """У аккаунта, созданного регистрацией, своего vid нет — он наследует
+        гостевой: именно по нему фоновый приём потом находит владельца."""
+        db = SessionLocal()
+        try:
+            guest = _mk_user(db, "m23g")
+            acc = _mk_user(db, "m23a")
+            acc.vid = None
+            db.commit()
+            gvid = guest.vid
+            accounts.merge_guest_into_account(db, acc, gvid)
+            db.commit()
+            assert acc.vid == gvid, "vid должен наследоваться аккаунтом"
+            assert db.query(PoolUser).filter(PoolUser.vid == gvid).count() == 1
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_merge_keeps_account_vid_when_it_already_has_one(self):
+        """Свой vid аккаунта не затирается, а гостевой освобождается: vid
+        уникален, и слияние не имеет права падать на этом ограничении."""
+        db = SessionLocal()
+        try:
+            guest = _mk_user(db, "m23g2")
+            acc = _mk_user(db, "m23a2")
+            own, gvid = acc.vid, guest.vid
+            accounts.merge_guest_into_account(db, acc, gvid)
+            db.commit()
+            assert acc.vid == own, "чужой vid затёр собственный"
+            assert db.query(PoolUser).filter(PoolUser.vid == gvid).count() == 0
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_receipt_survives_registration_during_verification(
+            self, client, monkeypatch):
+        import time
+        from datetime import datetime
+
+        from app.services.external import ExternalItem, ExternalResult
+
+        slow = {"calls": 0}
+
+        def _slow_fetch(*_a, **_k):
+            slow["calls"] += 1
+            time.sleep(0.9)     # окно гонки: регистрация успевает пройти раньше
+            return ExternalResult(
+                ok=True, source="test", found=True, message="OK",
+                date_time=datetime(2026, 9, 5, 14, 30), total_sum=1250.0,
+                operation=1, merchant_name="ООО Ромашка",
+                merchant_inn="7704001275", merchant_address="г. Тихвин",
+                items=[ExternalItem(name="Кофе", quantity=1.0, price=1250.0,
+                                    total=1250.0, vat_rate="20", vat_sum=208.33)],
+                raw={"document": {"receipt": {"totalSum": 125000}}})
+
+        monkeypatch.setattr(ingest, "_fetch_details", _slow_fetch)
+        db = SessionLocal()
+        try:
+            _enable_pool(db)
+            db.commit()
+            fn, fd, fp = _triple()
+            qr = f"t=20260905T1430&s=1250.00&fn={fn}&i={fd}&fp={fp}&n=1"
+            public._IP_HITS.clear()
+            client.cookies.clear()   # сессионный клиент хранит чужие cookie
+            r = client.post("/api/v1/public/pool/check",
+                            json={"qr_text": qr, "offerta": True, "hp": "",
+                                  "form_ms": 5000})
+            assert r.status_code == 200 and r.json().get("accepted"), r.text[:200]
+            raw = client.cookies.get("pool_vid") or ""
+            assert "." in raw, f"сервер не выдал подписанный vid: {raw!r}"
+
+            _SEQ["n"] += 1
+            reg = client.post("/api/v1/pool-auth/register",
+                              json={"email": f"m23-{_SEQ['n']}@test.ru",
+                                    "password": "parol-1234"},
+                              cookies={"pool_vid": raw})   # подпись обязательна
+            assert reg.status_code == 200, reg.text[:300]
+            acc_id = None
+            tok = reg.json()["token"]
+            import jwt as _jwt
+
+            from app.config import settings as _st
+            acc_id = _jwt.decode(tok, _st.SECRET_KEY,
+                                 algorithms=["HS256"]).get("pu")
+
+            _wait_bg()
+            db.expire_all()
+            rows = db.query(PoolReceipt).filter(PoolReceipt.fn == fn).all()
+            assert len(rows) == 1, f"чек потерян или задвоен: {len(rows)}"
+            assert rows[0].pool_user_id == acc_id, \
+                "чек должен принадлежать аккаунту, поглотившему гостя"
+            assert slow["calls"] >= 2, "приём не был повторён по актуальному владельцу"
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_background_reresolves_owner_by_vid(self):
+        """Замок на сам механизм повтора: оба проявления гонки пойманы."""
+        src = _read("app/pool/router_public.py")
+        start = src.index("    def _bg():")
+        end = src.index('threading.Thread(target=_bg, name="pool-web-ingest"',
+                        start)
+        body = src[start:end]
+        assert "except (IntegrityError, ObjectDeletedError):" in body
+        assert "s.rollback()" in body
+        assert "PoolUser.vid == vid" in body
+        assert "stale_id = u.id" in body, \
+            "id надо фиксировать до rollback: после него строка гостя мертва"
+        assert body.count("ingest.ingest_parsed(") == 2, \
+            "повтор приёма обязан быть ровно один"
+
+
+class TestAtomicPoints:
+    """Дефект 24: баллы терялись при параллельном приёме пачки.
+
+    `add_points` прибавляла баллы чтением-изменением-записью в памяти сессии.
+    При поточной сдаче каждый чек проверяется своим фоновым потоком со своей
+    сессией: два потока читали одно значение, и одно начисление терялось.
+    Замер живого прогона: 10 принятых чеков MAX дали 9 баллов на счёте при
+    10 начислениях в самих чеках.
+    """
+
+    def test_add_points_is_atomic_update(self):
+        src = _func_code(ingest.add_points)
+        assert "func.coalesce(PoolUser.points, 0) + int(delta)" in src
+        assert 'synchronize_session="fetch"' in src, \
+            "без синхронизации ответ user_points останется неточным"
+        assert "if not changed:" in src, "нужен запасной путь для незаписанной строки"
+
+    def test_concurrent_add_points_loses_nothing(self):
+        import threading
+        db = SessionLocal()
+        try:
+            u = _mk_user(db, "m24", points=0)
+            db.commit()
+            uid = u.id
+            n = 12
+            errors = []
+
+            def _one():
+                s = SessionLocal()
+                try:
+                    from app.pool.models import PoolUser as _PU
+                    owner = s.get(_PU, uid)
+                    ingest.add_points(s, owner, 1, "receipt", "r24")
+                    s.commit()
+                except Exception as e:                        # noqa: BLE001
+                    errors.append(repr(e))
+                    s.rollback()
+                finally:
+                    s.close()
+
+            threads = [threading.Thread(target=_one) for _ in range(n)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+            assert not errors, errors[:2]
+            db.expire_all()
+            from app.pool.models import PoolPoint
+            from app.pool.models import PoolUser as _PU
+            owner = db.get(_PU, uid)
+            ledger = (db.query(PoolPoint)
+                      .filter(PoolPoint.user_id == uid,
+                              PoolPoint.reason == "receipt").count())
+            assert owner.points == n, f"потеряно {n - owner.points} баллов из {n}"
+            assert ledger >= n, "журнал начислений обязан совпадать со счётом"
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_add_points_writes_ledger_and_zero_is_noop(self):
+        from app.pool.models import PoolPoint
+        db = SessionLocal()
+        try:
+            u = _mk_user(db, "m24b", points=0)
+            db.commit()
+            ingest.add_points(db, u, 0, "receipt")
+            db.commit()
+            assert u.points == 0
+            assert (db.query(PoolPoint)
+                    .filter(PoolPoint.user_id == u.id).count()) == 0
+            ingest.add_points(db, u, 2, "receipt", "ref24")
+            db.commit()
+            row = (db.query(PoolPoint)
+                   .filter(PoolPoint.user_id == u.id).one())
+            assert (row.delta, row.reason, row.ref_id) == (2, "receipt", "ref24")
+            assert u.points == 2
+        finally:
+            db.rollback()
+            db.close()
+
+
+# ======================================================================
 # 5. Настоящая клиентская логика сайта (прогон в node)
 # ======================================================================
 WEB_HELPERS = ("pubBatchKey", "pubBatchState", "pubBatchLabel", "pubBatchCount",
@@ -978,28 +1405,25 @@ class TestDocsDeviation:
 # 13. Ритуал выпуска
 # ======================================================================
 class TestRelease17040:
+    """v1.70.41: выпуск 1.70.40 отгружен.
+
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведёт test_v17041, а
+    здесь остаётся запись выпуска в истории (как сделано для 1.70.38 и 1.70.39).
+    """
+
     VERSION = "1.70.40"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read("app/config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read("app/static/sw.js")
-        assert f'"version": "{self.VERSION}"' in _read(
-            "app/static/manifest.webmanifest")
-        idx = _read("app/static/index.html")
-        assert f"app.css?v={self.VERSION}" in idx
-        assert f"app.js?v={self.VERSION}" in idx
-        assert f"maxapp.js?v={self.VERSION}" in _read(
-            "app/static/maxapp/index.html")
+    def test_version_is_release(self):
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read("app/config.py")).group(1)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 40)
 
-    def test_cache_busters_in_service_worker(self):
-        sw = _read("app/static/sw.js")
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_release_record_stays_in_history(self):
+        assert f"## [{self.VERSION}]" in _read("CHANGELOG.md")
+        assert f"'{self.VERSION}': [" in _read(APP_JS)
+        assert f"## v{self.VERSION} —" in _read("docs/ui_journal.md")
+        # механизм пачки остался в репозитории
+        assert (ROOT / "app/pool/batch.py").is_file()
 
     def test_whats_new_entry(self):
         js = _read(APP_JS)

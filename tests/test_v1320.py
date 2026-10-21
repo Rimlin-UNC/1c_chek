@@ -209,7 +209,16 @@ class TestGuestMerge:
         # гость-пользователь исчез, чеки принадлежат аккаунту
         db = _db()
         assert db.query(PoolUser).filter(PoolUser.email == "guest2acc@test.ru").count() == 1
-        assert db.query(PoolUser).filter(PoolUser.vid.isnot(None)).count() == 0
+        # v1.70.41: «гость исчез» больше нельзя проверять отсутствием строк с
+        # vid. Слияние наследует vid аккаунту: без этого чек, который в момент
+        # регистрации ещё проверяется в фоновом потоке, терялся вместе со
+        # строкой гостя (донору при этом ответили «Чек принят — проверяем»).
+        # Проверяем по сути: отдельной гостевой строки нет, vid ровно один и
+        # он принадлежит аккаунту.
+        with_vid = db.query(PoolUser).filter(PoolUser.vid.isnot(None)).all()
+        assert len(with_vid) == 1, f"гостевая строка не исчезла: {len(with_vid)}"
+        assert with_vid[0].email == "guest2acc@test.ru", \
+            "единственный vid обязан быть у аккаунта, а не у брошенного гостя"
         assert db.query(PoolReceipt).filter(
             PoolReceipt.pool_user_id == r.json()["user"]["id"]).count() == 2
         db.close()

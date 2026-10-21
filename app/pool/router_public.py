@@ -23,7 +23,9 @@ from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from ..config import settings
 from ..database import get_db
@@ -276,9 +278,37 @@ def pool_check(body: CheckBody, request: Request, response: Response,
         s = SessionLocal()
         try:
             u = s.get(PoolUser, user_id)
+            if u is None and vid:
+                # v1.70.41 (дефект 23): гостя уже поглотил аккаунт — vid
+                # наследован аккаунтом, поэтому владельца ищем по нему.
+                u = s.query(PoolUser).filter(PoolUser.vid == vid).first()
             if u is not None:
-                res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
-                                           fast=fast)
+                # id фиксируем ДО rollback: после него строка гостя может
+                # отсутствовать, и любое обращение к атрибутам даст
+                # ObjectDeletedError вместо полезного повтора.
+                stale_id = u.id
+                try:
+                    res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
+                                               fast=fast)
+                except (IntegrityError, ObjectDeletedError):
+                    # v1.70.41 (дефект 23): донор зарегистрировался/вошёл, пока
+                    # его чек проверялся у источника (проверка идёт секунды).
+                    # Слияние переносит историю и удаляет строку гостя, поэтому
+                    # захваченный id к моменту записи мертв: FOREIGN KEY
+                    # constraint failed при вставке чека либо ObjectDeletedError
+                    # при перечитывании владельца. Владелец находится по vid
+                    # (он наследован аккаунтом) и приём повторяется один раз —
+                    # донору уже ответили «Чек принят — проверяем», и потеря
+                    # чека оставила бы счётчик навсегда синим.
+                    s.rollback()
+                    fresh = (s.query(PoolUser)
+                             .filter(PoolUser.vid == vid).first() if vid
+                             else None)
+                    if fresh is None or fresh.id == stale_id:
+                        raise
+                    u = fresh
+                    res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
+                                               fast=fast)
                 # v1.34.0: сигналы поведения/правил после приёма чека
                 if isinstance(res, dict) and res.get("receipt_id"):
                     antifraud.after_receipt(s, u, res["receipt_id"], None,

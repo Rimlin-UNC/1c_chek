@@ -66,11 +66,33 @@ def get_or_create_user(db: Session, tg_user_id: str | None = None,
 
 
 def add_points(db: Session, user, delta: int, reason: str, ref_id: str = "") -> None:
-    """Начисление баллов с записью в журнал (points_ledger)."""
-    from .models import PoolPoint
+    """Начисление баллов с записью в журнал (points_ledger).
+
+    v1.70.41 (дефект 24): прибавка выполняется атомарным UPDATE
+    `points = coalesce(points, 0) + delta`, а не чтением-изменением-записью
+    в памяти сессии. При поточной сдаче каждый чек проверяется своим фоновым
+    потоком со своей сессией: два потока читали одно и то же значение, и одно
+    начисление терялось. Замер живого прогона: 10 принятых чеков MAX дали
+    9 баллов на счёте при 10 записях начисления в чеках — то есть донор
+    терял баллы, на которые уже имел право. Баллы — расчётная единица вывода
+    средств, поэтому теряются они не в нашу пользу.
+
+    `synchronize_session="fetch"` сразу обновляет значение в объекте, поэтому
+    ответы вида `user_points` остаются точными. Если строка участника ещё не
+    в базе (не сброшена на диск), делаем прежнюю прибавку в памяти.
+    """
+    from sqlalchemy import func
+
+    from .models import PoolPoint, PoolUser
     if delta == 0:
         return
-    user.points = (user.points or 0) + delta
+    changed = (db.query(PoolUser)
+               .filter(PoolUser.id == user.id)
+               .update({PoolUser.points:
+                        func.coalesce(PoolUser.points, 0) + int(delta)},
+                       synchronize_session="fetch"))
+    if not changed:
+        user.points = (user.points or 0) + delta
     db.add(PoolPoint(user_id=user.id, delta=delta, reason=reason, ref_id=ref_id))
 
 
