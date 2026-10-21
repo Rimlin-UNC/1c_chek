@@ -907,14 +907,18 @@ class TestDocs:
 
 
 class TestVersion17037Sync:
-    def test_all_sync_points(self):
-        ver = "1.70.37"
-        assert f'APP_VERSION: str = "{ver}"' in read("app/config.py")
-        assert f"ymaster-check-v{ver}" in read("app/static/sw.js")
-        assert f'"version": "{ver}"' in read("app/static/manifest.webmanifest")
-        idx = read(INDEX)
-        assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
-        assert f"maxapp.js?v={ver}" in read(MX_HTML)
+    """v1.70.38: выпуск 1.70.37 отгружен.
+
+    Точки синхронизации показывают ТЕКУЩУЮ версию (её проверяет test_v17038),
+    поэтому здесь остаётся запись выпуска в истории — там, где она и должна жить.
+    """
+
+    def test_release_record_stays_in_history(self):
+        assert "## [1.70.37]" in read("CHANGELOG.md")
+        assert "'1.70.37': [" in read(APP_JS)
+        # в инструкции версия упоминается без «v»: «С версии 1.70.37 …»
+        assert "1.70.37" in read("app/services/manual_content.py")
+        assert "v1.70.37" in read("docs/ui_journal.md")
 
     def test_whats_new_entry(self):
         js = read(APP_JS)
@@ -928,7 +932,7 @@ class TestVersion17037Sync:
 class TestRelease:
     """Требование «своя запись первая» живёт в файле текущего выпуска."""
 
-    VERSION = "1.70.37"
+    VERSION = "1.70.38"
 
     def test_whats_new_is_first(self):
         js = read(APP_JS)
@@ -939,9 +943,13 @@ class TestRelease:
         assert f"## [{self.VERSION}]" in read("CHANGELOG.md")
 
     def test_journal_entry(self):
+        # v1.70.38: раздел журнала СВОЕГО выпуска проверяется по своей версии,
+        # а не по self.VERSION — тот теперь следит за текущим выпуском (1.70.38),
+        # и раздел v1.70.37 в журнале остаётся историей, а не «текущим».
+        ver = "1.70.37"
         j = read("docs/ui_journal.md")
-        assert f"## v{self.VERSION} —" in j, "в журнале нет раздела выпуска"
-        sec = j.split(f"## v{self.VERSION} —", 1)[1].split("## Бэклог", 1)[0]
+        assert f"## v{ver} —" in j, "в журнале нет раздела выпуска"
+        sec = j.split(f"## v{ver} —", 1)[1].split("## v1.70.38", 1)[0]
         for needle in ("ст. 9 152-ФЗ", "reg_source", "6.66:1", "54 failed",
                        "localStorage"):
             assert needle in sec, f"в журнале нет «{needle}»"

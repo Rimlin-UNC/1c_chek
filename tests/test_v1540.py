@@ -151,11 +151,16 @@ class TestReceiptEmailApi:
             db.close()
         yield
 
-    def test_receipt_email_no_smtp_503(self, client):
+    def test_receipt_email_no_smtp_409(self, client):
         r = client.post("/api/v1/public/pool/receipt-email", json={
             "fn": "1234567890123456", "email": "a@mail.ru", "hp": ""})
-        # в тестовой среде SMTP не настроен — честный 503
-        assert r.status_code == 503
+        # в тестовой среде SMTP не настроен. До v1.70.38 здесь был 503
+        # «Service Unavailable», то есть «сервис недоступен, повторите позже»,
+        # хотя повтор не помог бы: письмо не уйдёт, пока владелец не настроит
+        # почту. Любой мониторинг и проверка «нет серверных ошибок» считали это
+        # аварией. Теперь 409 — состояние сервера, а не его отказ (тот же код,
+        # которым программа отвечает на «Обновление уже выполняется»).
+        assert r.status_code == 409
         assert "не настроена" in r.json()["detail"]
 
     def test_receipt_email_bad_address(self, client):

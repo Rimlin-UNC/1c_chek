@@ -39,12 +39,57 @@ sys.path.insert(0, str(ROOT))
 from tests.conftest import login  # noqa: E402
 
 
+def _read(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+INDEX = "app/static/index.html"
+APP_JS = "app/static/js/app.js"
+MX_HTML = "app/static/maxapp/index.html"
+
+
 # ------------------------------------------------------------------ версии
 class TestVersion17038:
+    """Ритуал выпуска: точки синхронизации текущего выпуска живут здесь.
+
+    Файлы прошлых выпусков (test_v17033…test_v17037) следят за ТЕКУЩЕЙ версией
+    через свой VERSION, а свои записи проверяют в истории.
+    """
+
+    VERSION = "1.70.38"
+
     def test_version_is_release(self):
-        cfg = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
-        ver = re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read("app/config.py")).group(1)
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 38)
+
+    def test_all_sync_points(self):
+        assert f'APP_VERSION: str = "{self.VERSION}"' in _read("app/config.py")
+        assert f"ymaster-check-v{self.VERSION}" in _read("app/static/sw.js")
+        assert f'"version": "{self.VERSION}"' in _read("app/static/manifest.webmanifest")
+        idx = _read(INDEX)
+        assert f"app.css?v={self.VERSION}" in idx
+        assert f"app.js?v={self.VERSION}" in idx
+        assert f"maxapp.js?v={self.VERSION}" in _read(MX_HTML)
+
+    def test_cache_busters_in_service_worker(self):
+        """sw.js кэширует те же адреса с той же версией, что и index.html."""
+        sw = _read("app/static/sw.js")
+        assert f"'/css/app.css?v={self.VERSION}'" in sw
+        assert f"'/js/app.js?v={self.VERSION}'" in sw
+
+    def test_whats_new_is_first(self):
+        js = _read(APP_JS)
+        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
+        assert m and m.group(1) == self.VERSION, "запись выпуска не первая"
+
+    def test_whats_new_entry(self):
+        js = _read(APP_JS)
+        block = js.split(f"'{self.VERSION}': [", 1)[1].split("'1.70.37': [", 1)[0]
+        assert block.count("{ icon:") == 6
+        for part in ("schemathesis", "locust", "Что нового", "номер страницы",
+                     "ApiError", "XML", "офлайн-очередь", ".env"):
+            assert part in block, f"в «Что нового» нет «{part}»"
 
     def test_changelog_mentions_release(self):
         text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -527,10 +572,23 @@ class TestNotConfiguredIsNotServerError:
     """#15: 503 обещал «повторите позже» и считался аварией в мониторинге."""
 
     def test_maxapp_session_answers_409(self, client):
-        r = client.post("/api/v1/maxapp/session",
-                        json={"init_data": "query_id=1&user=%7B%7D&hash=" + "a" * 64})
-        assert r.status_code == 409, f"{r.status_code} {r.text[:150]}"
-        assert "не настроено" in r.json()["detail"].lower()
+        # база в прогоне общая, а тесты MAX (v1.69/v1.70.37) записывают токен
+        # бота: без его очистки результат зависел бы от порядка запуска.
+        from app.database import SessionLocal
+        from app.services import appsettings
+        db = SessionLocal()
+        try:
+            before = appsettings.get_setting(db, "max_bot_token", "")
+            appsettings.set_setting(db, "max_bot_token", "")
+            db.commit()
+            r = client.post("/api/v1/maxapp/session",
+                            json={"init_data": "query_id=1&user=%7B%7D&hash=" + "a" * 64})
+            assert r.status_code == 409, f"{r.status_code} {r.text[:150]}"
+            assert "не настроено" in r.json()["detail"].lower()
+        finally:
+            appsettings.set_setting(db, "max_bot_token", before)
+            db.commit()
+            db.close()
 
     def test_no_503_left_in_application_code(self):
         """Регрессионный замок: статус 503 в коде приложения больше не используется."""
@@ -545,11 +603,27 @@ class TestNotConfiguredIsNotServerError:
         assert not hits, hits
 
     def test_bad_init_data_is_still_422(self, client):
-        """Проверка ввода не пострадала: мусор — это ошибка клиента."""
-        for body in ({"init_data": ""}, {"init_data": "коротко"}, {},
-                     {"init_data": 123}, {"init_data": "x" * 9000}):
-            r = client.post("/api/v1/maxapp/session", json=body)
-            assert r.status_code == 422, f"{body!r} → {r.status_code}"
+        """Проверка ввода не пострадала: мусор — это ошибка клиента.
+
+        Токен бота здесь обязан быть задан, иначе маршрут ответит 409 «не
+        настроено» до проверки ввода — поэтому подставляем служебное значение.
+        """
+        from app.database import SessionLocal
+        from app.services import appsettings
+        db = SessionLocal()
+        try:
+            before = appsettings.get_setting(db, "max_bot_token", "")
+            appsettings.set_setting(db, "max_bot_token",
+                                    before or "1234567890:TESTTOKENFORINPUTCHECK")
+            db.commit()
+            for body in ({"init_data": ""}, {"init_data": "коротко"}, {},
+                         {"init_data": 123}, {"init_data": "x" * 9000}):
+                r = client.post("/api/v1/maxapp/session", json=body)
+                assert r.status_code == 422, f"{body!r} → {r.status_code}"
+        finally:
+            appsettings.set_setting(db, "max_bot_token", before)
+            db.commit()
+            db.close()
 
 
 # --------------------------------------- #17 прожог ЦП на битом хэше
