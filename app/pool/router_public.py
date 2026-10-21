@@ -419,7 +419,11 @@ def receipt_email(body: MailBody, request: Request,
     from .mailer import base_url, send_mail, smtp_configured
     from .models import PoolReceipt
     if not smtp_configured(db):
-        raise HTTPException(503,
+        # v1.70.38: 503 → 409 (см. app/routers/maxapp.py::session).
+        # Несконфигурированная почта — состояние сервера, а не его отказ:
+        # 5xx здесь ложно срабатывал в мониторинге и в проверке «нет
+        # серверных ошибок» при фаззинге API.
+        raise HTTPException(409,
             "Отправка писем пока не настроена — данные чека видны на этой странице")
     fn = (body.fn or "").strip()
     r = (db.query(PoolReceipt).filter(PoolReceipt.fn == fn)

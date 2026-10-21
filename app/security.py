@@ -56,16 +56,24 @@ limiter = SlidingWindowLimiter()
 
 # Зоны: (префикс пути, ключ, лимит, окно сек)
 def _zone_for(path: str):
+    """(зона, лимит, окно в секундах) для пути или None.
+
+    v1.70.38: лимиты берутся из настроек (RATE_LIMIT_* в .env) — значения по
+    умолчанию равны прежним зашитым числам, поэтому боевое поведение то же,
+    но пороги можно поднять для нагрузочного тестирования и опустить, если
+    за одним IP прокси оказалось слишком много людей.
+    """
+    from .config import settings
     if path.startswith("/api/v1/auth/login"):
         # Подбор пароля бессмыслен: LoginGuard блокирует по (IP+логин) после 5 неудач.
         # Лимит зоны выше, т.к. за одним IP превью/прокси могут быть несколько людей.
-        return "login", 25, 60
+        return "login", settings.RATE_LIMIT_LOGIN, 60
     if path.startswith(("/api/v1/auth/register", "/api/v1/auth/invite-info")):
-        return "register", 40, 3600
+        return "register", settings.RATE_LIMIT_REGISTER, 3600
     if path.startswith("/onec/"):
-        return "onec", 120, 60
+        return "onec", settings.RATE_LIMIT_ONEC, 60
     if path.startswith("/api/"):
-        return "api", 240, 60
+        return "api", settings.RATE_LIMIT_API, 60
     return None
 
 

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..models import iso_z          # v1.60.0: инстанты — UTC+«Z»
+from ..config import settings   # v1.70.38: PAGE_MAX
 
 from ..database import get_db
 from . import accounts, engage, ingest, mailer, referral
@@ -81,7 +82,7 @@ def summary(db: Session = Depends(get_db),
 
 @router.get("/receipts", summary="Чек-Пул: мои чеки (пагинация)")
 def receipts(status: str = Query("", max_length=16),
-             page: int = Query(1, ge=1),
+             page: int = Query(1, ge=1, le=settings.PAGE_MAX),
              page_size: int = Query(20, ge=1, le=100),
              db: Session = Depends(get_db),
              user=Depends(accounts.require_pool_user)):

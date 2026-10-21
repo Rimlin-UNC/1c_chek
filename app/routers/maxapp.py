@@ -108,7 +108,14 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
                                               maxapp.bot_token(db))
     if err == "not_configured":
         from fastapi import HTTPException, status
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+        # v1.70.38: было 503 «Service Unavailable». Это неправда дважды:
+        # повторить позже не поможет (пока владелец не впишет токен бота MAX,
+        # состояние не изменится), а любой мониторинг и фаззинг по схеме
+        # считают 5xx отказом сервера. 409 — «конфликт с текущим состоянием
+        # сервера»: в проекте этот код уже используется для случаев, когда
+        # действие невозможно из-за состояния сервера («обновление уже
+        # выполняется»), а не из-за ошибки в запросе.
+        raise HTTPException(status.HTTP_409_CONFLICT,
                             "Мини-приложение ещё не настроено")
     if err in ("format", "bad_hash"):
         from fastapi import HTTPException

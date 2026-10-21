@@ -150,6 +150,83 @@ app = FastAPI(
 )
 
 
+# --------------------------------------------------------------------------
+#  v1.70.38: честная схема OpenAPI
+#
+#  Фаззинг по схеме (schemathesis, 36 723 тест-кейса) показал 110 расхождений
+#  между документацией и тем, что приложение отдаёт на самом деле. Причины три,
+#  все лечатся в одном месте и НЕ меняют поведение приложения — только описание:
+#   • на 422 FastAPI документирует {"detail": [{loc, msg, type}, …]}, а наш
+#     обработчик (_safe_validation_handler ниже) отдаёт {"detail": "текст"} —
+#     строку человеческим языком, её показывает интерфейс. Сгенерированный
+#     клиент спотыкался бы об это на каждой ошибке валидации;
+#   • ответы 401/403/429 не были объявлены вовсе, хотя приложение их
+#     возвращает: авторизация, права роли и лимит частоты по IP;
+#   • CSV-выгрузки отдают text/csv, а схема обещала application/json.
+#  Проверка «документация = факт» зафиксирована тестами TestOpenApiContract в
+#  tests/test_v17038.py.
+# --------------------------------------------------------------------------
+_API_ERROR_SCHEMA = {
+    "type": "object",
+    "title": "ApiError",
+    "properties": {
+        "detail": {
+            "type": "string",
+            "description": "Причина отказа человеческим языком",
+        },
+    },
+    "required": ["detail"],
+}
+
+
+def _error_response(description: str) -> dict:
+    """Описание ответа-ошибки: у всех отказов приложения одна форма тела."""
+    return {
+        "description": description,
+        "content": {"application/json": {
+            "schema": {"$ref": "#/components/schemas/ApiError"}}},
+    }
+
+
+_default_openapi = app.openapi
+
+
+def custom_openapi() -> dict:
+    """Штатная схема, приведённая к фактическим ответам приложения."""
+    schema = _default_openapi()          # собирает и кэширует штатную схему
+    schema.setdefault("components", {}).setdefault(
+        "schemas", {})["ApiError"] = _API_ERROR_SCHEMA
+    for path, item in (schema.get("paths") or {}).items():
+        for method, op in (item or {}).items():
+            if not isinstance(op, dict) or not isinstance(op.get("responses"), dict):
+                continue
+            responses = op["responses"]
+            if "422" in responses:
+                responses["422"] = _error_response(
+                    "Запрос не прошёл проверку: поле пустое, значение вне "
+                    "диапазона или не того типа")
+            if op.get("security"):
+                responses.setdefault("401", _error_response(
+                    "Нет токена, токен истёк или подделан"))
+                responses.setdefault("403", _error_response(
+                    "Прав недостаточно: роль не та или объект чужой"))
+            if path.startswith(("/api/", "/onec/")):
+                responses.setdefault("429", _error_response(
+                    "Слишком много запросов: повторите позже "
+                    "(интервал — в заголовке Retry-After)"))
+            if path.endswith(("export.csv", "export-csv")) and "200" in responses:
+                ok = responses["200"]
+                if isinstance(ok, dict):
+                    ok["description"] = ("CSV-файл: разделитель «;», "
+                                         "кодировка UTF-8")
+                    ok["content"] = {"text/csv": {
+                        "schema": {"type": "string", "format": "binary"}}}
+    return schema
+
+
+app.openapi = custom_openapi
+
+
 @app.exception_handler(RequestValidationError)
 async def _safe_validation_handler(request: Request, exc: RequestValidationError):
     """422 без падений (v1.67.1, аудит): бинарные тела (multipart в JSON
@@ -284,8 +361,12 @@ async def ws_status(ws: WebSocket):
 # --------------------------------------------------------------------------
 #  Служебные эндпоинты
 # --------------------------------------------------------------------------
-@app.api_route("/health", methods=["GET", "HEAD"], tags=["Служебные"],
-               summary="Проверка работоспособности")
+# v1.70.38: было @app.api_route(..., methods=["GET", "HEAD"]) — FastAPI
+# выдавал ОБА operation с одним operationId (health_health_get), схема
+# OpenAPI получалась с дублем: генераторы клиентов и фаззеры на такой схеме
+# спотыкаются. HEAD для GET-маршрута Starlette добавляет сам, поэтому
+# достаточно @app.get — и проверка nginx/systemd (`curl -I /health`) работает.
+@app.get("/health", tags=["Служебные"], summary="Проверка работоспособности")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION,
             "vendor": settings.VENDOR, "site": settings.VENDOR_SITE}

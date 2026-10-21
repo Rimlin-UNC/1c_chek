@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from ..auth import require_admin
+from ..config import settings   # v1.70.38: PAGE_MAX
 from ..database import get_db
 from ..models import User, iso_z
 
@@ -104,7 +105,7 @@ def pool_receipts(status: str = Query("", max_length=16),
                   industry: str = Query("", max_length=32),
                   missing_geo: bool = Query(False),
                   missing_industry: bool = Query(False),
-                  page: int = Query(1, ge=1),
+                  page: int = Query(1, ge=1, le=settings.PAGE_MAX),
                   page_size: int = Query(50, ge=1, le=200),
                   db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     from .models import PoolReceipt

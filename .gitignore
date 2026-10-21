@@ -37,3 +37,7 @@ htmlcov/
 .ruff_cache/
 .pytest_cache/
 .hypothesis/
+
+# v1.70.38: кэш и отчёты инструмента фаззинга API (пересоздаются прогоном)
+.schemathesis/
+schemathesis-report/

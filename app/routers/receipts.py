@@ -343,7 +343,7 @@ def list_receipts(
     date_to: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     company_id: str | None = Query(None, max_length=36,
                                    description="v1.11.0: компания (только админ)"),
-    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1, le=settings.PAGE_MAX), page_size: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
     query = db.query(Receipt)

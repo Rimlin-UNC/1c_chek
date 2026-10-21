@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..auth import require_admin
+from ..config import settings   # v1.70.38: PAGE_MAX
 from ..database import get_db
 from ..models import User, iso_z
 from . import antifraud
@@ -50,7 +51,7 @@ def summary(db: Session = Depends(get_db), admin: User = Depends(require_admin))
 @router.get("/signals", summary="Антифрод: лента сигналов (админ)")
 def signals(status: str = Query("", max_length=16),
             min_severity: int = Query(0, ge=0, le=5),
-            page: int = Query(1, ge=1),
+            page: int = Query(1, ge=1, le=settings.PAGE_MAX),
             page_size: int = Query(30, ge=1, le=100),
             db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     q = db.query(PoolSignal)

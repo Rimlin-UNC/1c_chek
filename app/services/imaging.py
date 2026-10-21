@@ -112,8 +112,19 @@ def decode_qr_image(image_bytes: bytes) -> ImageScanResult:
     Возвращает ImageScanResult. Если найдено несколько различных чеков —
     выбрасывает MultipleReceiptsError со списком разобранных чеков.
     """
+    # v1.70.38: пустой файл (0 байт) ронял весь запрос с кодом 500 —
+    # cv2.imdecode на пустом буфере бросает cv2.error «!buf.empty()», а
+    # маршруты ловят только QRParseError и ValueError. Пустой файл и любой
+    # отказ декодера (обрезанный/битый JPEG) теперь дают тот же ValueError,
+    # который маршрут превращает в понятные 422.
+    if not image_bytes:
+        raise ValueError("Файл изображения пустой")
     buf = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    try:
+        image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    except cv2.error as e:
+        raise ValueError("Не удалось прочитать изображение "
+                         "(поддерживаются JPEG/PNG/WebP)") from e
     if image is None:
         raise ValueError("Не удалось прочитать изображение (поддерживаются JPEG/PNG/WebP)")
 
