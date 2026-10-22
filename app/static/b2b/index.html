@@ -143,7 +143,9 @@
                autocomplete="off">
       </div>
       <div class="b2b-field b2b-consent">
-        <label for="reg-consent">
+        <!-- метка оборачивает свой чекбокс: связь неявная, атрибут for был бы
+             избыточным (html-validate, правило no-redundant-for) -->
+        <label>
           <input id="reg-consent" name="consent" type="checkbox" required>
           Согласен на обработку персональных данных и с условиями оферты
           (редакция 2026-10). Данные нужны только для проверки статуса

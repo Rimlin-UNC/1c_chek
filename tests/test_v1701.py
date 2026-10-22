@@ -37,8 +37,23 @@ class TestVersions1701:
             assert 'src="/maxapp/maxapp.js' in r.text
 
     def test_spa_prefix_slashed(self):
+        """Каждый префикс SPA-fallback обязан заканчиваться на «/».
+
+        Без завершающего «/» страница /maxapp попадала бы в 404, а служебным
+        считался бы любой путь вроде /maxappfoo. Раньше замок сверял
+        буквальный хвост кортежа, из-за чего ломался при добавлении префикса
+        (v1.70.45 — b2b/); теперь проверяется сам кортеж, и проверка строже:
+        она требует «/» у каждого элемента, а не у последнего.
+        """
         main = open("app/main.py", encoding="utf-8").read()
-        assert '"ws/", "maxapp/")' in main and '"ws/", "maxapp")' not in main
+        found = re.search(r"full_path\.startswith\(\(([^)]*)\)\)", main)
+        assert found, "кортеж префиксов SPA-fallback не найден в app/main.py"
+        prefixes = re.findall(r'"([^"]*)"', found.group(1))
+        assert prefixes, "кортеж префиксов пуст"
+        for prefix in prefixes:
+            assert prefix.endswith("/"), f"префикс {prefix!r} без завершающего «/»"
+        for expected in ("api/", "onec/", "ws/", "maxapp/"):
+            assert expected in prefixes, f"пропал служебный префикс {expected}"
 
     def test_changelog(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()
