@@ -644,6 +644,18 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
 .fly-chip.s-ok { color: var(--accent-text); }
 .fly-chip.s-pend { color: var(--info-text); }
 .fly-chip.s-bad { color: var(--bad-text); }
+/* v1.70.43: прилёт чека в фазу виден и при сканировании камерой. Значок летит
+   ВНУТРИ окна камеры (окно — position: relative), поэтому его слой считается от
+   окна: 75 остаётся ниже модальных окон и тостов, как требует замок v1.70.40,
+   а человек видит полёт там, куда смотрит. */
+.fly-chip.in-host { position: absolute; z-index: 6; }
+/* фазы в строке счётчиков окна камеры — те же три цвета, что у плиток формы:
+   оранжевый «принят», голубой «на модерации», терракота «не принят» */
+.batch-cam-counts .seg { display: inline-block; font-weight: 800; }
+.batch-cam-counts .seg-ok { color: var(--accent-text); }
+.batch-cam-counts .seg-pend { color: var(--info-text); }
+.batch-cam-counts .seg-bad { color: var(--bad-text); }
+.batch-cam-counts .seg.pulse { animation: batchPulse .5s ease; }
 @keyframes batchFly {
   from { opacity: 1; transform: translate(0, 0) scale(1); }
   to { opacity: 0; transform: translate(var(--fly-x), var(--fly-y)) scale(.5); }

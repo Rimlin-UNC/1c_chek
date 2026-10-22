@@ -617,6 +617,23 @@ function batchStateRow(x) {
     '<span class="bst">' + esc(label + sum) + '</span></div>';
 }
 
+// v1.70.43: импульс фазы и строка счётчиков запасной камеры — те же три цвета,
+// что у плиток карточки. Каждая фаза служит целью прилёта чека, поэтому после
+// сканирования видно, КУДА именно попал чек: принят, на модерации или нет.
+function pulsePhase(el) {
+  if (!el) return;
+  el.classList.remove('pulse');
+  void el.offsetWidth;                     // перезапуск анимации импульса
+  el.classList.add('pulse');
+}
+
+function camCountsHTML(c) {
+  return 'принято <span class="seg seg-ok" id="cam-seg-ok">' + c.ok + '</span>' +
+    ' · на модерации <span class="seg seg-pend" id="cam-seg-pend">' + c.pend +
+    '</span> · не принято <span class="seg seg-bad" id="cam-seg-bad">' + c.bad +
+    '</span>';
+}
+
 function batchRender() {
   const c = {ok: 0, pend: 0, bad: 0};
   BATCH.items.forEach((x) => { if (c[x.state] !== undefined) c[x.state] += 1; });
@@ -640,27 +657,30 @@ function batchRender() {
   }
   const cam = $('cam-counts');
   if (cam) {
-    cam.textContent = 'принято ' + c.ok + ' · на модерации ' + c.pend +
-      ' · не принято ' + c.bad;
+    cam.innerHTML = camCountsHTML(c);
   }
 }
 
 // «Чек улетает в пул»: короткий полёт к нужному счётчику + импульс счётчика.
 // При настройке «меньше движения» анимация отключена в CSS — счётчики работают.
 function batchFly(state) {
-  const id = state === 'ok' ? 'bc-ok' : (state === 'pend' ? 'bc-pend' : 'bc-bad');
-  const target = $(id);
+  const id = state === 'ok' ? 'ok' : (state === 'pend' ? 'pend' : 'bad');
+  const camOn = !!$('cam-v');                  // запасная камера открыта
+  const seg = camOn ? $('cam-seg-' + id) : null;
+  const target = seg || $('bc-' + id);
   if (!target) return;
-  target.classList.remove('pulse');
-  void target.offsetWidth;                     // перезапуск анимации импульса
-  target.classList.add('pulse');
+  pulsePhase(target);
+  if (seg) pulsePhase($('bc-' + id));          // плитка карточки мигает вместе
   let reduced = false;
   try {
     reduced = window.matchMedia &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch (e) { reduced = false; }
   if (reduced) return;
-  const src = $('btn-scan') || target;
+  // Источник — то, откуда чек только что пришёл: видео запасной камеры, иначе
+  // кнопка сканирования. Раньше при открытой камере значок летел из левого
+  // верхнего угла, потому что скрытая кнопка возвращала нулевой прямоугольник.
+  const src = (camOn ? $('cam-v') : $('btn-scan')) || target;
   const a = src.getBoundingClientRect();
   const b = target.getBoundingClientRect();
   const chip = document.createElement('div');
@@ -821,8 +841,8 @@ async function batchCamOpen() {
   showService('Сканер чеков',
     '<video id="cam-v" autoplay playsinline muted ' +
     'style="width:100%;border-radius:12px;background:#000"></video>' +
-    '<div class="cam-counts hint" id="cam-counts">принято 0 · на модерации 0 · ' +
-    'не принято 0</div>' +
+    '<div class="cam-counts hint" id="cam-counts">' +
+    camCountsHTML({ok: 0, pend: 0, bad: 0}) + '</div>' +
     '<p class="hint" style="margin-top:8px">Наводите камеру на QR чеков один за ' +
     'другим — каждый распознаётся сам и сразу проверяется на дубликат.</p>' +
     '<div style="height:8px"></div>' +

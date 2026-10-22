@@ -585,6 +585,53 @@ function poolStatusChip(st) {
 //  v1.51.0: живая камера там, где сдаётся чек — тот же модуль scanner.js,
 //  что в разделе «Сканирование»: распознавание в браузере, антисбливание.
 // ==========================================================================
+// v1.70.43: ОДНА механика «чек прилетает в свою фазу». Раньше одинаковый полёт
+// был нарисован в трёх местах, а при сканировании камерой значок оказывался ПОД
+// модальным окном и летел к счётчикам формы, которых человек не видит: смотрел
+// он в камеру. Теперь host задаёт окно, внутри которого летит значок, а целью
+// становится фаза в строке счётчиков самого окна.
+function pulsePhase(el) {
+  if (!el) return;
+  el.classList.remove('pulse');
+  void el.offsetWidth;                          // перезапуск импульса
+  el.classList.add('pulse');
+}
+
+function flyChipTo(state, srcEl, targetEl, hostEl) {
+  if (!targetEl) return;
+  pulsePhase(targetEl);
+  let reduced = false;
+  try {
+    reduced = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) { reduced = false; }
+  if (reduced) return;                          // «меньше движения»: фаза
+  const src = srcEl || targetEl;                // мигнула, полёт не рисуем
+  const a = src.getBoundingClientRect();
+  const b = targetEl.getBoundingClientRect();
+  const chipEl = document.createElement('div');
+  chipEl.className = `fly-chip s-${state}`;
+  chipEl.textContent = state === 'bad' ? '✕' : '🧾';
+  const base = hostEl ? hostEl.getBoundingClientRect() : { left: 0, top: 0 };
+  if (hostEl) chipEl.classList.add('in-host');
+  chipEl.style.left = `${Math.round(a.left + a.width / 2 - 14 - base.left)}px`;
+  chipEl.style.top = `${Math.round(a.top + 4 - base.top)}px`;
+  chipEl.style.setProperty('--fly-x',
+    `${Math.round(b.left + b.width / 2 - a.left - a.width / 2)}px`);
+  chipEl.style.setProperty('--fly-y', `${Math.round(b.top - a.top)}px`);
+  (hostEl || document.body).appendChild(chipEl);
+  setTimeout(() => { try { chipEl.remove(); } catch (e) { /* уже удалён */ } }, 700);
+}
+
+// Строка счётчиков окна камеры: те же три фазы и три фирменных цвета, что у
+// плиток формы; каждая фаза — цель прилёта чека. Числа свои и целые, поэтому
+// разметка собирается без вставок пользовательского текста.
+function camCountsHTML(c) {
+  return `принято <span class="seg seg-ok" id="poolcam-seg-ok">${c.ok}</span>`
+    + ` · на модерации <span class="seg seg-pend" id="poolcam-seg-pend">${c.pend}</span>`
+    + ` · не принято <span class="seg seg-bad" id="poolcam-seg-bad">${c.bad}</span>`;
+}
+
 function openPoolCameraScan(onText) {
   // v1.70.42: ОДНА камера на все случаи. Владелец: «не стоит плодить пакетное
   // сканирование и сканирование qr-чеком» — отдельной «камеры пачки» больше нет.
@@ -605,7 +652,7 @@ function openPoolCameraScan(onText) {
         <button type="button" class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
       </div>
     </div>
-    <div class="batch-cam-counts" id="poolcam-counts" role="status" aria-live="polite">принято 0 · на модерации 0 · не принято 0</div>
+    <div class="batch-cam-counts" id="poolcam-counts" role="status" aria-live="polite">${camCountsHTML({ ok: 0, pend: 0, bad: 0 })}</div>
     <p class="form-hint" style="margin-top:8px">Совет: QR с экрана другого телефона тоже сканируется.
     Чужой QR-код (не чек) игнорируется — ждём реквизиты 54-ФЗ. Каждый чек сразу проверяется
     на дубликат по ФН+ФД+ФП: уже сданный идёт в красный счётчик и в базу не попадает,
@@ -1002,6 +1049,7 @@ function bindPoolForm(root, opts) {
   const PB = {
     active: false, items: [], seen: {}, cap: PUB_BATCH_CAP, tries: 0,
     accepted: 0, timer: 0, t0: Date.now(), camCounts: null, camClose: null,
+    camSlot: null,
     day: { today: 0, limit: PUB_BATCH_CAP, left: PUB_BATCH_CAP },
   };
   const pbSetCount = (id, n) => {
@@ -1023,37 +1071,22 @@ function bindPoolForm(root, opts) {
         .map(pubBatchRowHTML).join('');
     }
     if (PB.camCounts) {
-      PB.camCounts.textContent = `принято ${c.ok} · на модерации ${c.pend}`
-        + ` · не принято ${c.bad}`;
+      PB.camCounts.innerHTML = camCountsHTML(c);
     }
   };
   const pbFly = (state) => {
-    const id = state === 'ok' ? 'pub-bc-ok'
-      : (state === 'pend' ? 'pub-bc-pend' : 'pub-bc-bad');
-    const target = $p(id);
-    if (!target) return;
-    target.classList.remove('pulse');
-    void target.offsetWidth;                    // перезапуск импульса
-    target.classList.add('pulse');
-    let reduced = false;
-    try {
-      reduced = window.matchMedia
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    } catch (e) { reduced = false; }
-    if (reduced) return;                        // уважение к «меньше движения»
-    const src = $p('pub-cam') || target;
-    const a = src.getBoundingClientRect();
-    const b = target.getBoundingClientRect();
-    const chipEl = document.createElement('div');
-    chipEl.className = `fly-chip s-${state}`;
-    chipEl.textContent = state === 'bad' ? '✕' : '🧾';
-    chipEl.style.left = `${Math.round(a.left + a.width / 2 - 14)}px`;
-    chipEl.style.top = `${Math.round(a.top + 4)}px`;
-    chipEl.style.setProperty('--fly-x',
-      `${Math.round(b.left + b.width / 2 - a.left - a.width / 2)}px`);
-    chipEl.style.setProperty('--fly-y', `${Math.round(b.top - a.top)}px`);
-    document.body.appendChild(chipEl);
-    setTimeout(() => { try { chipEl.remove(); } catch (e) { /* уже удалён */ } }, 700);
+    const id = state === 'ok' ? 'ok' : (state === 'pend' ? 'pend' : 'bad');
+    const formTarget = $p(`pub-bc-${id}`);
+    const slot = PB.camSlot;
+    const seg = slot ? slot.querySelector(`#poolcam-seg-${id}`) : null;
+    if (seg) {
+      // окно камеры открыто: чек прилетает в свою фазу прямо в окне — туда,
+      // куда смотрит человек, — а плитка счётчика в форме мигает вместе с ним
+      flyChipTo(state, slot.querySelector('#poolcam-video') || slot, seg, slot);
+      pulsePhase(formTarget);
+      return;
+    }
+    flyChipTo(state, $p('pub-cam'), formTarget, null);
   };
   const pbAdd = (item) => { PB.items.push(item); pbRender(); pbFly(item.state); };
   const pbSetDay = (d) => {
@@ -1118,6 +1151,7 @@ function bindPoolForm(root, opts) {
     PB.active = false;
     if (PB.camClose) {
       const c = PB.camClose; PB.camClose = null; PB.camCounts = null;
+      PB.camSlot = null;
       try { c(); } catch (e) { /* окно уже закрыто */ }
     }
     if (PB.timer) { clearTimeout(PB.timer); PB.timer = 0; }
@@ -1238,6 +1272,7 @@ function bindPoolForm(root, opts) {
       // рубеж сессии: камеру закрываем и спрашиваем «продолжаем или закончим?»
       if (PB.camClose) {
         const c = PB.camClose; PB.camClose = null; PB.camCounts = null;
+        PB.camSlot = null;
         try { c(); } catch (e) { /* уже закрыто */ }
       }
       const more = await pbAskMore();
@@ -1264,6 +1299,7 @@ function bindPoolForm(root, opts) {
     const cam = openPoolCameraScan((text, p) => { pbHandle(text, p, true); });
     cam.onFinish = () => pbStop('manual');
     PB.camCounts = cam.countsEl;
+    PB.camSlot = cam.slot;
     PB.camClose = cam.close;
     pbRender();
   };
@@ -5031,29 +5067,11 @@ function scanSessFly(state) {
     : (state === 'pend' ? 'scan-bc-pend' : 'scan-bc-bad');
   const target = document.getElementById(id);
   if (!target) return;
-  target.classList.remove('pulse');
-  void target.offsetWidth;                       // перезапуск импульса
-  target.classList.add('pulse');
-  let reduced = false;
-  try {
-    reduced = window.matchMedia
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch (e) { reduced = false; }
-  if (reduced) return;
+  // камера сотрудника встроена в панель и не перекрывает счётчики, поэтому
+  // значок летит по странице — окно-хозяин не нужно
   const src = document.getElementById('btn-camera-start')
     || document.getElementById('btn-upload') || target;
-  const a = src.getBoundingClientRect();
-  const b = target.getBoundingClientRect();
-  const chipEl = document.createElement('div');
-  chipEl.className = `fly-chip s-${state}`;
-  chipEl.textContent = state === 'bad' ? '✕' : '🧾';
-  chipEl.style.left = `${Math.round(a.left + a.width / 2 - 14)}px`;
-  chipEl.style.top = `${Math.round(a.top + 4)}px`;
-  chipEl.style.setProperty('--fly-x',
-    `${Math.round(b.left + b.width / 2 - a.left - a.width / 2)}px`);
-  chipEl.style.setProperty('--fly-y', `${Math.round(b.top - a.top)}px`);
-  document.body.appendChild(chipEl);
-  setTimeout(() => { try { chipEl.remove(); } catch (e) { /* уже удалён */ } }, 700);
+  flyChipTo(state, src, target, null);
 }
 
 function scanSessAdd(item) {
@@ -5886,6 +5904,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.43': [
+    { icon: '🧾', title: 'Чек прилетает в свою фазу — и это видно',
+      text: 'После каждого сканирования значок чека летит туда, куда чек попал: в оранжевый «принят», в синий «на модерации» или в красный «не принят». Сама фаза вспыхивает, а в списке сессии появляется строка чека. Так сразу понятно, что с чеком произошло, не вчитываясь в уведомление: принят он, ждёт подтверждения официальным источником или отклонён как дубликат.' },
+    { icon: '🎯', title: 'Прилёт виден и во время сканирования камерой',
+      text: 'Раньше при сканировании камерой значок рисовался под окном камеры и летел к счётчикам формы, которых человек в этот момент не видел: взгляд был в камере. Теперь окно камеры показывает те же три фазы своими цветами, и чек прилетает прямо в них — внутри окна. В мини-приложении MAX то же самое: когда сканер хоста недоступен и работает своя камера, чек прилетает в фазу в строке счётчиков камеры, а не летит из угла экрана.' },
+    { icon: '🎨', title: 'Три фазы — три фирменных цвета везде',
+      text: 'Оранжевый корпоративный — чек принят после проверки источником, синий — на модерации, терракота — не принят (дубликат или отказ). Те же цвета у плиток счётчиков, у строк списка сессии, у летящего значка и теперь у строки счётчиков в окне камеры. Один смысл — один цвет, на сайте и в MAX.' },
+    { icon: '♿', title: 'Настройка «меньше движения» уважается',
+      text: 'Если в системе включён режим без анимаций, полёт не рисуется: фаза просто вспыхивает, а счётчики и список обновляются как обычно. Смысл не теряется — куда попал чек, видно и без движения. Поведение закреплено автотестами: разметка окна камеры, цвета фаз и отключение полёта при системной настройке.' },
+  ],
   '1.70.42': [
     { icon: '📷', title: 'Одно сканирование вместо двух режимов',
       text: 'Раньше рядом стояли две кнопки: «Сканировать QR чека» и «Сканировать пачкой». Это два режима одного действия, и вели они себя по-разному: одиночный скан закрывал камеру и не показывал счётчики, а поточный — показывал. Теперь кнопка одна. Она открывает непрерывный поток сдачи: обычный одиночный чек — это та же сессия, в которой один чек. То же самое на сайте: вместо «Сканировать камерой» и «Сканировать пачкой» осталась одна кнопка «Сканировать чек».' },

@@ -111,6 +111,13 @@ nav button.active { color: var(--accent-text); font-weight: 700; }
 .brow.s-bad .bst { color: #c22e2a; }
 .batch-sum { margin-top: 8px; font-weight: 700; }
 .cam-counts { margin-top: 8px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* v1.70.43: фазы в строке счётчиков запасной камеры — те же три цвета, что у
+   плиток карточки, и каждая фаза является целью прилёта чека */
+.cam-counts .seg { display: inline-block; font-weight: 800; }
+.cam-counts .seg-ok { color: #9a4a00; }
+.cam-counts .seg-pend { color: #217287; }
+.cam-counts .seg-bad { color: #c22e2a; }
+.cam-counts .seg.pulse { animation: batchPulse .5s ease; }
 /* «чек улетает в пул»: короткая анимация от кнопки к счётчику + импульс счётчика */
 .fly-chip { position: fixed; z-index: 60; pointer-events: none; font-size: 13px;
             font-weight: 800; line-height: 1; padding: 5px 9px; border-radius: 999px;
@@ -134,7 +141,7 @@ nav button.active { color: var(--accent-text); font-weight: 700; }
 .batch-modal-title { font-size: 17px; font-weight: 800; margin-bottom: 6px; }
 /* уважение к настройке «меньше движения»: счётчики работают без анимаций */
 @media (prefers-reduced-motion: reduce) {
-  .fly-chip, .bcount.pulse, .brow { animation: none; }
+  .fly-chip, .bcount.pulse, .brow, .cam-counts .seg.pulse { animation: none; }
   .fly-chip { display: none; }
 }
 code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
@@ -274,6 +281,6 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   <button type="button" data-tab="profile">⭐ Профиль</button>
 </nav>
 
-<script src="/maxapp/maxapp.js?v=1.70.42"></script>
+<script src="/maxapp/maxapp.js?v=1.70.43"></script>
 </body>
 </html>
