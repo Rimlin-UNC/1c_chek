@@ -1043,8 +1043,10 @@ console.log(batchSummaryText());
 # ======================================================================
 class TestWebBatchFlow:
     def test_markup_ids(self):
+        """v1.70.42: владелец убрал деление на «пачку» и «обычное сканирование».
+        Кнопка запуска потока одна (`pub-cam`), панель сессии и счётчики те же."""
         js = _read(APP_JS)
-        for needle in ('id="pub-batch-start"', 'id="pub-batch"',
+        for needle in ('id="pub-cam"', 'id="pub-batch"',
                        'id="pub-batch-prog"', 'id="pub-bc-ok"',
                        'id="pub-bc-pend"', 'id="pub-bc-bad"',
                        'id="pub-batch-day"', 'id="pub-batch-list"',
@@ -1058,25 +1060,28 @@ class TestWebBatchFlow:
         assert "const PUB_BATCH_POLL_MAX = 40;" in js
         assert "const PUB_BATCH_ROWS = 8;" in js
 
-    def test_batch_camera_is_continuous(self):
-        """Главное отличие от одноразовой камеры: после чека она НЕ закрывается."""
-        fn = _js_block(_read(APP_JS), "function openPoolCameraBatch(")
+    def test_camera_is_continuous(self):
+        """v1.70.42: камера ОДНА и она непрерывная — после чека не закрывается.
+        Раньше это проверялось для отдельной «камеры пачки»; теперь других нет."""
+        fn = _js_block(_read(APP_JS), "function openPoolCameraScan(")
         cb = fn.split("new CameraScanner(video, (text) => {", 1)[1]
         cb = cb.split("});", 1)[0]
-        assert "onText(text, parsed)" in cb
-        assert "close()" not in cb, "камера пачки закрывается после чека"
-        assert "cam.stop()" not in cb, "камера пачки останавливается после чека"
+        assert "onText(text, p)" in cb
+        assert "close()" not in cb, "камера закрывается после чека"
+        assert "cam.stop()" not in cb, "камера останавливается после чека"
 
-    def test_one_shot_camera_still_one_shot(self):
-        """Одноразовая камера пула не тронута — её использует одиночная сдача."""
-        fn = _js_block(_read(APP_JS), "function openPoolCameraScan(")
-        assert "close()" in fn and "cam.stop()" in fn
+    def test_there_is_only_one_camera(self):
+        """v1.70.42: одноразовой «камеры пачки» больше нет — один поток сдачи.
+        Две функции камеры означали два режима для одного действия."""
+        js = _read(APP_JS)
+        assert js.count("function openPoolCameraScan(") == 1
+        assert "openPoolCameraBatch" not in js, "осталась вторая камера"
 
     def test_non_receipt_qr_is_not_counted(self):
         """Чужой QR (не чек) не должен попадать в счётчики пачки."""
-        fn = _js_block(_read(APP_JS), "function openPoolCameraBatch(")
+        fn = _js_block(_read(APP_JS), "function openPoolCameraScan(")
         cb = fn.split("new CameraScanner(video, (text) => {", 1)[1]
-        assert "if (!parsed)" in cb
+        assert "if (!p) return;" in cb
 
     def test_checkpoint_at_cap(self):
         js = _read(APP_JS)
@@ -1093,7 +1098,8 @@ class TestWebBatchFlow:
         """HONEYPOT_MS=800 и третий слой антифрода пометили бы честного донора
         как бота, если бы отправлялась дельта одного скана."""
         js = _read(APP_JS)
-        block = js.split("const pbHandle = async (text) => {", 1)[1]
+        block = js.split("const pbHandle = async (text, parsed, fromCamera) =>",
+                           1)[1]
         block = block.split("const pbStart", 1)[0]
         assert "form_ms: Date.now() - t0" in block
         assert "Date.now() - PB.t0" not in block.split("form_ms")[1][:80]
@@ -1111,16 +1117,21 @@ class TestWebBatchFlow:
         assert "pub-offerta" in block and "checked" in block
 
     def test_single_submit_routes_into_batch(self):
+        """v1.70.42: владелец убрал деление на «пачку» и «обычное сканирование»,
+        поэтому ветвление по PB.active из обработчика исчезло — отправка из поля
+        идёт в тот же конвейер безусловно и собственного запроса не имеет."""
         js = _read(APP_JS)
-        block = js.split("if (submit) submit.onclick = async () => {", 1)[1][:500]
-        assert "PB.active" in block and "pbHandle" in block
+        block = js.split("if (submit) submit.onclick = async () => {", 1)[1][:600]
+        assert "pbHandle(val, null, false)" in block
+        assert "poolApi(" not in block, "в кнопке отправки остался второй запрос"
 
     def test_polls_batch_status(self):
         assert "/api/v1/public/pool/batch-status" in _read(APP_JS)
 
     def test_intra_session_duplicate_does_not_hit_server(self):
         js = _read(APP_JS)
-        block = js.split("const pbHandle = async (text) => {", 1)[1]
+        block = js.split("const pbHandle = async (text, parsed, fromCamera) =>",
+                           1)[1]
         block = block.split("const pbStart", 1)[0]
         seen_at = block.index("PB.seen[norm]")
         post_at = block.index("'/api/v1/public/pool/check'")
@@ -1200,8 +1211,11 @@ class TestMaxBatchSource:
         assert "const BATCH_ROWS = 8;" in js
 
     def test_submit_routes_into_batch(self):
+        """v1.70.42: сессия ленивая — submit вызывает ensureSession() и отдаёт
+        текст в общий конвейер; условной ветки «если пачка активна» больше нет."""
         fn = _js_block(_read(MAX_JS), "async function submit(")
-        assert "BATCH.active" in fn and "batchHandle(text)" in fn
+        assert "ensureSession();" in fn and "batchHandle(text)" in fn
+        assert "api(" not in fn, "в submit вернулся второй путь отправки"
 
     def test_native_scanner_preferred(self):
         fn = _js_block(_read(MAX_JS), "async function batchScanOnce(")
@@ -1230,7 +1244,7 @@ class TestMaxBatchSource:
 
     def test_markup_controls(self):
         html = _read(MAX_HTML)
-        for needle in ("btn-batch", "batch-card", "batch-modal",
+        for needle in ("btn-scan", "batch-card", "batch-modal",
                        "btn-batch-more", "btn-batch-finish", "btn-batch-stop",
                        "batch-prog", "batch-day", "batch-list", "batch-sum"):
             assert needle in html, needle
@@ -1322,7 +1336,7 @@ class TestMarkupAccessibility:
 
     def test_max_batch_buttons_are_type_button(self):
         html = _read(MAX_HTML)
-        for bid in ("btn-batch", "btn-batch-stop", "btn-batch-more",
+        for bid in ("btn-scan", "btn-batch-stop", "btn-batch-more",
                     "btn-batch-finish"):
             i = html.index(f'id="{bid}"')
             tag = html[html.rindex("<button", 0, i):html.index(">", i)]
@@ -1330,7 +1344,7 @@ class TestMarkupAccessibility:
 
     def test_site_batch_buttons_are_type_button(self):
         js = _read(APP_JS)
-        for bid in ("pub-batch-start", "pub-batch-stop", "pub-batch-hide"):
+        for bid in ("pub-cam", "pub-batch-stop", "pub-batch-hide"):
             i = js.index(f'id="{bid}"')
             tag = js[js.rindex("<button", 0, i):js.index(">", i)]
             assert 'type="button"' in tag, bid

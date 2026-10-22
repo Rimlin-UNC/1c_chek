@@ -79,7 +79,10 @@ class TestLandingMarkup:
         # приёме — гейт camWanted вместо мгновенного setTimeout)
         assert "/[?&]cam=1/.test(location.hash" in js
         assert "const camWanted = /[?&]cam=1/.test(location.hash" in js
-        assert "if (camWanted) camPick();" in js
+        # v1.70.42: владелец убрал деление на «пачку» и «обычное сканирование»,
+        # поэтому автооткрытие зовёт единый поток сдачи (pbStart) вместо camPick;
+        # сам гейт — камера только при включённом приёме — сохранён дословно
+        assert "if (camWanted) pbStart(false);" in js
 
     def test_landing_bindings(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

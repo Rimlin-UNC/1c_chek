@@ -357,7 +357,9 @@ async function scanQr() {
     }
     await submit(text);
   } catch (e) {
-    scanCamera();                    // v1.70.7: камера, если MAX не открыл сканер
+    // v1.70.7: камера, если MAX не открыл сканер. v1.70.42: внутри непрерывного
+    // потока запасной путь уже свой (непрерывная камера), одиночный кадр не нужен
+    if (!BATCH.loop) scanCamera();
   }
 }
 
@@ -367,26 +369,17 @@ async function submit(qr) {
   // раскрывается в value — «[object Object]» больше не может улететь на сервер.
   const text = qrFromScan(qr).slice(0, 4000);
   if (!text) { say('Не удалось прочитать текст QR-кода — повторите', false); return; }
-  // v1.70.40: во время сдачи пачкой любой способ ввода (сканер, своя камера,
-  // вставка строки) идёт в один конвейер — со счётчиками и проверкой дубликата.
-  if (BATCH.active) { await batchHandle(text); return; }
-  const btn = $('btn-send') || $('btn-scan');
+  // v1.70.42: ОДИН конвейер приёма. Сканер MAX, своя камера, фото и вставка
+  // строки идут в одну сессию: общие счётчики, мгновенная проверка дубликата и
+  // уточнение статусов опросом. Второй ветки отправки больше нет — раньше
+  // одиночный скан и «пачка» соревновались за один и тот же суточный лимит,
+  // показывая разные картинки одному человеку.
+  const btn = $('btn-send');
   if (btn) btn.disabled = true;
-  say('Проверяем чек…');
   try {
-    const d = await api('POST', '/api/v1/maxapp/scan',
-                        {qr: text, form_ms: 5000});
-    refresh(d);
-    if (d.accepted === false && d.result === 'duplicate') {
-      say('Этот чек уже в пуле — спасибо!');
-    } else if (d.accepted === false) {
-      say(d.message || 'Не принято', false);
-    } else {
-      say('Чек принят! Баллы начислим после проверки ✓');
-      loadSummary();
-    }
-  } catch (e) { say(e.message, false); }
-  finally { if (btn) btn.disabled = false; }
+    ensureSession();
+    await batchHandle(text);
+  } finally { if (btn) btn.disabled = false; }
 }
 
 // ---- навигация ------------------------------------------------------
@@ -398,7 +391,8 @@ document.querySelectorAll('nav button').forEach(b => {
       $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
   };
 });
-$('btn-scan').onclick = scanQr;
+// v1.70.42: единственная кнопка сканирования — запускает общий поток сдачи
+$('btn-scan').onclick = startBatch;
 $('btn-send').onclick = () => {
   const v = $('qr-input').value.trim();
   if (v.length < 10) { say('Вставьте строку QR-кода чека', false); return; }
@@ -574,17 +568,23 @@ async function showInvite(token) {
 }
 
 // ==========================================================================
-//  v1.70.40: сдача чеков пачкой (до 100 за сессию).
-//
-//  Что видит донор:
-//   • «Сканировать пачкой» — после каждого чека сканер открывается сам,
-//     кнопки нажимать не нужно; «Готово» или отмена сканера завершают сдачу;
+//  v1.70.40: поточная сдача чеков (до 100 за сессию).
+//  v1.70.42: ОДИН поток сдачи — владелец: «не стоит плодить пакетное
+//   сканирование и сканирование qr-чеком». Отдельной кнопки «Сканировать
+//   пачкой» больше нет: обычная кнопка сканирования открывает тот же поток
+//   (камера открывается снова после каждого чека), а сессия со счётчиками
+//   начинается с первого чека любым способом ввода — сканер MAX, своя камера,
+//   фото или вставка строки. Конвейер приёма один: batchHandle → /scan,
+//   уточнение статусов → /batch-status, рубеж 100 → окно «продолжаем?»
+//   • камера открывается снова после каждого чека — кнопок нажимать не нужно,
+//     сдачу завершают «Готово» или отмена сканера;
 //   • каждый чек проверяется СРАЗУ: дубликат (ФН+ФД+ФП уже в базе) — красный
 //     счётчик и сообщение «уже есть в базе», новый чек — синий «на модерации»
 //     и анимация «чек улетает в пул»;
 //   • статусы уточняются опросом /batch-status: синий становится оранжевым
 //     (принят, балл начислен) или красным (не прошёл проверку);
-//   • после каждых 100 чеков — окно «продолжаем или закончим?»;
+//   • после каждых 100 чеков — окно «продолжаем или закончим?» (рубеж
+//     сдвигается ещё на 100, суточный лимит при этом остаётся прежним);
 //   • суточный лимит антифрода виден заранее: «сегодня сдано N из 100».
 //
 //  Источник истины — сервер: клиентская проверка повторов внутри сессии
@@ -596,7 +596,8 @@ const BATCH_POLL_MS = 2500;     // интервал опроса статусо�
 const BATCH_POLL_MAX = 40;      // ~100 с: дальше статусы видны во вкладке «Чеки»
 const BATCH_ROWS = 8;           // сколько последних чеков показывать в панели
 const BATCH = {
-  active: false, items: [], seen: {}, counts: {ok: 0, pend: 0, bad: 0},
+  active: false, loop: false, reads: 0, accepted: 0,
+  items: [], seen: {}, counts: {ok: 0, pend: 0, bad: 0},
   cap: BATCH_CAP, tries: 0, timer: 0, t0: 0,
   day: {today: 0, limit: BATCH_CAP, left: BATCH_CAP},
 };
@@ -659,7 +660,7 @@ function batchFly(state) {
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch (e) { reduced = false; }
   if (reduced) return;
-  const src = $('btn-batch') || $('btn-scan') || target;
+  const src = $('btn-scan') || target;
   const a = src.getBoundingClientRect();
   const b = target.getBoundingClientRect();
   const chip = document.createElement('div');
@@ -697,10 +698,28 @@ function batchSetDay(d) {
   if (d && typeof d.user_points === 'number') refresh(d);
 }
 
-// ---- приём одного чека в пачку -------------------------------------------
+// v1.70.42: сессия начинается с ПЕРВОГО чека любым способом ввода — отдельной
+// кнопки «пачкой» нет ни в разметке, ни в логике. Одиночный чек это та же
+// сессия, в которой один чек: счётчики, проверка дубликата и уточнение статусов
+// работают одинаково.
+function ensureSession() {
+  if (BATCH.active) return;
+  BATCH.active = true; BATCH.loop = false; BATCH.reads = 0; BATCH.accepted = 0;
+  BATCH.items = []; BATCH.seen = {}; BATCH.tries = 0; BATCH.t0 = Date.now();
+  BATCH.cap = BATCH_CAP;
+  BATCH.counts = {ok: 0, pend: 0, bad: 0};
+  const sum = $('batch-sum');
+  if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+  const card = $('batch-card');
+  if (card) card.classList.remove('hidden');
+  batchRender();
+}
+
+// ---- приём одного чека в сессию ------------------------------------------
 async function batchHandle(text) {
   const norm = String(text || '').replace(/\s+/g, '');
   if (!norm) return;
+  BATCH.reads += 1;            // сканер сработал — шаг непрерывного потока
   if (BATCH.seen[norm]) {
     // повтор внутри сессии: отвечаем мгновенно, запрос на сервер не уходит
     batchAdd({state: 'bad', who: 'повтор в этой сессии', message: ''});
@@ -731,6 +750,8 @@ async function batchHandle(text) {
   batchAdd({state: 'pend', fn: d.fn || '', fd: d.fd || '', fp: d.fp || '',
             key: batchKey(d.fn, d.fd, d.fp), sum: 0,
             message: d.message || 'Чек принят — проверяем'});
+  BATCH.accepted += 1;
+  if (BATCH.accepted === 1) loadSummary();   // одиночная сдача видит баллы сразу
   say('Чек добавлен в пул — проверяем ✓');
   batchPollSoon();
 }
@@ -797,7 +818,7 @@ async function batchCamOpen() {
       {video: {facingMode: 'environment'}});
   } catch (e) { return false; }
   _camStream = stream;                  // общий stopCam() останавливает и её
-  showService('Сканер пачки',
+  showService('Сканер чеков',
     '<video id="cam-v" autoplay playsinline muted ' +
     'style="width:100%;border-radius:12px;background:#000"></video>' +
     '<div class="cam-counts hint" id="cam-counts">принято 0 · на модерации 0 · ' +
@@ -854,18 +875,22 @@ function cameraBatchOnce() {
   });
 }
 
-// один шаг сканирования: сканер MAX первым, своя камера — запасной путь
+// один шаг единого потока: сканер MAX первым, своя камера — запасной путь.
+// v1.70.42: читатель ОДИН — нативный сканер читает и сдаёт scanQr() (тот же
+// примитив, что и одиночное нажатие), свою непрерывную камеру открывает
+// cameraBatchOnce(). Возвращает true, если чек прочитан и сдан, и false, если
+// сканер отменён или не вернул текст: для потока это «готово», а не ошибка.
 async function batchScanOnce() {
   const app = wa();
   if (app && typeof app.openCodeReader === 'function') {
-    try {
-      if (app.requestScreenMaxBrightness) {
-        try { await app.requestScreenMaxBrightness(); } catch (e) {}
-      }
-      return qrFromScan(await app.openCodeReader(false));
-    } catch (e) { return ''; }        // отмена или отказ моста — пачка завершается
+    const before = BATCH.reads;
+    try { await scanQr(); } catch (e) { return false; }
+    return BATCH.reads > before;
   }
-  return cameraBatchOnce();
+  const text = await cameraBatchOnce();
+  if (!text) return false;
+  await batchHandle(text);
+  return true;
 }
 
 // ---- окно рубежа «100 чеков» ---------------------------------------------
@@ -908,6 +933,7 @@ function batchSummaryText() {
 function stopBatch(reason) {
   const was = BATCH.active;
   BATCH.active = false;
+  BATCH.loop = false;
   if (_bcam) batchCamClose(false);
   batchSetButtons(false);
   const sum = $('batch-sum');
@@ -927,35 +953,27 @@ function stopBatch(reason) {
 }
 
 async function startBatch() {
-  if (BATCH.active) { say('Пачка уже идёт — сканируйте следующий чек'); return; }
-  BATCH.active = true;
-  BATCH.items = []; BATCH.seen = {}; BATCH.tries = 0; BATCH.t0 = Date.now();
-  BATCH.cap = BATCH_CAP;
-  BATCH.counts = {ok: 0, pend: 0, bad: 0};
-  const sum = $('batch-sum');
-  if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
-  const card = $('batch-card');
-  if (card) card.classList.remove('hidden');
+  if (BATCH.loop) { say('Сканер уже открыт — сканируйте следующий чек'); return; }
+  ensureSession();
+  BATCH.loop = true;
   batchSetButtons(true);
-  batchRender();
-  say('Пачка начата: сканируйте чеки один за другим. «Готово» — закончить.');
+  say('Сканируйте чеки один за другим — камера открывается снова после каждого. '
+    + '«Готово» — закончить сдачу.');
   // цикл сдачи: сканер открывается сам после каждого чека
-  while (BATCH.active) {
+  while (BATCH.active && BATCH.loop) {
     if (BATCH.items.length >= BATCH.cap) {
       const more = await batchAskMore();
       if (!more) break;
     }
-    let text = '';
-    try { text = await batchScanOnce(); } catch (e) { text = ''; }
-    if (!text) break;                  // отмена сканера = «готово», не ошибка
-    await batchHandle(text);
+    let ok = false;
+    try { ok = await batchScanOnce(); } catch (e) { ok = false; }
+    if (!ok) break;                    // отмена сканера = «готово», не ошибка
   }
   stopBatch('done');
 }
 
 
-// ---- v1.70.40: кнопки пачки ---------------------------------------
-$('btn-batch').onclick = startBatch;
+// ---- v1.70.42: кнопка «Готово» завершает единый поток сдачи ---------
 $('btn-batch-stop').onclick = () => stopBatch('manual');
 
 boot();

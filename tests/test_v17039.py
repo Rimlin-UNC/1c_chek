@@ -145,11 +145,16 @@ class TestMaxAppSource:
         assert "submit(raw)" not in block, "объект по-прежнему уходит в submit"
 
     def test_submit_sends_text_only(self):
+        """v1.70.42: путь отправки стал один. submit раскрывает объект в текст и
+        отдаёт его в общий конвейер, а сам запрос живёт в batchHandle — раньше
+        второй запрос был в submit, и два режима сдачи дублировали приём."""
         js = _read(MAXAPP_JS)
         block = _js_function(js, "async function submit(qr) {")
         assert "String(qr)" not in block, "осталось оборачивание объекта в строку"
         assert "qrFromScan(qr)" in block
-        assert "{qr: text," in block
+        assert "api(" not in block, "в submit вернулся второй путь отправки"
+        pipe = _js_function(js, "async function batchHandle(text) {")
+        assert "{qr: String(text).slice(0, 4000), form_ms: 5000}" in pipe
 
     def test_empty_result_does_not_reach_server(self):
         """При пустом тексте — понятный совет и возврат, а не запрос."""

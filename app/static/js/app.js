@@ -586,40 +586,64 @@ function poolStatusChip(st) {
 //  что в разделе «Сканирование»: распознавание в браузере, антисбливание.
 // ==========================================================================
 function openPoolCameraScan(onText) {
+  // v1.70.42: ОДНА камера на все случаи. Владелец: «не стоит плодить пакетное
+  // сканирование и сканирование qr-чеком» — отдельной «камеры пачки» больше нет.
+  // Камера не закрывается после чека: донор сканирует один за другим, счётчики
+  // видны прямо в окне, сдачу завершает кнопка «Готово». Один чек — это та же
+  // сессия, в которой один чек; второго режима и второго конвейера нет.
   let cam = null;
+  const handle = { slot: null, close: null, countsEl: null, onFinish: null };
   const { slot, close } = openModal(`
-    <div class="modal-title">📸 Сканирование QR-кода чека</div>
+    <div class="modal-title">📷 Сканирование QR-кода чека</div>
     <div class="camera-viewport" style="max-width:440px">
       <video id="poolcam-video" playsinline muted></video>
       <div class="scan-frame" id="poolcam-frame" style="display:none"><span class="corner"></span></div>
       <div class="scan-line" id="poolcam-line" style="display:none"></div>
       <div class="camera-overlay" id="poolcam-overlay">
         <span class="big-ico">📷</span>
-        <div>Наведите камеру на QR-код чека.<br>Код распознаётся автоматически.</div>
+        <div>Наведите камеру на QR-код чека.<br>После каждого чека камера остаётся включённой.</div>
         <button type="button" class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
       </div>
     </div>
+    <div class="batch-cam-counts" id="poolcam-counts" role="status" aria-live="polite">принято 0 · на модерации 0 · не принято 0</div>
     <p class="form-hint" style="margin-top:8px">Совет: QR с экрана другого телефона тоже сканируется.
-    Чужой QR-код (не чек) игнорируется — ждём реквизиты 54-ФЗ.</p>`,
+    Чужой QR-код (не чек) игнорируется — ждём реквизиты 54-ФЗ. Каждый чек сразу проверяется
+    на дубликат по ФН+ФД+ФП: уже сданный идёт в красный счётчик и в базу не попадает,
+    новый — в синий «на модерации», а после подтверждения официальным источником счётчик
+    становится оранжевым и балл начисляется.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="poolcam-camoff">⏹ Выключить камеру</button>
+      <button type="button" class="btn btn-primary" id="poolcam-done">✅ Готово — закончить сдачу</button>
+    </div>`,
     { onClose: () => { if (cam) { cam.stop(); cam = null; } } });
+  handle.slot = slot;
+  handle.close = close;
+  handle.countsEl = slot.querySelector('#poolcam-counts');
   const start = slot.querySelector('#poolcam-start');
   if (start) start.onclick = async () => {
     const video = slot.querySelector('#poolcam-video');
     try {
       cam = new CameraScanner(video, (text) => {
         const p = parseQrClient(text);
-        if (!p) return;                       // не чековый QR — ждём дальше
-        if (cam) { cam.stop(); cam = null; }
-        close();
-        onText(text, p);
+        if (!p) return;                       // не чековый QR — ждём следующий
+        onText(text, p);                      // камера остаётся включённой
       });
       await cam.start();
       slot.querySelector('#poolcam-overlay').classList.add('hidden');
       slot.querySelector('#poolcam-frame').style.display = '';
       slot.querySelector('#poolcam-line').style.display = '';
-      toast('Камера включена — наведите на QR-код чека', 'info', '📸');
+      toast('Камера включена — сканируйте чеки один за другим', 'info', '📷 Сканер');
     } catch (e) { toast(e.message, 'err', 'Камера недоступна'); }
   };
+  const off = slot.querySelector('#poolcam-camoff');
+  if (off) off.onclick = () => { if (cam) { cam.stop(); cam = null; } };
+  const done = slot.querySelector('#poolcam-done');
+  if (done) done.onclick = () => {
+    if (cam) { cam.stop(); cam = null; }
+    close();
+    if (typeof handle.onFinish === 'function') handle.onFinish();
+  };
+  return handle;
 }
 
 // ==========================================================================
@@ -684,57 +708,6 @@ function pubBatchSummaryText(items, ms) {
   const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
   return `Итог сдачи: принято ${c.ok}, на модерации ${c.pend}, не принято ${c.bad}`
     + ` · баллов +${c.points} · время ${dur}`;
-}
-
-// Непрерывная камера для пачки: после каждого чека НЕ закрывается, а счётчики
-// видны прямо в окне — донор не теряет контекст, пока сканирует следующий чек.
-function openPoolCameraBatch(onText, onFinish) {
-  let cam = null;
-  const { slot, close } = openModal(`
-    <div class="modal-title">📦 Сканирование пачкой</div>
-    <div class="camera-viewport" style="max-width:440px">
-      <video id="pbatch-video" playsinline muted></video>
-      <div class="scan-frame" id="pbatch-frame" style="display:none"><span class="corner"></span></div>
-      <div class="scan-line" id="pbatch-line" style="display:none"></div>
-      <div class="camera-overlay" id="pbatch-overlay">
-        <span class="big-ico">📷</span>
-        <div>Наведите камеру на QR-код чека.<br>После каждого чека камера остаётся включённой.</div>
-        <button type="button" class="btn btn-primary" id="pbatch-start">▶ Включить камеру</button>
-      </div>
-    </div>
-    <div class="batch-cam-counts" id="pbatch-counts" role="status" aria-live="polite">принято 0 · на модерации 0 · не принято 0</div>
-    <p class="form-hint" style="margin-top:8px">Каждый чек сразу проверяется на дубликат по ФН+ФД+ФП:
-    уже сданный идёт в красный счётчик и в базу не попадает, новый — в синий «на модерации».
-    Как только официальный источник подтверждает чек, счётчик становится оранжевым, а балл — начисленным.</p>
-    <div class="modal-actions">
-      <button type="button" class="btn" id="pbatch-camoff">⏹ Выключить камеру</button>
-      <button type="button" class="btn btn-primary" id="pbatch-done">✅ Готово — закончить сдачу</button>
-    </div>`,
-    { onClose: () => { if (cam) { cam.stop(); cam = null; } } });
-  const start = slot.querySelector('#pbatch-start');
-  if (start) start.onclick = async () => {
-    const video = slot.querySelector('#pbatch-video');
-    try {
-      cam = new CameraScanner(video, (text) => {
-        const parsed = parseQrClient(text);
-        if (!parsed) {                 // не чековый QR — ждём следующий
-          toast('QR прочитан, но это не чек (нет ФН/ФД/ФП)', 'warn', '📦 Пачка');
-          return;
-        }
-        onText(text, parsed);          // камера остаётся включённой
-      });
-      await cam.start();
-      slot.querySelector('#pbatch-overlay').classList.add('hidden');
-      slot.querySelector('#pbatch-frame').style.display = '';
-      slot.querySelector('#pbatch-line').style.display = '';
-      toast('Камера включена — сканируйте чеки один за другим', 'info', '📦 Пачка');
-    } catch (e) { toast(e.message, 'err', 'Камера недоступна'); }
-  };
-  const off = slot.querySelector('#pbatch-camoff');
-  if (off) off.onclick = () => { if (cam) { cam.stop(); cam = null; } };
-  const done = slot.querySelector('#pbatch-done');
-  if (done) done.onclick = () => { close(); if (onFinish) onFinish(); };
-  return { slot, close, countsEl: slot.querySelector('#pbatch-counts') };
 }
 
 // v1.52.0: ручной ввод реквизитов там же, где сканируют (резерв —
@@ -831,9 +804,7 @@ function publicFormHTML() {
     вашей компании, минуя общий пул.</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
     <button type="button" class="btn btn-sm btn-primary" id="pub-cam"
-            title="Живое сканирование камерой — как в разделе «Сканирование»">📸 Сканировать камерой</button>
-    <button type="button" class="btn btn-sm btn-primary" id="pub-batch-start"
-            title="Непрерывное сканирование: до 100 чеков за сессию, каждый сразу проверяется на дубликат">📦 Сканировать пачкой</button>
+            title="Один поток сдачи: камера не закрывается после чека, до 100 чеков за сессию, каждый сразу проверяется на дубликат">📷 Сканировать чек</button>
     <button type="button" class="btn btn-sm" id="pub-manual"
             title="Резервный способ: QR повреждён — реквизиты с чека">⌨ Ввести вручную</button>
     <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
@@ -843,7 +814,7 @@ function publicFormHTML() {
   <div id="pub-photo-hint" class="form-hint hidden" style="margin:4px 0 8px"></div>
   <div id="pub-batch" class="batch-panel hidden">
     <div class="batch-head">
-      <span class="batch-title">📦 Сдача пачкой</span>
+      <span class="batch-title">🧾 Сдача чеков</span>
       <span class="batch-prog" id="pub-batch-prog">0 / 100</span>
     </div>
     <div class="batch-counts" role="status" aria-live="polite">
@@ -929,16 +900,12 @@ function bindPoolForm(root, opts) {
       .filter((f) => /^image\//.test(f.type));
     if (fs.length) decodeToQr(fs[0]);
   });
-  // живая камера — тот же модуль scanner.js, что в разделе «Сканирование»
-  const camPick = () => openPoolCameraScan((text, p) => {
-    $p('pub-qr').value = text;
-    const hint = $p('pub-photo-hint');
-    show('pub-photo-hint', true);
-    if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + p.fn
-      + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
-  });
+  // v1.70.42: живая камера — тот же модуль scanner.js, что в разделе
+  // «Сканирование», но ОДНА на все случаи: кнопка запускает единый поток сдачи
+  // (камера не закрывается после чека, счётчики общие со вставкой строки, фото
+  // и ручным вводом). Отдельного режима «пачкой» больше нет.
   const camBtn = $p('pub-cam');
-  if (camBtn) camBtn.onclick = camPick;
+  if (camBtn) camBtn.onclick = () => pbStart(false);
   // v1.54.0/v1.59.0: пришли с главной «Сканировать чек» — камера откроется
   // сама, но только когда подтвердится, что приём включён (раньше была
   // гонка: камера открывалась до ответа сервера, донор сканировал, а форма
@@ -1034,7 +1001,7 @@ function bindPoolForm(root, opts) {
   // приходит сразу, а verified/pending/rejected определяется в фоне).
   const PB = {
     active: false, items: [], seen: {}, cap: PUB_BATCH_CAP, tries: 0,
-    timer: 0, t0: Date.now(), camCounts: null, camClose: null,
+    accepted: 0, timer: 0, t0: Date.now(), camCounts: null, camClose: null,
     day: { today: 0, limit: PUB_BATCH_CAP, left: PUB_BATCH_CAP },
   };
   const pbSetCount = (id, n) => {
@@ -1074,7 +1041,7 @@ function bindPoolForm(root, opts) {
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch (e) { reduced = false; }
     if (reduced) return;                        // уважение к «меньше движения»
-    const src = $p('pub-batch-start') || target;
+    const src = $p('pub-cam') || target;
     const a = src.getBoundingClientRect();
     const b = target.getBoundingClientRect();
     const chipEl = document.createElement('div');
@@ -1125,7 +1092,7 @@ function bindPoolForm(root, opts) {
       pbRender();
       const c = pubBatchCount(PB.items);
       toast(`Проверка прошла: принято ${c.ok}, на модерации ${c.pend}, не принято ${c.bad}`,
-        c.bad ? 'warn' : 'ok', '📦 Пачка');
+        c.bad ? 'warn' : 'ok', '🧾 Сдача');
     }
     if (PB.items.some((x) => x.state === 'pend')) pbPollSoon();
   };
@@ -1168,26 +1135,57 @@ function bindPoolForm(root, opts) {
     }
     if (was) {
       const c = pubBatchCount(PB.items);
-      toast(summary, c.bad ? 'warn' : 'ok', '📦 Пачка');
+      toast(summary, c.bad ? 'warn' : 'ok', '🧾 Сдача');
     }
     pbRender();
     loadMine();
     // статусы продолжают уточняться и после завершения — опрос начинается заново
     if (PB.items.some((x) => x.state === 'pend')) { PB.tries = 0; pbPollSoon(); }
   };
-  const pbHandle = async (text) => {
+  // сообщение рядом с кнопкой отправки — для вставки строки и ручного ввода;
+  // камера живёт в своём окне, ей достаточно тоста
+  const pbMsg = (text, fromCamera) => {
+    if (fromCamera === true) return;
+    const msg = $p('pub-msg');
+    if (!msg) return;
+    msg.textContent = text || '';
+    msg.classList.toggle('hidden', !text);
+  };
+  // v1.70.42: согласие с офертой — единственный рубильник отправки (152-ФЗ:
+  // согласие до передачи данных). Чек, прочитанный камерой до отметки, на сервер
+  // не уходит, но и не теряется: строка QR паркуется в поле, донор видит
+  // реквизиты и что осталось сделать.
+  const pbPark = (text, p) => {
+    const qr = $p('pub-qr');
+    if (qr) qr.value = text;
+    const hint = $p('pub-photo-hint');
+    show('pub-photo-hint', true);
+    if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + (p && p.fn ? p.fn : '—')
+      + (p && p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
+    toast('Отметьте согласие с офертой — тогда чек уйдёт в пул', 'warn', '🧾 Сдача');
+  };
+  const pbHandle = async (text, parsed, fromCamera) => {
     const raw = String(text || '').trim();
     if (!raw) return;
+    const offerta = $p('pub-offerta');
+    if (offerta && !offerta.checked) {
+      if (fromCamera === true) { pbPark(raw, parsed); return; }
+      const warn = 'Отметьте согласие с офертой — без него чек принять нельзя';
+      pbMsg(warn, fromCamera);
+      toast(warn, 'warn', '🧾 Сдача');
+      return;
+    }
+    pbEnsure();                              // сессия начинается с первого чека
+    pbMsg('', fromCamera);
     const norm = raw.replace(/\s+/g, '');
     if (PB.seen[norm]) {
       // повтор внутри сессии: отвечаем мгновенно, запрос на сервер не уходит
       pbAdd({ state: 'bad', who: 'повтор в этой сессии' });
       toast('Этот чек вы уже сдали в этой сессии — дважды он в базу не попадёт',
-        'warn', '📦 Пачка');
+        'warn', '🧾 Сдача');
       return;
     }
     PB.seen[norm] = true;
-    const offerta = $p('pub-offerta');
     let d;
     try {
       d = await poolApi('POST', '/api/v1/public/pool/check', {
@@ -1202,14 +1200,17 @@ function bindPoolForm(root, opts) {
     } catch (e) {
       PB.seen[norm] = false;                    // не отправлено — можно повторить
       pbAdd({ state: 'bad', who: 'не отправлено' });
-      toast(e.status === 429 ? 'Слишком много отправок — сделайте паузу'
-        : (e.message || 'Ошибка сети'), 'err', '📦 Пачка');
+      const net = e.status === 429 ? 'Слишком много отправок — сделайте паузу'
+        : (e.message || 'Ошибка сети');
+      pbMsg(net, fromCamera);
+      toast(net, 'err', '🧾 Сдача');
       if (e.status === 429) pbStop('limit');
       return;
     }
     if (!d || d.ok === false) {
       pbAdd({ state: 'bad', who: 'не принято' });
-      toast((d && d.message) || 'Чек не принят', 'err', '📦 Пачка');
+      pbMsg((d && d.message) || 'Чек не принят', fromCamera);
+      toast((d && d.message) || 'Чек не принят', 'err', '🧾 Сдача');
       return;
     }
     pbSetDay(d);
@@ -1218,7 +1219,7 @@ function bindPoolForm(root, opts) {
       pbAdd({ state: 'bad', who: dup ? 'дубликат' : 'не принято', message: d.message || '' });
       toast(dup ? (d.message || 'Такой чек уже есть в базе — не принят')
         : (d.message || 'Не принято'), dup ? 'warn' : 'err',
-        dup ? '🧾 Дубликат' : '📦 Пачка');
+        dup ? '🧾 Дубликат' : '🧾 Сдача');
       if (d.result === 'flood') pbStop('flood');
       return;
     }
@@ -1227,6 +1228,10 @@ function bindPoolForm(root, opts) {
       key: pubBatchKey(d.fn, d.fd, d.fp), sum: 0, points: 0,
       message: d.message || 'Чек принят — проверяем',
     });
+    PB.accepted += 1;
+    // одиночная сдача видит то же, что и раньше: подробный статус, электронный
+    // чек и письмо на почту; поточная — панель со счётчиками
+    if (PB.accepted === 1 && d.fn) pollStatus(d.fn);
     beep();
     pbPollSoon();
     if (PB.items.length >= PB.cap) {
@@ -1240,30 +1245,28 @@ function bindPoolForm(root, opts) {
       else pbStop('cap');
     }
   };
+  // сессия начинается с первого чека любым способом ввода — отдельной кнопки
+  // «начать пачку» нет ни в разметке, ни в логике
+  const pbEnsure = () => {
+    if (PB.active) return;
+    PB.active = true; PB.items = []; PB.seen = {}; PB.cap = PUB_BATCH_CAP;
+    PB.tries = 0; PB.accepted = 0; PB.t0 = Date.now();
+    const sum = $p('pub-batch-sum');
+    if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+    show('pub-batch', true);
+    pbRender();
+  };
   const pbStart = (resume) => {
-    const offerta = $p('pub-offerta');
-    if (offerta && !offerta.checked) {
-      toast('Отметьте согласие с офертой — без него чек принять нельзя',
-        'warn', '📦 Пачка');
-      return;
-    }
-    if (!PB.active) {
-      PB.active = true; PB.items = []; PB.seen = {}; PB.cap = PUB_BATCH_CAP;
-      PB.tries = 0; PB.t0 = Date.now();
-      const sum = $p('pub-batch-sum');
-      if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
-    }
+    pbEnsure();
     show('pub-batch', true);
     pbRender();
     if (resume === true && PB.camClose) return;  // камера уже открыта
-    const cam = openPoolCameraBatch((text) => { pbHandle(text); },
-      () => pbStop('manual'));
+    const cam = openPoolCameraScan((text, p) => { pbHandle(text, p, true); });
+    cam.onFinish = () => pbStop('manual');
     PB.camCounts = cam.countsEl;
     PB.camClose = cam.close;
     pbRender();
   };
-  const pbStartBtn = $p('pub-batch-start');
-  if (pbStartBtn) pbStartBtn.onclick = () => pbStart(false);
   const pbStopBtn = $p('pub-batch-stop');
   if (pbStopBtn) pbStopBtn.onclick = () => pbStop('manual');
   const pbHideBtn = $p('pub-batch-hide');
@@ -1271,35 +1274,20 @@ function bindPoolForm(root, opts) {
 
   const submit = $p('pub-submit');
   if (submit) submit.onclick = async () => {
-    // v1.70.40: во время сдачи пачкой вставка строки и фото идут в общий
-    // конвейер — со счётчиками и проверкой дубликата, без второго пути
-    if (PB.active) {
-      const qrEl = $p('pub-qr');
-      await pbHandle(qrEl ? qrEl.value : '');
-      if (qrEl) qrEl.value = '';
+    // v1.70.42: второй путь отправки удалён. Вставка строки, фото и ручной ввод
+    // идут в ту же сессию, что и камера: те же счётчики, та же проверка
+    // дубликата по ФН+ФД+ФП, то же уточнение статусов опросом.
+    pbMsg('');
+    const qrEl = $p('pub-qr');
+    const val = qrEl ? qrEl.value.trim() : '';
+    if (!val) {
+      pbMsg('Вставьте строку QR-кода чека или отсканируйте его камерой');
       return;
     }
-    const msg = $p('pub-msg');
-    msg.classList.add('hidden');
     submit.disabled = true;
-    try {
-      const res = await poolApi('POST', '/api/v1/public/pool/check', {
-        qr_text: $p('pub-qr').value,
-        offerta: !!$p('pub-offerta').checked,
-        hp: $p('pub-hp').value,
-        form_ms: Date.now() - t0,
-        employee_email: ($p('pub-emp') ? $p('pub-emp').value.trim() : ''),
-      });
-      if (!res.ok || !res.accepted) {
-        msg.textContent = res.message || 'Не получилось отправить чек';
-        msg.classList.remove('hidden');
-        return;
-      }
-      pollStatus(res.fn);
-    } catch (e) {
-      msg.textContent = e.message || 'Ошибка сети';
-      msg.classList.remove('hidden');
-    } finally { submit.disabled = false; }
+    try { await pbHandle(val, null, false); }
+    finally { submit.disabled = false; }
+    if (qrEl) qrEl.value = '';
   };
 
   const olink = $p('pub-offerta-link');
@@ -1361,7 +1349,7 @@ function bindPoolForm(root, opts) {
       poolLoadLeadersPub(root);          // v1.36.0: лидерборд месяца
     }
     await loadMine();
-    if (camWanted) camPick();          // v1.59.0: камера — при включённом приёме
+    if (camWanted) pbStart(false);     // v1.70.42: камера — при включённом приёме
   })();
 }
 
@@ -4822,7 +4810,7 @@ async function viewScan(container) {
           <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
         </div>` : ''}
         <div class="glass card" style="margin-bottom:16px">
-          <div class="card-title">📦 Сдача пачкой <span class="spacer"></span>
+          <div class="card-title">🧾 Сдача чеков <span class="spacer"></span>
             <span class="batch-prog" id="scan-batch-prog">0 / 100</span></div>
           <div class="batch-counts" role="status" aria-live="polite">
             <span class="bcount b-ok" id="scan-bc-ok"><b>0</b><i>принято</i></span>
@@ -4872,7 +4860,7 @@ async function viewScan(container) {
   const sessReset = $('#btn-scan-sess-reset');
   if (sessReset) sessReset.onclick = () => {
     scanSessReset();
-    toast('Новая сессия сдачи: счётчики обнулены', 'info', '📦 Пачка');
+    toast('Новая сессия сдачи: счётчики обнулены', 'info', '🧾 Сдача');
   };
 
   $('#btn-camera-start').onclick = async () => {
@@ -5898,6 +5886,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.42': [
+    { icon: '📷', title: 'Одно сканирование вместо двух режимов',
+      text: 'Раньше рядом стояли две кнопки: «Сканировать QR чека» и «Сканировать пачкой». Это два режима одного действия, и вели они себя по-разному: одиночный скан закрывал камеру и не показывал счётчики, а поточный — показывал. Теперь кнопка одна. Она открывает непрерывный поток сдачи: обычный одиночный чек — это та же сессия, в которой один чек. То же самое на сайте: вместо «Сканировать камерой» и «Сканировать пачкой» осталась одна кнопка «Сканировать чек».' },
+    { icon: '🔁', title: 'Камера не закрывается после чека',
+      text: 'После каждого чека камера остаётся включённой, а в MAX сканер открывается снова сам — чеки сдаются один за другим без лишних нажатий. Завершает сдачу кнопка «Готово» или отмена сканера: после этого виден итог сессии — сколько принято, сколько на модерации, сколько не принято, начисленные баллы и время сдачи. Рубеж в 100 чеков сохранён: на нём открывается окно «Вы отсканировали 100 чеков — продолжаем или закончим?».' },
+    { icon: '🧮', title: 'Счётчики появляются с первого чека',
+      text: 'Сессия начинается с первого чека при любом способе ввода: сканер, своя камера, фото, вставка строки и ручной ввод считаются вместе. Каждый чек сразу проверяется на дубликат по ФН+ФД+ФП: уже сданный идёт в красный счётчик и в базу не попадает, новый — в синий «на модерации», а как только официальный источник подтверждает чек, счётчик становится оранжевым и балл начисляется. Суточный лимит виден заранее: «Сегодня сдано N из 100 — осталось M».' },
+    { icon: '🛡', title: 'Согласие осталось рубильником отправки — и тупика больше нет',
+      text: 'Без отметки согласия с офертой чек на сервер не уходит: это требование закона и правило сервиса. Раньше в таком случае камера просто не открывалась, и человек не понимал, что произошло. Теперь чек не теряется: отсканированная строка QR появляется в поле с подсказкой «Осталось отметить оферту и отправить». Сервер не менялся — те же проверка дубликата, тексты отказов и начисление баллов, поэтому ничего уже сданного выпуск не затрагивает.' },
+  ],
   '1.70.41': [
     { icon: '🔐', title: 'Регистрация и вход больше не ломаются, если вы уже сдавали чеки без регистрации',
       text: 'Найдено и устранено собственными тестами. Обещание «сдал чеки без регистрации → зарегистрировался → всё на месте» обрывалось: при присоединении гостевой истории к аккаунту переносились только чеки и баллы, а строка гостя удалялась. Но на неё ссылаются ещё десять таблиц — согласия на обработку данных, одноразовые токены, отпечатки устройств, журнал IP, сигналы антифрода, приглашения, достижения и заявки на вывод. Если донор успевал получить хотя бы один сигнал антифрода (например, пять одинаковых сумм подряд) или достижение, регистрация, вход по ссылке и сдача чека из кабинета отвечали ошибкой сервера. Теперь переносится вся история целиком: сигналы антифрода и отпечатки устройств сохраняются, а не стираются — обнулить репутацию простой регистрацией больше нельзя. Конфликты уникальности разбираются явно: уже полученное аккаунтом достижение не дублируется, а своя реферальная привязка не затирается гостевой. Само присоединение выполняется в точке сохранения: даже непредвиденный сбой откатывает только его и больше не мешает зарегистрироваться.' },
