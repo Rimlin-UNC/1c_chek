@@ -427,6 +427,13 @@ app.include_router(pool_api.router)        # v1.39.0: /api/v1/pool-api/* (агр
 app.include_router(pool_my.router)         # v1.32.0: /api/v1/pool-my/*
 app.include_router(maxapp.router)          # v1.69.0: /api/v1/maxapp/* (мини-приложение MAX)
 
+# v1.70.45: контур B2B — доступ компаний и ИП к платному API. Третий контур
+# (ядро, Чек-Пул, B2B): свой JWT typ=b2b, свои таблицы b2b_*, свои страницы.
+from .b2b import router_public as b2b_public   # noqa: E402
+from .b2b import router_admin as b2b_admin     # noqa: E402
+app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
+app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
+
 
 # --------------------------------------------------------------------------
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static
@@ -457,10 +464,31 @@ async def maxapp_page(fname: str = ""):
     return FileResponse(static / "index.html")
 
 
+@app.get("/b2b", include_in_schema=False)
+@app.get("/b2b/", include_in_schema=False)
+@app.get("/b2b/{fname}", include_in_schema=False)
+async def b2b_page(fname: str = ""):
+    """Кабинет компании для доступа к платному API (v1.70.45).
+
+    Страница отдельная (как /maxapp/) и НЕ связана ссылками с публичным
+    лендингом: раздел «API для бизнеса» виден только компаниям,
+    подтвердившим статус. Содержимое раздела отдаёт /api/v1/b2b/content
+    после проверки статуса — сама статика данных не содержит.
+    """
+    if "/" in fname or ".." in fname or fname.startswith("."):
+        raise HTTPException(status_code=404)
+    static = BASE_DIR / "app" / "static" / "b2b"
+    if fname:
+        f = static / fname
+        return FileResponse(f) if f.is_file() \
+            else JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(static / "index.html")
+
+
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(full_path: str):
     """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
-    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/")):
+    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/", "b2b/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     if ".." in full_path:
         # v1.70.11: страховка от траверсала сверх нормализации сервера

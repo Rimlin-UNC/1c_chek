@@ -38,7 +38,9 @@ CSS = ROOT / "app/static/css/app.css"
 APP_JS = ROOT / "app/static/js/app.js"
 MAX_HTML = ROOT / "app/static/maxapp/index.html"
 ROUTER = ROOT / "app/pool/router_api.py"
-IMG_DIR = ROOT / "app/static/img/api"
+# v1.70.45: схемы вынесены из публичной статики за гейт — их отдаёт
+# только закрытый маршрут кабинета подтверждённым компаниям.
+IMG_DIR = ROOT / "app/b2b/assets"
 
 SVG_FILES = ("api-access.svg", "api-request-path.svg", "api-data-boundary.svg")
 
@@ -492,13 +494,16 @@ class TestDiagrams:
     def test_diagrams_are_referenced_from_document(self):
         text = doc()
         for name in SVG_FILES:
-            assert f"../app/static/img/api/{name}" in text, \
+            assert f"../app/b2b/assets/{name}" in text, \
                 f"схема {name} не подключена к docs/API.md"
 
-    def test_diagrams_are_served_by_app(self):
-        """Схемы лежат в статике приложения — их отдаёт сервер."""
+    def test_diagrams_are_behind_the_gate(self):
+        """Схемы вынесены из публичной статики: отдаются только через закрытый
+        маршрут кабинета компаниям с подтверждённым статусом."""
         for name in SVG_FILES:
-            assert (ROOT / "app/static/img/api" / name).exists(), name
+            assert (ROOT / "app/b2b/assets" / name).exists(), name
+            assert not (ROOT / "app/static/img/api" / name).exists(), \
+                f"{name} осталась в публичной статике"
 
     def test_request_path_shows_check_order(self):
         """Вторая схема — порядок проверок и коды, как в _authenticate."""
@@ -516,89 +521,59 @@ class TestDiagrams:
 
 
 # ======================================================================
-# 5. Раздел лендинга «API для бизнеса»
+# 5. Раздел закрыт от посторонних (v1.70.45)
 # ======================================================================
+# Директива владельца: «Пока убрать скрыть от посторонних глаз API для
+# бизнеса — агрегаты Чек-Пула». Раздел переехал в кабинет компании /b2b/
+# и открывается только после подтверждения статуса через корпоративную
+# почту, поэтому замки ниже проверяют ОТСУТСТВИЕ раздела на публичной
+# странице и перенос схем за гейт. Замки v1.70.44 на присутствие раздела
+# удалены как утратившие силу — их заменили эти.
 LAND_CLASSES = ("land-api", "land-api-title", "land-api-lead", "land-api-grid",
                 "land-api-card", "land-api-tariffs", "land-api-note",
                 "land-api-fig", "land-api-cta")
 
 
-class TestLandingSection:
+class TestLandingIsClosed:
     def html(self):
         return _read(INDEX)
 
     def css(self):
         return _read(CSS)
 
-    def test_section_exists_with_landmark(self):
+    def test_section_is_gone_from_public_landing(self):
+        """Ни секции, ни её идентификатора, ни ссылок на неё."""
         h = self.html()
-        assert 'id="land-api"' in h
-        assert 'class="land-api"' in h
-        assert 'aria-labelledby="land-api-title"' in h
-        assert 'id="land-api-title"' in h
+        assert "land-api" not in h, "класс раздела остался на публичной странице"
+        assert 'id="land-api"' not in h
+        assert 'href="#land-api"' not in h
 
-    def test_section_is_discoverable(self):
-        """На раздел ведёт ссылка из блока вопросов лендинга."""
+    def test_faq_no_longer_advertises_the_api(self):
+        """Пункт «Нужны данные по чекам для аналитики?» вёл посторонних к
+        разделу — убран вместе со ссылкой."""
         h = self.html()
-        assert 'href="#land-api"' in h
-        assert "API для бизнеса" in h
-        assert "Есть платное API" in h or "платное API" in h
+        assert "Нужны данные по чекам для аналитики" not in h
+        assert "Есть платное API" not in h
 
-    def test_diagrams_are_on_landing(self):
+    def test_diagrams_are_not_linked_from_landing(self):
         h = self.html()
-        for name in SVG_FILES[:1] + SVG_FILES[2:]:
-            assert f"/img/api/{name}" in h, f"схема {name} не показана на лендинге"
-        # у каждой картинки есть текстовая замена
-        block = h.split('id="land-api"', 1)[1].split("</section>", 1)[0]
-        assert block.count("<img") == block.count("alt=")
+        for name in SVG_FILES:
+            assert name not in h, f"схема {name} показана посторонним"
+        assert "/img/api/" not in h
 
-    def test_tariff_numbers_match_document(self):
-        """Цифры лимитов на лендинге и в документе — одни и те же."""
-        h = self.html().split('id="land-api"', 1)[1].split("</section>", 1)[0]
-        for name, rate, quota in TARIFFS:
-            assert name in h, f"на лендинге нет тарифа «{name}»"
-            assert f"{rate:,}".replace(",", " ") in h or str(rate) in h
-            assert quota in h, f"на лендинге нет квоты {quota} тарифа «{name}»"
-            assert name in doc()
-
-    def test_no_prices_on_landing(self):
-        h = self.html().split('id="land-api"', 1)[1].split("</section>", 1)[0]
-        for bad in FORBIDDEN_PRICES:
-            assert bad not in h, f"на лендинге опубликована цена «{bad}»"
-        assert "по запросу" in h
-
-    def test_every_class_is_styled(self):
+    def test_section_styles_are_removed(self):
+        """Мёртвых правил не остаётся: 21 правило раздела удалено из app.css."""
         css = self.css()
         for cls in LAND_CLASSES:
-            assert f".{cls}" in css, f"класс .{cls} не описан в app.css"
+            assert f".{cls}" not in css, f"в app.css остался мёртвый .{cls}"
 
-    def test_no_new_colors_in_section_css(self):
-        """Цвета — только фирменные токены: ни одного hex в блоке раздела."""
-        css = self.css()
-        block = css.split(".land-api {", 1)[1].split("@media", 1)[0]
-        assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", block), \
-            "в стилях раздела появился цвет мимо токенов"
-        root = css.split(":root", 1)[1].split("}", 1)[0]
-        for token in re.findall(r"var\((--[\w-]+)\)", block):
-            assert f"{token}:" in root, f"токен {token} объявлен не в :root"
-
-    def test_text_is_readable(self):
-        """Подписи не мельче 12.5px (0.78125rem) — правило читаемости."""
-        css = self.css()
-        block = css.split(".land-api {", 1)[1].split("@media", 1)[0]
-        for m in re.finditer(r"font-size:\s*([\d.]+)rem", block):
-            assert float(m.group(1)) * 16 >= 12.5, f"мелкий текст {m.group(1)}rem"
-
-    def test_mobile_single_column(self):
-        """На узком экране карточки в одну колонку — цифры читаются с телефона."""
-        css = self.css()
-        assert ".land-api-grid { grid-template-columns: 1fr; }" in css
-
-    def test_section_comment_cites_the_document(self):
-        h = self.html()
-        block = h[h.index("v1.70.44: платное API"):h.index('id="land-api"')]
-        assert "docs/API.md" in block
-        assert "router_api.py" in block
+    def test_tariff_numbers_still_match_document(self):
+        """Цифры лимитов в документе не изменились после переноса раздела."""
+        text = doc()
+        for name, rate, quota in TARIFFS:
+            assert name in text, f"в документе нет тарифа «{name}»"
+            assert f"{rate:,}".replace(",", " ") in text or str(rate) in text
+            assert quota in text, f"в документе нет квоты {quota} тарифа «{name}»"
 
 
 # ======================================================================
@@ -621,4 +596,4 @@ class TestReadmeLink:
         assert "pool_api_enabled" in sec
 
     def test_readme_shows_diagram(self):
-        assert "app/static/img/api/api-access.svg" in _read(README)
+        assert "app/b2b/assets/api-access.svg" in _read(README)

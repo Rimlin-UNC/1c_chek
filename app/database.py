@@ -84,6 +84,13 @@ def init_db() -> None:
     except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
         import traceback
         traceback.print_exc()
+    try:  # v1.70.45: таблицы контура B2B (доступ компаний к платному API)
+        from .b2b import models as _b2b_models  # noqa: F401
+        from .b2b.models import ensure_b2b_schema
+        ensure_b2b_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
     _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении

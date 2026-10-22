@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- v1.70.45: кабинет компаний для доступа к платному API. Страница отдельная
+     (как /maxapp/) и НЕ связана ссылками с публичным лендингом: раздел
+     «API для бизнеса» видят только компании, подтвердившие статус через
+     корпоративную почту и проверку ЕГРЮЛ/ЕГРИП. Содержимое закрытых страниц
+     приходит с /api/v1/b2b/content — защита на сервере, а не в разметке.
+     В индексацию страница не отдаётся. chek@ymaster.ru -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="Кабинет компании: доступ к обезличенным агрегатам по кассовым чекам">
+<title>API для бизнеса — кабинет компании · Ямастер Чек</title>
+<link rel="stylesheet" href="/b2b/b2b.css?v=1.70.45">
+</head>
+<body>
+
+<header class="b2b-head">
+  <div class="b2b-brand">
+    <span class="b2b-logo" aria-hidden="true">▣</span>
+    <span class="b2b-brand-text">
+      <b>API для бизнеса</b>
+      <small>Ямастер Чек · агрегаты Чек-Пула</small>
+    </span>
+  </div>
+  <nav class="b2b-nav" id="b2b-nav" aria-label="Разделы кабинета">
+    <button type="button" class="b2b-tab" data-view="start">Начало</button>
+    <button type="button" class="b2b-tab hidden" data-view="hub" data-gated="1">Раздел API</button>
+    <button type="button" class="b2b-tab hidden" data-view="docs" data-gated="1">Документация</button>
+    <button type="button" class="b2b-tab hidden" data-view="tariffs" data-gated="1">Тарифы и состав</button>
+    <button type="button" class="b2b-tab hidden" data-view="contact" data-gated="1">Обсудить подключение</button>
+    <button type="button" class="b2b-tab hidden" data-view="cabinet" data-auth="1">Кабинет</button>
+    <button type="button" class="b2b-tab" data-view="login" data-anon="1">Вход</button>
+    <button type="button" class="b2b-tab" data-view="register" data-anon="1">Регистрация</button>
+  </nav>
+  <div class="b2b-who" id="b2b-who"></div>
+</header>
+
+<main class="b2b-main" id="b2b-main">
+
+  <p class="b2b-msg hidden" id="b2b-msg" role="status" aria-live="polite"></p>
+
+  <!-- НАЧАЛО: что нужно сделать компании или ИП (открыто всем) -->
+  <section class="b2b-view" id="view-start" data-view="start"
+           aria-labelledby="start-title">
+    <h1 class="b2b-h1" id="start-title">Доступ к данным чеков для аналитики</h1>
+    <p class="b2b-lead">Обезличенные агрегаты по кассовым чекам: объёмы,
+      география, отрасли, средний чек, топ продавцов и срезы под вашими
+      фильтрами. Раздел открыт только компаниям и ИП, подтвердившим статус
+      через корпоративную почту.</p>
+
+    <div class="b2b-grid">
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Что нужно сделать</h2>
+        <ol class="b2b-steps" id="start-steps"></ol>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Требования к компании</h2>
+        <ul class="b2b-list" id="start-requirements"></ul>
+        <h2 class="b2b-h2 b2b-h2-next">С чем мы не подключаем</h2>
+        <ul class="b2b-list b2b-list-dim" id="start-not-accepted"></ul>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Тарифы — это лимиты ключа</h2>
+        <table class="b2b-table" id="start-tariffs">
+          <thead>
+            <tr>
+              <th scope="col">Тариф</th>
+              <th scope="col">Запросов/час</th>
+              <th scope="col">Квота/мес</th>
+              <th scope="col">Стоимость</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="b2b-note">Состав методов одинаков на любом тарифе. Стоимость
+          не публикуется: она зависит от лимитов и срока подписки — сообщим по
+          запросу после заявки.</p>
+        <div class="b2b-actions">
+          <button type="button" class="btn btn-primary" data-go="register">Зарегистрировать компанию</button>
+          <button type="button" class="btn" data-go="login">У меня уже есть кабинет</button>
+        </div>
+      </article>
+    </div>
+
+    <p class="b2b-note" id="start-closed"></p>
+  </section>
+
+  <!-- РЕГИСТРАЦИЯ -->
+  <section class="b2b-view hidden" id="view-register" data-view="register"
+           aria-labelledby="register-title">
+    <h1 class="b2b-h1" id="register-title">Регистрация компании</h1>
+    <p class="b2b-lead">Почта должна быть на домене компании: бесплатный ящик
+      не подтверждает, что вы представляете организацию.</p>
+    <form class="b2b-card b2b-form" id="form-register" novalidate>
+      <div class="b2b-field">
+        <label for="reg-email">Корпоративная почта</label>
+        <input id="reg-email" name="email" type="email" autocomplete="email"
+               placeholder="ivanov@vashacompaniya.ru" required>
+      </div>
+      <div class="b2b-field">
+        <label for="reg-password">Пароль</label>
+        <input id="reg-password" name="password" type="password"
+               autocomplete="new-password" minlength="8" required>
+        <span class="b2b-hint">Не короче 8 символов, не только цифры</span>
+      </div>
+      <div class="b2b-field">
+        <label for="reg-name">Наименование (как в ЕГРЮЛ/ЕГРИП)</label>
+        <input id="reg-name" name="company_name" type="text"
+               placeholder="ООО «Ромашка» или Иванов Иван Иванович" required>
+      </div>
+      <div class="b2b-field">
+        <label for="reg-inn">ИНН</label>
+        <input id="reg-inn" name="inn" type="text" inputmode="numeric"
+               placeholder="10 цифр — ООО, 12 цифр — ИП" required>
+      </div>
+      <div class="b2b-row">
+        <div class="b2b-field">
+          <label for="reg-contact">Контактное лицо</label>
+          <input id="reg-contact" name="contact_name" type="text"
+                 autocomplete="name" placeholder="Фамилия и имя">
+        </div>
+        <div class="b2b-field">
+          <label for="reg-phone">Телефон</label>
+          <input id="reg-phone" name="phone" type="tel" autocomplete="tel"
+                 placeholder="+7 900 000-00-00">
+        </div>
+      </div>
+      <div class="b2b-field">
+        <label for="reg-tariff">Какой объём данных нужен</label>
+        <select id="reg-tariff" name="tariff">
+          <option value="start">Старт — до 5 000 запросов в месяц</option>
+          <option value="business">Бизнес — до 30 000 запросов в месяц</option>
+          <option value="analytics">Аналитика — до 150 000 запросов в месяц</option>
+          <option value="">Пока не выбрали</option>
+        </select>
+      </div>
+      <!-- поле-ловушка: человек его не видит и не заполняет -->
+      <div class="b2b-trap" aria-hidden="true">
+        <label for="reg-trap">Не заполняйте это поле</label>
+        <input id="reg-trap" name="hp" type="text" tabindex="-1"
+               autocomplete="off">
+      </div>
+      <div class="b2b-field b2b-consent">
+        <label for="reg-consent">
+          <input id="reg-consent" name="consent" type="checkbox" required>
+          Согласен на обработку персональных данных и с условиями оферты
+          (редакция 2026-10). Данные нужны только для проверки статуса
+          компании и подключения к API.
+        </label>
+      </div>
+      <div class="b2b-actions">
+        <button type="submit" class="btn btn-primary" id="reg-submit">Зарегистрироваться</button>
+        <button type="button" class="btn" data-go="login">Войти</button>
+      </div>
+      <p class="b2b-note">После регистрации придёт письмо для подтверждения
+        корпоративной почты — ссылка действует 24 часа.</p>
+    </form>
+  </section>
+
+  <!-- ВХОД -->
+  <section class="b2b-view hidden" id="view-login" data-view="login"
+           aria-labelledby="login-title">
+    <h1 class="b2b-h1" id="login-title">Вход в кабинет</h1>
+    <form class="b2b-card b2b-form" id="form-login" novalidate>
+      <div class="b2b-field">
+        <label for="log-email">Корпоративная почта</label>
+        <input id="log-email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="b2b-field">
+        <label for="log-password">Пароль</label>
+        <input id="log-password" name="password" type="password"
+               autocomplete="current-password" required>
+      </div>
+      <div class="b2b-actions">
+        <button type="submit" class="btn btn-primary" id="log-submit">Войти</button>
+        <button type="button" class="btn" data-go="register">Регистрация</button>
+      </div>
+      <p class="b2b-note">Забыли пароль?
+        <button type="button" class="b2b-link" id="reset-open">пришлём ссылку
+        для входа</button> — она действует 1 час.</p>
+    </form>
+    <form class="b2b-card b2b-form hidden" id="form-reset" novalidate>
+      <h2 class="b2b-h2">Ссылка для входа</h2>
+      <div class="b2b-field">
+        <label for="res-email">Корпоративная почта</label>
+        <input id="res-email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="b2b-actions">
+        <button type="submit" class="btn btn-primary">Выслать ссылку</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- НОВЫЙ ПАРОЛЬ ПО ССЫЛКЕ ИЗ ПИСЬМА -->
+  <section class="b2b-view hidden" id="view-newpass" data-view="newpass"
+           aria-labelledby="newpass-title">
+    <h1 class="b2b-h1" id="newpass-title">Новый пароль</h1>
+    <form class="b2b-card b2b-form" id="form-newpass" novalidate>
+      <div class="b2b-field">
+        <label for="np-password">Новый пароль</label>
+        <input id="np-password" name="password" type="password"
+               autocomplete="new-password" minlength="8" required>
+        <span class="b2b-hint">Не короче 8 символов, не только цифры</span>
+      </div>
+      <div class="b2b-actions">
+        <button type="submit" class="btn btn-primary">Сохранить и войти</button>
+      </div>
+      <p class="b2b-note">Ссылка из письма действует 1 час и только один раз.</p>
+    </form>
+  </section>
+
+  <!-- ПОДТВЕРЖДЕНИЕ ПОЧТЫ -->
+  <section class="b2b-view hidden" id="view-confirm" data-view="confirm"
+           aria-labelledby="confirm-title">
+    <h1 class="b2b-h1" id="confirm-title">Подтверждение корпоративной почты</h1>
+    <div class="b2b-card">
+      <p class="b2b-lead" id="confirm-text">Проверяем ссылку из письма…</p>
+      <div class="b2b-actions">
+        <button type="button" class="btn" id="confirm-resend" hidden>Выслать письмо повторно</button>
+        <button type="button" class="btn" data-go="start">На начало</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- РАЗДЕЛ API (закрыт до подтверждения статуса) -->
+  <section class="b2b-view hidden" id="view-hub" data-view="hub"
+           aria-labelledby="hub-title">
+    <h1 class="b2b-h1" id="hub-title">API для бизнеса — агрегаты Чек-Пула</h1>
+    <p class="b2b-lead" id="hub-lead"></p>
+    <div class="b2b-grid">
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Что получаете</h2>
+        <ul class="b2b-list" id="hub-give"></ul>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Чего не отдаём ни на каком тарифе</h2>
+        <ul class="b2b-list b2b-list-dim" id="hub-never"></ul>
+        <p class="b2b-note" id="hub-flag"></p>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Как устроен доступ</h2>
+        <ol class="b2b-steps" id="hub-steps"></ol>
+        <div class="b2b-actions">
+          <button type="button" class="btn btn-primary" data-go="contact">Обсудить подключение</button>
+          <button type="button" class="btn" data-go="tariffs">Тарифы и состав</button>
+        </div>
+      </article>
+    </div>
+    <div class="b2b-figs" id="hub-figs"></div>
+  </section>
+
+  <!-- ДОКУМЕНТАЦИЯ API (закрыта) -->
+  <section class="b2b-view hidden" id="view-docs" data-view="docs"
+           aria-labelledby="docs-title">
+    <h1 class="b2b-h1" id="docs-title">Документация API</h1>
+    <p class="b2b-lead" id="docs-lead"></p>
+    <div class="b2b-card">
+      <h2 class="b2b-h2">Авторизация</h2>
+      <p class="b2b-note" id="docs-auth"></p>
+      <p class="b2b-note" id="docs-key"></p>
+      <p class="b2b-note" id="docs-openapi"></p>
+    </div>
+    <div id="docs-methods"></div>
+    <div class="b2b-card">
+      <h2 class="b2b-h2">Коды отказов</h2>
+      <table class="b2b-table" id="docs-errors">
+        <thead>
+          <tr>
+            <th scope="col">Код</th>
+            <th scope="col">Текст ответа</th>
+            <th scope="col">Когда бывает</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <h2 class="b2b-h2 b2b-h2-next">Правила фильтров</h2>
+      <ul class="b2b-list" id="docs-rules"></ul>
+    </div>
+  </section>
+
+  <!-- ТАРИФЫ И СОСТАВ (закрыты) -->
+  <section class="b2b-view hidden" id="view-tariffs" data-view="tariffs"
+           aria-labelledby="tariffs-title">
+    <h1 class="b2b-h1" id="tariffs-title">Тарифы и состав</h1>
+    <p class="b2b-lead" id="tariffs-lead"></p>
+    <div class="b2b-card">
+      <table class="b2b-table" id="tariffs-table">
+        <thead>
+          <tr>
+            <th scope="col">Тариф</th>
+            <th scope="col">Запросов/час</th>
+            <th scope="col">Квота/мес</th>
+            <th scope="col">Методов</th>
+            <th scope="col">Стоимость</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="b2b-note" id="tariffs-price"></p>
+      <div class="b2b-actions">
+        <button type="button" class="btn btn-primary" data-go="contact">Обсудить подключение</button>
+      </div>
+    </div>
+    <div class="b2b-grid">
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Что входит</h2>
+        <ul class="b2b-list" id="tariffs-included"></ul>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Чего нет ни на одном тарифе</h2>
+        <ul class="b2b-list b2b-list-dim" id="tariffs-never"></ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- ОБСУДИТЬ ПОДКЛЮЧЕНИЕ (закрыто) -->
+  <section class="b2b-view hidden" id="view-contact" data-view="contact"
+           aria-labelledby="contact-title">
+    <h1 class="b2b-h1" id="contact-title">Обсудить подключение</h1>
+    <p class="b2b-lead" id="contact-lead"></p>
+    <form class="b2b-card b2b-form" id="form-contact" novalidate>
+      <div class="b2b-field">
+        <label for="app-tariff">Тариф</label>
+        <select id="app-tariff" name="tariff"></select>
+      </div>
+      <div class="b2b-field">
+        <label for="app-task">Задача: что считаете и какие срезы нужны</label>
+        <textarea id="app-task" name="task" rows="5" minlength="20" required></textarea>
+        <span class="b2b-hint" id="app-task-hint"></span>
+      </div>
+      <div class="b2b-field">
+        <label for="app-volume">Ожидаемый объём запросов</label>
+        <input id="app-volume" name="expected_volume" type="text"
+               placeholder="до 5 000 запросов в месяц, ночной расчёт">
+        <span class="b2b-hint" id="app-volume-hint"></span>
+      </div>
+      <div class="b2b-actions">
+        <button type="submit" class="btn btn-primary" id="app-submit">Отправить заявку</button>
+      </div>
+      <p class="b2b-note">Заявка уходит администратору сервиса вместе с
+        результатами проверок. Решение и условия придут на корпоративную
+        почту.</p>
+    </form>
+  </section>
+
+  <!-- КАБИНЕТ (для вошедших) -->
+  <section class="b2b-view hidden" id="view-cabinet" data-view="cabinet"
+           aria-labelledby="cabinet-title">
+    <h1 class="b2b-h1" id="cabinet-title">Кабинет компании</h1>
+    <div class="b2b-grid">
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Статус</h2>
+        <p class="b2b-status" id="cab-status"></p>
+        <p class="b2b-note" id="cab-reason"></p>
+        <dl class="b2b-defs" id="cab-company"></dl>
+        <div class="b2b-actions">
+          <button type="button" class="btn" id="cab-resend" hidden>Выслать письмо повторно</button>
+          <button type="button" class="btn btn-primary hidden" id="cab-go-contact" data-go="contact">Обсудить подключение</button>
+        </div>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Проверки статуса</h2>
+        <ul class="b2b-checks" id="cab-checks"></ul>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Ключ и лимиты</h2>
+        <p class="b2b-key" id="cab-key"></p>
+        <dl class="b2b-defs" id="cab-usage"></dl>
+        <p class="b2b-note">Ключ показывается один раз при выдаче — в базе
+          хранится только его хэш. Запросы идут с заголовком
+          <code>X-API-Key</code>.</p>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">Заявки</h2>
+        <ul class="b2b-list" id="cab-applications"></ul>
+      </article>
+      <article class="b2b-card">
+        <h2 class="b2b-h2">История</h2>
+        <ul class="b2b-list b2b-list-dim" id="cab-events"></ul>
+      </article>
+    </div>
+    <div class="b2b-actions">
+      <button type="button" class="btn" id="cab-logout">Выйти</button>
+    </div>
+  </section>
+
+</main>
+
+<footer class="b2b-foot">
+  <p>ООО «Ямастер» · ymaster.ru ·
+    <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a></p>
+  <p class="b2b-note">Данные обезличены: сырые чеки, их позиции и сведения об
+    участниках не передаются ни на каком тарифе.</p>
+</footer>
+
+<script src="/b2b/b2b.js?v=1.70.45"></script>
+</body>
+</html>

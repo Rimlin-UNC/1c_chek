@@ -57,6 +57,7 @@ const VIEW_TITLES = {
   poolpeople: 'Чек-Пул: участники',    // v1.41.0: список + просмотр кабинета
   fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
   poolpick: 'Чек-Пул: подбор для компании', // v1.37.0: бухгалтер
+  b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -3575,6 +3576,7 @@ function route(silent = false) {
     poolpeople: isAdmin(),               // v1.41.0: участники + просмотр
     fraud: isAdmin(),                    // v1.34.0: антифрод
     poolpick: isAccountant(),            // v1.37.0: подбор для компании
+    b2badmin: isAdmin(),                 // v1.70.45: модерация B2B
     boss: isManager() || isAdmin(),      // v1.64.0: отчёт руководителя
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
@@ -3593,6 +3595,7 @@ function route(silent = false) {
     poolpeople: viewPoolPeople,           // v1.41.0: участники + просмотр кабинета
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
+    b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
   // v1.55.0: сбой отрисовки не оставляет белый экран — возвращаем
@@ -11093,6 +11096,425 @@ async function waBindSettingsCard() {
       } catch (e) { toast(e.message, 'err'); }
     };
   });
+}
+
+
+// --------------------------------------------------------------------------
+//  v1.70.45: МОДЕРАЦИЯ КОНТУРА B2B (#/b2badmin, только администратор).
+//
+//  Требование владельца: администратор видит всё, но каждая такая поверхность
+//  помечена «Это не видит никто» — пометка приходит с сервера (поле marker в
+//  каждом ответе /api/v1/b2b-admin/*), а не выдумана на клиенте.
+//
+//  Здесь переключаются режимы автоматизации (полная / частичная / отмена),
+//  одобряются заявки с выдачей ключа в один клик, подтверждаются и
+//  отклоняются статусы компаний. Полный ключ показывается ОДИН раз: в базе
+//  хранится только SHA-256 хэш (тот же механизм, что у ключей Чек-Пула).
+//  Данные компании вводит она сама, поэтому всё экранируется через esc().
+// --------------------------------------------------------------------------
+const B2B_ADM = { tab: 'queue', status: '', q: '', company: '', cfg: null, key: '' };
+
+function b2bAdmMark(marker) {
+  const text = marker || 'Это не видит никто';
+  return `<span class="b2badm-mark" title="Внутренняя поверхность сервиса: клиентам не показывается">${esc(text)}</span>`;
+}
+
+function b2bAdmShell() {
+  return `
+  <div class="glass card">
+    <div class="card-title">🔐 API для бизнеса: модерация</div>
+    <div id="b2badm-marker" class="b2badm-markerline"></div>
+    <div id="b2badm-counters" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+    <div class="b2badm-config" id="b2badm-config"></div>
+    <div class="b2badm-tabs">
+      <button type="button" class="btn btn-sm b2badm-tab" data-tab="queue">Очередь заявок</button>
+      <button type="button" class="btn btn-sm b2badm-tab" data-tab="companies">Компании</button>
+      <button type="button" class="btn btn-sm b2badm-tab" data-tab="events">Журнал контура</button>
+    </div>
+    <div id="b2badm-body" class="b2badm-body"></div>
+  </div>
+  <div class="glass card b2badm-keycard" id="b2badm-keycard" hidden>
+    <div class="card-title">🔑 Ключ выдан — показывается один раз</div>
+    <p class="form-hint">Скопируйте ключ сейчас и передайте компании: повторно
+      увидеть его нельзя, в базе хранится только хэш. В письме компании уходит
+      ссылка на кабинет, а не сам ключ.</p>
+    <code class="b2badm-key" id="b2badm-key"></code>
+    <div class="b2badm-actions">
+      <button type="button" class="btn btn-sm" id="b2badm-key-copy">📋 Скопировать</button>
+      <button type="button" class="btn btn-sm" id="b2badm-key-close">Скрыть</button>
+    </div>
+  </div>`;
+}
+
+function b2bAdmRenderConfig(cfg, modes) {
+  const box = $('#b2badm-config');
+  if (!box) return;
+  const opts = (modes || []).map(m =>
+    `<option value="${esc(m.code)}"${m.code === cfg.auto_mode ? ' selected' : ''}>${esc(m.title)}</option>`).join('');
+  const notes = {};
+  (modes || []).forEach(m => { notes[m.code] = m.note; });
+  box.innerHTML = `
+    <div class="b2badm-cfgrow">
+      <label class="b2badm-cfgfield" for="b2badm-mode">Режим автоматизации
+        <select id="b2badm-mode">${opts}</select>
+      </label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-enabled"${cfg.enabled ? ' checked' : ''}> Контур включён (регистрация открыта)</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-autokey"${cfg.auto_issue_key ? ' checked' : ''}> В полной автоматизации ключ выдаёт сервис</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-registry"${cfg.require_registry ? ' checked' : ''}> Карточка ЕГРЮЛ/ЕГРИП обязательна</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-free"${cfg.allow_free_domains ? ' checked' : ''}> Разрешить бесплатные почтовые домены</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-notify"${cfg.notify_admin ? ' checked' : ''}> Уведомлять о новых заявках</label>
+      <button type="button" class="btn btn-sm" id="b2badm-save">💾 Сохранить режим</button>
+    </div>
+    <p class="form-hint" id="b2badm-mode-note">${esc(notes[cfg.auto_mode] || cfg.auto_mode_note || '')}</p>`;
+
+  $('#b2badm-mode').onchange = (e) => {
+    const note = $('#b2badm-mode-note');
+    if (note) note.textContent = notes[e.target.value] || '';
+  };
+  $('#b2badm-save').onclick = async () => {
+    const payload = {
+      auto_mode: $('#b2badm-mode').value,
+      enabled: $('#b2badm-enabled').checked,
+      auto_issue_key: $('#b2badm-autokey').checked,
+      require_registry: $('#b2badm-registry').checked,
+      allow_free_domains: $('#b2badm-free').checked,
+      notify_admin: $('#b2badm-notify').checked,
+    };
+    try {
+      const d = await api.put('/api/v1/b2b-admin/config', payload);
+      B2B_ADM.cfg = d.config;
+      toast(d.message || 'Режим сохранён', 'ok');
+      b2bAdmLoad();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+async function b2bAdmLoad() {
+  try {
+    const d = await api.get('/api/v1/b2b-admin/overview');
+    B2B_ADM.cfg = d.config;
+    const markBox = $('#b2badm-marker');
+    if (markBox) markBox.innerHTML = b2bAdmMark(d.marker);
+    const c = d.counters || {};
+    const box = $('#b2badm-counters');
+    if (box) {
+      const parts = Object.keys(c).filter(k => k !== 'total' && k !== 'queue')
+        .map(k => `${esc((d.status_titles || {})[k] || k)}: <b>${fmtInt(c[k])}</b>`);
+      box.innerHTML = `Компаний всего <b>${fmtInt(c.total || 0)}</b> · ${parts.join(' · ')}<br>`
+        + `В очереди заявок: <b>${fmtInt(c.queue || 0)}</b> · режим: <b>${esc(d.config.auto_mode_title)}</b>`;
+    }
+    b2bAdmRenderConfig(d.config, d.modes);
+    b2bAdmRenderBody(d);
+  } catch (e) {
+    const box = $('#b2badm-counters');
+    if (box) box.textContent = e.message;
+  }
+}
+
+function b2bAdmRenderBody(d) {
+  if (B2B_ADM.tab === 'companies') return b2bAdmCompanies();
+  if (B2B_ADM.tab === 'events') return b2bAdmEvents();
+  return b2bAdmQueue(d);
+}
+
+function b2bAdmQueue(d) {
+  const body = $('#b2badm-body');
+  if (!body) return;
+  const items = (d && d.queue) || [];
+  if (!items.length) {
+    body.innerHTML = '<p class="form-hint">Очередь пуста: заявок, ожидающих '
+      + 'решения, нет. Полный список — во вкладке «Компании».</p>';
+    return;
+  }
+  body.innerHTML = `
+    <table class="table b2badm-table">
+      <thead><tr>
+        <th>Компания</th><th>Тариф</th><th>Проверки</th><th>Задача</th><th>Действия</th>
+      </tr></thead>
+      <tbody>${items.map(a => `
+        <tr data-aid="${esc(a.id)}" data-cid="${esc(a.company_id)}">
+          <td><b>${esc(a.company)}</b><br><span class="form-hint">${esc(a.email)} · ИНН ${esc(a.inn || '—')} · риск ${fmtInt(a.risk_score)}</span></td>
+          <td>${esc(a.tariff_title)}<br><span class="form-hint">${fmtInt(a.tariff_rate)}/час · ${fmtInt(a.tariff_quota)}/мес</span></td>
+          <td>${b2bAdmChecks(a.checks || [])}</td>
+          <td class="b2badm-task">${esc(a.task || '—')}<br><span class="form-hint">${esc(a.status_title)} · ${esc(a.auto_mode || '')}</span></td>
+          <td class="b2badm-actions">
+            <button type="button" class="btn btn-sm b2badm-approve">✅ Одобрить и выдать ключ</button>
+            <button type="button" class="btn btn-sm b2badm-reject">✖ Отклонить</button>
+            <button type="button" class="btn btn-sm b2badm-open">👁 Карточка</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  $$('#b2badm-body .b2badm-approve').forEach(btn => btn.onclick = () => {
+    const aid = btn.closest('tr').dataset.aid;
+    b2bAdmApprove(aid);
+  });
+  $$('#b2badm-body .b2badm-reject').forEach(btn => btn.onclick = () => {
+    const aid = btn.closest('tr').dataset.aid;
+    b2bAdmRejectApplication(aid);
+  });
+  $$('#b2badm-body .b2badm-open').forEach(btn => btn.onclick = () => {
+    B2B_ADM.company = btn.closest('tr').dataset.cid;
+    b2bAdmCompany();
+  });
+}
+
+function b2bAdmChecks(checks) {
+  if (!checks.length) return '<span class="form-hint">не выполнялись</span>';
+  return checks.map(c =>
+    `<span class="b2badm-checkchip ${c.ok ? 'ok' : 'bad'}" title="${esc(c.detail)}">${c.ok ? '✓' : '✕'} ${esc(c.title)}</span>`).join(' ');
+}
+
+async function b2bAdmApprove(aid) {
+  if (!confirm('Одобрить заявку и выдать ключ по лимитам тарифа?')) return;
+  try {
+    const d = await api.post(`/api/v1/b2b-admin/applications/${encodeURIComponent(aid)}/approve`, {});
+    toast(d.message || 'Заявка одобрена', 'ok');
+    if (d.key) b2bAdmShowKey(d.key);
+    b2bAdmLoad();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function b2bAdmShowKey(key) {
+  B2B_ADM.key = key;
+  const card = $('#b2badm-keycard');
+  const box = $('#b2badm-key');
+  if (!card || !box) return;
+  box.textContent = key;
+  card.hidden = false;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function b2bAdmRejectApplication(aid) {
+  const reason = prompt('Причина отказа по заявке (уйдёт в письме компании):');
+  if (reason === null) return;
+  if (!reason.trim()) { toast('Укажите причину отказа', 'err'); return; }
+  try {
+    const d = await api.post(`/api/v1/b2b-admin/applications/${encodeURIComponent(aid)}/reject`, { reason: reason.trim() });
+    toast(d.message || 'Заявка отклонена', 'ok');
+    b2bAdmLoad();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function b2bAdmCompanies() {
+  const body = $('#b2badm-body');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="b2badm-filters">
+      <input id="b2badm-q" placeholder="Поиск: почта, компания или ИНН" value="${esc(B2B_ADM.q)}">
+      <select id="b2badm-status">
+        <option value="">Все статусы</option>
+        <option value="email_pending">Ждут подтверждения почты</option>
+        <option value="checks">Проверки</option>
+        <option value="verified">Подтверждённые</option>
+        <option value="rejected">Отклонённые</option>
+        <option value="blocked">Закрытые</option>
+        <option value="new">Не завершили регистрацию</option>
+      </select>
+      <button type="button" class="btn btn-sm" id="b2badm-find">🔎 Найти</button>
+    </div>
+    <div id="b2badm-list" class="form-hint">Загружаем…</div>`;
+  $('#b2badm-status').value = B2B_ADM.status;
+  const run = async () => {
+    const q = encodeURIComponent(B2B_ADM.q), s = encodeURIComponent(B2B_ADM.status);
+    try {
+      const d = await api.get(`/api/v1/b2b-admin/companies?q=${q}&status=${s}`);
+      const list = $('#b2badm-list');
+      if (!list) return;
+      if (!d.items.length) { list.textContent = 'Компаний не найдено.'; return; }
+      list.innerHTML = `
+        <table class="table b2badm-table">
+          <thead><tr><th>Компания</th><th>Статус</th><th>Риск</th><th>Заявок</th><th></th></tr></thead>
+          <tbody>${d.items.map(c => `
+            <tr data-cid="${esc(c.id)}">
+              <td><b>${esc(c.company_name || '—')}</b><br><span class="form-hint">${esc(c.email)} · ИНН ${esc(c.inn || '—')}${c.kind ? ' · ' + esc(c.kind) : ''}</span></td>
+              <td>${esc(c.status_title)}</td>
+              <td>${fmtInt(c.risk_score)}</td>
+              <td>${fmtInt(c.applications)}</td>
+              <td class="b2badm-actions"><button type="button" class="btn btn-sm b2badm-open">👁 Карточка</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      $$('#b2badm-list .b2badm-open').forEach(btn => btn.onclick = () => {
+        B2B_ADM.company = btn.closest('tr').dataset.cid;
+        b2bAdmCompany();
+      });
+    } catch (e) {
+      const list = $('#b2badm-list');
+      if (list) list.textContent = e.message;
+    }
+  };
+  $('#b2badm-find').onclick = run;
+  $('#b2badm-q').oninput = (e) => { B2B_ADM.q = e.target.value.trim(); };
+  $('#b2badm-status').onchange = (e) => { B2B_ADM.status = e.target.value; run(); };
+  run();
+}
+
+async function b2bAdmCompany() {
+  const body = $('#b2badm-body');
+  const cid = B2B_ADM.company;
+  if (!body || !cid) return;
+  body.innerHTML = '<p class="form-hint">Загружаем карточку…</p>';
+  try {
+    const d = await api.get(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}`);
+    const c = d.company || {};
+    const key = d.key || {};
+    body.innerHTML = `
+      <div class="b2badm-card">
+        <div class="b2badm-cardhead">
+          <div><b>${esc(c.company_name || '—')}</b> · ${esc(c.status_title || c.status)} ${b2bAdmMark(d.marker)}</div>
+          <button type="button" class="btn btn-sm" id="b2badm-back">← К списку</button>
+        </div>
+        <dl class="b2badm-defs">
+          <dt>Почта</dt><dd>${esc(c.email)}</dd>
+          <dt>ИНН</dt><dd>${esc(c.inn || '—')}${c.kind ? ' · ' + esc(c.kind) : ''}</dd>
+          <dt>Контакт</dt><dd>${esc(c.contact_name || '—')}${c.phone ? ' · ' + esc(c.phone) : ''}</dd>
+          <dt>Риск</dt><dd>${fmtInt(c.risk_score)}</dd>
+          <dt>Согласие</dt><dd>редакция ${esc(c.consent_version || '—')}</dd>
+          <dt>Почта подтверждена</dt><dd>${c.email_verified_at ? esc(c.email_verified_at.slice(0, 10)) : 'нет'}</dd>
+          <dt>Причина отказа</dt><dd>${esc(c.reject_reason || '—')}</dd>
+          <dt>Пометки</dt><dd>${esc(c.notes || '—')}</dd>
+        </dl>
+        <div class="b2badm-actions">
+          <button type="button" class="btn btn-sm" id="b2badm-verify">✅ Подтвердить статус</button>
+          <button type="button" class="btn btn-sm" id="b2badm-recheck">🔁 Перепроверить</button>
+          <button type="button" class="btn btn-sm" id="b2badm-creject">✖ Отклонить</button>
+          <button type="button" class="btn btn-sm" id="b2badm-block">${c.status === 'blocked' ? '🔓 Восстановить доступ' : '⛔ Закрыть доступ'}</button>
+          <button type="button" class="btn btn-sm" id="b2badm-resend">✉ Выслать письмо</button>
+        </div>
+      </div>
+      <div class="b2badm-card">
+        <div class="card-title">Проверки статуса</div>
+        ${b2bAdmCheckList(d.checks || [], d.check_titles || {})}
+      </div>
+      <div class="b2badm-card">
+        <div class="card-title">Ключ и заявки</div>
+        <p class="form-hint">${key.issued
+          ? `Ключ ${esc(key.prefix)} ${key.active ? 'активен' : 'отозван'} · ${fmtInt(key.used_hour)} из ${fmtInt(key.rate_per_hour)} за час · ${fmtInt(key.used_month)} из ${fmtInt(key.monthly_quota)} за месяц · последний вызов ${esc(key.last_used_at || '—')}`
+          : 'Ключ не выдавался'}</p>
+        ${(d.applications || []).map(a => `
+          <div class="b2badm-app" data-aid="${esc(a.id)}">
+            <div><b>${esc(a.tariff)}</b> · ${esc(a.status_title)} · ${esc((a.created_at || '').slice(0, 10))}</div>
+            <div class="form-hint">${esc(a.task || '')}</div>
+            <div class="form-hint">${esc(a.auto_decision || '')}</div>
+            <div class="b2badm-actions">
+              ${a.status === 'approved' || a.status === 'parked' || a.status === 'new'
+                ? `<button type="button" class="btn btn-sm b2badm-app-approve">✅ Одобрить и выдать ключ</button>` : ''}
+              ${a.status === 'approved'
+                ? `<button type="button" class="btn btn-sm b2badm-app-revoke">⛔ Отозвать ключ</button>` : ''}
+              ${a.status !== 'rejected' && a.status !== 'revoked'
+                ? `<button type="button" class="btn btn-sm b2badm-app-reject">✖ Отклонить заявку</button>` : ''}
+            </div>
+          </div>`).join('') || '<p class="form-hint">Заявок нет</p>'}
+      </div>
+      <div class="b2badm-card">
+        <div class="card-title">Журнал компании</div>
+        <ul class="b2badm-events">${(d.events || []).map(e =>
+          `<li>${esc((e.created_at || '').slice(0, 16).replace('T', ' '))} · <b>${esc(e.actor)}</b> · ${esc(e.action)}${e.details ? ' — ' + esc(e.details) : ''}</li>`).join('')
+          || '<li>Событий нет</li>'}</ul>
+      </div>`;
+
+    $('#b2badm-back').onclick = () => { B2B_ADM.company = ''; b2bAdmCompanies(); };
+    $('#b2badm-verify').onclick = async () => {
+      const note = prompt('Пометка к подтверждению статуса (необязательно):') || '';
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/verify`, { note });
+        toast(r.message || 'Статус подтверждён', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-recheck').onclick = async () => {
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/recheck`, {});
+        toast(r.passed ? 'Проверки пройдены' : 'Есть замечания: ' + (r.problems || []).join('; '), r.passed ? 'ok' : 'warn');
+        b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-creject').onclick = async () => {
+      const reason = prompt('Причина отказа компании (уйдёт в письме):');
+      if (reason === null) return;
+      if (!reason.trim()) { toast('Укажите причину', 'err'); return; }
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/reject`, { reason: reason.trim() });
+        toast(r.message || 'Отклонено', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-block').onclick = async () => {
+      const blocked = c.status !== 'blocked';
+      const reason = blocked ? (prompt('Причина закрытия доступа:') || '') : '';
+      if (blocked && !reason.trim()) { toast('Укажите причину', 'err'); return; }
+      const path = blocked ? 'block' : 'unblock';
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/${path}`, { reason });
+        toast(r.message || 'Готово', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-resend').onclick = async () => {
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/resend`, {});
+        toast(r.message || 'Письмо отправлено', r.sent ? 'ok' : 'warn');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $$('#b2badm-body .b2badm-app-approve').forEach(btn => btn.onclick = () =>
+      b2bAdmApprove(btn.closest('.b2badm-app').dataset.aid));
+    $$('#b2badm-body .b2badm-app-reject').forEach(btn => btn.onclick = () =>
+      b2bAdmRejectApplication(btn.closest('.b2badm-app').dataset.aid));
+    $$('#b2badm-body .b2badm-app-revoke').forEach(btn => btn.onclick = async () => {
+      if (!confirm('Отозвать выданный ключ? Доступ компании к API прекратится сразу.')) return;
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/applications/${encodeURIComponent(btn.closest('.b2badm-app').dataset.aid)}/revoke`, {});
+        toast(r.message || 'Ключ отозван', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    });
+  } catch (e) { body.innerHTML = `<p class="form-hint">${esc(e.message)}</p>`; }
+}
+
+function b2bAdmCheckList(checks, titles) {
+  if (!checks.length) return '<p class="form-hint">Проверки не выполнялись — нажмите «Перепроверить».</p>';
+  return `<ul class="b2badm-checks">${checks.map(c => `
+    <li class="${c.ok ? 'ok' : 'bad'}">
+      <span class="b2badm-sign">${c.ok ? '✓' : '✕'}</span>
+      <span><b>${esc(c.title || titles[c.kind] || c.kind)}</b>
+      <span class="form-hint">${esc(c.detail)}</span></span>
+    </li>`).join('')}</ul>`;
+}
+
+async function b2bAdmEvents() {
+  const body = $('#b2badm-body');
+  if (!body) return;
+  body.innerHTML = '<p class="form-hint">Загружаем журнал…</p>';
+  try {
+    const d = await api.get('/api/v1/b2b-admin/events?limit=100');
+    body.innerHTML = `
+      <p class="form-hint">${esc(d.note || '')}</p>
+      <ul class="b2badm-events">${(d.items || []).map(e =>
+        `<li>${esc((e.created_at || '').slice(0, 16).replace('T', ' '))} · <b>${esc(e.actor)}</b> · ${esc(e.action)}${e.details ? ' — ' + esc(e.details) : ''}</li>`).join('')
+        || '<li>Событий нет</li>'}</ul>`;
+  } catch (e) { body.innerHTML = `<p class="form-hint">${esc(e.message)}</p>`; }
+}
+
+async function viewB2bAdmin(container) {
+  container.innerHTML = b2bAdmShell();
+  $$('.b2badm-tab').forEach(btn => btn.onclick = () => {
+    B2B_ADM.tab = btn.dataset.tab;
+    B2B_ADM.company = '';
+    $$('.b2badm-tab').forEach(b => b.classList.toggle('active', b === btn));
+    b2bAdmLoad();
+  });
+  const first = $('.b2badm-tab');
+  if (first) first.classList.add('active');
+  $('#b2badm-key-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(B2B_ADM.key);
+      toast('Ключ скопирован', 'ok');
+    } catch (e) { toast('Скопируйте ключ вручную', 'warn'); }
+  };
+  $('#b2badm-key-close').onclick = () => {
+    B2B_ADM.key = '';
+    const box = $('#b2badm-key');
+    if (box) box.textContent = '';
+    $('#b2badm-keycard').hidden = true;
+  };
+  await b2bAdmLoad();
 }
 
 // --------------------------------------------------------------------------

@@ -1580,33 +1580,59 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .land-faq summary { cursor: pointer; font-weight: 600; font-size: 0.875rem; }
 .land-faq p { margin: 8px 0 2px; color: var(--text-dim); font-size: 0.84375rem; line-height: 1.55; }
 .land-note { color: var(--text-dim); font-size: 0.78125rem; margin: 14px 0 0; }
-/* v1.70.44: раздел лендинга «API ДЛЯ БИЗНЕСА» — платное подключение.
-   Тарифная сетка, состав методов и тексты отказов описаны в docs/API.md и
-   соответствуют app/pool/router_api.py. Цены здесь не публикуем: тариф
-   назначается при подключении. Три карточки в ряд на широком экране и одна
-   колонка на узком — цифры лимитов и формат ключа должны читаться с телефона.
-   Цвета только фирменные, подписи идут текстовыми оттенками с контрастом не
-   ниже 4.5:1 на любой из поверхностей. */
-.land-api { margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--border); }
-.land-api-title { font-size: 1.375rem; font-weight: 800; line-height: 1.3; color: var(--text); margin: 0 0 8px; }
-.land-api-lead { color: var(--text-dim); font-size: 0.875rem; line-height: 1.65; margin: 0 0 18px; max-width: 64ch; }
-.land-api-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.land-api-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
-.land-api-card > b { display: block; color: var(--text); font-size: 0.90625rem; margin-bottom: 10px; }
-.land-api-card ul, .land-api-card ol { margin: 0; padding-left: 18px; }
-.land-api-card li { color: var(--text-dim); font-size: 0.8125rem; line-height: 1.6; margin-bottom: 6px; }
-.land-api-card code, .land-api-note code { color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; font-size: 0.78125rem; padding: 1px 5px; }
-.land-api-tariffs { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
-.land-api-tariffs th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
-.land-api-tariffs td { color: var(--text); padding: 7px 8px 7px 0; border-bottom: 1px solid var(--border); }
-.land-api-tariffs th + th, .land-api-tariffs td + td { text-align: right; }
-.land-api-note { display: block; color: var(--text-dim); font-size: 0.78125rem; line-height: 1.6; margin-top: 10px; }
-.land-api-fig { margin: 18px 0 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.land-api-fig img { display: block; width: 100%; height: auto; }
-.land-api-fig figcaption { padding: 10px 14px; color: var(--text-dim); font-size: 0.78125rem; line-height: 1.55; border-top: 1px solid var(--border); }
-.land-api-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 #login-screen .land-right { min-width: 0; }
 #login-screen .land-right .login-card { margin: 0; }
+/* v1.70.45: раздел модерации контура B2B (#/b2badmin, только администратор).
+   Доступ компаний к платному API: режимы автоматизации, очередь заявок,
+   карточки компаний с результатами проверок и выдача ключа. Каждая поверхность
+   раздела помечена «Это не видит никто» — пометка приходит с сервера.
+   Цвета только фирменными токенами, подписи не мельче 12.5 px. */
+.b2badm-markerline { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.b2badm-mark { display: inline-block; background: var(--accent-soft); color: var(--accent-text); border: 1px solid var(--border-strong); border-radius: 999px; padding: 4px 12px; font-size: 0.78125rem; font-weight: 700; line-height: 1.4; }
+.b2badm-config { background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 12px; }
+.b2badm-cfgrow { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.b2badm-cfgfield { display: flex; flex-direction: column; gap: 4px; color: var(--text-dim); font-size: 0.8125rem; font-weight: 600; }
+.b2badm-cfgfield select { min-width: min(240px, 92vw); }
+.b2badm-check { display: flex; gap: 8px; align-items: center; color: var(--text-dim); font-size: 0.8125rem; line-height: 1.45; cursor: pointer; }
+.b2badm-check input { width: auto; }
+.b2badm-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.b2badm-tab { border-color: var(--border-strong); color: var(--text-dim); }
+.b2badm-tab.active {
+  /* текст на фирменном оранжевом — тёмный, как в .btn-primary:
+     #1a1a1a даёт 6.66:1, белый дал бы 2.61:1 при пороге 4.5:1 */
+  background: var(--accent); border-color: var(--accent); color: #1a1a1a;
+}
+.b2badm-body { display: block; }
+.b2badm-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.b2badm-filters input { max-width: min(320px, 92vw); }
+.b2badm-list { display: block; }
+.b2badm-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.b2badm-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--border-strong); font-size: 0.8125rem; }
+.b2badm-table td { color: var(--text); padding: 10px 10px 10px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.b2badm-task { max-width: min(420px, 92vw); }
+.b2badm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.b2badm-checkchip { display: inline-block; border-radius: 999px; padding: 3px 10px; margin: 2px 4px 2px 0; font-size: 0.78125rem; font-weight: 600; border: 1px solid var(--border-strong); color: var(--text-dim); background: var(--bg-soft); }
+.b2badm-checkchip.ok { color: var(--ok-text); border-color: var(--ok-text); }
+.b2badm-checkchip.bad { color: var(--bad-text); border-color: var(--bad-text); }
+.b2badm-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
+.b2badm-cardhead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--text); font-size: 0.9375rem; }
+.b2badm-defs { display: grid; grid-template-columns: minmax(150px, 34%) 1fr; gap: 6px 14px; margin: 0 0 10px; font-size: 0.8125rem; }
+.b2badm-defs dt { color: var(--text-dim); }
+.b2badm-defs dd { margin: 0; color: var(--text); word-break: break-word; }
+.b2badm-checks { margin: 0; padding: 0; list-style: none; }
+.b2badm-checks li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.8125rem; line-height: 1.5; color: var(--text-dim); }
+.b2badm-checks li:last-child { border-bottom: 0; }
+.b2badm-checks li b { display: block; color: var(--text); font-size: 0.84375rem; }
+.b2badm-checks li.ok .b2badm-sign { color: var(--ok-text); }
+.b2badm-checks li.bad .b2badm-sign { color: var(--bad-text); }
+.b2badm-sign { flex: 0 0 auto; font-weight: 800; font-size: 0.875rem; color: var(--text-faint); }
+.b2badm-app { border-top: 1px solid var(--border); padding: 10px 0; color: var(--text); font-size: 0.84375rem; }
+.b2badm-events { margin: 0; padding-left: 18px; color: var(--text-dim); font-size: 0.8125rem; line-height: 1.6; }
+.b2badm-events li { margin-bottom: 6px; }
+.b2badm-keycard { border-color: var(--accent-text); }
+.b2badm-keycard[hidden] { display: none; }
+.b2badm-key { display: block; background: var(--accent-soft); color: var(--accent-text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 12px 14px; font-size: 0.9375rem; font-weight: 700; word-break: break-all; margin: 10px 0; }
+
 /* v1.55.0: мобильная вёрстка главной — без съезжания и обрезки.
    v1.70.35: два СОСЕДНИХ блока с одинаковым max-width: 920px слиты в один.
    В верхнем gap: 22px, padding-top: 20px и .land-h1 1.5625rem и так
@@ -1650,9 +1676,10 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   .land-steps span { font-size: 0.78125rem; }
   .land-lead-form { padding: 12px; }
   .land-faq summary { font-size: 0.84375rem; }
-  .land-api-grid { grid-template-columns: 1fr; }
-  .land-api-title { font-size: 1.1875rem; }
-  .land-api-cta .btn { flex: 1 1 auto; justify-content: center; }
+  /* v1.70.45: модерация B2B на узком экране — одна колонка, кнопки в ряд */
+  .b2badm-defs { grid-template-columns: 1fr; gap: 2px 0; }
+  .b2badm-table { font-size: 0.8125rem; }
+  .b2badm-actions .btn-sm { flex: 1 1 auto; }
   /* v1.56.1: 16px (не rem!) во всех полях — жёсткая гарантия против
      зума iOS при вводе, даже если пользователь уменьшил базовый шрифт */
   input, select, textarea { font-size: 16px; }
