@@ -85,27 +85,18 @@ def _rule(css: str, selector: str) -> str:
 # 1. Ритуал выпуска
 # ======================================================================
 class TestRelease17043:
+    """v1.70.44: выпуск 1.70.43 отгружен.
+
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведёт test_v17044, а
+    здесь остаётся запись выпуска в истории (как сделано для 1.70.38…1.70.42).
+    """
+
     VERSION = "1.70.43"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read("app/config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read("app/static/sw.js")
-        assert f'"version": "{self.VERSION}"' in _read(
-            "app/static/manifest.webmanifest")
-        idx = _read("app/static/index.html")
-        assert f"app.css?v={self.VERSION}" in idx
-        assert f"app.js?v={self.VERSION}" in idx
-        assert f"maxapp.js?v={self.VERSION}" in _read(MAX_HTML)
-
-    def test_cache_busters_in_service_worker(self):
-        sw = _read("app/static/sw.js")
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?\'([\d.]+)\'", js)
-        assert m and m.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_version_is_release(self):
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read("app/config.py")).group(1)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 43)
 
     def test_whats_new_entry(self):
         js = _read(APP_JS)

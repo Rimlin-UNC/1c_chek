@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 620" font-family="Segoe UI, Arial, sans-serif">
+  <!-- Ямастер Чек — платное API: путь запроса и лимиты. ООО «Ямастер», ymaster.ru -->
+  <defs>
+    <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff7a00"/><stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8fa0c9"/>
+    </marker>
+    <marker id="arrowOk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#34d399"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="620" fill="#0b1020" rx="14"/>
+  <rect x="0" y="0" width="1180" height="5" fill="url(#hdr)"/>
+  <text x="590" y="46" text-anchor="middle" fill="#e8ecf8" font-size="24" font-weight="700">Путь запроса: порядок проверок и коды ответов</text>
+  <text x="590" y="68" text-anchor="middle" fill="#6b7494" font-size="12.5">Разработчик: ООО «Ямастер» · ymaster.ru · info@ymaster.ru</text>
+
+  <!-- Колонка проверок -->
+  <text x="286" y="106" text-anchor="middle" fill="#6b7494" font-size="12">ПРОВЕРКА</text>
+  <text x="806" y="106" text-anchor="middle" fill="#6b7494" font-size="12">ЕСЛИ НЕ ПРОШЛА — КОД И ТЕКСТ ОТВЕТА</text>
+
+  <g font-size="12">
+    <!-- 1 -->
+    <rect x="46" y="118" width="480" height="46" rx="10" fill="#141b36" stroke="#2b3563"/>
+    <text x="66" y="146" fill="#e8ecf8">1. API включён администратором — настройка pool_api_enabled</text>
+    <rect x="566" y="122" width="62" height="38" rx="9" fill="#3a1d1d" stroke="#f87171"/>
+    <text x="597" y="146" text-anchor="middle" fill="#f87171" font-weight="700">403</text>
+    <text x="646" y="140" fill="#9aa3bd">«API для внешних клиентов выключен —</text>
+    <text x="646" y="156" fill="#9aa3bd">обратитесь к администратору»</text>
+    <!-- 2 -->
+    <rect x="46" y="176" width="480" height="46" rx="10" fill="#141b36" stroke="#2b3563"/>
+    <text x="66" y="204" fill="#e8ecf8">2. Заголовок X-API-Key передан и не пуст</text>
+    <rect x="566" y="180" width="62" height="38" rx="9" fill="#3a1d1d" stroke="#f87171"/>
+    <text x="597" y="204" text-anchor="middle" fill="#f87171" font-weight="700">401</text>
+    <text x="646" y="204" fill="#9aa3bd">«Укажите ключ в заголовке X-API-Key»</text>
+    <!-- 3 -->
+    <rect x="46" y="234" width="480" height="46" rx="10" fill="#141b36" stroke="#2b3563"/>
+    <text x="66" y="262" fill="#e8ecf8">3. Ключ найден по sha256 и не отозван</text>
+    <rect x="566" y="238" width="62" height="38" rx="9" fill="#3a1d1d" stroke="#f87171"/>
+    <text x="597" y="262" text-anchor="middle" fill="#f87171" font-weight="700">401</text>
+    <text x="646" y="262" fill="#9aa3bd">«Ключ недействителен или отозван»</text>
+    <!-- 4 -->
+    <rect x="46" y="292" width="480" height="46" rx="10" fill="#141b36" stroke="#2b3563"/>
+    <text x="66" y="320" fill="#e8ecf8">4. Лимит тарифа: запросов за последний час</text>
+    <rect x="566" y="296" width="62" height="38" rx="9" fill="#3a2d16" stroke="#fbbf24"/>
+    <text x="597" y="320" text-anchor="middle" fill="#fbbf24" font-weight="700">429</text>
+    <text x="646" y="320" fill="#9aa3bd">«Лимит тарифа: 60 запросов/час» — число из тарифа ключа</text>
+    <!-- 5 -->
+    <rect x="46" y="350" width="480" height="46" rx="10" fill="#141b36" stroke="#2b3563"/>
+    <text x="66" y="378" fill="#e8ecf8">5. Квота тарифа: запросов с начала месяца</text>
+    <rect x="566" y="354" width="62" height="38" rx="9" fill="#3a2d16" stroke="#fbbf24"/>
+    <text x="597" y="378" text-anchor="middle" fill="#fbbf24" font-weight="700">429</text>
+    <text x="646" y="372" fill="#9aa3bd">«Квота тарифа исчерпана: 5000 запросов/мес» —</text>
+    <text x="646" y="388" fill="#9aa3bd">число из тарифа ключа</text>
+    <!-- 6 -->
+    <rect x="46" y="408" width="480" height="46" rx="10" fill="#141b36" stroke="#2b3563"/>
+    <text x="66" y="430" fill="#e8ecf8">6. Вызов записан в журнал (путь без параметров),</text>
+    <text x="66" y="446" fill="#9aa3bd">    приём чеков в пуле включён</text>
+    <rect x="566" y="412" width="62" height="38" rx="9" fill="#3a1d1d" stroke="#f87171"/>
+    <text x="597" y="436" text-anchor="middle" fill="#f87171" font-weight="700">403</text>
+    <text x="646" y="436" fill="#9aa3bd">«Приём чеков выключен — агрегаты недоступны»</text>
+    <!-- 7 -->
+    <rect x="46" y="466" width="480" height="46" rx="10" fill="#12261f" stroke="#34d399"/>
+    <text x="66" y="494" fill="#34d399" font-weight="700">7. Данные собраны по верифицированным чекам</text>
+    <rect x="566" y="470" width="62" height="38" rx="9" fill="#12261f" stroke="#34d399"/>
+    <text x="597" y="494" text-anchor="middle" fill="#34d399" font-weight="700">200</text>
+    <text x="646" y="488" fill="#9aa3bd">{"aggregated": true, …} — счётчики, суммы, топы</text>
+    <text x="646" y="504" fill="#6b7494" font-size="11.5">самих чеков в ответе нет</text>
+  </g>
+
+  <!-- Стрелки между проверками -->
+  <g stroke="#8fa0c9" stroke-width="1.5">
+    <line x1="286" y1="164" x2="286" y2="174" marker-end="url(#arrow)"/>
+    <line x1="286" y1="222" x2="286" y2="232" marker-end="url(#arrow)"/>
+    <line x1="286" y1="280" x2="286" y2="290" marker-end="url(#arrow)"/>
+    <line x1="286" y1="338" x2="286" y2="348" marker-end="url(#arrow)"/>
+    <line x1="286" y1="396" x2="286" y2="406" marker-end="url(#arrow)"/>
+    <line x1="286" y1="454" x2="286" y2="464" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- Подвал: как считать лимиты -->
+  <rect x="46" y="536" width="1088" height="60" rx="12" fill="#131a38" stroke="#2b3563"/>
+  <text x="70" y="562" fill="#e8ecf8" font-size="13" font-weight="700">Как считаются лимиты</text>
+  <text x="70" y="582" fill="#9aa3bd" font-size="12">Час — скользящее окно (60 минут назад от запроса). Месяц — с 00:00 первого числа по UTC. Отказы проверки ключа (401, 403, 429) в журнал не</text>
+  <text x="70" y="596" fill="#9aa3bd" font-size="12">пишутся и в лимитах не учитываются; отказ «приём чеков выключен» приходит уже после записи в журнал, поэтому в лимите учитывается.</text>
+</svg>

@@ -19,7 +19,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.70.43">
+<link rel="stylesheet" href="/css/app.css?v=1.70.44">
 </head>
 <body>
   <!-- Анимированный фон -->
@@ -80,7 +80,79 @@
         <details><summary>А для компаний?</summary>
           <p>Сотрудники сканируют авансовые и командировочные чеки телефоном,
           бухгалтер видит их в базе и выгружает в 1С одной кнопкой.</p></details>
+        <details><summary>Нужны данные по чекам для аналитики?</summary>
+          <p>Есть платное API: обезличенные агрегаты по регионам, отраслям,
+          продавцам и среднему чеку. Подключение по подписке —
+          <a href="#land-api">раздел «API для бизнеса»</a> ниже.</p></details>
       </div>
+      <!-- v1.70.44: платное API для тех, кто подключается за деньги или по
+           подписке. Всё описанное работает в сервисе: состав методов, лимиты и
+           тексты ответов сверены с кодом (app/pool/router_api.py), полный
+           технический документ — docs/API.md. Цены здесь не публикуем: тариф
+           назначается при подключении, стоимость — по запросу. -->
+      <section class="land-api" id="land-api" aria-labelledby="land-api-title">
+        <h2 class="land-api-title" id="land-api-title">API для бизнеса — агрегаты Чек-Пула</h2>
+        <p class="land-api-lead">Обезличенные данные по кассовым чекам: объёмы, география, отрасли,
+        средний чек, топ продавцов и агрегаты под вашими фильтрами. Подключение по подписке,
+        тариф — это лимиты запросов. Сырые чеки, их позиции и данные участников не продаются
+        ни на каком тарифе: каждый ответ помечен <code>aggregated: true</code>.</p>
+        <div class="land-api-grid">
+          <div class="land-api-card">
+            <b>📊 Что получаете</b>
+            <ul>
+              <li>сводка пула: чеки, участники, средний чек, покрытие гео-данными</li>
+              <li>топы регионов, отраслей и продавцов за период от 1 до 365 дней</li>
+              <li>счётчик и агрегаты под фильтрами: даты, регион, город, отрасль, ИНН, вилка суммы</li>
+              <li>спецификация OpenAPI и интерактивная документация</li>
+            </ul>
+          </div>
+          <div class="land-api-card">
+            <b>💼 Тарифы — лимиты ключа</b>
+            <table class="land-api-tariffs">
+              <thead>
+                <tr><th scope="col">Тариф</th><th scope="col">Запросов/час</th><th scope="col">Квота/мес</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Старт</td><td>60</td><td>5 000</td></tr>
+                <tr><td>Бизнес</td><td>300</td><td>30 000</td></tr>
+                <tr><td>Аналитика</td><td>1 200</td><td>150 000</td></tr>
+              </tbody>
+            </table>
+            <span class="land-api-note">Стоимость — по запросу: зависит от лимитов и срока
+            подписки. Состав методов одинаков на любом тарифе.</span>
+          </div>
+          <div class="land-api-card">
+            <b>🔑 Как подключиться</b>
+            <ol>
+              <li>заявка на <code>info@ymaster.ru</code>: задача и частота обращений</li>
+              <li>согласуем тариф и выдаём ключ <code>apk_…</code> — показывается один раз</li>
+              <li>запросы с заголовком <code>X-API-Key</code>, ответы в JSON</li>
+              <li>отказ <code>403</code> — доступ ещё не включён администратором</li>
+            </ol>
+          </div>
+        </div>
+        <figure class="land-api-fig">
+          <img src="/img/api/api-access.svg" loading="lazy"
+               alt="Схема доступа к API: клиент с ключом, шесть проверок на каждый запрос, агрегаты из Чек-Пула, тарифные лимиты">
+          <figcaption>Доступ и ключ: проверка ключа, часовой лимит и месячная квота на каждый запрос,
+          запись в журнал вызовов. Хранится только хэш ключа.</figcaption>
+        </figure>
+        <figure class="land-api-fig">
+          <img src="/img/api/api-data-boundary.svg" loading="lazy"
+               alt="Граница данных: слева что API отдаёт, справа что не отдаёт никогда">
+          <figcaption>Граница данных: агрегаты, суммы и топы — да; сырые чеки, фискальные
+          реквизиты, участники и их контакты — нет ни на каком тарифе.</figcaption>
+        </figure>
+        <div class="land-api-cta">
+          <a class="btn btn-primary" href="mailto:info@ymaster.ru?subject=API">✉ Обсудить подключение</a>
+          <a class="btn" href="/api/docs" target="_blank" rel="noopener noreferrer">📘 Документация API</a>
+          <a class="btn" href="#land-api">⬆ Тарифы и состав</a>
+        </div>
+        <p class="land-api-note">Полный технический документ — <code>docs/API.md</code>: все шесть методов
+        с примерами запросов и ответов, коды ошибок, правила фильтров, раздел для администратора
+        сервиса и планы развития. Планы — не обязательство: сегодня работает то, что описано в разделах
+        о методах, лимитах и ошибках.</p>
+      </section>
       <p class="land-note">ООО «Ямастер» · ymaster.ru · info@ymaster.ru</p>
     </div>
     <div class="land-right">
@@ -370,6 +442,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.70.43"></script>
+  <script type="module" src="/js/app.js?v=1.70.44"></script>
 </body>
 </html>

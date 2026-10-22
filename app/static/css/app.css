@@ -1580,6 +1580,31 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .land-faq summary { cursor: pointer; font-weight: 600; font-size: 0.875rem; }
 .land-faq p { margin: 8px 0 2px; color: var(--text-dim); font-size: 0.84375rem; line-height: 1.55; }
 .land-note { color: var(--text-dim); font-size: 0.78125rem; margin: 14px 0 0; }
+/* v1.70.44: раздел лендинга «API ДЛЯ БИЗНЕСА» — платное подключение.
+   Тарифная сетка, состав методов и тексты отказов описаны в docs/API.md и
+   соответствуют app/pool/router_api.py. Цены здесь не публикуем: тариф
+   назначается при подключении. Три карточки в ряд на широком экране и одна
+   колонка на узком — цифры лимитов и формат ключа должны читаться с телефона.
+   Цвета только фирменные, подписи идут текстовыми оттенками с контрастом не
+   ниже 4.5:1 на любой из поверхностей. */
+.land-api { margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--border); }
+.land-api-title { font-size: 1.375rem; font-weight: 800; line-height: 1.3; color: var(--text); margin: 0 0 8px; }
+.land-api-lead { color: var(--text-dim); font-size: 0.875rem; line-height: 1.65; margin: 0 0 18px; max-width: 64ch; }
+.land-api-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.land-api-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+.land-api-card > b { display: block; color: var(--text); font-size: 0.90625rem; margin-bottom: 10px; }
+.land-api-card ul, .land-api-card ol { margin: 0; padding-left: 18px; }
+.land-api-card li { color: var(--text-dim); font-size: 0.8125rem; line-height: 1.6; margin-bottom: 6px; }
+.land-api-card code, .land-api-note code { color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; font-size: 0.78125rem; padding: 1px 5px; }
+.land-api-tariffs { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.land-api-tariffs th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
+.land-api-tariffs td { color: var(--text); padding: 7px 8px 7px 0; border-bottom: 1px solid var(--border); }
+.land-api-tariffs th + th, .land-api-tariffs td + td { text-align: right; }
+.land-api-note { display: block; color: var(--text-dim); font-size: 0.78125rem; line-height: 1.6; margin-top: 10px; }
+.land-api-fig { margin: 18px 0 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.land-api-fig img { display: block; width: 100%; height: auto; }
+.land-api-fig figcaption { padding: 10px 14px; color: var(--text-dim); font-size: 0.78125rem; line-height: 1.55; border-top: 1px solid var(--border); }
+.land-api-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 #login-screen .land-right { min-width: 0; }
 #login-screen .land-right .login-card { margin: 0; }
 /* v1.55.0: мобильная вёрстка главной — без съезжания и обрезки.
@@ -1625,6 +1650,9 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   .land-steps span { font-size: 0.78125rem; }
   .land-lead-form { padding: 12px; }
   .land-faq summary { font-size: 0.84375rem; }
+  .land-api-grid { grid-template-columns: 1fr; }
+  .land-api-title { font-size: 1.1875rem; }
+  .land-api-cta .btn { flex: 1 1 auto; justify-content: center; }
   /* v1.56.1: 16px (не rem!) во всех полях — жёсткая гарантия против
      зума iOS при вводе, даже если пользователь уменьшил базовый шрифт */
   input, select, textarea { font-size: 16px; }
