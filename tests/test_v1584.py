@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.58.4: Почтовый центр предзаполнен реквизитами
 # mail_timeweb.md (smtp.timeweb.ru:465 SSL, chek@ymaster.ru) — админ
 # вводит только пароль.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import pytest
 import re

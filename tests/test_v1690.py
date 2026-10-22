@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.69.0: мини-приложение MAX + вход через MAX.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки:
 #  - вход/регистрация через MAX: initData валидируется HMAC-SHA256

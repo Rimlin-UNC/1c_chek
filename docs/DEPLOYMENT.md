@@ -1,6 +1,6 @@
 # 🛠 Развёртывание «Ямастер Чек» на сервере Ubuntu 24.04
 
-> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
 
 Варианты установки — выберите свой:
 
@@ -180,4 +180,4 @@ python3 run.py --port 8000
 
 ---
 
-© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru

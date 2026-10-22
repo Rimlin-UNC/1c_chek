@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Ямастер Чек — тесты v1.70.37: регистрация через MAX, метка канала,
 # заполнение карточки и согласие на обработку персональных данных (152-ФЗ).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки:
 #  - участник, пришедший через мини-приложение MAX, помечается каналом
@@ -103,7 +103,7 @@ class TestConsentText:
         # а вот что в коде есть — только подтверждённое репозиторием
         assert 'OPERATOR_NAME = "ООО «Ямастер»"' in src
         assert 'OPERATOR_SITE = "https://ymaster.ru"' in src
-        assert 'CONSENT_CONTACT_DEFAULT = "info@ymaster.ru"' in src
+        assert 'CONSENT_CONTACT_DEFAULT = "chek@ymaster.ru"' in src
 
     def test_default_operator_line_is_honest(self):
         """Без реквизитов в настройках текст не придумывает адрес, а указывает
@@ -206,7 +206,7 @@ class TestOperatorRequisites:
             assert r.status_code == 422 and "privacy@" in r.json()["detail"]
             # отказ ничего не записал
             st = client.get("/api/v1/settings/consent", headers=hdr).json()
-            assert st["inn"] == "" and st["contact"] == "info@ymaster.ru"
+            assert st["inn"] == "" and st["contact"] == "chek@ymaster.ru"
         finally:
             self._reset(client, hdr)
 

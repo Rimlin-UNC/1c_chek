@@ -1,7 +1,7 @@
 // ======================================================================
 // Ямастер Чек — веб-клиент (SPA)
 // Разработчик и владелец идеи: ООО «Ямастер»
-// Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+// Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 //
 // Роли: Администратор (один, все права) · Бухгалтер (расширенные) ·
 //       Пользователь (сканирует и видит свои чеки).
@@ -4672,7 +4672,7 @@ async function openManual() {
        </div>` : ''}
        <div id="manual-body"></div>
        <div class="manual-foot">© ООО «Ямастер» — разработка и идея · ymaster.ru ·
-         info@ymaster.ru. Инструкция обновляется вместе с программой.</div>
+         chek@ymaster.ru. Инструкция обновляется вместе с программой.</div>
      </div>`, { onClose: null });
   $('#manual-close', slot).onclick = close;
   const body = $('#manual-body', slot);

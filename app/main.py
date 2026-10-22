@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Главный модуль: FastAPI-приложение, WebSocket-канал статусов, раздача SPA.
 """
@@ -140,7 +140,7 @@ app = FastAPI(
     description=(
         "REST API системы сканирования кассовых чеков и загрузки их в 1С.\n\n"
         "Разработчик и владелец идеи: **ООО «Ямастер»** — [ymaster.ru](https://ymaster.ru), "
-        "info@ymaster.ru\n\n"
+        "chek@ymaster.ru\n\n"
         "Разделы: Аутентификация · Чеки · Аналитика · Настройки · Пользователи · Интеграция 1С"
     ),
     lifespan=lifespan,

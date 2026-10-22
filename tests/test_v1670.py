@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.67.0: исходящие webhooks (Фаза 1, п.7).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.7):
 #  - событие «чек verified» → POST на URL компании с секретом и повторами;

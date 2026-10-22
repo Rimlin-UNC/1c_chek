@@ -8,7 +8,7 @@
 # company_id на уровне КАЖДОГО запроса (см. services/scoping.py) —
 # стандартный подход SaaS для этой связки технологий.
 #
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 

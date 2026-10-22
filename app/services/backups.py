@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — резервное копирование (v1.5.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # Уровни копий (data/backups): daily (7) / preupdate (5) / manual (10) /
 # archive-ГГГГММ — архив месяца (12). Копии вне git и вне git clean.

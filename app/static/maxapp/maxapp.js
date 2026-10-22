@@ -1,5 +1,5 @@
 // Ямастер Чек — мини-приложение MAX (v1.69.0)
-// ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+// ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 // Bridge: st.max.ru/js/max-web-app.js → window.WebApp.
 // Авторизация: initData → POST /api/v1/maxapp/session → JWT (память).
 'use strict';

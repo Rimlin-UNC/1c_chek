@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — развёртывание на сервере Ubuntu 24.04 прямо из GitHub
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru = 94.183.236.179):
 #   ssh root@94.183.236.179
@@ -119,7 +119,7 @@ if [[ $FIXSSL -eq 1 ]]; then
     [[ "$DOMAIN_IP" != "$SERVER_IP" ]] && echo "   ⚠ DNS указывает не на этот сервер — Let's Encrypt не пройдёт!"
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
     "$CERTBOT_BIN" certonly --nginx -d "$D" --non-interactive --agree-tos \
-      -m info@ymaster.ru ; RC=$?
+      -m chek@ymaster.ru ; RC=$?
   fi
   if [[ ${RC:-1} -eq 0 ]]; then
     ok "SSL готов. Перезапускаю nginx и собираю HTTPS-конфиг: sudo bash deploy.sh --update"
@@ -544,7 +544,7 @@ elif [[ -n "$SSL_DOMAIN" ]]; then
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
     echo "  Выпускаю сертификат (вывод certbot ниже)…"
     if "$CERTBOT_BIN" --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos --redirect \
-        -m info@ymaster.ru 2>&1 | tail -6; then
+        -m chek@ymaster.ru 2>&1 | tail -6; then
       ok "сертификат выпущен, HTTPS включён, http -> https автоматически"
     else
       warn "certbot не смог выпустить сертификат (вывод выше — там точная причина)."
@@ -607,5 +607,5 @@ echo "  Логи:        journalctl -u $SERVICE -f"
 echo "  Безопасность: UFW + fail2ban + rate-limit активны"
 echo "  Диагностика: sudo bash deploy.sh --diagnose   (если сайт недоступен)"
 echo ""
-echo "  ООО «Ямастер» — https://ymaster.ru · info@ymaster.ru"
+echo "  ООО «Ямастер» — https://ymaster.ru · chek@ymaster.ru"
 echo "=============================================================="

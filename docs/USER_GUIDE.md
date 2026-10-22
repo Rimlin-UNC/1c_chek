@@ -1,7 +1,7 @@
 # 📖 Руководство пользователя «Ямастер Чек»
 
 > **Разработчик и владелец идеи: ООО «Ямастер»**
-> Сайт: [ymaster.ru](https://ymaster.ru) · E-mail: [info@ymaster.ru](mailto:info@ymaster.ru)
+> Сайт: [ymaster.ru](https://ymaster.ru) · E-mail: [chek@ymaster.ru](mailto:chek@ymaster.ru)
 > Версия документа: 1.0 (22.09.2026)
 
 ---
@@ -310,6 +310,6 @@ t=20250901T1430&s=1520.50&fn=9999078902001234&i=54321&fp=812345678&n=1
 
 ## Поддержка
 
-**ООО «Ямастер»** · сайт: [ymaster.ru](https://ymaster.ru) · почта: [info@ymaster.ru](mailto:info@ymaster.ru)
+**ООО «Ямастер»** · сайт: [ymaster.ru](https://ymaster.ru) · почта: [chek@ymaster.ru](mailto:chek@ymaster.ru)
 
 © 2026 ООО «Ямастер». Все права на систему принадлежат правообладателю.

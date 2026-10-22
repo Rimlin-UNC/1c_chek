@@ -3,7 +3,7 @@
 **Система сканирования кассовых чеков и интеграции с 1С:Предприятие**
 
 > **Разработчик и владелец идеи: ООО «Ямастер»**
-> 🌐 Сайт: [ymaster.ru](https://ymaster.ru) · ✉️ E-mail: [info@ymaster.ru](mailto:info@ymaster.ru)
+> 🌐 Сайт: [ymaster.ru](https://ymaster.ru) · ✉️ E-mail: [chek@ymaster.ru](mailto:chek@ymaster.ru)
 
 Полноценный продукт по ТЗ: сотрудники сканируют QR-коды кассовых чеков (54-ФЗ) с телефона или
 веб-камеры, система автоматически разбирает реквизиты, отсекает дубликаты, проверяет чеки через
@@ -271,5 +271,5 @@ SVG-графики без зависимостей · PostgreSQL 17 / SQLite · 
 
 ---
 
-© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
 Лицензия MIT (файл [LICENSE](LICENSE)).

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Тесты v1.46.1: блок отката рабочий и информативный, реестр без дублей.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 import json
 import re
 

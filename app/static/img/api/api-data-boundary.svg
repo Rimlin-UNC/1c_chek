@@ -9,7 +9,7 @@
   <rect width="1180" height="620" fill="#0b1020" rx="14"/>
   <rect x="0" y="0" width="1180" height="5" fill="url(#hdr)"/>
   <text x="590" y="46" text-anchor="middle" fill="#e8ecf8" font-size="24" font-weight="700">Что отдаёт API и что не отдаёт никогда</text>
-  <text x="590" y="68" text-anchor="middle" fill="#6b7494" font-size="12.5">Разработчик: ООО «Ямастер» · ymaster.ru · info@ymaster.ru</text>
+  <text x="590" y="68" text-anchor="middle" fill="#6b7494" font-size="12.5">Разработчик: ООО «Ямастер» · ymaster.ru · chek@ymaster.ru</text>
 
   <!-- Отдаём -->
   <rect x="46" y="94" width="530" height="410" rx="12" fill="#12261f" stroke="#34d399"/>

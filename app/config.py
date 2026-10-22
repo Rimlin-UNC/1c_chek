@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Конфигурация приложения (переменные окружения / файл .env).
 """
@@ -73,7 +73,7 @@ class Settings:
     SELF_REEXEC: bool = True
     VENDOR: str = "ООО «Ямастер»"
     VENDOR_SITE: str = "https://ymaster.ru"
-    VENDOR_EMAIL: str = "info@ymaster.ru"
+    VENDOR_EMAIL: str = "chek@ymaster.ru"
 
     # --- Безопасность -------------------------------------------------
     SECRET_KEY: str = _env("SECRET_KEY", "ymaster-dev-secret-change-me-in-production")

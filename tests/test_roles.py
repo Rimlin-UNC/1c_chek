@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Ямастер Чек — тесты ролевой модели, приглашений и защиты.
-ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 """
 import time
 

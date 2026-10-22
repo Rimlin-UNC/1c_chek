@@ -9,7 +9,7 @@
 # лимиты, дедуп), проверка источников — в фоновом потоке; страница
 # опрашивает статус (live). Антифрод-минимум: honeypot, тайминг формы,
 # rate-limit на IP, суточный лимит из ядра пула.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -558,7 +558,7 @@ def receipt_email(body: MailBody, request: Request,
       style="background:#e8890c;color:#fff;padding:9px 16px;border-radius:8px;
       text-decoration:none;font-weight:600">Открыть кабинет</a></div>
   </div>
-  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · info@ymaster.ru<br>
+  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · chek@ymaster.ru<br>
   Письмо отправлено, потому что этот адрес указали при сканировании чека.
   Если это были не вы — просто не обращайте внимания.</div>
 </div>"""
@@ -572,7 +572,7 @@ def receipt_email(body: MailBody, request: Request,
              f"Статус: {status_ru}",
              f"Баллы: {r.points_awarded}", "",
              f"Кабинет участника: {base_url(db)}/#/my", "",
-             "ООО «Ямастер» · ymaster.ru · info@ymaster.ru", "",
+             "ООО «Ямастер» · ymaster.ru · chek@ymaster.ru", "",
              "Письмо отправлено, потому что этот адрес указали при сканировании",
              "чека. Если это были не вы — просто не обращайте внимания."]
     ok, err = send_mail(db, email, f"Электронный чек на {r.total_sum:.2f} руб. — Ямастер Чек-Пул",

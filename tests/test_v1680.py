@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.68.0: устойчивость (рекомендации аудита).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # Очередь автозагрузки · правый край XFF · мониторинг вебхуков ·
 # статус SECRET_KEY · runbook восстановления.
 import re

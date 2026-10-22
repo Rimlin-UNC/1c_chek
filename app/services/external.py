@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — получение полных данных чека из внешних источников
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # v1.2.0. Источники (провайдеры):
 #   proverkacheka  — proverkacheka.com, POST /api/v1/check/get

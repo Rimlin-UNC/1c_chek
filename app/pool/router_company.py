@@ -10,7 +10,7 @@
 # квота задаётся настройкой pool_pick_monthly_limit (админ). Привязанный
 # чек чужим компаниям не виден; участник сохраняет свои баллы.
 # Права: бухгалтер и администратор (ядро, require_accountant).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 

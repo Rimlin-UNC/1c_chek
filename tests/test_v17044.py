@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Ямастер Чек — тесты v1.70.44: документация платного API для внешних клиентов.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Требование выпуска: «Напиши API документацию для моего приложения. Для тех кто
 # готов подключиться и пользоваться за деньги или подписку. С картинками в нашем
@@ -44,7 +44,7 @@ SVG_FILES = ("api-access.svg", "api-request-path.svg", "api-data-boundary.svg")
 
 # Признаки стиля диаграмм документации (все присутствуют в эталоне).
 STYLE_NEEDLES = ("#0b1020", "#22d3ee", "ymaster.ru", "ООО «Ямастер»",
-                 "info@ymaster.ru")
+                 "chek@ymaster.ru")
 
 # Тарифы, опубликованные в документе и на лендинге: это лимиты ключа, а не цены.
 # «Старт» — значения по умолчанию в коде (DEFAULT_RATE / DEFAULT_QUOTA).
@@ -239,7 +239,7 @@ class TestDocumentMatchesCode:
         assert "152-ФЗ" in doc()
 
     def test_contacts_present(self):
-        for needle in ("info@ymaster.ru", "ymaster.ru", "ООО «Ямастер»"):
+        for needle in ("chek@ymaster.ru", "ymaster.ru", "ООО «Ямастер»"):
             assert needle in doc(), f"в документе нет «{needle}»"
 
     def test_no_foreign_scripts(self):

@@ -3,7 +3,7 @@
 # Все фильтры работают вместе (status/fns/exported/assignee/creator/
 # full_data/category/notified/даты/q/ids), поиск без учёта регистра,
 # фильтры не конфликтуют со scope компании.
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 
