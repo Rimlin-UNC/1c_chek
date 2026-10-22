@@ -31,8 +31,17 @@ from ..pool.router_api import CALLS_RETENTION_DAYS
 from ..services.companies_util import normalize_inn
 from . import auth, content, letters, pipeline, verify
 from .models import (
-    ACTOR_COMPANY, B2bApplication, B2bCompany, PURPOSE_RESET, PURPOSE_VERIFY,
-    ST_BLOCKED, ST_EMAIL_PENDING, ST_VERIFIED, log_event, _utcnow,
+    ACTOR_COMPANY,
+    PURPOSE_RESET,
+    PURPOSE_VERIFY,
+    ST_BLOCKED,
+    ST_EMAIL_PENDING,
+    ST_VERIFIED,
+    B2bApplication,
+    B2bCompany,
+    _utcnow,
+    log_event,
+    refresh_search_key,
 )
 
 log = logging.getLogger("ymaster.b2b.public")
@@ -263,6 +272,7 @@ def register(body: RegisterBody, request: Request,
         user_agent_hash=_hash_ua(request),
     )
     db.add(company)
+    refresh_search_key(company)
     db.flush()
     log_event(db, company.id, ACTOR_COMPANY, "registered",
               f"Регистрация с IP-хэшем {company.ip_hash}, тариф "
@@ -432,13 +442,19 @@ def submit_application(body: ApplicationBody,
         (body.expected_volume or "").strip())
     if not result.get("ok"):
         raise HTTPException(422, result.get("error") or "Заявка не принята")
-    payload = {"ok": True, "application": result["application"],
-               "status": result["status"], "message": result["message"],
-               "key": result.get("key", "")}
+    # Состояние кабинета — каноническое, поэтому поля заявки названы своими
+    # именами: «status» и «key» в _state означают статус компании и сведения
+    # о выданном ключе, а не результат этой заявки. Раньше _state перезаписывал
+    # их, и одноразовый ключ до компании не доходил.
+    payload = _state(db, company)
+    payload["ok"] = True
+    payload["application"] = result["application"]
+    payload["application_status"] = result["status"]
+    payload["message"] = result["message"]
+    payload["issued_key"] = result.get("key", "")
     if result.get("key"):
         payload["key_note"] = ("Ключ показывается один раз — скопируйте его "
                                "сейчас: в базе хранится только хэш")
-    payload.update(_state(db, company))
     return payload
 
 
@@ -446,9 +462,12 @@ def submit_application(body: ApplicationBody,
 # Закрытое содержимое раздела (только подтверждённые компании)
 # --------------------------------------------------------------------------
 @router.get("/content", summary="B2B: страницы раздела (после подтверждения)")
-def gated_content(page: str = "hub", db: Session = Depends(get_db),
+def gated_content(section: str = "hub",
                   company: B2bCompany = Depends(auth.require_verified)):
-    payload = content.page(page, company)
+    """Параметр назван `section`, а не `page`: в этом API `page` — номер
+    страницы списка с потолком PAGE_MAX (замок test_v17038 против падения 500
+    на огромном номере), а здесь передаётся имя раздела."""
+    payload = content.page(section, company)
     if payload is None:
         raise HTTPException(404, "Страница не найдена")
     return {"ok": True, **payload}

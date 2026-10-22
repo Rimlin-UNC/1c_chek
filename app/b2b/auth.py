@@ -26,7 +26,12 @@ from ..auth import hash_password, verify_password
 from ..config import settings
 from ..database import get_db
 from .models import (
-    B2bCompany, B2bToken, PURPOSE_RESET, PURPOSE_VERIFY, ST_BLOCKED, _utcnow,
+    PURPOSE_RESET,
+    PURPOSE_VERIFY,
+    ST_BLOCKED,
+    B2bCompany,
+    B2bToken,
+    _utcnow,
 )
 
 log = logging.getLogger("ymaster.b2b.auth")

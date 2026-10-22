@@ -26,9 +26,19 @@ from ..database import get_db
 from ..models import User
 from . import auth, content, letters, pipeline, verify
 from .models import (
-    ACTOR_ADMIN, AP_NEW, AP_PARKED, AP_REVOKED, APPLICATION_TITLES,
-    B2bApplication, B2bCompany, B2bEvent, CHECK_TITLES, COMPANY_STATUSES,
-    PURPOSE_VERIFY, ST_BLOCKED, STATUS_TITLES,
+    ACTOR_ADMIN,
+    AP_NEW,
+    AP_PARKED,
+    AP_REVOKED,
+    APPLICATION_TITLES,
+    CHECK_TITLES,
+    COMPANY_STATUSES,
+    PURPOSE_VERIFY,
+    ST_BLOCKED,
+    STATUS_TITLES,
+    B2bApplication,
+    B2bCompany,
+    B2bEvent,
 )
 from .router_public import key_info
 
@@ -120,7 +130,15 @@ def overview(db: Session = Depends(get_db),
                                if companies.get(a.company_id) else "—"),
                    "email": (companies.get(a.company_id).email
                              if companies.get(a.company_id) else ""),
-                   "tariff_title": content.TARIFF_TITLES.get(a.tariff, a.tariff)}
+                   "inn": (companies.get(a.company_id).inn
+                           if companies.get(a.company_id) else ""),
+                   "risk_score": (companies.get(a.company_id).risk_score
+                                  if companies.get(a.company_id) else 0),
+                   "tariff_title": content.TARIFF_TITLES.get(a.tariff, a.tariff),
+                   # лимиты тарифа — те же цифры, что в списке заявок: админ
+                   # видит, что именно выдаст одобрение в один клик
+                   "tariff_rate": pipeline.tariff_limits(a.tariff)[0],
+                   "tariff_quota": pipeline.tariff_limits(a.tariff)[1]}
                   for a in queue],
         "tariffs": content.tariffs(),
         "admin": admin.username,
@@ -151,12 +169,16 @@ def companies_list(status: str = "", q: str = "",
     query = db.query(B2bCompany)
     if status and status in COMPANY_STATUSES:
         query = query.filter(B2bCompany.status == status)
-    needle = (q or "").strip().lower()
+    needle = (q or "").strip()
     if needle:
-        like = f"%{needle}%"
+        # LIKE в SQLite регистронезависим только для ASCII, поэтому кириллицу
+        # ищем по колонке search_key (заполняется str.lower в Python), а почту
+        # и ИНН дублируем обычным сравнением — для строк без ключа.
+        low = needle.lower()
         query = query.filter(
-            (B2bCompany.email.like(like)) | (B2bCompany.company_name.like(like))
-            | (B2bCompany.inn.like(like)))
+            B2bCompany.search_key.like(f"%{low}%")
+            | B2bCompany.email.like(f"%{low}%")
+            | B2bCompany.inn.like(f"%{needle}%"))
     rows = query.order_by(B2bCompany.created_at.desc()).limit(PAGE_LIMIT).all()
     # число заявок на каждую компанию — одним запросом (без N+1)
     ids = [c.id for c in rows]

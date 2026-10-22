@@ -20,7 +20,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from ..pool import mailer
-from .models import B2bApplication, B2bCompany, TARIFF_TITLES
+from .models import TARIFF_TITLES, B2bApplication, B2bCompany
 
 log = logging.getLogger("ymaster.b2b.letters")
 

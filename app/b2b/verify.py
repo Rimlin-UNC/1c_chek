@@ -31,12 +31,25 @@ from sqlalchemy.orm import Session
 from ..services import checko
 from ..services.appsettings import get_setting
 from ..services.companies_util import (
-    canonical_name, inn_is_valid, inn_kind, normalize_inn, risk_assessment,
+    canonical_name,
+    inn_is_valid,
+    inn_kind,
+    normalize_inn,
+    risk_assessment,
     similar_ratio,
 )
 from .models import (
-    B2bCheck, B2bCompany, CK_DUPLICATE, CK_EMAIL_DOMAIN, CK_EMAIL_FORMAT,
-    CK_INN_FORMAT, CK_REGISTRY, CK_RISK, KIND_IP, KIND_UL, _utcnow,
+    CK_DUPLICATE,
+    CK_EMAIL_DOMAIN,
+    CK_EMAIL_FORMAT,
+    CK_INN_FORMAT,
+    CK_REGISTRY,
+    CK_RISK,
+    KIND_IP,
+    KIND_UL,
+    B2bCheck,
+    B2bCompany,
+    _utcnow,
 )
 
 log = logging.getLogger("ymaster.b2b.verify")
@@ -198,6 +211,10 @@ def check_registry(db: Session, company: B2bCompany,
 
     Ключ Checko не настроен → мягкая проверка по формальным признакам ИНН с
     явной пометкой: администратор видит, что реестр не запрашивался.
+
+    require_registry — переключатель `b2b_require_registry`: при включённом
+    красная карточка реестра блокирует автоматическое подтверждение статуса
+    (hard), при выключенном остаётся замечанием, которое видит администратор.
     """
     inn = normalize_inn(company.inn)
     key = (get_setting(db, checko.SETTING_KEY, "") or "").strip()
@@ -206,30 +223,37 @@ def check_registry(db: Session, company: B2bCompany,
         detail = ("Ключ Checko не настроен — реестр не запрашивался. "
                   "Проверка по формальным признакам ИНН: контрольная сумма "
                   f"и тип ({title or 'не определён'})")
+        if require_registry:
+            detail += (". Карточка реестра обязательна "
+                       "(b2b_require_registry=1) — администратор видит, что "
+                       "подтверждения из ЕГРЮЛ/ЕГРИП нет")
         # Мягкая проверка: не блокирует, но администратор видит пометку
         # «реестр не запрашивался» и решает сам (режим «частичная»).
         return _row(CK_REGISTRY, True, detail, hard=False, weight=0), None
     try:
         result = checko.fetch_card(key, inn)
     except checko.CheckoError as exc:
-        return _row(CK_REGISTRY, False, f"Реестр не подтвердил ИНН {inn}: {exc}"), None
+        return _row(CK_REGISTRY, False, f"Реестр не подтвердил ИНН {inn}: {exc}",
+                    hard=require_registry), None
     except Exception as exc:  # noqa: BLE001 — сбой сети не должен ломать приём заявки
         log.warning("b2b registry check failed for %s: %s", inn, exc)
         return _row(CK_REGISTRY, False,
                     "Не удалось запросить реестр (сеть или ключ). "
-                    "Повторите проверку позже"), None
+                    "Повторите проверку позже", hard=False), None
 
     card = (result or {}).get("card") or {}
     if not card.get("name_full"):
         return _row(CK_REGISTRY, False,
-                    f"В реестре нет организации с ИНН {inn}"), None
+                    f"В реестре нет организации с ИНН {inn}",
+                    hard=require_registry), None
     if not status_is_active(card.get("status", "")):
         return _row(CK_REGISTRY, False,
-                    f"Организация не действующая: статус «{card.get('status') or 'не указан'}»"), card
+                    f"Организация не действующая: статус «{card.get('status') or 'не указан'}»",
+                    hard=require_registry), card
     ok, ratio, note = names_match(card.get("name_full", ""),
                                   company.company_name, card.get("kind", ""))
     if not ok:
-        return _row(CK_REGISTRY, False, note, weight=10), card
+        return _row(CK_REGISTRY, False, note, hard=require_registry, weight=10), card
     return _row(CK_REGISTRY, True,
                 f"ЕГРЮЛ/ЕГРИП: {card.get('name_full')} — статус "
                 f"«{card.get('status')}», ОГРН {card.get('ogrn') or '—'}. {note}"), card
@@ -293,6 +317,11 @@ def run_checks(db: Session, company: B2bCompany, *,
         db.add(B2bCheck(company_id=company.id, kind=row["kind"], ok=row["ok"],
                         hard=row["hard"], weight=row["weight"],
                         detail=row["detail"], created_at=_utcnow()))
+    # Сессия проекта создана с autoflush=False: без явного flush следующий
+    # запрос (latest_checks) не увидит только что добавленные проверки, и
+    # вердикт будет вынесен по пустому списку. Flush — не commit: транзакцию
+    # по-прежнему ведёт вызывающий (конвейер).
+    db.flush()
     # тип организации и риск сохраняем на карточке компании
     code = inn_kind(normalize_inn(company.inn)) or ""
     company.kind = kind_title(code)
@@ -335,7 +364,14 @@ def verdict(checks: list[dict]) -> tuple[bool, list[str]]:
 
     Обязательные (hard) проверки должны быть зелёными; мягкие влияют на
     риск и уходят администратору, но сами не блокируют.
+
+    Пустой список — это НЕ «проверено и чисто», а «проверки не выполнены»:
+    автоматическое подтверждение статуса в таком случае запрещено (отказ в
+    закрытую сторону), решение остаётся за администратором.
     """
+    if not checks:
+        return False, ["Проверки не выполнены — автоматическое подтверждение "
+                       "невозможно, решение за администратором"]
     problems = [f"{c.get('title') or c.get('kind')}: {c.get('detail')}"
                 for c in checks if not c.get("ok") and c.get("hard")]
     return (not problems), problems

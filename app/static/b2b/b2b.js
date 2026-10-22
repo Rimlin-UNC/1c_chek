@@ -200,7 +200,8 @@
   }
 
   function loadPage(page, render) {
-    return api("/content?page=" + encodeURIComponent(page)).then(function (data) {
+    // параметр section, а не page: page в этом API — номер страницы списка
+    return api("/content?section=" + encodeURIComponent(page)).then(function (data) {
       render(data);
       if (data.diagrams && data.diagrams.length) { loadDiagrams(data.diagrams); }
     }).catch(function (err) {
@@ -541,7 +542,10 @@
       }).then(function (data) {
         btn.disabled = false;
         var text = data.message || "Заявка отправлена";
-        if (data.key) { text += " Ключ: " + data.key + " — " + (data.key_note || ""); }
+        if (data.issued_key) {
+          text += " Ключ: " + esc(data.issued_key) + " — " +
+            esc(data.key_note || "сохраните его сейчас");
+        }
         msg(text, "good");
         go("cabinet");
         return loadCabinet();

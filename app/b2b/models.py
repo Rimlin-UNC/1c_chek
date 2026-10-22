@@ -153,6 +153,13 @@ class B2bCompany(Base):
     card_json: Mapped[str] = mapped_column(Text, default="")
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Поисковый ключ для модерации: почта + наименование + ИНН в нижнем
+    # регистре. SQLite делает LIKE регистронезависимым только для ASCII,
+    # поэтому «Ромашка» не находится по запросу «ромашка»; ключ заполняется
+    # средствами Python (str.lower корректен для кириллицы) и индексируется.
+    search_key: Mapped[str] = mapped_column(String(600), default="",
+                                            index=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -305,6 +312,13 @@ class B2bEvent(Base):
 Index("ix_b2b_events_company_created", B2bEvent.company_id, B2bEvent.created_at)
 
 
+def refresh_search_key(company: "B2bCompany") -> str:
+    """Пересчитывает поисковый ключ компании (почта, наименование, ИНН)."""
+    key = f"{company.email or ''} {company.company_name or ''} {company.inn or ''}"
+    company.search_key = " ".join(key.lower().split())[:600]
+    return company.search_key
+
+
 def ensure_b2b_schema(engine) -> None:
     """Добавляющая миграция контура B2B (v1.70.45).
 
@@ -312,9 +326,32 @@ def ensure_b2b_schema(engine) -> None:
     безопасен (create_all пропускает существующее), поэтому обновление сервиса
     не требует ручных действий с базой.
     """
+    import sqlalchemy
     Base.metadata.create_all(bind=engine, tables=[
         B2bCompany.__table__, B2bApplication.__table__, B2bCheck.__table__,
         B2bToken.__table__, B2bEvent.__table__])
+    insp = sqlalchemy.inspect(engine)
+    cols = {c["name"] for c in insp.get_columns("b2b_companies")}
+    if "search_key" not in cols:
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE b2b_companies ADD COLUMN search_key "
+                "VARCHAR(600) DEFAULT ''"))
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text(
+            "CREATE INDEX IF NOT EXISTS ix_b2b_companies_search_key "
+            "ON b2b_companies (search_key)"))
+        # разовое заполнение для строк, созданных до появления колонки:
+        # lower() в SQLite не знает кириллицы, поэтому приводим в Python
+        rows = conn.execute(sqlalchemy.text(
+            "SELECT id, email, company_name, inn FROM b2b_companies "
+            "WHERE search_key IS NULL OR search_key = ''")).fetchall()
+        for row in rows:
+            key = " ".join(f"{row[1] or ''} {row[2] or ''} {row[3] or ''}"
+                           .lower().split())[:600]
+            conn.execute(sqlalchemy.text(
+                "UPDATE b2b_companies SET search_key = :key WHERE id = :cid"),
+                {"key": key, "cid": row[0]})
 
 
 def log_event(db, company_id: str, actor: str, action: str,

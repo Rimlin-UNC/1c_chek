@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..pool.router_api import CALLS_RETENTION_DAYS, KEY_PREFIX
-from .models import TARIFFS, TARIFF_TITLES
+from .models import TARIFF_TITLES, TARIFFS
 from .pipeline import TARIFF_LIMITS
 
 # Пометка владельца на внутренних поверхностях администратора
@@ -87,7 +87,8 @@ HUB_STEPS = (
 )
 
 REQUIREMENTS = (
-    "Действующее юридическое лицо или ИП, зарегистрированное в РФ",
+    "Действующее юридическое лицо (ООО, АО) или индивидуальный "
+    "предприниматель (ИП), зарегистрированные в РФ",
     "Корпоративная почта на домене компании — доступ к ящику у заявителя",
     "ИНН, совпадающий с данными ЕГРЮЛ/ЕГРИП, и наименование как в реестре",
     "Понятная задача: что считаете, как часто обращаетесь к API",

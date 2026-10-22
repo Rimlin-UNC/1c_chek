@@ -429,8 +429,9 @@ app.include_router(maxapp.router)          # v1.69.0: /api/v1/maxapp/* (мини
 
 # v1.70.45: контур B2B — доступ компаний и ИП к платному API. Третий контур
 # (ядро, Чек-Пул, B2B): свой JWT typ=b2b, свои таблицы b2b_*, свои страницы.
-from .b2b import router_public as b2b_public   # noqa: E402
-from .b2b import router_admin as b2b_admin     # noqa: E402
+from .b2b import router_admin as b2b_admin  # noqa: E402
+from .b2b import router_public as b2b_public  # noqa: E402
+
 app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
 app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
 

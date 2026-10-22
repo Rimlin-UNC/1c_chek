@@ -26,10 +26,27 @@ from ..pool.router_api import DEFAULT_QUOTA, DEFAULT_RATE, generate_key
 from ..services.appsettings import get_setting, set_setting
 from . import letters, verify
 from .models import (
-    ACTOR_ADMIN, ACTOR_COMPANY, ACTOR_SYSTEM, AP_APPROVED, AP_NEW, AP_PARKED,
-    AP_REJECTED, AP_REVOKED, B2bApplication, B2bCompany, ST_BLOCKED, ST_CHECKS,
-    ST_REJECTED, ST_VERIFIED, TARIFFS, TARIFF_ANALYTICS, TARIFF_BUSINESS,
-    TARIFF_START, TARIFF_TITLES, _utcnow, log_event,
+    ACTOR_ADMIN,
+    ACTOR_COMPANY,
+    ACTOR_SYSTEM,
+    AP_APPROVED,
+    AP_NEW,
+    AP_PARKED,
+    AP_REJECTED,
+    AP_REVOKED,
+    ST_BLOCKED,
+    ST_CHECKS,
+    ST_REJECTED,
+    ST_VERIFIED,
+    TARIFF_ANALYTICS,
+    TARIFF_BUSINESS,
+    TARIFF_START,
+    TARIFF_TITLES,
+    TARIFFS,
+    B2bApplication,
+    B2bCompany,
+    _utcnow,
+    log_event,
 )
 
 log = logging.getLogger("ymaster.b2b.pipeline")
@@ -335,8 +352,9 @@ def approve_application(db: Session, rec: B2bApplication, admin,
     letters.send_approved(db, company, rec)
     return {"ok": True, "key": result["key"], "prefix": result.get("prefix", ""),
             "application": rec.to_dict(),
-            "message": "Заявка одобрена, ключ выдан. Покажите его компании "
-                       "сейчас — полностью он больше не виден (в БД только хэш)"}
+            "message": "Заявка одобрена, ключ выдан. Он показывается один раз "
+                       "— скопируйте сейчас: в базе хранится только хэш, а "
+                       "компания видит ключ в своём кабинете"}
 
 
 def reject_application(db: Session, rec: B2bApplication, admin,
