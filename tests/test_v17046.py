@@ -508,7 +508,50 @@ class TestFieldOrderIsFixed:
 
 
 # ======================================================================
-# 8. Ритуал выпуска v1.70.46
+# 8. Копия декодера в мини-приложении — не мусор
+# ======================================================================
+class TestMaxappStaysSelfContained:
+    """Аудит мусора обязан был отметить эту пару: app/static/maxapp/jsQR.js и
+    app/static/js/vendor/jsQR.js совпадают побайтово (256 885 Б каждый), и
+    «дубль» такого размера — первая мишень для удаления.
+
+    Копия намеренная. Мини-приложение MAX открывается внутри мессенджера и по
+    решению проекта (docs/ui_journal.md, запись v1.70.45) не зависит от
+    основного бандла: своя разметка, свои стили, свой скрипт. Свою камеру
+    мини-приложение раскодирует именно этой копией — window.jsQR вызывается в
+    maxapp.js дважды. Удаление «дубля» молча сломало бы сканирование в MAX, и
+    до этого выпуска никакой тест такого удаления бы не поймал.
+
+    Побайтовое равенство закреплено отдельно: у дубля есть вторая опасность —
+    копии разъезжаются при обновлении библиотеки, и одна поверхность начинает
+    распознавать коды хуже другой.
+    """
+
+    OWN = ROOT / "app/static/maxapp/jsQR.js"
+    BUNDLE = ROOT / "app/static/js/vendor/jsQR.js"
+    MAXAPP_JS = ROOT / "app/static/maxapp/maxapp.js"
+
+    def test_miniapp_loads_its_own_copy(self):
+        assert 'src="/maxapp/jsQR.js"' in _read(MAX_HTML)
+
+    def test_miniapp_uses_the_decoder(self):
+        assert _read(self.MAXAPP_JS).count("window.jsQR") >= 2
+
+    def test_miniapp_does_not_reach_into_main_bundle(self):
+        for path in (MAX_HTML, self.MAXAPP_JS):
+            text = _read(path)
+            for needle in ("/js/vendor/", "/js/app.js", "/css/app.css"):
+                assert needle not in text, f"{path.name}: зависимость от бандла"
+
+    def test_copies_have_not_diverged(self):
+        own = self.OWN.read_bytes()
+        assert own, "копия декодера в мини-приложении пуста"
+        assert own == self.BUNDLE.read_bytes(), \
+            "копии jsQR разошлись: обновлять библиотеку нужно в обоих местах"
+
+
+# ======================================================================
+# 9. Ритуал выпуска v1.70.46
 # ======================================================================
 class TestRelease17046:
     """Точки синхронизации версии: их ведёт файл текущего выпуска.
