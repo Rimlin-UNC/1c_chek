@@ -530,7 +530,11 @@ class TestVersion1340:
         assert "pool_fraud" in mn
 
     def test_offerta_mentions_tech_data(self):
-        assert "технические признаки" in open("app/pool/ingest.py", encoding="utf-8").read()
+        # v1.70.47: краткий текст оферты переехал из ingest.py в документ
+        # (app/legal/offerta.py), откуда его берёт OFFERTA_SHORT. Проверяем сам
+        # текст, а не строки файла: при следующем переносе замок не устареет.
+        from app.pool import ingest
+        assert "технические признаки" in ingest.OFFERTA_SHORT
 
     def test_core_untouched(self):
         assert "pool_" not in open("app/models.py", encoding="utf-8").read()

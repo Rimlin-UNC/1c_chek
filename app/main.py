@@ -435,6 +435,14 @@ from .b2b import router_public as b2b_public  # noqa: E402
 app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
 app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
 
+# v1.70.47: публичная оферта. Страница /oferta должна отдаваться ДО
+# SPA-перехвата ниже, иначе запрос уйдёт в веб-клиент и пользователь,
+# поставивший галочку «согласен с условиями оферты», не увидел бы условий.
+# Без авторизации: документ читается до принятия его условий.
+from .legal import page as legal_page  # noqa: E402
+
+app.include_router(legal_page.router)      # /oferta, /oferta.txt, /api/v1/legal/*
+
 
 # --------------------------------------------------------------------------
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static
