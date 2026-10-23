@@ -278,8 +278,12 @@ def company_resend(cid: str, db: Session = Depends(get_db),
     token = auth.issue_one_time(db, company, PURPOSE_VERIFY)
     sent = letters.send_verify(db, company, token)
     from ..services.audit import log_action
-    log_action(admin, "b2b_letter_resent", {"company": company.email,
-                                            "sent": sent})
+    # details — именованным аргументом: третья позиция в сигнатуре log_action
+    # занята entity_type, и словарь на её месте ломал привязку параметров
+    # SQLite, из-за чего запись аудита молча не создавалась.
+    log_action(admin, "b2b_letter_resent", entity_type="b2b_company",
+               entity_id=company.id,
+               details={"company": company.email, "sent": sent})
     return {"ok": True, "marker": MARKER, "sent": sent,
             "message": "Письмо отправлено" if sent
             else "Почта сервиса не настроена — письмо не отправлено"}

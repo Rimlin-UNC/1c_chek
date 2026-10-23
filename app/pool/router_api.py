@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -266,6 +266,156 @@ def stats_overview(days: int = 30,
             "geo_coverage_pct": round(100 * geo / verified, 1) if verified else 0,
             "verified_in_period": month, "period_days": days,
             "avg_receipt_sum": round(float(avg), 2)}
+
+
+# Допустимая группировка динамики: день, неделя ISO, месяц.
+DYNAMICS_BUCKETS = ("day", "week", "month")
+
+
+def _bucket_label(moment: datetime, kind: str) -> str:
+    """Метка периода: 2026-10-23, 2026-W43 (неделя ISO) или 2026-10."""
+    if kind == "week":
+        iso = moment.isocalendar()
+        return f"{iso[0]}-W{int(iso[1]):02d}"
+    if kind == "month":
+        return moment.strftime("%Y-%m")
+    return moment.strftime("%Y-%m-%d")
+
+
+@router.get("/v1/stats/dynamics",
+            summary="API: динамика по дням, неделям и месяцам (агрегаты)")
+def stats_dynamics(days: int = 30, bucket: str = "day",
+                   region_code: str = "", industry: str = "",
+                   x_api_key: str = Header("", alias="X-API-Key"),
+                   db: Session = Depends(get_db),
+                   response: Response = None):
+    """Динамика объёмов и среднего чека + сравнение с предыдущим периодом.
+
+    Снимок за период отвечает на вопрос «сколько», динамика — на вопросы
+    «растёт или падает», «есть ли сезонность» и «как изменилось к прошлому
+    периоду». Отдаются только агрегаты: числа чеков, суммы и среднее по
+    периодам, без самих чеков, позиций и участников.
+    """
+    key = _authenticate(db, x_api_key, response)
+    _log_call(db, key, "v1/stats/dynamics")
+    db.commit()
+    _require_enabled(db)
+
+    kind = (bucket or "day").strip().lower()
+    if kind not in DYNAMICS_BUCKETS:
+        raise HTTPException(422, "bucket — day, week или month")
+
+    # Ноль и отрицательное значение приводят к одному дню — так же, как в
+    # остальных GET-методах (max(1, min(days, 365))); «days or 30» превратило
+    # бы ноль в тридцать и разошлось бы с документом.
+    window = max(1, min(int(days or 0), 365))
+    now = _utcnow()
+    since = now - timedelta(days=window)
+    region = (region_code or "").strip()
+    trade = (industry or "").strip()
+    stamp = func.coalesce(PoolReceipt.verified_at, PoolReceipt.created_at)
+    # День как строка YYYY-MM-DD: CAST(... AS DATE) в SQLite приводит к
+    # числовому сродству и возвращает «2026» вместо даты, а диалектные
+    # strftime/date_trunc сломали бы переносимость между SQLite и PostgreSQL.
+    # substr(CAST(... AS VARCHAR), 1, 10) одинаково работает на обеих СУБД.
+    day_col = func.substr(cast(stamp, String), 1, 10)
+
+    def totals(start: datetime, end: datetime) -> tuple[int, float]:
+        """Число чеков и сумма за окно (только верифицированные)."""
+        q = (db.query(func.count(PoolReceipt.id),
+                      func.coalesce(func.sum(PoolReceipt.total_sum), 0.0))
+             .filter(PoolReceipt.status == "verified",
+                     stamp >= start, stamp < end))
+        if region:
+            q = q.filter(PoolReceipt.region_code == region)
+        if trade:
+            q = q.filter(PoolReceipt.industry == trade)
+        row = q.one()
+        return int(row[0] or 0), float(row[1] or 0.0)
+
+    def by_day(start: datetime, end: datetime) -> dict:
+        """Разбивка по дням одним запросом; недели и месяцы собрать в Python
+        дешевле и переносимее, чем диалектными функциями дат."""
+        q = (db.query(day_col, func.count(PoolReceipt.id),
+                      func.coalesce(func.sum(PoolReceipt.total_sum), 0.0))
+             .filter(PoolReceipt.status == "verified",
+                     stamp >= start, stamp < end))
+        if region:
+            q = q.filter(PoolReceipt.region_code == region)
+        if trade:
+            q = q.filter(PoolReceipt.industry == trade)
+        out: dict[str, tuple[int, float]] = {}
+        for day, count, amount in q.group_by(day_col).all():
+            out[str(day)[:10]] = (int(count or 0), float(amount or 0.0))
+        return out
+
+    daily = by_day(since, now + timedelta(seconds=1))
+
+    # Непрерывный ряд: период без чеков — это ноль, а не пропуск. Обход всегда
+    # по дням, а метка периода вычисляется для каждого дня — иначе неделя или
+    # месяц собрали бы только один свой день и потеряли остальные.
+    order: list[str] = []
+    sums: dict[str, list] = {}
+    cursor = since.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_window = now + timedelta(seconds=1)
+    while cursor < end_of_window:
+        label = _bucket_label(cursor, kind)
+        if label not in sums:
+            order.append(label)
+            sums[label] = [0, 0.0]
+        day_key = cursor.strftime("%Y-%m-%d")
+        if day_key in daily:
+            sums[label][0] += daily[day_key][0]
+            sums[label][1] += daily[day_key][1]
+        cursor += timedelta(days=1)
+
+    points = []
+    base_sum = base_avg = 0.0
+    for label in order:
+        count, amount = sums[label]
+        avg = (amount / count) if count else 0.0
+        if not base_sum and count:
+            # базовый период — первый непустой: индекс считается от него
+            base_sum, base_avg = amount, avg
+        points.append({
+            "label": label,
+            "receipts": count,
+            "sum": round(amount, 2),
+            "avg": round(avg, 2),
+            "index_sum": round(amount / base_sum * 100, 1) if base_sum else None,
+            "index_avg": round(avg / base_avg * 100, 1) if base_avg else None,
+        })
+
+    total_receipts, total_sum = totals(since, now + timedelta(seconds=1))
+    prev_receipts, prev_sum = totals(since - timedelta(days=window), since)
+    total_avg = (total_sum / total_receipts) if total_receipts else 0.0
+    prev_avg = (prev_sum / prev_receipts) if prev_receipts else 0.0
+
+    def growth(current: float, previous: float):
+        """Изменение к прошлому периоду в процентах (None, если сравнивать не с чем)."""
+        if not previous:
+            return None
+        return round((current - previous) / previous * 100, 1)
+
+    return {
+        "aggregated": True,
+        "period_days": days,
+        "window_days": window,
+        "bucket": kind,
+        "points": points,
+        "points_count": len(points),
+        "totals": {"receipts": total_receipts, "sum": round(total_sum, 2),
+                   "avg": round(total_avg, 2)},
+        "previous": {"receipts": prev_receipts, "sum": round(prev_sum, 2),
+                     "avg": round(prev_avg, 2)},
+        "lfl_pct": {"receipts": growth(total_receipts, prev_receipts),
+                    "sum": growth(total_sum, prev_sum),
+                    "avg": growth(total_avg, prev_avg)},
+        "base_note": ("index_sum и index_avg — процент к первому непустому "
+                      "периоду ряда (база = 100)"),
+        "filters": {"region_code": region, "industry": trade},
+        "receipts_excluded": True,
+    }
 
 
 @router.get("/v1/stats/regions",

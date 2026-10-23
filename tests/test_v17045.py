@@ -173,6 +173,12 @@ def _verified_company(client, letters_box, inn: str = INN_UL,
     return body["token"], body["company"]["id"]
 
 
+def _utc_stamp(days_ago: int):
+    """Момент в UTC для посева чеков: день назад от текущего момента."""
+    from datetime import timedelta
+    return verify._utcnow() - timedelta(days=days_ago)
+
+
 @pytest.fixture(autouse=True)
 def _clean(client):
     """client нужен не для assertions: сессионная фикстура поднимает
@@ -1331,7 +1337,8 @@ class TestGate:
 class TestContentIsBuiltFromCode:
     def test_methods_come_from_the_router(self):
         found = content.methods()
-        assert len(found) == 6, [m["short"] for m in found]
+        assert len(found) == 7, [m["short"] for m in found]
+        assert "/v1/stats/dynamics" in [m["short"] for m in found]
         assert [m["short"] for m in found] == list(content.METHOD_ORDER)
         for item in found:
             assert item["path"].startswith("/api/v1/pool-api/v1/")
@@ -1362,7 +1369,7 @@ class TestContentIsBuiltFromCode:
         assert items[2]["monthly_quota"] == 150_000
         for item in items:
             assert item["price"] == "по запросу"
-            assert item["methods"] == 6
+            assert item["methods"] == 7
 
     def test_error_texts_are_verbatim_from_the_router(self):
         """Тексты отказов в документе берутся из кода роутера, а не придуманы:
@@ -1956,6 +1963,89 @@ class TestAdminApplications:
                        AuditLog.action.like("b2b_%")).all()]
         db.close()
         assert "b2b_application_approved" in actions
+
+
+    def test_every_documented_audit_action_is_really_written(self, client,
+                                                             letters_box,
+                                                             admin_hdr):
+        """Живой прогон нашёл то, что тесты не поймали: словарь, переданный в
+        log_action третьим позиционным аргументом, попадал в entity_type,
+        привязка параметров SQLite падала, исключение проглатывалось
+        предупреждением — и запись аудита молча не создавалась, хотя документ
+        её обещал. Замок проверяет каждое задокументированное действие.
+        """
+        from app.models import AuditLog
+
+        db = _db()
+        _enable(db)
+        db.query(AuditLog).filter(AuditLog.action.like("b2b_%")).delete(
+            synchronize_session=False)
+        db.commit()
+        db.close()
+
+        token, cid = _verified_company(client, letters_box)
+        hdr = {"Authorization": "Bearer " + token}
+        base = f"/api/v1/b2b-admin/companies/{cid}"
+
+        # режим автоматизации
+        assert client.put("/api/v1/b2b-admin/config", headers=admin_hdr,
+                          json={"auto_mode": pipeline.MODE_PARTIAL}
+                          ).status_code == 200
+        # повтор письма подтверждения
+        assert client.post(f"{base}/resend", headers=admin_hdr).status_code == 200
+        # заявка: одобрение, затем отзыв ключа
+        aid = client.post("/api/v1/b2b/applications", headers=hdr,
+                          json={"tariff": "start",
+                                "task": "Нужны агрегаты по регионам и отраслям"}
+                          ).json()["application"]["id"]
+        assert client.post(f"/api/v1/b2b-admin/applications/{aid}/approve",
+                           headers=admin_hdr, json={}).status_code == 200
+        assert client.post(f"/api/v1/b2b-admin/applications/{aid}/revoke",
+                           headers=admin_hdr).status_code == 200
+        # вторая заявка: отказ
+        aid2 = client.post("/api/v1/b2b/applications", headers=hdr,
+                           json={"tariff": "business",
+                                 "task": "Нужны агрегаты по отраслям для отчёта"}
+                           ).json()["application"]["id"]
+        assert client.post(f"/api/v1/b2b-admin/applications/{aid2}/reject",
+                           headers=admin_hdr,
+                           json={"reason": "Объём не соответствует тарифу"}
+                           ).status_code == 200
+        # ручное подтверждение, отказ, блокировка и восстановление
+        assert client.post(f"{base}/verify", headers=admin_hdr,
+                           json={"note": "Проверил вручную"}).status_code == 200
+        assert client.post(f"{base}/block", headers=admin_hdr,
+                           json={"reason": "Нарушение условий"}).status_code == 200
+        assert client.post(f"{base}/unblock", headers=admin_hdr).status_code == 200
+        assert client.post(f"{base}/reject", headers=admin_hdr,
+                           json={"reason": "Домен не принадлежит компании"}
+                           ).status_code == 200
+
+        db = _db()
+        rows = db.query(AuditLog).filter(AuditLog.action.like("b2b_%")).all()
+        written = {row.action for row in rows}
+        db.close()
+
+        expected = {"b2b_config_changed", "b2b_letter_resent",
+                    "b2b_application_approved", "b2b_key_revoked",
+                    "b2b_application_rejected", "b2b_company_verified",
+                    "b2b_company_blocked", "b2b_company_unblocked",
+                    "b2b_company_rejected"}
+        missing = sorted(expected - written)
+        assert not missing, f"не записаны в аудит: {missing}; записано {sorted(written)}"
+
+        # детали дошли как словарь, а не как строка-заглушка
+        db = _db()
+        resent = db.query(AuditLog).filter(
+            AuditLog.action == "b2b_letter_resent").first()
+        db.close()
+        assert resent is not None and resent.details, "детали аудита пусты"
+        assert CORP_MAIL in resent.details, resent.details
+
+        # документ обещает ровно то, что действительно пишется
+        doc = _read(MECH_DOC)
+        for action in sorted(expected):
+            assert action in doc, f"в документе механизма нет {action}"
 
     def test_full_key_never_reaches_audit_or_events(self, client, admin_hdr,
                                                     letters_box):
@@ -2884,6 +2974,274 @@ class TestModerationFunnel:
 
 
 # ======================================================================
+# 19. Метод динамики — то, чего сегменту не хватало
+# ======================================================================
+# Исследование рынка фискальной аналитики (Платформа ОФД, Чек Индекс,
+# Такском, Контур.ОФД, Продажи.рф) даёт один ответ: бизнесу нужен не снимок
+# за период, а динамика — ряд по дням, неделям и месяцам, индекс к базовому
+# периоду и сравнение с прошлым периодом (LFL). Разовый замер эксперты прямо
+# называют ошибкой: он не отличает тренд от всплеска.
+class TestDynamicsMethod:
+    API = "/api/v1/pool-api/v1/stats/dynamics"
+
+    @pytest.fixture
+    def api_key(self, client, admin_hdr):
+        """Ключ платного API и включённые выключатели (настройки изолируются
+        фикстурой conftest, поэтому за пределы теста не утекают)."""
+        from app.pool import router_api
+        from app.services import appsettings
+        db = _db()
+        appsettings.set_setting(db, "pool_enabled", "1")
+        appsettings.set_setting(db, router_api.API_ENABLED_KEY, "1")
+        db.commit()
+        db.close()
+        r = client.post("/api/v1/pool-admin/api-keys", headers=admin_hdr,
+                        json={"name": "Проба динамики", "rate_per_hour": 200,
+                              "monthly_quota": 5000})
+        assert r.status_code == 200, r.text
+        return {"X-API-Key": r.json()["key"]}
+
+    @pytest.fixture
+    def seed(self):
+        """Чеки пула для ряда. Удаляются после теста: база общая на весь
+        прогон, и чужие счётчики не должны поехать от наших данных."""
+        from app.pool.models import PoolReceipt
+        created = []
+        counter = [0]
+
+        def make(days_ago, count=1, total=1000.0, region="77",
+                 industry="Продукты", status="verified"):
+            db = _db()
+            for _ in range(count):
+                counter[0] += 1
+                n = f"dyn{counter[0]:06d}"
+                stamp = _utc_stamp(days_ago)
+                rec = PoolReceipt(source="web", fn=n, fd=n, fp=n,
+                                  receipt_date=stamp, total_sum=total,
+                                  merchant_name="ООО «Проба динамики»",
+                                  merchant_inn=INN_UL, region_code=region,
+                                  city="Москва", industry=industry,
+                                  status=status, verified_at=stamp,
+                                  created_at=stamp)
+                db.add(rec)
+                db.flush()
+                created.append(rec.id)
+            db.commit()
+            db.close()
+
+        yield make
+        db = _db()
+        for rid in created:
+            row = db.get(PoolReceipt, rid)
+            if row is not None:
+                db.delete(row)
+        db.commit()
+        db.close()
+
+    def test_route_is_documented_everywhere(self):
+        """Дрейф-замки: метод описан в документе, на странице раздела и в README."""
+        assert "GET /v1/stats/dynamics" in _read(DOC)
+        assert "### 6.2 `GET /v1/stats/dynamics`" in _read(DOC)
+        page = json.dumps(content.docs(), ensure_ascii=False)
+        assert "/v1/stats/dynamics" in page
+        assert "/api/v1/pool-api/v1/stats/dynamics" in _read(README)
+        assert [m["short"] for m in content.methods()].count(
+            "/v1/stats/dynamics") == 1
+
+    def test_series_is_continuous_and_sums_to_totals(self, client, api_key,
+                                                     seed):
+        """Пропуск в ряде читался бы как обрыв данных, а не как ноль."""
+        seed(1, count=2, total=1000.0)
+        seed(5, count=3, total=500.0)
+        seed(20, count=1, total=2500.0)
+        r = client.get(self.API, headers=api_key,
+                       params={"days": 30, "bucket": "day"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["aggregated"] is True
+        assert body["receipts_excluded"] is True
+        assert body["bucket"] == "day"
+        points = body["points"]
+        assert len(points) >= 30, f"ряд короче окна: {len(points)}"
+        labels = [p["label"] for p in points]
+        assert len(set(labels)) == len(labels), "в ряду повторяются метки"
+        assert labels == sorted(labels), "ряд не упорядочен по времени"
+        assert sum(p["receipts"] for p in points) == body["totals"]["receipts"] == 6
+        assert abs(sum(p["sum"] for p in points) - body["totals"]["sum"]) < 0.01
+        empty = [p for p in points if p["receipts"] == 0]
+        assert empty, "пустые периоды должны присутствовать с нулями"
+        assert all(p["sum"] == 0.0 and p["avg"] == 0.0 for p in empty)
+
+    @pytest.mark.parametrize("bucket,pattern", [
+        ("day", r"^\d{4}-\d{2}-\d{2}$"),
+        ("week", r"^\d{4}-W\d{2}$"),
+        ("month", r"^\d{4}-\d{2}$"),
+    ])
+    def test_bucket_labels_and_totals(self, client, api_key, seed, bucket,
+                                      pattern):
+        seed(1, count=2, total=1000.0)
+        seed(9, count=2, total=2000.0)
+        seed(25, count=2, total=3000.0)
+        r = client.get(self.API, headers=api_key,
+                       params={"days": 30, "bucket": bucket})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["bucket"] == bucket
+        assert body["points"], "ряд пуст"
+        for point in body["points"]:
+            assert re.match(pattern, point["label"]), point["label"]
+        # недели и месяцы обязаны собрать все дни, а не один день из периода
+        assert sum(p["receipts"] for p in body["points"]) == 6, body["points"]
+        assert abs(sum(p["sum"] for p in body["points"])
+                   - body["totals"]["sum"]) < 0.01
+
+    def test_week_follows_iso_numbering(self, client, api_key, seed):
+        """Неделя ISO 8601 начинается в понедельник: две даты одной недели
+        дают одну метку, а не две."""
+        from datetime import date, timedelta
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        seed((today - monday).days, count=1, total=100.0)
+        seed(max(0, (today - monday).days - 1), count=1, total=100.0)
+        body = client.get(self.API, headers=api_key,
+                          params={"days": 14, "bucket": "week"}).json()
+        weeks = [p for p in body["points"] if p["receipts"]]
+        assert weeks, "недели с чеками не найдены"
+        assert all(re.match(r"^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$",
+                            p["label"]) for p in weeks), weeks
+
+    def test_invalid_bucket_is_422_not_a_silent_default(self, client, api_key,
+                                                        seed):
+        seed(1, count=1)
+        r = client.get(self.API, headers=api_key,
+                       params={"days": 30, "bucket": "квартал"})
+        assert r.status_code == 422
+        assert "bucket — day, week или month" in r.json()["detail"]
+
+    def test_bucket_is_case_and_space_tolerant(self, client, api_key, seed):
+        seed(1, count=1)
+        r = client.get(self.API, headers=api_key,
+                       params={"days": 30, "bucket": " WEEK "})
+        assert r.status_code == 200, r.text
+        assert r.json()["bucket"] == "week"
+
+    def test_window_is_clamped_but_echoed(self, client, api_key, seed):
+        """Особенность всех GET-методов сохранена: period_days повторяет
+        запрошенное значение, а фактическое окно видно в window_days."""
+        seed(1, count=1)
+        body = client.get(self.API, headers=api_key,
+                          params={"days": 9999}).json()
+        assert body["period_days"] == 9999
+        assert body["window_days"] == 365
+        zero = client.get(self.API, headers=api_key, params={"days": 0}).json()
+        assert zero["window_days"] == 1
+
+    def test_index_base_is_the_first_non_empty_period(self, client, api_key,
+                                                      seed):
+        seed(2, count=1, total=1000.0)
+        seed(1, count=1, total=1500.0)
+        body = client.get(self.API, headers=api_key,
+                          params={"days": 10, "bucket": "day"}).json()
+        filled = [p for p in body["points"] if p["receipts"]]
+        assert filled[0]["index_sum"] == 100.0
+        assert filled[0]["index_avg"] == 100.0
+        assert filled[1]["index_sum"] == 150.0, filled[1]
+        leading = [p for p in body["points"]
+                   if p["label"] < filled[0]["label"]]
+        assert all(p["index_sum"] is None for p in leading), \
+            "до базового периода индекс не определён"
+
+    def test_lfl_compares_with_the_previous_period(self, client, api_key, seed):
+        seed(1, count=4, total=1000.0)        # текущее окно (дни 0…10)
+        seed(15, count=2, total=1000.0)       # предыдущее окно (дни 10…20):
+        # посев внутри окна, а не на границе — границу отсекают миллисекунды
+        # между моментом посева и моментом запроса
+        body = client.get(self.API, headers=api_key,
+                          params={"days": 10, "bucket": "day"}).json()
+        assert body["totals"]["receipts"] == 4
+        assert body["previous"]["receipts"] == 2
+        assert body["lfl_pct"]["receipts"] == 100.0
+        assert body["lfl_pct"]["sum"] == 100.0
+        assert body["lfl_pct"]["avg"] == 0.0
+
+    def test_lfl_is_null_when_there_is_nothing_to_compare(self, client,
+                                                          api_key, seed):
+        seed(1, count=2, total=1000.0)
+        body = client.get(self.API, headers=api_key,
+                          params={"days": 10, "bucket": "day"}).json()
+        assert body["previous"]["receipts"] == 0
+        assert body["lfl_pct"] == {"receipts": None, "sum": None, "avg": None}
+
+    def test_filters_narrow_the_series(self, client, api_key, seed):
+        seed(1, count=2, total=1000.0, industry="Продукты")
+        seed(1, count=3, total=2000.0, industry="Одежда")
+        seed(1, count=5, total=3000.0, region="78")
+        whole = client.get(self.API, headers=api_key,
+                           params={"days": 10}).json()
+        assert whole["totals"]["receipts"] == 10
+        by_industry = client.get(self.API, headers=api_key,
+                                 params={"days": 10, "industry": "Одежда"}).json()
+        assert by_industry["totals"]["receipts"] == 3
+        assert by_industry["filters"]["industry"] == "Одежда"
+        by_region = client.get(self.API, headers=api_key,
+                               params={"days": 10, "region_code": "78"}).json()
+        assert by_region["totals"]["receipts"] == 5
+        assert by_region["filters"]["region_code"] == "78"
+        empty = client.get(self.API, headers=api_key,
+                           params={"days": 10, "industry": "Нет такой"}).json()
+        assert empty["totals"]["receipts"] == 0
+        assert empty["points"], "ряд должен остаться непрерывным и пустым"
+
+    def test_unverified_receipts_are_not_counted(self, client, api_key, seed):
+        seed(1, count=2, total=1000.0)
+        seed(1, count=3, total=5000.0, status="rejected")
+        body = client.get(self.API, headers=api_key,
+                          params={"days": 10}).json()
+        assert body["totals"]["receipts"] == 2, body["totals"]
+
+    def test_response_leaks_no_receipts_or_merchants(self, client, api_key,
+                                                     seed):
+        seed(1, count=2, total=1000.0)
+        r = client.get(self.API, headers=api_key, params={"days": 10})
+        body = json.dumps(r.json(), ensure_ascii=False)
+        for leak in ("merchant", "Проба динамики", INN_UL, '"fn"', '"fd"',
+                     '"fp"', "positions", "pool_user"):
+            assert leak not in body, f"в ответе есть «{leak}»"
+
+    def test_method_requires_a_key_and_respects_limits(self, client, api_key):
+        assert client.get(self.API).status_code == 401
+        assert client.get(self.API, headers={"X-API-Key": "apk_" + "0" * 43}
+                          ).status_code == 401
+
+    def test_method_carries_rate_limit_headers(self, client, api_key, seed):
+        seed(1, count=1)
+        r = client.get(self.API, headers=api_key, params={"days": 10})
+        assert r.status_code == 200
+        assert r.headers["X-RateLimit-Limit"] == "200"
+        assert int(r.headers["X-RateLimit-Remaining"]) >= 198
+        assert r.headers["X-Quota-Limit"] == "5000"
+
+    def test_method_is_counted_in_the_call_journal(self, client, api_key, seed):
+        seed(1, count=1)
+        client.get(self.API, headers=api_key, params={"days": 10})
+        from app.pool.models import PoolApiCall
+        db = _db()
+        paths = [row.path for row in db.query(PoolApiCall).all()]
+        db.close()
+        assert any("dynamics" in p for p in paths), paths[-3:]
+
+    def test_document_describes_params_and_fields(self):
+        """Документ описывает ровно то, что отдаёт код."""
+        text = _read(DOC)
+        section = text.split("### 6.2 `GET /v1/stats/dynamics`", 1)[1]
+        section = section.split("### 6.3", 1)[0]
+        for needle in ("`days`", "`bucket`", "`region_code`", "`industry`",
+                       "index_sum", "index_avg", "lfl_pct", "window_days",
+                       "points_count", "ISO 8601", "422"):
+            assert needle in section, f"в разделе метода нет «{needle}»"
+
+
+# ======================================================================
 # 15. Ритуал выпуска v1.70.45
 # ======================================================================
 class TestRelease17045:
@@ -2940,10 +3298,11 @@ class TestRelease17045:
 
     def test_whats_new_entry(self):
         block = self._block()
-        assert block.count("{ icon:") == 9, "в записи выпуска не девять пунктов"
+        assert block.count("{ icon:") == 10, "в записи выпуска не десять пунктов"
         for needle in ("закрыт от посторонних", "корпоративную почту", "ЕГРЮЛ",
                        "автоматизации", "один раз", "chek@ymaster.ru",
-                       "остаток лимита", "эпохи сессий", "полосами"):
+                       "остаток лимита", "эпохи сессий", "полосами",
+                       "Динамика по дням"):
             assert needle in block, f"в «Что нового» нет «{needle}»"
 
     def test_whats_new_has_no_foreign_letters(self):

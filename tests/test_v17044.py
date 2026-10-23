@@ -155,9 +155,15 @@ class TestRelease17044:
 # 2. Документ описывает ровно то, что работает
 # ======================================================================
 class TestDocumentMatchesCode:
-    def test_code_has_six_routes(self):
-        """Опора на факт: платное API — шесть маршрутов, все под /v1."""
-        assert len(routes_in_code()) == 6, routes_in_code()
+    def test_code_has_seven_routes(self):
+        """Опора на факт: платное API — семь маршрутов, все под /v1.
+
+        v1.70.45 добавил метод динамики: исследование сегмента показало, что
+        бизнесу нужен не снимок за период, а ряд по дням/неделям/месяцам со
+        сравнением с прошлым периодом.
+        """
+        assert len(routes_in_code()) == 7, routes_in_code()
+        assert ("GET", "/v1/stats/dynamics") in routes_in_code()
 
     def test_every_route_is_documented(self):
         """Дрейф-замок: новый маршрут в коде обязан появиться в документе."""

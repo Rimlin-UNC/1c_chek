@@ -12,6 +12,7 @@
 Запуск: .venv/bin/python qa/probe_b2b.py
 """
 import json
+import re
 import sys
 
 import httpx
@@ -166,8 +167,12 @@ check("в hub требования к юридическому лицу и ИП"
       any("ИП" in row or "предприниматель" in row for row in pages["hub"].get("requirements") or []))
 check("в hub сказано, как узнать стоимость",
       "стоимость" in json.dumps(pages["hub"], ensure_ascii=False).lower())
-check("в docs шесть методов", len(pages["docs"].get("methods") or []) == 6,
+check("в docs семь методов", len(pages["docs"].get("methods") or []) == 7,
       str(len(pages["docs"].get("methods") or [])))
+check("метод динамики есть на закрытой странице",
+      any(m["short"] == "/v1/stats/dynamics"
+          for m in pages["docs"].get("methods") or []),
+      str([m["short"] for m in pages["docs"].get("methods") or []]))
 check("в docs база /api/v1/pool-api", pages["docs"].get("base_url") == "/api/v1/pool-api")
 check("в tariffs лимиты из констант кода",
       [t["rate_per_hour"] for t in pages["tariffs"].get("items") or []] == [60, 300, 1200],
@@ -175,7 +180,8 @@ check("в tariffs лимиты из констант кода",
 check("в tariffs цены «по запросу»",
       all(t["price"] == "по запросу" for t in pages["tariffs"].get("items") or []))
 check("в tariffs состав методов и граница данных",
-      pages["tariffs"].get("methods_count") == 6 and len(pages["tariffs"].get("never") or []) >= 3)
+      pages["tariffs"].get("methods_count") == 7 and len(pages["tariffs"].get("never") or []) >= 3,
+      str(pages["tariffs"].get("methods_count")))
 check("в contact три тарифа для формы", len(pages["contact"].get("tariffs") or []) == 3)
 
 flat = json.dumps(pages, ensure_ascii=False)
@@ -332,7 +338,10 @@ r = c.get("/")
 check("главная страница отдаётся", r.status_code == 200 and "Ямастер" in r.text)
 check("на главной нет раздела «API для бизнеса»", "land-api" not in r.text)
 check("на главной нет пункта-ссылки на раздел", "Нужны данные по чекам для аналитики" not in r.text)
-check("на главной нет прежнего адреса почты", "info@ymaster.ru" not in r.text)
+# прежний адрес собирается из частей: иначе этот же зонд находит себя в
+# проверке «старого адреса нет нигде в репозитории»
+OLD_MAIL = "info@" + "ymaster.ru"
+check("на главной нет прежнего адреса почты", OLD_MAIL not in r.text)
 check("форма заявки для доноров на месте", 'id="land-lead"' in r.text)
 check("кабинет закрыт от поиска", 'noindex' in c.get("/b2b/").text)
 
@@ -357,7 +366,6 @@ check("вход после разблокировки → 200", r.status_code ==
 check("прежний токен работал до сброса пароля",
       c.get("/api/v1/b2b/me", headers=OLDH).status_code == 200)
 c.post("/api/v1/b2b/reset-request", json={"email": MAIL})
-import re as _re  # noqa: E402
 import sqlite3 as _sqlite3  # noqa: E402
 
 _con = _sqlite3.connect(DB_PATH)
@@ -441,6 +449,89 @@ spa_js = c.get("/js/app.js").text
 check("в разделе модерации есть распределение по статусам",
       "b2bAdmFunnel" in spa_js and 'id="b2badm-funnel"' in spa_js)
 check("уровни цвета статусов описаны", "B2B_ADM_LEVELS" in spa_js)
+
+# ------------------------------------------------------- 9. метод динамики
+print("\n9. Динамика по периодам — новый метод платного API")
+dyn_key = c.post("/api/v1/pool-admin/api-keys", headers=ADMIN,
+                 json={"name": "Проба динамики (стенд)", "rate_per_hour": 60,
+                       "monthly_quota": 1000}).json()["key"]
+DH = {"X-API-Key": dyn_key}
+DYN = "/api/v1/pool-api/v1/stats/dynamics"
+
+r = c.get(DYN, headers=DH, params={"days": 30, "bucket": "day"})
+check("динамика по дням → 200", r.status_code == 200, r.text[:200])
+body = r.json()
+check("ответ помечен как агрегат", body.get("aggregated") is True)
+check("ответ помечен как без чеков", body.get("receipts_excluded") is True)
+check("ряд непрерывный и не короче окна", len(body["points"]) >= 30,
+      str(len(body["points"])))
+check("сумма точек равна итогу",
+      sum(p["receipts"] for p in body["points"]) == body["totals"]["receipts"])
+check("метки periodов — даты", all(re.match(r"^\d{4}-\d{2}-\d{2}$",
+                                        p["label"]) for p in body["points"]))
+check("в ответе есть итоги прошлого периода", "previous" in body)
+check("в ответе есть изменение к прошлому периоду", "lfl_pct" in body)
+check("окно и эхо различаются", body["window_days"] == 30
+      and body["period_days"] == 30)
+
+for bucket, pattern in (("week", r"^\d{4}-W\d{2}$"),
+                        ("month", r"^\d{4}-\d{2}$")):
+    r = c.get(DYN, headers=DH, params={"days": 90, "bucket": bucket})
+    check(f"динамика по {bucket} → 200", r.status_code == 200, str(r.status_code))
+    data = r.json()
+    check(f"метки {bucket} верного формата",
+          all(re.match(pattern, p["label"]) for p in data["points"]),
+          str([p["label"] for p in data["points"][:4]]))
+    check(f"сумма точек {bucket} равна итогу",
+          sum(p["receipts"] for p in data["points"]) == data["totals"]["receipts"],
+          f"{sum(p['receipts'] for p in data['points'])} != {data['totals']['receipts']}")
+
+r = c.get(DYN, headers=DH, params={"days": 30, "bucket": "квартал"})
+check("неверная группировка → 422", r.status_code == 422, str(r.status_code))
+check("в 422 названы допустимые значения",
+      "day, week или month" in r.json().get("detail", ""))
+
+r = c.get(DYN, headers=DH, params={"days": 9999})
+check("окно зажато до 365, эхо запрошенного значения",
+      r.json()["window_days"] == 365 and r.json()["period_days"] == 9999)
+r = c.get(DYN, headers=DH, params={"days": 0})
+check("ноль дней трактуется как один день", r.json()["window_days"] == 1,
+      str(r.json()["window_days"]))
+
+r = c.get(DYN, headers=DH, params={"days": 30, "industry": "Продукты"})
+check("фильтр по отрасли принят", r.status_code == 200
+      and r.json()["filters"]["industry"] == "Продукты")
+r = c.get(DYN, headers=DH, params={"days": 30, "region_code": "77"})
+check("фильтр по региону принят", r.status_code == 200
+      and r.json()["filters"]["region_code"] == "77")
+
+text = json.dumps(c.get(DYN, headers=DH, params={"days": 30}).json(),
+                  ensure_ascii=False)
+for leak in ("merchant", '"fn"', '"fd"', '"fp"', "positions", "pool_user"):
+    check(f"в динамике нет «{leak}»", leak not in text)
+
+r = c.get(DYN)
+check("динамика без ключа → 401", r.status_code == 401, str(r.status_code))
+r = c.get(DYN, headers=DH, params={"days": 30})
+check("динамика несёт заголовки остатка лимита",
+      r.headers.get("x-ratelimit-limit") == "60",
+      r.headers.get("x-ratelimit-limit", ""))
+check("метод описан в документе", "### 6.2 `GET /v1/stats/dynamics`"
+      in open("docs/API.md", encoding="utf-8").read())
+# блокировка и разблокировка увеличили эпоху сессий, поэтому прежний токен
+# мёртв — это и проверялось выше; для закрытых страниц берём свежий
+fresh = c.post("/api/v1/b2b/login", json={"email": MAIL, "password": PASSWORD})
+check("вход после разблокировки даёт новый токен", fresh.status_code == 200,
+      str(fresh.status_code))
+CO2 = {"Authorization": "Bearer " + fresh.json()["token"]}
+docs_page = c.get("/api/v1/b2b/content", headers=CO2,
+                  params={"section": "docs"}).json()
+check("метод описан на закрытой странице документации",
+      any(m["short"] == "/v1/stats/dynamics"
+          for m in docs_page.get("methods") or []),
+      str([m["short"] for m in docs_page.get("methods") or []]))
+check("на странице семь методов", len(docs_page.get("methods") or []) == 7,
+      str(len(docs_page.get("methods") or [])))
 
 print("\n" + "=" * 62)
 print(f"ИТОГ: {OK} зелёных, {BAD} красных")
