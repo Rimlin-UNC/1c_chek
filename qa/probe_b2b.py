@@ -25,6 +25,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 APP_VERSION = re.search(r'APP_VERSION: str = "([^"]+)"',
                         (ROOT / "app" / "config.py").read_text(
                             encoding="utf-8")).group(1)
+# v1.70.47: редакция оферты — тоже из источника правды, а не литералом
+OFFERTA_EDITION = re.search(r'^EDITION = "([^"]+)"',
+                            (ROOT / "app" / "legal" / "offerta.py").read_text(
+                                encoding="utf-8"), re.M).group(1)
 MARKER = "Это не видит никто"
 INN_UL = "7707083893"
 MAIL = "it@probe45-company.ru"
@@ -540,6 +544,49 @@ check("метод описан на закрытой странице докум
       str([m["short"] for m in docs_page.get("methods") or []]))
 check("на странице семь методов", len(docs_page.get("methods") or []) == 7,
       str(len(docs_page.get("methods") or [])))
+
+# ----------------------------------------------------------------------
+#  Публичная оферта (v1.70.47): страница, текст для печати, структура и
+#  ссылки. Проверяется то, что увидит настоящий клиент: страница отдаётся
+#  без авторизации, потому что условия читают ДО принятия.
+# ----------------------------------------------------------------------
+off = c.get("/oferta")
+check("страница оферты отдаётся без авторизации", off.status_code == 200,
+      str(off.status_code))
+check("в странице названа редакция документа", OFFERTA_EDITION in off.text,
+      off.text[:120])
+check("страница оферты самостоятельна и не тянет веб-клиент",
+      "/js/app.js" not in off.text and 'id="app"' not in off.text)
+check("в странице есть оглавление и раздел реквизитов",
+      'id="toc"' in off.text and "Реквизиты Правообладателя" in off.text)
+txt = c.get("/oferta.txt")
+check("текст для печати отдаётся как текст",
+      txt.status_code == 200
+      and txt.headers.get("content-type", "").startswith("text/plain"),
+      str(txt.status_code))
+check("текст для печати содержит ту же редакцию", OFFERTA_EDITION in txt.text)
+leg = c.get("/api/v1/legal/offerta")
+check("структура документа отдаётся без авторизации", leg.status_code == 200,
+      str(leg.status_code))
+check("редакция в структуре совпадает со страницей",
+      leg.json().get("edition") == OFFERTA_EDITION,
+      str(leg.json().get("edition")))
+check("в структуре есть разделы и термины",
+      len(leg.json().get("sections") or []) == 17
+      and len(leg.json().get("definitions") or []) == 13,
+      str(len(leg.json().get("sections") or [])))
+check("стили страницы оферты отдаются",
+      c.get("/legal/oferta.css").status_code == 200,
+      str(c.get("/legal/oferta.css").status_code))
+cab_html = c.get("/b2b/").text
+check("галочка кабинета компании ведёт на оферту", 'href="/oferta"' in cab_html)
+check("подвал кабинета компании ведёт на оферту",
+      cab_html.count('href="/oferta"') >= 2, str(cab_html.count('href="/oferta"')))
+land_html = c.get("/").text
+check("подвал веб-клиента ведёт на оферту", 'href="/oferta"' in land_html)
+check("неизвестный путь юридического интерфейса не проглочен страницей",
+      c.get("/api/v1/legal/nope").status_code == 404,
+      str(c.get("/api/v1/legal/nope").status_code))
 
 print("\n" + "=" * 62)
 print(f"ИТОГ: {OK} зелёных, {BAD} красных")
