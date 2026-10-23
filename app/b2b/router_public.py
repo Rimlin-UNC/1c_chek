@@ -32,6 +32,7 @@ from ..services.companies_util import normalize_inn
 from . import auth, content, letters, pipeline, verify
 from .models import (
     ACTOR_COMPANY,
+    ACTOR_SYSTEM,
     PURPOSE_RESET,
     PURPOSE_VERIFY,
     ST_BLOCKED,
@@ -321,7 +322,8 @@ def verify_email(body: TokenBody, db: Session = Depends(get_db)):
     }
     if company.status == ST_VERIFIED:
         # ссылка доказала владение ящиком — сразу открываем кабинет
-        payload["token"] = auth.issue_b2b_token(company.id)
+        payload["token"] = auth.issue_b2b_token(company.id,
+                                                company.token_epoch)
         payload["pages"] = list(content.PAGES)
     return payload
 
@@ -359,7 +361,15 @@ def login(body: LoginBody, request: Request, db: Session = Depends(get_db)):
     company = _by_email(db, email)
     if company is None or not auth.check_secret(body.password,
                                                 company.password_hash):
-        auth.note_failure(key)
+        fails = auth.note_failure(key)
+        if company is not None and fails == auth.LOGIN_WARN_AT:
+            # Третья неудача подряд — повод показать администратору, что в
+            # кабинет компании пытаются войти. Пишем один раз на серию:
+            # перебор ограничен (LOGIN_MAX в окне), журнал не забивается.
+            log_event(db, company.id, ACTOR_SYSTEM, "login_failed",
+                      f"Неверный пароль: {fails}-я неудача подряд, "
+                      f"IP-хэш {_hash_ip(_client_ip(request))}")
+            db.commit()
         raise HTTPException(401, "Неверная почта или пароль")
     if company.status == ST_BLOCKED:
         auth.note_failure(key)
@@ -368,7 +378,8 @@ def login(body: LoginBody, request: Request, db: Session = Depends(get_db)):
     company.last_login_at = _utcnow()
     log_event(db, company.id, ACTOR_COMPANY, "login", "Вход в кабинет")
     db.commit()
-    return {"ok": True, "token": auth.issue_b2b_token(company.id),
+    return {"ok": True,
+            "token": auth.issue_b2b_token(company.id, company.token_epoch),
             **_state(db, company)}
 
 
@@ -408,11 +419,17 @@ def reset_confirm(body: ResetConfirmBody, db: Session = Depends(get_db)):
     if error:
         raise HTTPException(422, error)
     company.password_hash = auth.hash_secret(body.password)
+    # прежние сессии гасятся: смена пароля означает, что старый токен мог
+    # попасть не в те руки, поэтому он не должен доживать свой срок
+    company.token_epoch = int(company.token_epoch or 0) + 1
     log_event(db, company.id, ACTOR_COMPANY, "password_reset",
-              "Пароль обновлён по ссылке из письма")
+              f"Пароль обновлён по ссылке из письма; сессии сброшены "
+              f"(эпоха {company.token_epoch})")
     db.commit()
-    return {"ok": True, "token": auth.issue_b2b_token(company.id),
-            "message": "Пароль обновлён — вход выполнен"}
+    return {"ok": True,
+            "token": auth.issue_b2b_token(company.id, company.token_epoch),
+            "message": "Пароль обновлён — вход выполнен. Прежние сессии "
+                       "закрыты: на других устройствах нужно войти заново"}
 
 
 # --------------------------------------------------------------------------

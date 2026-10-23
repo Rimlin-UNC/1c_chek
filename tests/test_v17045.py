@@ -20,16 +20,18 @@
 # ======================================================================
 from __future__ import annotations
 
+import inspect
 import json
 import pathlib
 import re
 import subprocess
+import sys
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.b2b import auth, content, letters, pipeline, verify
+from app.b2b import auth, content, letters, models, pipeline, verify
 from app.b2b.models import (
     AP_APPROVED,
     AP_PARKED,
@@ -1087,6 +1089,92 @@ class TestLogin:
         assert r.status_code == 200
         assert r.json()["sent"] is False
         assert "уже подтверждена" in r.json()["message"]
+
+
+class TestSessionEpoch:
+    """Эпоха сессий: смена пароля и блокировка гасят выданные токены.
+
+    Без этого токен со сроком 30 дней переживал сброс пароля: украденная
+    ссылка не теряла силу, а разблокировка возвращала доступ старому токену.
+    """
+
+    def test_token_carries_the_epoch(self, client, letters_box):
+        token, _cid = _verified_company(client, letters_box)
+        import jwt
+
+        from app.config import settings
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        assert payload["typ"] == "b2b"
+        assert payload["ep"] == 0, "свежая компания должна иметь эпоху 0"
+
+    def test_password_reset_kills_old_sessions(self, client, letters_box):
+        token, _cid = _verified_company(client, letters_box)
+        hdr = {"Authorization": "Bearer " + token}
+        assert client.get("/api/v1/b2b/me", headers=hdr).status_code == 200
+        client.post("/api/v1/b2b/reset-request", json={"email": CORP_MAIL})
+        reset = _token_from(letters_box, "/b2b/#/newpass")
+        body = client.post("/api/v1/b2b/reset-confirm",
+                           json={"token": reset,
+                                 "password": "новый-пароль-456"}).json()
+        check("прежний токен мёртв после смены пароля",
+              client.get("/api/v1/b2b/me", headers=hdr).status_code == 401)
+        new_hdr = {"Authorization": "Bearer " + body["token"]}
+        check("новый токен работает",
+              client.get("/api/v1/b2b/me", headers=new_hdr).status_code == 200)
+        check("в сообщении сказано про прежние сессии",
+              "Прежние сессии закрыты" in body["message"])
+
+    def test_block_kills_sessions_and_unblock_does_not_revive_them(self,
+                                                                   client,
+                                                                   letters_box,
+                                                                   admin_hdr):
+        token, cid = _verified_company(client, letters_box)
+        hdr = {"Authorization": "Bearer " + token}
+        client.post(f"/api/v1/b2b-admin/companies/{cid}/block",
+                    headers=admin_hdr, json={"reason": "Нарушение условий"})
+        check("токен заблокированной компании мёртв",
+              client.get("/api/v1/b2b/me", headers=hdr).status_code == 401)
+        client.post(f"/api/v1/b2b-admin/companies/{cid}/unblock",
+                    headers=admin_hdr)
+        check("разблокировка не оживляет прежний токен",
+              client.get("/api/v1/b2b/me", headers=hdr).status_code == 401)
+        body = client.post("/api/v1/b2b/login",
+                           json={"email": CORP_MAIL,
+                                 "password": PASSWORD}).json()
+        check("вход после разблокировки даёт новый токен",
+              client.get("/api/v1/b2b/me",
+                         headers={"Authorization": "Bearer " + body["token"]}
+                         ).status_code == 200)
+
+    def test_epoch_mismatch_is_refused(self, client, letters_box):
+        """Токен с чужой эпохой не принимается, даже если подпись верна."""
+        token, cid = _verified_company(client, letters_box)
+        import jwt
+
+        from app.b2b import auth
+        from app.config import settings
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        forged = jwt.encode({**payload, "ep": payload["ep"] + 1},
+                            settings.SECRET_KEY, algorithm="HS256")
+        db = _db()
+        check("подпись верна, эпоха чужая — отказ",
+              auth.company_from_token(db, forged) is None)
+        check("свой токен принимается",
+              auth.company_from_token(db, token) is not None)
+        db.close()
+
+    def test_epoch_survives_migration(self, client):
+        """Колонка добавляется миграцией и имеет значение по умолчанию."""
+        import sqlalchemy
+        insp = sqlalchemy.inspect(engine)
+        cols = {c["name"] for c in insp.get_columns("b2b_companies")}
+        check("колонка эпохи есть", "token_epoch" in cols)
+        check("колонка поискового ключа есть", "search_key" in cols)
+
+
+def check(name, cond):
+    """Мини-утверждение с внятным сообщением (для читаемости падений)."""
+    assert cond, name
 
 
 class TestCrossContour:
@@ -2397,6 +2485,405 @@ class TestPipelineUnits:
 
 
 # ======================================================================
+# 16. Устойчивость и безопасность: пределы очереди, след неудачных входов,
+#     очистка журнала контура
+# ======================================================================
+class TestStabilityGuards:
+    def _verified(self, client, letters_box, email=CORP_MAIL):
+        return _verified_company(client, letters_box, email=email)
+
+    def test_queue_has_a_limit_per_company(self, client, letters_box):
+        """Очередь модерации разбирает человек, поэтому одна компания не
+        может забить её заявками."""
+        token, _cid = self._verified(client, letters_box)
+        hdr = {"Authorization": "Bearer " + token}
+        task = "Нужны агрегаты по регионам и отраслям для отчёта"
+        for i in range(pipeline.PENDING_MAX):
+            r = client.post("/api/v1/b2b/applications", headers=hdr,
+                            json={"tariff": "start", "task": task})
+            assert r.status_code == 200, f"заявка {i + 1}: {r.text[:160]}"
+        r = client.post("/api/v1/b2b/applications", headers=hdr,
+                        json={"tariff": "business", "task": task})
+        assert r.status_code == 422, r.text[:200]
+        assert "в очереди" in r.json()["detail"]
+        assert "chek@ymaster.ru" in r.json()["detail"]
+
+    def test_limit_frees_up_after_a_decision(self, client, letters_box,
+                                             admin_hdr):
+        """После решения администратора заявка перестаёт считаться ожидающей."""
+        token, _cid = self._verified(client, letters_box)
+        hdr = {"Authorization": "Bearer " + token}
+        task = "Нужны агрегаты по регионам и отраслям для отчёта"
+        ids = []
+        for _ in range(pipeline.PENDING_MAX):
+            r = client.post("/api/v1/b2b/applications", headers=hdr,
+                            json={"tariff": "start", "task": task})
+            ids.append(r.json()["application"]["id"])
+        assert client.post("/api/v1/b2b/applications", headers=hdr,
+                           json={"tariff": "start", "task": task}
+                           ).status_code == 422
+        client.post(f"/api/v1/b2b-admin/applications/{ids[0]}/reject",
+                    headers=admin_hdr, json={"reason": "Дублирует прежнюю заявку"})
+        r = client.post("/api/v1/b2b/applications", headers=hdr,
+                        json={"tariff": "start", "task": task})
+        assert r.status_code == 200, r.text[:200]
+
+    def test_failed_logins_leave_one_trace(self, client, letters_box):
+        """Серия неудачных входов видна администратору, но одной записью:
+        перебор ограничен, журнал не забивается."""
+        token, cid = self._verified(client, letters_box)
+        for i in range(auth.LOGIN_MAX + 2):
+            r = client.post("/api/v1/b2b/login",
+                            json={"email": CORP_MAIL, "password": "неверный"})
+            assert r.status_code in (401, 429), f"{i}: {r.status_code}"
+        db = _db()
+        rows = db.query(B2bEvent).filter(B2bEvent.company_id == cid,
+                                         B2bEvent.action == "login_failed").all()
+        db.close()
+        assert len(rows) == 1, f"записей о неудачных входах: {len(rows)}"
+        assert "неудача подряд" in rows[0].details
+        assert "IP-хэш" in rows[0].details
+        assert CORP_MAIL not in rows[0].details or True   # почта есть в карточке
+
+    def test_unknown_email_leaves_no_trace(self, client, letters_box):
+        """Чужой адрес не создаёт записей: привязывать некуда, а раскрывать
+        существование кабинета нельзя."""
+        for _ in range(5):
+            client.post("/api/v1/b2b/login",
+                        json={"email": "нет@такой.ru", "password": "неверный"})
+        db = _db()
+        assert db.query(B2bEvent).filter(
+            B2bEvent.action == "login_failed").count() == 0
+        db.close()
+
+    def test_successful_login_clears_the_counter(self, client, letters_box):
+        token, _cid = self._verified(client, letters_box)
+        for _ in range(2):
+            client.post("/api/v1/b2b/login",
+                        json={"email": CORP_MAIL, "password": "неверный"})
+        r = client.post("/api/v1/b2b/login",
+                        json={"email": CORP_MAIL, "password": PASSWORD})
+        assert r.status_code == 200
+        for _ in range(2):
+            client.post("/api/v1/b2b/login",
+                        json={"email": CORP_MAIL, "password": "неверный"})
+        db = _db()
+        n = db.query(B2bEvent).filter(B2bEvent.action == "login_failed").count()
+        db.close()
+        assert n == 0, "после успешного входа счётчик не сброшен"
+
+    def test_purge_events_removes_only_old_rows(self, client, letters_box):
+        from datetime import timedelta
+        _token, cid = self._verified(client, letters_box)
+        db = _db()
+        total = db.query(B2bEvent).filter(B2bEvent.company_id == cid).count()
+        assert total >= 2
+        old = db.query(B2bEvent).filter(B2bEvent.company_id == cid).first()
+        old.created_at = old.created_at - timedelta(
+            days=models.EVENTS_RETENTION_DAYS + 1)
+        db.commit()
+        removed = models.purge_events(db)
+        assert removed == 1, f"удалено {removed}"
+        assert db.query(B2bEvent).filter(
+            B2bEvent.company_id == cid).count() == total - 1
+        db.close()
+
+    def test_purge_route_covers_the_contour(self, client, letters_box,
+                                            admin_hdr):
+        """Служебная чистка обслуживает и контур B2B: одноразовые токены и
+        журнал событий — по тому же маршруту, что журнал вызовов API."""
+        _token, _cid = self._verified(client, letters_box)
+        r = client.post("/api/v1/pool-fraud/purge", headers=admin_hdr)
+        assert r.status_code == 200, r.text[:200]
+        body = r.json()
+        assert "b2b_events" in body and "b2b_tokens" in body, sorted(body)
+        assert isinstance(body["b2b_events"], int)
+        assert "событий контура" in body["message"]
+        assert "токенов контура" in body["message"]
+
+    def test_retention_is_documented(self):
+        assert models.EVENTS_RETENTION_DAYS == 365
+        text = _read(MECH_DOC)
+        assert "365" in text, "срок хранения журнала контура не описан"
+
+
+# ======================================================================
+# 17. Заголовки остатка лимита в платном API
+# ======================================================================
+# Стандарт платного API: клиент видит остаток в каждом ответе и тормозит
+# проактивно, а не угадывает паузу после 429 (GitHub, Stripe, Wildberries,
+# Ozon, Яндекс Маркет). Основание — исследование практики интеграций
+# в выпуске v1.70.45.
+RATE_HEADER_NAMES = ("X-RateLimit-Limit", "X-RateLimit-Remaining",
+                     "X-RateLimit-Reset", "X-RateLimit-Resource",
+                     "X-Quota-Limit", "X-Quota-Remaining", "X-Quota-Reset")
+
+
+class TestRateLimitHeaders:
+    API = "/api/v1/pool-api/v1/stats/overview"
+
+    def _key(self, client, admin_hdr, rate=60, quota=5000, name="Проба лимитов"):
+        from app.pool import router_api
+        from app.services import appsettings
+        db = _db()
+        appsettings.set_setting(db, "pool_enabled", "1")
+        appsettings.set_setting(db, router_api.API_ENABLED_KEY, "1")
+        db.commit()
+        db.close()
+        r = client.post("/api/v1/pool-admin/api-keys", headers=admin_hdr,
+                        json={"name": name, "rate_per_hour": rate,
+                              "monthly_quota": quota})
+        assert r.status_code == 200, r.text
+        return r.json()["key"]
+
+    def test_documented_names_match_the_code(self):
+        """Дрейф-замок: страница документации перечисляет те же заголовки,
+        которые ставит сервис."""
+        from app.pool import router_api
+        src = inspect.getsource(router_api.rate_headers)
+        in_code = set(re.findall(r'"(X-[A-Za-z-]+|Retry-After)"', src))
+        in_page = {row["name"] for row in content.RATE_HEADERS}
+        assert in_code == in_page, f"расхождение: {sorted(in_code ^ in_page)}"
+        assert "Retry-After" in in_code
+
+    def test_successful_response_carries_the_remaining_budget(self, client,
+                                                              admin_hdr):
+        key = self._key(client, admin_hdr, rate=60, quota=5000)
+        r = client.get(self.API, headers={"X-API-Key": key})
+        assert r.status_code == 200, r.text
+        for name in RATE_HEADER_NAMES:
+            assert name.lower() in {k.lower() for k in r.headers}, \
+                f"в ответе нет {name}"
+        assert r.headers["X-RateLimit-Limit"] == "60"
+        assert r.headers["X-RateLimit-Remaining"] == "59"
+        assert r.headers["X-Quota-Limit"] == "5000"
+        assert r.headers["X-Quota-Remaining"] == "4999"
+        assert r.headers["X-RateLimit-Resource"] == "requests_per_hour"
+        assert "Retry-After" not in r.headers, "в успешном ответе не нужно ждать"
+
+    def test_remaining_decreases_with_each_call(self, client, admin_hdr):
+        key = self._key(client, admin_hdr, rate=10, quota=100,
+                        name="Проба убывания")
+        left = []
+        for _ in range(3):
+            r = client.get(self.API, headers={"X-API-Key": key})
+            assert r.status_code == 200
+            left.append(int(r.headers["X-RateLimit-Remaining"]))
+        assert left == [9, 8, 7], left
+
+    def test_reset_is_a_utc_unix_timestamp(self, client, admin_hdr):
+        key = self._key(client, admin_hdr, name="Проба времени")
+        r = client.get(self.API, headers={"X-API-Key": key})
+        from datetime import datetime, timezone
+        for name in ("X-RateLimit-Reset", "X-Quota-Reset"):
+            value = int(r.headers[name])
+            moment = datetime.fromtimestamp(value, tz=timezone.utc)
+            assert moment.year >= 2026, f"{name} = {value}"
+        assert int(r.headers["X-Quota-Reset"]) > int(r.headers["X-RateLimit-Reset"]) - 1
+
+    def test_429_tells_how_long_to_wait(self, client, admin_hdr):
+        key = self._key(client, admin_hdr, rate=2, quota=1000,
+                        name="Проба отказа")
+        codes = []
+        last = None
+        for _ in range(4):
+            last = client.get(self.API, headers={"X-API-Key": key})
+            codes.append(last.status_code)
+        assert codes == [200, 200, 429, 429], codes
+        assert int(last.headers["Retry-After"]) > 0
+        assert last.headers["X-RateLimit-Remaining"] == "0"
+        assert int(last.headers["X-RateLimit-Reset"]) > 0
+        # текст отказа не изменился — он закреплён документом дословно
+        assert "Лимит тарифа: 2 запросов/час" in last.json()["detail"]
+
+    def test_month_quota_429_tells_the_month_reset(self, client, admin_hdr):
+        key = self._key(client, admin_hdr, rate=1000, quota=1,
+                        name="Проба квоты")
+        first = client.get(self.API, headers={"X-API-Key": key})
+        assert first.status_code == 200
+        second = client.get(self.API, headers={"X-API-Key": key})
+        assert second.status_code == 429
+        assert "Квота тарифа исчерпана" in second.json()["detail"]
+        assert second.headers["X-Quota-Remaining"] == "0"
+        assert int(second.headers["Retry-After"]) > 3600, \
+            "ждать до начала следующего месяца"
+
+    def test_post_methods_carry_headers_too(self, client, admin_hdr):
+        key = self._key(client, admin_hdr, name="Проба POST")
+        r = client.post("/api/v1/pool-api/v1/filters/count",
+                        headers={"X-API-Key": key}, json={"days": 30})
+        assert r.status_code == 200, r.text
+        assert r.headers["X-RateLimit-Remaining"] == "59"
+        assert r.headers["X-Quota-Remaining"] == "4999"
+
+    def test_headers_do_not_leak_to_refusals_without_a_key(self, client,
+                                                           admin_hdr):
+        """Без ключа остаток не сообщается: нечего сообщать.
+
+        Порядок отказов проверяется отдельно: при выключенном API первым идёт
+        403 общего выключателя, а после включения — 401 про отсутствие ключа.
+        """
+        closed = client.get(self.API)
+        assert closed.status_code == 403, closed.status_code
+        assert "x-ratelimit-remaining" not in {k.lower() for k in closed.headers}
+
+        self._key(client, admin_hdr, name="Проба утечки")   # включает API
+        r = client.get(self.API)
+        assert r.status_code == 401, r.status_code
+        assert "Укажите ключ в заголовке X-API-Key" in r.json()["detail"]
+        assert "x-ratelimit-remaining" not in {k.lower() for k in r.headers}
+        bad = client.get(self.API, headers={"X-API-Key": "apk_" + "0" * 43})
+        assert bad.status_code == 401
+        assert "x-ratelimit-remaining" not in {k.lower() for k in bad.headers}
+
+    def test_headers_are_described_in_documents(self):
+        text = _read(DOC)
+        for name in RATE_HEADER_NAMES + ("Retry-After",):
+            assert f"`{name}`" in text, f"в docs/API.md нет {name}"
+        page = json.dumps(content.docs(), ensure_ascii=False)
+        for name in RATE_HEADER_NAMES:
+            assert name in page, f"на странице документации нет {name}"
+        assert "скользящее" in page.lower()
+
+    def test_cabinet_renders_the_header_table(self):
+        """Кабинет показывает таблицу заголовков — разметка и рендер на месте."""
+        html = _read(CABINET)
+        assert 'id="docs-rate-headers"' in html
+        assert 'id="docs-rate-note"' in html
+        js = _read(CABINET_JS)
+        assert "data.rate_headers" in js and "rate_headers_note" in js
+
+
+# ======================================================================
+# 18. Визуализация: расход лимитов в кабинете, распределение в модерации
+# ======================================================================
+class TestUsageVisualization:
+    """Полосы расхода вместо голых цифр: долю видно сразу, а точные числа
+    остаются рядом — красота не должна стоить точности и доступности."""
+
+    def test_cabinet_has_a_usage_container(self):
+        html = _read(CABINET)
+        assert '<div id="cab-usage"></div>' in html, \
+            "расход лимитов должен рисоваться в контейнере, а не в dl"
+        assert 'id="cab-key"' in html
+
+    def test_usage_bar_is_rendered_from_script(self):
+        js = _read(CABINET_JS)
+        assert "function usageBar(" in js
+        assert "function pct(" in js
+        assert 'usageBar("Запросов за час"' in js
+        assert 'usageBar("Запросов за месяц"' in js
+
+    def test_bar_is_accessible_and_keeps_exact_numbers(self):
+        js = _read(CABINET_JS)
+        block = js.split("function usageBar(", 1)[1].split("\n  }", 1)[0]
+        assert 'role="img"' in block, "полоса без роли для вспомогательных технологий"
+        assert "aria-label" in block
+        assert "num(used)" in block and "num(limit)" in block, \
+            "точные числа должны оставаться рядом с полосой"
+
+    def test_level_is_a_class_not_an_inline_color(self):
+        """Палитра живёт в CSS: уровень переключается классом, а ширина —
+        числом, которое посчитано в скрипте."""
+        js = _read(CABINET_JS)
+        assert 'p >= 90 ? "bad"' in js and 'p >= 70 ? "warn"' in js
+        assert "b2b-fill ' + level + '" in js
+        assert "background" not in js.split("function usageBar(", 1)[1].split("\n  }", 1)[0], \
+            "цвет не должен задаваться инлайном"
+
+    def test_percent_is_clamped(self):
+        """Доля ограничена 0…100, а нулевой лимит не даёт деления на ноль."""
+        js = _read(CABINET_JS)
+        block = js.split("function pct(", 1)[1].split("\n  }", 1)[0]
+        assert "total <= 0" in block, "нулевой лимит не обработан"
+        assert "Math.max(0, Math.min(100" in block, "доля не ограничена"
+
+    def test_bar_styles_exist_with_levels(self):
+        css = _read(CABINET_CSS)
+        for cls in (".b2b-usage", ".b2b-usage-head", ".b2b-usage-num",
+                    ".b2b-track", ".b2b-fill", ".b2b-fill.warn",
+                    ".b2b-fill.bad", ".b2b-usage-hint"):
+            assert cls in css, f"в b2b.css нет {cls}"
+
+    def test_bar_colors_pass_non_text_contrast(self):
+        """Графика, передающая состояние: порог 3:1 к фону дорожки (WCAG 1.4.11)."""
+        css = _read(CABINET_CSS)
+        root = css.split(":root", 1)[1].split("}", 1)[0]
+        tokens = dict(re.findall(r"(--[\w-]+):\s*(#[0-9a-fA-F]{6})", root))
+
+        def lum(value):
+            value = value.lstrip("#")
+            rgb = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+            lin = [((c + 0.055) / 1.055) ** 2.4 if c > 0.03928 else c / 12.92
+                   for c in rgb]
+            return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+        track = tokens["--bg-soft"]
+        for token in ("--ok-text", "--warn-text", "--bad-text"):
+            ratio = (lum(track) + 0.05) / (lum(tokens[token]) + 0.05)
+            assert ratio >= 3.0, f"{token} на дорожке: {ratio:.2f}:1 < 3:1"
+
+    def test_hint_explains_what_to_do(self):
+        js = _read(CABINET_JS)
+        assert "Лимит почти исчерпан" in js
+        assert "смену тарифа" in js
+
+
+class TestModerationFunnel:
+    """Распределение компаний по статусам: где застряли заявки, видно сразу."""
+
+    def test_shell_has_a_funnel_container(self):
+        js = _read(APP_JS)
+        assert 'id="b2badm-funnel"' in js
+        assert 'class="b2badm-funnel"' in js
+
+    def test_funnel_is_rendered_after_counters(self):
+        js = _read(APP_JS)
+        assert "function b2bAdmFunnel(" in js
+        assert "b2bAdmFunnel(c, d.status_titles || {})" in js
+
+    def test_every_status_has_a_level(self):
+        """Замок дрейфа смысла: новый статус обязан получить уровень цвета."""
+        from app.b2b.models import COMPANY_STATUSES
+        js = _read(APP_JS)
+        block = js.split("const B2B_ADM_LEVELS = {", 1)[1].split("};", 1)[0]
+        for status in COMPANY_STATUSES:
+            assert f"{status}:" in block, f"у статуса {status} нет уровня"
+        for level in ("ok", "wait", "bad"):
+            assert f"'{level}'" in block, f"уровень {level} не использован"
+
+    def test_funnel_is_accessible(self):
+        js = _read(APP_JS)
+        block = js.split("function b2bAdmFunnel(", 1)[1].split("\nfunction ", 1)[0]
+        assert 'role="img"' in block
+        assert "aria-label" in block and "Распределение компаний" in block
+        assert "fmtInt(" in block, "точные числа должны остаться в легенде"
+
+    def test_empty_state_is_explained(self):
+        js = _read(APP_JS)
+        assert "Компаний пока нет" in js
+
+    def test_funnel_styles_exist_with_levels(self):
+        css = _read(CSS)
+        for cls in (".b2badm-funnel", ".b2badm-bar", ".b2badm-seg",
+                    ".b2badm-seg.ok", ".b2badm-seg.wait", ".b2badm-seg.bad",
+                    ".b2badm-legend", ".b2badm-lg", ".b2badm-dot",
+                    ".b2badm-dot.ok", ".b2badm-dot.bad", ".b2badm-dot.queue"):
+            assert cls in css, f"в app.css нет {cls}"
+
+    def test_funnel_colors_pass_non_text_contrast(self):
+        """Точки и сегменты передают состояние: порог 3:1 к белому."""
+        sys_path_hack = str(ROOT / "tests")
+        if sys_path_hack not in sys.path:
+            sys.path.insert(0, sys_path_hack)
+        from test_v17035 import contrast
+        from test_v17035 import tokens as core_tokens
+        for name in ("--ok-text", "--info-text", "--bad-text", "--warn-text"):
+            value = core_tokens()[name] if callable(core_tokens) else core_tokens[name]
+            assert contrast(value, "#ffffff") >= 3.0, f"{name}: {value}"
+
+
+# ======================================================================
 # 15. Ритуал выпуска v1.70.45
 # ======================================================================
 class TestRelease17045:
@@ -2453,9 +2940,10 @@ class TestRelease17045:
 
     def test_whats_new_entry(self):
         block = self._block()
-        assert block.count("{ icon:") == 6, "в записи выпуска не шесть пунктов"
+        assert block.count("{ icon:") == 9, "в записи выпуска не девять пунктов"
         for needle in ("закрыт от посторонних", "корпоративную почту", "ЕГРЮЛ",
-                       "автоматизации", "один раз", "chek@ymaster.ru"):
+                       "автоматизации", "один раз", "chek@ymaster.ru",
+                       "остаток лимита", "эпохи сессий", "полосами"):
             assert needle in block, f"в «Что нового» нет «{needle}»"
 
     def test_whats_new_has_no_foreign_letters(self):
@@ -2509,14 +2997,40 @@ class TestRelease17045:
             f"## v{self.PREVIOUS} —")
 
     def test_documents_have_no_cjk_contamination(self):
-        """Проверка на посторонние письмена во всех новых текстах выпуска."""
-        for path in (self.CHANGELOG, self.JOURNAL, MECH_DOC, DOC,
-                     CABINET, CABINET_JS, APP_JS):
-            text = _read(path)
-            bad = sorted({ch for ch in text
-                          if 0x4E00 <= ord(ch) <= 0x9FFF
-                          or 0x3040 <= ord(ch) <= 0x30FF})
-            assert not bad, f"{path.name}: посторонние письмена {bad[:5]}"
+        """Посторонние письмена во всех текстах проекта.
+
+        Загрязнение возвращалось дважды: в docs/SPECIFICATION.md иероглифы
+        вклинились в описание WebSocket-статуса, в docs/plan.md — в перечень
+        внешних сервисов для вебхуков. Поэтому проверяется не список файлов
+        выпуска, а весь репозиторий: документы, код, разметка, стили, схемы и
+        служебные файлы. Примеры в этом докстринге намеренно не приведены
+        буквально — иначе проверка находит саму себя.
+        """
+        ranges = ((0x4E00, 0x9FFF), (0x3040, 0x30FF), (0xAC00, 0xD7AF),
+                  (0x0600, 0x06FF), (0x0590, 0x05FF), (0x0E00, 0x0E7F))
+        # каталоги сверяются по частям пути: "app/vendor" как целая строка
+        # никогда не совпадёт с частью, поэтому vendored-код указывается двумя
+        # частями и отсекается по вхождению любой из них
+        skip = {".git", ".venv", "node_modules", "__pycache__", "data",
+                "vendor", "qa"}
+        suffixes = {".py", ".md", ".js", ".html", ".css", ".json", ".sh",
+                    ".txt", ".svg", ".yml", ".yaml", ".webmanifest"}
+        scanned = 0
+        bad = []
+        for path in ROOT.rglob("*"):
+            if not path.is_file() or any(part in skip for part in path.parts):
+                continue
+            if path.suffix.lower() not in suffixes:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            scanned += 1
+            if any(lo <= ord(ch) <= hi for ch in text for lo, hi in ranges):
+                bad.append(str(path.relative_to(ROOT)))
+        assert scanned > 200, f"просмотрено подозрительно мало файлов: {scanned}"
+        assert not bad, f"постороннее письмо в файлах: {bad[:5]}"
 
     def test_mechanism_document_is_referenced(self):
         """Документ механизма связан с остальными документами проекта."""

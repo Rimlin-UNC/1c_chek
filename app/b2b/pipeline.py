@@ -51,6 +51,11 @@ from .models import (
 
 log = logging.getLogger("ymaster.b2b.pipeline")
 
+# Порог очереди: сколько заявок одной компании может ждать решения
+# администратора одновременно. Решение принимает человек, поэтому новая заявка
+# имеет смысл только после разбора прежних; лимит защищает очередь от забивания.
+PENDING_MAX = 3
+
 # --------------------------------------------------------------------------
 # Режимы автоматизации
 # --------------------------------------------------------------------------
@@ -253,6 +258,18 @@ def submit_application(db: Session, company: B2bCompany, tariff: str,
     if len((task or "").strip()) < 20:
         return {"ok": False,
                 "error": "Опишите задачу подробнее — не короче 20 символов"}
+    # Одна компания не должна забивать очередь модерации: решение по заявке
+    # принимает человек, поэтому новая заявка имеет смысл только тогда, когда
+    # прежние разобраны. Лимит мягкий — это не антифрод, а защита очереди.
+    pending = (db.query(B2bApplication)
+               .filter(B2bApplication.company_id == company.id,
+                       B2bApplication.status.in_((AP_NEW, AP_PARKED)))
+               .count())
+    if pending >= PENDING_MAX:
+        return {"ok": False,
+                "error": f"У вас уже {pending} заявки в очереди — дождитесь "
+                         "решения администратора или напишите на "
+                         f"{letters.SUPPORT}"}
 
     rec = B2bApplication(company_id=company.id, tariff=tariff,
                          task=(task or "").strip()[:4000],
@@ -444,6 +461,9 @@ def set_blocked(db: Session, company: B2bCompany, admin,
     if blocked:
         company.status = ST_BLOCKED
         company.reject_reason = (reason or "").strip()[:300]
+        # сессии гасятся сразу: токен заблокированной компании не должен
+        # ожить сам, если администратор позже восстановит доступ
+        company.token_epoch = int(company.token_epoch or 0) + 1
         action = "company_blocked"
     else:
         company.status = ST_VERIFIED if company.verified_at else ST_CHECKS

@@ -14,12 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..auth import require_admin
-from ..config import settings   # v1.70.38: PAGE_MAX
+from ..config import settings  # v1.70.38: PAGE_MAX
 from ..database import get_db
 from ..models import User, iso_z
 from . import antifraud
-from .models import (PoolFingerprint, PoolIpLog, PoolReferral, PoolSignal,
-                     PoolUser)
+from .models import PoolFingerprint, PoolIpLog, PoolReferral, PoolSignal, PoolUser
 
 router = APIRouter(prefix="/api/v1/pool-fraud", tags=["pool-fraud"])
 
@@ -215,12 +214,19 @@ def purge(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     res["api_calls"] = purge_calls(db)       # v1.39.0: журнал API ≤ 90 дней
     from ..services.mail_center import purge_log
     res["mail_log"] = purge_log(db)          # v1.44.0: журнал писем ≤ 90 дней
+    from ..b2b import auth as b2b_auth
+    from ..b2b.models import purge_events
+    # v1.70.45: контур B2B — одноразовые токены и журнал событий
+    res["b2b_tokens"] = b2b_auth.purge_expired(db)
+    res["b2b_events"] = purge_events(db)     # журнал контура ≤ 365 дней
     db.commit()                              # аудит отдельной сессией —
     log_action(admin, "pool_fraud_purge", details=res)   # коммитим заранее
     return {"ok": True, **res,
             "message": f"Удалено: сетей {res['ip_log']}, устройств "
                        f"{res['fingerprints']}, закрытых сигналов {res['signals']}"
-                       f", вызовов API {res['api_calls']}"}
+                       f", вызовов API {res['api_calls']}"
+                       f", токенов контура {res['b2b_tokens']}"
+                       f", событий контура {res['b2b_events']}"}
 
 
 # --------------------------------------------------------------------------

@@ -138,10 +138,24 @@ if [[ $DIAGNOSE -eq 1 ]]; then
   journalctl -u "$SERVICE" -n 12 --no-pager 2>/dev/null | tail -12 || true
   echo "-- приложение напрямую (health):"
   curl -s -o /dev/null -w "   127.0.0.1:8000/health -> HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8000/health || echo "   127.0.0.1:8000 -> НЕ ОТВЕЧАЕТ"
+  echo "-- кабинет компании /b2b/ и его активы:"
+  for P in /b2b/ /b2b/b2b.css /b2b/b2b.js; do
+    curl -s -o /dev/null -w "   127.0.0.1:8000$P -> HTTP %{http_code}\n" --max-time 5 "http://127.0.0.1:8000$P" || echo "   $P -> НЕ ОТВЕЧАЕТ"
+  done
+  echo "-- контур B2B (включён ли приём заявок компаний):"
+  curl -s --max-time 5 http://127.0.0.1:8000/api/v1/b2b/status 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    print("   enabled: %s · контакт: %s" % (d.get("enabled"), d.get("contact")))
+except Exception:
+    print("   статус контура не прочитан")' || echo "   /api/v1/b2b/status -> НЕ ОТВЕЧАЕТ"
   echo "-- база данных:"
   if [[ -f "$DB_FILE" ]]; then
     ls -l "$DB_FILE" | awk '{print "   файл: " $9 " (" $5 " байт)"}'
     sqlite3 "$DB_FILE" "SELECT '   users: '||COUNT(*) FROM users; SELECT '   receipts: '||COUNT(*) FROM receipts;" 2>/dev/null || true
+    sqlite3 "$DB_FILE" "SELECT '   компании B2B: '||COUNT(*) FROM b2b_companies; SELECT '   заявки B2B: '||COUNT(*) FROM b2b_applications;" 2>/dev/null \
+      || echo "   таблиц контура B2B нет (сервис ещё не запускался после обновления)"
   else
     echo "   файл базы НЕ НАЙДЕН: $DB_FILE"
   fi

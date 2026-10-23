@@ -5920,6 +5920,12 @@ const WHATS_NEW = {
       text: 'Ключ выдаёт прежний механизм платного API: в базе хранится только необратимый хэш, поэтому восстановить показанный ключ невозможно. В письмах полный ключ не отправляется — только ссылка на кабинет, потому что письмо может быть переслано. Отзыв ключа мгновенно прекращает доступ к API.' },
     { icon: '✉️', title: 'Почта сервиса — chek@ymaster.ru',
       text: 'Адрес chek@ymaster.ru теперь во всех письмах, формах, документах и настройках вместо прежнего служебного ящика.' },
+    { icon: '📊', title: 'Остаток лимита виден в каждом ответе API',
+      text: 'Платный API теперь сообщает остаток лимита в заголовках каждого ответа: сколько запросов осталось в текущем часе и в месячной квоте, когда освободится место и сколько секунд ждать после отказа. Интеграция замедляется заранее, а не угадывает паузу после ошибки — так устроены крупные площадки, и именно этого ждут разработчики, которые подключаются за деньги. Описание заголовков добавлено в документ и на закрытую страницу документации в кабинете.' },
+    { icon: '🛡️', title: 'Смена пароля закрывает прежние сессии',
+      text: 'Токен кабинета компании живёт 30 дней, поэтому раньше украденный токен переживал сброс пароля, а разблокировка кабинета оживляла прежние сессии. Теперь у компании есть номер эпохи сессий: смена пароля и блокировка увеличивают его, и все выданные до этого токены перестают работать сразу. Добавлены предел числа заявок в очереди модерации, срок хранения журнала контура 365 дней с чисткой штатным служебным маршрутом и отметка о серии неудачных входов — администратор видит попытку входа в чужой кабинет.' },
+    { icon: '📈', title: 'Расход лимитов и очередь — наглядно',
+      text: 'В кабинете компании расход лимитов показан полосами: час и месяц, с уровнем «норма», «остаток мал», «почти исчерпано», подсказкой что делать и точными числами рядом. В разделе модерации добавлено распределение компаний по статусам — сразу видно, где застряли заявки: ждут подтверждения почты, на проверках, подтверждены, отклонены или закрыты. Полосы доступны вспомогательным технологиям: у них текстовое описание с числами, а цвет задан классами из таблицы стилей.' },
   ],
   '1.70.44': [
     { icon: '📘', title: 'Документ API для тех, кто подключается за деньги',
@@ -11139,6 +11145,7 @@ function b2bAdmShell() {
     <div class="card-title">🔐 API для бизнеса: модерация</div>
     <div id="b2badm-marker" class="b2badm-markerline"></div>
     <div id="b2badm-counters" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+    <div id="b2badm-funnel" class="b2badm-funnel"></div>
     <div class="b2badm-config" id="b2badm-config"></div>
     <div class="b2badm-tabs">
       <button type="button" class="btn btn-sm b2badm-tab" data-tab="queue">Очередь заявок</button>
@@ -11158,6 +11165,46 @@ function b2bAdmShell() {
       <button type="button" class="btn btn-sm" id="b2badm-key-close">Скрыть</button>
     </div>
   </div>`;
+}
+
+/* Уровень статуса: зелёный — доступ открыт, синий — ждёт действий компании
+   или сервиса, красный — отказ или закрытие. Совпадает со смыслом цветов
+   в остальном продукте. */
+const B2B_ADM_LEVELS = {
+  verified: 'ok',
+  new: 'wait',
+  email_pending: 'wait',
+  checks: 'wait',
+  rejected: 'bad',
+  blocked: 'bad'
+};
+
+function b2bAdmFunnel(counters, titles) {
+  const c = counters || {};
+  const keys = Object.keys(c).filter(k => k !== 'total' && k !== 'queue');
+  const total = Number(c.total || 0);
+  if (!keys.length) return '';
+  if (!total) {
+    return '<p class="form-hint">Компаний пока нет: распределение по статусам '
+      + 'появится после первых регистраций.</p>';
+  }
+  const label = keys.map(k => `${(titles || {})[k] || k}: ${fmtInt(c[k] || 0)}`).join(', ');
+  const segs = keys.filter(k => Number(c[k] || 0) > 0).map(k => {
+    const n = Number(c[k] || 0);
+    // минимум 3%, чтобы единичную компанию было видно на общей полосе
+    const p = Math.max(3, Math.round((n / total) * 100));
+    const lvl = B2B_ADM_LEVELS[k] || 'wait';
+    return `<span class="b2badm-seg ${lvl}" style="width:${p}%"></span>`;
+  }).join('');
+  const legend = keys.map(k => {
+    const lvl = B2B_ADM_LEVELS[k] || 'wait';
+    return `<span class="b2badm-lg"><i class="b2badm-dot ${lvl}"></i>`
+      + `${esc((titles || {})[k] || k)}: <b>${fmtInt(c[k] || 0)}</b></span>`;
+  }).join('');
+  return `<div class="b2badm-bar" role="img" aria-label="Распределение компаний по статусам — ${esc(label)}">${segs}</div>
+    <div class="b2badm-legend">${legend}
+      <span class="b2badm-lg"><i class="b2badm-dot queue"></i>Заявок в очереди: <b>${fmtInt(c.queue || 0)}</b></span>
+    </div>`;
 }
 
 function b2bAdmRenderConfig(cfg, modes) {
@@ -11217,6 +11264,8 @@ async function b2bAdmLoad() {
       box.innerHTML = `Компаний всего <b>${fmtInt(c.total || 0)}</b> · ${parts.join(' · ')}<br>`
         + `В очереди заявок: <b>${fmtInt(c.queue || 0)}</b> · режим: <b>${esc(d.config.auto_mode_title)}</b>`;
     }
+    const funnel = $('#b2badm-funnel');
+    if (funnel) funnel.innerHTML = b2bAdmFunnel(c, d.status_titles || {});
     b2bAdmRenderConfig(d.config, d.modes);
     b2bAdmRenderBody(d);
   } catch (e) {

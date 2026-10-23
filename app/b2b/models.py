@@ -160,6 +160,11 @@ class B2bCompany(Base):
     search_key: Mapped[str] = mapped_column(String(600), default="",
                                             index=True)
 
+    # Эпоха сессий: номер входит в JWT, поэтому смена пароля и блокировка
+    # гасят все ранее выданные токены сразу, не дожидаясь истечения 30 дней.
+    # Без этого украденный токен продолжал бы работать после сброса пароля.
+    token_epoch: Mapped[int] = mapped_column(Integer, default=0)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -332,11 +337,17 @@ def ensure_b2b_schema(engine) -> None:
         B2bToken.__table__, B2bEvent.__table__])
     insp = sqlalchemy.inspect(engine)
     cols = {c["name"] for c in insp.get_columns("b2b_companies")}
-    if "search_key" not in cols:
-        with engine.begin() as conn:
-            conn.execute(sqlalchemy.text(
-                "ALTER TABLE b2b_companies ADD COLUMN search_key "
-                "VARCHAR(600) DEFAULT ''"))
+    add_cols = (
+        ("search_key",
+         "ALTER TABLE b2b_companies ADD COLUMN search_key VARCHAR(600) "
+         "DEFAULT ''"),
+        ("token_epoch",
+         "ALTER TABLE b2b_companies ADD COLUMN token_epoch INTEGER DEFAULT 0"),
+    )
+    for name, ddl in add_cols:
+        if name not in cols:
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(ddl))
     with engine.begin() as conn:
         conn.execute(sqlalchemy.text(
             "CREATE INDEX IF NOT EXISTS ix_b2b_companies_search_key "
@@ -362,3 +373,20 @@ def log_event(db, company_id: str, actor: str, action: str,
                    details=(details or "")[:1000])
     db.add(rec)
     return rec
+
+
+# Журнал контура хранится год: этого хватает, чтобы разобрать спорную заявку,
+# и не даёт таблице расти бесконечно. Чистка вызывается служебным маршрутом
+# обслуживания вместе с журналом вызовов API и журналом писем.
+EVENTS_RETENTION_DAYS = 365
+
+
+def purge_events(db, days: int = EVENTS_RETENTION_DAYS) -> int:
+    """Удаляет записи журнала контура старше `days` дней. Возвращает число."""
+    from datetime import timedelta
+    cutoff = _utcnow() - timedelta(days=max(1, int(days or EVENTS_RETENTION_DAYS)))
+    removed = (db.query(B2bEvent)
+               .filter(B2bEvent.created_at < cutoff)
+               .delete(synchronize_session=False))
+    db.commit()
+    return int(removed or 0)

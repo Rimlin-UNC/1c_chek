@@ -238,6 +238,34 @@ STRICT_RULES = (
     f"{CALLS_RETENTION_DAYS} дней",
 )
 
+# Заголовки остатка лимита: сервер сообщает остаток в каждом ответе, поэтому
+# интеграция тормозит заранее, а не угадывает паузу после 429. Имена — те же,
+# что ставит app/pool/router_api.rate_headers; соответствие закреплено тестом.
+RATE_HEADERS = (
+    {"name": "X-RateLimit-Limit",
+     "text": "почасовой лимит ключа (скользящее окно 60 минут)"},
+    {"name": "X-RateLimit-Remaining",
+     "text": "сколько останется после этого обращения"},
+    {"name": "X-RateLimit-Reset",
+     "text": "Unix-время в секундах (UTC), когда в окне освободится место"},
+    {"name": "X-RateLimit-Resource",
+     "text": "какой ресурс исчерпывается: requests_per_hour"},
+    {"name": "X-Quota-Limit", "text": "месячная квота ключа"},
+    {"name": "X-Quota-Remaining",
+     "text": "сколько осталось в текущем месяце по UTC"},
+    {"name": "X-Quota-Reset",
+     "text": "Unix-время в секундах (UTC) начала следующего месяца"},
+    {"name": "Retry-After",
+     "text": "только в ответе 429: сколько секунд ждать до повтора"},
+)
+
+RATE_HEADERS_NOTE = (
+    "Окно часового лимита скользящее: X-RateLimit-Reset показывает момент, "
+    "когда окно покинет самый старый вызов, а не границу календарного часа. "
+    "Следите за X-RateLimit-Remaining и замедляйтесь, когда остаток мал; при "
+    "429 ждите Retry-After секунд."
+)
+
 KEY_FORMAT = (f"Ключ начинается с {KEY_PREFIX} и целиком показывается один раз "
               "при выдаче; в базе хранится только SHA-256 хэш")
 
@@ -336,6 +364,8 @@ def docs(company=None) -> dict:
         "key_format": KEY_FORMAT,
         "methods": methods(),
         "errors": [dict(e) for e in ERRORS],
+        "rate_headers": list(RATE_HEADERS),
+        "rate_headers_note": RATE_HEADERS_NOTE,
         "strict_rules": list(STRICT_RULES),
         "openapi": ("/api/docs — Swagger UI, /redoc — ReDoc, "
                     "/openapi.json — спецификация"),

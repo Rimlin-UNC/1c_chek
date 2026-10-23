@@ -594,6 +594,44 @@ body {
 .b2b-foot a { color: var(--accent-text); }
 
 /* --- узкий экран: одна колонка, кнопки во всю ширину -------------------- */
+/* Расход лимитов ключа: полоса + точные цифры рядом.
+   Цифры важнее красоты, поэтому они всегда видны, а полоса лишь показывает
+   долю. Уровень (ok/warn/bad) переключается классом из b2b.js. */
+.b2b-usage { margin: 12px 0 0; }
+.b2b-usage-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  margin-bottom: 5px;
+}
+.b2b-usage-num { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.b2b-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.b2b-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok-text);
+  transition: width var(--speed) ease;
+}
+.b2b-fill.warn { background: var(--warn-text); }
+.b2b-fill.bad { background: var(--bad-text); }
+.b2b-usage-hint {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 0.78125rem;
+  line-height: 1.45;
+}
+
 @media (max-width: 720px) {
   .b2b-head { padding: 10px 12px; }
   .b2b-main { padding: 16px 12px 32px; }

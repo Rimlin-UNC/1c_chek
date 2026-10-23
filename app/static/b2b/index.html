@@ -277,6 +277,17 @@
         </thead>
         <tbody></tbody>
       </table>
+      <h2 class="b2b-h2 b2b-h2-next">Остаток лимита в заголовках ответа</h2>
+      <p class="b2b-note" id="docs-rate-note"></p>
+      <table class="b2b-table" id="docs-rate-headers">
+        <thead>
+          <tr>
+            <th scope="col">Заголовок</th>
+            <th scope="col">Что означает</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
       <h2 class="b2b-h2 b2b-h2-next">Правила фильтров</h2>
       <ul class="b2b-list" id="docs-rules"></ul>
     </div>
@@ -369,7 +380,9 @@
       <article class="b2b-card">
         <h2 class="b2b-h2">Ключ и лимиты</h2>
         <p class="b2b-key" id="cab-key"></p>
-        <dl class="b2b-defs" id="cab-usage"></dl>
+        <!-- расход лимитов: полосы вместо голых цифр, но цифры остаются рядом —
+             точность и доступность важнее красоты -->
+        <div id="cab-usage"></div>
         <p class="b2b-note">Ключ показывается один раз при выдаче — в базе
           хранится только его хэш. Запросы идут с заголовком
           <code>X-API-Key</code>.</p>

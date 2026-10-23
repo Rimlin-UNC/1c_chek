@@ -47,6 +47,38 @@
     return n.toLocaleString("ru-RU");
   }
 
+  /* Доля израсходованного лимита в процентах, 0…100. Лимит может быть нулевым
+     у только что выданного ключа — тогда полоса пустая, а не «бесконечная». */
+  function pct(used, limit) {
+    var total = Number(limit || 0);
+    if (!isFinite(total) || total <= 0) { return 0; }
+    var part = Number(used || 0);
+    if (!isFinite(part) || part <= 0) { return 0; }
+    return Math.max(0, Math.min(100, Math.round((part / total) * 100)));
+  }
+
+  /* Полоса расхода лимита: цвет — уровнем (классом), а не инлайновым стилем,
+     поэтому палитра остаётся в CSS и проверяется на контраст. Ширина — число,
+     которое мы посчитали сами, вставка безопасна. */
+  function usageBar(title, used, limit) {
+    var p = pct(used, limit);
+    var level = p >= 90 ? "bad" : (p >= 70 ? "warn" : "ok");
+    var left = Math.max(0, Number(limit || 0) - Number(used || 0));
+    return '<div class="b2b-usage">' +
+      '<div class="b2b-usage-head"><span>' + esc(title) + "</span>" +
+      '<span class="b2b-usage-num">' + num(used) + " из " + num(limit) +
+      " · " + p + "%</span></div>" +
+      '<div class="b2b-track" role="img" aria-label="' + esc(title) +
+      ": израсходовано " + p + " процентов, осталось " + num(left) + '">' +
+      '<span class="b2b-fill ' + level + '" style="width:' + p + '%"></span>' +
+      "</div>" +
+      '<p class="b2b-usage-hint">' + (p >= 90
+        ? "Лимит почти исчерпан: повторите позже или обсудите смену тарифа."
+        : (p >= 70 ? "Остаток мал — планируйте запросы."
+          : "Осталось " + num(left) + " запросов.")) + "</p>" +
+      "</div>";
+  }
+
   function msg(text, kind) {
     var box = $("#b2b-msg");
     box.textContent = text || "";
@@ -284,6 +316,12 @@
       return "<tr><td>" + esc(e.code) + '</td><td class="doc-text">' + esc(e.text) +
         '</td><td class="doc-text">' + esc(e.why) + "</td></tr>";
     }).join("");
+    var rates = $("#docs-rate-headers tbody");
+    rates.innerHTML = (data.rate_headers || []).map(function (h) {
+      return "<tr><td><code>" + esc(h.name) + '</code></td><td class="doc-text">' +
+        esc(h.text) + "</td></tr>";
+    }).join("");
+    $("#docs-rate-note").textContent = data.rate_headers_note || "";
     fillList("#docs-rules", data.strict_rules || []);
   }
 
@@ -362,15 +400,20 @@
     $("#cab-key").textContent = key.issued
       ? (key.active ? "Ключ " + key.prefix + " активен" : "Ключ " + key.prefix + " отозван")
       : "Ключ ещё не выдан";
-    var usage = key.issued ? [
-      ["Тариф", fmt(key.tariff)],
-      ["Запросов за час", num(key.used_hour) + " из " + num(key.rate_per_hour)],
-      ["Запросов за месяц", num(key.used_month) + " из " + num(key.monthly_quota)],
-      ["Последний вызов", fmt(key.last_used_at)]
-    ] : [];
-    $("#cab-usage").innerHTML = usage.map(function (row) {
-      return "<dt>" + esc(row[0]) + "</dt><dd>" + esc(row[1]) + "</dd>";
-    }).join("");
+    var usage = $("#cab-usage");
+    if (key.issued) {
+      usage.innerHTML =
+        usageBar("Запросов за час", key.used_hour, key.rate_per_hour) +
+        usageBar("Запросов за месяц", key.used_month, key.monthly_quota) +
+        '<dl class="b2b-defs">' +
+        [["Тариф", fmt(key.tariff)],
+         ["Последний вызов", fmt(key.last_used_at)]].map(function (row) {
+           return "<dt>" + esc(row[0]) + "</dt><dd>" + esc(row[1]) + "</dd>";
+         }).join("") + "</dl>";
+    } else {
+      usage.innerHTML = '<p class="b2b-note">Ключ ещё не выдан — расход лимитов ' +
+        "появится после одобрения заявки.</p>";
+    }
 
     var apps = data.applications || [];
     $("#cab-applications").innerHTML = apps.length ? apps.map(function (a) {

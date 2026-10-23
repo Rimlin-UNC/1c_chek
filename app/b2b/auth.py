@@ -43,6 +43,7 @@ RESET_TTL_MIN = 60              # ссылка входа: 1 час
 # Ограничение попыток входа (защита от перебора паролей)
 LOGIN_WINDOW = 900              # окно наблюдения: 15 минут
 LOGIN_MAX = 6                   # неудач в окне до блокировки
+LOGIN_WARN_AT = 3               # на какой неудаче писать событие в журнал
 _ATTEMPTS: dict[str, list[float]] = {}
 
 # Ограничение регистраций и повторных писем по IP
@@ -67,8 +68,16 @@ def login_blocked(key: str) -> bool:
     return len(_hits(key)) >= LOGIN_MAX
 
 
-def note_failure(key: str) -> None:
-    _hits(key).append(time.time())
+def note_failure(key: str) -> int:
+    """Отмечает неудачу и возвращает число неудач в окне наблюдения.
+
+    Счётчик нужен не только ограничителю: на третьей неудаче подряд контур
+    пишет событие в журнал компании, чтобы администратор видел попытку входа
+    в чужой кабинет (перебор уже ограничен, поэтому журнал не забивается).
+    """
+    hits = _hits(key)
+    hits.append(time.time())
+    return len(hits)
 
 
 def note_success(key: str) -> None:
@@ -93,10 +102,17 @@ def note_ip(ip: str) -> None:
 # --------------------------------------------------------------------------
 # JWT кабинета компании
 # --------------------------------------------------------------------------
-def issue_b2b_token(company_id: str) -> str:
+def issue_b2b_token(company_id: str, epoch: int = 0) -> str:
+    """Токен кабинета компании.
+
+    `ep` — эпоха сессий из карточки компании: токен перестаёт действовать,
+    как только эпоху увеличили (смена пароля, блокировка), не дожидаясь
+    истечения срока.
+    """
     now = int(time.time())
     return jwt.encode(
-        {"typ": "b2b", "bc": company_id, "iat": now, "exp": now + TOKEN_TTL},
+        {"typ": "b2b", "bc": company_id, "ep": int(epoch or 0),
+         "iat": now, "exp": now + TOKEN_TTL},
         settings.SECRET_KEY, algorithm="HS256")
 
 
@@ -110,6 +126,12 @@ def company_from_token(db: Session, token: str) -> B2bCompany | None:
         return None
     company = db.get(B2bCompany, str(payload.get("bc") or ""))
     if company is None or company.status == ST_BLOCKED:
+        return None
+    # эпоха сессий: токен, выданный до смены пароля или блокировки, мёртв
+    try:
+        if int(payload.get("ep") or 0) != int(company.token_epoch or 0):
+            return None
+    except (TypeError, ValueError):
         return None
     return company
 
