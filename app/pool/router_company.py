@@ -87,11 +87,6 @@ def _enabled(db: Session) -> None:
                                  "недоступен")
 
 
-def _like(col, needle: str):
-    from .router_admin import _or_like
-    return _or_like(col, needle)
-
-
 def _filtered(db: Session, f: dict, limit: int = SUGGEST_POOL):
     """Незакреплённые верифицированные чеки по фильтрам подбора."""
     q = db.query(PoolReceipt).filter(PoolReceipt.status == "verified",

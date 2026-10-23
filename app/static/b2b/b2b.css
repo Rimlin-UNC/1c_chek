@@ -362,6 +362,8 @@ body {
   font-size: 16px;
 }
 
+/* Порядок значим: font: inherit в общей группе сбрасывает line-height,
+   поэтому это правило обязано стоять после неё. */
 .b2b-field textarea { resize: vertical; line-height: 1.55; }
 
 .b2b-field input:focus,

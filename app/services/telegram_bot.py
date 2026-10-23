@@ -383,7 +383,6 @@ def _pool_balance_text(db: Session, from_id: str | None, chat_id: str) -> str | 
 # --------------------------------------------------------------------------
 _worker: threading.Thread | None = None
 _stop = threading.Event()
-_wake = threading.Event()
 _bot_username: str = ""
 
 
@@ -757,11 +756,6 @@ def diagnose(db: Session) -> dict:
             "api_base": api_base,
             "via_base": via_base,                        # v1.70.12
             "verdict": v[0], "message": v[1]}
-
-
-def wake() -> None:
-    """Разбудить цикл после изменений настроек."""
-    _wake.set()
 
 
 # --------------------------------------------------------------------------

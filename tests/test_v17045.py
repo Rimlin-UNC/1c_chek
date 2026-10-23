@@ -3245,51 +3245,23 @@ class TestDynamicsMethod:
 # 15. Ритуал выпуска v1.70.45
 # ======================================================================
 class TestRelease17045:
-    """Точки синхронизации версии: их ведёт файл текущего выпуска.
+    """v1.70.46: выпуск 1.70.45 отгружен.
 
-    Прежние классы (1.70.38…1.70.44) оставляют у себя только запись выпуска
-    в истории — приём тот же, что в предыдущих релизах.
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведёт test_v17046, а
+    здесь остаётся запись выпуска в истории (как сделано для 1.70.38…1.70.44).
+    Константа PREVIOUS нужна своим же проверкам записи «Что нового», раздела
+    CHANGELOG и журнала: они вырезают текст между своей версией и предыдущей.
     """
 
     VERSION = "1.70.45"
     PREVIOUS = "1.70.44"
-    SW = ROOT / "app/static/sw.js"
-    MANIFEST = ROOT / "app/static/manifest.webmanifest"
-    MAX_HTML = ROOT / "app/static/maxapp/index.html"
     CHANGELOG = ROOT / "CHANGELOG.md"
     JOURNAL = ROOT / "docs/ui_journal.md"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read(ROOT / "app/config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read(self.SW)
-        assert f'"version": "{self.VERSION}"' in _read(self.MANIFEST)
-        idx = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in idx
-        assert f"app.js?v={self.VERSION}" in idx
-        assert f"maxapp.js?v={self.VERSION}" in _read(self.MAX_HTML)
-
-    def test_cache_busters_in_service_worker(self):
-        """Кэш-бастеры в списке предзагрузки обязаны совпадать с index.html:
-        caches.addAll падает на первом же 404 и установка SW не происходит."""
-        sw = _read(self.SW)
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_cabinet_assets_carry_the_same_version(self):
-        """Кабинет /b2b/ — отдельная страница, но версия кэш-бастеров общая."""
-        html = _read(CABINET)
-        assert f"/b2b/b2b.css?v={self.VERSION}" in html
-        assert f"/b2b/b2b.js?v={self.VERSION}" in html
-
-    def test_no_previous_version_left_in_sync_points(self):
-        for path in (ROOT / "app/config.py", INDEX, self.SW, self.MANIFEST,
-                     self.MAX_HTML, CABINET):
-            assert self.PREVIOUS not in _read(path), f"{path.name}: старая версия"
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_version_is_release(self):
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read("app/config.py")).group(1)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 45)
 
     def _block(self):
         js = _read(APP_JS)

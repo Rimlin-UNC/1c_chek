@@ -449,7 +449,15 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
 .scan-frame .corner::after { bottom: -2px; right: -2px; border-left: none; border-top: none; }
 .scan-line {
   position: absolute; left: 8%; right: 8%; height: 3px; border-radius: 3px;
-  background: linear-gradient(90deg, transparent, #22d3ee, transparent);
+  /* v1.70.46: #22d3ee — остаток палитры Tailwind, от которой проект
+     отказался в v1.70.35 (CHANGELOG: 1.81:1 на светлом). Линия теперь
+     фирменная и совпадает с уголками рамки, которые уже var(--accent).
+     Ореол нужен ради худшего случая — яркого кадра с камеры: сам оранжевый
+     даёт на белом 2.61:1 при пороге 3:1 для графики (WCAG 1.4.11), а тёмный
+     ореол поверх белого — 4.54:1. На тёмном видоискателе ореол не виден,
+     там линия даёт 7.75:1. */
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  filter: drop-shadow(0 0 6px rgba(3,6,16,.55));
   animation: scanline 2.4s ease-in-out infinite; top: 20%;
 }
 @keyframes scanline { 0%,100% { top: 18%; opacity: .5; } 50% { top: 80%; opacity: 1; } }

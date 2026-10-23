@@ -445,14 +445,6 @@ def run_helper(phase: str, timeout: float = CMD_TIMEOUT,
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
-def helper_script() -> str:
-    """Путь к сценарию помощника: установленный (root) либо из комплекта."""
-    if os.path.exists(HELPER_PATH):
-        return HELPER_PATH
-    src = os.path.join(DEPLOY_DIR, HELPER_SRC)
-    return src if os.path.exists(src) else ""
-
-
 def helper_argv(phase: str, mode: str | None = None) -> list[str]:
     """Аргументы вызова помощника по режиму прав (см. run_helper).
 

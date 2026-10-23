@@ -12,12 +12,19 @@
 Запуск: .venv/bin/python qa/probe_b2b.py
 """
 import json
+import pathlib
 import re
 import sys
 
 import httpx
 
 BASE = "http://127.0.0.1:8001"
+# Версия берётся из источника правды, а не зашивается числом: иначе каждый
+# выпуск даёт ложный красный на проверке /health.
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+APP_VERSION = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        (ROOT / "app" / "config.py").read_text(
+                            encoding="utf-8")).group(1)
 MARKER = "Это не видит никто"
 INN_UL = "7707083893"
 MAIL = "it@probe45-company.ru"
@@ -353,7 +360,8 @@ names = [prm["name"] for prm in paths["/api/v1/b2b/content"]["get"].get("paramet
 check("параметр имени раздела — section, не page", names == ["section"], str(names))
 r = c.get("/health")
 check("health → 200", r.status_code == 200, str(r.status_code))
-check("версия приложения 1.70.45", r.json().get("version") == "1.70.45", r.text[:160])
+check(f"версия приложения {APP_VERSION}",
+      r.json().get("version") == APP_VERSION, r.text[:160])
 
 # ------------------------------------------------------- 8. доработки выпуска
 print("\n8. Безопасность, устойчивость и заголовки остатка лимита")

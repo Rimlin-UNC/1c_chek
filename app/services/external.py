@@ -113,23 +113,6 @@ def _find_receipt_dict(obj, depth: int = 0):
     return None
 
 
-def _scale_money(value: float, known_rub: float | None) -> float:
-    """
-    Определение масштаба суммы: источники на базе ФНС отдают копейки.
-    Сверяемся с известной суммой из QR (s=…), чтобы не ошибиться.
-    """
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if known_rub:
-        if abs(v - known_rub * 100) <= max(1.0, known_rub * 0.5):
-            return round(v / 100.0, 2)          # копейки → рубли
-        if abs(v - known_rub) <= max(1.0, known_rub * 0.5):
-            return round(v, 2)                   # уже рубли
-    return round(v / 100.0, 2) if v >= 100000 else round(v, 2)
-
-
 def _parse_operation(receipt: dict) -> int | None:
     op = receipt.get("operation")
     if op in (1, 2):

@@ -55,7 +55,6 @@ SETT_TOKEN = "max_bot_token"             # секрет (appsettings.SECRET_KEYS
 SETT_CHANNEL = "assistants_channel"      # telegram | max | both (общий)
 SETT_USERNAME = "max_bot_username"       # v1.70.1: фактический ник бота
 _DEFAULT_NICK = "chek.ymaster.bot"       # публичный ник по умолчанию
-_TECH_NICK = re.compile(r"^id\d+_bot$")  # v1.70.2: служебный username из get_me
 SETT_TECH = "max_bot_tech"               # v1.70.3: чей токен (служебное имя)
 SITE_URL = "https://chek.ymaster.ru"     # v1.70.4: кнопка «Открыть сайт»
 _last_update_ago = None                  # v1.70.2: сек с последнего события
@@ -214,12 +213,6 @@ def refresh_username(db: Session) -> str:
         if appsettings.get_setting(db, SETT_USERNAME, "") != u:
             appsettings.set_setting(db, SETT_USERNAME, u)
     return _username_cache
-
-
-def _public(u: str) -> str:
-    """Публичный ник для диплинков: служебный idNNNN_bot не годится."""
-    u = (u or "").strip()
-    return "" if (not u or _TECH_NICK.fullmatch(u)) else u
 
 
 def tech_username(db: Session) -> str:

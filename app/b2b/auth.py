@@ -16,7 +16,7 @@ import hashlib
 import logging
 import secrets
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import jwt
 from fastapi import Depends, HTTPException, Request
@@ -242,15 +242,3 @@ def hash_secret(password: str) -> str:
 
 def check_secret(password: str, stored: str) -> bool:
     return bool(stored) and verify_password(password, stored)
-
-
-def _iso(value: datetime | None) -> str:
-    return value.isoformat() if value else ""
-
-
-def token_ttl_left(token: B2bToken) -> int:
-    """Сколько секунд осталось у одноразового токена (для диагностики)."""
-    if token.expires_at is None:
-        return 0
-    delta = token.expires_at - datetime.now(timezone.utc).replace(tzinfo=None)
-    return max(0, int(delta.total_seconds()))
