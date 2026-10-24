@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.16.0: самовосстановление апдейтера (обновление
 # из приложения без .git), Telegram-бот (настройки/привязка/напоминания),
 # светофор контрагента, массовое обновление ЕГРЮЛ.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import itertools
 import os
@@ -59,7 +59,9 @@ class TestUpdaterSelfHeal:
         monkeypatch.setattr(up, "_gh_git", fail_404)
         try:
             up._remote_version("o/r", "main")
-            assert False, "должна быть ошибка"
+            # v1.70.38: `assert False` под `python -O` вырезается — проверка
+            # становилась пустой
+            raise AssertionError("должна быть ошибка")
         except RuntimeError as e:
             assert "нет файла" in str(e) and "main" in str(e)
 

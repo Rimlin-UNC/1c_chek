@@ -10,7 +10,7 @@
 # храним ТОЛЬКО хэшем sha256. SMS-подтверждение первого вывода готово
 # кодом в pool_tokens (purpose="sms"); шлюз подключим отдельным решением.
 # Все начисления/списания — через журнал pool_points (reason WITHDRAW).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 

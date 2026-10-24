@@ -5,7 +5,7 @@
 # подтверждение e-mail. Контур пула: JWT typ=pool, пользователи ядра
 # компании не затрагиваются. Защита: rate-limit по IP, единые сообщения
 # об ошибках (без перечисления существующих e-mail в magic link).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 

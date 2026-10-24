@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2100 2970" width="2100" height="2970">
-  <!-- Ямастер Чек — фирменный бланк A4 (шаблон). ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+  <!-- Ямастер Чек — фирменный бланк A4 (шаблон). ООО «Ямастер», https://ymaster.ru, chek@ymaster.ru -->
   <defs>
     <linearGradient id="ymTileB" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#6366F1"/>
@@ -41,6 +41,6 @@
   </g>
   <!-- подвал -->
   <rect x="140" y="2760" width="1820" height="6" rx="3" fill="#E3E6EC"/>
-  <text x="140" y="2850" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="40" fill="#5B6472">ООО «Ямастер» · info@ymaster.ru · ymaster.ru</text>
+  <text x="140" y="2850" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="40" fill="#5B6472">ООО «Ямастер» · chek@ymaster.ru · ymaster.ru</text>
   <text x="1960" y="2850" text-anchor="end" font-family="'Segoe UI',Inter,Arial,sans-serif" font-size="40" font-weight="600" fill="#FF7A00">chek.ymaster.ru</text>
 </svg>

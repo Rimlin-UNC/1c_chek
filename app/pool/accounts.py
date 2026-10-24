@@ -5,16 +5,16 @@
 # свой JWT (typ=pool), свои пароли (PBKDF2 ядра), своя таблица токенов.
 # Гостевая история (cookie vid) при регистрации/входе ПРИСОЕДИНЯЕТСЯ
 # к аккаунту — «сдал чеки без регистрации → зарегистрировался → всё на месте».
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import time
-import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 from ..auth import hash_password, verify_password
 from ..config import settings
 from ..database import get_db
+
+log = logging.getLogger("ymaster.pool.accounts")
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 PASSWORD_MIN = 8
@@ -126,23 +128,115 @@ def authenticate(db: Session, email: str, password: str):
 
 # --- слияние гостевой истории (cookie vid) с аккаунтом ------------------------
 def merge_guest_into_account(db: Session, account, vid: str | None) -> int:
-    """Перенос чеков/баллов гостя (по vid из cookie) в аккаунт.
-    Возвращает число перенесённых чеков. Идемпотентно: без гостя — 0."""
-    from .models import PoolPoint, PoolReceipt, PoolUser
+    """Перенос ВСЕЙ истории гостя (по vid из cookie) в аккаунт.
+
+    Возвращает число перенесённых чеков. Идемпотентно: без гостя — 0.
+
+    v1.70.41 (дефект 22, найден живым прогоном поточной сдачи): прежняя версия
+    переносила только `pool_receipts` и `pool_points`, после чего удаляла
+    гостя. Но на `pool_users.id` ссылаются ДЕСЯТЬ таблиц: согласия 152-ФЗ,
+    одноразовые токены, отпечатки устройств, журнал IP, сигналы антифрода,
+    рефералы, достижения и выводы средств. Любой гость, успевший получить
+    сигнал антифрода (например REPEAT_SUMS после пяти одинаковых сумм подряд)
+    или достижение, при регистрации/входе давал
+    `sqlite3.IntegrityError: FOREIGN KEY constraint failed`: регистрация, вход
+    по ссылке и сдача чека из кабинета падали с 500. То есть ровно тот путь,
+    который обещан в шапке модуля — «сдал чеки без регистрации →
+    зарегистрировался → всё на месте», — обрывался.
+
+    Что сделано:
+      1) переносятся все зависимые строки, а не две таблицы;
+      2) сигналы антифрода, отпечатки и журнал IP переносятся, а НЕ удаляются:
+         это история того же человека и устройства, и её потеря означала бы,
+         что риск можно «обнулить» простой регистрацией;
+      3) конфликты уникальности разбираются явно — достижение с тем же кодом и
+         уже существующая реферальная привязка аккаунта побеждают гостевые;
+      4) всё выполняется в SAVEPOINT: сбой откатывает только слияние и никогда
+         не ломает регистрацию, вход или приём чека (слияние — удобство,
+         а не обязательство), причина уходит в журнал.
+    """
+    from .models import (
+        PoolAchievement,
+        PoolConsent,
+        PoolFingerprint,
+        PoolIpLog,
+        PoolPoint,
+        PoolReceipt,
+        PoolReferral,
+        PoolSignal,
+        PoolToken,
+        PoolUser,
+        PoolWithdrawal,
+    )
 
     if not vid:
         return 0
     guest = db.query(PoolUser).filter(PoolUser.vid == vid).first()
     if guest is None or guest.id == account.id:
         return 0
-    moved = (db.query(PoolReceipt)
-             .filter(PoolReceipt.pool_user_id == guest.id)
-             .update({PoolReceipt.pool_user_id: account.id},
-                     synchronize_session=False))
-    db.query(PoolPoint).filter(PoolPoint.user_id == guest.id).update(
-        {PoolPoint.user_id: account.id}, synchronize_session=False)
-    account.points = (account.points or 0) + (guest.points or 0)
-    db.delete(guest)
+
+    sp = db.begin_nested()          # SAVEPOINT: сбой слияния не ломает запрос
+    try:
+        moved = (db.query(PoolReceipt)
+                 .filter(PoolReceipt.pool_user_id == guest.id)
+                 .update({PoolReceipt.pool_user_id: account.id},
+                         synchronize_session=False))
+        # таблицы без ограничений уникальности — перенос целиком
+        for model in (PoolPoint, PoolConsent, PoolToken, PoolFingerprint,
+                      PoolIpLog, PoolSignal, PoolWithdrawal):
+            db.query(model).filter(model.user_id == guest.id).update(
+                {model.user_id: account.id}, synchronize_session=False)
+
+        # достижения: UNIQUE(user_id, code) — уже полученное аккаунтом не
+        # переносится (иначе конфликт), гостевой дубликат удаляется
+        own_codes = [a.code for a in db.query(PoolAchievement)
+                     .filter(PoolAchievement.user_id == account.id).all()]
+        if own_codes:
+            (db.query(PoolAchievement)
+             .filter(PoolAchievement.user_id == guest.id,
+                     PoolAchievement.code.in_(own_codes))
+             .delete(synchronize_session=False))
+        db.query(PoolAchievement).filter(
+            PoolAchievement.user_id == guest.id).update(
+                {PoolAchievement.user_id: account.id},
+                synchronize_session=False)
+
+        # рефералы: UNIQUE(referred_id) — привязка аккаунта побеждает гостевую
+        taken = (db.query(PoolReferral)
+                 .filter(PoolReferral.referred_id == account.id).first()
+                 is not None)
+        if taken:
+            (db.query(PoolReferral)
+             .filter(PoolReferral.referred_id == guest.id)
+             .delete(synchronize_session=False))
+        db.query(PoolReferral).filter(
+            PoolReferral.referred_id == guest.id).update(
+                {PoolReferral.referred_id: account.id},
+                synchronize_session=False)
+        db.query(PoolReferral).filter(
+            PoolReferral.referrer_id == guest.id).update(
+                {PoolReferral.referrer_id: account.id},
+                synchronize_session=False)
+
+        # v1.70.41 (дефект 23): vid наследуется аккаунтом. Без этого чек,
+        # который ещё проверяется в фоновом потоке, теряется: поток ищет
+        # владельца по id гостя, а строки гостя уже нет — донору при этом
+        # ответили «Чек принят — проверяем». Заодно последующие анонимные
+        # запросы с той же cookie попадают в аккаунт, а не плодят нового
+        # пустого гостя (история больше не расщепляется).
+        inherited = guest.vid if not (account.vid or "").strip() else None
+        guest.vid = None            # vid UNIQUE: освобождаем до передачи
+        db.flush()
+        if inherited:
+            account.vid = inherited
+        account.points = (account.points or 0) + (guest.points or 0)
+        db.delete(guest)
+        db.flush()                  # здесь и проявляется FK-конфликт, если он есть
+        sp.commit()
+    except Exception as e:                              # noqa: BLE001
+        sp.rollback()
+        log.warning("слияние гостевой истории отложено (vid=%s): %s", vid, e)
+        return 0
     return moved
 
 
@@ -204,7 +298,8 @@ def verify_link(db: Session, user) -> str:
 def delete_account(db: Session, user) -> None:
     """ПДн удаляются: e-mail и пароль стираются, баллы сгорают (запись в
     журнале). Сданные чеки остаются в открытой базе обезличенными — это
-    согласовано офертой (участник передал фискальные данные без ПДн)."""
+    согласовано офертой (участник передал фискальные данные без ПДн) —
+    пункты 7.3, 7.4 и 14.5 публичной оферты, страница /oferta."""
     from . import ingest
     from .models import PoolReceipt
     if user.points:

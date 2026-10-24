@@ -95,13 +95,6 @@ def settings_info(db: Session) -> dict:
     }
 
 
-def pending_count(db: Session) -> int:
-    """Сколько записей ещё не доставлено (включая ждущие повтора)."""
-    from ..models import WebhookLog
-    return db.query(WebhookLog).filter(
-        WebhookLog.delivered_at.is_(None)).count()
-
-
 def stuck_count(db: Session) -> int:
     """Недоставлено и попытки исчерпаны — нужен человек у приёмника."""
     from ..models import WebhookLog

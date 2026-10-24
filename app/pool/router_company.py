@@ -10,7 +10,7 @@
 # квота задаётся настройкой pool_pick_monthly_limit (админ). Привязанный
 # чек чужим компаниям не виден; участник сохраняет свои баллы.
 # Права: бухгалтер и администратор (ядро, require_accountant).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth import require_accountant
+from ..config import settings   # v1.70.38: PAGE_MAX
 from ..database import get_db
 from ..models import Company, User
 from . import ingest
@@ -84,11 +85,6 @@ def _enabled(db: Session) -> None:
     if not ingest.pool_enabled(db):
         raise HTTPException(403, "Приём чеков в пул выключен — подбор "
                                  "недоступен")
-
-
-def _like(col, needle: str):
-    from .router_admin import _or_like
-    return _or_like(col, needle)
 
 
 def _filtered(db: Session, f: dict, limit: int = SUGGEST_POOL):
@@ -213,7 +209,7 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
            city: str = "", industry: str = "", inn: str = "",
            sum_min: float | None = Query(None), sum_max: float | None = Query(None),
            q_str: str = Query("", alias="q", max_length=100),
-           page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=50),
+           page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=50),
            company_id: str = "", db: Session = Depends(get_db),
            user: User = Depends(require_accountant)):
     _company(db, user, company_id)          # права; чеки — общие незакреплённые
@@ -233,7 +229,7 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
 
 @router.get("/mine", summary="Чек-Пул: чеки, привязанные к компании")
 def mine(date_from: str = "", date_to: str = "",
-         page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=50),
+         page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=50),
          company_id: str = "", db: Session = Depends(get_db),
          user: User = Depends(require_accountant)):
     comp = _company(db, user, company_id)

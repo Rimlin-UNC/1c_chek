@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — свежие данные ЕГРЮЛ/ЕГРИП: скачивание выписки (v1.22.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 #
 # Механизм: кнопка в карточке компании «⬇ Скачать свежие данные».
 # Источники (по порядку):
@@ -25,6 +25,10 @@ _UA = "YmasterCheck/1.22 (+https://ymaster.ru)"
 # --------------------------------------------------------------------------
 #  1. Официальный сервис ФНС: PDF-выписка ЕГРЮЛ/ЕГРИП
 # --------------------------------------------------------------------------
+# v1.70.38: ниже стоят аннотации `# nosec B310` (bandit: urlopen разрешает
+# схемы file:// и другие). Обоснование: адрес здесь ОДИН и задан константой
+# модуля FNS_EGRUL_URL (https://egrul.nalog.ru/…), из настроек или из запроса
+# пользователя он не берётся, поэтому подменить схему нечем.
 def fetch_fns_pdf(inn: str, timeout: int = 20) -> bytes | None:
     """PDF-выписка с egrul.nalog.ru по ИНН. Возвращает bytes PDF или None,
     если сервис недоступен/не дал результат (никогда не бросает)."""
@@ -36,7 +40,7 @@ def fetch_fns_pdf(inn: str, timeout: int = 20) -> bytes | None:
             FNS_EGRUL_URL, data=data, method="POST",
             headers={"User-Agent": _UA,
                      "Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 — адрес — константа FNS_EGRUL_URL
             token = (json.loads(r.read().decode("utf-8", "replace")) or {}).get("t")
         if not token:
             return None
@@ -44,14 +48,14 @@ def fetch_fns_pdf(inn: str, timeout: int = 20) -> bytes | None:
         req2 = urllib.request.Request(
             FNS_EGRUL_URL + "search-result/" + token,
             headers={"User-Agent": _UA})
-        with urllib.request.urlopen(req2, timeout=timeout) as r:
+        with urllib.request.urlopen(req2, timeout=timeout) as r:  # nosec B310 — адрес — константа FNS_EGRUL_URL
             rows = (json.loads(r.read().decode("utf-8", "replace")) or {}).get("rows") or []
         if not rows or not rows[0].get("t"):
             return None
         req3 = urllib.request.Request(
             FNS_EGRUL_URL + "search-result/" + rows[0]["t"],
             headers={"User-Agent": _UA})
-        with urllib.request.urlopen(req3, timeout=timeout) as r:
+        with urllib.request.urlopen(req3, timeout=timeout) as r:  # nosec B310 — адрес — константа FNS_EGRUL_URL
             blob = r.read()
         # валидация: это действительно PDF
         if blob[:5] == b"%PDF-" and len(blob) > 1000:

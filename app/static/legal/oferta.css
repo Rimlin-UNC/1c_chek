@@ -1,0 +1,301 @@
+/* ==========================================================================
+   Ямастер Чек — страница публичной оферты (/oferta)
+
+   Документ читается до принятия условий, поэтому приоритеты здесь другие,
+   чем в рабочем интерфейсе: максимум читабельности, никакой анимации,
+   корректная печать. Дизайн — тот же, что у приложения: светлая тема,
+   фирменный оранжевый, те же токены и шрифтовой стек.
+
+   Оранжевый (--accent) на белом даёт 2.61:1 — это ниже порога 3:1, которого
+   WCAG 1.4.11 требует от значимых нетекстовых элементов, и тем более ниже
+   4.5:1 для текста. Поэтому в документе он только декоративный: линейка у
+   заголовка раздела и край предупреждения. Смысла сами по себе они не несут —
+   разделы различаются номерами и заголовками, а содержание предупреждения
+   продублировано словами. Приёмы — из решения v1.70.32 для app.css, где
+   фирменные цвета разрешены для границ и подложек, но не для подписей.
+
+   Текст и ссылки окрашены в --accent-text: 6.26:1 на белом и 5.65:1 на
+   мягкой подложке --accent-soft (порог 4.5:1). Основной текст --text —
+   12.63:1, приглушённый --text-dim — 6.69:1, заголовки --indigo — 12.95:1.
+
+   ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+  --bg: #f5f5f5;
+  --panel: #ffffff;
+  --text: #333333;
+  --text-dim: #5c5c5c;
+  --border: rgba(51, 51, 51, 0.12);
+  --border-strong: rgba(51, 51, 51, 0.22);
+  --accent: #ff7a00;
+  --accent-soft: #fff1e3;
+  --accent-text: #9a4a00;
+  --indigo: #4b0082;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow: 0 10px 34px -14px rgba(51, 51, 51, 0.28);
+  --font-main: "Inter", "Segoe UI", system-ui, -apple-system, Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  /* ширина текстовой колонки: юридический текст читается с трудом, когда
+     строка длиннее ~75 знаков, поэтому колонка у́же экрана */
+  --measure: 48rem;
+  /* печать — только чёрное по белому: цветной принтер есть не у всех, а
+     документ должен быть читаем и в архивной копии. Токены объявлены здесь,
+     чтобы в файле не было литералов цвета вне :root */
+  --print-ink: #000000;
+  --print-paper: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-main);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+/* Переход по клавиатуре: ссылка видна только в фокусе, но всегда первой */
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  color: var(--accent-text);
+  border: 1px solid var(--border-strong);
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+
+.skip:focus { left: 0; }
+
+a {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+a:hover { text-decoration-thickness: 2px; }
+
+a:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
+}
+
+/* --- Шапка документа -------------------------------------------------- */
+
+.head {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 2.25rem 1.25rem 0.5rem;
+}
+
+.product {
+  margin: 0 0 0.35rem;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.85rem;
+  line-height: 1.25;
+  color: var(--indigo);
+}
+
+.subtitle {
+  margin: 0 0 0.9rem;
+  font-size: 1.05rem;
+  color: var(--text-dim);
+}
+
+.edition {
+  margin: 0.2rem 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.edition b { color: var(--text); }
+
+/* --- Тело документа --------------------------------------------------- */
+
+.doc {
+  max-width: var(--measure);
+  margin: 1rem auto 3rem;
+  padding: 0 1.25rem;
+}
+
+.sec {
+  margin: 0 0 1rem;
+  padding: 1.35rem 1.5rem 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.sec h2 {
+  margin: 0 0 0.9rem;
+  padding-left: 0.75rem;
+  border-left: 4px solid var(--accent);
+  font-size: 1.2rem;
+  line-height: 1.35;
+  color: var(--indigo);
+}
+
+.sec p { margin: 0 0 0.85rem; }
+
+.sec p:last-child { margin-bottom: 0; }
+
+/* Предупреждение о неполных реквизитах: подложка мягкая, текст контрастный */
+.banner {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--accent-text);
+  font-size: 15px;
+}
+
+/* Оглавление: на широком экране в две колонки, чтобы не тянулось на экран */
+.toc {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  columns: 2;
+  column-gap: 2rem;
+  font-size: 15px;
+}
+
+.toc li {
+  margin: 0 0 0.4rem;
+  break-inside: avoid;
+}
+
+/* Термины: значение выровнено по левому краю, термин выделен */
+.defs { margin: 0; }
+
+.defs dt {
+  margin-top: 0.9rem;
+  font-weight: 600;
+  color: var(--indigo);
+}
+
+.defs dt:first-of-type { margin-top: 0; }
+
+.defs dd {
+  margin: 0.2rem 0 0;
+  padding-left: 1rem;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text);
+}
+
+/* Пункты: нумерация уже в тексте документа, поэтому маркеры подавлены,
+   а висячий отступ выравнивает перенесённые строки под первой буквой
+   номера — так пункт читается как абзац, а не как лесенка */
+.clauses {
+  margin: 0;
+  padding: 0 0 0 2.75rem;
+  list-style: none;
+}
+
+.clauses li {
+  margin: 0 0 0.8rem;
+  text-indent: -2.75rem;
+}
+
+.clauses li:last-child { margin-bottom: 0; }
+
+/* Реквизиты и пояснение к ним */
+.requisites p { margin: 0 0 0.4rem; }
+
+.note {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  color: var(--accent-text);
+  font-size: 15px;
+}
+
+.foot {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-strong);
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.foot p { margin: 0 0 0.5rem; }
+
+/* --- Узкие экраны ----------------------------------------------------- */
+
+@media (max-width: 720px) {
+  body { font-size: 15.5px; }
+
+  .head { padding-top: 1.5rem; }
+
+  h1 { font-size: 1.5rem; }
+
+  .doc { padding: 0 0.85rem; }
+
+  .sec {
+    padding: 1.1rem 1rem 1.2rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .toc { columns: 1; }
+
+  .clauses { padding-left: 2.25rem; }
+
+  .clauses li { text-indent: -2.25rem; }
+}
+
+/* --- Печать ----------------------------------------------------------- */
+
+@media print {
+  body {
+    background: var(--print-paper);
+    color: var(--print-ink);
+    font-size: 11.5pt;
+    line-height: 1.45;
+  }
+
+  .skip,
+  .foot a { display: none; }
+
+  .sec {
+    margin: 0 0 0.6rem;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    break-inside: avoid-page;
+  }
+
+  .sec h2 { break-after: avoid; }
+
+  .banner,
+  .note {
+    background: none;
+    border: 1px solid var(--print-ink);
+    color: var(--print-ink);
+  }
+
+  a {
+    color: var(--print-ink);
+    text-decoration: none;
+  }
+}

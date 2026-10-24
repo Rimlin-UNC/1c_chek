@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.68.0: устойчивость (рекомендации аудита).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # Очередь автозагрузки · правый край XFF · мониторинг вебхуков ·
 # статус SECRET_KEY · runbook восстановления.
 import re
@@ -139,8 +139,16 @@ class TestSystemIndicators:
         H = login(client, "admin", "admin123")
         d = client.get("/api/v1/admin/system", headers=H).json()
         assert isinstance(d["secret_key_ok"], bool)
-        assert d["secret_key_ok"] is False        # в тестах ключ дефолтный
         assert "queued" in d["fetch_queue"]
+        # v1.70.36: значение индикатора не должно зависеть от локального .env
+        # разработчика — превью и прод ставят собственный ключ, и прежняя
+        # проверка «в тестах ключ дефолтный» на такой машине падала. Логику
+        # индикатора проверяем юнитом на обоих концах; глобальный ключ не
+        # трогаем: его подмена инвалидировала бы уже выданный токен.
+        from app.security import secret_is_weak
+        assert secret_is_weak("ymaster-dev-secret-change-me-in-production")
+        assert secret_is_weak("короткий")
+        assert not secret_is_weak("K" * 48)
 
 
 # ------------------------------------------------------------------ вебхуки

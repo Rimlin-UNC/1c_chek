@@ -12,7 +12,7 @@
 # Дубликат не сохраняется (UNIQUE fn+fd+fp) и не приносит баллов —
 # на Этапе 1 строже плана («половинные баллы» — этап 6), зато без
 # серых схем «сдал чужой чек дважды».
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -20,22 +20,29 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from ..legal import offerta as _offerta
 from ..services.qr import QRParseError, parse_qr
 
 SETT_ENABLED = "pool_enabled"
-DAILY_LIMIT = 50                # чеков в сутки на пользователя (антифрод, слой 5)
+# v1.70.40: решение владельца — суточный лимит поднят с 50 до 100, чтобы
+# сдача пачкой (рубеж сессии BATCH.SESSION_CAP = 100) не упиралась в потолок
+# на 51-м чеке. Антифрод-слой сохранён: лимит по-прежнему считается на
+# участника в сутки, отказ machine-readable (result="flood") и пишется в журнал.
+DAILY_LIMIT = 100               # чеков в сутки на пользователя (антифрод, слой 5)
 ANOMALY_SUM = 500_000.0         # сумма-аномалия → ручная проверка (план, разд. 4)
 POINTS_PER_RECEIPT = 1          # 1 чек = 1 балл (план, разд. 2)
-OFFERTA_VERSION = "2026-10"     # v1.31.0: редакция оферты для журнала согласий
+# v1.70.47: редакция оферты берётся из самого документа
+# (app/legal/offerta.py), а не задаётся здесь второй раз: журнал согласий
+# pool_consents пишет ту же редакцию, которая опубликована на странице
+# /oferta, и разойтись они больше не могут. Имя сохранено — на него замок
+# (tests/test_v1310.py:432).
+OFFERTA_VERSION = _offerta.EDITION
 
-OFFERTA_SHORT = (
-    "Отправляя чек, вы подтверждаете, что он ваш, и передаёте его фискальные "
-    "данные (ФН, ФД, ФП, ИНН продавца, сумма, состав) в открытую базу "
-    "«Ямастер Чек-Пул». Персональные данные третьих лиц в базу не попадают. "
-    "Для защиты от накрутки мы храним обезличенные технические признаки "
-    "устройства и сети — они не позволяют установить личность и удаляются "
-    "не позже чем через год."
-)
+# v1.70.47: краткий текст живёт в самом документе (app/legal/offerta.py),
+# а не здесь: его показывают галочка в публичной форме, приветствие бота и
+# панель администратора, причём бот подставляет в него полный адрес
+# страницы. Вторая копия текста разъехалась бы с первой при первой правке.
+OFFERTA_SHORT = _offerta.short_terms()
 
 
 def pool_enabled(db: Session) -> bool:
@@ -62,11 +69,33 @@ def get_or_create_user(db: Session, tg_user_id: str | None = None,
 
 
 def add_points(db: Session, user, delta: int, reason: str, ref_id: str = "") -> None:
-    """Начисление баллов с записью в журнал (points_ledger)."""
-    from .models import PoolPoint
+    """Начисление баллов с записью в журнал (points_ledger).
+
+    v1.70.41 (дефект 24): прибавка выполняется атомарным UPDATE
+    `points = coalesce(points, 0) + delta`, а не чтением-изменением-записью
+    в памяти сессии. При поточной сдаче каждый чек проверяется своим фоновым
+    потоком со своей сессией: два потока читали одно и то же значение, и одно
+    начисление терялось. Замер живого прогона: 10 принятых чеков MAX дали
+    9 баллов на счёте при 10 записях начисления в чеках — то есть донор
+    терял баллы, на которые уже имел право. Баллы — расчётная единица вывода
+    средств, поэтому теряются они не в нашу пользу.
+
+    `synchronize_session="fetch"` сразу обновляет значение в объекте, поэтому
+    ответы вида `user_points` остаются точными. Если строка участника ещё не
+    в базе (не сброшена на диск), делаем прежнюю прибавку в памяти.
+    """
+    from sqlalchemy import func
+
+    from .models import PoolPoint, PoolUser
     if delta == 0:
         return
-    user.points = (user.points or 0) + delta
+    changed = (db.query(PoolUser)
+               .filter(PoolUser.id == user.id)
+               .update({PoolUser.points:
+                        func.coalesce(PoolUser.points, 0) + int(delta)},
+                       synchronize_session="fetch"))
+    if not changed:
+        user.points = (user.points or 0) + delta
     db.add(PoolPoint(user_id=user.id, delta=delta, reason=reason, ref_id=ref_id))
 
 
@@ -79,12 +108,35 @@ def _fetch_details(db: Session, qr_raw: str, fn: str, fd: str, fp: str,
     return engine.fetch(db, qr_raw, fn, fd, fp, total_rub, date_time)
 
 
+def today_count(db: Session, user) -> int:
+    """Сколько чеков участник сдал сегодня (антифрод-счётчик, v1.70.40)."""
+    from ..models import utcnow
+    from .models import PoolReceipt
+    if user is None:
+        return 0
+    day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return (db.query(PoolReceipt)
+            .filter(PoolReceipt.pool_user_id == user.id,
+                    PoolReceipt.created_at >= day_start).count())
+
+
+def limit_info(db: Session, user) -> dict:
+    """Прозрачность лимита: сдано сегодня / потолок / сколько осталось.
+
+    v1.70.40: донор видит приближение к суточному лимиту ЗАДОЛГО до отказа —
+    информативность вместо неожиданного «Лимит: не больше N чеков в сутки».
+    """
+    today = today_count(db, user)
+    return {"today": today, "limit": DAILY_LIMIT,
+            "left": max(0, DAILY_LIMIT - today)}
+
+
 def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
     """Быстрые проверки ДО обращения к источникам (v1.31.0): включённость,
     разбор QR, дедуп, суточный лимит. Возвращает (parsed, None) либо
     (None, result_dict) — машиночитаемый отказ. Не пишет в БД."""
-    from .models import PoolReceipt
     from ..models import utcnow
+    from .models import PoolReceipt
 
     if not pool_enabled(db):
         return None, {"result": "disabled", "message": "Пул выключен",
@@ -106,10 +158,7 @@ def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
     # 3) лимит на пользователя в сутки (антифрод, минимум; user может
     #    отсутствовать в претесте «а парсится ли строка вообще»)
     if user is not None:
-        day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        today = (db.query(PoolReceipt)
-                 .filter(PoolReceipt.pool_user_id == user.id,
-                         PoolReceipt.created_at >= day_start).count())
+        today = today_count(db, user)
         if today >= DAILY_LIMIT:
             return None, {"result": "flood",
                           "message": f"Лимит: не больше {DAILY_LIMIT} чеков в сутки",
@@ -121,8 +170,8 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
                   fast: bool = False) -> dict:
     """Движок источников → строки в БД → статус и баллы. Фоновая часть
     веб-приёма (v1.31.0); вызывается и синхронно из ingest_receipt."""
-    from .models import PoolItem, PoolReceipt
     from ..models import utcnow
+    from .models import PoolItem, PoolReceipt
 
     # 4) данные чека из движка источников (ФНС GetTicket → ЧЗ → …)
     try:
@@ -264,6 +313,7 @@ def ingest_receipt(db: Session, qr_raw: str, source: str, user) -> dict:
 def overview(db: Session) -> dict:
     """Счётчики для админ-панели (Этап 1: минимальный дашборд)."""
     from sqlalchemy import func
+
     from .models import PoolPoint, PoolReceipt, PoolUser
     q = db.query(PoolReceipt)
     total = q.count()

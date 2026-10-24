@@ -66,10 +66,17 @@ def _admin(client) -> dict:
 
 def _miniapp_session(client, max_id: int, username: str | None = None) -> dict:
     _setup(client)
-    r = client.post("/api/v1/maxapp/session",
-                    json={"init_data": build_init_data(max_id, username=username)})
+    init = build_init_data(max_id, username=username)
+    r = client.post("/api/v1/maxapp/session", json={"init_data": init})
     assert r.status_code == 200, r.text
-    return r.json()
+    d = r.json()
+    # v1.70.37: до согласия на обработку данных (152-ФЗ) в карточке участника
+    # нет ни имени, ни ника, поэтому для ВХОДА НА САЙТ мини-приложение передаёт
+    # initData вместе с кодом/токеном — сервер берёт username MAX из
+    # подписанного платформой payload. Возвращаем initData, чтобы тесты
+    # повторяли поведение настоящего клиента.
+    d["init_data"] = init
+    return d
 
 
 def _create_invite(client, company="ООО МАКС-Веб", role="user",
@@ -147,7 +154,8 @@ class TestMaxWebLogin:
         sess = _miniapp_session(client, 4242, username="webmax")
         h = {"Authorization": "Bearer " + sess["access_token"]}
         c = client.post("/api/v1/maxapp/confirm-login",
-                        headers=h, json={"code": code})
+                        headers=h, json={"code": code,
+                                         "init_data": sess["init_data"]})
         assert c.status_code == 200, c.text
         p2 = client.post("/api/v1/auth/max/poll", json={"code": code})
         assert p2.status_code == 200, p2.text
@@ -342,7 +350,8 @@ class TestMaxInvites:
         assert pv.status_code == 200 and pv.json()["valid"] is True
         assert pv.json()["company_name"] == "ООО МАКС-Инв"
         a = client.post("/api/v1/maxapp/invite/accept",
-                        headers=h, json={"token": inv["token"]})
+                        headers=h, json={"token": inv["token"],
+                                         "init_data": sess["init_data"]})
         assert a.status_code == 200, a.text
         d = a.json()
         assert d["status"] == "ok" and d["action"] == "registered"

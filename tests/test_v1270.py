@@ -4,7 +4,7 @@
 # Источник «Приложение ФНС» (irkkt-mobile, fns_app) выведен из системы
 # в v1.57.0 (сервис перестал отвечать). Инвариант порядка сохранён:
 # proverkacheka — единственный рабочий источник, mock всегда в конце.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from tests.conftest import login, client  # noqa: F401
 

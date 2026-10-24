@@ -1,6 +1,6 @@
 # 🟡 Интеграция «Ямастер Чек» ↔ 1С:Предприятие
 
-> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
 > Поддерживаемые конфигурации: **1С:Бухгалтерия 3.0**, **1С:ERP 2**, **1С:УТ 11** (платформа 8.3.10+)
 
 Два режима интеграции:
@@ -20,7 +20,7 @@
 
 ```bash
 curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/ping
-# {"service":"Ямастер Чек","vendor":"ООО Ямастер (ymaster.ru)","pending_receipts":12,...}
+# {"service":"Ямастер Чек","vendor":"ООО «Ямастер» (ymaster.ru)","pending_receipts":12,...}
 ```
 
 При необходимости перевыпустите токен («♻ Сгенерировать») — старый перестанет работать.
@@ -208,4 +208,4 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
 
 ---
 
-© 2026 **ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+© 2026 **ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru

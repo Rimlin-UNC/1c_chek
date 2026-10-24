@@ -1,0 +1,20 @@
+{
+  "rules": {
+    "color-no-invalid-hex": true,
+    "block-no-empty": true,
+    "property-no-unknown": true,
+    "unit-no-unknown": true,
+    "at-rule-no-unknown": true,
+    "media-feature-name-no-unknown": true,
+    "function-no-unknown": [true, { "ignoreFunctions": ["color-mix"] }],
+    "no-invalid-double-slash-comments": true,
+    "font-family-no-missing-generic-family-keyword": true,
+    "named-grid-areas-no-invalid": true,
+    "keyframe-declaration-no-important": true,
+    "comment-no-empty": true,
+    "declaration-block-no-shorthand-property-overrides": true,
+    "declaration-block-no-duplicate-properties": [true, {
+      "ignore": ["consecutive-duplicates-with-different-values"]
+    }]
+  }
+}

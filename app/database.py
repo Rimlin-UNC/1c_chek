@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Подключение к базе данных (SQLAlchemy).
 """
@@ -30,7 +30,6 @@ def _utcnow() -> "object":
 
 class Base(DeclarativeBase):
     """Базовый класс всех ORM-моделей."""
-    pass
 
 
 _connect_args = {}
@@ -82,6 +81,13 @@ def init_db() -> None:
     try:  # v1.31.0: добавляющая миграция пула (vid у pool_users + pool_consents)
         from .pool.models import ensure_pool_schema
         ensure_pool_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
+    try:  # v1.70.45: таблицы контура B2B (доступ компаний к платному API)
+        from .b2b import models as _b2b_models  # noqa: F401
+        from .b2b.models import ensure_b2b_schema
+        ensure_b2b_schema(engine)
     except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
         import traceback
         traceback.print_exc()
@@ -158,6 +164,27 @@ def _ensure_schema() -> None:
              "ALTER TABLE companies ADD COLUMN limit_per_month FLOAT NULL"),
             ("forbidden_categories",
              "ALTER TABLE companies ADD COLUMN forbidden_categories VARCHAR(1000) DEFAULT ''"),
+        ],
+        "pool_users": [
+            # v1.70.37: канал регистрации и метка «пришёл через MAX»
+            ("reg_source",
+             "ALTER TABLE pool_users ADD COLUMN reg_source VARCHAR(16) DEFAULT ''"),
+            # v1.70.37: профиль из MAX — заполняется только после согласия
+            ("first_name",
+             "ALTER TABLE pool_users ADD COLUMN first_name VARCHAR(64) DEFAULT ''"),
+            ("last_name",
+             "ALTER TABLE pool_users ADD COLUMN last_name VARCHAR(64) DEFAULT ''"),
+            ("photo_url",
+             "ALTER TABLE pool_users ADD COLUMN photo_url VARCHAR(512) DEFAULT ''"),
+            ("language",
+             "ALTER TABLE pool_users ADD COLUMN language VARCHAR(8) DEFAULT ''"),
+            # v1.70.37: согласие 152-ФЗ на данные из MAX (момент/версия/канал)
+            ("consent_at",
+             "ALTER TABLE pool_users ADD COLUMN consent_at DATETIME NULL"),
+            ("consent_version",
+             "ALTER TABLE pool_users ADD COLUMN consent_version VARCHAR(16) DEFAULT ''"),
+            ("consent_source",
+             "ALTER TABLE pool_users ADD COLUMN consent_source VARCHAR(16) DEFAULT ''"),
         ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),

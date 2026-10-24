@@ -29,6 +29,7 @@ from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      Query, UploadFile, status)
 from fastapi.responses import Response
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER, get_current_user,
@@ -342,7 +343,7 @@ def list_receipts(
     date_to: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     company_id: str | None = Query(None, max_length=36,
                                    description="v1.11.0: компания (только админ)"),
-    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1, le=settings.PAGE_MAX), page_size: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
     query = db.query(Receipt)
@@ -437,7 +438,7 @@ def list_creators(company_id: str | None = Query(None, max_length=36),
             .filter(Receipt.created_by.isnot(None))
             .group_by(Receipt.created_by).all())
     ids = [uid for uid, _n in rows]
-    cnt = {uid: n for uid, n in rows}
+    cnt = dict(rows)   # v1.70.38: без лишнего прохода по тем же парам
     users = db.query(User).filter(User.id.in_(ids)).all() if ids else []
     by_id = {u.id: u for u in users}
     # редкий случай: пользователь удалён — показываем «(удалён)»
@@ -1200,17 +1201,29 @@ def _verify_one_sync(receipt_id: str) -> None:
         db.commit()
 
         # v1.18.0: id задаём явно (max+1) — на таблицах старой схемы SQLite
-        # не автоинкрементировал BigInteger PK и журнал ФНС молча не вёлся
-        _nid = (db.query(func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1
-        db.add(FnsLog(id=_nid,
-                      receipt_id=receipt.id,
-                      request_data=json.dumps({"fn": receipt.fn, "fd": receipt.fd,
-                                               "fp": receipt.fp}, ensure_ascii=False),
-                      response_data=json.dumps(result.raw, ensure_ascii=False)[:4000],
-                      provider=(result.raw.get("provider", "mock")
-                                if isinstance(result.raw, dict) else "mock"),
-                      ok=result.ok, duration_ms=duration))
-        db.commit()
+        # не автоинкрементировал BigInteger PK и журнал ФНС молча не вёлся.
+        # v1.70.38: max+1 без повторов — это гонка (два одновременных чека
+        # получают один id, второй коммит падает, строка журнала теряется),
+        # поэтому при IntegrityError номер перечитывается и вставка идёт заново.
+        _req = json.dumps({"fn": receipt.fn, "fd": receipt.fd,
+                           "fp": receipt.fp}, ensure_ascii=False)
+        _resp = json.dumps(result.raw, ensure_ascii=False)[:4000]
+        _prov = (result.raw.get("provider", "mock")
+                 if isinstance(result.raw, dict) else "mock")
+        for _try in range(5):
+            _nid = (db.query(
+                func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1
+            db.add(FnsLog(id=_nid,
+                          receipt_id=receipt.id,
+                          request_data=_req,
+                          response_data=_resp,
+                          provider=_prov,
+                          ok=result.ok, duration_ms=duration))
+            try:
+                db.commit()
+                break
+            except IntegrityError:
+                db.rollback()      # чек к этому моменту уже сохранён выше
         broadcast("receipt_verified", receipt.to_dict())
         # v1.67.0: событие наружу — исходящий webhook (очередь + повторы)
         from ..services.webhooks import enqueue_receipt_verified

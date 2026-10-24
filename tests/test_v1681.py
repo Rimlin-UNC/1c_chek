@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.68.1: стресс-дожим (уведомления + пул).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 import re
 import time
 

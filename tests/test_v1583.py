@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.58.3: оранжевые кнопки во всей программе,
 # московское время на сервере (deploy.sh), закрепление переключателя
 # вида в UI-харнессе.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 import os
@@ -65,14 +65,34 @@ class TestCorporateOrange:
         assert "border-color: var(--accent); background: #ffe4c9;" in css
 
     def test_semantics_kept(self):
+        """Семантика «зелёный = успех, терракота = ошибка» сохранена.
+
+        v1.70.32: пин переведён на читаемые оттенки. Прежние `color: var(--ok)`
+        и `color: var(--bad)` давали 4.25:1 и 3.96:1 на белом — ниже порога
+        WCAG AA (4.5:1) для текста кнопок, а тест это закреплял. Границы и
+        подложки по-прежнему фирменные (--ok/--bad), текстовые оттенки — из
+        отдельных токенов --ok-text/--bad-text.
+        """
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert ".btn-ok { border-color: rgba(52,211,153,.4); color: var(--ok); background: #eaf7f1; }" in css
-        assert ".btn-bad { border-color: rgba(248,113,113,.4); color: var(--bad); background: #fdeeec; }" in css
-        assert ".btn-primary {" in css                       # градиент на месте
+        ok = css.split(".btn-ok {")[1].split("}")[0]
+        assert "color: var(--ok-text)" in ok, ok
+        assert "var(--ok)" in ok and "#eaf7f1" in ok      # фирменная зелень
+        bad = css.split(".btn-bad {")[1].split("}")[0]
+        assert "color: var(--bad-text)" in bad, bad
+        assert "var(--bad)" in bad and "#fdeeec" in bad   # фирменная терракота
+        assert ".btn-primary {" in css                    # градиент на месте
 
     def test_btn_icon_orange_hover(self):
+        """Ховер иконочной кнопки остаётся фирменно-оранжевым.
+
+        v1.70.32: текст — через `--accent-text` (#9a4a00, 5.65:1 на
+        --accent-soft). Прежний `color: var(--accent)` давал 2.36:1 — иконка на
+        ховере практически исчезала, а тест это закреплял. Подложка не
+        изменилась, фирменный оранжевый на месте.
+        """
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert ".btn-icon:hover { background: var(--accent-soft); color: var(--accent); }" in css
+        assert ".btn-icon:hover { background: var(--accent-soft); " \
+               "color: var(--accent-text); }" in css
 
 
 class TestServerMsk:

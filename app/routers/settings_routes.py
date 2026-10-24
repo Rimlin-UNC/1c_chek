@@ -3,13 +3,16 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Настройки: маппинг реквизитов, параметры ФНС и 1С, справочники полей.
 """
 from __future__ import annotations
 
+import re
 import secrets
+
+from pydantic import BaseModel, Field
 
 from fastapi import (APIRouter, Depends, HTTPException, Query,
                      Request, status)
@@ -193,6 +196,78 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
         "auto_verify": body.auto_verify,
         "advance_deadline_days": body.advance_deadline_days})
     return {"ok": True, "message": "Настройки сохранены"}
+
+
+# --------------------------------------------------------------------------
+#  v1.70.37: реквизиты оператора в тексте согласия на обработку персональных
+#  данных (152-ФЗ). Текст согласия живёт в services.consent; здесь — только те
+#  сведения, которые знает владелец: ИНН, ОГРН, юридический адрес и почта для
+#  связи по персональным данным. В коде намеренно нет «значений по умолчанию»
+#  для реквизитов: выдуманные юридические факты в согласии — дефект хуже
+#  пустого поля, поэтому пока они не заполнены, в тексте вместо адреса
+#  указывается общеизвестный источник (ЕГРЮЛ) и почта для запроса, а
+#  администратор видит пометку о неполноте (п. 2 ч. 4 ст. 9 152-ФЗ).
+# --------------------------------------------------------------------------
+class ConsentRequisitesPatch(BaseModel):
+    # запас по длине — на ввод с проборами и дефисами («55 01-28 0595»):
+    # цифры извлекаются на сервере, в настройку пишется только число
+    inn: str | None = Field(default=None, max_length=32)
+    ogrn: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=300)
+    contact: str | None = Field(default=None, max_length=120)
+
+
+@router.get("/consent", summary="Реквизиты оператора в согласии 152-ФЗ (админ)")
+def get_consent_settings(db: Session = Depends(get_db),
+                         user: User = Depends(require_admin)):
+    from ..services import consent
+    r = consent.requisites(db)
+    return {**r,
+            "complete": consent.requisites_complete(db),
+            "version": consent.CONSENT_VERSION,
+            "operator_line": consent.operator_line(db)}
+
+
+@router.put("/consent", summary="Сохранить реквизиты оператора (админ)")
+def put_consent_settings(body: ConsentRequisitesPatch,
+                         db: Session = Depends(get_db),
+                         user: User = Depends(require_admin)):
+    from ..services import consent
+    if body.inn is not None:
+        inn = re.sub(r"\D", "", body.inn)
+        if inn and len(inn) not in (10, 12):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "ИНН: 10 цифр для юридического лица, 12 — для ИП")
+        appsettings.set_setting(db, consent.KEY_INN, inn)
+    if body.ogrn is not None:
+        ogrn = re.sub(r"\D", "", body.ogrn)
+        if ogrn and len(ogrn) not in (13, 15):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "ОГРН: 13 цифр (ОГРНИП — 15)")
+        appsettings.set_setting(db, consent.KEY_OGRN, ogrn)
+    if body.address is not None:
+        appsettings.set_setting(db, consent.KEY_ADDRESS,
+                                body.address.strip()[:300])
+    if body.contact is not None:
+        contact = body.contact.strip()[:120]
+        if contact and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Почта для связи по персональным данным: "
+                                "адрес вида chek@ymaster.ru")
+        appsettings.set_setting(db, consent.KEY_CONTACT, contact)
+    log_action(user, "consent_requisites_updated", details={
+        "inn": body.inn, "ogrn": body.ogrn,
+        "address_set": bool((body.address or "").strip()),
+        "contact": body.contact})
+    complete = consent.requisites_complete(db)
+    return {"ok": True, "complete": complete,
+            "operator_line": consent.operator_line(db),
+            "message": ("Реквизиты сохранены — текст согласия обновлён"
+                        if complete else
+                        "Сохранено. Для полноты по п. 2 ч. 4 ст. 9 152-ФЗ "
+                        "укажите ИНН, ОГРН и юридический адрес: пока в тексте "
+                        "согласия вместо адреса — ссылка на ЕГРЮЛ и почта для "
+                        "запроса")}
 
 
 # --------------------------------------------------------------------------
@@ -493,7 +568,7 @@ def put_max_settings(body: dict, db: Session = Depends(get_db),
             _s(db, mx.SETT_USERNAME, "")
         elif not _re.fullmatch(r"[A-Za-z0-9._-]{2,64}", nick):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "Ник бота: латиница, цифры и . _ - "
+                                "Ник бота: латиница, цифры и знаки . _ - "
                                 "(как в ссылке max.ru/ник)")
         else:
             _s(db, mx.SETT_USERNAME, nick)
@@ -653,30 +728,26 @@ def ping_telegram(db: Session = Depends(get_db), admin: User = Depends(require_a
 
 
 @router.get("/telegram/adguard/setup",
-            summary="Статус автоустановки AdGuard VPN (админ)")
+            summary="Статус AdGuard VPN: задание + включён ли VPN (админ)")
 def adguard_setup_status(admin: User = Depends(require_admin)):
+    """v1.70.25: добавлено `vpn` — по нему панель красит кнопку-переключатель
+    (зелёный = VPN работает, красный = выключен)."""
     from ..services import adguard_setup as ag
     return {"job": ag.setup_status(), "running": ag.job.running,
-            "hint": "Механика как у обновления: фазы по порядку, живой "
-                    "журнал; ссылка входа AdGuard появляется в job.login_url."}
+            "vpn": ag.vpn_status()}
 
 
 @router.get("/telegram/adguard/setup/preflight",
             summary="Готовность сервера к автоустановке AdGuard (админ)")
 def adguard_setup_preflight(admin: User = Depends(require_admin)):
+    """v1.70.16: мастер без пароля. Готов — запускаем; не готов — отдаём
+    ОДНУ команду для терминала (one_time_cmd), пароль не запрашиваем."""
     from ..services import adguard_setup as ag
-    pf = ag.preflight()
-    if pf["need_password"]:
-        pf["hint"] = ("Программа работает без root, а sudo просит пароль — "
-                      "введите пароль сервера в панели установки (как в "
-                      "окне обновления; sudo проверяет пароль служебного "
-                      "пользователя программы). Используется только на "
-                      "время установки и нигде не сохраняется.")
-    return pf
+    return ag.preflight()
 
 
 @router.post("/telegram/adguard/setup",
-             summary="Автоустановка AdGuard VPN из программы: start/cancel (админ)")
+             summary="AdGuard VPN из программы: start/cancel/off (админ)")
 def adguard_setup_action(body: dict, db: Session = Depends(get_db),
                          admin: User = Depends(require_admin)):
     from ..services import adguard_setup as ag
@@ -687,15 +758,42 @@ def adguard_setup_action(body: dict, db: Session = Depends(get_db),
                                 "Установка не выполняется")
         log_action(admin, "adguard_setup_cancel")
         return {"ok": True, "message": "Останавливаю…"}
+    if action == "off":
+        # v1.70.25: выключение VPN той же кнопкой. CLI и вход не удаляются,
+        # поэтому повторное включение идёт без ссылки подтверждения.
+        r = ag.turn_off()
+        if not r.get("ok"):
+            if r.get("need_rule"):
+                # правило помощника не установлено/устарело: это не конфликт,
+                # а «нужна одна команда в терминале» — отдаём её в ответе.
+                return {"ok": False, "need_rule": True,
+                        "one_time_cmd": r.get("one_time_cmd", ""),
+                        "message": r.get("error", "")}
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                r.get("error") or "Не выключить VPN")
+        log_action(admin, "adguard_off")
+        return {"ok": True, "vpn": r.get("vpn"), "message": r.get("message", "")}
     if ag.job.running:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Установка уже выполняется — смотрите журнал "
                             "в карточке Telegram")
-    # пароль — только в память задания (sudo -S на время установки)
-    ag.start_setup(db, sudo_password=(body or {}).get("sudo_password") or "")
+    # v1.70.16: пароль сервера больше не принимается вовсе — привилегированные
+    # шаги делает помощник (sudoers NOPASSWD). Старый клиент мог прислать поле
+    # sudo_password из кэша: молча игнорируем и говорим об этом в ответе.
+    ignored_pw = bool((body or {}).get("sudo_password"))
+    try:
+        ag.start_setup(db)
+    except RuntimeError as e:
+        # v1.70.21: гонка двух одновременных запусков — это 409, а не 500.
+        # Проверка выше не атомарна, поэтому страховка обязана быть здесь.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     log_action(admin, "adguard_setup_start")
     return {"ok": True,
-            "message": "Установка запущена — следите за процессом в карточке"}
+            "message": "Установка запущена — следите за процессом в карточке",
+            "passwordless": True,
+            **({"warning": "Пароль не использован: с v1.70.16 мастер AdGuard "
+                           "работает без пароля (обновите страницу, чтобы "
+                           "убрать устаревшее поле)."} if ignored_pw else {})}
 
 
 @router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")

@@ -4,7 +4,7 @@
 # Только НОВЫЕ таблицы (pool_*); существующие таблицы ядра не изменяются.
 # Миграции — только добавляющие (ensure_pool_schema: новые таблицы +
 # добавление колонок), продакшн-база никогда не требует разрушающих ALTER.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -58,6 +58,23 @@ class PoolUser(Base):
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
     quarantined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    # v1.70.37: канал регистрации участника: max | tg | web | "" (гость сайта).
+    # Поле — факт о способе входа, не персональные данные; по нему администратор
+    # видит, что человек пришёл через мини-приложение MAX.
+    reg_source: Mapped[str] = mapped_column(String(16), default="")
+    # v1.70.37: профиль из MAX. Заполняется ТОЛЬКО после явного согласия
+    # (152-ФЗ, ст. 9): пока consent_at NULL, карточка пуста, а сессия и начисление
+    # баллов работают — для них достаточно идентификатора.
+    first_name: Mapped[str] = mapped_column(String(64), default="")
+    last_name: Mapped[str] = mapped_column(String(64), default="")
+    photo_url: Mapped[str] = mapped_column(String(512), default="")
+    language: Mapped[str] = mapped_column(String(8), default="")
+    # v1.70.37: согласие на обработку данных, полученных из MAX: момент дачи,
+    # версия текста согласия и канал. NULL consent_at — согласие не дано либо
+    # отозвано: персональные поля очищены (ст. 21 152-ФЗ).
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consent_version: Mapped[str] = mapped_column(String(16), default="")
+    consent_source: Mapped[str] = mapped_column(String(16), default="")
 
 
 # --------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.4.0: обновление из приложения, статьи расходов,
 # расширенные действия администратора, виджеты дашборда.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import uuid
 
@@ -11,6 +11,12 @@ from tests.conftest import login
 
 
 def _mk_user(client, role="user"):
+    """Создаёт пользователя по приглашению; возвращает заголовки АДМИНА, id,
+    имя и — с v1.70.38 — заголовки самого нового пользователя.
+
+    Раньше токен созданного пользователя выбрасывался, поэтому проверки
+    «эндпоинт только для админа» уходили без авторизации и проверяли
+    анонима вместо обычного пользователя (см. test_check_requires_admin)."""
     hdr = login(client, "admin", "admin123")
     uname = f"usr{uuid.uuid4().hex[:6]}"
     r = client.post("/api/v1/invites", json={
@@ -22,7 +28,9 @@ def _mk_user(client, role="user"):
         "password": "secret2026", "full_name": uname.upper()})
     assert r2.status_code == 200
     uid = r2.json()["user"]["id"]
-    return hdr, uid, uname
+    tok = r2.json().get("access_token") or ""
+    uhdr = {"Authorization": f"Bearer {tok}"} if tok else {}
+    return hdr, uid, uname, uhdr
 
 
 class TestUpdater:
@@ -41,13 +49,25 @@ class TestUpdater:
         assert "9.9.9" in d["changelog_excerpt"]
 
     def test_check_requires_admin(self, client):
-        hdr, _, _ = _mk_user(client, "user")
-        h = login(client, [c for c in [hdr]], "x") if False else None
-        # логинимся как пользователь
-        # (регистрация вернула токен, но для простоты берём админ-проверку)
-        assert h is None
-        r = client.get("/api/v1/admin/update/check")  # без заголовка
-        assert r.status_code in (401, 403)
+        """v1.70.38: тест был ФИКТИВНЫМ. Строка
+        `h = login(...) if False else None` превращала `assert h is None`
+        в тавтологию, а запрос уходил вообще без токена — проверялся аноним,
+        а не «обычный пользователь не может проверять обновления».
+        Теперь проверяются оба случая и свежим клиентом: общий `client`
+        несёт cookie прежнего админ-входа, с ней ответ был бы 200 не
+        потому, что доступ разрешён."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        _hdr, _uid, _uname, uhdr = _mk_user(client, "user")
+        assert uhdr, "регистрация не вернула токен пользователя"
+        with TestClient(app) as anon:
+            r_user = anon.get("/api/v1/admin/update/check", headers=uhdr)
+            r_anon = anon.get("/api/v1/admin/update/check")
+        # вошедший пользователь без прав — 403, аноним — 401/403, и ни в том
+        # ни в другом случае сведений об обновлении не отдаётся
+        assert r_user.status_code == 403, r_user.text
+        assert "update_available" not in (r_user.text or "")
+        assert r_anon.status_code in (401, 403)
 
     def test_apply_when_no_update(self, client, monkeypatch):
         from app.services import updater
@@ -88,7 +108,7 @@ class TestUpdater:
 
 class TestAdminUserActions:
     def test_change_role(self, client):
-        hdr, uid, uname = _mk_user(client, "user")
+        hdr, uid, uname, _uhdr = _mk_user(client, "user")
         r = client.patch(f"/api/v1/admin/users/{uid}/role",
                          json={"role": "accountant"}, headers=hdr)
         assert r.status_code == 200, r.text
@@ -97,7 +117,7 @@ class TestAdminUserActions:
         assert r2.status_code == 422, "роль admin через смену роли недоступна"
 
     def test_reset_password_gives_temp(self, client):
-        hdr, uid, uname = _mk_user(client, "user")
+        hdr, uid, uname, _uhdr = _mk_user(client, "user")
         r = client.post(f"/api/v1/admin/users/{uid}/reset-password", headers=hdr)
         assert r.status_code == 200
         temp = r.json()["temp_password"]
@@ -115,7 +135,7 @@ class TestAdminUserActions:
         assert r.status_code == 400
 
     def test_unarchive_restores_login(self, client):
-        hdr, uid, uname = _mk_user(client, "user")
+        hdr, uid, uname, _uhdr = _mk_user(client, "user")
         # архивируем штатным способом
         r = client.delete(f"/api/v1/users/{uid}", headers=hdr)
         assert r.status_code == 200
@@ -130,16 +150,36 @@ class TestAdminUserActions:
     def test_transfer_receipts(self, client):
         from tests.test_external import _scan  # хелпер со случайным ФП
         hdr_admin = login(client, "admin", "admin123")
-        hdr_a, uid_a, _ = _mk_user(client, "user")
-        hdr_b, uid_b, _ = _mk_user(client, "user")
-        receipt = _scan(client, hdr_a)
+        hdr_a, uid_a, _, uha = _mk_user(client, "user")
+        hdr_b, uid_b, _, uhb = _mk_user(client, "user")
+        # v1.70.39: чек создаёт САМ сотрудник (uha), а не админ. Первый
+        # возвращаемый _mk_user заголовок — админский, поэтому раньше и чек,
+        # и проверка видимости шли от имени админа: админ видит все чеки,
+        # значит проверка «получатель видит чек» была пустой, а падала она
+        # лишь тогда, когда чек не попадал в первые 50 строк общего списка.
+        receipt = _scan(client, uha)
         r = client.post(f"/api/v1/admin/users/{uid_a}/transfer-receipts",
                         json={"to_user_id": uid_b}, headers=hdr_admin)
         assert r.status_code == 200, r.text
-        # чек должен быть виден получателю (у role=user — только свои)
-        mine = client.get("/api/v1/receipts", headers=hdr_b).json()
+        # чек должен быть виден получателю (у role=user — только свои).
+        # v1.70.39: запрашиваем именно этот чек (ids), а не первую страницу
+        # списка — иначе результат зависел от того, сколько чеков накопилось
+        # в общем сеансе БД и в каком порядке тесты выполнялись.
+        # Изоляция пространства при этом проверяется: ids не отменяет scope.
+        mine = client.get("/api/v1/receipts", params={"ids": receipt["id"]},
+                          headers=uhb).json()
         assert any(x["id"] == receipt["id"] for x in mine["items"]), \
             "после передачи чек виден новому владельцу"
+        # прежний владелец чек больше не видит (role=user → только свои)
+        gone = client.get("/api/v1/receipts", params={"ids": receipt["id"]},
+                          headers=uha).json()
+        assert not any(x["id"] == receipt["id"] for x in gone["items"]), \
+            "после передачи чек не виден прежнему владельцу"
+        # админ по-прежнему видит чек и знает, кому он теперь принадлежит
+        both = client.get("/api/v1/receipts", params={"ids": receipt["id"]},
+                          headers=hdr_admin).json()
+        assert any(x["id"] == receipt["id"] for x in both["items"])
+        assert hdr_a and hdr_b  # заголовки админа использованы выше
 
 
 class TestCategory:
