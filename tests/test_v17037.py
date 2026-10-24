@@ -151,7 +151,7 @@ class TestOperatorRequisites:
     INN = "5501280595"
     OGRN = "1245500017062"
     ADDR = "644085, г. Омск, пр-кт Мира, д. 183, офис 27"
-    MAIL = "privacy@ymaster.ru"
+    MAIL = "privacy@example.com"  # RFC 2606: зарезервирован для примеров
 
     def _put(self, client, hdr, **kw):
         return client.put("/api/v1/settings/consent", headers=hdr, json=kw)
@@ -203,7 +203,7 @@ class TestOperatorRequisites:
             assert self._put(client, hdr, inn="12345").status_code == 422
             assert self._put(client, hdr, ogrn="12345").status_code == 422
             r = self._put(client, hdr, contact="не почта")
-            assert r.status_code == 422 and "privacy@" in r.json()["detail"]
+            assert r.status_code == 422 and "chek@" in r.json()["detail"]
             # отказ ничего не записал
             st = client.get("/api/v1/settings/consent", headers=hdr).json()
             assert st["inn"] == "" and st["contact"] == "chek@ymaster.ru"
@@ -932,7 +932,7 @@ class TestVersion17037Sync:
 class TestRelease:
     """Требование «своя запись первая» живёт в файле текущего выпуска."""
 
-    VERSION = "1.70.48"
+    VERSION = "1.70.49"
 
     def test_whats_new_is_first(self):
         js = read(APP_JS)

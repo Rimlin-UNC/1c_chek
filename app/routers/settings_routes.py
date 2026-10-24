@@ -253,7 +253,7 @@ def put_consent_settings(body: ConsentRequisitesPatch,
         if contact and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "Почта для связи по персональным данным: "
-                                "адрес вида privacy@ymaster.ru")
+                                "адрес вида chek@ymaster.ru")
         appsettings.set_setting(db, consent.KEY_CONTACT, contact)
     log_action(user, "consent_requisites_updated", details={
         "inn": body.inn, "ogrn": body.ogrn,

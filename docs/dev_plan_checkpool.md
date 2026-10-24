@@ -376,7 +376,7 @@ passkey_removed, login_passkey(+failed).
 - Cookie-баннер с категориями (необходимые / антифрод / аналитика) —
   fingerprint включаем только после согласия на «антифрод».
 - IP/fingerprint — хранение ≤12 месяцев, затем анонимизация.
-- Пользователь вправе запросить свой risk_score (support@ymaster.ru).
+- Пользователь вправе запросить свой risk_score (chek@ymaster.ru).
 
 ## 6. Риски и митигации
 
