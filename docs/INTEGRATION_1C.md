@@ -20,7 +20,7 @@
 
 ```bash
 curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/ping
-# {"service":"Ямастер Чек","vendor":"ООО Ямастер (ymaster.ru)","pending_receipts":12,...}
+# {"service":"Ямастер Чек","vendor":"ООО «Ямастер» (ymaster.ru)","pending_receipts":12,...}
 ```
 
 При необходимости перевыпустите токен («♻ Сгенерировать») — старый перестанет работать.

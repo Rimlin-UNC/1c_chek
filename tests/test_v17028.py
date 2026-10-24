@@ -217,7 +217,7 @@ class TestTtyOutputParsing:
         assert ag.LOGIN_ANSWERS[0][1] == "b", "первым делом — открыть ссылку"
         assert all(k in ("b", "s") for _d, k in ag.LOGIN_ANSWERS), \
             "«x» нажимать нельзя: это отмена входа"
-        assert all(isinstance(d, float) or isinstance(d, int)
+        assert all(isinstance(d, (float, int))
                    for d, _k in ag.LOGIN_ANSWERS)
 
     def test_pty_output_does_not_change_url_filtering(self):

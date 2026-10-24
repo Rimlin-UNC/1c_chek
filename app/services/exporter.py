@@ -174,7 +174,7 @@ def build_enterprise_data_json(receipts: list[Receipt],
     return json.dumps({
         "ФорматВерсии": "1.3",
         "ИмяПакета": "ЯмастерЧек",
-        "Поставщик": "ООО Ямастер (ymaster.ru)",
+        "Поставщик": "ООО «Ямастер» (ymaster.ru)",
         "ДатаФормирования": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
         "Данные": {
             "Контейнер": [
@@ -206,7 +206,7 @@ def build_enterprise_data_xml(receipts: list[Receipt],
     """Полный пакет EnterpriseData в формате XML."""
     root = ET.Element("EnterpriseData", {
         "ФорматВерсии": "1.3", "ИмяПакета": "ЯмастерЧек",
-        "Поставщик": "ООО Ямастер (ymaster.ru)",
+        "Поставщик": "ООО «Ямастер» (ymaster.ru)",
     })
     container = ET.SubElement(root, "Данные")
     cont = ET.SubElement(container, "Контейнер")

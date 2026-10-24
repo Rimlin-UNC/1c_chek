@@ -118,7 +118,7 @@ def render_html(db: Session | None = None) -> str:
   <h1>{_e(d['title'])}</h1>
   <p class="subtitle">{_e(d['subtitle'])}</p>
   <p class="edition">Редакция <b>{_e(d['edition'])}</b> от {_e(d['edition_date'])}
-     · правообладатель: {_e(d['operator'])}</p>
+     · Правообладатель: {_e(d['operator'])}</p>
   <p class="edition">Обращения: <a href="mailto:{_e(d['contact'])}">{_e(d['contact'])}</a>
      · <a href="{offerta.PAGE_PATH}.txt">текст для печати</a>
      · <a href="/">на сайт</a></p>

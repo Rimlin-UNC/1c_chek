@@ -49,7 +49,7 @@ def ping(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
     pending = db.query(Receipt).filter(Receipt.exported == False).count()  # noqa: E712
     return {
         "service": "Ямастер Чек",
-        "vendor": "ООО Ямастер (ymaster.ru)",
+        "vendor": "ООО «Ямастер» (ymaster.ru)",
         "pending_receipts": pending,
         "server_time": dt.datetime.utcnow().isoformat() + "Z",
     }

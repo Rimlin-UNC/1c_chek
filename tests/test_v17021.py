@@ -96,7 +96,7 @@ class TestStartRace:
                 ag.job.reset()
                 barrier = threading.Barrier(n)
 
-                def racer():
+                def racer(barrier=barrier):
                     barrier.wait()
                     try:
                         ag.start_setup(None)

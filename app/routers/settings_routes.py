@@ -568,7 +568,7 @@ def put_max_settings(body: dict, db: Session = Depends(get_db),
             _s(db, mx.SETT_USERNAME, "")
         elif not _re.fullmatch(r"[A-Za-z0-9._-]{2,64}", nick):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "Ник бота: латиница, цифры и . _ - "
+                                "Ник бота: латиница, цифры и знаки . _ - "
                                 "(как в ссылке max.ru/ник)")
         else:
             _s(db, mx.SETT_USERNAME, nick)
