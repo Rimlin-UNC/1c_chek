@@ -2106,3 +2106,38 @@ label.field[hidden] { display: none; }
   .osm-tab { font-size: 12px; padding: 7px 10px; }
   .osm-chart { height: 220px; }
 }
+
+/* ==========================================================================
+   v1.70.58 — читаемые оглавления блоков: сетка заголовка карточки на
+   узком экране и в низком ландшафте. Портрет: строка 1 — название и
+   стрелка, строка 2 — подзаголовок, строка 3 — значок состояния.
+   ========================================================================== */
+.card-title > .ct-text { min-width: 0; }
+@media (max-width: 640px), (orientation: landscape) and (max-height: 560px) {
+  .glass.card.foldable > .card-title {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 10px;
+    row-gap: 4px;
+    align-items: center;
+  }
+  .glass.card.foldable > .card-title > .ct-text { grid-column: 1; grid-row: 1; }
+  .glass.card.foldable > .card-title > .fold-chevron {
+    grid-column: 2; grid-row: 1; justify-self: end;
+  }
+  .glass.card.foldable > .card-title > .form-hint { grid-column: 1 / -1; grid-row: 2; }
+  .glass.card.foldable > .card-title > .chip { grid-column: 1 / -1; grid-row: 3; justify-self: start; }
+  .glass.card.foldable > .card-title > .spacer { display: none; }
+}
+/* v1.70.58: заголовок страницы на телефоне переносится на вторую строку
+   вместо обрезания точками; базовое правило (одна строка с «…» для
+   планшета и выше) не тронуто — высота шапки 50px вмещает две строки. */
+@media (max-width: 640px) {
+  .page-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    font-size: 17px;
+    line-height: 1.15;
+  }
+}
