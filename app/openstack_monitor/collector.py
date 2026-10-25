@@ -20,6 +20,7 @@ import json
 from datetime import datetime
 
 from ..models import iso_z
+from . import connection
 from .models import DEFAULT_THRESHOLDS, _utcnow
 
 # Пределы чтения списков: сбор не должен вычитывать тысячи объектов.
@@ -55,18 +56,23 @@ def _as_int(value, default: int = 0) -> int:
 
 
 def hypervisor_stats(conn) -> tuple[dict, str]:
-    """Статистика гипервизоров Nova. → (числа, причина отказа)."""
+    """Статистика гипервизоров Nova. → (числа, причина отказа).
+
+    v1.70.56: сводка берётся через connection.hypervisor_totals — в
+    openstacksdk 4.x метода get_hypervisor_statistics нет (отказ владельца:
+    AttributeError 'Proxy' object has no attribute), документированная
+    замена — сумма полей hypervisors(details=True). Форма ответа прежняя:
+    проводные имена vcpus/memory_mb/local_gb, пороги и история не меняются.
+    """
     try:
-        raw = conn.compute.get_hypervisor_statistics()
+        raw = connection.hypervisor_totals(conn)
     except Exception as exc:                               # noqa: BLE001
         return {}, f"{type(exc).__name__}: {exc}"
     out = {}
     for key in ("vcpus", "vcpus_used", "memory_mb", "memory_mb_used",
                 "free_ram_mb", "local_gb", "local_gb_used", "free_disk_gb",
                 "running_vms", "current_workload"):
-        value = getattr(raw, key, None)
-        if value is None and isinstance(raw, dict):
-            value = raw.get(key)
+        value = raw.get(key)
         if value is not None:
             out[key] = _as_int(value)
     return out, ""

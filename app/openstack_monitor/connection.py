@@ -437,12 +437,78 @@ def classify_error(exc: BaseException) -> str:
     return name[:60] or "error"
 
 
+# Поля сводки Nova в терминах openstacksdk 4.x: атрибут ресурса
+# Hypervisor → проводное имя из ответа статистики Nova. SDK 4.x переименовал
+# атрибуты (memory_mb → memory_size, local_gb → local_disk_size и т.д.), а
+# метода get_hypervisor_statistics в compute-прокси 4.x нет вовсе — отказ
+# владельца v1.70.55 ровно об этом: AttributeError 'Proxy' object has no
+# attribute 'get_hypervisor_statistics'.
+_HYPERVISOR_FIELDS = (
+    ("vcpus", "vcpus"),
+    ("vcpus_used", "vcpus_used"),
+    ("memory_size", "memory_mb"),
+    ("memory_used", "memory_mb_used"),
+    ("memory_free", "free_ram_mb"),
+    ("local_disk_size", "local_gb"),
+    ("local_disk_used", "local_gb_used"),
+    ("local_disk_free", "free_disk_gb"),
+    ("running_vms", "running_vms"),
+    ("current_workload", "current_workload"),
+    ("disk_available", "disk_available_least"),
+)
+
+
+def hypervisor_totals(conn) -> dict:
+    """Сводка по гипервизорам — по документации openstacksdk.
+
+    Документированный способ 4.x: генератор ``conn.compute.hypervisors(
+    details=True)`` (Nova ``GET /os-hypervisors/detail``); сводка — сумма
+    полей каждого гипервизора, теми же полями и тем же способом, которым
+    Nova считает собственный ``GET /os-hypervisors/statistics``: всё
+    суммируется, кроме ``disk_available_least`` — там минимум. Если SDK
+    старый и родной метод статистики на месте, зовётся он.
+
+    Возвращает словарь проводных имён (vcpus, memory_mb, local_gb, …) —
+    ровно ту форму, которую всегда ели сборщик метрик и проверка
+    подключения: карточки и пороги не замечают подмены.
+    """
+    proxy = conn.compute
+    legacy = getattr(proxy, "get_hypervisor_statistics", None)
+    if callable(legacy):
+        return _as_plain(legacy())
+    totals: dict = {}
+    count = 0
+    for hypervisor in proxy.hypervisors(details=True):
+        count += 1
+        for attr, wire in _HYPERVISOR_FIELDS:
+            value = getattr(hypervisor, attr, None)
+            if value is None:
+                # старый SDK/ответ без переименования: атрибут = проводное имя
+                value = getattr(hypervisor, wire, None)
+            if value is None:
+                continue
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+            if wire == "disk_available_least" and wire in totals:
+                totals[wire] = min(totals[wire], value)
+            elif wire == "disk_available_least":
+                totals[wire] = value
+            else:
+                totals[wire] = totals.get(wire, 0) + value
+    totals["count"] = count
+    return totals
+
+
 def test_connection(cfg: dict) -> dict:
     """Проверить подключение (ТЗ, раздел 4).
 
-    Последовательность из ТЗ: пробный запрос к Keystone, затем к Nova
-    (get_hypervisor_statistics). Возвращает ok/error, текст ошибки и
-    список доступных сервисов. Секрет в ответ не попадает.
+    Последовательность из ТЗ: пробный запрос к Keystone, затем к Nova —
+    сводка гипервизоров через hypervisor_totals (openstacksdk 4.x: сумма
+    полей hypervisors(details=True), в старом SDK — родной метод
+    статистики). Возвращает ok/error, текст ошибки и список доступных
+    сервисов. Секрет в ответ не попадает.
     """
     secrets = secrets_of(cfg)
     ok, why = sdk_available()
@@ -482,8 +548,9 @@ def test_connection(cfg: dict) -> dict:
 
     stats = None
     try:
-        raw = conn.compute.get_hypervisor_statistics()
-        stats = _as_plain(raw)
+        # v1.70.56: сводка — по документации установленной библиотеки;
+        # get_hypervisor_statistics в openstacksdk 4.x не существует.
+        stats = hypervisor_totals(conn)
     except Exception as exc:                               # noqa: BLE001
         return {"ok": False,
                 "error": mask_secret(f"Keystone пройден, но Nova отказала: "
