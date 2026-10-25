@@ -56,7 +56,8 @@ TIMEOUT_MAX_SEC = 300
 # Поля формы, которые сохраняются как есть (строки).
 TEXT_FIELDS = ("auth_url", "username", "app_cred_id", "project_name",
                "user_domain_name", "project_domain_name", "region_name",
-               "resource_provider_uuid")
+               "resource_provider_uuid", "user_domain_id",
+               "project_domain_id")
 
 
 def _clamp(value, low: int, high: int, default: int) -> int:
@@ -109,6 +110,8 @@ def connection_cfg(row: OpenstackSettings) -> dict:
         "project_name": row.project_name,
         "user_domain_name": row.user_domain_name,
         "project_domain_name": row.project_domain_name,
+        "user_domain_id": row.user_domain_id,
+        "project_domain_id": row.project_domain_id,
         "region_name": row.region_name,
         "interface": row.interface,
         "verify_tls": bool(row.verify_tls),

@@ -89,6 +89,12 @@ class OpenstackSettings(Base):
     user_domain_name: Mapped[str] = mapped_column(String(200), default="Default")
     project_domain_name: Mapped[str] = mapped_column(String(200),
                                                      default="Default")
+    # v1.70.53: домен идентификатором — так его задаёт файл openrc.sh, который
+    # панели провайдеров отдают администратору (OS_PROJECT_DOMAIN_ID). Имя
+    # домена у провайдера может не совпадать с «Default» буквально, и тогда
+    # Keystone отвечает безликим HTTP 401; идентификатор имеет приоритет.
+    user_domain_id: Mapped[str] = mapped_column(String(64), default="")
+    project_domain_id: Mapped[str] = mapped_column(String(64), default="")
     region_name: Mapped[str] = mapped_column(String(100), default="")
     # «interface» — имя поля из ТЗ; в Python это не ключевое слово.
     interface: Mapped[str] = mapped_column(String(20), default="public")
@@ -131,6 +137,8 @@ class OpenstackSettings(Base):
             "project_name": self.project_name,
             "user_domain_name": self.user_domain_name,
             "project_domain_name": self.project_domain_name,
+            "user_domain_id": self.user_domain_id,
+            "project_domain_id": self.project_domain_id,
             "region_name": self.region_name,
             "interface": self.interface,
             "verify_tls": bool(self.verify_tls),
@@ -242,7 +250,40 @@ def ensure_openstack_schema(engine) -> None:
     не трогает. Повторный вызов безопасен: create_all пропускает уже
     существующее, поэтому обновление сервера не требует ручных действий
     с базой.
+
+    v1.70.53: create_all НЕ добавляет колонки в уже созданную таблицу, а
+    настройки к этому выпуску уже живут на боевых серверах — поэтому
+    недостающие колонки добавляются отдельным ALTER TABLE. Миграция строго
+    добавляющая: существующие данные не переписываются, повторный вызов
+    безопасен.
     """
     Base.metadata.create_all(bind=engine, tables=[
         OpenstackSettings.__table__, OpenstackMetric.__table__,
         OpenstackSyncLog.__table__])
+    _ensure_settings_columns(engine)
+
+
+# Колонки настроек, которые выпуск v1.70.53 добавляет к уже созданной таблице.
+_ADDED_SETTINGS_COLUMNS = (
+    ("user_domain_id", "VARCHAR(64) DEFAULT '' NOT NULL"),
+    ("project_domain_id", "VARCHAR(64) DEFAULT '' NOT NULL"),
+)
+
+
+def _ensure_settings_columns(engine) -> None:
+    """Добавить недостающие колонки в openstack_settings (v1.70.53).
+
+    Инспекция диалектонезависима (sqlalchemy.inspect), ALTER TABLE ADD COLUMN
+    понимают и SQLite, и PostgreSQL. Таблица к этому моменту существует —
+    её создал create_all выше.
+    """
+    from sqlalchemy import inspect, text
+
+    existing = {col["name"] for col in
+                inspect(engine).get_columns("openstack_settings")}
+    for name, ddl in _ADDED_SETTINGS_COLUMNS:
+        if name in existing:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(
+                f"ALTER TABLE openstack_settings ADD COLUMN {name} {ddl}"))

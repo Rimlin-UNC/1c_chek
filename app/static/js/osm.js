@@ -156,7 +156,7 @@ export function parseOpenrc(text) {
 // Раскладка разобранных переменных по полям формы. Заполняются только те
 // поля, значение для которых нашлось: отсутствующие переменные не должны
 // стирать то, что администратор уже ввёл руками.
-function applyOpenrc(values) {
+export function applyOpenrc(values) {
   const filled = [];
   const put = (id, value, label) => {
     const el = document.getElementById(id);
@@ -180,6 +180,11 @@ function applyOpenrc(values) {
   put('osm-project', values.OS_PROJECT_NAME || values.OS_TENANT_NAME, 'проект');
   put('osm-udn', values.OS_USER_DOMAIN_NAME, 'домен пользователя');
   put('osm-pdn', values.OS_PROJECT_DOMAIN_NAME, 'домен проекта');
+  // v1.70.53: панели провайдеров отдают файл c OS_PROJECT_DOMAIN_ID —
+  // домен идентификатором. У имени и идентификатора разные поля: файл
+  // может содержать только одно из двух.
+  put('osm-udn-id', values.OS_USER_DOMAIN_ID, 'домен пользователя по ID');
+  put('osm-pdn-id', values.OS_PROJECT_DOMAIN_ID, 'домен проекта по ID');
   put('osm-region', values.OS_REGION_NAME, 'регион');
   const iface = document.getElementById('osm-interface');
   if (iface && ['public', 'internal', 'admin'].includes(values.OS_INTERFACE)) {
@@ -261,6 +266,8 @@ function connPanel(set) {
     ${field('osm-project', 'Проект (project_name)', set.project_name)}
     ${field('osm-udn', 'Домен пользователя (user_domain_name)', set.user_domain_name || 'Default')}
     ${field('osm-pdn', 'Домен проекта (project_domain_name)', set.project_domain_name || 'Default')}
+    ${field('osm-udn-id', 'Домен пользователя по ID (user_domain_id)', set.user_domain_id || '', '', 'Обычно пусто. Идентификатор важнее имени: поле заполняется само, если файл провайдера содержит OS_USER_DOMAIN_ID.')}
+    ${field('osm-pdn-id', 'Домен проекта по ID (project_domain_id)', set.project_domain_id || '', '', 'Панели провайдеров часто отдают файл с OS_PROJECT_DOMAIN_ID вместо имени — тогда заполняется это поле, и облако получает домен ровно так, как записано у провайдера.')}
     ${field('osm-region', 'Регион (region_name)', set.region_name, '', 'например, RegionOne')}
     <label class="field"><span>Таймаут, секунд (timeout_sec)</span>
       <input id="osm-timeout" type="number" min="1" max="300" step="1"
@@ -651,6 +658,8 @@ function readConnectionForm() {
     project_name: document.getElementById('osm-project')?.value.trim() || '',
     user_domain_name: document.getElementById('osm-udn')?.value.trim() || 'Default',
     project_domain_name: document.getElementById('osm-pdn')?.value.trim() || 'Default',
+    user_domain_id: document.getElementById('osm-udn-id')?.value.trim() || '',
+    project_domain_id: document.getElementById('osm-pdn-id')?.value.trim() || '',
     region_name: document.getElementById('osm-region')?.value.trim() || '',
     interface: document.getElementById('osm-interface')?.value || 'public',
     verify_tls: !!document.getElementById('osm-verify-tls')?.checked,
@@ -682,10 +691,26 @@ function renderTestResult(result) {
     const chipCls = state === 'доступен' ? 'verified' : 'unknown';
     return `<span class="chip ${chipCls}"><span class="dot"></span>${esc(name)} — ${esc(state)}</span>`;
   }).join('');
+  // v1.70.53: безликий HTTP 401 от провайдера администратор получил без
+  // объяснений. Чек-лист по реальным причинам отказа — прямо под ошибкой.
+  const denied = !result.ok && (result.error_code === 'auth_denied'
+    || /HTTP 40[13]/.test(result.error || ''));
+  const deniedHint = denied
+    ? '<div class="form-hint">Облако не приняло учётные данные. Проверьте по '
+      + 'порядку: 1) секрет — файл провайдера часто содержит заглушку из «x» '
+      + 'вместо пароля: настоящее значение видно в панели провайдера за '
+      + 'кнопкой «Показать», введите его в поле «Секрет» вручную; '
+      + '2) при копировании секрета не должно быть лишних пробелов и перевода '
+      + 'строки; 3) логин и проект — ровно как в файле провайдера; '
+      + '4) домены — если в файле задан OS_PROJECT_DOMAIN_ID, поле «Домен '
+      + 'проекта по ID» должно быть заполнено: идентификатор важнее имени.'
+      + '</div>'
+    : '';
   box.innerHTML = `<div class="osm-alert ${cls}">${result.ok ? '✓' : '✕'}<div>`
     + `<b>${result.ok ? 'Подключение прошло' : 'Подключение не прошло'}</b>`
     + (result.error ? `<div>${esc(result.error)}</div>` : '')
     + (result.error_code ? `<div>Код: <span class="osm-code">${esc(result.error_code)}</span></div>` : '')
+    + deniedHint
     + (chips ? `<div class="osm-services">${chips}</div>` : '')
     + `</div></div>`;
 }

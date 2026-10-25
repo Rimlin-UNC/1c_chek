@@ -77,6 +77,10 @@ class SettingsBody(BaseModel):
     project_name: str = ""
     user_domain_name: str = "Default"
     project_domain_name: str = "Default"
+    # v1.70.53: файл панели провайдера задаёт домен идентификатором
+    # (OS_PROJECT_DOMAIN_ID) — он имеет приоритет над именем.
+    user_domain_id: str = ""
+    project_domain_id: str = ""
     region_name: str = ""
     interface: str = "public"
     verify_tls: bool = True
@@ -100,6 +104,10 @@ class TestBody(BaseModel):
     project_name: str = ""
     user_domain_name: str = "Default"
     project_domain_name: str = "Default"
+    # v1.70.53: файл панели провайдера задаёт домен идентификатором
+    # (OS_PROJECT_DOMAIN_ID) — он имеет приоритет над именем.
+    user_domain_id: str = ""
+    project_domain_id: str = ""
     region_name: str = ""
     interface: str = "public"
     verify_tls: bool = True

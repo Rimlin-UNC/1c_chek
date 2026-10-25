@@ -115,9 +115,17 @@ def validate_cfg(cfg: dict) -> list[str]:
         if not str(cfg.get("project_name") or "").strip():
             problems.append("не задан проект (project_name)")
 
-    for field in ("user_domain_name", "project_domain_name", "region_name"):
-        if not str(cfg.get(field) or "").strip():
-            problems.append(f"не задано поле {field}")
+    # v1.70.53: домен допускается задавать именем ИЛИ идентификатором —
+    # файл провайдера может содержать только OS_PROJECT_DOMAIN_ID.
+    for axis, name_key, id_key in (
+            ("пользователя", "user_domain_name", "user_domain_id"),
+            ("проекта", "project_domain_name", "project_domain_id")):
+        if not (str(cfg.get(name_key) or "").strip()
+                or str(cfg.get(id_key) or "").strip()):
+            problems.append(f"не задан домен {axis}: нужно имя "
+                            f"({name_key}) или идентификатор ({id_key})")
+    if not str(cfg.get("region_name") or "").strip():
+        problems.append("не задано поле region_name")
 
     try:
         timeout = int(cfg.get("timeout_sec") or 0)
@@ -159,19 +167,39 @@ def build_connection(cfg: dict):
 
     auth_type = cfg.get("auth_type")
     if auth_type == AUTH_APP_CRED:
+        # v1.70.53: «Проверить подключение» с только что введённым секретом
+        # приходит без ключа app_cred_secret (форма отправляет его под именем
+        # secret) — раньше здесь падал KeyError вместо проверки.
         auth = v3.ApplicationCredential(
             auth_url=cfg["auth_url"],
             application_credential_id=cfg["app_cred_id"],
-            application_credential_secret=cfg["app_cred_secret"],
+            application_credential_secret=(cfg.get("app_cred_secret")
+                                           or cfg.get("secret") or ""),
         )
     else:
+        # v1.70.53: домен может быть задан идентификатором — так его отдаёт
+        # файл openrc.sh из панелей провайдеров (OS_PROJECT_DOMAIN_ID). У
+        # провайдера имя домена может не совпадать с «Default» буквально, и
+        # тогда Keystone отвечает безликим HTTP 401. Идентификатор имеет
+        # приоритет над именем — как в keystoneauth.
+        user_domain: dict[str, str] = {}
+        if str(cfg.get("user_domain_id") or "").strip():
+            user_domain["user_domain_id"] = str(cfg["user_domain_id"]).strip()
+        else:
+            user_domain["user_domain_name"] = cfg["user_domain_name"]
+        project_domain: dict[str, str] = {}
+        if str(cfg.get("project_domain_id") or "").strip():
+            project_domain["project_domain_id"] = \
+                str(cfg["project_domain_id"]).strip()
+        else:
+            project_domain["project_domain_name"] = cfg["project_domain_name"]
         auth = v3.Password(
             auth_url=cfg["auth_url"],
             username=cfg["username"],
-            password=cfg["password"],
+            password=cfg.get("password") or cfg.get("secret") or "",
             project_name=cfg["project_name"],
-            user_domain_name=cfg["user_domain_name"],
-            project_domain_name=cfg["project_domain_name"],
+            **user_domain,
+            **project_domain,
         )
     sess = session.Session(auth=auth,
                            verify=bool(cfg.get("verify_tls", True)),
@@ -228,11 +256,16 @@ def classify_error(exc: BaseException) -> str:
     name = type(exc).__name__
     module = type(exc).__module__ or ""
     lowered = f"{module}.{name}".lower()
-    if "timeout" in lowered or "timeout" in str(exc).lower():
+    text = str(exc).lower()
+    if "timeout" in lowered or "timeout" in text:
         return "timeout"
     if "connectionerror" in lowered or "connection" in lowered:
         return "connection"
     if "unauthorized" in lowered or "forbidden" in lowered:
+        return "auth_denied"
+    # v1.70.53: openstacksdk заворачивает отказ Keystone в SDKException, и
+    # безликий «HTTP 401» от провайдера раньше получал бесполезный код «sdk».
+    if "(http 401)" in text or "(http 403)" in text:
         return "auth_denied"
     if "auth" in lowered:
         return "auth"

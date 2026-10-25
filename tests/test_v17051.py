@@ -362,13 +362,23 @@ class TestSchema:
 # ==========================================================================
 class TestConnection:
     def test_password_auth_uses_the_tz_keys(self):
-        """Пример ТЗ 6.1 читает cfg["password"] и пять полей домена/проекта."""
+        """Пример ТЗ 6.1 читает cfg["password"] и пять полей домена/проекта.
+
+        v1.70.53: пароль дополнительно принимает ключ формы secret —
+        «Проверить подключение» присылает свежий секрет под этим именем, и
+        прежняя форма падала KeyError, не доходя до Keystone. Домен может
+        задаваться идентификатором (файл провайдера), тогда имя плагину не
+        передаётся; ветка имени при пустом идентификаторе осталась прежней.
+        """
         src = _read(MONITOR / "connection.py")
         body = src.split("def build_connection", 1)[1].split("\ndef ", 1)[0]
         assert "v3.Password(" in body
-        for key in ("auth_url", "username", "password", "project_name",
-                    "user_domain_name", "project_domain_name"):
+        for key in ("auth_url", "username", "project_name"):
             assert f'cfg["{key}"]' in body, key
+        assert 'cfg.get("password") or cfg.get("secret")' in body
+        assert 'user_domain["user_domain_name"] = cfg["user_domain_name"]' in body
+        assert ('project_domain["project_domain_name"] = '
+                'cfg["project_domain_name"]') in body
         assert "session.Session(" in body
         assert "openstack.connection.Connection(" in body
 
@@ -377,7 +387,10 @@ class TestConnection:
         body = src.split("def build_connection", 1)[1].split("\ndef ", 1)[0]
         assert "v3.ApplicationCredential(" in body
         assert 'cfg["app_cred_id"]' in body
-        assert 'cfg["app_cred_secret"]' in body
+        # v1.70.53: откат к ключу формы secret — тот же дефект KeyError, что
+        # и в парольной ветке; ключ ТЗ app_cred_secret остаётся главным.
+        assert 'cfg.get("app_cred_secret")' in body
+        assert 'cfg.get("secret")' in body
 
     def test_verify_and_timeout_are_passed_to_the_session(self):
         src = _read(MONITOR / "connection.py")
