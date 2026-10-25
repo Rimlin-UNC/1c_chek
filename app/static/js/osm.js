@@ -129,6 +129,66 @@ function shortTime(iso) {
     hour: '2-digit', minute: '2-digit' });
 }
 
+// --- Разбор openrc.sh (v1.70.52) ------------------------------------------
+// Панели провайдеров отдают готовый файл openrc.sh со всеми параметрами
+// Keystone, кроме секрета (а иногда и с ним). Разбор идёт СТРОГО в браузере:
+// содержимое файла не отправляется на сервер, поэтому секрет не попадает ни
+// в журнал запросов, ни в ответ API — в поле формы он ложится только в DOM.
+export function parseOpenrc(text) {
+  const values = {};
+  const lines = String(text || '').split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.charAt(0) === '#') continue;
+    const m = /^\s*(?:export\s+)?(OS_[A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let value = m[2].trim();
+    const quote = value.charAt(0);
+    if ((quote === '"' || quote === "'") && value.length > 1
+        && value.charAt(value.length - 1) === quote) {
+      value = value.slice(1, -1);
+    }
+    values[m[1]] = value;
+  }
+  return values;
+}
+
+// Раскладка разобранных переменных по полям формы. Заполняются только те
+// поля, значение для которых нашлось: отсутствующие переменные не должны
+// стирать то, что администратор уже ввёл руками.
+function applyOpenrc(values) {
+  const filled = [];
+  const put = (id, value, label) => {
+    const el = document.getElementById(id);
+    if (!el || !value) return;
+    el.value = value;
+    filled.push(label);
+  };
+  const appCred = !!values.OS_APPLICATION_CREDENTIAL_ID;
+  const authType = document.getElementById('osm-auth-type');
+  if (authType && (appCred || values.OS_USERNAME)) {
+    authType.value = appCred ? 'application_credential' : 'password';
+    syncAuthTypeVisibility();
+    filled.push('способ аутентификации');
+  }
+  put('osm-auth-url', values.OS_AUTH_URL, 'адрес Keystone');
+  put('osm-username', values.OS_USERNAME, 'имя пользователя');
+  put('osm-app-cred-id', values.OS_APPLICATION_CREDENTIAL_ID,
+    'идентификатор учётных данных');
+  put('osm-secret', values.OS_APPLICATION_CREDENTIAL_SECRET || values.OS_PASSWORD,
+    'секрет');
+  put('osm-project', values.OS_PROJECT_NAME || values.OS_TENANT_NAME, 'проект');
+  put('osm-udn', values.OS_USER_DOMAIN_NAME, 'домен пользователя');
+  put('osm-pdn', values.OS_PROJECT_DOMAIN_NAME, 'домен проекта');
+  put('osm-region', values.OS_REGION_NAME, 'регион');
+  const iface = document.getElementById('osm-interface');
+  if (iface && ['public', 'internal', 'admin'].includes(values.OS_INTERFACE)) {
+    iface.value = values.OS_INTERFACE;
+    filled.push('интерфейс каталога');
+  }
+  return filled;
+}
+
 // --- Разметка -------------------------------------------------------------
 
 function field(id, label, value, attrs = '', hint = '') {
@@ -171,6 +231,16 @@ function connPanel(set) {
   const secretHint = set.secret_set ? 'сохранён — пустое поле не меняет его'
     : 'не задан';
   return `
+  <label class="field full"><span>Содержимое openrc.sh — заполняет поля само</span>
+    <textarea id="osm-openrc" rows="5" placeholder="export OS_AUTH_URL=https://cloud.example.ru:5000/v3&#10;export OS_USERNAME=…&#10;export OS_PROJECT_NAME=…"></textarea>
+    <span class="form-hint">Файл openrc.sh скачивается в панели провайдера на
+      вкладке API рядом с логином и паролем. Разбирается в браузере и никуда
+      не отправляется: секрет остаётся на вашем устройстве, пока вы не
+      нажмёте «Сохранить». Переменные, которых в файле нет, не стирают то,
+      что уже введено руками.</span></label>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px">
+    <button type="button" class="btn btn-sm" id="osm-openrc-apply">📋 Заполнить из openrc.sh</button>
+  </div>
   <div class="form-grid">
     <label class="field full"><span>Адрес Keystone (auth_url)</span>
       <input id="osm-auth-url" value="${esc(set.auth_url || '')}"
@@ -317,6 +387,22 @@ export function osmCardHtml(set, status) {
 }
 
 // --- Вкладки --------------------------------------------------------------
+
+function syncAuthTypeVisibility() {
+  const authType = document.getElementById('osm-auth-type');
+  if (!authType) return;
+  const appCred = authType.value === 'application_credential';
+  document.querySelectorAll('#osm-panel-conn [data-auth="password"]')
+    .forEach(el => { el.hidden = appCred; });
+  document.querySelectorAll('#osm-panel-conn [data-auth="app_cred"]')
+    .forEach(el => { el.hidden = !appCred; });
+  const secretLabel = document.querySelector('#osm-panel-conn #osm-secret')
+    ?.parentElement?.querySelector('span');
+  if (secretLabel) {
+    secretLabel.textContent = appCred ? 'Секрет (app_cred_secret)'
+      : 'Секрет (password)';
+  }
+}
 
 function wireTabs() {
   const tablist = document.querySelector('#st-openstack [role="tablist"]');
@@ -624,17 +710,19 @@ export function osmWire(onReload) {
   wireTabs();
 
   const authType = document.getElementById('osm-auth-type');
-  if (authType) authType.onchange = () => {
-    const appCred = authType.value === 'application_credential';
-    document.querySelectorAll('#osm-panel-conn [data-auth="password"]')
-      .forEach(el => { el.hidden = appCred; });
-    document.querySelectorAll('#osm-panel-conn [data-auth="app_cred"]')
-      .forEach(el => { el.hidden = !appCred; });
-    const secretLabel = document.querySelector('#osm-panel-conn #osm-secret')?.parentElement
-      ?.querySelector('span');
-    if (secretLabel) {
-      secretLabel.textContent = appCred ? 'Секрет (app_cred_secret)' : 'Секрет (password)';
+  if (authType) authType.onchange = () => syncAuthTypeVisibility();
+
+  const openrcApply = document.getElementById('osm-openrc-apply');
+  if (openrcApply) openrcApply.onclick = () => {
+    const box = document.getElementById('osm-openrc');
+    const filled = applyOpenrc(parseOpenrc(box ? box.value : ''));
+    if (!filled.length) {
+      toast('В тексте не найдено ни одной переменной OS_: вставьте содержимое '
+        + 'файла openrc.sh целиком', 'err', '☁️');
+      return;
     }
+    toast(`По openrc.sh заполнено: ${filled.join(', ')}. Секрет и остальные `
+      + 'поля проверьте и нажмите «Проверить подключение».', 'ok', '☁️');
   };
 
   const tls = document.getElementById('osm-verify-tls');
