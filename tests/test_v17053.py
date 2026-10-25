@@ -535,48 +535,21 @@ class TestCardUiLocks:
 #  8. Выпуск v1.70.53
 # ==========================================================================
 class TestRelease17053:
-    """Точки синхронизации версии ведёт файл текущего выпуска. Прежние
-    классы (1.70.38…1.70.52) оставляют у себя только запись выпуска в
-    истории — приём тот же, что в предыдущих релизах."""
+    """v1.70.54: выпуск 1.70.53 отгружен.
+
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведёт test_v17054, а
+    здесь остаётся запись выпуска в истории (как сделано для 1.70.38…1.70.52).
+    Константа PREVIOUS нужна своим же проверкам записи «Что нового», раздела
+    CHANGELOG и журнала: они вырезают текст между своей версией и предыдущей.
+    """
 
     VERSION = "1.70.53"
     PREVIOUS = "1.70.52"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read(APP / "config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read(SW)
-        assert f'"version": "{self.VERSION}"' in _read(MANIFEST)
-        index = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in index
-        assert f"app.js?v={self.VERSION}" in index
-        assert f"maxapp.js?v={self.VERSION}" in _read(MAX_HTML)
-
-    def test_cache_busters_in_service_worker(self):
-        sw = _read(SW)
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_cabinet_assets_carry_the_same_version(self):
-        html = _read(CABINET)
-        assert f"/b2b/b2b.css?v={self.VERSION}" in html
-        assert f"/b2b/b2b.js?v={self.VERSION}" in html
-
-    def test_changed_module_is_served_with_the_release_version(self):
-        js = _read(APP_JS)
-        assert "from './osm.js'" in js
-        assert f"app.js?v={self.VERSION}" in _read(INDEX)
-
-    def test_no_previous_version_left_in_sync_points(self):
-        for path in (APP / "config.py", INDEX, SW, MANIFEST, MAX_HTML, CABINET):
-            text = _read(path)
-            for form in (f"v={self.PREVIOUS}", f'"{self.PREVIOUS}"',
-                         f"check-v{self.PREVIOUS}"):
-                assert form not in text, f"{path.name}: {form}"
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_version_is_release(self):
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read(APP / "config.py")).group(1)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 53)
 
     def _block(self):
         js = _read(APP_JS)
@@ -601,7 +574,6 @@ class TestRelease17053:
 
     def test_changelog_entry(self):
         text = _read(CHANGELOG)
-        assert f"## [{self.VERSION}]" in text
         section = text.split(f"## [{self.VERSION}]", 1)[1].split(
             f"## [{self.PREVIOUS}]", 1)[0]
         for needle in ("домен", "идентификатор", "401", "openrc", "миграц",
@@ -619,7 +591,6 @@ class TestRelease17053:
 
     def test_journal_entry(self):
         text = _read(JOURNAL)
-        assert f"## v{self.VERSION} —" in text
         section = text.split(f"## v{self.VERSION} —", 1)[1].split(
             f"## v{self.PREVIOUS}", 1)[0]
         for needle in ("Подготовка", "План", "Решение", "Проверка",
@@ -637,18 +608,3 @@ class TestRelease17053:
         for path in (CHANGELOG, JOURNAL, pathlib.Path(__file__)):
             flat = re.sub(r"\s+", " ", _read(path)).lower()
             assert needle in flat, f"{path.name}: нет цитаты владельца"
-
-    def test_previous_release_class_is_history_only(self):
-        src = _read(RELEASE_52_TESTS)
-        block = src.split("class TestRelease17052:", 1)[1]
-        assert "test_all_sync_points" not in block
-        assert "test_cache_busters_in_service_worker" not in block
-        assert "test_whats_new_is_first" not in block
-        assert "test_version_is_release" in block
-        assert f'VERSION = "{self.PREVIOUS}"' in block
-
-    def test_previous_release_keeps_exactly_nine_methods(self):
-        src = _read(RELEASE_52_TESTS)
-        block = src.split("class TestRelease17052:", 1)[1]
-        methods = re.findall(r"^    def (\w+)", block, re.M)
-        assert len(methods) == 9, methods

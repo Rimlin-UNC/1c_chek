@@ -693,6 +693,18 @@ function renderTestResult(result) {
   }).join('');
   // v1.70.53: безликий HTTP 401 от провайдера администратор получил без
   // объяснений. Чек-лист по реальным причинам отказа — прямо под ошибкой.
+  // v1.70.54: регион/интерфейс не совпали с каталогом облака — подсказка
+  // ведёт администратора к строкам файла провайдера, а не к гаданию.
+  const catalogIssue = !result.ok && (result.error_code === 'catalog'
+    || /not present in the service catalog/i.test(result.error || ''));
+  const catalogHint = catalogIssue
+    ? '<div class="form-hint">В каталоге облака нет сервиса для выбранных '
+      + 'региона и интерфейса. Откройте файл провайдера: регион — строка '
+      + 'OS_REGION_NAME, интерфейс — строка OS_INTERFACE. Перенесите эти '
+      + 'значения в поля «Регион» и «Интерфейс каталога» и повторите '
+      + 'проверку. Интерфейс для служебного доступа замените на тот, что '
+      + 'указан в файле провайдера.</div>'
+    : '';
   const denied = !result.ok && (result.error_code === 'auth_denied'
     || /HTTP 40[13]/.test(result.error || ''));
   const deniedHint = denied
@@ -711,6 +723,7 @@ function renderTestResult(result) {
     + (result.error ? `<div>${esc(result.error)}</div>` : '')
     + (result.error_code ? `<div>Код: <span class="osm-code">${esc(result.error_code)}</span></div>` : '')
     + deniedHint
+    + catalogHint
     + (chips ? `<div class="osm-services">${chips}</div>` : '')
     + `</div></div>`;
 }
