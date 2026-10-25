@@ -1,4 +1,4 @@
-ТЗ для ИИ-агента: блок «Мониторинг OpenStack» в chek.ymaster.ru
+ТЗ: блок «Мониторинг OpenStack» в chek.ymaster.ru
 
 1. Контекст и цель
 
