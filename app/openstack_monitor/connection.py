@@ -422,6 +422,12 @@ def classify_error(exc: BaseException) -> str:
     # EndpointNotFound себе.
     if "servicedisabled" in lowered or "endpointnotfound" in lowered:
         return "catalog"
+    # v1.70.57: отказ ПОЛИТИКИ облака (403 при уже пройденном Keystone) —
+    # не отказ учётных данных. Отказ владельца: ForbiddenException 403
+    # «Policy doesn't allow os_compute_api:os-hypervisors:list-detail»
+    # получал код auth_denied и неуместный чек-лист про пароль.
+    if "policy doesn't allow" in text or "policy does not allow" in text:
+        return "policy"
     if "unauthorized" in lowered or "forbidden" in lowered:
         return "auth_denied"
     # v1.70.53: openstacksdk заворачивает отказ Keystone в SDKException, и
@@ -435,6 +441,23 @@ def classify_error(exc: BaseException) -> str:
     if "sdkexception" in lowered:
         return "sdk"
     return name[:60] or "error"
+
+
+def exc_summary(exc: BaseException) -> str:
+    """Исключение одной строкой — без задвоения имени класса.
+
+    v1.70.57: SDK сам встраивает имя исключения в текст HTTP-отказа, и
+    карточка показывала «ForbiddenException: ForbiddenException: 403 …»
+    (отказ владельца). Если текст уже начинается именем класса — префикс
+    не добавляется.
+    """
+    name = type(exc).__name__
+    text = str(exc).strip()
+    if not text:
+        return name
+    if text.startswith(f"{name}:") or text == name:
+        return text
+    return f"{name}: {text}"
 
 
 # Поля сводки Nova в терминах openstacksdk 4.x: атрибут ресурса
@@ -514,54 +537,86 @@ def test_connection(cfg: dict) -> dict:
     ok, why = sdk_available()
     if not ok:
         return {"ok": False, "error": why, "error_code": "no_sdk",
-                "services": {}, "authorized": False, "hypervisor": None}
+                "services": {}, "authorized": False, "hypervisor": None,
+                "notice": ""}
 
     problems = validate_cfg(cfg)
     hard = hard_problems(cfg)
     if hard:
         return {"ok": False, "error": "; ".join(hard), "error_code": "form",
                 "services": {}, "authorized": False, "hypervisor": None,
-                "warnings": problems}
+                "warnings": problems, "notice": ""}
 
     conn = None
     try:
         conn = build_connection(cfg)
         conn.authorize()
     except Exception as exc:                               # noqa: BLE001
+        if conn is not None:
+            close_connection(conn)
         return {"ok": False,
-                "error": mask_secret(f"{type(exc).__name__}: {exc}", *secrets),
+                "error": mask_secret(exc_summary(exc), *secrets),
                 "error_code": classify_error(exc),
                 "services": {}, "authorized": False, "hypervisor": None,
-                "warnings": problems}
+                "warnings": problems, "notice": ""}
 
-    services = _service_names(conn, str(cfg.get("region_name") or "").strip(),
-                              str(cfg.get("interface") or "").strip())
-
-    # v1.70.54: сверить регион и интерфейс с каталогом РАНЬШЕ обращения к
-    # Nova — иначе отказ приходит посторонним текстом ServiceDisabledException.
-    mismatch = _catalog_mismatch(conn, cfg)
-    if mismatch:
-        return {"ok": False, "error": mismatch, "error_code": "catalog",
-                "services": services, "authorized": True, "hypervisor": None,
-                "warnings": problems,
-                "catalog": catalog_suggestion(conn, cfg)}
-
-    stats = None
+    # v1.70.57: сессию ручной проверки закрывать ОБЯЗАТЕЛЬНО — прежде она
+    # оставалась открытой, и каждое нажатие «Проверить подключение» плодило
+    # висящее соединение.
     try:
-        # v1.70.56: сводка — по документации установленной библиотеки;
-        # get_hypervisor_statistics в openstacksdk 4.x не существует.
-        stats = hypervisor_totals(conn)
-    except Exception as exc:                               # noqa: BLE001
-        return {"ok": False,
-                "error": mask_secret(f"Keystone пройден, но Nova отказала: "
-                                     f"{type(exc).__name__}: {exc}", *secrets),
-                "error_code": classify_error(exc),
-                "services": services, "authorized": True, "hypervisor": None,
-                "warnings": problems}
+        services = _service_names(
+            conn, str(cfg.get("region_name") or "").strip(),
+            str(cfg.get("interface") or "").strip())
 
-    return {"ok": True, "error": "", "error_code": "",
-            "services": services, "authorized": True, "hypervisor": stats,
-            "warnings": problems}
+        # v1.70.54: сверить регион и интерфейс с каталогом РАНЬШЕ обращения
+        # к Nova — иначе отказ приходит посторонним ServiceDisabledException.
+        mismatch = _catalog_mismatch(conn, cfg)
+        if mismatch:
+            return {"ok": False, "error": mismatch, "error_code": "catalog",
+                    "services": services, "authorized": True,
+                    "hypervisor": None, "warnings": problems, "notice": "",
+                    "catalog": catalog_suggestion(conn, cfg)}
+
+        stats = None
+        notice = ""
+        try:
+            # v1.70.56: сводка — по документации установленной библиотеки;
+            # get_hypervisor_statistics в openstacksdk 4.x не существует.
+            stats = hypervisor_totals(conn)
+        except Exception as exc:                           # noqa: BLE001
+            code = classify_error(exc)
+            if code != "policy":
+                return {"ok": False,
+                        "error": mask_secret(
+                            "Keystone пройден, но Nova отказала: "
+                            + exc_summary(exc), *secrets),
+                        "error_code": code,
+                        "services": services, "authorized": True,
+                        "hypervisor": None, "warnings": problems,
+                        "notice": ""}
+            # v1.70.57: Keystone пройден и каталог совпал — подключение
+            # РАБОТАЕТ; политика облака запретила лишь одну операцию для
+            # роли. Это примечание, а не приговор: мониторинг соберёт
+            # разрешённые данные, а запрещённый шаг запишет причину.
+            notice = ("Облако приняло учётные данные и пропустило Keystone, "
+                      "но его политика не разрешает статистику гипервизоров "
+                      "для вашей роли — облако требует для неё роль "
+                      "администратора. Подключение РАБОТАЕТ: мониторинг "
+                      "соберёт разрешённые данные (квоты, балансировщики, "
+                      "инвентарь Placement), а причину запрета запишет в "
+                      "журнал. За статистику сервера нужно попросить "
+                      "провайдера облака выдать роль администратора "
+                      "проекту мониторинга. Ответ облака: "
+                      + mask_secret(exc_summary(exc), *secrets))
+            problems.append("статистика гипервизоров: запрещена политикой "
+                            "облака для текущей роли")
+
+        return {"ok": True, "error": "", "error_code": "",
+                "services": services, "authorized": True,
+                "hypervisor": stats, "warnings": problems,
+                "notice": notice}
+    finally:
+        close_connection(conn)
 
 
 def _as_plain(obj) -> dict:

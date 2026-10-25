@@ -717,8 +717,12 @@ function renderTestResult(result) {
         : '')
       + '</div>'
     : '';
-  const denied = !result.ok && (result.error_code === 'auth_denied'
-    || /HTTP 40[13]/.test(result.error || ''));
+  // v1.70.57: если облако уже приняло учётные данные (authorized),
+  // чек-лист про пароль бессмыслен — отказ владельца «Policy doesn't
+  // allow …» при authorized:true показывал советы про секрет.
+  const denied = !result.ok && result.authorized !== true
+    && (result.error_code === 'auth_denied'
+      || /HTTP 40[13]/.test(result.error || ''));
   const deniedHint = denied
     ? '<div class="form-hint">Облако не приняло учётные данные. Проверьте по '
       + 'порядку: 1) секрет — файл провайдера часто содержит заглушку из «x» '
@@ -734,6 +738,7 @@ function renderTestResult(result) {
     + `<b>${result.ok ? 'Подключение прошло' : 'Подключение не прошло'}</b>`
     + (result.error ? `<div>${esc(result.error)}</div>` : '')
     + (result.error_code ? `<div>Код: <span class="osm-code">${esc(result.error_code)}</span></div>` : '')
+    + (result.notice ? `<div class="form-hint">${esc(result.notice)}</div>` : '')
     + deniedHint
     + catalogHint
     + (chips ? `<div class="osm-services">${chips}</div>` : '')

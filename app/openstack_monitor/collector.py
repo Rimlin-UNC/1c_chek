@@ -67,7 +67,7 @@ def hypervisor_stats(conn) -> tuple[dict, str]:
     try:
         raw = connection.hypervisor_totals(conn)
     except Exception as exc:                               # noqa: BLE001
-        return {}, f"{type(exc).__name__}: {exc}"
+        return {}, connection.exc_summary(exc)
     out = {}
     for key in ("vcpus", "vcpus_used", "memory_mb", "memory_mb_used",
                 "free_ram_mb", "local_gb", "local_gb_used", "free_disk_gb",
@@ -100,7 +100,7 @@ def quota_limits(conn) -> tuple[dict, str]:
     try:
         limits = conn.compute.get_limits()
     except Exception as exc:                               # noqa: BLE001
-        return {}, f"{type(exc).__name__}: {exc}"
+        return {}, connection.exc_summary(exc)
     absolute = _absolute_map(limits)
     out: dict = {}
     for short, nova_name in QUOTA_FIELDS.items():
@@ -122,9 +122,21 @@ def placement_inventories(conn, cfg: dict) -> tuple[dict | None, str]:
     try:
         raw = conn.placement.get(f"/resource_providers/{rp_uuid}/inventories")
     except Exception as exc:                               # noqa: BLE001
-        return None, f"{type(exc).__name__}: {exc}"
+        return None, connection.exc_summary(exc)
     if isinstance(raw, dict):
         return raw, ""
+    # v1.70.57: сырой запрос openstacksdk 4.x возвращает объект Response,
+    # а не словарь — прежде он проваливался в json.dumps(default=str) и
+    # «разбирался» в строку "<Response [200]>". Документированный способ
+    # прочитать тело — его json().
+    body_json = getattr(raw, "json", None)
+    if callable(body_json):
+        try:
+            parsed = body_json()
+        except ValueError as exc:
+            return None, f"не удалось разобрать ответ Placement: {exc}"
+        if isinstance(parsed, dict):
+            return parsed, ""
     # Прокси может вернуть объект ресурса — приводим к словарю.
     body = getattr(raw, "body", None) or getattr(raw, "_body", None)
     if isinstance(body, dict):
@@ -152,6 +164,34 @@ def traffic_bytes(conn) -> tuple[int | None, int | None, str]:
     if not balancers:
         return None, None, "в проекте нет балансировщиков"
 
+    # v1.70.57: метода по-балансировочной статистики в openstacksdk 4.x
+    # НЕТ (замер: у Proxy отсутствует «statistics») — шаг вечно кончался
+    # AttributeError. Документированная статистика Octavia — сквозной
+    # запрос GET /v2/octavia/statistics (bytes_in, bytes_out); он и
+    # используется, когда родного метода в библиотеке нет.
+    statistics = getattr(proxy, "statistics", None)
+    if not callable(statistics):
+        try:
+            resp = proxy.get("octavia/statistics")
+        except Exception as exc:                           # noqa: BLE001
+            return None, None, ("статистика балансировщиков недоступна: "
+                                + connection.exc_summary(exc))
+        data = resp if isinstance(resp, dict) else None
+        if data is None:
+            resp_json = getattr(resp, "json", None)
+            if callable(resp_json):
+                try:
+                    parsed = resp_json()
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    data = parsed
+        if data is None:
+            return None, None, "ответ статистики балансировщиков не разобран"
+        return (_as_int(data.get("bytes_in")),
+                _as_int(data.get("bytes_out")),
+                "сквозная статистика балансировщиков")
+
     total_in = 0
     total_out = 0
     counted = 0
@@ -164,7 +204,7 @@ def traffic_bytes(conn) -> tuple[int | None, int | None, str]:
         try:
             stats = proxy.statistics(lb_id)
         except Exception as exc:                           # noqa: BLE001
-            last_error = f"{type(exc).__name__}: {exc}"
+            last_error = connection.exc_summary(exc)
             continue
         raw_in = getattr(stats, "bytes_in", None)
         raw_out = getattr(stats, "bytes_out", None)
