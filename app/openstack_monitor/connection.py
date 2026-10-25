@@ -290,10 +290,73 @@ def _catalog_mismatch(conn, cfg: dict) -> str:
     return ("Keystone пройден, но в каталоге облака нет сервиса compute "
             f"для интерфейса «{interface}»{where}. Каталог предлагает "
             "регионы: " + (", ".join(regions) or "—") + "; интерфейсы: "
-            + (", ".join(interfaces) or "—") + ". Регион и интерфейс нужно "
-            "брать из файла провайдера: строки OS_REGION_NAME и "
-            "OS_INTERFACE, поля «Регион» и «Интерфейс каталога» на вкладке "
-            "«Подключение».")
+            + (", ".join(interfaces) or "—") + ". Значения региона и "
+            "интерфейса задают строки OS_REGION_NAME и OS_INTERFACE файла "
+            "провайдера, поля «Регион» и «Интерфейс каталога» на вкладке "
+            "«Подключение»; если файл противоречит каталогу, верьте "
+            "каталогу — его вернуло само облако провайдера в ответ на ваши "
+            "учётные данные.")
+
+
+def catalog_suggestion(conn, cfg: dict) -> dict:
+    """Что каталог предлагает взамен запрошенной пары регион+интерфейс.
+
+    Жалоба владельца v1.70.54: панель провайдера противоречит собственному
+    облаку — скачанный файл задаёт регион eu-west2, а каталог, возвращённый
+    Keystone, предлагает единственный регион ru-central. Программа не меняет
+    параметры администратора за его спиной, но обязана предложить верную
+    пару: кнопка «Подставить из каталога» на карточке заполняет поля формы,
+    решение остаётся за администратором.
+
+    Предложение даётся только когда оно ОДНОЗНАЧНО:
+    1. интерфейс из формы есть в каталоге ровно у одного региона — пара
+       (этот регион, этот интерфейс);
+    2. иначе регион из формы есть в каталоге — пара (он, предпочтительно
+       public, иначе internal, иначе admin, иначе единственный свой);
+    3. иначе регион в каталоге единственный — пара (он, тот же порядок
+       предпочтений);
+    4. иначе предложения нет: при нескольких равноправных вариантах выбор
+       делает администратор по списку в тексте ошибки.
+    """
+    facts: dict = {"regions": [], "interfaces": [], "suggestion": None}
+    endpoints = service_endpoints(conn, "compute")
+    if not endpoints:
+        return facts
+    pairs = {
+        (str(item.get("region") or item.get("region_id") or ""),
+         str(item.get("interface") or ""))
+        for item in endpoints
+    }
+    pairs.discard(("", ""))
+    facts["regions"] = sorted({r for r, _ in pairs} - {""})
+    facts["interfaces"] = sorted({i for _, i in pairs} - {""})
+
+    region = str(cfg.get("region_name") or "").strip()
+    interface = str(cfg.get("interface") or "public").strip()
+    preference = ("public", "internal", "admin")
+
+    def pick(candidates: set) -> str:
+        for want in preference:
+            if want in candidates:
+                return want
+        return sorted(candidates)[0] if candidates else ""
+
+    same_interface = {r for r, i in pairs if i == interface and r}
+    suggestion = None
+    if len(same_interface) == 1:
+        suggestion = {"region": next(iter(same_interface)),
+                      "interface": interface}
+    elif region in facts["regions"]:
+        iface = pick({i for r, i in pairs if r == region and i})
+        if iface:
+            suggestion = {"region": region, "interface": iface}
+    elif len(facts["regions"]) == 1:
+        only = facts["regions"][0]
+        iface = pick({i for r, i in pairs if r == only and i})
+        if iface:
+            suggestion = {"region": only, "interface": iface}
+    facts["suggestion"] = suggestion
+    return facts
 
 
 def _service_names(conn, region_name: str = "",
@@ -414,7 +477,8 @@ def test_connection(cfg: dict) -> dict:
     if mismatch:
         return {"ok": False, "error": mismatch, "error_code": "catalog",
                 "services": services, "authorized": True, "hypervisor": None,
-                "warnings": problems}
+                "warnings": problems,
+                "catalog": catalog_suggestion(conn, cfg)}
 
     stats = None
     try:

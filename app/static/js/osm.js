@@ -697,13 +697,25 @@ function renderTestResult(result) {
   // ведёт администратора к строкам файла провайдера, а не к гаданию.
   const catalogIssue = !result.ok && (result.error_code === 'catalog'
     || /not present in the service catalog/i.test(result.error || ''));
+  // v1.70.55: панель провайдера может противоречить собственному облаку —
+  // каталог предложил одну пару, файл другую. Программа лишь ПРЕДЛАГАЕТ:
+  // кнопка заполняет поля, решение и повтор проверки — за администратором.
+  const suggestion = (result.catalog && result.catalog.suggestion) || null;
   const catalogHint = catalogIssue
     ? '<div class="form-hint">В каталоге облака нет сервиса для выбранных '
       + 'региона и интерфейса. Откройте файл провайдера: регион — строка '
       + 'OS_REGION_NAME, интерфейс — строка OS_INTERFACE. Перенесите эти '
       + 'значения в поля «Регион» и «Интерфейс каталога» и повторите '
       + 'проверку. Интерфейс для служебного доступа замените на тот, что '
-      + 'указан в файле провайдера.</div>'
+      + 'указан в файле провайдера.'
+      + (suggestion
+        ? ` Если файл противоречит каталогу, верьте каталогу: он предлагает `
+          + `регион «${esc(suggestion.region)}», интерфейс `
+          + `«${esc(suggestion.interface)}». `
+          + '<button type="button" class="btn btn-sm" id="osm-catalog-apply">'
+          + 'Подставить из каталога</button>'
+        : '')
+      + '</div>'
     : '';
   const denied = !result.ok && (result.error_code === 'auth_denied'
     || /HTTP 40[13]/.test(result.error || ''));
@@ -726,6 +738,22 @@ function renderTestResult(result) {
     + catalogHint
     + (chips ? `<div class="osm-services">${chips}</div>` : '')
     + `</div></div>`;
+  // v1.70.55: подстановка предложения каталога в поля формы одним нажатием.
+  const catalogApply = box.querySelector('#osm-catalog-apply');
+  if (catalogApply && suggestion) {
+    catalogApply.addEventListener('click', () => {
+      const regionField = document.getElementById('osm-region');
+      const ifaceField = document.getElementById('osm-interface');
+      if (regionField) regionField.value = suggestion.region;
+      if (ifaceField && ['public', 'internal', 'admin'].includes(suggestion.interface)) {
+        ifaceField.value = suggestion.interface;
+      }
+      catalogApply.textContent = 'Подставлено';
+      catalogApply.disabled = true;
+      toast('Регион и интерфейс из каталога подставлены в поля — повторите '
+        + 'проверку подключения', 'ok', '☁️');
+    });
+  }
 }
 
 async function saveSettings(withLimits) {
