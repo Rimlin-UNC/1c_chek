@@ -96,6 +96,14 @@ async def lifespan(app: FastAPI):
     except Exception:                                    # noqa: BLE001
         log.exception("fetch queue workers start failed")
 
+    # v1.70.51: мониторинг OpenStack — поток опроса, если включён в настройках
+    try:
+        from .openstack_monitor import worker as os_worker
+        if os_worker.start_worker():
+            log.info("openstack monitor worker auto-started")
+    except Exception:                                    # noqa: BLE001
+        log.exception("openstack monitor worker start failed")
+
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:
         import asyncio as _aio
@@ -434,6 +442,14 @@ from .b2b import router_public as b2b_public  # noqa: E402
 
 app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
 app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
+
+# v1.70.51: мониторинг OpenStack (docs/Monitor.md). Внутренний контур для
+# администратора: настройки подключения, показатели, история и журнал.
+# Префикс общий для всей программы — /api/v1/openstack/*, поэтому в список
+# исключений SPA-перехвата ниже он уже входит (api/).
+from .openstack_monitor import router as openstack_router  # noqa: E402
+
+app.include_router(openstack_router.router)  # /api/v1/openstack/* (админ)
 
 # v1.70.47: публичная оферта. Страница /oferta должна отдаваться ДО
 # SPA-перехвата ниже, иначе запрос уйдёт в веб-клиент и пользователь,

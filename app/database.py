@@ -91,6 +91,13 @@ def init_db() -> None:
     except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
         import traceback
         traceback.print_exc()
+    try:  # v1.70.51: таблицы мониторинга OpenStack (docs/Monitor.md)
+        from .openstack_monitor import models as _os_models  # noqa: F401
+        from .openstack_monitor.models import ensure_openstack_schema
+        ensure_openstack_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
     _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении
