@@ -5908,6 +5908,37 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.50': [
+    { icon: '👥', title: 'Клиенты приложения одним списком',
+      text: 'В разделе «Данные» рядом с карточкой «Сервер и команды» появились две '
+        + 'новые карточки. Первая — справочник клиентских поверхностей: веб-клиент, '
+        + 'устанавливаемое приложение, мини-приложение в MAX, контур B2B, Telegram, '
+        + '1С, платный доступ и страница оферты. У каждой названы адрес, состав '
+        + 'пользователей, способ подключения и место в коде, а рядом стоят живые '
+        + 'счётчики — сколько пользователей, входов, компаний, привязанных чатов, '
+        + 'выгруженных чеков и обращений по ключам.' },
+    { icon: '🔀', title: 'Куда уходят данные и что известно о сети',
+      text: 'Вторая карточка показывает одиннадцать потоков данных: адреса, состав '
+        + 'передаваемого, способ защиты, журнал-свидетель и модуль-источник. '
+        + 'Отдельным блоком идут сетевые сведения о сервере — граница сети, обратный '
+        + 'прокси, сертификаты, защита от подбора пароля, служба, хранение, секреты '
+        + 'и личные данные. У каждого факта назван файл, которым он подтверждён.' },
+    { icon: '🧮', title: 'Счётчики только там, где есть журнал',
+      text: 'Числа берутся из журналов, которые программа уже ведёт: проверка чеков, '
+        + 'почта, вебхуки и платный доступ. У потока без журнала счётчиков не '
+        + 'появляется — карточка прямо пишет, что журнал не ведётся. Выдуманное '
+        + 'число хуже отсутствия числа, поэтому дописывать его от руки нельзя.' },
+    { icon: '🔒', title: 'Секреты в ответ не попадают',
+      text: 'Из устройств остаются метка и время, из ключей — префикс и лимиты. '
+        + 'Хэши токенов, открытые ключи, пароли почтовых ящиков и сами ключи не '
+        + 'отдаются ни в каком виде; проверка на восемь запрещённых имён в ответе '
+        + 'закреплена замком.' },
+    { icon: '🔖', title: 'Выпуск понадобился из-за кэш-бастеров',
+      text: 'Правка коснулась клиентского скрипта, а его адрес в разметке, в '
+        + 'service worker и в манифесте несёт номер версии. Без нового номера '
+        + 'браузер продолжил бы отдавать прежний файл из кэша, и карточки не '
+        + 'появились бы ни у кого.' },
+  ],
   '1.70.49': [
     { icon: '✉️', title: 'Один корпоративный адрес во всех полях',
       text: 'Проверка по запросу владельца показала: прежний адрес уже перенесён на корпоративный chek@ymaster.ru в выпуске 1.70.45, но рядом с ним остались четыре других адреса того же домена — в подсказке поля, в примере сообщения об отказе и в двух плановых документах. Все четыре приведены к корпоративному, чтобы почта для связи по персональным данным, поддержка и обращения по плану не расходились по разным ящикам. Теперь в отслеживаемых файлах у домена только один адрес, и это закреплено замком.' },
@@ -9000,9 +9031,11 @@ async function viewSettings(container) {
   try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); whSet = await api.get('/api/v1/settings/webhooks'); consentSet = await api.get('/api/v1/settings/consent'); } }   // v1.66.0: + MAX, v1.67.0: + webhooks
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
-  let appSum = null, sysInfo = null;
+  let appSum = null, sysInfo = null, clientsInfo = null;
   try { appSum = await api.get('/api/v1/settings/app/summary'); } catch {}
   if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
+  // v1.70.50: клиенты приложения и передача данных — один запрос на две карточки
+  if (isAdmin()) { try { clientsInfo = await api.get('/api/v1/admin/clients'); } catch {} }
   // v1.62.0: политика расходов — бухгалтер и админ
   if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
   if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
@@ -9485,6 +9518,27 @@ async function viewSettings(container) {
         Первая — одноразовая: разрешает приложению перезапускать себя без пароля
         (после неё обновления из приложения идут полностью автоматически).</p>
         <div id="sys-cmds"></div>
+      </div>
+
+      <div class="glass card" id="st-clients" data-sec="data" style="order:14">
+        <div class="card-title">👥 Клиенты приложения <span class="form-hint">(v1.70.50)</span></div>
+        <p class="form-hint" style="margin:0 0 10px">Кто подключается к серверу: справочник
+          клиентских поверхностей и живые счётчики по каждой из них.</p>
+        <div id="cl-surfaces"><div class="skeleton" style="height:34px"></div></div>
+        <details style="margin-top:10px">
+          <summary>Подключённые устройства и последние входы</summary>
+          <div id="cl-connections" style="margin-top:8px">
+            <div class="skeleton" style="height:34px"></div></div>
+        </details>
+      </div>
+
+      <div class="glass card" id="st-transfer" data-sec="data" style="order:15">
+        <div class="card-title">🔀 Передача данных и сеть <span class="form-hint">(v1.70.50)</span></div>
+        <p class="form-hint" style="margin:0 0 10px">Куда уходят данные и что известно о сети
+          сервера. Счётчики берутся из журналов, которые программа уже ведёт;
+          у потока без журнала счётчиков не появляется.</p>
+        <dl class="kv" style="font-size:13px" id="tr-network"><dt>Загрузка…</dt><dd></dd></dl>
+        <div id="tr-flows" style="margin-top:10px"></div>
       </div>
 
       <div class="glass card" id="st-update" data-sec="data" style="order:11">
@@ -10266,6 +10320,124 @@ async function viewSettings(container) {
     sc && sc.querySelectorAll('.cmd-copy').forEach(b => {
       b.onclick = () => copyCmd(b.dataset.cmd, b);
     });
+  }
+
+  // v1.70.50: «Клиенты приложения» + «Передача данных и сеть»
+  if (isAdmin() && clientsInfo) {
+    const _v = (x) => (x === null || x === undefined || x === '' ? '—' : String(x));
+    const DIR = { out: 'наружу', in: 'внутрь', both: 'в обе стороны',
+                  browser: 'браузер, не сервер' };
+    const ACT = {
+      login: 'пароль', login_passkey: 'быстрый вход', login_max: 'через MAX',
+      login_failed: 'пароль — отказ', login_passkey_failed: 'быстрый вход — отказ',
+    };
+
+    const cs = $('#cl-surfaces');
+    if (cs) {
+      cs.innerHTML = (clientsInfo.surfaces || []).map((s) => {
+        const live = (s.live || []).map((m) =>
+          `<dt>${esc(m.label)}</dt><dd>${esc(_v(m.value))}</dd>`).join('');
+        return `
+        <details style="margin-bottom:6px">
+          <summary>${esc(s.icon)} ${esc(s.name)}
+            <span class="form-hint" style="margin-left:6px">${esc(s.address)}</span></summary>
+          <div style="margin:6px 0 8px;font-size:13px">${esc(s.text)}</div>
+          <dl class="kv" style="font-size:13px">
+            <dt>Кто пользуется</dt><dd>${esc(s.audience)}</dd>
+            <dt>Как подключается</dt><dd>${esc(s.transport)}</dd>
+            <dt>Код поверхности</dt><dd><code class="inline">${esc(s.source)}</code></dd>
+          </dl>
+          ${live ? `<dl class="kv" style="font-size:13px;margin-top:6px">${live}</dl>` : ''}
+        </details>`;
+      }).join('') || '<p class="form-hint">Справочник пуст</p>';
+    }
+
+    const cc = $('#cl-connections');
+    if (cc) {
+      const c = clientsInfo.connections || {};
+      const tbl = (head, rows) => rows ? `
+        <table class="data" style="font-size:12.5px;margin-top:4px">
+          <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+          <tbody>${rows}</tbody></table>` : '';
+      const pk = (c.passkeys || []).map((p) =>
+        `<tr><td>${esc(_v(p.label))}</td><td>${esc(_v(p.username))}</td>
+         <td>${esc(_v(p.created_at))}</td><td>${esc(_v(p.last_used_at))}</td></tr>`).join('');
+      const lg = (c.logins || []).map((l) =>
+        `<tr><td>${esc(_v(l.username))}</td><td>${esc(ACT[l.action] || l.action)}</td>
+         <td>${esc(_v(l.ip))}</td><td>${esc(_v(l.at))}</td></tr>`).join('');
+      const ks = (c.api_keys || []).map((k) =>
+        `<tr><td>${esc(_v(k.name))}</td><td><code class="inline">${esc(_v(k.prefix))}…</code></td>
+         <td>${k.active ? '✅ да' : '⛔ нет'}</td><td>${esc(_v(k.rate_per_hour))}</td>
+         <td>${esc(_v(k.monthly_quota))}</td><td>${esc(_v(k.last_used_at))}</td></tr>`).join('');
+      cc.innerHTML = `
+        <dl class="kv" style="font-size:13px">
+          <dt>Устройств с быстрым входом</dt><dd>${esc(_v(c.passkeys_total))}</dd>
+          <dt>Входов за 24 часа</dt><dd>${esc(_v(c.logins_24h))}</dd>
+          <dt>Отказов входа за 24 часа</dt><dd>${esc(_v(c.logins_failed_24h))}</dd>
+          <dt>Участников Чек-Пула</dt><dd>${esc(_v(c.pool_users))}</dd>
+        </dl>
+        ${pk ? `<div class="form-hint" style="margin-top:10px">Устройства</div>
+          ${tbl(['Метка', 'Владелец', 'Добавлено', 'Последний вход'], pk)}` : ''}
+        ${lg ? `<div class="form-hint" style="margin-top:10px">Последние входы</div>
+          ${tbl(['Пользователь', 'Способ', 'Адрес', 'Когда'], lg)}` : ''}
+        ${ks ? `<div class="form-hint" style="margin-top:10px">Ключи платного API</div>
+          ${tbl(['Название', 'Префикс', 'Действует', 'В час', 'Квота', 'Последний вызов'], ks)}` : ''}`;
+    }
+
+    const tn = $('#tr-network');
+    if (tn) {
+      const n = clientsInfo.network || {};
+      const q = n.fetch_queue || {};
+      tn.innerHTML = `
+        <dt>Адрес сайта</dt><dd><code class="inline">${esc(_v(n.site_url))}</code></dd>
+        <dt>База данных</dt><dd>${esc(_v(n.database_kind))} · ${esc(_v(n.db_size_mb))} МБ</dd>
+        <dt>Файл базы</dt><dd><code class="inline">${esc(_v(n.db_path))}</code></dd>
+        <dt>Резервных копий</dt><dd>${esc(_v(n.backups_total))}</dd>
+        <dt>Очередь загрузки</dt><dd>${esc(_v(q.queued))}</dd>
+        <dt>Сборка</dt><dd><code class="inline">${esc(_v(n.commit))}</code> ·
+          ветка ${esc(_v(n.branch))}</dd>`;
+    }
+
+    const tf = $('#tr-flows');
+    if (tf) {
+      const facts = (clientsInfo.network_facts || []).map((f) => `
+        <div style="margin-bottom:8px">
+          <div style="font-size:13px;font-weight:600">${esc(f.label)}</div>
+          <div class="form-hint" style="margin-top:2px">${esc(f.value)}</div>
+          <div class="form-hint" style="margin-top:2px">Источник:
+            <code class="inline">${esc(f.source)}</code></div>
+        </div>`).join('');
+      const flows = (clientsInfo.flows || []).map((f) => {
+        const stats = (f.stats || []).map((m) =>
+          `<dt>${esc(m.label)}</dt><dd>${esc(_v(m.value))}</dd>`).join('');
+        const hosts = (f.hosts || []).map((h) =>
+          `<code class="inline">${esc(h)}</code>`).join(' ');
+        return `
+        <details style="margin-bottom:6px">
+          <summary>${esc(f.icon)} ${esc(f.service)}
+            <span class="form-hint" style="margin-left:6px">${esc(DIR[f.direction] || f.direction)}</span></summary>
+          <div style="margin:6px 0 8px">
+            <div style="font-size:13px">Что передаётся: ${esc(f.sends)}</div>
+            <div class="form-hint" style="margin-top:4px">Защита: ${esc(f.protection)}</div>
+            ${hosts ? `<div class="form-hint" style="margin-top:4px">Адреса: ${hosts}</div>` : ''}
+            <div class="form-hint" style="margin-top:4px">Источник:
+              <code class="inline">${esc(f.source)}</code>${f.log ? ` · журнал:
+              <code class="inline">${esc(f.log)}</code>` : ''}</div>
+            ${stats ? `<dl class="kv" style="font-size:13px;margin-top:6px">${stats}</dl>`
+              : '<div class="form-hint" style="margin-top:6px">Счётчиков нет: поток не ведёт журнал</div>'}
+          </div>
+        </details>`;
+      }).join('');
+      tf.innerHTML = `
+        <details>
+          <summary>Сеть и размещение сервера</summary>
+          <div style="margin-top:8px">${facts}</div>
+        </details>
+        <details style="margin-top:6px">
+          <summary>Потоки данных</summary>
+          <div style="margin-top:8px">${flows}</div>
+        </details>`;
+    }
   }
   makeSettingsCollapsible(container);   // v1.21.0: сворачиваемые блоки
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)

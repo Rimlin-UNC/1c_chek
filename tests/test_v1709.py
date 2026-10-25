@@ -71,9 +71,15 @@ class TestSettingsMenuStructure:
         # v1.70.37: карточек 28 — добавлен блок st-consent «Согласие 152-ФЗ:
         # данные участников из MAX» в разделе «Интеграции» (реквизиты оператора
         # для текста согласия, который показывается в мини-приложении MAX).
-        assert len(with_sec) == 28, with_sec
+        # v1.70.50: карточек 30 — по требованию владельца в разделе «Данные»
+        # рядом с блоком «Сервер и команды» появились st-clients «Клиенты
+        # приложения» (порядок 14) и st-transfer «Передача данных и сеть»
+        # (порядок 15); обе только для администратора и на одном запросе.
+        assert len(with_sec) == 30, with_sec
         assert ("st-consent", "integr", "38") in with_sec
         assert ("st-adguard", "device", "49") in with_sec
+        assert ("st-clients", "data", "14") in with_sec
+        assert ("st-transfer", "data", "15") in with_sec
         assert all(cid and cid.startswith(("st-", "wa-", "mail-"))
                    for cid, _s, _o in with_sec)
         secs = {s for _c, s, _o in with_sec}
@@ -84,7 +90,9 @@ class TestSettingsMenuStructure:
         # v1.70.28: device 4 -> 5 (блок AdGuard VPN); из карточки
         # Telegram-бота он удалён, но сама карточка st-tgbot осталась в integr.
         # v1.70.37: integr 6 -> 7 — карточка реквизитов оператора в согласии.
-        expect = {"data": 4, "checks": 6, "integr": 7, "personal": 6,
+        # v1.70.50: data 4 -> 6 — «Клиенты приложения» и «Передача данных
+        # и сеть» встали в раздел «Данные» рядом с «Сервер и команды».
+        expect = {"data": 6, "checks": 6, "integr": 7, "personal": 6,
                   "device": 5}
         for sec, n in expect.items():
             assert f'data-sec="{sec}"' in js

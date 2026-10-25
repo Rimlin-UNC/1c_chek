@@ -60,7 +60,6 @@ SETTINGS_ROUTES = APP / "routers" / "settings_routes.py"
 CONSENT_PY = APP / "services" / "consent.py"
 CONSENT_TESTS = ROOT / "tests" / "test_v17037.py"
 GUARD_TESTS = ROOT / "tests" / "test_v17045.py"
-RELEASE_48_TESTS = ROOT / "tests" / "test_v17048.py"
 PROBE = ROOT / "qa" / "probe_b2b.py"
 VENDOR_META = APP / "vendor" / "qrcode" / "METADATA.txt"
 
@@ -338,42 +337,21 @@ class TestRejectedFindingsAreRecorded:
 # 6. Ритуал выпуска
 # ======================================================================
 class TestRelease17049:
-    """Точки синхронизации версии ведёт файл текущего выпуска. Прежние
-    классы (1.70.38…1.70.48) оставляют у себя только запись выпуска в
-    истории — приём тот же, что в предыдущих релизах."""
+    """v1.70.50: выпуск 1.70.49 отгружен.
+
+    Точки синхронизации показывают ТЕКУЩУЮ версию — их ведёт test_v17050, а
+    здесь остаётся запись выпуска в истории (как сделано для 1.70.38…1.70.48).
+    Константа PREVIOUS нужна своим же проверкам записи «Что нового», раздела
+    CHANGELOG и журнала: они вырезают текст между своей версией и предыдущей.
+    """
 
     VERSION = "1.70.49"
     PREVIOUS = "1.70.48"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read(APP / "config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read(SW)
-        assert f'"version": "{self.VERSION}"' in _read(MANIFEST)
-        index = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in index
-        assert f"app.js?v={self.VERSION}" in index
-        assert f"maxapp.js?v={self.VERSION}" in _read(MAX_HTML)
-
-    def test_cache_busters_in_service_worker(self):
-        """Правка коснулась клиентского скрипта: без нового номера браузер и
-        кэш приложения продолжили бы отдавать прежний файл."""
-        sw = _read(SW)
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_cabinet_assets_carry_the_same_version(self):
-        html = _read(CABINET)
-        assert f"/b2b/b2b.css?v={self.VERSION}" in html
-        assert f"/b2b/b2b.js?v={self.VERSION}" in html
-
-    def test_no_previous_version_left_in_sync_points(self):
-        for path in (APP / "config.py", INDEX, SW, MANIFEST, MAX_HTML, CABINET):
-            assert self.PREVIOUS not in _read(path), f"{path.name}: старая версия"
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, "запись выпуска не первая"
+    def test_version_is_release(self):
+        ver = re.search(r'APP_VERSION: str = "([^"]+)"',
+                        _read(APP / "config.py")).group(1)
+        assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 49)
 
     def _block(self):
         js = _read(APP_JS)
@@ -433,15 +411,3 @@ class TestRelease17049:
         for path in (CHANGELOG, JOURNAL, pathlib.Path(__file__)):
             assert "Проверь все места где этот адрес" in _read(path), \
                 f"{path.name}: нет цитаты владельца"
-
-    def test_previous_release_class_is_history_only(self):
-        """Класс прежнего выпуска больше не держит точки синхронизации: иначе
-        каждый следующий релиз обязан был бы править чужой тест. Класс в своём
-        файле последний, поэтому хвост берётся до конца файла."""
-        src = _read(RELEASE_48_TESTS)
-        block = src.split("class TestRelease17048:", 1)[1]
-        assert "test_all_sync_points" not in block
-        assert "test_cache_busters_in_service_worker" not in block
-        assert "test_whats_new_is_first" not in block
-        assert "test_version_is_release" in block
-        assert f'VERSION = "{self.PREVIOUS}"' in block
