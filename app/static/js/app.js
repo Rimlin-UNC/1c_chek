@@ -274,7 +274,7 @@ function maxBotLink(startParam) {
 function initMaxIntro() {
   const box = $('#max-intro');
   if (!box) return;
-  let seen = '';
+  let seen;
   try { seen = localStorage.getItem(MAX_INTRO_KEY) || ''; } catch (e) { seen = '1'; }
   if (seen) return;                       // уже показывали — не мешаем
   box.classList.remove('hidden');
@@ -602,7 +602,7 @@ function pulsePhase(el) {
 function flyChipTo(state, srcEl, targetEl, hostEl) {
   if (!targetEl) return;
   pulsePhase(targetEl);
-  let reduced = false;
+  let reduced;
   try {
     reduced = window.matchMedia
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -3840,7 +3840,7 @@ async function viewCompanies(container) {
       const r = await api.post('/api/v1/companies/bulk-refresh', { limit: 40 });
       toast(r.message, 'ok', '🗂');
       if (r.errors && r.errors.length) console.warn('bulk-refresh errors:', r.errors);
-      load();
+      route(true);
     } catch (e) { toast(e.message, 'err'); }
     cbr.disabled = false; cbr.textContent = '⟳ Обновить ЕГРЮЛ (все)';
   };
@@ -5920,6 +5920,30 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.59': [
+    { icon: '🔓', title: 'Кнопка квадратного кода приглашения снова работает',
+      text: 'Кнопка квадратного кода в диалоге создания приглашения молча '
+        + 'умирала: функция, рисующая код, была объявлена внутри другого '
+        + 'экрана, и клик падал ошибкой имени. Функция вынесена на уровень '
+        + 'модуля — код открывается и из диалога, и из списка приглашений.' },
+    { icon: '🗂', title: 'Список компаний обновляется после массового обновления',
+      text: 'После массового обновления карточек ЕГРЮЛ таблица не '
+        + 'перечитывалась, а в журнал браузера прилетала внутренняя '
+        + 'ошибка: обработчик звал функцию, которой на этом экране нет. '
+        + 'Теперь экран перечитывается, и администратор сразу видит '
+        + 'свежие статусы компаний.' },
+    { icon: '🌓', title: 'Формы не чернеют в тёмной теме браузера',
+      text: 'Страницы объявляют светлую цветовую схему: тёмная тема '
+        + 'браузера больше не перекрашивает поля ввода, списки и '
+        + 'календари в тёмное на светлом фоне — текст остаётся читаемым '
+        + 'у пользователей с ночным режимом устройства.' },
+    { icon: '📣', title: 'Результаты действий озвучиваются экранным чтецом',
+      text: 'Контейнер уведомлений получил роль статуса для экранных '
+        + 'чтецов: результат любого действия — сохранение, обновление, '
+        + 'ошибка — не только виден, но и озвучен. Дополнительно внедрён '
+        + 'статический анализатор кода: опечатки и мёртвые ветки ловятся '
+        + 'до браузера, а сторонние библиотеки из анализа исключены.' },
+  ],
   '1.70.58': [
     { icon: '📐', title: 'Оглавления блоков читаемы на телефоне',
       text: 'На узком экране строка оглавления сжималась в столбики '
@@ -8944,29 +8968,6 @@ async function viewUsers(container) {
     route(true);
   });
 
-  // v1.8.2: модал QR-кода приглашения — показать/скачать PNG
-  async function openInviteQr(inv, url) {
-    const { slot } = openModal(`
-      <div class="modal-title">▣ QR-код приглашения</div>
-      <div class="invite-qr-box"><div class="skeleton" style="height:220px;width:220px"></div></div>
-      <p class="form-hint" style="margin-top:10px">Пусть сотрудник наведёт камеру телефона
-      (сканер QR — камера или «Google Объектив») — откроется страница регистрации,
-      роль присвоится автоматически. Ссылка: <span class="mono" style="font-size:11px">${esc(url || '')}</span></p>
-      <div class="modal-actions">
-        <button type="button" class="btn" data-close>Закрыть</button>
-        <button type="button" class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
-      </div>`);
-    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
-    const box = slot.querySelector('.invite-qr-box');
-    try {
-      const { blob, filename } = await api.download(`/api/v1/invites/${inv.id}/qr`);
-      const objUrl = URL.createObjectURL(blob);
-      box.innerHTML = `<img src="${objUrl}" alt="QR-код приглашения" width="220" height="220">`;
-      slot.querySelector('#iv-qr-dl').onclick = () => downloadBlob(blob, filename);
-    } catch (e) {
-      box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`;
-    }
-  }
 
 
   // --- Пользователи ---
@@ -11382,7 +11383,7 @@ async function viewSettings(container) {
 async function bindMailCenter() {
   const $m = (id) => document.getElementById(id);
   if (!$m('mail-card')) return;
-  let cfg = null, rules = [];
+  let cfg, rules = [];
   const DAY_TITLES = { daily: 'ежедневно', mon: 'понедельник', tue: 'вторник',
     wed: 'среда', thu: 'четверг', fri: 'пятница', sat: 'суббота', sun: 'воскресенье' };
   const AUD = {
@@ -11572,7 +11573,7 @@ async function waBindSettingsCard() {
       'Вход по паролю работает как раньше.';
     return;
   }
-  let items = [];
+  let items;
   try { items = (await api.get('/api/v1/auth/passkeys')).items; }
   catch (e) { list.textContent = e.message || 'Не удалось загрузить'; return; }
   list.innerHTML = items.length ? items.map(k =>
@@ -12098,3 +12099,31 @@ function registerServiceWorker() {
 
 // --------------------------------------------------------------------------
 boot();
+
+
+// v1.70.59: модал QR-кода приглашения — определение на уровне модуля.
+// Прежде функция была объявлена внутри экрана «Пользователи», и
+// кнопка «QR» диалога создания приглашения падала ReferenceError.
+  // v1.8.2: модал QR-кода приглашения — показать/скачать PNG
+async function openInviteQr(inv, url) {
+  const { slot } = openModal(`
+    <div class="modal-title">▣ QR-код приглашения</div>
+    <div class="invite-qr-box"><div class="skeleton" style="height:220px;width:220px"></div></div>
+    <p class="form-hint" style="margin-top:10px">Пусть сотрудник наведёт камеру телефона
+    (сканер QR — камера или «Google Объектив») — откроется страница регистрации,
+    роль присвоится автоматически. Ссылка: <span class="mono" style="font-size:11px">${esc(url || '')}</span></p>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-close>Закрыть</button>
+      <button type="button" class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  const box = slot.querySelector('.invite-qr-box');
+  try {
+    const { blob, filename } = await api.download(`/api/v1/invites/${inv.id}/qr`);
+    const objUrl = URL.createObjectURL(blob);
+    box.innerHTML = `<img src="${objUrl}" alt="QR-код приглашения" width="220" height="220">`;
+    slot.querySelector('#iv-qr-dl').onclick = () => downloadBlob(blob, filename);
+  } catch (e) {
+    box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`;
+  }
+  }
