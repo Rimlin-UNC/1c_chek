@@ -1,0 +1,22 @@
+{
+  "name": "ymaster-check-qa",
+  "private": true,
+  "version": "1.70.60",
+  "description": "QA-цепочка Ямастер Чек: ESLint + Vitest + Playwright + Newman (Postman-коллекция). ООО «Ямастер»",
+  "scripts": {
+    "lint": "eslint app/static/js",
+    "test:js": "vitest run",
+    "test:e2e": "playwright test",
+    "test:api": "newman run qa/postman/ymaster_check.postman_collection.json --env-var baseUrl=http://127.0.0.1:8002"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.64.1",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "jsdom": "^25.0.0",
+    "newman": "^6.0.0",
+    "playwright": "^1.49.0",
+    "vitest": "^2.1.0"
+  }
+}
