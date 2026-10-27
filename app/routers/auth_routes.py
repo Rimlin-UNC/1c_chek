@@ -28,6 +28,7 @@ from ..database import get_db
 from ..models import Company, Invite, User, iso_z
 from ..schemas import LoginRequest, PasswordChange, RegisterRequest
 from ..security import login_guard
+from ..services import rbac as rbac_space   # v1.70.61: пространство роли
 from ..services.audit import log_action
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Аутентификация"])
@@ -178,6 +179,9 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
     _comp = db.get(Company, user.company_id) if user.company_id else None
     d["company_name"] = ((_comp.short_name or _comp.name) if _comp else None)
     d["is_platform_admin"] = (user.role == "admin")
+    # v1.70.61: пространство роли — экраны и разделы настроек, которые
+    # роль действительно вправе видеть (иерархия app/services/rbac.py)
+    d["space"] = rbac_space.space_payload(user.role)
     # v1.16.0: Telegram-привязка для личного кабинета настроек
     d["telegram_bound"] = bool(user.telegram_chat_id)
     # v1.66.0: привязка ассистента MAX

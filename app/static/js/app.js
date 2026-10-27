@@ -95,6 +95,30 @@ function shortOpfName(name) {
 const isAccountant = () => state.me && (state.me.role === 'admin' || state.me.role === 'accountant');
 const isManager = () => state.me && state.me.role === 'manager';   // v1.64.0: только просмотр
 const isAdmin = () => state.me && state.me.role === 'admin';
+// v1.70.61: иерархия ролей и пространства — зеркало app/services/rbac.py
+// (замок выпуска сверяет оба источника). Роль видит только свои экраны
+// и свои разделы настроек; пространство донора — только контур пула.
+const ROLE_SPACE = {
+  admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
+                        'poolpick', 'boss', 'users', 'audit', 'companies',
+                        'pooladmin', 'poolpeople', 'fraud', 'b2badmin',
+                        'settings'],
+                secs: ['data', 'checks', 'integr', 'personal', 'device'] },
+  accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
+                        'poolpick', 'settings'],
+                secs: ['checks', 'personal'] },
+  manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
+                secs: ['personal'] },
+  user:       { views: ['dashboard', 'scan', 'receipts', 'settings'],
+                secs: ['personal'] },
+  donor:      { views: ['public', 'my', 'partners'], secs: [] },
+};
+const roleSpace = () => ROLE_SPACE[(state.me && state.me.role) || 'donor'] || ROLE_SPACE.donor;
+const spaceHas = (key) => {
+  const kind = key.slice(0, key.indexOf(':')), name = key.slice(key.indexOf(':') + 1);
+  const space = roleSpace();
+  return (kind === 'view' ? space.views : space.secs).includes(name);
+};
 
 // --------------------------------------------------------------------------
 //  Точка входа
@@ -2982,6 +3006,11 @@ function enterApp() {
     state.poolEnabled = !!info.enabled;
     $$('.pool-only').forEach(el => el.classList.toggle('hidden', !state.poolEnabled));
     if (!state.poolEnabled && isAdmin()) poolEnableBanner();   // v1.59.0
+    // v1.70.61: матрица ролей — пункт меню вне пространства роли скрыт,
+    // даже если прежние классовые фильтры его оставили видимым.
+    $$('.nav-item').forEach(a => {
+      if (a.dataset.view && !spaceHas('view:' + a.dataset.view)) a.classList.add('hidden');
+    });
   }).catch(() => {});
   applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
@@ -3586,6 +3615,12 @@ function route(silent = false) {
   // v1.58.1: пул выключен → страницы пула недоступны, меню их скрывает
   if ((view === 'public' || view === 'my' || view === 'partners') &&
       state.poolEnabled === false) { location.hash = '#/dashboard'; return; }
+  // v1.70.61: матрица пространств — раздел вне роли недоступен даже
+  // прямой ссылкой: компания уходит на дашборд, гость — на сдачу чека.
+  if (!spaceHas('view:' + view)) {
+    location.hash = getToken() ? '#/dashboard' : '#/public';
+    return;
+  }
 
   const renderers = {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
@@ -5920,6 +5955,32 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.61': [
+    { icon: '🪪', title: 'Каждой роли — своё пространство программы',
+      text: 'Построена ветка иерархии прав: администратор видит всё, '
+        + 'бухгалтер — чеки и выгрузку с мапингом, руководитель — только '
+        + 'просмотр и свой отчёт, сотрудник — рабочую зону сканирования '
+        + 'и реестра. Пространство роли заперто и в меню, и в маршрутах, '
+        + 'и в настройках: чужой раздел не открыть даже прямой ссылкой.' },
+    { icon: '🧭', title: 'Меню без лишнего: только пункты своей роли',
+      text: 'Раньше реестр, сканирование и настройки открывались любой '
+        + 'роли, а страницы пула мелькали в меню компании. Теперь пункт '
+        + 'меню вне пространства роли скрыт: участник-донор видит три '
+        + 'пункта пула, сотрудник — рабочую зону, бухгалтер — свой '
+        + 'набор, и ничего сверх полномочий.' },
+    { icon: '⚙️', title: 'Настройки соответствуют роли',
+      text: 'Меню настроек и карточки разделов показываются по роли: '
+        + 'администратору — все разделы, бухгалтеру — проверка чеков и '
+        + 'почта плюс личное, руководителю и сотруднику — только личное. '
+        + 'Служебные разделы устройства и данных остались прерогативой '
+        + 'администратора.' },
+    { icon: '🪽', title: 'Пространство донора упрощено до сути',
+      text: 'Участнику, который сдаёт чеки в пул ради бонуса, не нужен '
+        + 'мапинг и компании: его пространство — сдать чек, свои бонусы '
+        + 'и партнёры. Оно не пересекается с контуром компании: ни '
+        + 'дашборда, ни чужих чеков, ни настроек — только то, что '
+        + 'донору действительно интересно.' },
+  ],
   '1.70.60': [
     { icon: '🧪', title: 'Юнит-тесты модулей интерфейса',
       text: 'Форматы чисел и дат, экранирование, подписи статусов и '
@@ -9346,7 +9407,7 @@ async function viewSettings(container) {
   container.innerHTML = `
     <div class="settings-layout">
     <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">${
-      SETTINGS_GROUPS.map((g) => `
+      SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
       <div class="snav-group" data-grp="${g.key}">
         <button type="button" class="snav-head" aria-expanded="false">
           <span class="snav-ico">${g.icon}</span><span class="snav-title">${g.title}</span>
@@ -10069,6 +10130,12 @@ async function viewSettings(container) {
       </div>
     </div>
     </div>`;
+
+  // v1.70.61: карточки настроек вне разделов роли скрыты — участник
+  // компании не видит чужих разделов, донор настроек не имеет вовсе.
+  container.querySelectorAll('.glass.card[data-sec]').forEach((c) => {
+    if (!spaceHas('sec:' + c.dataset.sec)) c.classList.add('hidden');
+  });
 
   // v1.70.9: тулбар и поведение меню-иерархии настроек
   const settingsApply = (nav, cur) => {
