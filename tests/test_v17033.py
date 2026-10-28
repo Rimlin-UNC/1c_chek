@@ -585,7 +585,7 @@ class TestAutocomplete:
 
     @pytest.mark.parametrize("field,value", [
         ("land-email", "email"),
-        ("login-username", "username"),
+        ("login-username", "username webauthn"),   # v1.70.62: passkey-autofill
         ("reg-fullname", "name"),
         ("reg-username", "username"),
     ])
@@ -693,7 +693,7 @@ class TestRelease:
     # требование «своя запись первая» проверяет test_v17041.
     # v1.70.45: VERSION здесь — ТЕКУЩАЯ версия (класс сверяет точки
     # синхронизации, CHANGELOG и журнал), поэтому поднимается каждый выпуск.
-    VERSION = "1.70.61"
+    VERSION = "1.70.62"
 
     def test_all_sync_points(self):
         points = [

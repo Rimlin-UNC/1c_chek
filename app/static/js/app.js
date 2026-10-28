@@ -452,6 +452,40 @@ async function waPlatformAvailable() {
   } catch (e) { return false; }
 }
 
+// v1.70.62: профессиональный сценарий (web.dev, MDN, Chrome IO25):
+// модальный селектор аккаунтов (лист Google Менеджера паролей) всплывает
+// у discoverable-запроса с пустым allowCredentials и медиацией по
+// умолчанию. Убираем лишний шаг тремя приёмами:
+//  1) mediation: 'immediate' — если ключ есть на устройстве, браузер
+//     сразу просит биометрию, нет — молча выходит без всяких листов;
+//  2) allowCredentials по логину (или последнему входу) — церемония
+//     привязана к учётке, платформе нечего предлагать на выбор;
+//  3) условный autofill: mediation: 'conditional' +
+//     autocomplete="username webauthn" — passkey в подсказках клавиатуры,
+//     касание подсказки даёт биометрию сразу, без модального окна.
+let waCondAbort = null;
+
+function waRememberLogin(user) {
+  try {
+    if (user && user.username) {
+      localStorage.setItem('ymaster-wa-last', user.username);
+    }
+  } catch (e) { /* приватный режим: быстрый вход и так не сохранится */ }
+}
+
+function waAbortConditional() {
+  if (waCondAbort) { waCondAbort.abort(); waCondAbort = null; }
+}
+
+// Логин для привязки церемонии: поле формы, иначе последний успешный вход
+function waLoginUsername() {
+  const field = $('#login-username');
+  const typed = field ? field.value.trim() : '';
+  if (typed) return typed;
+  try { return localStorage.getItem('ymaster-wa-last') || ''; }
+  catch (e) { return ''; }
+}
+
 // Проверка поддержки: показать кнопку на экране входа
 async function waInitLoginScreen() {
   const wrap = $('#login-passkey-wrap');
@@ -462,26 +496,67 @@ async function waInitLoginScreen() {
     const btn = $('#login-passkey');
     btn.disabled = true;
     btn.textContent = 'Подтвердите себя на устройстве…';
+    waAbortConditional();            // одномоментно живёт один WebAuthn-запрос
     try {
-      const r = await waLoginCore('');
+      const r = await waLoginCore(waLoginUsername(), 'immediate');
       setToken(r.access_token);
       state.me = r.user;
       enterApp();
     } catch (e) {
       const el = $('#login-error');
-      el.textContent = e.waCancelled
-        ? 'Вход отменён — подтвердите отпечаток/лицо или введите пароль'
-        : (e.message || 'Не удалось войти по ключу устройства');
+      el.textContent = e.waNoKey
+        ? 'На этом устройстве ключа нет — войдите по паролю и включите быстрый вход'
+        : e.waCancelled
+          ? 'Вход отменён — подтвердите отпечаток/лицо или введите пароль'
+          : (e.message || 'Не удалось войти по ключу устройства');
       el.classList.remove('hidden');
     }
     btn.disabled = false;
     btn.textContent = '🔑 Войти по отпечатку пальца / Face ID';
   };
+  waStartConditional();              // v1.70.62: passkey в autofill клавиатуры
 }
 
-async function waLoginCore(username) {
-  const opts = await api.post('/api/v1/auth/passkey/login/options',
-    { username: username || null });
+// Условный autofill: запрос молча ждёт, пока пользователь не коснётся
+// passkey в подсказках клавиатуры; коснулся — сразу биометрия без листов.
+async function waStartConditional() {
+  try {
+    if (!window.PublicKeyCredential ||
+        !PublicKeyCredential.isConditionalMediationAvailable) return;
+    if (!await PublicKeyCredential.isConditionalMediationAvailable()) return;
+  } catch (e) { return; }
+  waAbortConditional();
+  waCondAbort = new AbortController();
+  const signal = waCondAbort.signal;
+  try {
+    // для autofill allowCredentials обязан быть пустым (web.dev)
+    const r = await waLoginCore('', 'conditional', signal);
+    setToken(r.access_token);
+    state.me = r.user;
+    enterApp();
+  } catch (e) { /* отменён, введён пароль или уход со страницы — молча */ }
+}
+
+// Отмена vs «ключа на устройстве нет» (NotFoundError): во втором случае
+// браузер по mediation 'immediate' молча выходит — показываем парольный
+// экран вместо тревожного «отменено» (подход Chrome IO25).
+function waGetError(e) {
+  const err = new Error(e && e.message ? e.message : 'Отменено на устройстве');
+  if (e && e.name === 'NotFoundError') err.waNoKey = true;
+  else err.waCancelled = true;
+  return err;
+}
+
+async function waLoginCore(username, mediation, signal) {
+  let opts;
+  try {
+    opts = await api.post('/api/v1/auth/passkey/login/options',
+      { username: username || null });
+  } catch (e) {
+    // у логина нет ключа или он неизвестен — discoverable-запрос
+    opts = await api.post('/api/v1/auth/passkey/login/options',
+      { username: null });
+  }
   const get = {
     challenge: WA_B64.dec(opts.challenge),
     rpId: opts.rpId,
@@ -493,13 +568,25 @@ async function waLoginCore(username) {
       type: c.type || 'public-key', id: WA_B64.dec(c.id),
     }));
   }
+  const req = { publicKey: get };
+  if (mediation) req.mediation = mediation;   // 'immediate' | 'conditional'
+  if (signal) req.signal = signal;
   let assertion;
   try {
-    assertion = await navigator.credentials.get({ publicKey: get });
+    assertion = await navigator.credentials.get(req);
   } catch (e) {
-    const err = new Error('Отменено на устройстве');
-    err.waCancelled = true;
-    throw err;
+    // старый браузер не знает mediation 'immediate' (TypeError на
+    // словаре опций) — повторяем без медиации: allowCredentials всё равно
+    // привязывает церемонию к учётке и сокращает путь до биометрии
+    if (mediation === 'immediate' && e instanceof TypeError) {
+      try {
+        assertion = await navigator.credentials.get({ publicKey: get });
+      } catch (e2) {
+        throw waGetError(e2);
+      }
+    } else {
+      throw waGetError(e);
+    }
   }
   return api.post('/api/v1/auth/passkey/login/verify', {
     id: assertion.id,
@@ -2992,6 +3079,8 @@ async function showRegister(token) {
 //  Оболочка приложения
 // --------------------------------------------------------------------------
 function enterApp() {
+  waAbortConditional();                     // v1.70.62: autofill больше не ждёт
+  waRememberLogin(state.me);                // v1.70.62: вход в одно касание
   showScreen('app-shell');                  // v1.59.1: единый переключатель
   $('#user-name').textContent = state.me.full_name || state.me.username;
   $('#user-role').textContent = roleLabel(state.me.role);
@@ -5955,6 +6044,24 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.62': [
+    { icon: '🔑', title: 'Отпечаток сразу спрашивает отпечаток',
+      text: 'Кнопка быстрого входа больше не показывает лишний лист '
+        + 'выбора аккаунта: запрос привязан к учётке и просит только '
+        + 'биометрию. Коснулись кнопки — подтвердите себя, и всё.' },
+    { icon: '⌨️', title: 'Ключ устройства в подсказках клавиатуры',
+      text: 'На экране входа ключ появляется в подсказках поля логина, '
+        + 'как пароли в других программах: коснитесь подсказки — и '
+        + 'биометрия подтвердит вход без модальных окон.' },
+    { icon: '🧠', title: 'Повторный вход — в одно касание',
+      text: 'Программа запоминает последний успешный логин на '
+        + 'устройстве, поэтому кнопке отпечатка не нужно ничего '
+        + 'вводить: церемония сразу привязана к вашей учётке.' },
+    { icon: '🪽', title: 'Нет ключа — нет тревоги',
+      text: 'Если на устройстве ключа ещё нет, программа молча '
+        + 'предложит обычный вход по паролю и настройку быстрого '
+        + 'входа вместо пугающего сообщения об отмене.' },
+  ],
   '1.70.61': [
     { icon: '🪪', title: 'Каждой роли — своё пространство программы',
       text: 'Построена ветка иерархии прав: администратор видит всё, '
