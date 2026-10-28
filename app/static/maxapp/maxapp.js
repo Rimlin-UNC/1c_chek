@@ -402,6 +402,11 @@ $('btn-cam').onclick = scanCamera;
 $('btn-photo').onclick = pickPhoto;
 $('qr-file').onchange = uploadPhoto;
 $('btn-consent-toggle').onclick = toggleConsent;
+// v1.70.64: владелец — «в мини приложении в профиле добавить кнопку
+// открыть приложение и сделать переход в приложение»
+const oaBtn = $('btn-open-app');
+if (oaBtn) oaBtn.onclick = () => openLink(location.origin + '/');
+
 $('btn-share').onclick = () => {
   const app = wa();
   const link = ME.ref_link || 'https://max.ru/chek.ymaster.bot?startapp=ref_' + (ME.ref_code || '');
@@ -523,10 +528,18 @@ async function showLoginConfirm(code) {
     try {
       // v1.70.37: initData — чтобы сервер взял username MAX из подписанного
       // payload: в карточке участника имени до согласия (152-ФЗ) нет.
-      await api('POST', '/api/v1/maxapp/confirm-login',
+      const r = await api('POST', '/api/v1/maxapp/confirm-login',
                 {code: code, init_data: (wa() && wa().initData) || ''});
-      $('svc-msg').textContent = 'Готово! Вернитесь на сайт — вход выполнится сам.';
       $('svc-confirm').disabled = true;
+      // v1.70.64: перекидываем на сайт сами (билет одноразовый); если
+      // окружение не дало открыть ссылку — прежняя подсказка рукой.
+      if (r && r.web_link) {
+        $('svc-msg').textContent = 'Готово! Открываем сайт…';
+        setTimeout(() => openLink(r.web_link), 600);
+      } else {
+        $('svc-msg').textContent =
+          'Готово! Вернитесь на сайт — вход выполнится сам.';
+      }
     } catch (e) { $('svc-msg').textContent = e.message; }
   };
 }

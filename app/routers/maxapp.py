@@ -424,7 +424,13 @@ def confirm_login(body: ConfirmLoginBody, db: Session = Depends(get_db),
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             "Код не найден, устарел или уже подтверждён")
-    return {"status": "confirmed"}
+    # v1.70.64: владелец — «при нажатии «подтвердить вход» перекидывало на
+    # сайт»: мини-приложение открывает web_link, сайт по одноразовому
+    # билету входит сам и предлагает вернуться в мини-приложение.
+    ticket = max_login.make_webticket(db, str(user.tg_user_id or ""),
+                                      username=uname, display=disp)
+    return {"status": "confirmed",
+            "web_link": f"{max_login.SITE_URL}/#/max-login/{ticket}"}
 
 
 def _invite_or_none(db: Session, token: str):
