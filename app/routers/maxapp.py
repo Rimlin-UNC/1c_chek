@@ -429,8 +429,10 @@ def confirm_login(body: ConfirmLoginBody, db: Session = Depends(get_db),
     # билету входит сам и предлагает вернуться в мини-приложение.
     ticket = max_login.make_webticket(db, str(user.tg_user_id or ""),
                                       username=uname, display=disp)
+    # v1.70.65: без фрагмента — ссылка той же формы, что проверенная
+    # кнопка профиля; фрагмент в chooser/WebAPK вёл себя непредсказуемо
     return {"status": "confirmed",
-            "web_link": f"{max_login.SITE_URL}/#/max-login/{ticket}"}
+            "web_link": f"{max_login.SITE_URL}/?maxlogin={ticket}"}
 
 
 def _invite_or_none(db: Session, token: str):

@@ -523,7 +523,9 @@ async function showLoginConfirm(code) {
     'Если это не вы открывали сайт — просто закройте этот экран.</p>' +
     '<div style="height:10px"></div>' +
     '<button type="button" class="btn" id="svc-confirm">Подтвердить вход</button>' +
-    '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>');
+    '<div style="height:8px"></div><div id="svc-msg" class="hint"></div>' +
+    '<div style="height:8px"></div>' +
+    '<button type="button" class="btn hidden" id="svc-open">🌐 Открыть сайт</button>');
   $('svc-confirm').onclick = async () => {
     try {
       // v1.70.37: initData — чтобы сервер взял username MAX из подписанного
@@ -531,11 +533,19 @@ async function showLoginConfirm(code) {
       const r = await api('POST', '/api/v1/maxapp/confirm-login',
                 {code: code, init_data: (wa() && wa().initData) || ''});
       $('svc-confirm').disabled = true;
-      // v1.70.64: перекидываем на сайт сами (билет одноразовый); если
-      // окружение не дало открыть ссылку — прежняя подсказка рукой.
+      // v1.70.65: владелец — автооткрытие без касания зависало на выборе
+      // приложения андроида. Надёжен только проверенный путь профиля:
+      // открытие ссылки ИЗ касания. Поэтому большая кнопка прямо здесь.
       if (r && r.web_link) {
-        $('svc-msg').textContent = 'Готово! Открываем сайт…';
-        setTimeout(() => openLink(r.web_link), 600);
+        $('svc-msg').textContent =
+          'Вход подтверждён — нажмите «Открыть сайт», вход уже выполнен.';
+        const so = $('svc-open');
+        so.classList.remove('hidden');
+        so.onclick = () => {
+          so.disabled = true;
+          $('svc-msg').textContent = 'Открываем сайт…';
+          openLink(r.web_link);
+        };
       } else {
         $('svc-msg').textContent =
           'Готово! Вернитесь на сайт — вход выполнится сам.';

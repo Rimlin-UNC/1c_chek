@@ -117,8 +117,10 @@ class TestMaxReturnFlow:
         body = r.json()
         assert body["status"] == "confirmed"
         link = body["web_link"]
-        assert "/#/max-login/" in link, "билет не в ссылке на сайт"
-        ticket = link.split("/#/max-login/", 1)[1]
+        # v1.70.65: без фрагмента — chooser/WebAPK открывают надёжно
+        assert "/?maxlogin=" in link, "билет не в ссылке на сайт"
+        assert "#/" not in link
+        ticket = link.split("/?maxlogin=", 1)[1]
         # сайт по билету входит сам
         p = client.post("/api/v1/auth/max/poll", json={"code": ticket})
         assert p.status_code == 200 and p.json()["status"] == "ok"
@@ -154,12 +156,23 @@ class TestMaxReturnFlow:
             "'#/dashboard')" in block
         assert "maxBackDialog()" in block
 
-    def test_miniapp_redirects_after_confirm(self):
+    def test_miniapp_opens_site_by_tap_after_confirm(self):
         js = _read(MAX_JS)
-        assert "'Готово! Открываем сайт…'" in js
+        # v1.70.65: автооткрытия без касания больше нет — оно зависало
+        # на chooser андроида; переход только из касания (путь профиля)
+        block = js.split("async function showLoginConfirm(", 1)[1].split(
+            "async function showInvite(", 1)[0]
+        assert "setTimeout(() => openLink(r.web_link)" not in block
+        assert 'id="svc-open"' in js or "id=\"svc-open\"" in js
         assert "openLink(r.web_link)" in js
+        assert "Вход подтверждён — нажмите «Открыть сайт»" in js
         assert "Готово! Вернитесь на сайт — вход выполнится сам." in js, \
             "ручная подсказка осталась фолбэком"
+
+    def test_site_reads_ticket_from_query(self):
+        js = _read(APP_JS)
+        assert "maxlogin=([A-Za-z0-9_-]{16,150})" in js
+        assert "maxLoginFlow(mxl[1], true)" in js
 
     def test_profile_has_open_app_button(self):
         html = _read(MAX_HTML)
@@ -177,123 +190,51 @@ class TestMaxReturnFlow:
 
 
 class TestRelease17064:
-    """Точки синхронизации версии ведёт файл текущего выпуска. Прежние
-    классы (1.70.38…1.70.63) оставляют у себя только запись выпуска в
-    истории — приём тот же, что в предыдущих релизах."""
+    """Точки синхронизации версии ведёт файл текущего выпуска (1.70.65).
+    Здесь остаётся запись выпуска 1.70.64 в истории."""
 
     VERSION = "1.70.64"
     PREVIOUS = "1.70.63"
 
-    def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read(
-            APP / "config.py")
-        assert f"ymaster-check-v{self.VERSION}" in _read(SW)
-        assert f'"version": "{self.VERSION}"' in _read(MANIFEST)
-        index = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in index
-        assert f"app.js?v={self.VERSION}" in index
-        assert f"maxapp.js?v={self.VERSION}" in _read(MAX_HTML)
+    def test_version_is_release(self):
+        src = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
+        # живое значение сверяет выпуск-владелец; здесь — форма релиза
+        assert re.search(r"APP_VERSION: str = \"1\.70\.\d+\"", src)
 
-    def test_cache_busters_in_service_worker(self):
-        sw = _read(SW)
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
-
-    def test_cabinet_assets_carry_the_same_version(self):
-        html = _read(CABINET)
-        assert f"/b2b/b2b.css?v={self.VERSION}" in html
-        assert f"/b2b/b2b.js?v={self.VERSION}" in html
-
-    def test_changed_assets_are_served_with_the_release_version(self):
-        index = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in index
-        assert f"app.js?v={self.VERSION}" in index
-
-    def test_no_previous_version_left_in_sync_points(self):
-        for path in (APP / "config.py", INDEX, SW, MANIFEST, MAX_HTML,
-                     CABINET):
-            text = _read(path)
-            for form in (f"v={self.PREVIOUS}", f'"{self.PREVIOUS}"',
-                         f"check-v{self.PREVIOUS}"):
-                assert form not in text, f"{path.name}: {form}"
-
-    def test_whats_new_is_first(self):
-        js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, \
-            "запись выпуска не первая"
-
-    def _block(self):
-        js = _read(APP_JS)
-        return js.split(f"'{self.VERSION}': [", 1)[1].split(
-            f"'{self.PREVIOUS}': [", 1)[0]
-
-    def test_whats_new_entry(self):
-        block = self._block()
-        assert block.count("{ icon:") == 4, "в записи выпуска не четыре пункта"
-        for needle in ("окошко", "кабинет", "сайт", "билет"):
-            assert needle in block, f"в «Что нового» нет «{needle}»"
-
-    def test_whats_new_has_no_foreign_letters(self):
-        prose = re.sub(r"\{ icon:|\btitle:|\btext:", "", self._block())
-        for ch in prose:
-            assert ord(ch) < 0x2100 or not str.isalpha(ch), \
-                f"постороннее письмо {ch!r}"
-        allowed = {"MAX", "Telegram", "service", "worker"}
-        words = set(re.findall(r"\b[A-Za-z]{2,}\b", prose)) - allowed
-        assert not words, f"латинские слова в прозе: {sorted(words)[:6]}"
-
-    def test_changelog_entry(self):
-        text = _read(CHANGELOG)
+    def test_changelog_has_release(self):
+        text = CHANGELOG.read_text(encoding="utf-8")
         assert f"## [{self.VERSION}]" in text
-        section = text.split(f"## [{self.VERSION}]", 1)[1].split(
-            f"## [{self.PREVIOUS}]", 1)[0]
-        flat = section.lower()
-        for needle in ("билет", "max-login", "окошко", "кэш-бастер",
-                       "отклонено"):
-            assert needle in flat, f"в CHANGELOG нет «{needle}»"
-        for head in ("Подготовка", "Что оказалось не так", "Решение",
-                     "Отклонено", "Проверено"):
-            assert f"### {head}" in section, f"в CHANGELOG нет «{head}»"
 
     def test_changelog_quotes_the_owner(self):
-        section = _read(CHANGELOG).split(f"## [{self.VERSION}]", 1)[1]
+        section = CHANGELOG.read_text(encoding="utf-8").split(
+            f"## [{self.VERSION}]", 1)[1]
         flat = re.sub(r"\s+", " ", section).lower()
-        for needle in (OWNER_QUOTE_A, OWNER_QUOTE_B):
-            assert needle in flat, f"в цитате владельца нет «{needle}»"
+        assert "кнопку открыть приложение и сделать переход" in flat
 
-    def test_journal_entry(self):
-        text = _read(JOURNAL)
+    def test_journal_has_release(self):
+        text = JOURNAL.read_text(encoding="utf-8")
         assert f"## v{self.VERSION} —" in text
-        section = text.split(f"## v{self.VERSION} —", 1)[1].split(
-            f"## v{self.PREVIOUS}", 1)[0]
-        for needle in ("Подготовка", "План", "Решение", "Проверка",
-                       "Отклонённые варианты", "билет", "окошко",
-                       "кэш-бастер"):
-            assert needle in section, f"в журнале вёрстки нет «{needle}»"
 
-    def test_journal_entry_is_above_previous(self):
-        text = _read(JOURNAL)
+    def test_journal_is_above_previous(self):
+        text = JOURNAL.read_text(encoding="utf-8")
         assert text.index(f"## v{self.VERSION} —") < text.index(
             f"## v{self.PREVIOUS} —")
 
-    def test_owner_requirement_is_quoted(self):
-        for path in (CHANGELOG, JOURNAL, pathlib.Path(__file__)):
-            flat = re.sub(r"\s+", " ", _read(path)).lower()
-            for needle in (OWNER_QUOTE_A, OWNER_QUOTE_B):
-                assert needle in flat, f"{path.name}: нет цитаты владельца"
+    def test_whats_new_entry_exists_in_history(self):
+        js = (ROOT / "app" / "static" / "js" / "app.js").read_text(
+            encoding="utf-8")
+        assert f"'{self.VERSION}': [" in js
 
-    def test_previous_release_class_is_history_only(self):
-        src = _read(RELEASE_63_TESTS)
-        block = src.split("class TestRelease17063:", 1)[1]
-        assert "test_all_sync_points" not in block
-        assert "test_cache_busters_in_service_worker" not in block
-        assert "test_whats_new_is_first" not in block
-        assert "test_version_is_release" in block
-        assert f'VERSION = "{self.PREVIOUS}"' in block
+    def test_trackers_reference_a_release(self):
+        for year in range(33, 38):
+            text = (ROOT / "tests" / f"test_v170{year}.py").read_text(
+                encoding="utf-8")
+            assert re.search(r"\"1\.70\.\d+\"", text)
 
-    def test_previous_release_keeps_exactly_nine_methods(self):
-        src = _read(RELEASE_63_TESTS)
-        block = src.split("class TestRelease17063:", 1)[1]
-        methods = re.findall(r"^    def (\w+)", block, re.M)
-        assert len(methods) == 9, methods
+    def test_sw_cache_name_is_versioned(self):
+        sw = SW.read_text(encoding="utf-8")
+        assert re.search(r"ymaster-check-v1\.70\.\d+", sw)
+
+    def test_no_placeholder_left(self):
+        for path in (CHANGELOG, JOURNAL):
+            assert "TODO" not in path.read_text(encoding="utf-8")
