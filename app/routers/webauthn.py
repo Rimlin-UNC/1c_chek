@@ -10,6 +10,7 @@
 # ======================================================================
 from __future__ import annotations
 
+import base64
 import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -35,6 +36,21 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Аутентификация"])
 
 CHALLENGE_TTL = dt.timedelta(minutes=3)   # срок жизни одноразового challenge
 MAX_KEYS_PER_USER = 10
+
+
+def _raw_id(cred_id: str) -> bytes:
+    """Сырые байты идентификатора ключа из сохранённой строки base64url.
+
+    Дескриптор PublicKeyCredentialDescriptor ждёт именно сырые байты:
+    библиотека сама упакует их в base64url для провода, и устройство
+    сверит их со своим идентификатором. Повторная упаковка строки
+    (ошибка v1.70.62) давала платформе ascii-строку вместо raw id —
+    лист «Ключи доступа не найдены» даже при живом ключе на устройстве.
+    """
+    try:
+        return base64.urlsafe_b64decode(cred_id + "=" * (-len(cred_id) % 4))
+    except Exception:  # noqa: BLE001
+        return cred_id.encode()
 
 
 # --------------------------------------------------------------------------
@@ -111,7 +127,7 @@ def register_options(request: Request, db: Session = Depends(get_db),
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.REQUIRED,
             user_verification=UserVerificationRequirement.REQUIRED),
-        exclude_credentials=[PublicKeyCredentialDescriptor(id=c.id.encode())
+        exclude_credentials=[PublicKeyCredentialDescriptor(id=_raw_id(c.id))
                              for c in existing],
     )
     challenge = opts.challenge
@@ -174,7 +190,7 @@ def login_options(body: LoginOptionsBody, request: Request,
         u = (db.query(User)
                .filter(User.username == body.username.strip()).first())
         if u is not None:
-            allow = [PublicKeyCredentialDescriptor(id=c.id.encode())
+            allow = [PublicKeyCredentialDescriptor(id=_raw_id(c.id))
                      for c in db.query(WebauthnCredential)
                                 .filter(WebauthnCredential.user_id == u.id)
                                 .all()]
@@ -201,7 +217,6 @@ def login_verify(body: CredentialBody, request: Request,
     ip = client_ip(request)
     challenge = _take_challenge(db, body.response.get("challenge_hex"),
                                 "auth", None)
-    import base64
     try:
         raw_id = base64.urlsafe_b64decode(body.rawId + "=" * (-len(body.rawId) % 4))
     except Exception:  # noqa: BLE001
