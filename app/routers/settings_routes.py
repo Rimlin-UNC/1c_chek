@@ -627,7 +627,11 @@ def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_ad
                 User.telegram_chat_id.isnot(None)).count(),
             "hint": "Токен от @BotFather хранится зашифрованным. Если сервер "
                     "не видит api.telegram.org (частая блокировка в РФ) — "
-                    "укажите прокси. Сотрудники подключаются сами: "
+                    "укажите прокси. Готовая схема без второго сервера: "
+                    "бесплатный Cloudflare Worker и локальный прокси "
+                    "http://127.0.0.1:8080 — комплект в deploy/tg-cf-worker "
+                    "(отчёт о выборе: docs/telegram_proxy_audit_v17068.md). "
+                    "Сотрудники подключаются сами: "
                     "Настройки → Telegram → код → /start КОД."}
 
 
