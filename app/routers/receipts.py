@@ -1025,15 +1025,32 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
             new_fn = (body.fn or receipt.fn).strip()
             new_fd = (body.fd or receipt.fd).strip()
             new_fp = (body.fp or receipt.fp).strip()
-            dup = (db.query(Receipt)
-                   .filter(Receipt.fn == new_fn, Receipt.fd == new_fd,
-                           Receipt.fp == new_fp, Receipt.id != receipt.id)
-                   .first())
-            if dup:
-                raise HTTPException(status.HTTP_409_CONFLICT,
-                                    "Чек с такими ФН/ФД/ФП уже существует")
-            receipt.fn, receipt.fd, receipt.fp = new_fn, new_fd, new_fp
-            changed["fields"] += ["fn", "fd", "fp"]
+            old_identity = (receipt.fn, receipt.fd, receipt.fp)
+            new_identity = (new_fn, new_fd, new_fp)
+            if new_identity != old_identity:
+                # Серия операций во всех контурах блокирует фискальную тройку.
+                # Обе тройки берём в одном порядке, чтобы встречные правки не
+                # взаимно заблокировались. После ожидания перечитываем чек.
+                from ..pool.models import PoolReceipt
+                from ..services.receipt_identity import lock_identity
+
+                for identity in sorted((old_identity, new_identity)):
+                    lock_identity(db, *identity)
+                db.refresh(receipt)
+                if (receipt.fn, receipt.fd, receipt.fp) != old_identity:
+                    raise HTTPException(409, "Чек был изменён одновременно — обновите страницу")
+                linked = db.query(PoolReceipt.id).filter_by(
+                    fn=old_identity[0], fd=old_identity[1], fp=old_identity[2]).first()
+                if linked:
+                    raise HTTPException(409, "Чек связан с историей Чек-Пула: изменить фискальные реквизиты нельзя")
+                dup = (db.query(Receipt.id)
+                       .filter(Receipt.fn == new_fn, Receipt.fd == new_fd,
+                               Receipt.fp == new_fp, Receipt.id != receipt.id).first())
+                pool_dup = db.query(PoolReceipt.id).filter_by(fn=new_fn, fd=new_fd, fp=new_fp).first()
+                if dup or pool_dup:
+                    raise HTTPException(409, "Чек с такими ФН/ФД/ФП уже существует")
+                receipt.fn, receipt.fd, receipt.fp = new_identity
+                changed["fields"] += ["fn", "fd", "fp"]
 
         if body.receipt_date is not None:
             receipt.receipt_date = body.receipt_date

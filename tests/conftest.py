@@ -35,10 +35,13 @@ def client():
 def _reset_security_state():
     """Между тестами сбрасываем rate-limit и блокировки входа."""
     from app.security import limiter, login_guard
+    from app.services import max_login
+    max_login._ip_times.clear()
     limiter._hits.clear()
     login_guard._fails.clear()
     login_guard._blocked_until.clear()
     yield
+    max_login._ip_times.clear()
     limiter._hits.clear()
     login_guard._fails.clear()
     login_guard._blocked_until.clear()

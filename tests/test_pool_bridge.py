@@ -361,3 +361,319 @@ def test_pdf_mixed_batch_reports_foreign_duplicate_and_keeps_new(client, setup_b
     with SessionLocal() as db:
         db.query(Receipt).filter_by(fn=new_fn).delete()
         db.commit()
+
+
+def test_edit_cannot_break_pool_history_or_create_pool_duplicate(client, setup_bridge, monkeypatch):
+    _, a1, _, _, _, pid, qr, fn, fd, fp = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    other_fn = ('8' if fn[0] != '8' else '9') + fn[1:]
+    other_qr = qr.replace(fn, other_fn)
+    independent = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': other_qr}).json()['receipt']
+    assert independent
+    collision = client.patch(f"/api/v1/receipts/{independent['id']}", headers=a1,
+                             json={'fn': fn, 'fd': fd, 'fp': fp})
+    assert collision.status_code == 409
+    transferred = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    assert transferred
+    rekey = client.patch(f"/api/v1/receipts/{transferred['id']}", headers=a1,
+                         json={'fn': '6' + fn[1:]})
+    assert rekey.status_code == 409 and 'истори' in rekey.json()['detail']
+    with SessionLocal() as db:
+        assert db.get(Receipt, transferred['id']).fn == fn
+        assert db.get(PoolReceipt, pid).fn == fn
+        assert db.get(Receipt, independent['id']).fn == other_fn
+        db.query(Receipt).filter_by(id=independent['id']).delete()
+        db.commit()
+
+
+def test_offline_copy_migration_preserves_access_points_and_conflicts(client, setup_bridge, monkeypatch, tmp_path):
+    import sqlite3
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolPoint
+    from app.services.scoping import can_view_receipt
+    from qa.migrate_receipt_copy import migrate_copy
+
+    _, a1, _, c1, c2, pid, qr, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    created = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    with SessionLocal() as db:
+        donor = PoolUser(vid='migration_' + uuid4().hex, points=9)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id = donor_id
+        db.get(Receipt, created['id']).comment = 'личная заметка компании'
+        pool.total_sum = 999.0  # прошлое расхождение нельзя молча объединять
+        pool.assigned_company_id = c2
+        db.add(PoolPoint(user_id=donor_id, delta=9, reason='receipt', ref_id=pid))
+        db.commit()
+    copy_path = tmp_path / 'migrated.db'
+    summary = migrate_copy(engine.url.database, copy_path)
+    assert summary['needs_review'] >= 1
+    with sqlite3.connect(copy_path) as db:
+        doc = db.execute('SELECT id, total_sum, review_mask FROM unified_fiscal_documents WHERE fn=?', (fn,)).fetchone()
+        assert doc and doc[1] is None and doc[2] & 2 and doc[2] & 8
+        assert set(db.execute('SELECT origin_kind, origin_id FROM unified_receipt_origins WHERE document_id=?',
+                              (doc[0],)).fetchall()) == {('pool', pid), ('registry', created['id'])}
+        assert db.execute('SELECT points FROM pool_users WHERE id=?', (donor_id,)).fetchone() == (9,)
+        assert db.execute('SELECT delta FROM pool_points WHERE ref_id=?', (pid,)).fetchone() == (9,)
+        assert db.execute('PRAGMA integrity_check').fetchone() == ('ok',)
+    copied_engine = create_engine('sqlite:///' + str(copy_path))
+    with Session(copied_engine) as db:
+        receipt = db.get(Receipt, created['id'])
+        assert receipt.comment == 'личная заметка компании' and len(receipt.items) == 2
+        assert db.query(PoolItem).filter_by(receipt_id=pid).count() == 2
+        owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+        other = db.query(User).filter_by(company_id=c2, role='accountant').first()
+        assert can_view_receipt(owner, receipt) and not can_view_receipt(other, receipt)
+    copied_engine.dispose()
+    with SessionLocal() as db:
+        assert db.get(PoolReceipt, pid).total_sum == 999.0
+        assert not db.connection().exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE name='unified_fiscal_documents'").first()
+        db.query(PoolPoint).filter_by(ref_id=pid).delete()
+        db.get(PoolReceipt, pid).pool_user_id = None
+        db.delete(db.get(PoolUser, donor_id))
+        db.commit()
+    with pytest.raises(FileExistsError):
+        migrate_copy(engine.url.database, copy_path)
+
+
+def test_migrated_copy_api_scopes_companies_and_donors(client, setup_bridge, monkeypatch, tmp_path):
+    """Чтение через реальные API с подменой БД только на мигрированную копию."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine, get_db
+    from app.main import app
+    from app.pool.accounts import issue_pool_token
+    from app.pool.models import PoolPoint
+    from qa.migrate_receipt_copy import migrate_copy
+
+    _, a1, a2, c1, _, pid, qr, _, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    created = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    with SessionLocal() as db:
+        donor = PoolUser(vid='donor_' + uuid4().hex, points=9)
+        stranger = PoolUser(vid='stranger_' + uuid4().hex, points=0)
+        db.add_all([donor, stranger])
+        db.flush()
+        donor_id, stranger_id = donor.id, stranger.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded = donor_id, 9
+        db.add(PoolPoint(user_id=donor_id, delta=9, reason='receipt', ref_id=pid))
+        db.get(Receipt, created['id']).comment = 'private company remark'
+        db.commit()
+    copy_path = tmp_path / 'api-rehearsal.db'
+    migrate_copy(engine.url.database, copy_path)
+    copied_engine = create_engine('sqlite:///' + str(copy_path), connect_args={'check_same_thread': False})
+    copied_session = sessionmaker(bind=copied_engine)
+    def copied_db():
+        with copied_session() as db:
+            yield db
+    app.dependency_overrides[get_db] = copied_db
+    donor_header = {'Authorization': 'Bearer ' + issue_pool_token(donor_id)}
+    stranger_header = {'Authorization': 'Bearer ' + issue_pool_token(stranger_id)}
+    try:
+        own = client.get('/api/v1/receipts/' + created['id'], headers=a1)
+        assert own.status_code == 200 and own.json()['comment'] == 'private company remark'
+        assert client.get('/api/v1/receipts/' + created['id'], headers=a2).status_code == 404
+        own_pool = client.get('/api/v1/pool-company/mine', headers=a1).json()['items']
+        foreign_pool = client.get('/api/v1/pool-company/mine', headers=a2).json()['items']
+        assert pid in {r['id'] for r in own_pool} and pid not in {r['id'] for r in foreign_pool}
+        assert client.get('/api/v1/pool-my/summary', headers=donor_header).json()['points'] == 9
+        donor_receipt = client.get('/api/v1/pool-my/receipt/' + pid, headers=donor_header)
+        assert donor_receipt.status_code == 200 and donor_receipt.json()['points'] == 9
+        assert len(donor_receipt.json()['items']) == 2
+        assert 'private company remark' not in donor_receipt.text
+        assert client.get('/api/v1/pool-my/receipt/' + pid, headers=stranger_header).status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        copied_engine.dispose()
+        with SessionLocal() as db:
+            db.query(PoolPoint).filter_by(ref_id=pid).delete()
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.delete(db.get(PoolUser, donor_id))
+            db.delete(db.get(PoolUser, stranger_id))
+            db.commit()
+
+
+def test_migrated_copy_starts_app_with_same_access_and_donor_history(client, setup_bridge, monkeypatch, tmp_path):
+    """Отдельный процесс запускает настоящее приложение на SQLite-копии."""
+    import os
+    import subprocess
+    import sys
+
+    from app.config import settings
+    from app.database import engine
+    from app.pool.accounts import issue_pool_token
+    from app.pool.models import PoolPoint
+    from qa.migrate_receipt_copy import migrate_copy
+
+    _, a1, a2, _, _, pid, qr, _, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    created = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    with SessionLocal() as db:
+        donor = PoolUser(vid='copy_start_' + uuid4().hex, points=11)
+        stranger = PoolUser(vid='copy_start_' + uuid4().hex, points=0)
+        db.add_all([donor, stranger])
+        db.flush()
+        donor_id, stranger_id = donor.id, stranger.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded = donor_id, 11
+        db.add(PoolPoint(user_id=donor_id, delta=11, reason='receipt', ref_id=pid))
+        db.get(Receipt, created['id']).comment = 'private company remark'
+        db.commit()
+    copy_path = tmp_path / 'startup-rehearsal.db'
+    migrate_copy(engine.url.database, copy_path)
+    code = r'''
+import json, sys
+from fastapi.testclient import TestClient
+from app.main import app
+from app.services import backups, telegram_bot, max_bot, webhooks
+from app.openstack_monitor import worker
+from app.routers import receipts
+from app.services import releases
+backups.daily_backup.start = lambda: None
+telegram_bot.start_worker = max_bot.start_worker = webhooks.start_worker = worker.start_worker = lambda: False
+receipts.start_fetch_workers = lambda: 0
+receipts.start_limit_retry_worker = lambda: False
+releases.mark_healthy = lambda *a, **k: None
+p = json.load(sys.stdin)
+with TestClient(app) as c:
+    own = c.get('/api/v1/receipts/' + p['rid'], headers=p['a1'])
+    assert own.status_code == 200 and own.json()['comment'] == 'private company remark', own.text
+    assert c.get('/api/v1/receipts/' + p['rid'], headers=p['a2']).status_code == 404
+    assert c.get('/api/v1/pool-my/summary', headers=p['donor']).json()['points'] == 11
+    donor = c.get('/api/v1/pool-my/receipt/' + p['pid'], headers=p['donor'])
+    assert donor.status_code == 200 and donor.json()['points'] == 11 and len(donor.json()['items']) == 2
+    assert 'private company remark' not in donor.text
+    assert c.get('/api/v1/pool-my/receipt/' + p['pid'], headers=p['stranger']).status_code == 404
+    mine = c.get('/api/v1/pool-company/mine', headers=p['a1']).json()['items']
+    other = c.get('/api/v1/pool-company/mine', headers=p['a2']).json()['items']
+    assert p['pid'] in {x['id'] for x in mine} and p['pid'] not in {x['id'] for x in other}
+'''
+    payload = json.dumps({'rid': created['id'], 'pid': pid, 'a1': a1, 'a2': a2,
+                          'donor': {'Authorization': 'Bearer ' + issue_pool_token(donor_id)},
+                          'stranger': {'Authorization': 'Bearer ' + issue_pool_token(stranger_id)}})
+    env = {**os.environ, 'DATABASE_URL': 'sqlite:///' + str(copy_path),
+           'SECRET_KEY': settings.SECRET_KEY, 'YM_NO_REEXEC': '1', 'YM_FETCHQ_OFF': '1'}
+    try:
+        run = subprocess.run([sys.executable, '-c', code], input=payload, text=True,
+                             env=env, capture_output=True, timeout=60, check=False)
+        assert run.returncode == 0, run.stdout + run.stderr
+    finally:
+        with SessionLocal() as db:
+            db.query(PoolPoint).filter_by(ref_id=pid).delete()
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.delete(db.get(PoolUser, donor_id))
+            db.delete(db.get(PoolUser, stranger_id))
+            db.commit()
+
+
+def test_unified_preview_respects_company_and_donor_privacy(client, setup_bridge, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_receipt_preview import company_view, donor_view
+
+    _, a1, _, c1, c2, pid, qr, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    receipt_id = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']['id']
+    with SessionLocal() as db:
+        donor = PoolUser(vid='unified_' + uuid4().hex, points=7)
+        stranger = PoolUser(vid='unified_' + uuid4().hex, points=0)
+        db.add_all([donor, stranger])
+        db.flush()
+        donor_id, stranger_id = donor.id, stranger.id
+        db.get(PoolReceipt, pid).pool_user_id = donor_id
+        db.get(Receipt, receipt_id).comment = 'private company remark'
+        db.commit()
+    path = tmp_path / 'unified-preview.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc_id = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            a1_user = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            a2_user = db.query(User).filter_by(company_id=c2, role='accountant').first()
+            company = company_view(db, doc_id, a1_user, c1)
+            assert company['receipt']['comment'] == 'private company remark'
+            with pytest.raises(HTTPException) as err:
+                company_view(db, doc_id, a2_user, c2)
+            assert err.value.status_code == 404
+            # Историческое расхождение назначений не даёт второй компании
+            # доступ к чеку, принадлежащему первой компании в реестре.
+            db.get(PoolReceipt, pid).assigned_company_id = c2
+            db.flush()
+            with pytest.raises(HTTPException) as err:
+                company_view(db, doc_id, a2_user, c2)
+            assert err.value.status_code == 404
+            donor = donor_view(db, doc_id, db.get(PoolUser, donor_id))
+            assert len(donor['receipt']['items']) == 2
+            assert 'private company remark' not in str(donor)
+            with pytest.raises(HTTPException) as err:
+                donor_view(db, doc_id, db.get(PoolUser, stranger_id))
+            assert err.value.status_code == 404
+            # При изменении исходного ФН старый снимок не используется как факт.
+            db.get(PoolReceipt, pid).fn = 'mismatch'
+            db.flush()
+            with pytest.raises(HTTPException) as err:
+                donor_view(db, doc_id, db.get(PoolUser, donor_id))
+            assert err.value.status_code == 404
+            db.rollback()
+    finally:
+        copied.dispose()
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.delete(db.get(PoolUser, donor_id))
+            db.delete(db.get(PoolUser, stranger_id))
+            db.commit()
+
+
+def test_unified_preview_assigned_pool_permissions(client, setup_bridge, tmp_path):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_receipt_preview import company_view
+
+    hdr, a1, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _mk_user(client, hdr, c1, 'unified_' + uuid4().hex[:12], role='user')
+    assert client.post('/api/v1/pool-company/assign', headers=a1, json={'receipt_ids': [pid]}).status_code == 200
+    path = tmp_path / 'assigned-preview.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            accountant = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            other = db.query(User).filter_by(company_id=c2, role='accountant').first()
+            employee = db.query(User).filter_by(company_id=c1, role='user').first()
+            view = company_view(db, doc, accountant, c1)
+            assert view['origin'] == 'pool' and view['receipt']['id'] == pid
+            assert 'pool_user_id' not in view['receipt'] and 'raw' not in view['receipt']
+            for user, company in ((other, c2), (other, c1), (employee, c1)):
+                with pytest.raises(HTTPException) as err:
+                    company_view(db, doc, user, company)
+                assert err.value.status_code == 404
+    finally:
+        copied.dispose()
