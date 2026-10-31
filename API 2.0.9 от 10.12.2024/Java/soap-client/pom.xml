@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>ru.gnivc.inplat.servin.openapi.soap.client</groupId>
+    <artifactId>soap-client</artifactId>
+    <packaging>pom</packaging>
+    <version>1.0</version>
+
+    <properties>
+        <packaging>jar</packaging>
+        <jdk.version>1.8</jdk.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <verion-maven-compile>3.6.1</verion-maven-compile>
+        <version-cxf>3.1.11</version-cxf>
+        <camel.version>2.18.4</camel.version>
+    </properties>
+
+    <profiles>
+        <profile>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <id>dev</id>
+            <modules>
+                <module>soap-client-components</module>
+                <module>consumer-auth-service-client</module>
+                <module>consumer-async-service-client</module>
+                <module>consumer-async-service-signature-client</module>
+                <module>upload-downloadFile-service-client</module>
+            </modules>
+            <properties>
+                <env>dev</env>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>consumer-auth-client</id>
+            <modules>
+                <module>soap-client-components</module>
+                <module>consumer-auth-service-client</module>
+            </modules>
+            <properties>
+                <env>consumer-auth-client</env>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>consumer-async-client</id>
+            <modules>
+                <module>soap-client-components</module>
+                <module>consumer-async-service-client</module>
+            </modules>
+            <properties>
+                <env>consumer-async-client</env>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>consumer-signature-async-client</id>
+            <modules>
+                <module>soap-client-components</module>
+                <module>consumer-async-service-signature-client</module>
+            </modules>
+            <properties>
+                <env>consumer-signature-async-client</env>
+            </properties>
+        </profile>
+        <profile>
+            <id>upload-downloadFile-service-client</id>
+            <modules>
+                <module>soap-client-components</module>
+                <module>upload-downloadFile-service-client</module>
+            </modules>
+            <properties>
+                <env>upload-downloadFile-service-client</env>
+            </properties>
+        </profile>
+    </profiles>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-core</artifactId>
+            <version>${camel.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.cxf</groupId>
+            <artifactId>cxf-rt-transports-http-jetty</artifactId>
+            <version>${version-cxf}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.cxf</groupId>
+            <artifactId>cxf-rt-frontend-jaxws</artifactId>
+            <version>${version-cxf}</version>
+        </dependency>
+        <!-- Логирование -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>jaxb2-maven-plugin</artifactId>
+            <version>2.2</version>
+        </dependency>
+
+        <!-- http-клиент -->
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.6</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpmime</artifactId>
+            <version>4.5.6</version>
+        </dependency>
+
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.6</version>
+        </dependency>
+    </dependencies>
+</project>
