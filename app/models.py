@@ -31,6 +31,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _safe_json(text: str):
+    """JSON из строки без исключений (пустая/битая строка → {})."""
+    import json
+    try:
+        return json.loads(text) if text else {}
+    except ValueError:
+        return {}
+
+
 def iso_z(dt: datetime | None) -> str | None:
     """v1.60.0: момент времени → ISO-строка UTC с «Z».
 
@@ -242,6 +251,28 @@ class Receipt(Base):
     policy_flags: Mapped[str] = mapped_column(String(200), default="",
                                               server_default="")
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # --- v1.70.72: разбор чека для пула и фильтров ---
+    # Регион продавца: из адреса места расчётов, иначе из ИНН (первые 2 цифры)
+    region_code: Mapped[str] = mapped_column(String(4), default="",
+                                             server_default="", index=True)
+    region_name: Mapped[str] = mapped_column(String(120), default="",
+                                             server_default="")
+    region_city: Mapped[str] = mapped_column(String(120), default="",
+                                             server_default="")
+    # Отрасль покупки (по наименованиям позиций) и группа товаров
+    industry: Mapped[str] = mapped_column(String(100), default="",
+                                          server_default="")
+    industry_lc: Mapped[str] = mapped_column(String(100), default="",
+                                             server_default="", index=True)
+    product_group: Mapped[str] = mapped_column(String(100), default="",
+                                               server_default="")
+    # Налогообложение и способ оплаты — из полного документа ФНС
+    taxation: Mapped[str] = mapped_column(String(40), default="",
+                                          server_default="")
+    taxation_name: Mapped[str] = mapped_column(String(60), default="",
+                                               server_default="")
+    pay_type: Mapped[str] = mapped_column(String(20), default="",
+                                          server_default="")
 
     items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", lazy="selectin"
@@ -293,6 +324,15 @@ class Receipt(Base):
             "policy_flags": [f for f in (self.policy_flags or "").split(",")
                              if f],          # v1.62.0: нарушения политики
             "category": self.category or "",
+            # v1.70.72: регион, отрасль, налоги и способ оплаты
+            "region_code": self.region_code or "",
+            "region_name": self.region_name or "",
+            "region_city": self.region_city or "",
+            "industry": self.industry or "",
+            "product_group": self.product_group or "",
+            "taxation": self.taxation or "",
+            "taxation_name": self.taxation_name or "",
+            "pay_type": self.pay_type or "",
             # v1.12.3: кто добавил чек (ФИО/логин автора скана) —
             # user подгружен joined, доп. запроса нет
             "created_by_name": ((self.user.full_name or self.user.username)
@@ -315,6 +355,20 @@ class ReceiptItem(Base):
     vat_rate: Mapped[str] = mapped_column(String(10), default="none")  # none|0|10|20|10/110|20/120
     vat_sum: Mapped[float] = mapped_column(Float, default=0.0)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # --- v1.70.72: полные реквизиты позиции из документа ФНС ---
+    product_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #   признак предмета расчёта (1 товар, 3 работа, 4 услуга, …)
+    payment_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #   признак способа расчёта (4 полный расчёт, 1 предоплата, …)
+    unit: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    #   единица измерения (ОКЕИ → «шт», «кг», «л»)
+    product_group: Mapped[str] = mapped_column(String(100), default="",
+                                               server_default="")
+    industry: Mapped[str] = mapped_column(String(100), default="",
+                                          server_default="")
+    extra_json: Mapped[str] = mapped_column(Text, default="",
+                                            server_default="")
+    #   маркировка, агент, поставщик, страна, таможенная декларация, ФОИВ
 
     receipt: Mapped[Receipt] = relationship(back_populates="items")
 
@@ -327,6 +381,13 @@ class ReceiptItem(Base):
             "total": self.total,
             "vat_rate": self.vat_rate,
             "vat_sum": self.vat_sum,
+            "product_type": self.product_type,
+            "payment_type": self.payment_type,
+            "unit": self.unit or "",
+            "product_group": self.product_group or "",
+            "industry": self.industry or "",
+            "extra": (_safe_json(self.extra_json)
+                      if getattr(self, "extra_json", "") else {}),
         }
 
 

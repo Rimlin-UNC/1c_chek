@@ -40,11 +40,10 @@ class TestRelease17071:
         index = _read(INDEX)
         assert f"app.css?v={ver}" in index and f"app.js?v={ver}" in index
 
-    def test_whats_new_is_first(self):
+    def test_whats_new_entry_is_present(self):
+        """Запись выпуска на месте; первой её держит файл текущего выпуска."""
         js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, \
-            "запись выпуска не первая"
+        assert f"'{self.VERSION}': [" in js
 
     def test_whats_new_entry(self):
         block = _read(APP_JS).split(f"'{self.VERSION}': [", 1)[1].split(

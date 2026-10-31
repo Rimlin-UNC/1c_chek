@@ -33,17 +33,42 @@ DAILY_LIMIT = int(os.environ.get("FAKE_FNS_LIMIT", "1000"))
 PROCESSING_TICKS = int(os.environ.get("FAKE_FNS_TICKS", "1"))
 DENY_IP = os.environ.get("FAKE_FNS_DENY_IP", "") == "1"
 
+# v1.70.72: чек максимально похож на настоящий ответ ФНС — со всеми
+# полями, которые отдаёт GetTicket (продавец, касса, налоги, кассир,
+# позиции с типом предмета расчёта, маркировкой и отраслевым реквизитом).
 TICKET_OK = {
-    "id": "ticket-1", "ofdId": "ofd-1",
+    "id": "ticket-1", "kind": "kkt", "ofdId": "ofd-1",
     "receipt": {
         "totalSum": 89000, "dateTime": "2026-10-01T09:08:00",
         "user": "ООО «Тест-Магазин»", "userInn": "7801234567",
-        "retailPlaceAddress": "Санкт-Петербург, Невский пр., 1",
+        "userKpp": "780101001",
+        "retailPlaceAddress": "198000, Санкт-Петербург, Невский пр., 1",
+        "retailPlace": "Торговый зал",
+        "operationType": 1, "taxationType": 1,
+        "operator": "Иванова М. П.", "operatorInn": "780100000001",
+        "kktRegId": "0001234567890123", "fiscalDriveNumber": "9988776655443322",
+        "fiscalDocumentNumber": 77133, "fiscalSign": 1482926127,
+        "shiftNumber": 285, "requestNumber": 12,
+        "fiscalDocumentFormatVer": "1.05",
+        "cashTotalSum": 0, "ecashTotalSum": 89000,
+        "nds10": 7417, "nds18": 8100,
+        "properties": [{"key": "Код заказа", "value": "G637"}],
         "items": [
             {"name": "Товар А", "price": 44500, "sum": 44500, "quantity": 1,
-             "nds": "20", "ndsSum": 7417},
+             "nds": "20", "ndsSum": 7417, "productType": 1, "paymentType": 4,
+             "measurementUnit": "796"},
             {"name": "Товар Б", "price": 44500, "sum": 44500, "quantity": 1,
-             "nds": "20", "ndsSum": 7417},
+             "nds": "20", "ndsSum": 7417, "productType": 1, "paymentType": 4,
+             "measurementUnit": "796",
+             "itemsIndustryDetails": [
+                 {"idFoiv": "020", "foundationDocDateTime": "14.12.2018",
+                  "foundationDocNumber": "1556",
+                  "industryPropValue": "RU-430302-0001",
+                  "labelCodeProcesMode": 0,
+                  "checkingLabeledProdResult": 15}],
+             "productCodeData": [{"productIdType": 1,
+                                  "gtin": "04601234567890",
+                                  "serial": "ABC123"}]},
         ],
     },
 }

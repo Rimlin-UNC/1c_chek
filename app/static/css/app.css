@@ -2141,3 +2141,47 @@ label.field[hidden] { display: none; }
     line-height: 1.15;
   }
 }
+
+/* ======================================================================
+   v1.70.72: полная карточка чека и «чек как в магазине»
+   Вид бумажного чека — моношрифт на белом листе, чтобы человек узнавал
+   знакомый документ, а не таблицу. Печать — только сам чек (print-pack).
+   ====================================================================== */
+.ticket-wrap { display: flex; justify-content: center; padding: 6px 0 14px; }
+.ticket {
+  width: 100%; max-width: 380px; padding: 18px 20px 16px;
+  background: #fff; color: #2a2418; border-radius: 8px;
+  box-shadow: 0 6px 22px rgb(0 0 0 / 12%), 0 1px 2px rgb(0 0 0 / 8%);
+  font-family: "Courier New", Courier, monospace; font-size: 12px; line-height: 1.45;
+}
+.ticket-head { text-align: center; }
+.ticket-title { font-size: 13.5px; font-weight: 700; letter-spacing: .3px; }
+.ticket-sub { font-size: 11.5px; color: #6f6250; }
+.ticket-sep { margin: 9px 0; border-top: 1px dashed #8a8a8a; }
+.ticket-line { display: flex; justify-content: space-between; gap: 10px; }
+.ticket-line span:last-child { white-space: nowrap; }
+.ticket-item { margin: 5px 0; }
+.ticket-item-name { word-break: break-word; }
+.ticket-item-calc { display: flex; justify-content: space-between; gap: 10px; color: #6f6250; }
+.ticket-total { display: flex; justify-content: space-between; font-size: 14px; font-weight: 700; margin-top: 4px; }
+.ticket-small { font-size: 11px; color: #6f6250; }
+.ticket-qr { display: flex; justify-content: center; margin: 10px 0 4px; }
+.ticket-qr img { width: 132px; height: 132px; image-rendering: pixelated; }
+.ticket-center { text-align: center; }
+
+/* Полная карточка: вкладки и группы полей */
+.fcard-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+.fcard-tabs .btn.active { background: var(--accent); color: #1a1a1a; border-color: transparent; }
+.fcard-grid { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; font-size: 13px; }
+.fcard-grid dt { color: var(--text-dim); }
+.fcard-grid dd { margin: 0; word-break: break-word; }
+.fcard-group { margin-bottom: 16px; }
+.fcard-group-title { font-size: 12px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--text-dim); margin: 0 0 6px; }
+.fcard-json { max-height: 320px; overflow: auto; padding: 10px; border-radius: 8px; background: rgb(0 0 0 / 4%); font-family: "Courier New", monospace; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; }
+.fcard-note { font-size: 12px; color: var(--text-dim); margin: 6px 0 12px; }
+.badge-soft { display: inline-block; padding: 1px 8px; border-radius: 999px; background: rgb(0 0 0 / 6%); font-size: 11.5px; }
+
+@media print {
+  .ticket { box-shadow: none; border-radius: 0; max-width: 100%; }
+  .fcard-tabs, .fcard-note { display: none; }
+}

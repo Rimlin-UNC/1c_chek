@@ -165,6 +165,10 @@ class ReceiptPatch(BaseModel):
     merchant_inn: Optional[str] = Field(default=None, max_length=20)
     merchant_address: Optional[str] = Field(default=None, max_length=500)
     cashier: Optional[str] = Field(default=None, max_length=200)
+    # v1.70.72: отрасль и регион можно поправить вручную (уточнение пула)
+    industry: Optional[str] = Field(default=None, max_length=100)
+    region_code: Optional[str] = Field(default=None, max_length=4)
+    region_name: Optional[str] = Field(default=None, max_length=120)
     items: Optional[list["ReceiptItemPatch"]] = None
 
 
@@ -175,6 +179,12 @@ class ReceiptItemPatch(BaseModel):
     total: float = Field(default=0.0, ge=0)
     vat_rate: Optional[str] = Field(default="none", max_length=10)
     vat_sum: Optional[float] = Field(default=None, ge=0)
+
+
+class EnrichRequest(BaseModel):
+    """v1.70.72: разбор сохранённых данных чеков (без запросов в ФНС)."""
+    receipt_ids: list[str] = Field(default_factory=list, max_length=500)
+    only_empty: bool = True          # только там, где регион/отрасль не заданы
 
 
 class FetchDetailsRequest(BaseModel):

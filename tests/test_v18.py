@@ -6,6 +6,7 @@
 # ======================================================================
 import os
 import subprocess
+import sys
 
 from tests.conftest import login
 
@@ -146,13 +147,31 @@ class TestUpdatePipelineE2E:
         # заглушка БД — чтобы preupdate-копия создалась как в бою
         (dst / "data").mkdir(exist_ok=True)
         (dst / "data" / "ymaster_check.db").write_bytes(b"fake-db-for-test")
+        # В клоне нет окружения (venv не в git), поэтому конвейер уходил на
+        # системный python3: на Debian/Ubuntu 24.04 установка зависимостей
+        # падала по PEP 668 (externally-managed-environment), а проверка
+        # целостности — на отсутствии fastapi, и исправное обновление
+        # откатывалось. Тест про git-механику (fetch → reset → clean →
+        # восстановление дрейфа) и бэкап, поэтому pip подменяем на «true»
+        # (как в test_v1460), а проверку целостности ведём интерпретатором
+        # самого теста — зависимости в нём есть.
         monkeypatch.setattr(up, "APP_DIR", str(dst))
         monkeypatch.setattr(up, "_append_history", lambda *a, **k: None)
-        up._do_apply("1.8.0", "Rimlin-UNC/1c_chek", "arena/01a0caaa-1c-chek")
+        monkeypatch.setattr(up, "_pip_cmd", lambda: ["true"])   # зависимости не ставим
+        monkeypatch.setattr(up, "_py_bin", lambda: sys.executable)
+        branch = "arena/01a0caaa-1c-chek"
+        up._do_apply("1.8.0", "Rimlin-UNC/1c_chek", branch)
         assert up.job.success, getattr(up.job, "log", None) or getattr(up.job, "error", None)
-        # локальный дрейф перезатёрт кодом с origin (версия снова 1.8.0)
+        # локальный дрейф перезатёрт кодом с origin: версия снова та, что в
+        # обновляемой ветке (а не «старая» 0.0.9 и не версия нашего рабочего
+        # дерева — оно может быть впереди ветки обновления)
         new_cfg = cfg.read_text(encoding="utf-8")
-        assert f'APP_VERSION: str = "{cur}"' in new_cfg
+        in_branch = subprocess.run(
+            ["git", "-C", str(dst), "show", f"origin/{branch}:app/config.py"],
+            check=True, capture_output=True, text=True).stdout
+        want = _re.search(r'APP_VERSION: str = "([^"]+)"', in_branch).group(1)
+        assert 'APP_VERSION: str = "0.0.9"' not in new_cfg
+        assert f'APP_VERSION: str = "{want}"' in new_cfg
         backups = os.listdir(dst / "data" / "backups")
         assert any(b.startswith("db-preupdate-") for b in backups)
 

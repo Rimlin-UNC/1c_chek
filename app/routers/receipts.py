@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+from typing import Annotated
 import csv
 import datetime as dt
 import io
@@ -25,33 +26,65 @@ import queue
 import threading
 import time
 
-from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
-                     Query, UploadFile, status)
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER, get_current_user,
-                    require_accountant, require_admin)
-from ..services.scoping import (can_edit_receipt, can_view_receipt,
-                                scope_receipts, target_company_id)   # v1.11.0
-
+from ..auth import (
+    ROLE_ACCOUNTANT,
+    ROLE_ADMIN,
+    ROLE_USER,
+    get_current_user,
+    require_accountant,
+    require_admin,
+)
 from ..config import settings
 from ..database import get_db
-from ..models import (Company, FnsLog, MappingSetting, MerchantRule,
-                      Receipt, ReceiptItem, User)
-from ..schemas import (AssignBulk, ExportRequest, FetchDetailsRequest,
-                       ManualReceipt, ReceiptMoveBody, ReceiptPatch,
-                       RememberMerchantBody, AdvanceReportBody, ScanRequest,
-                       VerifyRequest)
+from ..models import Company, FnsLog, MappingSetting, MerchantRule, Receipt, ReceiptItem, User
+from ..schemas import (
+    AdvanceReportBody,
+    AssignBulk,
+    EnrichRequest,
+    ExportRequest,
+    FetchDetailsRequest,
+    ManualReceipt,
+    ReceiptMoveBody,
+    ReceiptPatch,
+    RememberMerchantBody,
+    ScanRequest,
+    VerifyRequest,
+)
 from ..services import appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
+from ..services.external import ExternalResult
+from ..services.external import engine as external_engine
 from ..services.fns import check_receipt
-from ..services.external import engine as external_engine, ExternalResult
-from ..services.qr import (MultipleReceiptsError, ParsedQR, QRParseError,
-                           build_qr_string, parse_qr, receipts_json)
+from ..services.qr import (
+    MultipleReceiptsError,
+    ParsedQR,
+    QRParseError,
+    build_qr_string,
+    parse_qr,
+    receipts_json,
+)
+from ..services.scoping import (
+    can_edit_receipt,
+    can_view_receipt,
+    scope_receipts,  # v1.11.0
+    target_company_id,
+)
 
 router = APIRouter(prefix="/api/v1/receipts", tags=["Чеки"])
 
@@ -92,7 +125,7 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
     db.add(receipt)
     db.flush()                                     # v1.62.0: id до политики
     try:                                           # v1.62.0: пометка нарушений
-        from ..services import policy as _pol      # политики (мягко)
+        from ..services import policy as _pol  # политики (мягко)
         _pol.refresh_receipt(db, receipt)
     except Exception:                              # noqa: BLE001
         pass                                       # политика не ломает приём
@@ -344,6 +377,25 @@ def list_receipts(
     date_to: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     company_id: str | None = Query(None, max_length=36,
                                    description="v1.11.0: компания (только админ)"),
+    # --- v1.70.72: фильтры для работы с пулом ---
+    region: str | None = Query(None, max_length=4,
+                               description="Код региона продавца (74, 77, …)"),
+    industry: str | None = Query(None, max_length=100,
+                                 description="Отрасль покупки (Аптека, АЗС, …)"),
+    product_group: str | None = Query(None, max_length=100,
+                                      description="Группа товаров в позициях"),
+    merchant_inn: str | None = Query(None, max_length=20,
+                                     description="ИНН продавца"),
+    merchant: str | None = Query(None, max_length=200,
+                                 description="Наименование или адрес продавца"),
+    taxation: str | None = Query(None, max_length=40,
+                                 description="Код системы налогообложения"),
+    pay_type: str | None = Query(None, max_length=20,
+                                 description="наличные|безналичные|смешанная"),
+    sum_min: float | None = Query(None, ge=0, description="Сумма чека от"),
+    sum_max: float | None = Query(None, ge=0, description="Сумма чека до"),
+    has_items: bool | None = Query(None,
+                                   description="Есть ли позиции (полный документ)"),
     page: int = Query(1, ge=1, le=settings.PAGE_MAX), page_size: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
@@ -379,6 +431,39 @@ def list_receipts(
         query = query.filter(Receipt.category_lc.like(f"%{category.strip().casefold()}%"))
     if notified is not None:
         query = query.filter(Receipt.notified == notified)
+    # --- v1.70.72: регион, отрасль, продавец, налоги, суммы ---
+    if region:
+        query = query.filter(Receipt.region_code == region.strip()[:4])
+    if industry:
+        key = industry.strip().casefold()
+        query = query.filter(or_(Receipt.industry_lc == key,
+                                 Receipt.product_group == industry.strip(),
+                                 Receipt.industry == industry.strip()))
+    if product_group:
+        from ..models import ReceiptItem as _RI
+        sub = db.query(_RI.receipt_id).filter(
+            _RI.product_group == product_group.strip()).subquery()
+        query = query.filter(Receipt.id.in_(sub))
+    if merchant_inn:
+        query = query.filter(Receipt.merchant_inn == merchant_inn.strip()[:20])
+    if merchant:
+        like = f"%{merchant.strip()}%"
+        query = query.filter(or_(Receipt.merchant_name.ilike(like),
+                                 Receipt.merchant_address.ilike(like),
+                                 Receipt.merchant_inn.like(like)))
+    if taxation:
+        query = query.filter(Receipt.taxation == taxation.strip()[:40])
+    if pay_type:
+        query = query.filter(Receipt.pay_type == pay_type.strip()[:20])
+    if sum_min is not None:
+        query = query.filter(Receipt.total_sum >= float(sum_min))
+    if sum_max is not None:
+        query = query.filter(Receipt.total_sum <= float(sum_max))
+    if has_items is not None:
+        from ..models import ReceiptItem as _RI2
+        sub2 = db.query(_RI2.receipt_id).subquery()
+        query = (query.filter(Receipt.id.in_(sub2)) if has_items
+                 else query.filter(~Receipt.id.in_(sub2)))
     if attention:
         cutoff = dt.datetime.utcnow() - dt.timedelta(days=3)
         query = query.filter(Receipt.status.in_(["new", "verifying"]),
@@ -425,8 +510,101 @@ def list_receipts(
 
 
 # --------------------------------------------------------------------------
-#  Карточка / изменение / удаление
+#  v1.70.72: полная карточка чека, справочники фильтров, разбор данных
 # --------------------------------------------------------------------------
+@router.get("/facets", summary="Значения фильтров пула: регионы, отрасли, продавцы")
+def receipt_facets(user: Annotated[User, Depends(get_current_user)],
+                   db: Annotated[Session, Depends(get_db)]):
+    """Что есть в пуле — для выпадающих фильтров (без обращения к ФНС)."""
+    from ..services import goods as _goods
+    q = scope_receipts(db.query(Receipt), user, None)
+
+    def top(column, limit: int = 60) -> list[dict]:
+        rows = (q.with_entities(column, func.count(Receipt.id))
+                .filter(column.isnot(None), column != "")
+                .group_by(column).order_by(func.count(Receipt.id).desc())
+                .limit(limit).all())
+        return [{"value": val, "count": cnt} for val, cnt in rows]
+
+    region_rows = (q.with_entities(Receipt.region_code, Receipt.region_name,
+                                   func.count(Receipt.id))
+                   .filter(Receipt.region_code.isnot(None),
+                           Receipt.region_code != "")
+                   .group_by(Receipt.region_code, Receipt.region_name)
+                   .order_by(func.count(Receipt.id).desc()).limit(100).all())
+    return {
+        "regions": [{"code": code, "name": name or code, "count": cnt}
+                    for code, name, cnt in region_rows],
+        "industries": top(Receipt.industry),
+        "product_groups": top(Receipt.product_group),
+        "sellers": top(Receipt.merchant_inn, limit=100),
+        "taxations": top(Receipt.taxation_name),
+        "pay_types": top(Receipt.pay_type),
+        # Полный справочник отраслей — чтобы фильтр не «худел»
+        "industry_catalog": _goods.industries(),
+        "group_catalog": _goods.groups(),
+        "pending_limit": int(db.query(func.count(Receipt.id)).filter(
+            Receipt.fns_status == "pending").scalar() or 0),
+    }
+
+
+@router.post("/enrich", summary="Разобрать сохранённые данные чеков: регион, "
+                                "отрасль, группы товаров (бухгалтер+)")
+def enrich_receipts(body: EnrichRequest,
+                    user: Annotated[User, Depends(require_accountant)],
+                    db: Annotated[Session, Depends(get_db)]):
+    """Достроить разбор БЕЗ запросов в ФНС (лимит не расходуется).
+
+    Берёт сохранённый ответ ФНС (raw_data), адрес и ИНН продавца, а также
+    наименования позиций. Полезно для чеков, проверенных до v1.70.72.
+    """
+    from ..services import receipt_card as _card
+    ids = [i for i in (body.receipt_ids or []) if i][:500]
+    q = scope_receipts(db.query(Receipt), user, None)
+    if ids:
+        q = q.filter(Receipt.id.in_(ids))
+    elif body.only_empty:
+        q = q.filter(or_(Receipt.region_code.is_(None),
+                         Receipt.region_code == "",
+                         Receipt.industry.is_(None), Receipt.industry == ""))
+    rows = q.limit(2000).all()
+    stats = {"receipts": len(rows), "with_ticket": 0, "regions": 0,
+             "industries": 0, "items": 0}
+    for r in rows:
+        before_region = r.region_code or ""
+        before_ind = r.industry or ""
+        res = _card.enrich_receipt(db, r)
+        stats["items"] += int(res.get("items") or 0)
+        if res.get("ticket"):
+            stats["with_ticket"] += 1
+        if (r.region_code or "") and not before_region:
+            stats["regions"] += 1
+        if (r.industry or "") and not before_ind:
+            stats["industries"] += 1
+    db.commit()
+    log_action(user, "receipts_enrich", details=stats)
+    return {"ok": True, **stats,
+            "message": (f"Разобрано чеков: {stats['receipts']} — регион "
+                        f"определён у {stats['regions']}, отрасль у "
+                        f"{stats['industries']} (запросов в ФНС не было)")}
+
+
+@router.get("/{receipt_id}/card",
+            summary="Полная информация по чеку: все реквизиты, как в магазине")
+def receipt_full_card(receipt_id: str,
+                      user: Annotated[User, Depends(get_current_user)],
+                      db: Annotated[Session, Depends(get_db)]):
+    """Всё, что есть по чеку: реквизиты ФНС, продавец, регион, отрасль,
+    позиции со всеми полями, налоги, оплата, служебные данные."""
+    from ..services import receipt_card as _card
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt or not can_view_receipt(user, receipt):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    card = _card.build_card(receipt)
+    card["receipt"] = receipt.to_dict(with_items=True)
+    return card
+
+
 @router.get("/creators", summary="Кто добавлял чеки (для выпадающего списка, бухгалтер+)")
 def list_creators(company_id: str | None = Query(None, max_length=36),
                   user: User = Depends(get_current_user),
@@ -655,6 +833,7 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
                                  "total_sum", "personal_sum", "operation",
                                  "merchant_name", "merchant_inn",
                                  "merchant_address", "cashier",
+                                 "industry", "region_code", "region_name",
                                  "items") if getattr(body, f) is not None]
         if forbidden:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -717,6 +896,18 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
         if body.notified is not None:
             receipt.notified = body.notified
             changed["fields"].append("notified")
+        # v1.70.72: уточнение отраслевого признака и региона вручную
+        if body.industry is not None:
+            ind = body.industry.strip()[:100]
+            receipt.industry = ind
+            receipt.industry_lc = ind.casefold()[:100]
+            changed["fields"].append("industry")
+        if body.region_code is not None:
+            receipt.region_code = body.region_code.strip()[:4]
+            changed["fields"].append("region_code")
+        if body.region_name is not None:
+            receipt.region_name = body.region_name.strip()[:120]
+            changed["fields"].append("region_name")
         if body.category is not None:
             cat = body.category.strip()[:100]
             receipt.category = cat
@@ -824,7 +1015,7 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
     except Exception:                              # noqa: BLE001
         pass
     try:                                           # v1.63.0: правила компании
-        from ..services import merchant_rules as _mr   # назначения
+        from ..services import merchant_rules as _mr  # назначения
         for r in rows:
             _mr.apply_rules(db, r)
     except Exception:                              # noqa: BLE001
@@ -908,6 +1099,16 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     if not human_edited:
         receipt.details_source = res.source or receipt.details_source
     receipt.details_fetched_at = dt.datetime.utcnow()
+    # v1.70.72: полный документ ФНС → регион, отрасль, реквизиты позиций
+    try:
+        from ..services import receipt_card as _card
+        _ticket = (res.raw.get("ticket") if isinstance(res.raw, dict) else None)
+        if isinstance(_ticket, dict) and _ticket:
+            _card.apply_to_receipt(db, receipt, _ticket,
+                                   force_items=bool(receipt.details_source != "manual_edit"))
+    except Exception:                                  # noqa: BLE001
+        logging.getLogger("ymaster").debug("receipt card apply",
+                                           exc_info=True)
     # v1.61.0: «понимающий» конвейер правил — если машинные данные
     # противоречивы (суммы позиций ≠ итог и т.п.), чек уходит на ручную
     # проверку с понятной причиной. Ручные правки (manual_edit) не
@@ -1216,8 +1417,12 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
 # --------------------------------------------------------------------------
 #  Проверка в ФНС (фоновая задача)
 # --------------------------------------------------------------------------
-def _verify_one_sync(receipt_id: str) -> None:
-    """Синхронное выполнение проверки (для фонового потока)."""
+def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
+    """Синхронное выполнение проверки (для фонового потока).
+
+    v1.70.72: job_id — задание пакетной проверки, чтобы человек увидел итог
+    «проверено N из M: подтверждено …, не найдено …».
+    """
     from ..database import SessionLocal
     _VERIFY_SEM.acquire()                    # v1.67.1: ждём БЕЗ сессии
     db = SessionLocal()
@@ -1249,6 +1454,8 @@ def _verify_one_sync(receipt_id: str) -> None:
             broadcast("receipt_verified", receipt.to_dict())
             from ..services.webhooks import enqueue_receipt_verified
             enqueue_receipt_verified(db, receipt.id)
+            from ..services import verify_jobs as _jobs
+            _jobs.note(job_id, "quota")
             return
 
         receipt.fns_status = result.status
@@ -1279,8 +1486,28 @@ def _verify_one_sync(receipt_id: str) -> None:
         if result.status == "valid" and (items or receipt.items):
             receipt.full_data = True
 
+        # v1.70.72: полный документ ФНС — регион, отрасль, налоги, реквизиты
         raw = json.loads(receipt.raw_data or "{}")
-        raw["fns"] = result.raw
+        old_fns = raw.get("fns") if isinstance(raw.get("fns"), dict) else {}
+        _ticket = (result.raw.get("ticket")
+                   if isinstance(result.raw, dict) else None)
+        # Ответ из кэша приходит без документа: берём сохранённый ранее,
+        # иначе повторная проверка «обнуляла» полные данные чека.
+        if not _ticket and isinstance(old_fns.get("ticket"), dict):
+            _ticket = old_fns["ticket"]
+        if result.status == "valid" and isinstance(_ticket, dict) and _ticket:
+            try:
+                from ..services import receipt_card as _card
+                _card.apply_to_receipt(db, receipt, _ticket)
+            except Exception:                          # noqa: BLE001
+                logging.getLogger("ymaster").debug("receipt card apply",
+                                                   exc_info=True)
+        merged = dict(old_fns)
+        if isinstance(result.raw, dict):
+            merged.update(result.raw)
+        if _ticket and not merged.get("ticket"):
+            merged["ticket"] = _ticket
+        raw["fns"] = merged
         receipt.raw_data = json.dumps(raw, ensure_ascii=False)
         db.commit()
 
@@ -1309,10 +1536,14 @@ def _verify_one_sync(receipt_id: str) -> None:
             except IntegrityError:
                 db.rollback()      # чек к этому моменту уже сохранён выше
         broadcast("receipt_verified", receipt.to_dict())
+        from ..services import verify_jobs as _jobs
+        _jobs.note(job_id, result.status)
         # v1.67.0: событие наружу — исходящий webhook (очередь + повторы)
         from ..services.webhooks import enqueue_receipt_verified
         enqueue_receipt_verified(db, receipt.id)
     except Exception as e:  # не роняем воркер
+        from ..services import verify_jobs as _jobs
+        _jobs.note(job_id, "error")
         try:
             db.rollback()
             r = db.get(Receipt, receipt_id)
@@ -1327,11 +1558,13 @@ def _verify_one_sync(receipt_id: str) -> None:
         _VERIFY_SEM.release()                # v1.67.1
 
 
-def _run_verification(receipt_ids: list[str]) -> None:
-    """Фоновое пакетное выполнение проверок."""
+def _run_verification(receipt_ids: list[str],
+                      job_id: str | None = None) -> None:
+    """Фоновое пакетное выполнение проверок (v1.70.72: с учётом задания)."""
     threads = []
     for rid in receipt_ids:
-        t = threading.Thread(target=_verify_one_sync, args=(rid,), daemon=True)
+        t = threading.Thread(target=_verify_one_sync, args=(rid, job_id),
+                             daemon=True)
         t.start()
         threads.append(t)
     for t in threads:
@@ -1352,10 +1585,34 @@ def verify(body: VerifyRequest, background: BackgroundTasks,
             user).all()
         ids = [r.id for r in found]
     if not ids:
-        return {"queued": 0, "message": "Нет чеков для проверки"}
-    background.add_task(_run_verification, ids)
-    log_action(user, "verify_queued", details={"count": len(ids)})
-    return {"queued": len(ids), "message": f"Отправлено на проверку: {len(ids)} чеков"}
+        return {"queued": 0, "job_id": "", "message": "Нет чеков для проверки"}
+    # v1.70.72: задание — чтобы после пакетной проверки показать итог
+    from ..services import verify_jobs as _jobs
+    job = _jobs.create(len(ids), user.id)
+    background.add_task(_run_verification, ids, job["job_id"])
+    log_action(user, "verify_queued", details={"count": len(ids),
+                                               "job_id": job["job_id"]})
+    return {"queued": len(ids), "job_id": job["job_id"],
+            "message": f"Отправлено на проверку: {len(ids)} чеков"}
+
+
+@router.get("/verify/latest", summary="Последняя пакетная проверка ФНС (итог)")
+def verify_latest(user: Annotated[User, Depends(require_accountant)]):
+    from ..services import verify_jobs as _jobs
+    snap = _jobs.latest(user.id)
+    if not snap:
+        return {"job": None, "message": "Пакетных проверок ещё не было"}
+    return {"job": snap, "message": _jobs.summary_text(snap)}
+
+
+@router.get("/verify/{job_id}", summary="Ход и итог пакетной проверки ФНС")
+def verify_job(job_id: str,
+              user: Annotated[User, Depends(require_accountant)]):
+    from ..services import verify_jobs as _jobs
+    snap = _jobs.get(job_id)
+    if not snap:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+    return {"job": snap, "message": _jobs.summary_text(snap)}
 
 
 @router.post("/{receipt_id}/verify", summary="Проверить один чек в ФНС (бухгалтер+)")

@@ -14,6 +14,7 @@ import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
+import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 
 // --------------------------------------------------------------------------
@@ -6149,6 +6150,28 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.72': [
+    { icon: '🧾', title: 'Полная карточка чека: все данные и вид как в магазине',
+      text: 'В карточке чека появилась кнопка «Полная информация по чеку» с '
+        + 'четырьмя вкладками: «Чек как в магазине» — бумажный чек с позициями, '
+        + 'НДС, итогом, кассиром, ФН/ФД/ФПД и QR-кодом; «Все реквизиты» — '
+        + 'продавец, касса, оплата, налоги, кассир, дополнительные реквизиты; '
+        + '«Товары» — позиции с типом, единицей, маркировкой и поставщиком; '
+        + '«Сырые данные» — сохранённый ответ ФНС. Чек можно напечатать.' },
+    { icon: '🗺️', title: 'Регион продавца и отрасль покупки — для пула',
+      text: 'Из чека берётся всё, что отдаёт ФНС: наименование и ИНН продавца, '
+        + 'адрес места расчётов, КПП, касса, смена, система налогообложения, '
+        + 'НДС по ставкам, кассир, дополнительные реквизиты, а по позициям — '
+        + 'тип предмета расчёта, единица измерения, код маркировки, поставщик, '
+        + 'страна и отраслевой реквизит ФОИВ. Регион определяется по адресу, '
+        + 'а если адреса нет — по первым двум цифрам ИНН. Отрасль покупки — '
+        + 'по наименованиям позиций. Всё это можно поправить вручную.' },
+    { icon: '✅', title: 'Уведомление: сколько чеков проверено',
+      text: 'После пакетной проверки в ФНС программа показывает ход и итог: '
+        + '«Проверено чеков: 12 из 12 — подтверждено 10, не найдено 1, '
+        + 'ждут лимита 1». Одно уведомление вместо молчания, плюс промежуточные '
+        + 'отчёты каждые пять чеков.' },
+  ],
   '1.70.71': [
     { icon: '🔧', title: 'Проверка ФНС заработала после сохранения токена',
       text: 'Исправили ошибку, из-за которой мастер-токен, введённый на '
@@ -7832,6 +7855,46 @@ function fillCats(sel, cats, keepValue) {
   sel.value = keepValue || '';
 }
 
+// v1.70.72: «Проверено N чеков» — ход и итог пакетной проверки ФНС.
+// Человек отправил несколько чеков и должен увидеть, сколько из них
+// реально проверено, сколько подтверждено, а сколько ждёт сброса лимита.
+const verifyWatch = { timer: null, jobId: '' };
+async function watchVerifyJob(jobId) {
+  if (!jobId) return;
+  if (verifyWatch.timer) clearInterval(verifyWatch.timer);
+  verifyWatch.jobId = jobId;
+  let announced = 0;
+  const tick = async () => {
+    let snap = null;
+    try {
+      const r = await api.get(`/api/v1/receipts/verify/${jobId}`);
+      snap = r.job;
+      if (snap && snap.finished) {
+        clearInterval(verifyWatch.timer);
+        verifyWatch.timer = null;
+        const c = snap.counters || {};
+        const parts = [];
+        if (c.valid) parts.push(`подтверждено ${c.valid}`);
+        if (c.not_found) parts.push(`не найдено ${c.not_found}`);
+        if (c.invalid) parts.push(`отклонено ${c.invalid}`);
+        if (c.quota) parts.push(`ждут лимита ${c.quota}`);
+        if (c.unknown || c.error) parts.push(`без ответа ${c.unknown + c.error}`);
+        toast(`Проверено чеков: ${snap.done} из ${snap.total}${parts.length ? ' — ' + parts.join(', ') : ''}`,
+          c.not_found || c.invalid || c.unknown || c.error ? 'warn' : 'ok', 'Проверка ФНС завершена');
+        if (typeof viewReceipts._refresh === 'function') viewReceipts._refresh();
+        return;
+      }
+      // промежуточный отчёт — на каждые 5 проверенных чеков
+      if (snap && snap.done >= announced + 5) {
+        announced = snap.done;
+        toast(`Проверено ${snap.done} из ${snap.total}…`, 'info', 'Проверка ФНС');
+      }
+    } catch (e) { /* задание могло исчезнуть — молча ждём следующего */ }
+  };
+  verifyWatch.timer = setInterval(tick, 2000);
+  setTimeout(tick, 1500);
+}
+
 async function viewReceipts(container) {
   const acc = isAccountant();
   // v1.8.0: срок сдачи авансового отчёта (настройка приказа руководителя)
@@ -7873,6 +7936,25 @@ async function viewReceipts(container) {
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
         <button type="button" class="btn" id="btn-filter">Найти</button>
       </div>
+      <div class="filter-bar" style="margin-top:10px">
+        <label class="field"><span>Регион продавца</span>
+          <select id="f-region"><option value="">все регионы</option></select></label>
+        <label class="field"><span>Отрасль покупки</span>
+          <select id="f-industry"><option value="">все отрасли</option></select></label>
+        <label class="field"><span>Группа товаров</span>
+          <select id="f-group"><option value="">все группы</option></select></label>
+        <label class="field"><span>Продавец (ИНН или название)</span>
+          <input id="f-merchant" placeholder="например 7801234567"></label>
+        <label class="field"><span>Оплата</span>
+          <select id="f-pay"><option value="">любая</option>
+            <option value="наличные">наличные</option>
+            <option value="безналичные">безналичные</option>
+            <option value="смешанная">смешанная</option></select></label>
+        <label class="field"><span>Сумма от</span><input id="f-sum-min" type="number" min="0" step="0.01" placeholder="0"></label>
+        <label class="field"><span>Сумма до</span><input id="f-sum-max" type="number" min="0" step="0.01" placeholder="∞"></label>
+        <button type="button" class="btn" id="btn-filter2">Найти</button>
+        ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разложить сохранённые чеки по регионам и отраслям. Запросов в ФНС НЕ делает — суточный лимит не расходуется">🧭 Разобрать данные чеков</button>' : ''}
+      </div>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
           <button type="button" class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
@@ -7909,14 +7991,40 @@ async function viewReceipts(container) {
     q: '', status: '', fns_status: '', exported: '', assignee: '',
     creator: '', full_data: '',
     category: '', notified: '', date_from: '', date_to: '', page: 1,
+    // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
+    region: '', industry: '', product_group: '', merchant: '',
+    pay_type: '', sum_min: '', sum_max: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
+  // v1.70.72: значения фильтров — из фактического пула (регионы, отрасли…)
+  if (!viewReceipts._facetsLoaded) {
+    viewReceipts._facetsLoaded = true;
+    api.get('/api/v1/receipts/facets' + (companyIdParam()
+      ? '?company_id=' + companyIdParam() : ''))
+      .then((f) => {
+        const fillSel = (sel, list, label) => {
+          if (!sel) return;
+          const keep = sel.value;
+          sel.innerHTML = `<option value="">${label}</option>` + list.map(x =>
+            `<option value="${esc(x.value || x.code)}">${esc(x.name || x.value)}${x.count != null ? ' · ' + x.count : ''}</option>`).join('');
+          sel.value = keep;
+        };
+        fillSel($('#f-region'), (f.regions || []).map(x => ({ value: x.code, name: x.name, count: x.count })), 'все регионы');
+        fillSel($('#f-industry'), (f.industries || []).length ? f.industries
+          : (f.industry_catalog || []).map(v => ({ value: v, name: v })), 'все отрасли');
+        fillSel($('#f-group'), (f.product_groups || []).length ? f.product_groups
+          : (f.group_catalog || []).map(v => ({ value: v, name: v })), 'все группы');
+      }).catch(() => { viewReceipts._facetsLoaded = false; });
+  }
   // вернуть значения в поля формы — чтобы видно было, что фильтр применён
   [['#f-q', 'q'], ['#f-status', 'status'], ['#f-fns', 'fns_status'],
    ['#f-exp', 'exported'], ['#f-creator', 'creator'],
    ['#f-full', 'full_data'], ['#f-category', 'category'],
-   ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to']]
+   ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to'],
+   ['#f-region', 'region'], ['#f-industry', 'industry'],
+   ['#f-group', 'product_group'], ['#f-merchant', 'merchant'],
+   ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
     .forEach(([sel, key]) => {
       const el = $(sel);
       if (el && filters[key]) el.value = filters[key];
@@ -8182,21 +8290,44 @@ async function viewReceipts(container) {
     }
     filters.date_from = $('#f-from').value;
     filters.date_to = $('#f-to').value;
+    // v1.70.72: регион, отрасль, группа, продавец, оплата, суммы
+    [['#f-region', 'region'], ['#f-industry', 'industry'],
+     ['#f-group', 'product_group'], ['#f-merchant', 'merchant'],
+     ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],
+     ['#f-sum-max', 'sum_max']].forEach(([sel, key]) => {
+      const el = $(sel);
+      filters[key] = el ? el.value : '';
+    });
     filters.page = 1;
     viewReceipts._filters = { ...filters };   // v1.25.1: переживают перестроение вида
     load();
   };
   $('#f-q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-filter').click(); });
+  const btnF2 = $('#btn-filter2');
+  if (btnF2) btnF2.onclick = () => $('#btn-filter').click();
 
   if (acc) {
     $('#btn-bulk-verify').onclick = async () => {
       if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
       const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [...state.receiptsSelected] });
       toast(r.message, 'info', 'Проверка ФНС');
+      watchVerifyJob(r.job_id);
     };
     $('#btn-bulk-verify-all').onclick = async () => {
       const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [] });
       toast(r.message, 'info', 'Проверка ФНС');
+      watchVerifyJob(r.job_id);
+    };
+    // v1.70.72: разбор сохранённых данных — регион, отрасль, группы товаров
+    const btnEnrich = $('#btn-enrich');
+    if (btnEnrich) btnEnrich.onclick = async () => {
+      btnEnrich.disabled = true;
+      try {
+        const r = await api.post('/api/v1/receipts/enrich', { only_empty: true });
+        toast(r.message, 'ok', 'Разбор данных чеков');
+        load();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { btnEnrich.disabled = false; }
     };
     $('#btn-bulk-assign').onclick = () => bulkAssignDialog();
     $('#btn-bulk-fetch').onclick = async () => {
@@ -9035,6 +9166,85 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 }
 
+// ==========================================================================
+//  v1.70.72: ПОЛНАЯ КАРТОЧКА ЧЕКА
+//  Две задачи владельца: (1) увидеть ВСЁ, что есть по чеку, (2) увидеть
+//  чек так, как он выглядел в магазине. Плюс продавец, регион и отрасль —
+//  чтобы потом раскладывать пул.
+// ==========================================================================
+async function receiptFullCard(id) {
+  let card;
+  try {
+    card = await api.get(`/api/v1/receipts/${encodeURIComponent(id)}/card`);
+  } catch (e) { return toast(e.message, 'err'); }
+  const d = card.document || {};
+  d.receipt_id = id;
+  const tabs = [
+    ['shop', '🧾 Чек как в магазине', () => shopReceiptHTML(d)],
+    ['details', '📋 Все реквизиты', () => fullCardDetailsHTML(d)],
+    ['items', `📦 Товары (${(d.items || []).length})`, () => fullCardItemsHTML(d)],
+    ['raw', '🗄 Сырые данные', () => fullCardRawHTML(card)],
+  ];
+  const body = openModal(`
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">Полная информация по чеку</h3>
+      ${chip(d.receipt_note ? d.receipt_note.fns_status : 'unknown')}
+      <span class="badge-soft">${fmtSum(d.money ? d.money.total : 0)}</span>
+      <button type="button" class="btn btn-sm" id="fcard-print" style="margin-left:auto">🖨 Напечатать</button>
+    </div>
+    <div class="fcard-note">${esc((d.seller || {}).name || 'Продавец не указан')} ·
+      ${esc((d.region || {}).name || 'регион не определён')} ·
+      ${esc((d.industry || {}).industry || 'отрасль не определена')}</div>
+    <div class="fcard-tabs">${tabs.map((t, i) => `<button type="button"
+      class="btn btn-sm ${i === 0 ? 'active' : ''}" data-ftab="${t[0]}">${t[1]}</button>`).join('')}</div>
+    <div id="fcard-body"></div>`, {});
+  const slot = body.slot;
+  const pane = slot.querySelector('#fcard-body');
+  const show = (key) => {
+    const tab = tabs.find(t => t[0] === key) || tabs[0];
+    slot.querySelectorAll('[data-ftab]').forEach(b =>
+      b.classList.toggle('active', b.dataset.ftab === tab[0]));
+    pane.innerHTML = tab[2]();
+  };
+  // QR-код тянем с авторизацией (blob): <img src> токен не передаёт
+  async function hydrateQr() {
+    const img = slot.querySelector('#shop-ticket img');
+    if (!img || img.dataset.ready) return;
+    try {
+      const { blob } = await api.download(`/api/v1/receipts/${id}/qr.png`);
+      const url = URL.createObjectURL(blob);
+      img.src = url;
+      img.dataset.ready = '1';
+      receiptFullCard._qr = url;
+    } catch (e) { img.style.display = 'none'; }
+  }
+  slot.querySelectorAll('[data-ftab]').forEach(b =>
+    b.onclick = () => { show(b.dataset.ftab); hydrateQr(); });
+  show('shop');
+  hydrateQr();
+  const pr = slot.querySelector('#fcard-print');
+  if (pr) pr.onclick = () => {
+    const win = window.open('', '_blank', 'width=460,height=760');
+    if (!win) return toast('Разрешите всплывающие окна для печати', 'warn');
+    const qr = receiptFullCard._qr || '';
+    const html = shopReceiptHTML({ ...d, receipt_id: id })
+      .replace(/<img[^>]*>/, qr ? `<img src="${qr}" alt="QR">` : '');
+    win.document.write(`<html><head><meta charset="utf-8"><title>Чек</title>
+      <style>
+        body{font-family:"Courier New",monospace;margin:0;padding:10px;background:#fff;color:#111}
+        .ticket{max-width:100%;box-shadow:none;border-radius:0}
+        .ticket-qr img{width:150px;height:150px}
+        .ticket-line,.ticket-total{display:flex;justify-content:space-between;gap:10px}
+        .ticket-sep{border-top:1px dashed #8a8a8a;margin:8px 0}
+        .ticket-center{text-align:center}
+        .ticket-item-calc{display:flex;justify-content:space-between}
+        .ticket-title{font-weight:700}.ticket-small{font-size:11px;color:#555}
+      </style>
+      </head><body>${html}<scr` + `ipt>setTimeout(()=>window.print(),500)</scr` + `ipt></body></html>`);
+    win.document.close();
+  };
+}
+
 // --- Drawer: карточка чека --------------------------------------------------
 async function receiptDrawer(id) {
   // v1.28.0: один чек — одна карточка. Повторные клики по тому же чеку
@@ -9089,6 +9299,7 @@ async function receiptDrawer(id) {
           <td class="cell-sum">${fmtSum(it.price)}</td><td class="cell-sum">${fmtSum(it.total)}</td></tr>`).join('')}</tbody></table>`
         : emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)')}
       <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
+        <button type="button" class="btn btn-sm" id="d-fullcard">📄 Полная информация по чеку</button>
         ${acc ? '<button type="button" class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
         ${acc ? '<button type="button" class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
         ${canDel ? '<button type="button" class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
@@ -9115,6 +9326,8 @@ async function receiptDrawer(id) {
     navigator.clipboard && navigator.clipboard.writeText(r.qr_data);
     toast('Строка QR скопирована', 'info');
   };
+  const fullBtn = drawer.querySelector('#d-fullcard');
+  if (fullBtn) fullBtn.onclick = () => receiptFullCard(id);
   const save = drawer.querySelector('#d-save');
   if (save) save.onclick = async () => {
     try {
