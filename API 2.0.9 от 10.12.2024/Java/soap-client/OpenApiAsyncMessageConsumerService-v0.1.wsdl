@@ -1,0 +1,387 @@
+<?xml version="1.0" ?>
+<wsdl:definitions
+        xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+        xmlns:tns="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/1.0"
+        xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+        xmlns:ns1="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0"
+        name="OpenApiAsyncMessageConsumerService"
+        targetNamespace="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/1.0">
+
+    <wsdl:types>
+
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:tns="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0"
+                   elementFormDefault="qualified"
+                   targetNamespace="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0"
+                   version="1.0">
+
+            <xs:complexType name="AsyncMessageConsumerServiceFault">
+                <xs:annotation>
+                    <xs:documentation>Базовая ошибка асинхронного сервиса сообщений Поставщика</xs:documentation>
+                </xs:annotation>
+                <xs:sequence>
+                    <!-- minOccurs="0" для поддержки обратной совместимости, после добавления расширения существующих Fault'ов,
+                     от базового AsyncMessageConsumerServiceFault -->
+                    <xs:element minOccurs="0" maxOccurs="1" name="Message" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>Сообщение об ошибке</xs:documentation>
+                        </xs:annotation>
+                    </xs:element>
+                </xs:sequence>
+            </xs:complexType>
+
+            <xs:element name="MessageNotFoundFault" type="tns:MessageNotFoundFault"/>
+
+            <xs:complexType name="MessageNotFoundFault">
+                <xs:annotation>
+                    <xs:documentation>Сообщение не найдено</xs:documentation>
+                </xs:annotation>
+                <xs:complexContent mixed="false">
+                    <xs:extension base="tns:AsyncMessageConsumerServiceFault">
+                    </xs:extension>
+                </xs:complexContent>
+            </xs:complexType>
+
+            <xs:element name="MessagesNotFoundFault" type="tns:MessagesNotFoundFault"/>
+
+            <xs:complexType name="MessagesNotFoundFault">
+                <xs:annotation>
+                    <xs:documentation>По переданному списку MessageID сообщений не найдено</xs:documentation>
+                </xs:annotation>
+                <xs:complexContent mixed="false">
+                    <xs:extension base="tns:AsyncMessageConsumerServiceFault">
+                    </xs:extension>
+                </xs:complexContent>
+            </xs:complexType>
+
+            <xs:element name="AuthenticationFault" type="tns:AuthenticationFault"/>
+
+            <xs:complexType name="AuthenticationFault">
+                <xs:annotation>
+                    <xs:documentation>Ошибка проверки подлинности</xs:documentation>
+                </xs:annotation>
+                <xs:complexContent mixed="false">
+                    <xs:extension base="tns:AsyncMessageConsumerServiceFault">
+                    </xs:extension>
+                </xs:complexContent>
+            </xs:complexType>
+
+            <xs:element name="FileNotFoundFault" type="tns:FileNotFoundFault"/>
+            <xs:complexType name="FileNotFoundFault">
+                <xs:annotation>
+                    <xs:documentation>Файл не найден</xs:documentation>
+                </xs:annotation>
+                <xs:complexContent mixed="false">
+                    <xs:extension base="tns:AsyncMessageConsumerServiceFault">
+                    </xs:extension>
+                </xs:complexContent>
+            </xs:complexType>
+
+            <xs:element name="RateLimitingFault" type="tns:RateLimitingFault" />
+            <xs:complexType name="RateLimitingFault">
+                <xs:annotation>
+                    <xs:documentation>Превышено количество запросов в единицу времени.</xs:documentation>
+                </xs:annotation>
+                <xs:complexContent mixed="false">
+                    <xs:extension base="tns:AsyncMessageConsumerServiceFault">
+                        <xs:sequence>
+                            <xs:element name="errorCode" type="xs:int" />
+                        </xs:sequence>
+                    </xs:extension>
+                </xs:complexContent>
+            </xs:complexType>
+
+            <xs:simpleType name="ProcessingStatuses">
+                <xs:restriction base="xs:string">
+                    <xs:enumeration value="PROCESSING"/>
+                    <xs:enumeration value="COMPLETED"/>
+                </xs:restriction>
+            </xs:simpleType>
+
+            <xs:element name="GetMessageRequest">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element minOccurs="1" maxOccurs="1" name="MessageId" type="xs:string">
+                            <xs:annotation>
+                                <xs:documentation>Идентификатор сообщения</xs:documentation>
+                            </xs:annotation>
+                        </xs:element>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+
+            <xs:element name="GetMessageResponse">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element minOccurs="1" maxOccurs="1" name="ProcessingStatus" type="tns:ProcessingStatuses"/>
+                        <xs:element minOccurs="0" maxOccurs="1" name="Message">
+                            <xs:complexType>
+                                <xs:sequence>
+                                    <xs:any namespace="##other" processContents="skip"/>
+                                </xs:sequence>
+                            </xs:complexType>
+                        </xs:element>
+                        <xs:element name="FileLinks" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+
+            <xs:element name="GetMessagesRequestExpression" type="tns:GetMessagesRequestExpression"/>
+
+            <xs:complexType name="GetMessagesRequestExpression">
+                <xs:sequence>
+                    <xs:element minOccurs="1" maxOccurs="1" name="MessageId" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>Идентификатор сообщения</xs:documentation>
+                        </xs:annotation>
+                    </xs:element>
+                    <xs:element minOccurs="1" maxOccurs="1" name="UserToken" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>Токен пользователя</xs:documentation>
+                        </xs:annotation>
+                    </xs:element>
+                </xs:sequence>
+            </xs:complexType>
+
+            <xs:element name="GetMessagesRequest">
+                <xs:complexType>
+                    <xs:sequence>
+                        <!-- AVM: Если кол-во выражений больше конфигурируемого значения, выдавать ошибку "Максимальное количество выражений в списке - N." -->
+                        <xs:element name="Expressions" minOccurs="1" maxOccurs="unbounded"
+                                    type="tns:GetMessagesRequestExpression"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+
+            <xs:element name="GetMessagesResponseMessage" type="tns:GetMessagesResponseMessage"/>
+
+            <xs:complexType name="GetMessagesResponseMessage">
+                <xs:sequence>
+                    <!-- AVM: Должна быть проверка, что файл запрашивает тот, кому он принадлелжит (AppId, UserToken, что еще?) в сервисе скачивания файлов в Потребителе (idmz) -->
+                    <xs:element minOccurs="1" maxOccurs="1" name="MessageId" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>Идентификатор сообщения</xs:documentation>
+                        </xs:annotation>
+                    </xs:element>
+
+                    <xs:element minOccurs="0" maxOccurs="1" name="Result">
+                        <xs:complexType>
+                            <xs:sequence>
+
+                                <xs:element minOccurs="1" maxOccurs="1" name="ProcessingStatus"
+                                            type="tns:ProcessingStatuses"/>
+                                <xs:element minOccurs="0" maxOccurs="1" name="Message">
+                                    <xs:complexType>
+                                        <xs:sequence>
+                                            <xs:any namespace="##other" processContents="skip"/>
+                                        </xs:sequence>
+                                    </xs:complexType>
+                                </xs:element>
+                                <xs:element name="FileLinks" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+
+                            </xs:sequence>
+                        </xs:complexType>
+                    </xs:element>
+
+                    <xs:element minOccurs="0" maxOccurs="1" name="Fault" type="tns:AsyncMessageConsumerServiceFault"/>
+
+                </xs:sequence>
+            </xs:complexType>
+
+            <xs:element name="GetMessagesResponse">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="Messages" minOccurs="1" maxOccurs="unbounded"
+                                    type="tns:GetMessagesResponseMessage"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+
+            <xs:element name="SendMessageRequest">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element minOccurs="1" maxOccurs="1" name="Message">
+                            <xs:complexType>
+                                <xs:sequence>
+                                    <xs:any namespace="##other" processContents="skip"/>
+                                </xs:sequence>
+                            </xs:complexType>
+                        </xs:element>
+                        <xs:element name="FileLinks" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+
+            <xs:element name="SendMessageResponse">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element minOccurs="1" maxOccurs="1" name="MessageId" type="xs:string">
+                            <xs:annotation>
+                                <xs:documentation>Идентификатор сообщения</xs:documentation>
+                            </xs:annotation>
+                        </xs:element>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+
+        </xs:schema>
+
+    </wsdl:types>
+
+    <wsdl:message name="GetMessageResponse">
+        <wsdl:part element="ns1:GetMessageResponse" name="parameters">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="GetMessageRequest">
+        <wsdl:part element="ns1:GetMessageRequest" name="parameters">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="SendMessageRequest">
+        <wsdl:part element="ns1:SendMessageRequest" name="parameters">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="SendMessageResponse">
+        <wsdl:part element="ns1:SendMessageResponse" name="parameters">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="GetMessagesResponse">
+        <wsdl:part element="ns1:GetMessagesResponse" name="parameters">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="GetMessagesRequest">
+        <wsdl:part element="ns1:GetMessagesRequest" name="parameters">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="MessageNotFoundException">
+        <wsdl:part element="ns1:MessageNotFoundFault" name="MessageNotFoundException">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="MessagesNotFoundException">
+        <wsdl:part element="ns1:MessagesNotFoundFault" name="MessagesNotFoundException">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="AuthenticationException">
+        <wsdl:part element="ns1:AuthenticationFault" name="AuthenticationException">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="FileNotFoundException">
+        <wsdl:part element="ns1:FileNotFoundFault" name="FileNotFoundException">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:message name="RateLimitingException">
+        <wsdl:part element="ns1:RateLimitingFault" name="RateLimitingException">
+        </wsdl:part>
+    </wsdl:message>
+
+    <wsdl:portType name="OpenApiAsyncMessageConsumerServicePortType">
+
+        <wsdl:operation name="GetMessage">
+            <wsdl:input message="tns:GetMessageRequest" name="GetMessageRequest">
+            </wsdl:input>
+            <wsdl:output message="tns:GetMessageResponse" name="GetMessageResponse">
+            </wsdl:output>
+            <wsdl:fault name="AuthenticationException" message="tns:AuthenticationException"/>
+            <wsdl:fault name="MessageNotFoundException" message="tns:MessageNotFoundException"/>
+            <wsdl:fault name="RateLimitingException" message="tns:RateLimitingException" />
+        </wsdl:operation>
+
+        <wsdl:operation name="SendMessage">
+            <wsdl:input message="tns:SendMessageRequest" name="SendMessageRequest">
+            </wsdl:input>
+            <wsdl:output message="tns:SendMessageResponse" name="SendMessageResponse">
+            </wsdl:output>
+            <wsdl:fault name="AuthenticationException" message="tns:AuthenticationException"/>
+            <wsdl:fault name="FileNotFoundException" message="tns:FileNotFoundException"/>
+            <wsdl:fault name="RateLimitingException" message="tns:RateLimitingException"/>
+        </wsdl:operation>
+
+        <wsdl:operation name="GetMessages">
+            <wsdl:input message="tns:GetMessagesRequest" name="GetMessagesRequest">
+            </wsdl:input>
+            <wsdl:output message="tns:GetMessagesResponse" name="GetMessagesResponse">
+            </wsdl:output>
+            <wsdl:fault name="AuthenticationException" message="tns:AuthenticationException"/>
+            <wsdl:fault name="RateLimitingException" message="tns:RateLimitingException" />
+            <wsdl:fault name="MessagesNotFoundException" message="tns:MessagesNotFoundException"/>
+        </wsdl:operation>
+
+    </wsdl:portType>
+
+    <wsdl:binding name="OpenApiAsyncMessageConsumerServiceSoapBinding"
+                  type="tns:OpenApiAsyncMessageConsumerServicePortType">
+        <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"></soap:binding>
+
+        <wsdl:operation name="GetMessage">
+            <soap:operation soapAction="urn:GetMessageRequest" style="document"></soap:operation>
+            <wsdl:input name="GetMessageRequest">
+                <soap:body use="literal"></soap:body>
+            </wsdl:input>
+            <wsdl:output name="GetMessageResponse">
+                <soap:body use="literal"></soap:body>
+            </wsdl:output>
+            <wsdl:fault name="AuthenticationException">
+                <soap:fault name="AuthenticationException" use="literal"/>
+            </wsdl:fault>
+            <wsdl:fault name="MessageNotFoundException">
+                <soap:fault name="MessageNotFoundException" use="literal"/>
+            </wsdl:fault>
+            <wsdl:fault name="RateLimitingException">
+                <soap:fault name="RateLimitingException" use="literal" />
+            </wsdl:fault>
+        </wsdl:operation>
+
+        <wsdl:operation name="SendMessage">
+            <soap:operation soapAction="urn:SendMessageRequest" style="document"></soap:operation>
+            <wsdl:input name="SendMessageRequest">
+                <soap:body use="literal"></soap:body>
+            </wsdl:input>
+            <wsdl:output name="SendMessageResponse">
+                <soap:body use="literal"></soap:body>
+            </wsdl:output>
+            <wsdl:fault name="AuthenticationException">
+                <soap:fault name="AuthenticationException" use="literal"/>
+            </wsdl:fault>
+            <wsdl:fault name="FileNotFoundException">
+                <soap:fault name="FileNotFoundException" use="literal"/>
+            </wsdl:fault>
+        </wsdl:operation>
+
+        <wsdl:operation name="GetMessages">
+            <soap:operation soapAction="urn:GetMessagesRequest" style="document"></soap:operation>
+            <wsdl:input name="GetMessagesRequest">
+                <soap:body use="literal"></soap:body>
+            </wsdl:input>
+            <wsdl:output name="GetMessagesResponse">
+                <soap:body use="literal"></soap:body>
+            </wsdl:output>
+            <wsdl:fault name="AuthenticationException">
+                <soap:fault name="AuthenticationException" use="literal"/>
+            </wsdl:fault>
+            <wsdl:fault name="RateLimitingException">
+                <soap:fault name="RateLimitingException" use="literal" />
+            </wsdl:fault>
+            <wsdl:fault name="MessagesNotFoundException">
+                <soap:fault name="MessagesNotFoundException" use="literal"/>
+            </wsdl:fault>
+        </wsdl:operation>
+    </wsdl:binding>
+
+    <wsdl:service name="OpenApiAsyncMessageConsumerService">
+        <wsdl:port binding="tns:OpenApiAsyncMessageConsumerServiceSoapBinding"
+                   name="OpenApiAsyncMessageConsumerServiceEndpoint">
+            <soap:address
+                    location="http://server:port/open-api/system/subsystem/external_system_namespace"></soap:address>
+        </wsdl:port>
+    </wsdl:service>
+
+</wsdl:definitions>
