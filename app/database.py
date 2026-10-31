@@ -106,6 +106,7 @@ def init_db() -> None:
     _backfill_assignee_lc()
     _backfill_full_data()
     _backfill_marking()
+    _backfill_retail_place()
     _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
@@ -214,6 +215,7 @@ def _ensure_schema() -> None:
             # v1.55.0: расширенные поля источника (proverkacheka: место
             # расчётов, касса, смена, налог, свойства заказа и др.)
             ("ext_json", "ALTER TABLE receipts ADD COLUMN ext_json TEXT DEFAULT ''"),
+            ("retail_place_index", "ALTER TABLE receipts ADD COLUMN retail_place_index TEXT NULL"),
             # --- v1.11.0: мультикомпанийность ---
             ("company_id", "ALTER TABLE receipts ADD COLUMN company_id VARCHAR(36) NULL"),
             # --- v1.2.0: полные данные чека + флаг уведомления ---
@@ -288,6 +290,9 @@ def _ensure_schema() -> None:
                 conn.execute(text(
                     "CREATE INDEX IF NOT EXISTS idx_receipts_company "
                     "ON receipts(company_id)"))
+        if "receipts" in existing_tables:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipts_place_pending "
+                              "ON receipts(id) WHERE retail_place_index IS NULL"))
         if "receipt_items" in existing_tables:
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipt_items_marking "
                               "ON receipt_items(marking_present, receipt_id)"))
@@ -303,6 +308,31 @@ def _ensure_schema() -> None:
                 conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
                              {"lc": (cat or "").casefold(), "i": rid})
 
+
+
+def _backfill_retail_place() -> None:
+    """Пакетно индексировать старые записи без изменения исходных данных."""
+    from sqlalchemy import update
+
+    from .models import Receipt, saved_retail_place
+    db = SessionLocal()
+    try:
+        while True:
+            rows = (db.query(Receipt.id, Receipt.ext_json, Receipt.raw_data)
+                    .filter(Receipt.retail_place_index.is_(None)).limit(500).all())
+            if not rows:
+                break
+            for row in rows:
+                # Условие защищает свежие данные от конкурирующего backfill.
+                db.execute(update(Receipt).where(
+                    Receipt.id == row.id, Receipt.retail_place_index.is_(None)
+                ).values(retail_place_index=saved_retail_place(row.ext_json, row.raw_data)))
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _backfill_marking() -> None:

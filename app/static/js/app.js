@@ -6150,6 +6150,11 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.78': [
+    { icon: '🎯', title: 'Сумма позиции и место расчёта',
+      text: 'В подборе доступны диапазон суммы отдельной позиции и поиск по сохранённому '
+        + 'названию места расчёта. Интерфейс показывает заполненность поля среди доступных чеков.' },
+  ],
   '1.70.77': [
     { icon: '🎯', title: 'Точнее подбор позиций и сохранённые данные',
       text: 'Название, НДС, цена и количество ищутся в одной позиции; '
@@ -7997,6 +8002,9 @@ async function viewReceipts(container) {
           <option value="seller_name">название продавца</option><option value="seller_inn">ИНН продавца</option>
           <option value="address">адрес продавца</option><option value="fiscal">ФН, ФД или ФП</option>
           <option value="items">нет позиций</option></select></label>
+        <label class="field"><span>Сумма позиции от</span><input id="f-item-total-min" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Сумма позиции до</span><input id="f-item-total-max" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Место расчёта (название)</span><input id="f-retail-place" maxlength="300" placeholder="магазин, сайт…"></label>
         <label class="field"><span>Цена позиции от</span><input id="f-item-price-min" type="number" min="0" step="0.01"></label>
         <label class="field"><span>Цена позиции до</span><input id="f-item-price-max" type="number" min="0" step="0.01"></label>
         <label class="field"><span>Количество позиции от</span><input id="f-item-qty-min" type="number" min="0" step="any"></label>
@@ -8018,7 +8026,8 @@ async function viewReceipts(container) {
         ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разобрать до 2000 сохранённых чеков за раз; запросов в ФНС нет">🧭 Разобрать данные чеков</button>' : ''}
       </div>
       <p class="form-hint">Регион и город определяются по адресу, регион иногда по ИНН; отрасли и группы — по названиям позиций, это не классификация ФНС. При отсутствии полного чека часть фильтров может не сработать. «Разобрать данные чеков» обрабатывает до 2000 записей за раз без запроса в ФНС.</p>
-      <p class="form-hint">Название, НДС, цена и количество должны совпасть в одной позиции; отрасль, группа и маркировка проверяются по чеку в целом. Цена и количество используются как сохранены, при импорте могли быть подставлены значения по умолчанию. Состав оплаты проверяет положительную сохранённую сумму наличными или безналичными и не исключает другие способы оплаты.</p>
+      <p class="form-hint">Название, НДС, сумма, цена и количество должны совпасть в одной позиции; отрасль, группа и маркировка проверяются по чеку в целом. Сумма, цена и количество используются как сохранены, при импорте могли быть подставлены значения по умолчанию; ноль не обязательно подтверждён источником. Состав оплаты проверяет положительную сохранённую сумму наличными или безналичными и не исключает другие способы оплаты.</p>
+      <p class="form-hint" id="f-place-coverage">Место расчёта ищется по сохранённому названию, не по адресу или названию продавца; в старых чеках поле может отсутствовать.</p>
       <p class="form-hint">НДС показан как сохранённое значение: это может быть код ФНС, а «none» может означать как отсутствие НДС, так и отсутствие данных. Маркировка ищется только в сохранённых данных позиций; отсутствие записи не доказывает, что товар без маркировки. Чеки без позиций в выборку «данные не сохранены» не входят. Недостающие реквизиты: название, ИНН и адрес продавца, ФН/ФД/ФП и позиции.</p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
@@ -8059,7 +8068,7 @@ async function viewReceipts(container) {
     // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
     region: '', region_name: '', city: '', industry: '', product_group: '', item_name: '', operation: '', has_items: '', merchant: '',
     pay_type: '', sum_min: '', sum_max: '', vat_rate: '', marking: '', missing: '',
-    item_price_min: '', item_price_max: '', item_quantity_min: '', item_quantity_max: '', payment_component: '',
+    item_price_min: '', item_price_max: '', item_total_min: '', item_total_max: '', retail_place: '', item_quantity_min: '', item_quantity_max: '', payment_component: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
@@ -8089,6 +8098,11 @@ async function viewReceipts(container) {
       fillSel('#f-industry', f.industries || [], 'все отрасли', 'industry');
       fillSel('#f-group', f.product_groups || [], 'все группы', 'product_group');
       fillSel('#f-vat', f.vat_rates || [], 'любое значение', 'vat_rate');
+      const coverage = container.querySelector('#f-place-coverage');
+      if (coverage && f.retail_place_coverage) {
+        const c = f.retail_place_coverage;
+        coverage.textContent = `Место расчёта сохранено у ${fmtInt(c.saved)} из ${fmtInt(c.total)} доступных чеков с учётом выбранной компании. Поиск по названию, не по адресу или продавцу; отсутствие записи не означает отсутствие места расчёта.`;
+      }
     } catch (e) { toast('Не удалось загрузить значения фильтров: ' + e.message, 'warn'); }
   }
   loadFacets();
@@ -8099,6 +8113,7 @@ async function viewReceipts(container) {
    ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to'],
    ['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
    ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'],
+   ['#f-item-total-min', 'item_total_min'], ['#f-item-total-max', 'item_total_max'], ['#f-retail-place', 'retail_place'],
    ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
    ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
    ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
@@ -8372,6 +8387,7 @@ async function viewReceipts(container) {
     // v1.70.72: регион, отрасль, группа, продавец, оплата, суммы
     [['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
      ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'],
+   ['#f-item-total-min', 'item_total_min'], ['#f-item-total-max', 'item_total_max'], ['#f-retail-place', 'retail_place'],
    ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
    ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
      ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],

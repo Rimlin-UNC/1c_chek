@@ -228,6 +228,8 @@ class Receipt(Base):
     comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
     ext_json: Mapped[str] = mapped_column(Text, default="")          # v1.55.0: расширенные поля источника (JSON)
+    # Поисковая копия сохранённого места расчёта; NULL = ещё не обработано.
+    retail_place_index: Mapped[str | None] = mapped_column(Text, nullable=True)
     # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
     # v1.23.0: полные данные чека получены из сервиса проверки (позиции,
     # магазин, наличные/безнал) — список показывает это, кнопка запроса скрыта
@@ -341,6 +343,36 @@ class Receipt(Base):
         if with_items:
             d["items"] = [it.to_dict() for it in self.items]
         return d
+
+
+def saved_retail_place(ext_json: str | None, raw_data: str | None) -> str:
+    """Название места расчёта из сохранённых данных, не адрес и не продавец."""
+    ext = _safe_json(ext_json or "")
+    if isinstance(ext, dict):
+        place = ext.get("retail_place")
+        if isinstance(place, str) and place.strip():
+            return place.strip()
+    raw = _safe_json(raw_data or "")
+    fns = raw.get("fns") if isinstance(raw, dict) else None
+    ticket = fns.get("ticket") if isinstance(fns, dict) else None
+    if not isinstance(ticket, dict):
+        return ""
+    document = ticket.get("receipt") if isinstance(ticket.get("receipt"), dict) else ticket
+    for key, value in document.items():
+        if str(key).lower() in ("retailplace", "retailplacename") and isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+@event.listens_for(Receipt, "before_insert")
+@event.listens_for(Receipt, "before_update")
+def _sync_retail_place(_mapper, _connection, receipt):
+    from sqlalchemy import inspect
+
+    state = inspect(receipt)
+    if (receipt.retail_place_index is None or state.attrs.ext_json.history.has_changes()
+            or state.attrs.raw_data.history.has_changes()):
+        receipt.retail_place_index = saved_retail_place(receipt.ext_json, receipt.raw_data)
 
 
 class ReceiptItem(Base):

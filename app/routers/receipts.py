@@ -386,6 +386,9 @@ def list_receipts(
     item_name: str | None = Query(None, max_length=200, description="Название позиции чека"),
     operation: int | None = Query(None, ge=1, le=4, description="Признак расчёта"),
     vat_rate: str | None = Query(None, max_length=10, description="Сохранённое значение НДС позиции"),
+    retail_place: str | None = Query(None, max_length=300, description="Название места расчёта, сохранённое в чеке"),
+    item_total_min: float | None = Query(None, ge=0, description="Сумма позиции от"),
+    item_total_max: float | None = Query(None, ge=0, description="Сумма позиции до"),
     item_price_min: float | None = Query(None, ge=0, description="Цена позиции от"),
     item_price_max: float | None = Query(None, ge=0, description="Цена позиции до"),
     item_quantity_min: float | None = Query(None, ge=0, description="Количество позиции от"),
@@ -474,6 +477,10 @@ def list_receipts(
         item_conditions.append(contains(ReceiptItem.name, item_name))
     if vat_rate is not None and vat_rate != "":
         item_conditions.append(ReceiptItem.vat_rate == vat_rate)
+    if item_total_min is not None:
+        item_conditions.append(ReceiptItem.total >= item_total_min)
+    if item_total_max is not None:
+        item_conditions.append(ReceiptItem.total <= item_total_max)
     if item_price_min is not None:
         item_conditions.append(ReceiptItem.price >= item_price_min)
     if item_price_max is not None:
@@ -506,6 +513,8 @@ def list_receipts(
             "items": ~Receipt.items.any(),
         }
         query = query.filter(or_(*fields.values()) if missing == "any" else fields[missing])
+    if retail_place and retail_place.strip():
+        query = query.filter(contains(Receipt.retail_place_index, retail_place))
     if merchant_inn:
         query = query.filter(Receipt.merchant_inn == merchant_inn.strip()[:20])
     if merchant:
@@ -620,7 +629,11 @@ def receipt_facets(user: Annotated[User, Depends(get_current_user)],
                 .join(scoped_ids, ReceiptItem.receipt_id == scoped_ids.c.id)
                 .filter(ReceiptItem.vat_rate.isnot(None), ReceiptItem.vat_rate != "")
                 .group_by(ReceiptItem.vat_rate).order_by(ReceiptItem.vat_rate).all())
+    place_total = q.count()
+    place_saved = q.filter(Receipt.retail_place_index.isnot(None),
+                           func.trim(Receipt.retail_place_index, " \t\r\n") != "").count()
     return {
+        "retail_place_coverage": {"saved": place_saved, "total": place_total},
         "vat_rates": [{"value": value, "count": count} for value, count in vat_rows],
         "region_names": locations(Receipt.region_name),
         "cities": locations(Receipt.region_city),
