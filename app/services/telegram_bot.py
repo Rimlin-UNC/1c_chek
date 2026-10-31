@@ -821,10 +821,17 @@ def notify_user(user_id: str, text: str) -> None:
 
 
 def refresh_username(db: Session) -> str:
-    """Обновить кэш username бота (для настроек)."""
+    """Обновить кэш username бота (для настроек и ссылок t.me).
+
+    v1.70.69 (исправление): запрос шёл на официальный адрес, игнорируя
+    настройку «Адрес API» (v1.70.12). В условиях блокировки это значило,
+    что имя бота не обновлялось и ссылка https://t.me/… в окне входа через
+    Telegram не появлялась — вход оставался только «кодом текстом».
+    """
     global _bot_username
     try:
-        me = get_me(get_token(db), proxy=get_proxy(db))  # v1.29.0
+        me = get_me(get_token(db), proxy=get_proxy(db),   # v1.29.0
+                    base=get_api_base(db))                # v1.70.12/69
         _bot_username = me.get("username") or ""
     except Exception:                                    # noqa: BLE001
         _bot_username = ""

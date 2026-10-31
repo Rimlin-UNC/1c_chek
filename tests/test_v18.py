@@ -42,8 +42,9 @@ class TestPersonalSum:
         assert r.status_code in (400, 403, 422), r.text
 
     def test_migration_column_exists(self, client):
-        from app.database import engine
         from sqlalchemy import inspect
+
+        from app.database import engine
         cols = {c["name"] for c in inspect(engine).get_columns("receipts")}
         assert "personal_sum" in cols
 
@@ -70,6 +71,52 @@ class TestAdvanceDeadline:
         ahdr = login(client, "acc18", "secret2026")
         r = client.get("/api/v1/settings/app", headers=ahdr)
         assert r.status_code == 200 and "advance_deadline_days" in r.json()
+
+
+class TestInterpreterSelection:
+    """v1.70.69: обновление обязано пользоваться интерпретатором ЦЕЛЕВОГО
+    окружения. Раньше при имени окружения .venv (локальная разработка)
+    брались системный pip и системный python3: на Debian/Ubuntu 24.04 с
+    PEP 668 установка зависимостей падала, а проверка целостности —
+    с ModuleNotFoundError, и обновление откатывалось на исправном коде."""
+
+    def _app(self, tmp_path, names):
+        for name in names:
+            bin_dir = tmp_path / name / "bin"
+            bin_dir.mkdir(parents=True)
+            for exe in ("pip", "python3", "python"):
+                (bin_dir / exe).write_text("#!/bin/sh\n", encoding="utf-8")
+        (tmp_path / "requirements.txt").write_text("", encoding="utf-8")
+        return tmp_path
+
+    def test_prefers_venv_then_dot_venv(self, tmp_path, monkeypatch):
+        import app.services.updater as up
+        self._app(tmp_path, ["venv", ".venv"])
+        monkeypatch.setattr(up, "APP_DIR", str(tmp_path))
+        assert up._pip_cmd()[0] == str(tmp_path / "venv" / "bin" / "pip")
+        assert up._py_bin() == str(tmp_path / "venv" / "bin" / "python3")
+
+    def test_dot_venv_is_used_when_venv_absent(self, tmp_path, monkeypatch):
+        import app.services.updater as up
+        self._app(tmp_path, [".venv"])
+        monkeypatch.setattr(up, "APP_DIR", str(tmp_path))
+        assert up._pip_cmd()[0] == str(tmp_path / ".venv" / "bin" / "pip")
+        assert up._py_bin() == str(tmp_path / ".venv" / "bin" / "python3")
+
+    def test_falls_back_to_system_python(self, tmp_path, monkeypatch):
+        """Контракт v1.8.3 сохранён: нет ни venv, ни .venv — системный
+        python3 (так продукт ведёт себя на сервере без окружения)."""
+        import app.services.updater as up
+        self._app(tmp_path, [])
+        monkeypatch.setattr(up, "APP_DIR", str(tmp_path))
+        assert up._pip_cmd()[:3] == ["python3", "-m", "pip"]
+        assert up._py_bin() == "python3"
+
+    def test_requirements_path_is_target(self, tmp_path, monkeypatch):
+        import app.services.updater as up
+        self._app(tmp_path, ["venv"])
+        monkeypatch.setattr(up, "APP_DIR", str(tmp_path))
+        assert up._pip_cmd()[-1] == str(tmp_path / "requirements.txt")
 
 
 class TestUpdatePipelineE2E:
@@ -133,8 +180,8 @@ class TestNoFlickerAndStandards:
         assert "/js/printpack.js" in sw
 
     def test_html_standards(self):
-        from html.parser import HTMLParser
         from collections import Counter
+        from html.parser import HTMLParser
         VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
                 'link', 'meta', 'param', 'source', 'track', 'wbr'}
 

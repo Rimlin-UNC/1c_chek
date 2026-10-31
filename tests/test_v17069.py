@@ -402,6 +402,51 @@ class TestBindCodeNotHijacked:
         assert "telegram_login.confirm" in src
 
 
+class TestBotUsernameRespectsApiBase:
+    """Найдено живым прогоном v1.70.69: имя бота обновлялось в обход
+    настройки «Адрес API» (v1.70.12). В условиях блокировки это ломало
+    ссылку t.me в окне входа: оставался только путь «код текстом»."""
+
+    def test_refresh_username_passes_api_base(self, monkeypatch):
+        from app.database import SessionLocal
+        from app.services import appsettings
+        from app.services import telegram_bot as tg
+        seen = {}
+
+        def fake_me(token, proxy="", base=""):
+            seen.update({"token": token, "proxy": proxy, "base": base})
+            return {"username": "chek_ymaster_bot", "name": "Чек"}
+
+        db = SessionLocal()
+        try:
+            appsettings.set_setting(db, tg.SETT_TOKEN, "123456:TEST")
+            appsettings.set_setting(db, tg.SETT_API_BASE,
+                                    "http://127.0.0.1:8080")
+            monkeypatch.setattr(tg, "get_me", fake_me)
+            got = tg.refresh_username(db)
+        finally:
+            db.close()
+        assert got == "chek_ymaster_bot"
+        assert seen["base"] == "http://127.0.0.1:8080", seen
+        # имя доступно настройкам — значит попадёт и в ссылку t.me
+        assert tg.bot_settings(SessionLocal())["bot_username"] == \
+            "chek_ymaster_bot"
+
+    def test_login_link_appears_after_refresh(self, client, monkeypatch):
+        from app.database import SessionLocal
+        from app.services import appsettings, telegram_login
+        from app.services import telegram_bot as tg
+        db = SessionLocal()
+        try:
+            monkeypatch.setattr(tg, "_bot_username", "chek_ymaster_bot")
+            appsettings.set_setting(db, tg.SETT_TOKEN, "123456:TEST")
+            out = telegram_login.create_code(db, "10.0.0.1")
+        finally:
+            db.close()
+        assert out["tg_link"].startswith("https://t.me/chek_ymaster_bot"
+                                         "?start=tglogin_")
+
+
 class TestTelegramLoginUi:
     """Кнопка и поток на сайте — без ручных шагов в чате бота."""
 
@@ -436,6 +481,118 @@ class TestTelegramLoginUi:
         assert "setToken(p.access_token)" in block
         assert "enterApp()" in block
         assert "expired" in block
+
+
+class TestConcurrentPoll:
+    """Два одновременных опроса одного подтверждённого кода не должны
+    создать две учётные записи на один чат (две вкладки, двойной клик)."""
+
+    def test_parallel_polls_make_one_account(self, monkeypatch):
+        import threading as _th
+
+        from app.database import SessionLocal
+        from app.models import User
+        from app.services import appsettings
+        from app.services import telegram_bot as tg
+        from app.services import telegram_login as tl
+        db = SessionLocal()
+        try:
+            appsettings.set_setting(db, tg.SETT_TOKEN, "123456:TEST")
+            code = tl.create_code(db, "10.1.2.3")["code"]
+            assert tl.confirm(db, code, "700900777",
+                              username="raceuser", display="Гонка")
+        finally:
+            db.close()
+        results: list[dict] = []
+        lock = _th.Lock()
+
+        def worker() -> None:
+            s = SessionLocal()
+            try:
+                r = tl.poll(s, code)
+            finally:
+                s.close()
+            with lock:
+                results.append(r)
+
+        threads = [_th.Thread(target=worker) for _ in range(4)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=30)
+        ok = [r for r in results if r.get("status") == "ok"]
+        assert len(ok) == 1, [r.get("status") for r in results]
+        assert all(r.get("status") in ("ok", "expired") for r in results)
+        db = SessionLocal()
+        try:
+            n = db.query(User).filter(User.telegram_chat_id == "700900777").count()
+            assert n == 1, f"аккаунтов на чат: {n}"
+        finally:
+            db.close()
+
+    def test_address_map_is_bounded(self):
+        from app.services import telegram_login as tl
+        assert tl.MAX_KEYS >= 1000
+        src = _read(APP / "services" / "telegram_login.py")
+        assert "len(_ip_times) > MAX_KEYS" in src
+
+
+class TestLiveHarness:
+    """Стенд живой проверки (qa/) должен оставаться безопасным и рабочим:
+    поддельный Bot API слушает только петлевой адрес, а сам сценарий
+    проверяет то, ради чего написан."""
+
+    QA = ROOT / "qa"
+
+    def test_fake_api_is_loopback_only(self):
+        src = _read(self.QA / "fake_telegram_api.py")
+        assert '"127.0.0.1"' in src
+        assert "0.0.0.0" not in src
+        assert "getMe" in src and "sendMessage" in src
+        assert "ThreadingHTTPServer" in src
+
+    def test_scenario_covers_the_whole_chain(self):
+        src = _read(self.QA / "e2e_telegram_login.py")
+        for needle in ("/api/v1/auth/telegram/start", "/api/v1/auth/telegram/poll",
+                       "/api/v1/settings/telegram", "refresh-bot",
+                       "/api/v1/auth/me", "handle_update",
+                       "telegram_login_codes", "login_telegram"):
+            assert needle in src, needle
+        # итог печатается и код возврата честный
+        assert "ИТОГ:" in src and "return 0 if not bad else 1" in src
+
+    def test_scripts_compile(self):
+        import ast
+        for name in ("fake_telegram_api.py", "e2e_telegram_login.py"):
+            ast.parse(_read(self.QA / name))
+
+
+class TestSchemaUpgrade:
+    """Прод обновляется без миграций: недостающая таблица создаётся при
+    старте (Base.metadata.create_all в init_db). Проверено и живьём:
+    копия рабочей базы без telegram_login_codes после старта получила
+    таблицу, старые данные (пользователи, коды MAX) остались целы."""
+
+    def test_table_registered_in_metadata(self):
+        from app.database import Base
+        assert "telegram_login_codes" in Base.metadata.tables
+
+    def test_old_database_gets_the_new_table(self, tmp_path):
+        from sqlalchemy import create_engine, inspect
+
+        from app.database import Base
+        eng = create_engine(f"sqlite:///{tmp_path/'old.db'}")
+        # «старая» база: только таблица кодов MAX, как до выпуска
+        Base.metadata.tables["max_login_codes"].create(eng)
+        assert "telegram_login_codes" not in inspect(eng).get_table_names()
+        Base.metadata.create_all(eng)              # как init_db при старте
+        names = inspect(eng).get_table_names()
+        assert "telegram_login_codes" in names
+        assert "max_login_codes" in names          # старое не тронуто
+        cols = {c["name"] for c in
+                inspect(eng).get_columns("telegram_login_codes")}
+        assert {"code_hash", "tg_chat_id", "tg_username", "tg_name",
+                "ip", "expires_at", "used_at"} <= cols
 
 
 class TestRelease17069:

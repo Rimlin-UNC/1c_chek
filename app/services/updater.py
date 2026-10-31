@@ -36,6 +36,7 @@ import httpx
 
 from ..config import settings
 
+
 # v1.60.0: метки журнала хода обновления — UTC ISO с «Z»: приложение
 # открывают из любой страны и города, локальную зону выбирает браузер
 # при показе (updLogLine в app.js). Наивный datetime.now() (до v1.59.6)
@@ -499,13 +500,22 @@ def _local_commit() -> str:
 
 
 def _pip_cmd() -> list[str]:
-    """pip целевого окружения: venv (прод) или системный python (песочница)."""
-    venv_pip = os.path.join(APP_DIR, "venv", "bin", "pip")
-    if os.path.exists(venv_pip):
-        return [venv_pip, "install", "--quiet", "-r",
-                os.path.join(APP_DIR, "requirements.txt")]
-    return ["python3", "-m", "pip", "install", "--quiet", "-r",
-            os.path.join(APP_DIR, "requirements.txt")]
+    """pip целевого окружения — в порядке надёжности (v1.70.69).
+
+    Порядок: venv/ (так ставит install.sh и deploy.sh), затем .venv/
+    (локальная разработка), затем тот интерпретатор, которым запущено
+    приложение (в проде это venv/bin/python — тот же pip), и только в
+    последнюю очередь системный python3. Раньше при отсутствии venv/
+    сразу брался системный: на Debian/Ubuntu 24.04 с PEP 668 установка
+    зависимостей падала («externally-managed-environment»), обновление
+    откатывалось — при том что рядом был рабочий pip приложения.
+    """
+    req = os.path.join(APP_DIR, "requirements.txt")
+    for name in ("venv", ".venv"):
+        pip_exe = os.path.join(APP_DIR, name, "bin", "pip")
+        if os.path.exists(pip_exe):
+            return [pip_exe, "install", "--quiet", "-r", req]
+    return ["python3", "-m", "pip", "install", "--quiet", "-r", req]
 
 
 def _file_sha256(path: str) -> str:
@@ -723,9 +733,19 @@ def _py_bin() -> str:
     """v1.8.3: python ЦЕЛЕВОГО окружения для проверок обновления.
     На проде зависимости стоят в venv — системный python3 не имеет fastapi,
     и проверка целостности могла ложно провалиться (обновление откатилось бы
-    даже при исправном коде). venv есть → берём его, иначе системный python3."""
-    venv_py = os.path.join(APP_DIR, "venv", "bin", "python3")
-    return venv_py if os.path.exists(venv_py) else "python3"
+    даже при исправном коде).
+
+    v1.70.69: добавлены те же запасные варианты, что у pip (см. _pip_cmd):
+    venv/, затем .venv/, затем интерпретатор, которым запущено приложение.
+    Раньше при имени окружения .venv проверка шла системным python3 и
+    падала с ModuleNotFoundError — обновление откатывалось на исправном
+    коде."""
+    for name in ("venv", ".venv"):
+        for exe in ("python3", "python"):
+            venv_py = os.path.join(APP_DIR, name, "bin", exe)
+            if os.path.exists(venv_py):
+                return venv_py
+    return "python3"
 
 
 def _health_check() -> tuple[bool, str]:

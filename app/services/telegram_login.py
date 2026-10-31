@@ -15,6 +15,7 @@ import datetime as dt
 import hashlib
 import re
 import secrets
+import threading
 import time
 from collections import deque
 
@@ -28,8 +29,12 @@ CODE_TTL_S = 10 * 60                     # жизнь кода на подтве
 RATE_MAX = 10                            # кодов с одного IP в час
 RATE_WINDOW_S = 3600
 
+MAX_KEYS = 5000                          # предел словаря адресов (память)
 _ip_times: dict[str, deque] = {}
 _UNSAFE = re.compile(r"[^a-z0-9_]")
+# Один вход за раз: два одновременных опроса одного кода не должны создать
+# две учётные записи на один чат (вкладка + мини-приложение, двойной клик).
+_login_lock = threading.Lock()
 
 
 def _code_hash(raw: str) -> str:
@@ -44,6 +49,10 @@ def create_code(db: Session, ip: str = "") -> dict:
     (воркер получил его через getMe); иначе человек вводит код руками.
     """
     now = time.monotonic()
+    if len(_ip_times) > MAX_KEYS:        # страховка памяти: чужие адреса
+        for k in [k for k, v in _ip_times.items()
+                  if not v or v[-1] <= now - RATE_WINDOW_S]:
+            _ip_times.pop(k, None)
     dq = _ip_times.setdefault((ip or "?")[:64], deque())
     while dq and dq[0] <= now - RATE_WINDOW_S:
         dq.popleft()
@@ -104,10 +113,18 @@ def poll(db: Session, raw: str) -> dict:
         return {"status": "expired"}
     if not row.tg_chat_id:
         return {"status": "pending"}
-    user = login_or_register(db, row.tg_chat_id, row.tg_username,
-                             row.tg_name or row.tg_username)
-    row.used_at = utcnow()
-    db.commit()
+    # v1.70.69: вход и гашение кода — под замком, с перечитыванием строки:
+    # второй параллельный опрос увидит погашенный код, а не создаст
+    # вторую учётную запись на тот же чат.
+    with _login_lock:
+        db.expire_all()
+        row = _live_row(db, raw)
+        if row is None:
+            return {"status": "expired"}
+        user = login_or_register(db, row.tg_chat_id, row.tg_username,
+                                 row.tg_name or row.tg_username)
+        row.used_at = utcnow()
+        db.commit()
     return {"status": "ok", "access_token": create_access_token(user),
             "user": user.to_dict()}
 
