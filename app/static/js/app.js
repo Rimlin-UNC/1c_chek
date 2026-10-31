@@ -6183,6 +6183,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.80': [
+    'Предупреждение о чеке, зарегистрированном за другой организацией, при добавлении любым способом.',
+    'Для фото и PDF учитывается выбранная администратором организация.',
+    'Офлайн-очередь сообщает о дубликатах и сохраняет выбранную организацию новых сканов.',
+    'Подготовлена диагностика пересечений реестра и Чек-Пула без изменения данных.',
+  ],
   '1.70.79': [
     { icon: '🧩', title: 'Чек-Пул и реестр работают вместе',
       text: 'Закреплённые чеки можно перенести в реестр без запроса в ФНС; '
@@ -7652,7 +7658,7 @@ async function handleScannedText(text, source) {
     }
   }
   // Офлайн: в очередь
-  const n = offlineQueue.push({ qr_data: text, source });
+  const n = offlineQueue.push({ qr_data: text, source, company_id: scanCompanyId() });
   toast(`Нет связи — скан сохранён локально (в очереди: ${n})`, 'warn', 'Офлайн-режим');
   refreshBadges();
 }
@@ -7678,10 +7684,11 @@ async function flushOfflineQueue(manual = false) {
   while (offlineQueue.size() > 0) {
     const item = offlineQueue.all()[0];
     try {
-      await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
-                                                source: item.source || 'web', company_id: scanCompanyId() });
+      const result = await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
+                                                source: item.source || 'web', company_id: Object.prototype.hasOwnProperty.call(item, 'company_id') ? item.company_id : scanCompanyId() });
       offlineQueue.shift();
-      sent++;
+      if (result.duplicate) toast(result.message || 'Чек уже зарегистрирован', 'warn', 'Офлайн-очередь');
+      else sent++;
     } catch (e) {
       if (e.status === 422) { offlineQueue.shift(); continue; }
       break;
@@ -7739,12 +7746,12 @@ function scanSessNoteServer(r, label) {
     });
     // дубликат чужой организации приходит с receipt: null — pushRecent это
     // переживёт (v1.70.40), а отправитель получит объяснение вместо тишины
-    if (rec) pushRecent(rec, true);
+    if (rec && !r.created) pushRecent(rec, true);
     refreshBadges();
     toast(r.message || 'Такой чек уже есть в базе — повторно не сохраняем',
       'warn', '🧾 Дубликат');
     scanSessCheckpoint();
-    return;
+    if (!r.created || !rec) return;
   }
   if (!rec) return;
   const key = scanSessKey(rec.fn, rec.fd, rec.fp);
@@ -7771,10 +7778,11 @@ function scanSessNoteServer(r, label) {
 async function serverScanImage(file) {
   const fd = new FormData();
   fd.append('file', file);
+  if (scanCompanyId()) fd.append('company_id', scanCompanyId());
   try {
     const r = await api.post('/api/v1/receipts/scan/image', fd);
     scanSessNoteServer(r, file.name);            // v1.70.40: счётчики сессии
-    toast(r.message, 'ok', 'Сервер распознал QR');
+    if (!r.duplicate) toast(r.message, 'ok', 'Сервер распознал QR');
   } catch (e) {
     if (e.status === 300) {
       const variants = (e.data && e.data.detail && e.data.detail.variants) || [];
@@ -7791,10 +7799,11 @@ async function serverScanImage(file) {
 async function serverScanPdf(file) {
   const fd = new FormData();
   fd.append('file', file);
+  if (scanCompanyId()) fd.append('company_id', scanCompanyId());
   try {
     const r = await api.post('/api/v1/receipts/scan/pdf', fd);
     scanSessNoteServer(r, file.name);            // v1.70.40: счётчики сессии
-    toast(r.message || 'Готово', 'ok', 'Чек из PDF');
+    if (!r.duplicate) toast(r.message || 'Готово', 'ok', 'Чек из PDF');
   } catch (e) {
     if (e.status === 300) {
       const variants = (e.data && e.data.detail && e.data.detail.variants) || [];
@@ -7887,7 +7896,7 @@ function manualDialog() {
       payload.company_id = scanCompanyId();   // v1.11.0
       const r = await api.post('/api/v1/receipts/manual', payload);
       $('#modal-root').classList.add('hidden');
-      pushRecent(r.receipt);
+      pushRecent(r.receipt, r.duplicate);
       toast(r.message, r.duplicate ? 'warn' : 'ok');
       refreshBadges();
     } catch (e) {

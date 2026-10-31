@@ -31,6 +31,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -113,8 +114,9 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         from ..pool import ingest as pool_ingest
         from ..pool.router_company import month_used, pick_limit
         from ..pool.transfer import copy_to_registry
-        if not company_id or pool.status != "verified" or (
-                pool.assigned_company_id and pool.assigned_company_id != company_id):
+        if pool.assigned_company_id and pool.assigned_company_id != company_id:
+            raise HTTPException(409, "Чек уже зарегистрирован за другой организацией")
+        if not company_id or pool.status != "verified":
             raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
         if (abs(float(pool.total_sum or 0) - parsed.total_sum) > 0.009 or
                 pool.operation != parsed.operation or not pool.receipt_date or not parsed.date_time or
@@ -175,6 +177,12 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
     db.commit()
     db.refresh(receipt)
     return receipt, True
+
+
+def _foreign_duplicate(user: User, receipt: Receipt, company_id: str | None) -> bool:
+    """Проверка принадлежности отдельно от расширенных прав администратора."""
+    return ((company_id is not None and receipt.company_id != company_id)
+            or not can_view_receipt(user, receipt))
 
 
 def _company_names(db: Session, ids) -> dict:
@@ -243,7 +251,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
                    {"fn": receipt.fn, "fd": receipt.fd})
         auto = False
         # v1.11.0: дубликат из ЧУЖОЙ компании — данные не раскрываем
-        if not can_view_receipt(user, receipt):
+        if _foreign_duplicate(user, receipt, company_id):
             return {"receipt": None, "duplicate": True, "auto_verify": False,
                     "message": "Этот чек уже учтён в другой организации. "
                                "Если он должен относиться к вашей — попросите "
@@ -266,7 +274,8 @@ def scan(body: ScanRequest, background: BackgroundTasks,
 @router.post("/scan/image", summary="Приём изображения чека: сервер находит QR")
 async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
                      user: User = Depends(get_current_user),
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_db),
+                     company_id: Annotated[str | None, Form()] = None):
     raw = await file.read()
     if len(raw) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -282,8 +291,8 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
     except (QRParseError, ValueError) as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, result.parsed, "image", user,
-                                       target_company_id(db, user, None))
+    company_id = target_company_id(db, user, company_id)
+    receipt, created = _upsert_receipt(db, result.parsed, "image", user, company_id)
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "source": "image"})
@@ -293,7 +302,7 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     else:
         auto = False
-        if not can_view_receipt(user, receipt):
+        if _foreign_duplicate(user, receipt, company_id):
             return {"receipt": None, "duplicate": True, "auto_verify": False,
                     "message": "Чек уже зарегистрирован в другой организации", "codes_found": result.total_codes}
     return {
@@ -315,7 +324,8 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
 @router.post("/scan/pdf", summary="Приём PDF-чека: QR из текстового слоя (почта/банк)")
 async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
                    user: User = Depends(get_current_user),
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_db),
+                   company_id: Annotated[str | None, Form()] = None):
     raw = await file.read()
     if len(raw) > settings.PDF_MAX_MB * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -327,17 +337,17 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    created, duplicate = False, False
+    created, duplicate, foreign_duplicate = False, False, False
+    company_id = target_company_id(db, user, company_id)
     last = None
     for qr_text in qr_texts:                 # нескольких чеков в файле — по одному
         try:
             parsed = parse_qr(qr_text)
         except QRParseError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
-        receipt, created_i = _upsert_receipt(db, parsed, "pdf", user,
-                                             target_company_id(db, user, None))
-        if not created_i and not can_view_receipt(user, receipt):
-            duplicate = True
+        receipt, created_i = _upsert_receipt(db, parsed, "pdf", user, company_id)
+        if not created_i and _foreign_duplicate(user, receipt, company_id):
+            duplicate = foreign_duplicate = True
             continue
         duplicate = duplicate or not created_i
         created = created or created_i
@@ -352,7 +362,12 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
     return {
         "receipt": _attach_company(db, last.to_dict(with_items=True)) if last else None,
         "duplicate": duplicate,
-        "message": ("Чек из PDF принят"
+        "created": created,
+        "message": ("Некоторые чеки из PDF приняты; другие уже зарегистрированы за другой организацией"
+                    if foreign_duplicate and created else
+                    "Чек уже зарегистрирован за другой организацией"
+                    if foreign_duplicate else
+                    "Чек из PDF принят"
                     if created else
                     "Чек из PDF уже был в системе"
                     if duplicate else "Чек принят"),
@@ -385,15 +400,15 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
     except QRParseError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, parsed, "manual", user,
-                                       target_company_id(db, user, getattr(body, "company_id", None)))
+    company_id = target_company_id(db, user, getattr(body, "company_id", None))
+    receipt, created = _upsert_receipt(db, parsed, "manual", user, company_id)
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
         _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
-    if not created and not can_view_receipt(user, receipt):
+    if not created and _foreign_duplicate(user, receipt, company_id):
         return {"receipt": None, "duplicate": True, "message": "Чек уже зарегистрирован в другой организации"}
     return {"receipt": _attach_company(db, receipt.to_dict(with_items=True)),
             "duplicate": not created,

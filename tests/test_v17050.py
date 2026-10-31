@@ -332,6 +332,8 @@ class TestClientsRoute:
         assert client.get(ROUTE, headers=hdr).status_code == 403
 
     def test_anonymous_is_refused(self, client):
+        # Фикстура client сессионная: предыдущий тест мог войти по cookie.
+        client.cookies.clear()
         assert client.get(ROUTE).status_code in (401, 403)
 
     def test_system_summary_is_untouched(self, client):

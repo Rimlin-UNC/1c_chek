@@ -47,6 +47,7 @@ def setup_bridge(client):
         db.query(PoolItem).filter(PoolItem.receipt_id == pid).delete(synchronize_session=False)
         db.query(PoolReceipt).filter(PoolReceipt.id == pid).delete(synchronize_session=False)
         db.commit()
+    client.cookies.clear()
 
 
 def test_assign_transfer_idempotency_and_provenance(client, setup_bridge, monkeypatch):
@@ -270,3 +271,93 @@ def test_new_pool_schema_boolean_default_is_false():
     columns = {col['name']: col for col in inspect(engine).get_columns('pool_receipts')}
     assert columns['fns_confirmed']['default'] == '0'
     engine.dispose()
+
+
+def test_duplicate_warning_across_entry_paths(client, setup_bridge, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.qr import parse_qr
+
+    hdr, a1, a2, c1, c2, pid, qr, fn, fd, fp = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    assert client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    scan = client.post('/api/v1/receipts/scan', headers=a2, json={'qr_data': qr}).json()
+    assert scan['duplicate'] and scan['receipt'] is None and 'другой организац' in scan['message']
+    admin_scan = client.post('/api/v1/receipts/scan', headers=hdr, json={'qr_data': qr, 'company_id': c2}).json()
+    assert admin_scan['duplicate'] and admin_scan['receipt'] is None
+    monkeypatch.setattr('app.routers.receipts.imaging.decode_qr_image',
+                        lambda *a: SimpleNamespace(parsed=parse_qr(qr), total_codes=1))
+    image = client.post('/api/v1/receipts/scan/image', headers=a2,
+                        files={'file': ('receipt.png', b'image', 'image/png')}).json()
+    assert image['receipt'] is None and 'другой организац' in image['message']
+    monkeypatch.setattr('app.services.pdf_receipts.extract_qr_texts', lambda *a: [qr])
+    pdf = client.post('/api/v1/receipts/scan/pdf', headers=a2,
+                      files={'file': ('receipt.pdf', b'%PDF-test', 'application/pdf')}).json()
+    assert pdf['receipt'] is None and 'другой организац' in pdf['message']
+    manual = client.post('/api/v1/receipts/manual', headers=a2, json={
+        'date_time': '22.09.2026 15:56', 'total_sum': 5764, 'fn': fn, 'fd': fd,
+        'fp': fp, 'operation': 1}).json()
+    assert manual['receipt'] is None and 'другой организац' in manual['message']
+    with SessionLocal() as db:
+        assert db.query(Receipt).filter_by(fn=fn).count() == 1
+        assert db.get(PoolReceipt, pid).assigned_company_id == c1
+
+
+def test_overlap_audit_detects_conflicts_without_mutation(client, setup_bridge, monkeypatch):
+    from app.services.receipt_merge_audit import audit_receipt_overlap
+
+    _, a1, _, _, c2, pid, qr, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    assert client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    with SessionLocal() as db:
+        before = audit_receipt_overlap(db)
+        pool = db.get(PoolReceipt, pid)
+        pool.total_sum += 10
+        pool.assigned_company_id = c2
+        db.commit()
+        after = audit_receipt_overlap(db)
+        assert after['matching_identities'] == before['matching_identities']
+        assert after['different_amount'] == before['different_amount'] + 1
+        assert after['different_company_assignment'] == before['different_company_assignment'] + 1
+        assert db.query(Receipt).filter_by(fn=fn).count() == 1
+        assert db.get(PoolReceipt, pid).total_sum == 5774
+
+
+def test_admin_upload_respects_selected_company(client, setup_bridge, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.qr import parse_qr
+
+    hdr, a1, _, _, c2, _, qr, _, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    assert client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    monkeypatch.setattr('app.routers.receipts.imaging.decode_qr_image',
+                        lambda *a: SimpleNamespace(parsed=parse_qr(qr), total_codes=1))
+    monkeypatch.setattr('app.services.pdf_receipts.extract_qr_texts', lambda *a: [qr])
+    for path, filename, mime in [('image', 'receipt.png', 'image/png'), ('pdf', 'receipt.pdf', 'application/pdf')]:
+        response = client.post(f'/api/v1/receipts/scan/{path}', headers=hdr,
+                               files={'file': (filename, b'test', mime)}, data={'company_id': c2})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result['duplicate'] and result['receipt'] is None
+        assert 'другой организац' in result['message']
+
+
+def test_pdf_mixed_batch_reports_foreign_duplicate_and_keeps_new(client, setup_bridge, monkeypatch):
+    _, a1, a2, _, c2, _, qr, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    assert client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    new_fn = ('8' if fn[0] != '8' else '9') + fn[1:]
+    new_qr = qr.replace(fn, new_fn)
+    monkeypatch.setattr('app.services.pdf_receipts.extract_qr_texts', lambda *a: [qr, new_qr])
+    result = client.post('/api/v1/receipts/scan/pdf', headers=a2,
+                         files={'file': ('receipts.pdf', b'pdf', 'application/pdf')}).json()
+    assert result['created'] and result['duplicate'] and 'другой организац' in result['message']
+    assert result['receipt']['fn'] == new_fn and result['receipt']['company_id'] == c2
+    with SessionLocal() as db:
+        db.query(Receipt).filter_by(fn=new_fn).delete()
+        db.commit()
