@@ -16,6 +16,7 @@
 # ======================================================================
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -135,7 +136,7 @@ def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
     """Быстрые проверки ДО обращения к источникам (v1.31.0): включённость,
     разбор QR, дедуп, суточный лимит. Возвращает (parsed, None) либо
     (None, result_dict) — машиночитаемый отказ. Не пишет в БД."""
-    from ..models import utcnow
+    from ..models import Receipt, utcnow
     from .models import PoolReceipt
 
     if not pool_enabled(db):
@@ -151,7 +152,9 @@ def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
     dup = (db.query(PoolReceipt)
            .filter(PoolReceipt.fn == parsed.fn, PoolReceipt.fd == parsed.fd,
                    PoolReceipt.fp == parsed.fp).first())
-    if dup is not None:
+    main_duplicate = (db.query(Receipt.id).filter(
+        Receipt.fn == parsed.fn, Receipt.fd == parsed.fd, Receipt.fp == parsed.fp).first())
+    if dup is not None or main_duplicate is not None:
         return None, {"result": "duplicate",
                       "message": "Этот чек уже в пуле — спасибо, что проверили!",
                       "points": 0, "user_points": user.points if user else 0}
@@ -170,10 +173,15 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
                   fast: bool = False) -> dict:
     """Движок источников → строки в БД → статус и баллы. Фоновая часть
     веб-приёма (v1.31.0); вызывается и синхронно из ingest_receipt."""
-    from ..models import utcnow
+    # Между быстрым precheck и фоновой обработкой чек могли уже добавить
+    # в реестр. Не тратим запрос ФНС на заведомый дубликат.
+    from ..models import Receipt, utcnow
     from .models import PoolItem, PoolReceipt
-
-    # 4) данные чека из движка источников (ФНС GetTicket → ЧЗ → …)
+    if db.query(Receipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first():
+        db.commit()
+        return {"result": "duplicate", "message": "Этот чек уже зарегистрирован",
+                "points": 0, "user_points": user.points if user else 0}
+    # 4) данные чека из движка источников
     try:
         ext = _fetch_details(db, qr_raw, parsed.fn, parsed.fd, parsed.fp,
                              parsed.total_sum, parsed.date_time)
@@ -182,6 +190,17 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         ext_error = f"источники недоступны: {e.__class__.__name__}"
     else:
         ext_error = ""
+
+    # Синхронизация с одновременным сканированием в основном реестре:
+    # запрос к источнику уже завершён, блокировка удерживается только на запись.
+    from ..services.receipt_identity import lock_identity
+    lock_identity(db, parsed.fn, parsed.fd, parsed.fp)
+    duplicate_main = db.query(Receipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
+    duplicate_pool = db.query(PoolReceipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
+    if duplicate_main or duplicate_pool:
+        db.commit()
+        return {"result": "duplicate", "message": "Этот чек уже зарегистрирован",
+                "points": 0, "user_points": user.points if user else 0}
 
     anomaly = parsed.total_sum > ANOMALY_SUM
     has_data = bool(ext and ext.found and ext.items)
@@ -201,7 +220,10 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         merchant_address=(ext.merchant_address if ext else ""),
         cashier=(ext.cashier if ext else ""),
         status="pending",
-        raw=(str(getattr(ext, "raw", "") or "")[:20000]),
+        raw=json.dumps(getattr(ext, "raw", {}) or {}, ensure_ascii=False),
+        extra_json=json.dumps(getattr(ext, "extra", {}) or {}, ensure_ascii=False),
+        fns_confirmed=bool(ext and ext.ok and ext.found and ext.source == "fns_api"),
+        fns_checked_at=(utcnow() if ext and ext.ok and ext.found and ext.source == "fns_api" else None),
     )
 
     db.add(receipt)

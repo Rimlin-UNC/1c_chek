@@ -97,11 +97,48 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
                     user: User | None,
                     company_id: str | None = None) -> tuple[Receipt, bool]:
     """Создание чека с дедупликацией по ФН+ФД+ФП."""
+    from ..services.receipt_identity import lock_identity
+    lock_identity(db, parsed.fn, parsed.fd, parsed.fp)
     existing = db.query(Receipt).filter(
         Receipt.fn == parsed.fn, Receipt.fd == parsed.fd, Receipt.fp == parsed.fp
     ).first()
     if existing:
+        db.commit()  # отпустить замок до аудита в отдельной сессии
         return existing, False  # уже есть — дубликат
+
+    # Чек из пула не дублируется и переносится без сетевого запроса.
+    from ..pool.models import PoolReceipt
+    pool = db.query(PoolReceipt).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
+    if pool:
+        from ..pool import ingest as pool_ingest
+        from ..pool.router_company import month_used, pick_limit
+        from ..pool.transfer import copy_to_registry
+        if not company_id or pool.status != "verified" or (
+                pool.assigned_company_id and pool.assigned_company_id != company_id):
+            raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
+        if (abs(float(pool.total_sum or 0) - parsed.total_sum) > 0.009 or
+                pool.operation != parsed.operation or not pool.receipt_date or not parsed.date_time or
+                pool.receipt_date.replace(second=0, microsecond=0) !=
+                parsed.date_time.replace(second=0, microsecond=0)):
+            raise HTTPException(409, "Данные QR не совпадают с сохранённым чеком; требуется проверка")
+        if not pool.assigned_company_id:
+            if not user or user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
+                raise HTTPException(403, "Чек найден в пуле: попросите бухгалтера подобрать его")
+            if not pool_ingest.pool_enabled(db):
+                raise HTTPException(409, "Чек найден в пуле, но подбор выключен")
+            company = db.query(Company).filter(Company.id == company_id).with_for_update().first()
+            if not company or not company.is_active:
+                raise HTTPException(403, "Компания не найдена или отключена")
+            limit = pick_limit(db)
+            if not limit or month_used(db, company_id) >= limit:
+                raise HTTPException(409, "Квота подбора из пула исчерпана или выключена")
+            pool.assigned_company_id = company_id
+            pool.assigned_at = dt.datetime.utcnow()
+            pool.assigned_by = user.id
+        receipt, created = copy_to_registry(db, pool, company_id, user)
+        db.commit()
+        db.refresh(receipt)
+        return receipt, created
 
     # v1.2.0: чек, присланный сотрудником, сразу помечается «от кого» —
     # бухгалтеру не нужно назначать вручную; меняют только бухгалтер/админ.
@@ -204,7 +241,6 @@ def scan(body: ScanRequest, background: BackgroundTasks,
     else:
         log_action(user, "receipt_duplicate", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd})
-        broadcast("receipt_duplicate", receipt.to_dict())
         auto = False
         # v1.11.0: дубликат из ЧУЖОЙ компании — данные не раскрываем
         if not can_view_receipt(user, receipt):
@@ -212,6 +248,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
                     "message": "Этот чек уже учтён в другой организации. "
                                "Если он должен относиться к вашей — попросите "
                                "администратора переместить его."}
+        broadcast("receipt_duplicate", receipt.to_dict())
 
     return {
         "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
@@ -256,6 +293,9 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     else:
         auto = False
+        if not can_view_receipt(user, receipt):
+            return {"receipt": None, "duplicate": True, "auto_verify": False,
+                    "message": "Чек уже зарегистрирован в другой организации", "codes_found": result.total_codes}
     return {
         "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
         "duplicate": not created,
@@ -296,6 +336,9 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
         receipt, created_i = _upsert_receipt(db, parsed, "pdf", user,
                                              target_company_id(db, user, None))
+        if not created_i and not can_view_receipt(user, receipt):
+            duplicate = True
+            continue
         duplicate = duplicate or not created_i
         created = created or created_i
         if created_i:
@@ -350,6 +393,8 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
         broadcast("receipt_created", receipt.to_dict())
         _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
+    if not created and not can_view_receipt(user, receipt):
+        return {"receipt": None, "duplicate": True, "message": "Чек уже зарегистрирован в другой организации"}
     return {"receipt": _attach_company(db, receipt.to_dict(with_items=True)),
             "duplicate": not created,
             "message": "Чек принят" if created else "Чек уже есть в системе"}

@@ -2140,15 +2140,14 @@ function poolLoadEngage(root) {
 const poolPk = {
   company: '', tab: 'search', page: 1, minePage: 1, dicts: null,
   picked: new Set(), minePicked: new Set(), auto: null,
-  f: { from: '', to: '', region: '', city: '', industry: '', inn: '', sumMin: '', sumMax: '', q: '' },
+  f: { from: '', to: '', region: '', city: '', industry: '', inn: '', sumMin: '', sumMax: '', q: '', itemName: '', vatRate: '', itemMin: '', itemMax: '', priceMin: '', priceMax: '', qtyMin: '', qtyMax: '', operation: '' },
 };
 
 function poolPkShell() {
   return `
   <div class="glass card">
-    <div class="card-title">🧩 Подбор из пула <span class="form-hint">(Этап 8 · v1.37.0)</span></div>
-    <p class="form-hint" style="margin-bottom:10px">Верифицированные чеки открытой базы — под авансовые отчёты.
-      Привязанный чек чужим компаниям не виден; участник сохраняет свои баллы.
+    <div class="card-title">🧩 Подбор из Чек-Пула</div>
+    <p class="form-hint" style="margin-bottom:10px">Здесь только чеки, сданные в общий пул, а не все проверенные чеки реестра. Выберите, привяжите к компании и перенесите во вкладке «Мои чеки компании» без повторного запроса в ФНС. История участника и баллы сохраняются. Одобрение в пуле не всегда означает подтверждение ФНС.
       <a href="#/public">Сдать чек в пул →</a></p>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
       <label class="field" id="poolpk-comp-wrap" style="max-width:340px"><span>Компания</span><select id="poolpk-comp"></select></label>
@@ -2178,10 +2177,22 @@ function poolPkFline(showGo = true) {
         .map((i) => `<option value="${i.code}" ${f.industry === i.code ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select></label>
     <label class="field" style="max-width:170px"><span>Город</span><input id="pk-city" value="${esc(f.city)}" placeholder="часть названия"></label>
     <label class="field" style="max-width:140px"><span>ИНН</span><input id="pk-inn" value="${esc(f.inn)}"></label>
+    ${showGo ? `
     <label class="field" style="max-width:120px"><span>Сумма от</span><input id="pk-smin" type="number" value="${esc(f.sumMin)}"></label>
     <label class="field" style="max-width:120px"><span>до</span><input id="pk-smax" type="number" value="${esc(f.sumMax)}"></label>
     <label class="field" style="max-width:220px"><span>Магазин или товар</span><input id="pk-q" value="${esc(f.q)}"></label>
-    ${showGo ? '<button type="button" class="btn btn-sm btn-primary" id="pk-go">🔍 Найти</button>' : ''}
+    <label class="field"><span>Название позиции</span><input id="pk-item" value="${esc(f.itemName || '')}"></label>
+    <label class="field"><span>НДС как сохранён</span><input id="pk-vat" value="${esc(f.vatRate || '')}" maxlength="8"></label>
+    <label class="field"><span>Сумма позиции от</span><input type="number" min="0" step="0.01" id="pk-item-min" value="${esc(f.itemMin || '')}"></label>
+    <label class="field"><span>Сумма позиции до</span><input type="number" min="0" step="0.01" id="pk-item-max" value="${esc(f.itemMax || '')}"></label>
+    <label class="field"><span>Цена позиции от</span><input type="number" min="0" step="0.01" id="pk-price-min" value="${esc(f.priceMin || '')}"></label>
+    <label class="field"><span>Цена позиции до</span><input type="number" min="0" step="0.01" id="pk-price-max" value="${esc(f.priceMax || '')}"></label>
+    <label class="field"><span>Количество от</span><input type="number" min="0" step="any" id="pk-qty-min" value="${esc(f.qtyMin || '')}"></label>
+    <label class="field"><span>Количество до</span><input type="number" min="0" step="any" id="pk-qty-max" value="${esc(f.qtyMax || '')}"></label>
+    <label class="field"><span>Операция</span><select id="pk-operation"><option value="">все</option>
+      ${[['1', 'Приход'], ['2', 'Возврат прихода'], ['3', 'Расход'], ['4', 'Возврат расхода']].map(([v, label]) => `<option value="${v}" ${f.operation === v ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    <button type="button" class="btn btn-sm btn-primary" id="pk-go">🔍 Найти</button>
+    <button type="button" class="btn btn-sm" id="pk-reset">Сбросить</button>` : ''}
   </div>`;
 }
 
@@ -2203,7 +2214,9 @@ async function poolPkLoadSearch() {
   const params = new URLSearchParams();
   const f = poolPk.f;
   [['from', 'date_from'], ['to', 'date_to'], ['region', 'region'], ['city', 'city'],
-   ['industry', 'industry'], ['inn', 'inn'], ['sumMin', 'sum_min'], ['sumMax', 'sum_max'], ['q', 'q']]
+   ['industry', 'industry'], ['inn', 'inn'], ['sumMin', 'sum_min'], ['sumMax', 'sum_max'], ['q', 'q'],
+   ['itemName', 'item_name'], ['vatRate', 'vat_rate'], ['itemMin', 'item_total_min'], ['itemMax', 'item_total_max'],
+   ['priceMin', 'item_price_min'], ['priceMax', 'item_price_max'], ['qtyMin', 'item_quantity_min'], ['qtyMax', 'item_quantity_max'], ['operation', 'operation']]
     .forEach(([k, p]) => { if (f[k]) params.set(p, f[k]); });
   params.set('page', poolPk.page); params.set('per_page', 20);
   try {
@@ -2217,10 +2230,11 @@ async function poolPkLoadSearch() {
     const pages = Math.max(1, Math.ceil(d.total / d.per_page));
     box.innerHTML = `
       ${poolPkFline()}
+      <div class="form-hint">Название, НДС, сумма, цена и количество относятся к одной позиции; выбранные чеки сохраняются при переходе между страницами. Данные старых чеков могут быть неполными; НДС может быть кодом, а ноль — значением по умолчанию.</div>
       <div class="form-hint" style="margin-bottom:6px">Найдено: <b>${fmtInt(d.total)}</b> · выбрано: <b id="pk-cnt">${poolPk.picked.size}</b></div>
       <div class="table-wrap"><table style="width:100%">
         <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8">Ничего не найдено — ослабьте фильтры</td></tr>'}</tbody></table></div>
+        <tbody>${rows || '<tr><td colspan="8">Нет доступных чеков пула по фильтрам. Проверенные чеки основного реестра автоматически в общий пул не публикуются.</td></tr>'}</tbody></table></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-sm" id="pk-prev" ${poolPk.page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.page} из ${pages}</span>
@@ -2239,8 +2253,14 @@ async function poolPkLoadSearch() {
     $('#pk-go').onclick = () => {
       const g = (id) => ($(id) ? $(id).value.trim() : '');
       poolPk.f = { from: g('#pk-from'), to: g('#pk-to'), region: g('#pk-region'), city: g('#pk-city'),
-                   industry: g('#pk-industry'), inn: g('#pk-inn'), sumMin: g('#pk-smin'), sumMax: g('#pk-smax'), q: g('#pk-q') };
-      poolPk.page = 1; poolPkLoadSearch();
+                   industry: g('#pk-industry'), inn: g('#pk-inn'), sumMin: g('#pk-smin'), sumMax: g('#pk-smax'), q: g('#pk-q'),
+                   itemName: g('#pk-item'), vatRate: g('#pk-vat'), itemMin: g('#pk-item-min'), itemMax: g('#pk-item-max'),
+                   priceMin: g('#pk-price-min'), priceMax: g('#pk-price-max'), qtyMin: g('#pk-qty-min'), qtyMax: g('#pk-qty-max'), operation: g('#pk-operation') };
+      poolPk.picked.clear(); poolPk.page = 1; poolPkLoadSearch();
+    };
+    $('#pk-reset').onclick = () => {
+      Object.keys(poolPk.f).forEach(key => { poolPk.f[key] = ''; });
+      poolPk.picked.clear(); poolPk.page = 1; poolPkLoadSearch();
     };
     $('#pk-assign').onclick = async () => {
       if (!poolPk.picked.size) { toast('Отметьте чеки в таблице', 'warn', '🧩'); return; }
@@ -2263,14 +2283,14 @@ async function poolPkLoadMine() {
     const d = await api.get('/api/v1/pool-company/mine?' + params.toString() + (poolPkCompId() ? '&' + poolPkCompId().slice(1) : ''));
     const rows = d.items.map((r) => `
       <tr>
-        <td><input type="checkbox" data-id="${r.id}" ${poolPk.minePicked.has(r.id) ? 'checked' : ''} style="width:auto" aria-label="Вернуть в пул"></td>
+        <td><input type="checkbox" data-id="${r.id}" ${poolPk.minePicked.has(r.id) ? 'checked' : ''} style="width:auto" aria-label="Выбрать чек"></td>
         <td class="num">${esc(r.date)}</td><td>${esc(r.merchant)}</td><td class="num">${esc(r.inn)}</td>
         <td class="num">${fmtSum(r.sum)}</td><td>${esc(r.city)}</td><td>${esc(r.industry)}</td>
         <td class="form-hint">${esc(r.items)}</td><td class="num form-hint">${esc(r.assigned_at)}</td></tr>`).join('');
     const pages = Math.max(1, Math.ceil(d.total / d.per_page));
     box.innerHTML = `
       <div class="form-hint" style="margin-bottom:6px">Привязано к компании: <b>${fmtInt(d.total)}</b> чеков.
-        Выгрузка — CSV для АО-1 и Excel.</div>
+        Выберите чеки для переноса в реестр без запроса в ФНС. После переноса вернуть их в общий пул нельзя, пока они есть в реестре.</div>
       <div class="table-wrap"><table style="width:100%">
         <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th><th>Привязан</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="9">Пока пусто — подберите чеки во вкладке «Найти чеки»</td></tr>'}</tbody></table></div>
@@ -2279,6 +2299,7 @@ async function poolPkLoadMine() {
         <span class="form-hint">Страница ${poolPk.minePage} из ${pages}</span>
         <button type="button" class="btn btn-sm" id="pk-m-next" ${poolPk.minePage >= pages ? 'disabled' : ''}>Вперёд →</button>
         <button type="button" class="btn btn-sm" id="pk-csv">⬇️ CSV (АО-1, Excel)</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pk-transfer">📥 Перенести выбранные в реестр</button>
         <button type="button" class="btn btn-sm" id="pk-unassign">↩️ Вернуть в пул (${poolPk.minePicked.size})</button>
       </div>`;
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
@@ -2294,6 +2315,14 @@ async function poolPkLoadMine() {
       if (poolPk.f.to) qs.set('date_to', poolPk.f.to);
       if (poolPk.company) qs.set('company_id', poolPk.company);
       window.location = '/api/v1/pool-company/export.csv?' + qs.toString();
+    };
+    $('#pk-transfer').onclick = async () => {
+      if (!poolPk.minePicked.size) { toast('Отметьте чеки', 'warn', '🧩'); return; }
+      try {
+        const r = await api.post('/api/v1/pool-company/transfer' + poolPkCompId(),
+                                 { receipt_ids: [...poolPk.minePicked] });
+        toast(r.message, r.unconfirmed ? 'warn' : 'ok', '🧩'); poolPk.minePicked.clear(); poolPkLoadMine();
+      } catch (e) { toast(e.message, 'warn', '🧩'); }
     };
     $('#pk-unassign').onclick = async () => {
       if (!poolPk.minePicked.size) { toast('Отметьте чеки', 'warn', '🧩'); return; }
@@ -2315,6 +2344,7 @@ async function poolPkLoadAuto() {
         <input id="pk-target" type="number" min="100" placeholder="например, 5000"></label>
       <button type="button" class="btn btn-sm btn-primary" id="pk-auto-go">🎯 Подобрать набор ±5%</button>
     </div>
+    <p class="form-hint">Автоподбор рассматривает до 500 подходящих чеков и до 50 в наборе; он не гарантирует лучший набор. Перед учётом проверьте принадлежность и допустимость расходов.</p>
     <div id="pk-auto-out"></div>`;
   const go = $('#pk-auto-go');
   if (go) go.onclick = async () => {
@@ -2382,23 +2412,26 @@ function poolPkBindTabs() {
 async function viewPoolPick(container) {
   container.innerHTML = poolPkShell();
   try { if (!poolPk.dicts) poolPk.dicts = await api.get('/api/v1/pool-company/dicts'); } catch (e) {}
-  // компания: админ выбирает; бухгалтер — своя (селектор скрыт, если одна)
-  try {
-    const q0 = await api.get('/api/v1/pool-company/quota');
-    const wrap = $('#poolpk-comp-wrap');
-    const comps = Array.isArray(state.companies) ? state.companies.filter((c) => c.is_active) : [];
-    if (comps.length > 1) {
-      wrap.classList.remove('hidden');
-      const sel = $('#poolpk-comp');
-      sel.innerHTML = comps.map((c) => `<option value="${c.id}">${esc(compName(c))}</option>`).join('');
-      if (poolPk.company) sel.value = poolPk.company;
-      poolPk.company = sel.value;
-      sel.onchange = () => { poolPk.company = sel.value; poolPk.picked.clear(); poolPk.minePicked.clear(); void poolPkLoadQuota(); };
-    } else {
-      wrap.classList.add('hidden');
-      poolPk.company = comps.length === 1 ? comps[0].id : poolPk.company;
-    }
-  } catch (e) {}
+  // Администратор выбирает компанию явно; бухгалтеру назначена своя.
+  const wrap = $('#poolpk-comp-wrap');
+  const comps = Array.isArray(state.companies) ? state.companies.filter(c => c.is_active) : [];
+  if (isAdmin() && comps.length) {
+    wrap.classList.remove('hidden');
+    const sel = $('#poolpk-comp');
+    sel.innerHTML = '<option value="">Выберите компанию</option>' + comps.map(c =>
+      `<option value="${esc(c.id)}">${esc(compName(c))}</option>`).join('');
+    sel.value = poolPk.company || '';
+    poolPk.company = sel.value;
+    sel.onchange = () => {
+      poolPk.company = sel.value; poolPk.picked.clear(); poolPk.minePicked.clear();
+      poolPk.page = 1; poolPk.minePage = 1;
+      void poolPkLoadQuota();
+      ({ search: poolPkLoadSearch, mine: poolPkLoadMine, auto: poolPkLoadAuto, staff: poolPkLoadStaff })[poolPk.tab]();
+    };
+  } else {
+    wrap.classList.add('hidden');
+    poolPk.company = '';
+  }
   poolPkBindTabs();
   void poolPkLoadQuota();
   ({ search: poolPkLoadSearch, mine: poolPkLoadMine, auto: poolPkLoadAuto, staff: poolPkLoadStaff })[poolPk.tab]();
@@ -6150,6 +6183,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.79': [
+    { icon: '🧩', title: 'Чек-Пул и реестр работают вместе',
+      text: 'Закреплённые чеки можно перенести в реестр без запроса в ФНС; '
+        + 'повторное сканирование использует доступный чек пула. Дубликаты '
+        + 'исключаются из подбора, а статус ФНС показывается только при подтверждённом источнике.' },
+  ],
   '1.70.78': [
     { icon: '🎯', title: 'Сумма позиции и место расчёта',
       text: 'В подборе доступны диапазон суммы отдельной позиции и поиск по сохранённому '

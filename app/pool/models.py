@@ -12,13 +12,21 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
-from ..models import iso_z          # v1.60.0: инстанты в API — UTC+«Z»
+from ..models import iso_z  # v1.60.0: инстанты в API — UTC+«Z»
 
 
 def _uid() -> str:
@@ -118,6 +126,9 @@ class PoolReceipt(Base):
     full_data: Mapped[bool] = mapped_column(Boolean, default=False)
     points_awarded: Mapped[int] = mapped_column(Integer, default=0)
     raw: Mapped[str] = mapped_column(Text, default="")
+    extra_json: Mapped[str] = mapped_column(Text, default="", server_default="")
+    fns_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    fns_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # привязка к компании (Этап 5; v1.37.0 — «Подбор из пула» и сценарий C)
     assigned_company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -204,6 +215,9 @@ def ensure_pool_schema(engine) -> None:
     # v1.37.0: колонки подбора для уже существующей pool_receipts
     rcols = {c["name"] for c in insp.get_columns("pool_receipts")}
     r_add = (
+        ("extra_json", "ALTER TABLE pool_receipts ADD COLUMN extra_json TEXT DEFAULT ''"),
+        ("fns_confirmed", "ALTER TABLE pool_receipts ADD COLUMN fns_confirmed BOOLEAN DEFAULT FALSE"),
+        ("fns_checked_at", "ALTER TABLE pool_receipts ADD COLUMN fns_checked_at TIMESTAMP NULL"),
         ("assigned_at",
          "ALTER TABLE pool_receipts ADD COLUMN assigned_at DATETIME"),
         ("assigned_by",

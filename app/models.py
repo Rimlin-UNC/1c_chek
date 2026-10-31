@@ -181,6 +181,12 @@ class Invite(Base):
         return True
 
 
+class ReceiptIdentityLock(Base):
+    """Общий замок фискальной тройки для реестра и пула."""
+    __tablename__ = "receipt_identity_locks"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
 # --------------------------------------------------------------------------
 #  Чеки (54-ФЗ)
 # --------------------------------------------------------------------------

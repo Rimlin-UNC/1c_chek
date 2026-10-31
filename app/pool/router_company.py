@@ -15,16 +15,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from ..auth import require_accountant
-from ..config import settings   # v1.70.38: PAGE_MAX
+from ..config import settings  # v1.70.38: PAGE_MAX
 from ..database import get_db
-from ..models import Company, User
+from ..models import Company, Receipt, User
 from . import ingest
 from .models import PoolItem, PoolReceipt, PoolUser
 
@@ -87,10 +88,15 @@ def _enabled(db: Session) -> None:
                                  "недоступен")
 
 
-def _filtered(db: Session, f: dict, limit: int = SUGGEST_POOL):
+def _filtered_query(db: Session, f: dict):
     """Незакреплённые верифицированные чеки по фильтрам подбора."""
     q = db.query(PoolReceipt).filter(PoolReceipt.status == "verified",
                                      PoolReceipt.assigned_company_id.is_(None))
+    # Старые совпадения с реестром не предлагаем повторно, даже если запись
+    # пула по историческим причинам не была закреплена.
+    q = q.filter(~db.query(Receipt.id).filter(
+        Receipt.fn == PoolReceipt.fn, Receipt.fd == PoolReceipt.fd,
+        Receipt.fp == PoolReceipt.fp).exists())
     if f.get("date_from"):
         try:
             q = q.filter(PoolReceipt.receipt_date >= datetime.strptime(
@@ -119,20 +125,43 @@ def _filtered(db: Session, f: dict, limit: int = SUGGEST_POOL):
             q = q.filter(PoolReceipt.total_sum <= float(f["sum_max"]))
         except (TypeError, ValueError):
             pass
-    rows = q.order_by(PoolReceipt.receipt_date.desc()).limit(limit).all()
-    # город и поиск — в Python: SQL lower() не понимает кириллицу
-    city = (f.get("city") or "").strip().lower()
-    needle = (f.get("q") or "").strip().lower()
-    if city:
-        rows = [r for r in rows if city in (r.city or "").lower()]
-    if needle:
-        ids = {r.id for r in rows}
-        hits = {it.receipt_id for it in db.query(PoolItem)
-                .filter(PoolItem.receipt_id.in_(ids)).all()
-                if needle in (it.name or "").lower()}
-        rows = [r for r in rows
-                if needle in (r.merchant_name or "").lower() or r.id in hits]
-    return rows
+    def folded(column):
+        return (func.ym_casefold(column) if db.get_bind().dialect.name == "sqlite"
+                else func.lower(column))
+
+    def contains(column, value):
+        term = value.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return folded(column).like(f"%{term}%", escape="\\")
+
+    if (f.get("city") or "").strip():
+        q = q.filter(contains(PoolReceipt.city, f["city"]))
+    if (f.get("q") or "").strip():
+        q = q.filter(or_(contains(PoolReceipt.merchant_name, f["q"]),
+            db.query(PoolItem.id).filter(PoolItem.receipt_id == PoolReceipt.id,
+                                        contains(PoolItem.name, f["q"])).exists()))
+    item_conditions = []
+    if (f.get("item_name") or "").strip():
+        item_conditions.append(contains(PoolItem.name, f["item_name"]))
+    if f.get("vat_rate"):
+        item_conditions.append(PoolItem.vat_rate == f["vat_rate"])
+    for key, column, is_min in (("item_total_min", PoolItem.total, True),
+                                ("item_total_max", PoolItem.total, False),
+                                ("item_price_min", PoolItem.price, True),
+                                ("item_price_max", PoolItem.price, False),
+                                ("item_quantity_min", PoolItem.quantity, True),
+                                ("item_quantity_max", PoolItem.quantity, False)):
+        if f.get(key) is not None:
+            item_conditions.append(column >= f[key] if is_min else column <= f[key])
+    if item_conditions:
+        q = q.filter(db.query(PoolItem.id).filter(
+            PoolItem.receipt_id == PoolReceipt.id, and_(*item_conditions)).exists())
+    if f.get("operation") is not None:
+        q = q.filter(PoolReceipt.operation == f["operation"])
+    return q
+
+
+def _filtered(db: Session, f: dict, limit: int = SUGGEST_POOL):
+    return _filtered_query(db, f).order_by(PoolReceipt.receipt_date.desc(), PoolReceipt.id).limit(limit).all()
 
 
 def _row(r: PoolReceipt, names: str = "") -> dict:
@@ -209,6 +238,11 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
            city: str = "", industry: str = "", inn: str = "",
            sum_min: float | None = Query(None), sum_max: float | None = Query(None),
            q_str: str = Query("", alias="q", max_length=100),
+           item_name: str = Query("", max_length=200), vat_rate: str = Query("", max_length=8),
+           item_total_min: float | None = Query(None, ge=0), item_total_max: float | None = Query(None, ge=0),
+           item_price_min: float | None = Query(None, ge=0), item_price_max: float | None = Query(None, ge=0),
+           item_quantity_min: float | None = Query(None, ge=0), item_quantity_max: float | None = Query(None, ge=0),
+           operation: int | None = Query(None, ge=1, le=4),
            page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=50),
            company_id: str = "", db: Session = Depends(get_db),
            user: User = Depends(require_accountant)):
@@ -216,12 +250,16 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
     _enabled(db)
     f = {"date_from": date_from, "date_to": date_to, "region": region,
          "city": city, "industry": industry, "inn": inn,
-         "sum_min": sum_min, "sum_max": sum_max, "q": q_str}
-    rows = _filtered(db, f, limit=100000)
-    total = len(rows)
+         "sum_min": sum_min, "sum_max": sum_max, "q": q_str,
+         "item_name": item_name, "vat_rate": vat_rate, "item_total_min": item_total_min,
+         "item_total_max": item_total_max, "item_price_min": item_price_min,
+         "item_price_max": item_price_max, "item_quantity_min": item_quantity_min,
+         "item_quantity_max": item_quantity_max, "operation": operation}
+    query = _filtered_query(db, f)
+    total = query.count()
     per = per_page
     start = (page - 1) * per
-    chunk = rows[start:start + per]
+    chunk = query.order_by(PoolReceipt.receipt_date.desc(), PoolReceipt.id).offset(start).limit(per).all()
     names = _names_for(db, [r.id for r in chunk])
     return {"total": total, "page": page, "per_page": per,
             "items": [_row(r, names.get(r.id, "")) for r in chunk]}
@@ -268,9 +306,16 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
     limit = pick_limit(db)
     if limit <= 0:
         raise HTTPException(403, "Подбор из пула выключен настройкой")
-    ids = list(dict.fromkeys((body.receipt_ids or [])))[:ASSIGN_BATCH]
-    if not ids:
-        raise HTTPException(422, "Не выбрано ни одного чека")
+    ids = list(dict.fromkeys(body.receipt_ids or []))
+    if not ids or len(ids) > ASSIGN_BATCH:
+        raise HTTPException(422, f"Выберите от 1 до {ASSIGN_BATCH} чеков")
+    from ..services.receipt_identity import lock_identity
+    candidates = db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids)).order_by(
+        PoolReceipt.fn, PoolReceipt.fd, PoolReceipt.fp).all()
+    for row in candidates:
+        lock_identity(db, row.fn, row.fd, row.fp)
+    db.query(Company).filter(Company.id == comp.id).with_for_update().first()
+    db.expire_all()  # после ожидания замка перечитать состояние кандидатов
     used = month_used(db, comp.id)
     if used + len(ids) > limit:
         raise HTTPException(409, f"Лимит тарифа: {limit} чеков/мес, "
@@ -280,8 +325,11 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
             .filter(PoolReceipt.id.in_(ids),
                     PoolReceipt.status == "verified",
                     PoolReceipt.assigned_company_id.is_(None)).all())
-    if not rows:
-        raise HTTPException(409, "Выбранные чеки уже заняты — обновите список")
+    if len(rows) != len(ids):
+        raise HTTPException(409, "Часть выбранных чеков уже занята — обновите список")
+    for row in rows:
+        if db.query(Receipt.id).filter_by(fn=row.fn, fd=row.fd, fp=row.fp).first():
+            raise HTTPException(409, "Один из чеков уже есть в реестре — обновите список")
     now = _utcnow()
     for r in rows:
         r.assigned_company_id = comp.id
@@ -302,12 +350,20 @@ def unassign(body: IdsBody, company_id: str = "",
              user: User = Depends(require_accountant)):
     from ..services.audit import log_action
     comp = _company(db, user, company_id)
-    ids = list(dict.fromkeys((body.receipt_ids or [])))[:ASSIGN_BATCH]
-    if not ids:
-        raise HTTPException(422, "Не выбрано ни одного чека")
+    ids = list(dict.fromkeys(body.receipt_ids or []))
+    if not ids or len(ids) > ASSIGN_BATCH:
+        raise HTTPException(422, f"Выберите от 1 до {ASSIGN_BATCH} чеков")
     rows = (db.query(PoolReceipt)
             .filter(PoolReceipt.id.in_(ids),
                     PoolReceipt.assigned_company_id == comp.id).all())
+    from ..services.receipt_identity import lock_identity
+    for r in sorted(rows, key=lambda x: (x.fn, x.fd, x.fp)):
+        lock_identity(db, r.fn, r.fd, r.fp)
+        db.refresh(r)
+        if r.assigned_company_id != comp.id:
+            raise HTTPException(409, "Чек больше не закреплён за компанией")
+        if db.query(Receipt.id).filter_by(fn=r.fn, fd=r.fd, fp=r.fp).first():
+            raise HTTPException(409, "Чек уже находится в реестре: сначала решите вопрос с его учётом")
     for r in rows:
         r.assigned_company_id = None
         r.assigned_at = None
@@ -318,6 +374,40 @@ def unassign(body: IdsBody, company_id: str = "",
     return {"ok": True, "unassigned": len(rows),
             "message": f"Возвращено в общий пул: {len(rows)} "
                        "(квота месяца восстанавливается)"}
+
+
+@router.post("/transfer", summary="Чек-Пул: перенести закреплённые чеки в реестр")
+def transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
+             user: Annotated[User, Depends(require_accountant)], company_id: str = ""):
+    from ..services.audit import log_action
+    from ..services.receipt_identity import lock_identity
+    from .transfer import copy_to_registry
+
+    comp = _company(db, user, company_id)
+    ids = list(dict.fromkeys(body.receipt_ids or []))
+    if not ids or len(ids) > ASSIGN_BATCH:
+        raise HTTPException(422, f"Выберите от 1 до {ASSIGN_BATCH} чеков")
+    rows = (db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids),
+            PoolReceipt.assigned_company_id == comp.id).order_by(
+                PoolReceipt.fn, PoolReceipt.fd, PoolReceipt.fp).all())
+    if len(rows) != len(ids):
+        raise HTTPException(404, "Некоторые чеки не найдены или недоступны")
+    for row in rows:
+        lock_identity(db, row.fn, row.fd, row.fp)
+    created, existing, unconfirmed = 0, 0, 0
+    for row in rows:
+        db.refresh(row)
+        receipt, was_created = copy_to_registry(db, row, comp.id, user)
+        created += int(was_created)
+        existing += int(not was_created)
+        unconfirmed += int(was_created and receipt.fns_status != "valid")
+    db.commit()
+    log_action(user, "pool_transfer", details={"company_id": comp.id, "created": created,
+                                                 "existing": existing, "unconfirmed": unconfirmed})
+    return {"ok": True, "created": created, "existing": existing, "unconfirmed": unconfirmed,
+            "message": (f"В реестр перенесено: {created}; уже было: {existing}. "
+                        f"Без подтверждённого происхождения проверки ФНС: {unconfirmed}. "
+                        "Запросов в ФНС не выполнялось.")}
 
 
 @router.post("/autosuggest", summary="Чек-Пул: авто-подбор под сумму отчёта (±5%)")
@@ -337,7 +427,7 @@ def autosuggest(body: AutoBody, company_id: str = "",
     picked: list = []
     acc = 0.0
     for r in sorted(cands, key=lambda x: -(x.total_sum or 0)):
-        if acc + (r.total_sum or 0) <= hi:
+        if len(picked) < ASSIGN_BATCH and acc + (r.total_sum or 0) <= hi:
             picked.append(r)
             acc += r.total_sum or 0
             if acc >= lo:
