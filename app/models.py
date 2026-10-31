@@ -648,3 +648,25 @@ class TelegramLoginCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AdvanceReportCounter(Base):
+    """Последний выданный номер по компании и месяцу даты отчёта."""
+    __tablename__ = "advance_report_counters"
+
+    company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)
+    last_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class AdvanceReportReservation(Base):
+    """Резервация делает повтор HTTP-запроса идемпотентным."""
+    __tablename__ = "advance_report_reservations"
+    __table_args__ = (UniqueConstraint("company_id", "period", "number"),)
+
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    report_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

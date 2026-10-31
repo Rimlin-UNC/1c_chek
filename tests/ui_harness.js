@@ -76,6 +76,7 @@ const apiLog = [];
 const toasts = [];
 
 const sandbox = {
+  crypto: { randomUUID: () => 'abc00000-0000-4000-8000-000000000000' },
   document, window: { addEventListener: () => {}, print: () => {}, matchMedia: () => ({ matches: false, addEventListener: () => {} }), location: { reload() {}, pathname: '/' } },
   navigator: { clipboard: { writeText: async () => {} }, userAgent: 'harness' },
   print: () => {},
@@ -124,7 +125,7 @@ const advancePayloads = [
     period: { from: '2026-10-01', to: '2026-10-31' },
     company: { id: 'x1', name: 'ООО «Ямастер»', inn: '7801234564' },
     rows: [
-      { id: 'r1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
+      { id: 'r1', company_id: 'x1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
         merchant_name: 'ООО Лента', merchant_inn: '7802000000', fn: '1', fd: '11',
         fp: '111', operation: 1, category: 'Хозрасходы', total_sum: 100.0,
         fns_status: 'valid', exported: false },
@@ -138,11 +139,11 @@ const advancePayloads = [
     period: { from: '2026-10-01', to: '2026-10-31' },
     company: { id: 'x1', name: 'ООО «Ямастер»', inn: '7801234564' },
     rows: [
-      { id: 'r1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
+      { id: 'r1', company_id: 'x1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
         merchant_name: 'ООО Лента', merchant_inn: '7802000000', fn: '1', fd: '11',
         fp: '111', operation: 1, category: 'Хозрасходы', total_sum: 100.0,
         fns_status: 'valid', exported: false },
-      { id: 'r2', receipt_date: '2026-10-06T13:00', assignee: 'Пётр Готовый',
+      { id: 'r2', company_id: 'x1', receipt_date: '2026-10-06T13:00', assignee: 'Пётр Готовый',
         merchant_name: 'АЗС', merchant_inn: '7803000000', fn: '2', fd: '12',
         fp: '222', operation: 1, category: 'Топливо', total_sum: 250.5,
         fns_status: 'invalid', exported: false },
@@ -207,7 +208,8 @@ sandbox.fetch = async (url, opts) => {
     payload = { total: 0, by_fns: {}, by_day: [], by_company: {}, by_source: {},
                 by_user: {}, by_status: {}, valid: 0, invalid: 0 };
   if (String(url).includes('/delete')) payload = { ok: true, message: 'Компания удалена' };
-  if (String(url).includes('/advance-report'))
+  if (String(url).includes('/advance-report/number')) payload = { number: 'АО-2026-10-01' };
+  else if (String(url).includes('/advance-report'))
     payload = advancePayloads[advanceIdx++ % advancePayloads.length];
   if (String(url).includes('/settings/checko') && (opts && opts.method) === 'PUT')
     payload = { ok: true, key_masked: 'x•••000' };
@@ -282,6 +284,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   let aoSlot = root._cls['.modal-slot'];
   aoSlot.querySelector('#ao-from').value = '2026-10-01';
   aoSlot.querySelector('#ao-to').value = '2026-10-31';
+  aoSlot.querySelector('#ao-date').value = '2026-10-31';
   const mkBtn = aoSlot.querySelector('#ao-make');
   await mkBtn.onclick({ target: mkBtn });
   await new Promise(r => setTimeout(r, 30));
@@ -313,6 +316,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   aoSlot = root._cls['.modal-slot'];
   aoSlot.querySelector('#ao-from').value = '2026-10-01';
   aoSlot.querySelector('#ao-to').value = '2026-10-31';
+  aoSlot.querySelector('#ao-date').value = '2026-10-31';
   const mkBtn2 = aoSlot.querySelector('#ao-make');
   await mkBtn2.onclick({ target: mkBtn2 });
   await new Promise(r => setTimeout(r, 30));

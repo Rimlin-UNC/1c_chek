@@ -54,6 +54,7 @@ from ..database import get_db
 from ..models import Company, FnsLog, MappingSetting, MerchantRule, Receipt, ReceiptItem, User
 from ..schemas import (
     AdvanceReportBody,
+    AdvanceReportNumberBody,
     AssignBulk,
     EnrichRequest,
     ExportRequest,
@@ -1663,6 +1664,67 @@ def export_receipts(body: ExportRequest, user: User = Depends(require_accountant
     filename = f"ymaster-check-export-{now.strftime('%Y%m%d-%H%M')}.{ext}"
     return Response(content=content, media_type=f"{media}; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/advance-report/number", summary="Зарезервировать номер авансового отчёта")
+def reserve_advance_number(body: AdvanceReportNumberBody,
+                           user: Annotated[User, Depends(require_accountant)],
+                           db: Annotated[Session, Depends(get_db)]):
+    """Атомарная помесячная нумерация по компании; повторы запроса безопасны."""
+    from uuid import UUID
+    from ..models import AdvanceReportCounter, AdvanceReportReservation
+
+    try:
+        date = dt.date.fromisoformat(body.report_date)
+        if date.isoformat() != body.report_date:
+            raise ValueError
+        request_id = str(UUID(body.request_id))
+    except ValueError as exc:
+        raise HTTPException(422, "Некорректная дата отчёта или идентификатор запроса") from exc
+    if user.role != ROLE_ADMIN and user.company_id != body.company_id:
+        raise HTTPException(403, "Нет доступа к компании")
+    if not db.get(Company, body.company_id):
+        raise HTTPException(404, "Компания не найдена")
+    period = date.strftime("%Y-%m")
+
+    def result(record):
+        if record.company_id != body.company_id or record.report_date != body.report_date:
+            raise HTTPException(409, "Идентификатор запроса уже использован для другого отчёта")
+        return {"number": f"АО-{period}-{record.number:02d}", "sequence": record.number,
+                "company_id": record.company_id, "report_date": record.report_date}
+
+    existing = db.get(AdvanceReportReservation, request_id)
+    if existing:
+        return result(existing)
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    elif dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        raise HTTPException(500, "Нумерация не поддерживает эту базу данных")
+    try:
+        # Первая запись защищает от одновременного повторения одного запроса.
+        record = AdvanceReportReservation(request_id=request_id, company_id=body.company_id,
+                                          period=period, report_date=body.report_date, number=0)
+        db.add(record)
+        db.flush()
+        counter = AdvanceReportCounter.__table__
+        stmt = insert(counter).values(company_id=body.company_id, period=period,
+                                      last_number=body.start_after + 1)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[counter.c.company_id, counter.c.period],
+            set_={"last_number": counter.c.last_number + 1},
+        ).returning(counter.c.last_number)
+        record.number = db.execute(stmt).scalar_one()
+        db.commit()
+        return result(record)
+    except IntegrityError:
+        db.rollback()
+        existing = db.get(AdvanceReportReservation, request_id)
+        if existing:
+            return result(existing)
+        raise HTTPException(409, "Не удалось зарезервировать номер; повторите запрос") from None
 
 
 @router.post("/advance-report", summary="Собрать авансовый отчёт за период (бухгалтер+)")

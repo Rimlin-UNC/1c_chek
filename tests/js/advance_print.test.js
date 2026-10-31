@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync('app/static/js/app.js', 'utf8');
-const start = source.indexOf('function aoShowPreview(');
+const start = source.indexOf('function aoReportFilename(');
 const end = source.indexOf('// --- v1.14.0: CSV', start);
 const makePreview = new Function('esc', '$', 'aoCsvDownload', 'ao1Json', 'downloadBlob',
   'toast', 'aoMultiPrint', 'ao1Print', 'printReceiptsPDF', 'openAO1Modal',
@@ -56,5 +56,24 @@ describe('выбор печати авансового отчёта', () => {
     x.slot.querySelector('#ao-include').value = 'receipts';
     x.slot.querySelector('#ao-print').click();
     expect(x.printReceipt).not.toHaveBeenCalled(); expect(x.toast).toHaveBeenCalled();
+  });
+});
+
+
+describe('имя PDF отчёта', () => {
+  const extract = source.slice(source.indexOf('function aoReportFilename('), source.indexOf('// --- v1.14.0: предпросмотр'));
+  const { filename, printTitle } = new Function(`${extract}; return { filename: aoReportFilename, printTitle: printWithTitle };`)();
+  it('включает номер, сокращённое название, дату и сумму в рублях и копейках', () => {
+    const rep = { total: { sum: 56755.34 }, requisites: { 'Организация': { 'НаименованиеСокращенное': 'ООО «Ямастер»' } } };
+    expect(filename(rep, { 'ao-num': 'АО-2026-10-46', 'ao-date': '2026-10-31' }))
+      .toBe('АО-2026-10-46-ООО «Ямастер»-2026-10-31-56755-34');
+  });
+  it('удаляет запрещённые символы файлов и восстанавливает заголовок после печати', () => {
+    expect(filename({ total: { sum: 10 }, company: { name: 'ООО А/Б:*' } }, { 'ao-num': 'АО-1', 'ao-date': '2026-10-31' }))
+      .toBe('АО-1-ООО А Б-2026-10-31-10-00');
+    document.title = 'Приложение'; const original = window.print;
+    window.print = vi.fn(() => expect(document.title).toBe('Номер отчёта'));
+    printTitle('Номер отчёта'); window.dispatchEvent(new Event('afterprint'));
+    expect(document.title).toBe('Приложение'); window.print = original;
   });
 });

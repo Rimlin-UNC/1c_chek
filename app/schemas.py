@@ -81,6 +81,13 @@ class AdvanceReportBody(BaseModel):
                              description="Только чеки, подтверждённые ФНС")
 
 
+class AdvanceReportNumberBody(BaseModel):
+    company_id: str = Field(min_length=1, max_length=36)
+    report_date: str = Field(min_length=10, max_length=10)
+    request_id: str = Field(min_length=36, max_length=36)
+    start_after: int = Field(default=0, ge=0, le=999999)
+
+
 class ExportRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=1000)
     format: Literal["json", "xml"] = "json"

@@ -6150,6 +6150,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.74': [
+    { icon: '📋', title: 'Нумерация авансовых отчётов и понятные имена PDF',
+      text: 'Номер резервируется отдельно для каждой компании и месяца; '
+        + 'в имя PDF входят номер, сокращённое название, дата отчёта и сумма. '
+        + 'При первом отчёте укажите последний ранее использованный номер.' },
+  ],
   '1.70.73': [
     { icon: '🖨️', title: 'Чеки 72 мм и экономный раскрой A4',
       text: 'В PDF чеки выводятся шириной 72 мм без уменьшения, в две колонки. '
@@ -8581,7 +8587,7 @@ async function printReceiptsPDF(ids, report = null) {
       root.remove();
       urls.forEach(url => URL.revokeObjectURL(url));
     }, { once: true });
-    window.print();
+    if (report?.filename) printWithTitle(report.filename); else window.print();
     printing = true;
   } catch (e) {
     close();
@@ -8627,9 +8633,12 @@ async function openAO1Modal(opts = {}) {
       <label class="field"><span>Организация</span>
         <input id="ao-org" value="${esc(state.me?.organization || 'ООО «Ямастер»')}"></label>
       <label class="field"><span>Номер документа</span>
-        <input id="ao-num" value="АО-${ym}-${String(Math.floor(Math.random() * 90) + 10)}"></label>
+        <input id="ao-num" readonly placeholder="Присваивается при сборке"></label>
+      <label class="field"><span>Последний ранее использованный номер за месяц</span>
+        <input id="ao-start-after" type="number" min="0" max="999999" step="1" value="0">
+        <small>До первого отчёта укажите максимальный номер, уже использованный в этом месяце, включая отчёты вне программы. Поле действует только при создании счётчика; позже номера идут автоматически.</small></label>
       <label class="field"><span>Дата составления</span>
-        <input id="ao-date" type="date" value="${now.toISOString().slice(0, 10)}"></label>
+        <input id="ao-date" type="date" value="${ym}-${String(now.getDate()).padStart(2, '0')}"></label>
       <label class="field"><span>Период: с</span>
         <input id="ao-from" type="date" value="${mFrom}"></label>
       <label class="field"><span>Период: по</span>
@@ -8682,6 +8691,11 @@ async function openAO1Modal(opts = {}) {
     const dFrom = slot.querySelector('#ao-from').value;
     const dTo = slot.querySelector('#ao-to').value;
     if (!dFrom || !dTo) return toast('Укажите период: с … по …', 'warn');
+    const reportDate = slot.querySelector('#ao-date').value;
+    const startAfter = Number(slot.querySelector('#ao-start-after').value || 0);
+    if (!reportDate || !Number.isInteger(startAfter) || startAfter < 0 || startAfter > 999999) {
+      return toast('Укажите дату отчёта и корректный последний номер', 'warn');
+    }
     btn.disabled = true; btn.textContent = '…собираю';
     try {
       const body = {
@@ -8697,9 +8711,18 @@ async function openAO1Modal(opts = {}) {
         btn.disabled = false; btn.textContent = '🧾 Собрать отчёт';
         return toast('За период чеков нет — измените фильтры', 'warn');
       }
+      const ids = new Set(rep.rows.map(r => r.company_id));
+      if (!rep.company?.id || ids.size !== 1 || !ids.has(rep.company.id)) {
+        throw new Error('Выберите одну компанию: номер отчёта ведётся отдельно для каждой компании.');
+      }
+      const reservation = await api.post('/api/v1/receipts/advance-report/number', {
+        company_id: rep.company.id, report_date: reportDate,
+        request_id: crypto.randomUUID(), start_after: startAfter,
+      });
+      slot.querySelector('#ao-num').value = reservation.number;
       aoShowPreview(slot, rep, {
         'ao-org': slot.querySelector('#ao-org').value,
-        'ao-num': slot.querySelector('#ao-num').value,
+        'ao-num': reservation.number,
         'ao-date': slot.querySelector('#ao-date').value,
         'ao-post': slot.querySelector('#ao-post').value,
         'ao-purpose': slot.querySelector('#ao-purpose').value,
@@ -8721,6 +8744,26 @@ async function openAO1Modal(opts = {}) {
   };
 }
 
+// Имя безопасно для Windows/macOS. Браузер может позволить изменить его в диалоге.
+function aoReportFilename(rep, meta) {
+  const company = rep.requisites?.['Организация']?.['НаименованиеСокращенное'] || rep.company?.name || meta['ao-org'] || 'Организация';
+  // Управляющие символы запрещены в именах файлов.
+  // eslint-disable-next-line no-control-regex
+  const clean = v => String(v || '').replace(/[\\/\u0000-\u001f<>:"|?*]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/g, '');
+  const amount = (Math.round((Number(rep.total?.sum) || 0) * 100) / 100).toFixed(2).replace('.', '-');
+  return [meta['ao-num'], company, meta['ao-date'], amount].map(clean).join('-');
+}
+
+// Браузер предлагает document.title в качестве имени PDF; смену имени можно отменить.
+function printWithTitle(name) {
+  const previous = document.title;
+  document.title = name;
+  const restore = () => { document.title = previous; };
+  window.addEventListener('afterprint', restore, { once: true });
+  try { window.print(); }
+  catch (err) { window.removeEventListener('afterprint', restore); restore(); throw err; }
+}
+
 // --- v1.14.0: предпросмотр собранного отчёта -------------------------------
 function aoShowPreview(slot, rep, meta) {
   aoShowPreview._meta = meta;   // v1.23.0: поля формы для JSON
@@ -8734,6 +8777,7 @@ function aoShowPreview(slot, rep, meta) {
       исключите их из учёта или перепроверьте.</div>` : ''}
     ${rep.truncated ? `<div class="info-callout" style="margin-bottom:8px">⚠ Показаны первые
       1000 чеков — сузьте период.</div>` : ''}
+    <div class="form-hint">Номер: <b>${esc(meta['ao-num'] || '—')}</b> · Предлагаемое имя PDF: ${esc(aoReportFilename(rep, meta))}.pdf</div>
     <div class="form-hint">Период: ${esc(rep.period.from)} — ${esc(rep.period.to)} ·
       ${esc(rep.company ? rep.company.name : 'все компании')}</div>
     <table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
@@ -8789,6 +8833,7 @@ function aoShowPreview(slot, rep, meta) {
       return toast('Не удалось сопоставить все строки с чеками — комплект не создан', 'err');
     }
     const makeReport = count => many ? aoMultiPrint(rep, meta, true) : ao1Print(slot, rep, { ...individual, attachmentPages: count }, true);
+    makeReport.filename = aoReportFilename(rep, meta);
     printReceiptsPDF(rows.map(r => r.id), makeReport);
   };
 }
@@ -8874,7 +8919,7 @@ function aoMultiPrint(rep, meta, prepareOnly = false) {
   setPrintPageMargin('@page { size: A4 portrait; margin: 10mm 15mm 10mm 20mm; }', true);
   if (prepareOnly) return root;
   toast(`Сводный АО: ${rep.total.count} чек(ов), ${rep.by_assignee.length} подотчётник(ов) — «Сохранить как PDF»`, 'ok', '🧾');
-  window.print();
+  printWithTitle(aoReportFilename(rep, meta));
 }
 
 // ==========================================================================
@@ -9066,7 +9111,7 @@ function ao1Print(f, rep, meta, prepareOnly = false) {
   document.body.appendChild(root);
   if (prepareOnly) return root;
   toast(`АО-1 (проект на основе формы): ${items.length} докум. на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
-  window.print();
+  printWithTitle(aoReportFilename(rep, meta));
 }
 
 function ruMoney(n) {

@@ -11,7 +11,7 @@ const start = source.indexOf('async function printReceiptsPDF(ids, report = null
 const end = source.indexOf('\nfunction dataCount', start);
 const makePrint = new Function('api', 'openModal', 'toast', 'shopReceiptHTML', 'esc',
   'packCut', 'splitBlocks', 'COL_H', 'columnX', 'SCALE', 'RCPT_W', 'MARGIN_Y',
-  'setPrintPageMargin', 'whenImagesReady', 'dataCount',
+  'setPrintPageMargin', 'whenImagesReady', 'dataCount', 'printWithTitle',
   `${source.slice(start, end)}; return printReceiptsPDF;`);
 
 describe('печать карточек', () => {
@@ -34,7 +34,7 @@ describe('печать карточек', () => {
     };
     print = makePrint(api, () => ({ close: vi.fn() }), toast, shopReceiptHTML, esc,
       packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y,
-      vi.fn(), vi.fn(async () => {}), n => `чеков: ${n}`);
+      vi.fn(), vi.fn(async () => {}), n => `чеков: ${n}`, name => { document.title = name; window.print(); });
   });
   afterEach(() => { vi.restoreAllMocks(); document.getElementById('print-root')?.remove(); });
   it('печатает все выбранные карточки с позициями, оплатой и фискальными реквизитами', async () => {
@@ -67,7 +67,9 @@ describe('печать карточек', () => {
       document.body.appendChild(root);
       return root;
     });
+    makeReport.filename = 'АО-2026-10-01-ООО Тест-2026-10-31-120-00';
     await print(['one', 'two'], makeReport);
+    expect(document.title).toBe(makeReport.filename);
     const root = document.getElementById('print-root');
     expect(root.firstElementChild.textContent).toBe('Отчёт');
     expect(root.textContent).toContain('Приложение № 1');
