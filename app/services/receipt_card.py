@@ -341,6 +341,8 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
         receipt.region_code = seller["region_code"]
         receipt.region_name = seller["region_name"] or ""
         receipt.region_city = seller["city"] or ""
+    elif seller.get("city") and not receipt.region_city:
+        receipt.region_city = seller["city"][:120]
     if tax["taxation"] not in (None, ""):
         if not (human and receipt.taxation):
             receipt.taxation = str(tax["taxation"])[:40]
@@ -472,10 +474,12 @@ def enrich_receipt(db, receipt) -> dict:
 
     # Чека ФНС в сохранённом виде нет — работаем с реквизитами чека
     geo = regions.detect(receipt.merchant_inn, receipt.merchant_address)
-    if geo["region_code"]:
+    if geo["region_code"] and not (receipt.details_source == "manual_edit" and receipt.region_code):
         receipt.region_code = geo["region_code"]
         receipt.region_name = geo["region_name"] or ""
         receipt.region_city = geo["city"] or ""
+    if geo.get("city") and not receipt.region_city:
+        receipt.region_city = geo["city"][:120]
     enrich_items(receipt)
     calc = goods.classify_items(
         [{"name": it.name, "total": it.total,

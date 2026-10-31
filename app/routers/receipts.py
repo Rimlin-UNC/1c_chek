@@ -381,6 +381,10 @@ def list_receipts(
     # --- v1.70.72: фильтры для работы с пулом ---
     region: str | None = Query(None, max_length=4,
                                description="Код региона продавца (74, 77, …)"),
+    region_name: str | None = Query(None, max_length=120, description="Название региона продавца"),
+    city: str | None = Query(None, max_length=120, description="Город продавца"),
+    item_name: str | None = Query(None, max_length=200, description="Название позиции чека"),
+    operation: int | None = Query(None, ge=1, le=4, description="Признак расчёта"),
     industry: str | None = Query(None, max_length=100,
                                  description="Отрасль покупки (Аптека, АЗС, …)"),
     product_group: str | None = Query(None, max_length=100,
@@ -435,23 +439,38 @@ def list_receipts(
     # --- v1.70.72: регион, отрасль, продавец, налоги, суммы ---
     if region:
         query = query.filter(Receipt.region_code == region.strip()[:4])
-    if industry:
+    # Фасеты выбирают сохранённые значения без потери кириллического регистра.
+    def folded(column):
+        return (func.ym_casefold(column) if db.get_bind().dialect.name == "sqlite"
+                else func.lower(column))
+
+    def contains(column, value):
+        term = value.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return folded(column).like(f"%{term}%", escape="\\")
+
+    if region_name and region_name.strip():
+        query = query.filter(folded(Receipt.region_name) == region_name.strip().casefold())
+    if city and city.strip():
+        query = query.filter(folded(Receipt.region_city) == city.strip().casefold())
+    if industry and industry.strip():
         key = industry.strip().casefold()
-        query = query.filter(or_(Receipt.industry_lc == key,
-                                 Receipt.product_group == industry.strip(),
-                                 Receipt.industry == industry.strip()))
-    if product_group:
-        from ..models import ReceiptItem as _RI
-        sub = db.query(_RI.receipt_id).filter(
-            _RI.product_group == product_group.strip()).subquery()
-        query = query.filter(Receipt.id.in_(sub))
+        query = query.filter(or_(folded(Receipt.industry) == key,
+                                 Receipt.items.any(folded(ReceiptItem.industry) == key)))
+    if product_group and product_group.strip():
+        key = product_group.strip().casefold()
+        query = query.filter(or_(folded(Receipt.product_group) == key,
+                                 Receipt.items.any(folded(ReceiptItem.product_group) == key)))
+    if item_name and item_name.strip():
+        query = query.filter(Receipt.items.any(contains(ReceiptItem.name, item_name)))
+    if operation is not None:
+        query = query.filter(Receipt.operation == operation)
     if merchant_inn:
         query = query.filter(Receipt.merchant_inn == merchant_inn.strip()[:20])
     if merchant:
-        like = f"%{merchant.strip()}%"
-        query = query.filter(or_(Receipt.merchant_name.ilike(like),
-                                 Receipt.merchant_address.ilike(like),
-                                 Receipt.merchant_inn.like(like)))
+        if merchant.strip():
+            query = query.filter(or_(contains(Receipt.merchant_name, merchant),
+                                     contains(Receipt.merchant_address, merchant),
+                                     contains(Receipt.merchant_inn, merchant)))
     if taxation:
         query = query.filter(Receipt.taxation == taxation.strip()[:40])
     if pay_type:
@@ -461,10 +480,7 @@ def list_receipts(
     if sum_max is not None:
         query = query.filter(Receipt.total_sum <= float(sum_max))
     if has_items is not None:
-        from ..models import ReceiptItem as _RI2
-        sub2 = db.query(_RI2.receipt_id).subquery()
-        query = (query.filter(Receipt.id.in_(sub2)) if has_items
-                 else query.filter(~Receipt.id.in_(sub2)))
+        query = query.filter(Receipt.items.any() if has_items else ~Receipt.items.any())
     if attention:
         cutoff = dt.datetime.utcnow() - dt.timedelta(days=3)
         query = query.filter(Receipt.status.in_(["new", "verifying"]),
@@ -484,9 +500,8 @@ def list_receipts(
             pass
     if date_to:
         try:
-            d = dt.datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59,
-                                                                  second=59)
-            query = query.filter(Receipt.receipt_date <= d)
+            d = dt.datetime.strptime(date_to, "%Y-%m-%d") + dt.timedelta(days=1)
+            query = query.filter(Receipt.receipt_date < d)
         except ValueError:
             pass
 
@@ -515,10 +530,15 @@ def list_receipts(
 # --------------------------------------------------------------------------
 @router.get("/facets", summary="Значения фильтров пула: регионы, отрасли, продавцы")
 def receipt_facets(user: Annotated[User, Depends(get_current_user)],
-                   db: Annotated[Session, Depends(get_db)]):
+                   db: Annotated[Session, Depends(get_db)],
+                   company_id: str | None = Query(None, max_length=36)):
     """Что есть в пуле — для выпадающих фильтров (без обращения к ФНС)."""
     from ..services import goods as _goods
-    q = scope_receipts(db.query(Receipt), user, None)
+    q = scope_receipts(db.query(Receipt), user, company_id)
+
+    def folded(column):
+        return (func.ym_casefold(column) if db.get_bind().dialect.name == "sqlite"
+                else func.lower(column))
 
     def top(column, limit: int = 60) -> list[dict]:
         rows = (q.with_entities(column, func.count(Receipt.id))
@@ -527,25 +547,46 @@ def receipt_facets(user: Annotated[User, Depends(get_current_user)],
                 .limit(limit).all())
         return [{"value": val, "count": cnt} for val, cnt in rows]
 
+    def locations(column):
+        rows = (q.with_entities(func.min(column), func.count(Receipt.id))
+                .filter(column.isnot(None), column != "")
+                .group_by(folded(column)).order_by(func.min(column)).all())
+        return [{"value": value, "count": count} for value, count in rows]
+
     region_rows = (q.with_entities(Receipt.region_code, Receipt.region_name,
                                    func.count(Receipt.id))
                    .filter(Receipt.region_code.isnot(None),
                            Receipt.region_code != "")
                    .group_by(Receipt.region_code, Receipt.region_name)
                    .order_by(func.count(Receipt.id).desc()).limit(100).all())
+    def classifications(receipt_column, item_column):
+        # UNION удаляет повтор одной группы в нескольких позициях одного чека.
+        from sqlalchemy import select, union
+        scoped = q.with_entities(Receipt.id).subquery()
+        a = select(Receipt.id.label("rid"), receipt_column.label("value")).where(
+            Receipt.id.in_(select(scoped.c.id)))
+        b = select(ReceiptItem.receipt_id.label("rid"), item_column.label("value")).where(
+            ReceiptItem.receipt_id.in_(select(scoped.c.id)))
+        values = union(a, b).subquery()
+        rows = (db.query(func.min(values.c.value), func.count(func.distinct(values.c.rid)))
+                .filter(values.c.value.isnot(None), values.c.value != "")
+                .group_by(folded(values.c.value)).order_by(func.min(values.c.value)).all())
+        return [{"value": value, "count": count} for value, count in rows]
+
     return {
+        "region_names": locations(Receipt.region_name),
+        "cities": locations(Receipt.region_city),
         "regions": [{"code": code, "name": name or code, "count": cnt}
                     for code, name, cnt in region_rows],
-        "industries": top(Receipt.industry),
-        "product_groups": top(Receipt.product_group),
+        "industries": classifications(Receipt.industry, ReceiptItem.industry),
+        "product_groups": classifications(Receipt.product_group, ReceiptItem.product_group),
         "sellers": top(Receipt.merchant_inn, limit=100),
         "taxations": top(Receipt.taxation_name),
         "pay_types": top(Receipt.pay_type),
         # Полный справочник отраслей — чтобы фильтр не «худел»
         "industry_catalog": _goods.industries(),
         "group_catalog": _goods.groups(),
-        "pending_limit": int(db.query(func.count(Receipt.id)).filter(
-            Receipt.fns_status == "pending").scalar() or 0),
+        "pending_limit": int(q.filter(Receipt.fns_status == "pending").count()),
     }
 
 
@@ -561,13 +602,16 @@ def enrich_receipts(body: EnrichRequest,
     """
     from ..services import receipt_card as _card
     ids = [i for i in (body.receipt_ids or []) if i][:500]
-    q = scope_receipts(db.query(Receipt), user, None)
+    q = scope_receipts(db.query(Receipt), user, body.company_id)
     if ids:
         q = q.filter(Receipt.id.in_(ids))
     elif body.only_empty:
         q = q.filter(or_(Receipt.region_code.is_(None),
                          Receipt.region_code == "",
-                         Receipt.industry.is_(None), Receipt.industry == ""))
+                         Receipt.region_city.is_(None), Receipt.region_city == "",
+                         Receipt.industry.is_(None), Receipt.industry == "",
+                         Receipt.items.any(or_(ReceiptItem.product_group.is_(None),
+                                               ReceiptItem.product_group == ""))))
     rows = q.limit(2000).all()
     stats = {"receipts": len(rows), "with_ticket": 0, "regions": 0,
              "industries": 0, "items": 0}

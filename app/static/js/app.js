@@ -6150,6 +6150,13 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.75': [
+    { icon: '🔎', title: 'Поиск чеков по региону, городу, товарам и отрасли',
+      text: 'Фильтры реестра используют регион и город продавца, отрасли и группы '
+        + 'как чека, так и отдельных позиций. Добавлены поиск товара, операция, '
+        + 'наличие позиций и сброс фильтров. Значения и счётчики ограничены '
+        + 'доступными чеками выбранной компании.' },
+  ],
   '1.70.74': [
     { icon: '📋', title: 'Нумерация авансовых отчётов и понятные имена PDF',
       text: 'Номер резервируется отдельно для каждой компании и месяца; '
@@ -7954,10 +7961,20 @@ async function viewReceipts(container) {
       <div class="filter-bar" style="margin-top:10px">
         <label class="field"><span>Регион продавца</span>
           <select id="f-region"><option value="">все регионы</option></select></label>
+        <label class="field"><span>Город продавца</span>
+          <select id="f-city"><option value="">все города</option></select></label>
         <label class="field"><span>Отрасль покупки</span>
           <select id="f-industry"><option value="">все отрасли</option></select></label>
         <label class="field"><span>Группа товаров</span>
           <select id="f-group"><option value="">все группы</option></select></label>
+        <label class="field"><span>Товар или услуга</span>
+          <input id="f-item-name" placeholder="название позиции"></label>
+        <label class="field"><span>Операция</span><select id="f-operation">
+          <option value="">все операции</option><option value="1">Приход</option>
+          <option value="2">Возврат прихода</option><option value="3">Расход</option>
+          <option value="4">Возврат расхода</option></select></label>
+        <label class="field"><span>Позиции</span><select id="f-items"><option value="">любые</option>
+          <option value="true">есть позиции</option><option value="false">нет позиций</option></select></label>
         <label class="field"><span>Продавец (ИНН или название)</span>
           <input id="f-merchant" placeholder="например 7801234567"></label>
         <label class="field"><span>Оплата</span>
@@ -7968,8 +7985,10 @@ async function viewReceipts(container) {
         <label class="field"><span>Сумма от</span><input id="f-sum-min" type="number" min="0" step="0.01" placeholder="0"></label>
         <label class="field"><span>Сумма до</span><input id="f-sum-max" type="number" min="0" step="0.01" placeholder="∞"></label>
         <button type="button" class="btn" id="btn-filter2">Найти</button>
-        ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разложить сохранённые чеки по регионам и отраслям. Запросов в ФНС НЕ делает — суточный лимит не расходуется">🧭 Разобрать данные чеков</button>' : ''}
+        <button type="button" class="btn" id="btn-filter-reset">Сбросить фильтры</button>
+        ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разобрать до 2000 сохранённых чеков за раз; запросов в ФНС нет">🧭 Разобрать данные чеков</button>' : ''}
       </div>
+      <p class="form-hint">Регион и город определяются по адресу, регион иногда по ИНН; отрасли и группы — по названиям позиций, это не классификация ФНС. При отсутствии полного чека часть фильтров может не сработать. «Разобрать данные чеков» обрабатывает до 2000 записей за раз без запроса в ФНС.</p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
           <button type="button" class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
@@ -8007,38 +8026,46 @@ async function viewReceipts(container) {
     creator: '', full_data: '',
     category: '', notified: '', date_from: '', date_to: '', page: 1,
     // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
-    region: '', industry: '', product_group: '', merchant: '',
+    region: '', region_name: '', city: '', industry: '', product_group: '', item_name: '', operation: '', has_items: '', merchant: '',
     pay_type: '', sum_min: '', sum_max: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
-  // v1.70.72: значения фильтров — из фактического пула (регионы, отрасли…)
-  if (!viewReceipts._facetsLoaded) {
-    viewReceipts._facetsLoaded = true;
-    api.get('/api/v1/receipts/facets' + (companyIdParam()
-      ? '?company_id=' + companyIdParam() : ''))
-      .then((f) => {
-        const fillSel = (sel, list, label) => {
-          if (!sel) return;
-          const keep = sel.value;
-          sel.innerHTML = `<option value="">${label}</option>` + list.map(x =>
-            `<option value="${esc(x.value || x.code)}">${esc(x.name || x.value)}${x.count != null ? ' · ' + x.count : ''}</option>`).join('');
-          sel.value = keep;
-        };
-        fillSel($('#f-region'), (f.regions || []).map(x => ({ value: x.code, name: x.name, count: x.count })), 'все регионы');
-        fillSel($('#f-industry'), (f.industries || []).length ? f.industries
-          : (f.industry_catalog || []).map(v => ({ value: v, name: v })), 'все отрасли');
-        fillSel($('#f-group'), (f.product_groups || []).length ? f.product_groups
-          : (f.group_catalog || []).map(v => ({ value: v, name: v })), 'все группы');
-      }).catch(() => { viewReceipts._facetsLoaded = false; });
+  // Справочники строятся из доступных чеков выбранной компании и обновляются
+  // при каждом открытии списка и после разбора сохранённых данных.
+  async function loadFacets() {
+    const company = companyIdParam() || '';
+    const requestId = viewReceipts._facetRequest = (viewReceipts._facetRequest || 0) + 1;
+    try {
+      const f = await api.get('/api/v1/receipts/facets' + (company
+        ? '?company_id=' + encodeURIComponent(company) : ''));
+      if ((companyIdParam() || '') !== company || viewReceipts._facetRequest !== requestId) return;
+      const fillSel = (selector, list, label, key) => {
+        const sel = container.querySelector(selector);
+        if (!sel) return;
+        const keep = filters[key] || '';
+        sel.innerHTML = `<option value="">${label}</option>` + list.map(x =>
+          `<option value="${esc(x.value)}">${esc(x.value)} · ${x.count}</option>`).join('');
+        // Сохраняем выбранный фильтр даже если список обновился и он исчез.
+        if (keep && !list.some(x => x.value === keep)) {
+          sel.insertAdjacentHTML('beforeend', `<option value="${esc(keep)}">${esc(keep)}</option>`);
+        }
+        sel.value = keep;
+      };
+      fillSel('#f-region', f.region_names || [], 'все регионы', 'region_name');
+      fillSel('#f-city', f.cities || [], 'все города', 'city');
+      fillSel('#f-industry', f.industries || [], 'все отрасли', 'industry');
+      fillSel('#f-group', f.product_groups || [], 'все группы', 'product_group');
+    } catch (e) { toast('Не удалось загрузить значения фильтров: ' + e.message, 'warn'); }
   }
+  loadFacets();
   // вернуть значения в поля формы — чтобы видно было, что фильтр применён
   [['#f-q', 'q'], ['#f-status', 'status'], ['#f-fns', 'fns_status'],
    ['#f-exp', 'exported'], ['#f-creator', 'creator'],
    ['#f-full', 'full_data'], ['#f-category', 'category'],
    ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to'],
-   ['#f-region', 'region'], ['#f-industry', 'industry'],
-   ['#f-group', 'product_group'], ['#f-merchant', 'merchant'],
+   ['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
+   ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-merchant', 'merchant'],
    ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
     .forEach(([sel, key]) => {
       const el = $(sel);
@@ -8206,7 +8233,9 @@ async function viewReceipts(container) {
       <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
         ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
       <td class="cell-date" data-label="Дата чека">${fmtDate(r.receipt_date)}${notifiedMark}
-        ${acc ? advanceBadge(r) : ''}</td>
+        ${acc ? advanceBadge(r) : ''}
+        ${(r.region_name || r.region_city) ? `<div class="form-hint">${esc([r.region_name, r.region_city].filter(Boolean).join(' · '))}</div>` : ''}
+        ${(r.industry || r.product_group) ? `<div class="form-hint" title="Основная отрасль и группа чека">${esc([r.industry, r.product_group].filter(Boolean).join(' · '))}</div>` : ''}</td>
       <td class="cell-sum" data-label="Сумма">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
         ? `<div class="form-hint">к учёту: ${fmtSum((r.total_sum || 0) - r.personal_sum)}</div>` : ''}</td>
       <td class="cell-mono" data-label="ФН">${r.fn}</td><td class="cell-mono" data-label="ФД">${r.fd}</td><td class="cell-mono" data-label="ФП">${r.fp}</td>
@@ -8306,18 +8335,26 @@ async function viewReceipts(container) {
     filters.date_from = $('#f-from').value;
     filters.date_to = $('#f-to').value;
     // v1.70.72: регион, отрасль, группа, продавец, оплата, суммы
-    [['#f-region', 'region'], ['#f-industry', 'industry'],
-     ['#f-group', 'product_group'], ['#f-merchant', 'merchant'],
+    [['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
+     ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-merchant', 'merchant'],
      ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],
      ['#f-sum-max', 'sum_max']].forEach(([sel, key]) => {
       const el = $(sel);
       filters[key] = el ? el.value : '';
     });
+    filters.region = ''; // старый фильтр по коду заменён названием
     filters.page = 1;
     viewReceipts._filters = { ...filters };   // v1.25.1: переживают перестроение вида
     load();
   };
   $('#f-q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-filter').click(); });
+  $('#btn-filter-reset').onclick = () => {
+    for (const key of Object.keys(filters)) filters[key] = key === 'page' ? 1 : '';
+    viewReceipts._filters = { ...filters };
+    container.querySelectorAll('.filter-bar input, .filter-bar select').forEach(el => { el.value = ''; });
+    viewReceipts._creatorKeep = ''; viewReceipts._catKeep = '';
+    load();
+  };
   const btnF2 = $('#btn-filter2');
   if (btnF2) btnF2.onclick = () => $('#btn-filter').click();
 
@@ -8338,8 +8375,9 @@ async function viewReceipts(container) {
     if (btnEnrich) btnEnrich.onclick = async () => {
       btnEnrich.disabled = true;
       try {
-        const r = await api.post('/api/v1/receipts/enrich', { only_empty: true });
+        const r = await api.post('/api/v1/receipts/enrich', { only_empty: true, company_id: companyIdParam() || null });
         toast(r.message, 'ok', 'Разбор данных чеков');
+        loadFacets();
         load();
       } catch (e) { toast(e.message, 'err'); }
       finally { btnEnrich.disabled = false; }

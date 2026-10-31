@@ -191,6 +191,7 @@ class ReceiptItemPatch(BaseModel):
 class EnrichRequest(BaseModel):
     """v1.70.72: разбор сохранённых данных чеков (без запросов в ФНС)."""
     receipt_ids: list[str] = Field(default_factory=list, max_length=500)
+    company_id: Optional[str] = Field(default=None, max_length=36)
     only_empty: bool = True          # только там, где регион/отрасль не заданы
 
 

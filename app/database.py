@@ -53,6 +53,11 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def _set_sqlite_pragma(dbapi_connection, connection_record):  # pragma: no cover
     """Включаем WAL для SQLite, чтобы параллельные чтения не блокировали запись."""
     if settings.DATABASE_URL.startswith("sqlite"):
+        # SQLite lower() не обрабатывает кириллицу: для поиска по сохранённым
+        # полям используем один и тот же Unicode casefold на каждом соединении.
+        dbapi_connection.create_function("ym_casefold", 1,
+            lambda value: str(value).casefold() if value is not None else None,
+            deterministic=True)
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         # v1.67.1 (аудит/стресс): параллельные записи ждут блокировку до 5 с
