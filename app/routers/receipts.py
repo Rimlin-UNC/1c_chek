@@ -138,7 +138,8 @@ def _notify_receipt_created(user, receipt) -> None:
     try:
         from ..services import telegram_bot as tg
         st_map = {"valid": "действителен", "invalid": "НЕ действителен",
-                  "not_found": "не найден в ФНС"}
+                  "not_found": "не найден в ФНС",
+                  "pending": "ожидает проверки (лимит ФНС)"}
         status = st_map.get(receipt.fns_status, "проверяется…")
         tg.notify_user(user.id, (
             f"✅ Чек принят: {(receipt.total_sum or 0):.2f} ₽"
@@ -1048,10 +1049,77 @@ def fetch_queue_stats() -> dict:
     return {"queued": _FETCHQ.qsize()}
 
 
+# --------------------------------------------------------------------------
+#  v1.70.70: автоматическая достройка чеков, ожидающих сброса лимита ФНС
+# --------------------------------------------------------------------------
+_LIMIT_WORKER: threading.Thread | None = None
+LIMIT_RETRY_INTERVAL_S = 15 * 60      # проверяем очередь раз в 15 минут
+
+
+def _limit_retry_tick() -> int:
+    """Проверить чеки со статусом «ожидает проверки» → сколько поставлено."""
+    from ..database import SessionLocal
+    from ..services import fns_quota
+    if fns_quota.used_today() >= fns_quota.limit_value():
+        return 0                     # лимит ещё не сбросился — ждём
+    db = SessionLocal()
+    try:
+        rows = db.query(Receipt).filter(
+            Receipt.fns_status == "pending").order_by(
+            Receipt.created_at.asc()).limit(50).all()
+        ids = [r.id for r in rows]
+    finally:
+        db.close()
+    for rid in ids:
+        threading.Thread(target=_verify_one_sync, args=(rid,),
+                         daemon=True).start()
+    if ids:
+        logging.getLogger("ymaster").info(
+            "♻️ лимит ФНС сброшен — поставлено на проверку чеков: %d",
+            len(ids))
+    return len(ids)
+
+
+def _limit_retry_worker() -> None:
+    while True:
+        try:
+            if fns_quota_exhausted():
+                _limit_retry_tick()
+        except Exception:                                # noqa: BLE001
+            logging.getLogger("ymaster").debug(
+                "limit retry worker", exc_info=True)
+        time.sleep(LIMIT_RETRY_INTERVAL_S)
+
+
+def fns_quota_exhausted() -> bool:
+    """Есть ли чеки, ожидающие сброса лимита ФНС."""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        return db.query(Receipt).filter(
+            Receipt.fns_status == "pending").first() is not None
+    except Exception:                                    # noqa: BLE001
+        return False
+    finally:
+        db.close()
+
+
+def start_limit_retry_worker() -> bool:
+    """Запустить фоновую достройку очереди (идемпотентно)."""
+    global _LIMIT_WORKER
+    if os.environ.get("YM_FETCHQ_OFF") == "1":      # тесты: детерминизм
+        return False
+    if _LIMIT_WORKER is not None and _LIMIT_WORKER.is_alive():
+        return False
+    _LIMIT_WORKER = threading.Thread(target=_limit_retry_worker, daemon=True,
+                                     name="ymaster-fns-limit-retry")
+    _LIMIT_WORKER.start()
+    return True
+
+
 def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt) -> bool:
-    """Автозагрузка деталей после скана (настройка external_auto, по умолч. вкл)."""
-    if (appsettings.get_setting(db, "external_auto", "1") == "1"
-            and receipt.status == "new" and not receipt.full_data):   # v1.25.2
+    """Автозагрузка деталей после скана (v1.70.70: всегда включена)."""
+    if receipt.status == "new" and not receipt.full_data:      # v1.25.2
         _enqueue_fetch(receipt.id)           # v1.68.0: очередь вместо потока
         return True
     return False
@@ -1102,17 +1170,17 @@ def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
             summary="Состояние источников данных (бухгалтер+)")
 def external_status(user: User = Depends(require_accountant),
                     db: Session = Depends(get_db)):
+    from ..services import fns_quota
     cfg = external_engine._settings(db)
     return {
+        # v1.70.70: источник единственный — Открытые API ФНС
         "chain": external_engine.provider_chain(db),
         "engine": external_engine.status(),
         "configured": {
-            # v1.57.0: рабочий источник один — proverkacheka; fns_api — на
-            # перспективу (мастер-токен в карточке «Проверка чеков»)
-            "fns_api": bool(cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN),
-            "proverkacheka": bool(cfg.get("proverkacheka_token")),
+            "fns": bool(cfg.get("fns_master_token")
+                        or settings.FNS_MASTER_TOKEN),
         },
-        "auto_fetch": appsettings.get_setting(db, "external_auto", "1") == "1",
+        "quota": fns_quota.stats(db),
     }
 
 
@@ -1167,6 +1235,22 @@ def _verify_one_sync(receipt_id: str) -> None:
                                receipt.fns_status, receipt.fns_checked_at)
         duration = int((time.monotonic() - t0) * 1000)
 
+        if result.status == "quota":
+            # v1.70.70: исчерпан суточный лимит ФНС — чек НЕ теряется:
+            # остаётся «ожидает проверки» и проверяется автоматически
+            # после сброса лимита (см. _limit_retry_worker).
+            receipt.status = "new"
+            receipt.fns_status = "pending"
+            receipt.fns_message = result.message
+            db.commit()
+            logging.getLogger("ymaster").warning(
+                "⏸ ЧЕК ОЖИДАЕТ ПРОВЕРКИ [%s]: лимит запросов к ФНС",
+                receipt.id)
+            broadcast("receipt_verified", receipt.to_dict())
+            from ..services.webhooks import enqueue_receipt_verified
+            enqueue_receipt_verified(db, receipt.id)
+            return
+
         receipt.fns_status = result.status
         receipt.fns_message = result.message
         receipt.fns_checked_at = dt.datetime.utcnow()
@@ -1208,8 +1292,8 @@ def _verify_one_sync(receipt_id: str) -> None:
         _req = json.dumps({"fn": receipt.fn, "fd": receipt.fd,
                            "fp": receipt.fp}, ensure_ascii=False)
         _resp = json.dumps(result.raw, ensure_ascii=False)[:4000]
-        _prov = (result.raw.get("provider", "mock")
-                 if isinstance(result.raw, dict) else "mock")
+        _prov = (result.raw.get("provider", "fns")
+                 if isinstance(result.raw, dict) else "fns")
         for _try in range(5):
             _nid = (db.query(
                 func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1

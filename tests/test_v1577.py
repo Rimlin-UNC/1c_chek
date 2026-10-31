@@ -44,122 +44,96 @@ class TestVersion1577:
 
 
 class TestFinalChain:
-    """Итоговая логика владельца: смотрим мастер-ключ ФНС."""
+    """v1.70.70: очередь одна — официальное API ФНС."""
 
     def _eng(self):
         from app.services import external
         return external.ExternalFetchEngine()
 
-    def test_no_master_direct_pke(self, monkeypatch):
-        """НЕТ мастер-ключа → запрос СРАЗУ напрямую в proverkacheka.com."""
+    def test_no_master_chain_same(self, monkeypatch):
         eng = self._eng()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok", "fns_master_token": ""})
+            "fns_master_token": ""})
         monkeypatch.setattr(
             "app.services.external.settings.FNS_MASTER_TOKEN", "",
             raising=False)
-        assert eng.provider_chain(None) == ["proverkacheka", "mock"]
+        assert eng.provider_chain(None) == ["fns_api"]
 
-    def test_master_fns_first(self, monkeypatch):
-        """ЕСТЬ мастер-ключ → ПЕРВЫЙ запрос в ФНС, pke — запасной."""
+    def test_master_chain_same(self, monkeypatch):
+        eng = self._eng()
+        monkeypatch.setattr(eng, "_settings", lambda db: {
+            "fns_master_token": "master"})
+        assert eng.provider_chain(None) == ["fns_api"]
+
+    def test_no_third_party_provider_left(self, monkeypatch):
         eng = self._eng()
         monkeypatch.setattr(eng, "_settings", lambda db: {
             "proverkacheka_token": "tok", "fns_master_token": "master"})
-        assert eng.provider_chain(None) == ["fns_api", "proverkacheka", "mock"]
-
-    def test_master_without_pke_token(self, monkeypatch):
-        """Мастер-ключ есть, токена pke нет → очередь [fns_api, mock]."""
-        eng = self._eng()
-        monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "", "fns_master_token": "master"})
-        assert eng.provider_chain(None) == ["fns_api", "mock"]
+        chain = eng.provider_chain(None)
+        assert "proverkacheka" not in chain and "mock" not in chain
 
 
 class TestFetchLogging:
-    """Журнал «ДАННЫЕ ЧЕКА»: видно всё, что происходит при запросе."""
+    """Журнал «ДАННЫЕ ЧЕКА»: видно, что происходит при запросе в ФНС."""
 
-    def _eng(self):
-        from app.services import external
-        eng = external.ExternalFetchEngine()
-        monkey = None
-        return eng
-
-    def _run(self, monkeypatch, master, pke_fail, fns_fail):
+    def _run(self, monkeypatch, master, fns_fail):
         from app.services import external
         eng = external.ExternalFetchEngine()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok", "fns_master_token": master})
-        monkeypatch.setattr(external, "MAX_SAME_PROVIDER_RETRIES", 0)
-        monkeypatch.setattr(external.time, "sleep", lambda s: None)
+            "fns_master_token": master})
+        monkeypatch.setattr(eng, "_polite_wait", lambda provider: None)
         calls = []
-
-        def _pke(qr, token):
-            calls.append("pke")
-            if pke_fail:
-                return False, "HTTP 500 от proverkacheka", {}
-            return True, "Данные получены", {"document": {"receipt": {}}}
 
         def _fns(qr, fn, fd, fp, total, dtm, token):
             calls.append("fns")
             if fns_fail:
-                return False, "HTTP 500 от ФНС", {}
-            return True, "Чек найден", {"provider": "fns_api",
-                                        "document": {"receipt": {}}}
+                return False, "ФНС: сеть недоступна", {}
+            return True, "Чек найден в ФНС", {
+                "provider": "fns", "status": "valid",
+                "document": {"receipt": {
+                    "totalSum": 89000, "items": [
+                        {"name": "Т", "price": 89000, "sum": 89000,
+                         "quantity": 1}]}}}
 
-        monkeypatch.setattr(external, "fetch_proverkacheka", _pke)
         monkeypatch.setattr(external, "fetch_fns", _fns)
-        monkeypatch.setattr(
-            external, "parse_receipt_payload",
-            lambda data, known: external.ExternalResult(
-                ok=True, source="", found=True, message="ok",
-                total_sum=known, items=[], raw=data))
         return eng, calls
 
-    def test_log_no_master_direct_pke(self, monkeypatch, caplog):
-        """Без мастер-ключа: ФНС не вызывается, сразу pke; QR в журнале."""
+    def test_log_no_master_named_reason(self, monkeypatch, caplog):
+        """Без мастер-ключа — понятная причина и QR в журнале."""
         caplog.set_level(logging.INFO)
-        eng, calls = self._run(monkeypatch, master="", pke_fail=False,
-                               fns_fail=False)
+        eng, calls = self._run(monkeypatch, master="", fns_fail=False)
         res = eng.fetch(None, QR_OWNER, "7380440902170632", "11100",
                         "2060442762", 890.00, None)
-        assert calls == ["pke"], calls              # напрямую, ФНС не вызывалась
-        assert res.ok and res.source == "proverkacheka"
+        assert calls == [], "без токена к ФНС не обращаемся"
+        assert res.ok is False and "Мастер-токен" in res.message
         txt = caplog.text
         assert "ДАННЫЕ ЧЕКА [fn=7380440902170632 i=11100 fp=2060442762]" in txt
-        assert "890.0" in txt                       # сумма из QR
-        assert "мастер-ключ ФНС: НЕТ" in txt
-        assert "ОЧЕРЕДЬ ИСТОЧНИКОВ: proverkacheka → mock" in txt
-        assert "✅ proverkacheka: ДАННЫЕ ЧЕКА ПОЛУЧЕНЫ" in txt
+        assert "890.0" in txt
 
-    def test_log_master_fns_first_then_pke(self, monkeypatch, caplog):
-        """С мастер-ключом: первый запрос в ФНС; сбой ФНС → pke; всё в журнале."""
+    def test_log_success_from_fns(self, monkeypatch, caplog):
+        """Успешная проверка: ключ маскирован, факт получения в журнале."""
         caplog.set_level(logging.INFO)
-        eng, calls = self._run(monkeypatch, master="sekret", pke_fail=False,
-                               fns_fail=True)
+        eng, calls = self._run(monkeypatch, master="sekret", fns_fail=False)
         res = eng.fetch(None, QR_OWNER, "7380440902170632", "11100",
                         "2060442762", 890.00, None)
-        assert calls == ["fns", "pke"], calls
-        assert res.ok and res.source == "proverkacheka"
+        assert calls == ["fns"]
+        assert res.ok and res.source == "fns_api"
         txt = caplog.text
-        assert "мастер-ключ ФНС: есть (…" in txt    # ключ маскирован
-        assert "ОЧЕРЕДЬ ИСТОЧНИКОВ: fns_api → proverkacheka → mock" in txt
-        assert "❌ fns_api: сбой (попытка 1/1): HTTP 500 от ФНС" in txt
-        assert "✅ proverkacheka: ДАННЫЕ ЧЕКА ПОЛУЧЕНЫ" in txt
+        assert "Мастер-токен ФНС: есть (…" in txt
+        assert "sekret" not in txt
+        assert "✅ ФНС: ДАННЫЕ ЧЕКА ПОЛУЧЕНЫ" in txt
 
-    def test_log_all_sources_down(self, monkeypatch, caplog):
-        """Оба источника упали → демо-источник, в журнале «ДАННЫЕ НЕ
-        ПОЛУЧЕНЫ» с причинами по каждому."""
+    def test_log_failure_is_explicit(self, monkeypatch, caplog):
+        """Сбой ФНС — в журнале «ДАННЫЕ НЕ ПОЛУЧЕНЫ» с причиной."""
         caplog.set_level(logging.INFO)
-        eng, calls = self._run(monkeypatch, master="sekret", pke_fail=True,
-                               fns_fail=True)
+        eng, calls = self._run(monkeypatch, master="sekret", fns_fail=True)
         res = eng.fetch(None, QR_OWNER, "7380440902170632", "11100",
                         "2060442762", 890.00, None)
-        assert calls == ["fns", "pke"]
-        assert res.source == "mock" and res.found is False   # демо, не данные
+        assert calls == ["fns"]
+        assert res.ok is False and res.found is False
         txt = caplog.text
-        assert "🚫 ДАННЫЕ НЕ ПОЛУЧЕНЫ [fn=7380440902170632" in txt
-        assert "реальные источники не ответили" in txt
-        assert "HTTP 500 от ФНС" in txt and "HTTP 500 от proverkacheka" in txt
+        assert "❌ ФНС: сбой" in txt and "сеть недоступна" in txt
+        assert "proverkacheka" not in txt.lower()
 
 
 class TestWorkerLogging:

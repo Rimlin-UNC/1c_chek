@@ -130,13 +130,10 @@ class TestSourcesChain:
             chain = eng.provider_chain(db)
         finally:
             db.close()
+        # v1.70.70: источник единственный — официальное API ФНС
+        assert chain == ["fns_api"]
         assert "custom" not in " ".join(chain)
-        assert chain[-1] == "mock"
-        # v1.57.7: при мастер-ключе первый — fns_api, proverkacheka — после
-        if "proverkacheka" in chain:
-            for p in ("fns_api",):
-                if p in chain:
-                    assert chain.index("proverkacheka") > chain.index(p)
+        assert "proverkacheka" not in chain and "mock" not in chain
 
     def test_chain_ignores_custom_even_if_configured(self, monkeypatch):
         from app.services import external
@@ -148,13 +145,14 @@ class TestSourcesChain:
         })
         chain = eng.provider_chain(None)
         assert all(not c.startswith("custom") for c in chain)
-        assert "proverkacheka" in chain
+        assert chain == ["fns_api"]
 
     def test_settings_card_text_updated(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "ofd_ru,custom,proverkacheka" not in js   # порядок без custom
         assert "ext-custom-urls" not in js and "external_custom_urls" not in js
-        assert "единственного стабильно работающего источника" in js
+        assert "Токен proverkacheka.com" not in js        # v1.70.70
+        assert "📥 Получение данных чека из ФНС" in js
 
 
 class TestEcheckFlow:

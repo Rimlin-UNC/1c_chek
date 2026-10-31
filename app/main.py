@@ -89,10 +89,15 @@ async def lifespan(app: FastAPI):
 
     # v1.68.0: демоны очереди автозагрузки деталей чеков (2 воркера)
     try:
-        from .routers.receipts import start_fetch_workers
+        from .routers.receipts import (start_fetch_workers,
+                                       start_limit_retry_worker)
         _n = start_fetch_workers()
         if _n:
             log.info("fetch queue workers started: %d", _n)
+        # v1.70.70: чеки, ожидавшие сброса суточного лимита ФНС,
+        # проверяются автоматически после его сброса
+        if start_limit_retry_worker():
+            log.info("fns limit retry worker started")
     except Exception:                                    # noqa: BLE001
         log.exception("fetch queue workers start failed")
 
@@ -399,7 +404,7 @@ def about():
         "email": settings.VENDOR_EMAIL,
         "max_bot_username": mx_username,
         "receipts_total": receipts_count,
-        "fns_provider_default": settings.FNS_PROVIDER,
+        "fns_provider": "fns",
     }
 
 

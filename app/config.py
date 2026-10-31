@@ -65,7 +65,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.70.69"
+    APP_VERSION: str = "1.70.70"
     DEFAULT_BRANCH: str = "main"   # v1.70.18: канал обновлений из приложения — main
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
     # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
@@ -89,10 +89,16 @@ class Settings:
     )
 
     # --- Интеграция с ФНС ------------------------------------------------
-    # Провайдер проверки чеков: "mock" (демо) | "fns" (реальное API ФНС)
-    FNS_PROVIDER: str = _env("FNS_PROVIDER", "mock")
+    # v1.70.70: единственный источник проверки чеков — Открытые API ФНС.
+    # Мастер-токен и AppId выдаются ФНС при регистрации приложения
+    # (Brand YmasterAPI, лимит 1000 запросов за 24 часа) и вводятся
+    # администратором в настройках программы.
     FNS_API_BASE: str = _env("FNS_API_BASE", "https://openapi.nalog.ru:8090")
     FNS_MASTER_TOKEN: str = _env("FNS_MASTER_TOKEN", "")
+    # Суточный лимит запросов к ФНС и предупреждение при 80 %
+    FNS_DAILY_LIMIT: int = _int_env("FNS_DAILY_LIMIT", 1000)
+    FNS_DAILY_LIMIT_ENABLED: bool = _env("FNS_DAILY_LIMIT_ENABLED",
+                                         "1") not in ("0", "false", "")
     # v1.29.0: прокси для Telegram-бота (api.telegram.org часто заблокирован)
     TELEGRAM_PROXY: str = _env("TELEGRAM_PROXY", "")
     FNS_CLIENT_APP_ID: str = _env("FNS_CLIENT_APP_ID", "YMASTER-CHECK")

@@ -4,38 +4,28 @@
 # Разработчик и владелец идеи: ООО «Ямастер»
 # Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
-# v1.2.0. Источники (провайдеры):
-#   proverkacheka  — proverkacheka.com, POST /api/v1/check/get
-#                    (qrraw + token) — ЕДИНСТВЕННЫЙ рабочий источник
-#                    (v1.57.0: документация сверена, забираем максимум полей);
-#   fns_api        — официальное API ФНС «Открытое API проверки чека ККТ»
-#                    (мастер-токен; карточка «Проверка чеков») — НА
-#                    ПЕРСПЕКТИВУ: включается автоматически при появлении токена;
-#   (v1.55.0: свои шлюзы выведены; v1.57.0: Приложение ФНС, Честный Знак,
-#    ОФД-ру выведены из системы — сервисы перестали отвечать)
-#   mock           — встроенная эмуляция для тестов и демонстрации.
+# v1.70.70: источник ровно один — Открытые API ФНС (openapi.nalog.ru:8090).
+# Сторонние сервисы проверки чеков (proverkacheka.com и подобные) и
+# демонстрационный источник удалены из кода: чек проверяется только по
+# официальному API ФНС, сверенному с комплектом «API 2.0.9 от 10.12.2024».
 #
-# АНТИБАН-МЕХАНИКА (защита от блокировок):
-#   • все запросы к внешним сервисам выполняются ПОСЛЕДОВАТЕЛЬНО (общий замок);
-#   • между запросами случайная пауза 2–7 секунд (rand.uniform(2.0, 7.0));
-#   • при 429/403 (превышение лимитов, бан) провайдер уходит в «остывание»
-#     с растущей паузой 10→20→40…минут (максимум 6 часов), движок
-#     автоматически переключается на следующий доступный источник;
-#   • при сетевых сбоях — до 2 повторов того же источника, затем переход
-#     к следующему; счётчик неудач сбрасывается после успеха;
-#   • таймаут запроса 20 с; повторная проверка чека — только вне кэша.
+# МЕХАНИКА:
+#   • обращения к ФНС строго последовательные (общий замок), пауза 2–7 с;
+#   • при сетевых сбоях источник «остывает» (10 мин → 6 ч, растущая пауза);
+#   • учитывается суточный лимит ФНС — 1000 запросов за 24 часа
+#     (см. fns_quota.py); при исчерпании чек остаётся в очереди и
+#     проверяется автоматически после сброса лимита;
+#   • повторная проверка того же чека берётся из кэша (30 дней) и лимит
+#     не расходует.
 # ======================================================================
 from __future__ import annotations
 
-import json
 import logging
 import random
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
-
-import httpx
+from datetime import datetime, timezone
 
 from ..config import settings
 
@@ -48,9 +38,6 @@ COOLDOWN_MAX_SECONDS = 6 * 3600.0    # максимум 6 часов
 MAX_SAME_PROVIDER_RETRIES = 2
 
 log = logging.getLogger("ymaster")
-
-PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"
-
 
 @dataclass
 class ExternalItem:
@@ -328,195 +315,87 @@ def parse_receipt_payload(data: dict, known_rub: float | None = None) -> Externa
 # ==========================================================================
 #  Отдельные провайдеры
 # ==========================================================================
-def fetch_proverkacheka(qr_raw: str, token: str) -> tuple[bool, str, dict]:
-    """
-    proverkacheka.com: POST /api/v1/check/get, поля qrraw + token
-    (токен из личного кабинета сервиса, Cookie ENGID=1.1).
-    v1.57.1: источник принимает разные форматы тела запроса — пробуем
-    последовательно urlencoded → JSON → multipart; формат меняется
-    автоматически, если пришёл 400/422 («неверный формат запроса»).
-    В сообщении об ошибке — причина: токен/квота/формат + фрагмент ответа.
-    Возвращает (успех_сети, сообщение, json_ответ).
-    """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (YmasterCheck/1.2; +https://ymaster.ru)",
-        "Cookie": "ENGID=1.1",
-    }
-    base = {"qrraw": qr_raw}
-    if token:
-        base["token"] = token
-
-    def _send(how: str):
-        if how == "json":                      # Content-Type: application/json
-            return httpx.post(PROVERKACHEKA_URL, json=base,
-                              headers=headers, timeout=REQUEST_TIMEOUT)
-        if how == "multipart":                 # multipart/form-data
-            return httpx.post(PROVERKACHEKA_URL,
-                              files={k: (None, v) for k, v in base.items()},
-                              headers=headers, timeout=REQUEST_TIMEOUT)
-        return httpx.post(PROVERKACHEKA_URL, data=base,   # application/x-www-form-urlencoded
-                          headers=headers, timeout=REQUEST_TIMEOUT)
-
-    last_err = ""
-    _accepted_format = ""
-    _saw_token_rejected = False            # v1.58.0
-    # v1.58.0: multipart — ЕДИНСТВЕННЫЙ формат, принятый API
-    # (проверено контрольным curl на боевом сервере 09.10.2026)
-    for how in ("multipart", "form", "json"):
-        try:
-            resp = _send(how)
-        except httpx.HTTPError as e:
-            return False, f"Сеть: {e.__class__.__name__}", {}
-        # v1.57.8: диагностика — что именно ответил источник
-        log.info("📩 proverkacheka [%s]: HTTP %s, %d байт",
-                 how, resp.status_code, len(resp.content or b""))
-        if resp.status_code == 401:
-            # v1.58.0: формат мог не передать токен — пробуем следующий
-            _saw_token_rejected = True
-            last_err = f"{how}: HTTP 401 (токен не принят)"
-            continue
-        if resp.status_code == 402:
-            return False, ("HTTP 402: квота/тариф API исчерпаны — пополните "
-                           "баланс в кабинете proverkacheka.com"), {}
-        if resp.status_code in (429, 403):
-            return False, f"HTTP {resp.status_code} (лимит/блокировка)", {}
-        if resp.status_code in (400, 422):
-            snippet = (resp.text or "")[:120].replace(chr(10), " ")
-            last_err = f"{how}: HTTP {resp.status_code} {snippet}"
-            continue                # формат тела не подошёл — пробуем следующий
-        if resp.status_code != 200:
-            snippet = (resp.text or "")[:120].replace(chr(10), " ")
-            return False, f"HTTP {resp.status_code} (сервис временно недоступен?) {snippet}", {}
-        try:
-            js = resp.json()
-        except ValueError:
-            return False, f"Ответ не JSON: {(resp.text or '')[:120]}", {}
-        # v1.57.8: тело ответа в журнал — видно, ЧТО вернул сервис
-        _snip = (resp.text or "").replace("\n", " ").replace("\r", " ")[:700]
-        log.info("📩 proverkacheka [%s]: ответ: %s", how, _snip or "(пусто)")
-        # v1.57.9/v1.58.0: ошибка может прийти В ТЕЛЕ при HTTP 200 —
-        # {"code":401,"data":"Не авторизован (не представился)…"}
-        _c = js.get("code") if isinstance(js, dict) else None
-        if isinstance(_c, str) and _c.isdigit():
-            _c = int(_c)                   # v1.58.0: код может прийти строкой
-        if isinstance(_c, int) and _c != 0:
-            _bdata = str(js.get("data") or js.get("message") or "")[:160]
-            if _c == 401:
-                # v1.58.0: формат мог не передать токен — пробуем следующий
-                _saw_token_rejected = True
-                last_err = f"{how}: код 401 в теле (токен не принят)"
-                continue
-            if _c == 402:
-                return False, (f"Квота/тариф API исчерпаны (code 402: {_bdata}) — "
-                               "пополните баланс в кабинете proverkacheka.com"), {}
-            if _c in (404, 5):
-                return False, (f"Чека нет в базе сервиса (code {_c}: {_bdata})"), {}
-            if _c in (429, 403):
-                return False, (f"Лимит/блокировка proverkacheka.com "
-                               f"(code {_c}: {_bdata})"), {}
-            return False, f"proverkacheka.com code {_c}: {_bdata}", {}
-        if not _accepted_format:
-            _accepted_format = how
-        return True, "OK", js
-    if _saw_token_rejected:   # v1.58.0: все форматы отказали в авторизации
-        return False, ("Токен не принят proverkacheka.com (не авторизован): "
-                       "обновите «Токен доступа к API» в настройках "
-                       "источников (персональная страница /user/…)"), {}
-    return False, f"Формат запроса не принят ({last_err})", {}
-
-
 def fetch_fns(qr_raw: str, fn: str, fd: str, fp: str, total_rub: float,
-              date_time: datetime, master_token: str) -> tuple[bool, str, dict]:
+              date_time: datetime,
+              master_token: str = "") -> tuple[bool, str, dict]:
+    """Проверка и получение чека в Открытых API ФНС (единственный путь).
+
+    v1.70.70: метод GetTicket официального асинхронного сервиса ФНС отдаёт
+    сразу и подтверждение существования чека, и полный документ (позиции,
+    ИНН, адрес расчётов) — поэтому отдельного «проверочного» запроса нет.
+    Возвращает (успех, сообщение, полезная нагрузка для разбора).
     """
-    Официальное API ФНС. Мастер-токен выдаётся по заявлению (см.
-    docs/knowledge/fns_auth.md). Проверка реквизитов: POST /api/2/check.
-    Возвращает JSON проверки (данные позиций ФНС отдаёт по отдельному
-    методу — при наличии токена движок попытается получить документ).
-    """
-    from .fns import FnsClient  # локальный импорт — избегаем цикла
-    client = FnsClient(master_token=master_token)
-    result = client.check_receipt(fn, fd, fp, total_rub, date_time)
-    raw = {"provider": "fns_api", "status": result.status, "message": result.message}
+    from .fns import FnsClient
+    client = FnsClient(master_token=master_token or None)
+    moment = date_time or datetime.now(timezone.utc).replace(tzinfo=None)
+    result = client.get_ticket(fn, fd, fp, total_rub, moment)
     if not result.ok:
-        return False, result.message, raw
-    # Валидный ответ ФНС = чек существует. v1.27.0: сразу за проверкой
-    # получаем ПОЛНЫЙ чек (GetTicket, SOAP KktService/0.1) — с позициями.
-    payload = {
-        "document": {"receipt": {
-            "totalSum": int(round(total_rub * 100)),
-            "dateTime": date_time.strftime("%Y-%m-%dT%H:%M:%S") if date_time else None,
-            "user": "", "userInn": "", "retailPlaceAddress": "",
-            "items": [],
-        }},
-        "check": result.raw,
-    }
-    try:
-        gt = client.get_ticket(fn, fd, fp, total_rub, date_time)
-        if gt.ok and isinstance(gt.raw.get("ticket"), dict) and gt.raw["ticket"]:
-            payload["ticket"] = gt.raw["ticket"]
-    except Exception:                       # GetTicket не обязан мешать проверке
-        pass
+        # quota — не сбой источника, а исчерпанный лимит: чек в очередь
+        return (False, result.message,
+                {"provider": "fns", "kind": result.raw.get("kind", ""),
+                 "status": result.status, "message": result.message})
+    ticket = result.raw.get("ticket") or {}
+    payload = {"provider": "fns", "status": result.status,
+               "message": result.message, "ticket": ticket,
+               "code": result.raw.get("code", "")}
+    if result.status != "valid":
+        return True, result.message, payload
+    # Приводим документ ФНС к форме, которую понимает parse_receipt_payload:
+    # в Ticket ФНС чек лежит в ключе receipt (или в корне для старых версий).
+    document = ticket.get("receipt") if isinstance(ticket, dict) else None
+    payload["document"] = {"receipt": document} if document else ticket
     return True, result.message, payload
 
 
 # ==========================================================================
-#  Движок: последовательность, паузы 2–7 с, остывание, ротация
+#  Движок загрузки: единственный источник — Открытые API ФНС
 # ==========================================================================
 class ExternalFetchEngine:
+    """Загрузка данных чека из ФНС с защитой от лишних обращений.
+
+    v1.70.70: сторонние провайдеры удалены — источник ровно один (ФНС).
+    Поэтому «ротация источников» больше не нужна; остались:
+      • последовательность запросов (общий замок) и пауза между ними;
+      • «остывание» при сетевых сбоях, чтобы не долбить сервис;
+      • учёт суточного лимита 1000 запросов (fns_quota): при исчерпании
+        результат приходит со статусом quota — чек остаётся в очереди и
+        проверяется автоматически после сброса лимита.
+    """
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._last_call: dict[str, float] = {}
         self._cooldown_until: dict[str, float] = {}
         self._fail_streak: dict[str, int] = {}
 
-    # --- Настройки источников из БД ---
+    # --- настройки из БД ---
     def _settings(self, db) -> dict:
         from ..models import AppSetting
         rows = {r.key: r.value for r in db.query(AppSetting).filter(
-            AppSetting.key.in_(["fns_master_token", "proverkacheka_token",
-                                "external_order", "external_auto"])).all()}
-        # v1.55.0: «свои шлюзы» выведены из системы — custom-ключи в БД
-        # больше не читаются и ни на что не влияют (данные не трогаем)
+            AppSetting.key.in_(["fns_master_token", "fns_client_app_id",
+                                "external_auto"])).all()}
         return rows
 
     def provider_chain(self, db) -> list[str]:
-        """ИТОГОВАЯ ЛОГИКА владельца (v1.57.7; как в v1.2.0, где загрузка
-        чеков работала идеально). Перед запросом смотрим мастер-ключ ФНС:
+        """Источник всегда один — ФНС (оставлено для совместимости вызовов)."""
+        return ["fns_api"]
 
-        • мастер-ключа НЕТ — запрос уходит СРАЗУ напрямую в
-          proverkacheka.com (запрос к ФНС не делаем);
-        • мастер-ключ ЕСТЬ — ПЕРВЫЙ запрос идёт в ФНС, а
-          proverkacheka.com остаётся запасным источником после него.
-
-        Настройка external_order на очерёдность не влияет — порядок
-        задан системой. mock всегда в конце — чеки проверяются даже
-        без токенов."""
-        cfg = self._settings(db)
-        chain: list[str] = []
-        if cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN:
-            chain.append("fns_api")           # мастер-ключ есть → ФНС первой
-        if cfg.get("proverkacheka_token"):
-            chain.append("proverkacheka")     # напрямую / запасной после ФНС
-        chain.append("mock")
-        return chain
-
-    def is_available(self, provider: str) -> bool:
+    def is_available(self, provider: str = "fns_api") -> bool:
         return time.time() >= self._cooldown_until.get(provider, 0.0)
 
     def status(self) -> dict:
         now = time.time()
-        out = {}
-        for p in ("fns_api", "proverkacheka", "mock"):
-            cd = self._cooldown_until.get(p, 0.0)
-            out[p] = {
-                "available": now >= cd,
-                "cooldown_sec": max(0, int(cd - now)),
-                "fail_streak": self._fail_streak.get(p, 0),
-            }
-        return out
+        from . import fns_quota
+        cd = self._cooldown_until.get("fns_api", 0.0)
+        return {"fns_api": {
+            "available": now >= cd,
+            "cooldown_sec": max(0, int(cd - now)),
+            "fail_streak": self._fail_streak.get("fns_api", 0),
+            "quota": fns_quota.stats(),
+        }}
 
     def _polite_wait(self, provider: str) -> None:
-        """Случайная пауза 2–7 с между запросами к источнику (антибан)."""
+        """Пауза между обращениями к ФНС (антибан: 2–7 с)."""
         last = self._last_call.get(provider, 0.0)
         gap = random.uniform(GAP_MIN_SECONDS, GAP_MAX_SECONDS)
         wait = last + gap - time.time()
@@ -525,116 +404,84 @@ class ExternalFetchEngine:
             time.sleep(min(wait, GAP_MAX_SECONDS))
         self._last_call[provider] = time.time()
 
-    def _note_failure(self, provider: str, message: str) -> None:
-        """Счётчик неудач и «остывание» при признаках блокировки."""
-        streak = self._fail_streak.get(provider, 0) + 1
-        self._fail_streak[provider] = streak
-        if ("429" in message or "403" in message or "блокир" in message.lower()):
+    def _note_failure(self, message: str) -> None:
+        streak = self._fail_streak.get("fns_api", 0) + 1
+        self._fail_streak["fns_api"] = streak
+        low = message.lower()
+        if "429" in message or "403" in message or "блокир" in low \
+                or "сеть недоступна" in low:
             cooldown = min(COOLDOWN_BASE_SECONDS * (2 ** (streak - 1)),
                            COOLDOWN_MAX_SECONDS)
-            self._cooldown_until[provider] = time.time() + cooldown
+            self._cooldown_until["fns_api"] = time.time() + cooldown
 
     def fetch(self, db, qr_raw: str, fn: str, fd: str, fp: str,
               total_rub: float, date_time: datetime | None) -> ExternalResult:
-        """
-        Главная точка входа. Перебирает источники по порядку; между запросами
-        — случайная пауза; при блокировке источник «остывает» и идёт ротация.
-        """
-        chain = self.provider_chain(db)
-        errors: list[str] = []
-        cfg = self._settings(db)
+        """Получить данные чека из ФНС (единственный источник)."""
         known_total = total_rub or None
-
-        # v1.57.7: подробный журнал загрузки (grep «ДАННЫЕ ЧЕКА»)
-        log.info("🔍 ДАННЫЕ ЧЕКА [fn=%s i=%s fp=%s]: старт загрузки "
+        log.info("🔍 ДАННЫЕ ЧЕКА [fn=%s i=%s fp=%s]: старт загрузки из ФНС "
                  "(сумма=%s руб., дата=%s)", fn, fd, fp, total_rub, date_time)
-        _mk = cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN
-        _pk = cfg.get("proverkacheka_token")
-        log.info("🔑 Ключи: мастер-ключ ФНС: %s; токен proverkacheka: %s",
-                 ("есть (…" + _mk[-4:] + ")") if _mk else
-                 "НЕТ — запрос идёт напрямую в proverkacheka.com",
-                 ("задан (…" + _pk[-4:] + ")") if _pk else "НЕ задан")
-        log.info("📋 ОЧЕРЕДЬ ИСТОЧНИКОВ: %s", " → ".join(chain))
 
-        for provider in chain:
-            if not self.is_available(provider):
-                errors.append(f"{provider}: остывание ещё {int(self._cooldown_until[provider] - time.time())} с")
-                continue
+        if not self.is_available():
+            left = int(self._cooldown_until["fns_api"] - time.time())
+            return ExternalResult(
+                ok=False, source="fns_api", found=False,
+                message=f"Сервис ФНС временно недоступен, повтор через "
+                        f"{left} с")
 
-            with self._lock:                      # строго последовательно
-                self._polite_wait(provider)
-                for attempt in range(MAX_SAME_PROVIDER_RETRIES + 1):
-                    try:
-                        if provider == "proverkacheka":
-                            net_ok, msg, data = fetch_proverkacheka(
-                                qr_raw, cfg.get("proverkacheka_token", ""))
-                        elif provider == "fns_api":
-                            token = cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN
-                            net_ok, msg, data = fetch_fns(
-                                qr_raw, fn, fd, fp, total_rub,
-                                date_time or datetime.utcnow(), token)
-                        else:  # mock
-                            from .fns import check_mock
-                            r = check_mock(fn, fd, fp, total_rub, date_time or datetime.utcnow())
-                            net_ok, msg = True, r.message
-                            data = {"provider": "mock", "status": r.status,
-                                    "document": {"receipt": {
-                                        "totalSum": int(round((total_rub or 0) * 100)),
-                                        "dateTime": (date_time or datetime.utcnow()).strftime("%Y-%m-%dT%H:%M:%S"),
-                                        "items": [], "user": "", "userInn": "",
-                                    }}}
-                    except Exception as e:            # непредвиденное — как сетевой сбой
-                        net_ok, msg, data = False, f"Ошибка: {e}", {}
+        cfg = self._settings(db)
+        token = cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN
+        if not token:
+            log.warning("🔑 Мастер-токен ФНС не задан — проверка невозможна")
+            return ExternalResult(
+                ok=False, source="fns_api", found=False,
+                message="Не задан Мастер-токен ФНС: укажите его в "
+                        "«Настройки → Проверка чеков (ФНС)»")
+        log.info("🔑 Мастер-токен ФНС: есть (…%s)", token[-4:])
 
-                    if net_ok:
-                        parsed = parse_receipt_payload(data, known_total)
-                        # v1.26.0: источник ответил, но данных ЧЕКА в ответе
-                        # нет (например, fns_api check без позиций) — это не
-                        # заполнение: пробуем следующий источник, а не
-                        # возвращаем «пустое» заполнение
-                        if not parsed.found and provider != "mock":
-                            errors.append(f"{provider}: {parsed.message}")
-                            log.warning("⚠️ %s: источник ответил, но данных "
-                                        "чека нет (%s) → следующий источник",
-                                        provider, parsed.message)
-                            break                       # к следующему источнику
-                        parsed.source = provider
-                        if provider == "mock":
-                            parsed.found = False
-                            parsed.message = f"Источник «mock» (демо): {msg}"
-                            log.error("🚫 ДАННЫЕ НЕ ПОЛУЧЕНЫ [fn=%s i=%s fp=%s]: "
-                                      "реальные источники не ответили (%s); "
-                                      "ответ демо-источника записан как «не найден»",
-                                      fn, fd, fp, "; ".join(errors) or "причин нет")
-                        else:
-                            parsed.found = True
-                            parsed.message = msg
-                        self._fail_streak[provider] = 0
-                        log.info("✅ %s: ДАННЫЕ ЧЕКА ПОЛУЧЕНЫ (%s)", provider, msg)
-                        parsed.raw["engine"] = {"errors": errors, "attempts": attempt + 1}
-                        return parsed
+        with self._lock:                      # строго последовательно
+            self._polite_wait("fns_api")
+            try:
+                moment = date_time or datetime.now(timezone.utc).replace(
+                    tzinfo=None)
+                net_ok, msg, data = fetch_fns(qr_raw, fn, fd, fp, total_rub,
+                                              moment, token)
+            except Exception as e:            # непредвиденное — как сбой
+                net_ok, msg, data = False, f"Ошибка: {e}", {}
 
-                    self._note_failure(provider, msg)
-                    errors.append(f"{provider}: {msg}")
-                    log.warning("❌ %s: сбой (попытка %d/%d): %s",
-                                provider, attempt + 1,
-                                MAX_SAME_PROVIDER_RETRIES + 1, msg)
-                    # блокировка/лимиты/токен/квота → сразу к следующему
-                    # источнику (повторы бессмысленны)
-                    if ("429" in msg or "403" in msg or "блокир" in msg.lower()
-                            or "токен не принят" in msg.lower()
-                            or "квота" in msg.lower()):
-                        log.warning("↪️ %s: блокировка/лимит — переход к "
-                                    "следующему источнику", provider)
-                        break
-                    # обычный сбой → короткая пауза и повтор того же источника
-                    time.sleep(random.uniform(1.0, 2.5))
+            if not net_ok:
+                if data.get("kind") == "quota":
+                    # лимит — не сбой сервиса: чек ждёт сброса лимита
+                    log.warning("⏸ ДАННЫЕ НЕ ПОЛУЧЕНЫ [fn=%s]: %s", fn, msg)
+                    return ExternalResult(ok=False, source="fns_api",
+                                          found=False, message=msg,
+                                          raw={"quota": True})
+                self._note_failure(msg)
+                log.warning("❌ ФНС: сбой: %s", msg)
+                return ExternalResult(ok=False, source="fns_api", found=False,
+                                      message=f"ФНС: {msg}")
 
-        log.error("🚫 ДАННЫЕ НЕ ПОЛУЧЕНЫ [fn=%s i=%s fp=%s]: %s",
-                  fn, fd, fp, "; ".join(errors) or "нет доступных источников")
-        return ExternalResult(ok=False, source="", found=False,
-                              message="Все источники недоступны: " + "; ".join(errors) if errors
-                              else "Нет доступных источников")
+            self._fail_streak["fns_api"] = 0
+            if data.get("status") in ("not_found", "invalid"):
+                log.info("ℹ️ ФНС: чек не подтверждён (%s)", msg)
+                return ExternalResult(ok=True, source="fns_api", found=False,
+                                      message=msg, raw=data)
+
+            parsed = parse_receipt_payload(data, known_total)
+            if not parsed.found:
+                log.warning("⚠️ ФНС: чек подтверждён, но позиций в ответе "
+                            "нет (%s)", parsed.message)
+                parsed.ok = True
+                parsed.source = "fns_api"
+                parsed.message = msg
+                parsed.raw["engine"] = {"errors": [], "attempts": 1}
+                return parsed
+
+            parsed.source = "fns_api"
+            parsed.found = True
+            parsed.message = msg
+            parsed.raw["engine"] = {"errors": [], "attempts": 1}
+            log.info("✅ ФНС: ДАННЫЕ ЧЕКА ПОЛУЧЕНЫ (%s)", msg)
+            return parsed
 
 
 # Глобальный движок (единственный экземпляр на процесс — ровные паузы)

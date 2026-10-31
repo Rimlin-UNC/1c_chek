@@ -53,43 +53,41 @@ class TestDeadSourcesRemoved:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert "Честный знак" not in idx
 
-    def test_chain_ignores_dead_order(self, monkeypatch):
-        """Сохранённый порядок с мёртвыми источниками игнорируется."""
+    def test_chain_ignores_saved_order(self, monkeypatch):
+        """v1.70.70: сохранённый порядок источников больше ни на что
+        не влияет — остарые значения в базе не трогаем, но игнорируем."""
         from app.services import external
         eng = external.ExternalFetchEngine()
         monkeypatch.setattr(eng, "_settings", lambda db: {
             "external_order": "fns_api,fns_app,crpt,ofd_ru,proverkacheka",
-            "proverkacheka_token": "tok", "fns_master_token": "",
-        })
-        chain = eng.provider_chain(None)
-        assert chain == ["proverkacheka", "mock"]
-
-    def test_chain_fns_api_on_perspective(self, monkeypatch):
-        """v1.57.7 (итоговая логика владельца): мастер-ключ задан →
-        первый запрос в ФНС, proverkacheka.com — запасной после него."""
-        from app.services import external
-        eng = external.ExternalFetchEngine()
-        monkeypatch.setattr(eng, "_settings", lambda db: {
-            "external_order": "proverkacheka",
             "proverkacheka_token": "tok", "fns_master_token": "master",
         })
-        chain = eng.provider_chain(None)
-        assert chain == ["fns_api", "proverkacheka", "mock"]
+        assert eng.provider_chain(None) == ["fns_api"]
+
+    def test_chain_is_fns_only(self, monkeypatch):
+        """Единственный источник проверки чеков — официальное API ФНС."""
+        from app.services import external
+        eng = external.ExternalFetchEngine()
+        monkeypatch.setattr(eng, "_settings", lambda db: {})
+        assert eng.provider_chain(None) == ["fns_api"]
 
     def test_status_tuple_clean(self):
-        src = open("app/services/external.py", encoding="utf-8").read()
-        assert 'for p in ("fns_api", "proverkacheka", "mock"):' in src
+        """v1.70.70: в состоянии движка один источник — ФНС."""
+        from app.services.external import ExternalFetchEngine
+        st = ExternalFetchEngine().status()
+        assert list(st) == ["fns_api"]
+        assert "proverkacheka" not in st and "mock" not in st
 
 
-class TestProverkachekaMaxData:
-    def test_fetch_matches_documentation(self):
-        """POST /api/v1/check/get, form qrraw+token, Cookie ENGID=1.1."""
+class TestFnsOnlyFetch:
+    def test_fetch_goes_through_fns_client(self):
+        """v1.70.70: сторонний сервис удалён, данные берутся из ФНС."""
         src = open("app/services/external.py", encoding="utf-8").read()
-        assert 'PROVERKACHEKA_URL = "https://proverkacheka.com/api/v1/check/get"' in src
-        f = src.split("def fetch_proverkacheka")[1].split("def fetch_fns")[0]
-        assert 'base = {"qrraw": qr_raw}' in f          # v1.57.1: 3 формата
-        assert 'for how in ("multipart", "form", "json"):' in f   # v1.58.0: рабочая схема
-        assert '"Cookie": "ENGID=1.1"' in f
+        assert "proverkacheka.com" not in src.split("# ==========")[0].split(
+            "МЕХАНИКА")[0].lower().replace("proverkacheka.com и подобные", "")
+        assert "def fetch_proverkacheka" not in src
+        f = src.split("def fetch_fns")[1].split("class ExternalFetchEngine")[0]
+        assert "FnsClient" in f and "get_ticket" in f
 
     def test_new_extra_fields_parsed(self):
         """ФФД-версия, адрес источника, мета позиций."""
@@ -133,7 +131,7 @@ class TestProverkachekaMaxData:
 class TestFnsBlockUntouched:
     def test_fns_card_still_present(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "Проверка чеков (ФНС)</div>" in js
+        assert ">Проверка чеков (ФНС) <span" in js
         # карточка ФНС живёт на своём эндпоинте /settings/fns (master_token)
         assert 'id="fns-token"' in js
         assert "api.put('/api/v1/settings/fns'" in js
@@ -143,21 +141,27 @@ class TestFnsBlockUntouched:
         assert "master_token" in sc
 
     def test_sources_card_rewritten(self):
+        """v1.70.70: карточка источников стала карточкой ФНС и лимита."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "(v1.57.0)</span>" in js
-        assert "единственного стабильно работающего источника" in js
-        assert "итоговая логика: перед запросом смотрим мастер-ключ ФНС" in js.split("📥 Источники данных чека")[1][:1800]
-        assert "Токен proverkacheka.com" in js
+        blk = js.split("📥 Получение данных чека из ФНС")[1][:1800]
+        assert "API ФНС" in blk and "GetTicket" in blk
+        assert "1000 запросов" in blk
+        assert "Токен proverkacheka.com" not in js
+        assert "Порядок источников (задан системой)" not in js
 
     def test_external_status_configured(self):
+        """v1.70.70: статус сообщает только о ФНС и расходе лимита."""
         src = open("app/routers/receipts.py", encoding="utf-8").read()
         blk = src.split('"configured"')[1][:400]
-        assert "fns_api" in blk and "proverkacheka" in blk
+        assert '"fns"' in blk
+        assert "proverkacheka" not in blk
         assert "fns_app" not in blk and "crpt" not in blk
+        assert '"quota"' in src.split('def external_status')[1][:600]
 
 
 class TestChainFunctional:
     def test_chain_without_tokens(self, monkeypatch):
+        """Даже без токена цепочка одна — ФНС (проверка скажет, чего нет)."""
         from app.services.external import ExternalFetchEngine
         from app.database import SessionLocal
         monkeypatch.setattr(
@@ -169,9 +173,10 @@ class TestChainFunctional:
             chain = eng.provider_chain(db)
         finally:
             db.close()
-        assert chain[-1] == "mock"
-        assert not any(c in ("crpt", "ofd_ru") or c.startswith("fns_app")
-                       or c.startswith("custom") for c in chain)
+        assert chain == ["fns_api"]
+        assert not any(c in ("crpt", "ofd_ru", "mock", "proverkacheka")
+                       or c.startswith("fns_app") or c.startswith("custom")
+                       for c in chain)
 
 
 class TestDependencies:

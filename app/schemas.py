@@ -105,7 +105,7 @@ class MappingSave(BaseModel):
 
 # --- Настройки ---------------------------------------------------------------
 class FnsSettingsPatch(BaseModel):
-    provider: Literal["mock", "fns"]
+    provider: Literal["fns"] = "fns"
     api_base: Optional[str] = None
     master_token: Optional[str] = None
     client_app_id: Optional[str] = None
@@ -186,15 +186,13 @@ class FetchDetailsRequest(BaseModel):
 
 
 class ExternalSettingsPatch(BaseModel):
-    """Настройки источников данных о чеке (только администратор)."""
+    """v1.70.70: настройки единственного источника — Открытых API ФНС."""
     fns_master_token: Optional[str] = Field(default=None, max_length=500)
-    proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
-    external_order: Optional[str] = Field(default=None, max_length=100)
-    external_auto: Optional[bool] = None
+    fns_client_app_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class ExternalTestRequest(BaseModel):
-    provider: str = "chain"  # chain (весь порядок) | fns_api | proverkacheka
+    """Контрольный запрос к ФНС (сторонних провайдеров больше нет)."""
     qrraw: Optional[str] = None
 
 

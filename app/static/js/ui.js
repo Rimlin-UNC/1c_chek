@@ -46,6 +46,7 @@ export function fmtDate(iso) {
 const STATUS_LABELS = {
   new: 'Новый', verifying: 'Проверяется', verified: 'Проверен', failed: 'Отклонён ФНС',
   valid: 'Действителен', invalid: 'Недействителен', not_found: 'Не найден в ФНС',
+  pending: 'Ожидает проверки (лимит ФНС)',
   unknown: 'Не проверен', exported: 'Выгружен в 1С',
 };
 export function statusLabel(s) { return STATUS_LABELS[s] || s || '—'; }

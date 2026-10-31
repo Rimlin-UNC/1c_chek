@@ -34,68 +34,92 @@ class TestVersion1571:
 
 
 class TestFetchRobust:
-    def _fake_post(self, calls, responses):
-        """responses: список (status, text/json) — по одному на вызов."""
+    """v1.70.70: устойчивость оставшегося единственного источника — ФНС.
+
+    Раньше здесь проверялся перебор форматов стороннего сервиса. Теперь
+    проверяем то, что действительно важно для ФНС: сетевой сбой, отказ
+    по токену с повтором, исчерпанный лимит и понятная причина в тексте.
+    """
+
+    def _fake(self, monkeypatch, responses):
+        from app.services import fns
+
+        calls = []
         it = iter(responses)
 
-        def _post(url, **kwargs):
-            calls.append(kwargs)
-            status, body = next(it)
-            if isinstance(body, dict):
-                return httpx.Response(status, json=body, request=httpx.Request("POST", url))
-            return httpx.Response(status, text=body, request=httpx.Request("POST", url))
-        return _post
+        def fake_post(url, content=None, headers=None, timeout=None, **kw):
+            calls.append({"url": url, "headers": headers or {},
+                          "body": content or b""})
+            return next(it)
 
-    def test_form_ok_first_try(self):
-        from app.services.external import fetch_proverkacheka
-        calls = []
-        payload = {"totalSum": 10000, "items": [{"name": "x", "price": 10000,
-                                                 "sum": 10000, "quantity": 1}]}
-        with mock_patch("httpx.post", self._fake_post(calls, [(200, payload)])):
-            ok, msg, data = fetch_proverkacheka("t=…&s=100.00&fn=1&i=2&fp=3&n=1", "tok")
-        assert ok and msg == "OK" and data["totalSum"] == 10000
-        assert len(calls) == 1 and "files" in calls[0]     # v1.58.0: multipart первым
+        monkeypatch.setattr(fns.httpx, "post", fake_post)
+        monkeypatch.setattr(fns.time, "sleep", lambda s: None)
+        monkeypatch.setattr(fns, "_db_setting", lambda key: "")
+        return fns.FnsClient(master_token="MASTER"), calls
 
-    def test_fallback_form_json_multipart(self):
-        from app.services.external import fetch_proverkacheka
-        calls = []
-        payload = {"totalSum": 10000, "items": []}
-        with mock_patch("httpx.post", self._fake_post(
-                calls, [(400, "bad format"), (422, "bad format"), (200, payload)])):
-            ok, msg, data = fetch_proverkacheka("t=…", "tok")
-        assert ok and data["totalSum"] == 10000
-        assert len(calls) == 3
-        assert "files" in calls[0] and "data" in calls[1] and "json" in calls[2]
+    def _resp(self, text, status=200):
+        from app.services import fns
+        return fns.httpx.Response(
+            status, text=text,
+            request=fns.httpx.Request("POST", "https://openapi.nalog.ru:8090"))
 
-    def test_all_formats_rejected_message(self):
-        from app.services.external import fetch_proverkacheka
-        calls = []
-        with mock_patch("httpx.post", self._fake_post(
-                calls, [(400, "need qr param"), (422, "no"), (400, "still no")])):
-            ok, msg, data = fetch_proverkacheka("t=…", "tok")
-        assert not ok and data == {}
-        assert "Формат запроса не принят" in msg
-        assert "still no" in msg                          # фрагмент ответа виден
+    def test_network_failure_reason(self, monkeypatch):
+        from app.services import fns
+        client = fns.FnsClient(master_token="MASTER")
 
-    def test_token_and_quota_errors(self):
-        from app.services.external import fetch_proverkacheka
-        calls = []
-        # v1.58.0: HTTP 401 → перебор всех форматов → итог «Токен не принят»
-        with mock_patch("httpx.post", self._fake_post(
-                calls, [(401, "{}"), (401, "{}"), (401, "{}")])):
-            ok, msg, _ = fetch_proverkacheka("t=…", "bad")
-        assert not ok and "Токен не принят" in msg
-        with mock_patch("httpx.post", self._fake_post(calls, [(402, "{}")])):
-            ok, msg, _ = fetch_proverkacheka("t=…", "tok")
-        assert not ok and "квота" in msg
+        def boom(*a, **k):
+            raise fns.httpx.ConnectError("network down")
 
-    def test_server_error_shows_snippet(self):
-        from app.services.external import fetch_proverkacheka
-        calls = []
-        with mock_patch("httpx.post", self._fake_post(
-                calls, [(500, "upstream exploded")])):
-            ok, msg, _ = fetch_proverkacheka("t=…", "tok")
-        assert not ok and "upstream exploded" in msg
+        monkeypatch.setattr(fns.httpx, "post", boom)
+        res = client.get_ticket("1", "2", "3", 1.0,
+                                dt.datetime(2026, 1, 1))
+        assert res.ok is False and "сеть недоступна" in res.message.lower()
+
+    def test_server_fault_reason_visible(self, monkeypatch):
+        auth = ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+                'envelope/"><soap:Body><ns2:GetMessageResponse xmlns:ns2="urn://'
+                'x-artefacts-gnivc-ru/inplat/servin/OpenApiMessageConsumerService'
+                '/types/1.0"><ns2:Message><ns2:Result><ns2:Token>T1</ns2:Token>'
+                '</ns2:Result></ns2:Message></ns2:GetMessageResponse>'
+                '</soap:Body></soap:Envelope>')
+        fault = ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+                 'envelope/"><soap:Body><soap:Fault><faultstring>'
+                 "UnmarshallingFailureException: unexpected element Fn"
+                 "</faultstring></soap:Fault></soap:Body></soap:Envelope>")
+        client, _ = self._fake(monkeypatch, [
+            self._resp(auth), self._resp(fault, 500)])
+        res = client.get_ticket("1", "2", "3", 1.0, dt.datetime(2026, 1, 1))
+        assert res.ok is False
+        assert "схем" in res.message, res.message
+
+    def test_token_refused_once_then_refreshed(self, monkeypatch):
+        auth = ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+                'envelope/"><soap:Body><ns2:GetMessageResponse xmlns:ns2="urn://'
+                'x-artefacts-gnivc-ru/inplat/servin/OpenApiMessageConsumerService'
+                '/types/1.0"><ns2:Message><ns2:Result><ns2:Token>T1</ns2:Token>'
+                '</ns2:Result></ns2:Message></ns2:GetMessageResponse>'
+                '</soap:Body></soap:Envelope>')
+        send = ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+                'envelope/"><soap:Body><ns2:SendMessageResponse xmlns:ns2="urn://'
+                'x-artefacts-gnivc-ru/inplat/servin/'
+                'OpenApiAsyncMessageConsumerService/types/1.0">'
+                '<ns2:MessageId>m1</ns2:MessageId></ns2:SendMessageResponse>'
+                '</soap:Body></soap:Envelope>')
+        client, calls = self._fake(monkeypatch, [
+            self._resp(auth), self._resp("denied", 401),
+            self._resp(auth), self._resp(send), self._resp("bad", 500)])
+        client.get_ticket("1", "2", "3", 1.0, dt.datetime(2026, 1, 1))
+        # после 401 токен запрошен заново (auth-запрос второй раз)
+        assert sum(1 for c in calls if "AuthService" in c["url"]) == 2
+
+    def test_quota_exhausted_before_request(self, monkeypatch):
+        from app.services import fns, fns_quota
+        monkeypatch.setattr(fns_quota, "spend", lambda amount=1, db=None: False)
+        monkeypatch.setattr(fns, "_db_setting", lambda key: "")
+        client = fns.FnsClient(master_token="MASTER")
+        res = client.get_ticket("1", "2", "3", 1.0, dt.datetime(2026, 1, 1))
+        assert res.status == "quota"
+        assert "лимит" in res.message.lower()
 
 
 class TestExtDataVisible:

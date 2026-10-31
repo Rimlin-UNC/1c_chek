@@ -128,9 +128,10 @@ class TestXmlHardening:
     def test_attack_becomes_no_data_for_the_caller(self):
         """Разбор ответа ФНС на атаку отвечает «нет данных», а не падением."""
         from app.services import fns
-        assert fns._xml_findtext_ns(BOMB, "lolz") is None
-        assert fns._xml_find_element_ns(BOMB, "lolz") is None
-        assert fns._xml_findtext_ns(XXE, "root") is None
+        # v1.70.70: разбор по локальным именам (префиксы ns2: в ответах ФНС)
+        assert fns.xml_text(BOMB, "lolz") is None
+        assert fns.xml_element(BOMB, "lolz") is None
+        assert fns.xml_text(XXE, "root") is None
 
     def test_external_entity_is_rejected(self):
         from app.services import fns
@@ -905,7 +906,12 @@ GATE = ("E9,F63,F7,F82,W605,B002,B006,B011,B012,B015,B016,B018,B020,B024,B025,"
 # except-pass нет, а там, где исключение ловится широко, стоит noqa: BLE001
 # с печатью стека — по образцу блока B2B в app/database.py.
 DEBT = {
-    "SIM115": 1100, "B008": 487, "ARG001": 273, "I001": 186, "UP009": 215,
+    # v1.70.70: UP009 215 → 217 — два новых файла (app/services/fns_quota.py
+    # и tests/test_v17070.py); строка «# -*- coding: utf-8 -*-» в шапке
+    # обязательна по конвенции репозитория, рост технологический.
+    # Остальные правила в том же выпуске уменьшились: I001 186 → 185,
+    # DTZ003 111 → 108 (переписаны на timezone-aware время).
+    "SIM115": 1100, "B008": 487, "ARG001": 273, "I001": 186, "UP009": 217,
     "F401": 122, "DTZ003": 111, "PLW1510": 82, "F841": 38, "S110": 32,
     "F811": 21, "BLE001": 13, "DTZ004": 2,
 }

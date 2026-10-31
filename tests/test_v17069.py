@@ -604,28 +604,39 @@ class TestRelease17069:
     PREVIOUS = "1.70.68"
 
     def test_all_sync_points(self):
-        assert f'APP_VERSION: str = "{self.VERSION}"' in _read(CONFIG)
-        assert f"ymaster-check-v{self.VERSION}" in _read(SW)
-        assert f'"version": "{self.VERSION}"' in _read(MANIFEST)
+        """Точки синхронизации идут за текущей версией (не отстают)."""
+        ver = self._current()
+        assert tuple(int(x) for x in ver.split(".")) >= tuple(
+            int(x) for x in self.VERSION.split("."))
+        assert f"ymaster-check-v{ver}" in _read(SW)
+        assert f'"version": "{ver}"' in _read(MANIFEST)
         index = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in index
-        assert f"app.js?v={self.VERSION}" in index
-        assert f"maxapp.js?v={self.VERSION}" in _read(MAX_HTML)
+        assert f"app.css?v={ver}" in index
+        assert f"app.js?v={ver}" in index
+        assert f"maxapp.js?v={ver}" in _read(MAX_HTML)
+
+    def _current(self) -> str:
+        """Текущая версия программы (кэш-метки всегда идут за ней)."""
+        cfg = _read(CONFIG)
+        return re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
 
     def test_cache_busters_in_service_worker(self):
         sw = _read(SW)
-        assert f"'/css/app.css?v={self.VERSION}'" in sw
-        assert f"'/js/app.js?v={self.VERSION}'" in sw
+        ver = self._current()
+        assert f"'/css/app.css?v={ver}'" in sw
+        assert f"'/js/app.js?v={ver}'" in sw
 
     def test_cabinet_assets_carry_the_same_version(self):
         html = _read(CABINET)
-        assert f"/b2b/b2b.css?v={self.VERSION}" in html
-        assert f"/b2b/b2b.js?v={self.VERSION}" in html
+        ver = self._current()
+        assert f"/b2b/b2b.css?v={ver}" in html
+        assert f"/b2b/b2b.js?v={ver}" in html
 
     def test_changed_assets_are_served_with_the_release_version(self):
         index = _read(INDEX)
-        assert f"app.css?v={self.VERSION}" in index
-        assert f"app.js?v={self.VERSION}" in index
+        ver = self._current()
+        assert f"app.css?v={ver}" in index
+        assert f"app.js?v={ver}" in index
 
     def test_no_previous_version_left_in_sync_points(self):
         for path in (CONFIG, INDEX, SW, MANIFEST, MAX_HTML, CABINET):
@@ -634,11 +645,17 @@ class TestRelease17069:
                          f"check-v{self.PREVIOUS}"):
                 assert form not in text, f"{path.name}: {form}"
 
-    def test_whats_new_is_first(self):
+    def test_whats_new_present_and_ordered(self):
+        """v1.70.70: точный пин «первая запись» переехал в файл текущего
+        выпуска (tests/test_v17070.py) — здесь остаётся порядок записей."""
         js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, \
-            "запись выпуска не первая"
+        assert f"'{self.VERSION}': [" in js
+        assert js.index(f"'{self.VERSION}': [") < js.index(
+            f"'{self.PREVIOUS}': [")
+        current = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'",
+                            js)
+        assert current and tuple(int(x) for x in current.group(1).split(".")) \
+            >= tuple(int(x) for x in self.VERSION.split("."))
 
     def _block(self):
         js = _read(APP_JS)

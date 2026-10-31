@@ -1,27 +1,50 @@
 # -*- coding: utf-8 -*-
-"""
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
-
-Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
-
-Модуль проверки подлинности чеков через API ФНС.
-
-Реализованы два провайдера (переключаются в веб-интерфейсе или .env):
-  * mock — детерминированная имитация проверки для демо/разработки;
-  * fns  — официальное «Открытое API проверки чека ККТ» (openapi.nalog.ru):
-      1) Получение временного токена: SOAP-операция GetMessage
-         (AuthRequest → AuthAppInfo → MasterToken + AppId);
-      2) Проверка чека: POST /open-api/api/2/check (JSON, заголовок token).
-
-Для подключения реального API необходимо направить заявку в ФНС и получить
-Мастер-токен (см. docs/knowledge/fns_auth.md).
-"""
+# ======================================================================
+# Ямастер Чек — единственный источник проверки чеков: Открытые API ФНС.
+#
+# Разработчик и владелец идеи: ООО «Ямастер»
+# Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+#
+# v1.70.70: сторонние провайдеры удалены — чек проверяется ТОЛЬКО в ФНС.
+# Контракт сверен с официальным комплектом «API 2.0.9 от 10.12.2024»
+# (папка в репозитории: документы «Описание сервиса Аутентификации»,
+# «Описание интерфейсов Открытых SOAP API (Потребитель)», «Примеры
+# запросов (Потребитель)» и WSDL/XSD из Java-клиента):
+#
+#   1) Аутентификация: POST {base}/open-api/AuthService/0.1
+#      SOAPAction: "urn:GetMessageRequest",
+#      конверт — OpenApiMessageConsumerService/types/1.0,
+#      тело — AuthRequest в ais3/kkt/AuthService/types/1.0 с MasterToken.
+#      Ответ: Result/Token + Result/ExpireTime.
+#      По документации токен живёт 1 час и кэшируется сервисом 40 минут —
+#      поэтому держим его 40 минут, а не дольше (иначе запросы шли бы с
+#      просроченным токеном).
+#
+#   2) Проверка чека = получение полного документа (GetTicket):
+#      POST {base}/open-api/ais3/KktService/0.1
+#      заголовки FNS-OpenApi-Token (временный токен) и
+#      FNS-OpenApi-UserToken (base64 идентификатора пользователя),
+#      SOAPAction: "urn:SendMessageRequest",
+#      конверт — OpenApiAsyncMessageConsumerService/types/1.0,
+#      тело — GetTicketRequest в ais3/kkt/KktTicketService/types/1.0.
+#      Ответ: MessageId.
+#
+#   3) Результат: тот же адрес, GetMessageRequest с MessageId
+#      (SOAPAction "urn:GetMessageRequest", тот же асинхронный конверт).
+#      ProcessingStatus: PROCESSING → опрос, COMPLETED → Result, где
+#      Code = 200 (успех) и Ticket — JSON-строка с полным чеком.
+#
+# Лимит ФНС: 1000 запросов за 24 часа на приложение (каждый запрос,
+# включая аутентификацию и опрос, считается) — учёт в fns_quota.py.
+# IP-адреса сервера должны быть в списке, согласованном с ФНС, иначе
+# сервис отвечает AccessDeniedException.
+# ======================================================================
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
+import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,394 +53,472 @@ import httpx
 
 from ..config import settings
 
+log = logging.getLogger("ymaster")
+
+# --- Адреса и пространства имён (строго по документации ФНС) -------------
+FNS_BASE_DEFAULT = "https://openapi.nalog.ru:8090"
+AUTH_PATH = "/open-api/AuthService/0.1"
+KKT_PATH = "/open-api/ais3/KktService/0.1"
+
+NS_SYNC = ("urn://x-artefacts-gnivc-ru/inplat/servin/"
+           "OpenApiMessageConsumerService/types/1.0")
+NS_ASYNC = ("urn://x-artefacts-gnivc-ru/inplat/servin/"
+            "OpenApiAsyncMessageConsumerService/types/1.0")
+NS_AUTH = "urn://x-artefacts-gnivc-ru/ais3/kkt/AuthService/types/1.0"
+NS_KKT = "urn://x-artefacts-gnivc-ru/ais3/kkt/KktTicketService/types/1.0"
+
+TOKEN_TTL_S = 40 * 60          # документация: токен кэшируется на 40 минут
+POLL_DELAYS = (2, 3, 5, 8, 12)  # паузы опроса: экономия суточного лимита
+SUCCESS_CODE = "200"           # Result/Code успешного GetTicket
+
 
 @dataclass
 class FnsResult:
-    """Результат проверки чека."""
-    status: str          # valid | invalid | not_found | unknown
+    """Результат обращения к ФНС."""
+    status: str          # valid | invalid | not_found | unknown | quota
     message: str
-    raw: dict            # ответ провайдера (для raw_data и аудита)
+    raw: dict            # ответ ФНС (для raw_data и аудита)
     ok: bool             # технический успех обращения
 
 
-# ==========================================================================
-#  Провайдер MOCK — детерминированная имитация (демо-режим)
-# ==========================================================================
-def check_mock(fn: str, fd: str, fp: str, total_sum: float,
-               receipt_date: datetime) -> FnsResult:
-    """
-    Имитация ответа ФНС: результат стабилен для одной тройки ФН+ФД+ФП,
-    ~85% чеков «найдены и корректны».
-    """
-    h = int(hashlib.sha256(f"{fn}|{fd}|{fp}".encode()).hexdigest(), 16)
-    bucket = h % 100
-    time.sleep(0.15)  # имитация сетевой задержки
-    if bucket < 85:
-        return FnsResult(
-            status="valid",
-            message="Чек найден в ФИАС ФНС, реквизиты корректны (демо-проверка)",
-            raw={"provider": "mock", "code": 0, "found": True},
-            ok=True,
-        )
-    if bucket < 93:
-        return FnsResult(
-            status="not_found",
-            message="Чек не найден: возможно, данные ещё не поступили от ОФД (демо)",
-            raw={"provider": "mock", "code": 1, "found": False},
-            ok=True,
-        )
-    return FnsResult(
-        status="invalid",
-        message="Контрольная сумма ФП не совпадает — чек недействителен (демо)",
-        raw={"provider": "mock", "code": 2, "found": True, "valid": False},
-        ok=True,
-    )
+class FnsQuotaExceeded(RuntimeError):
+    """Суточный лимит запросов к ФНС исчерпан."""
 
 
-# ==========================================================================
-#  Провайдер FNS — реальное API ФНС
-# ==========================================================================
-_SOAP_AUTH_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:msg="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiMessageConsumerService/types/1.0"
-               xmlns:auth="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0">
-  <soap:Body>
-    <msg:GetMessageRequest>
-      <msg:Message>
-        <auth:AuthRequest>
-          <auth:AuthAppInfo>
-            <auth:MasterToken>{master_token}</auth:MasterToken>
-          </auth:AuthAppInfo>
-        </auth:AuthRequest>
-      </msg:Message>
-    </msg:GetMessageRequest>
-  </soap:Body>
-</soap:Envelope>"""
-
-
-# ==========================================================================
-#  v1.27.0: Получение ПОЛНЫХ данных чека (GetTicket) — SOAP-сервис KKT.
-#  Протокол (по образцу QortexDevs/fnsapi, официальная документация ФНС):
-#    1) сессионный токен из AuthService (как выше) → заголовок
-#       FNS-OpenApi-Token (+ FNS-OpenApi-UserToken — base64 user_id);
-#    2) SendMessage(GetTicketRequest) → MessageId;
-#    3) опрос GetMessage(MessageId) до ProcessingStatus=COMPLETED;
-#    4) в Result.Message — JSON-СТРОКА с полным чеком (позиции, ИНН…).
-# ==========================================================================
-_SOAP_KKT_SEND_TEMPLATE = """<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <msg:SendMessageRequest xmlns:msg="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiMessageConsumerService/types/1.0">
-      <msg:Message>
-        <kkt:{request_type}TicketRequest xmlns:kkt="urn://x-artefacts-gnivc-ru/ais3/kkt/KktTicketService/types/1.0">
-          <kkt:{request_type}TicketInfo>
-            <kkt:Sum>{sum}</kkt:Sum>
-            <kkt:Date>{date}</kkt:Date>
-            <kkt:Fn>{fn}</kkt:Fn>
-            <kkt:TypeOperation>{operation}</kkt:TypeOperation>
-            <kkt:FiscalDocumentId>{fd}</kkt:FiscalDocumentId>
-            <kkt:FiscalSign>{fp}</kkt:FiscalSign>
-          </kkt:{request_type}TicketInfo>
-        </kkt:{request_type}TicketRequest>
-      </msg:Message>
-    </msg:SendMessageRequest>
-  </soap:Body>
-</soap:Envelope>"""
-
-_SOAP_KKT_GET_TEMPLATE = """<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <msg:GetMessageRequest xmlns:msg="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiMessageConsumerService/types/1.0">
-      <msg:MessageId>{message_id}</msg:MessageId>
-    </msg:GetMessageRequest>
-  </soap:Body>
-</soap:Envelope>"""
-
-
-def ET_tostring_compat(el) -> str:
-    """ET.tostring с защитой от отсутствия кодировки по умолчанию."""
-    import xml.etree.ElementTree as ET
-    return ET.tostring(el, encoding="unicode")
-
-
-# ---------------------------------------------------------------------------
-#  v1.70.38: безопасный разбор XML
-#  Ответы ФНС — ВНЕШНИЕ данные, а штатный xml.etree раскрывает сущности:
-#  493 байта «billion laughs» превращались в 1.6 МБ текста (×3200), а ещё
-#  пара уровней вложенности убивала единственный воркер uvicorn по памяти
-#  (DoS всего приложения). Плюс внешние сущности — чтение локальных файлов.
-#  Поэтому разбор идёт через defusedxml — готовую библиотеку, которую
-#  рекомендует документация Python (раздел «XML vulnerabilities»).
-#  Политика МЯГКАЯ: безобидный <!DOCTYPE> без сущностей остаётся рабочим,
-#  чтобы не сломать боевой обмен; запрещены только сущности и внешние ссылки.
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+#  Безопасный разбор XML (v1.70.38: ответы ФНС — внешние данные)
+# --------------------------------------------------------------------------
 def safe_fromstring(xml_text: str):
     """Разбор XML без сущностей и внешних связей. Ошибка → ValueError."""
     try:
         from defusedxml.ElementTree import fromstring as _defused
     except ImportError:                                  # pragma: no cover
-        # библиотеки нет — отклоняем хотя бы объявленные сущности
         if "<!ENTITY" in (xml_text or "")[:65536].upper():
             raise ValueError("XML с сущностями отклонён: нет defusedxml")
         import xml.etree.ElementTree as ET
-        # nosec B314: запасная ветка на случай отсутствия defusedxml;
-        # объявления сущностей отсеиваются проверкой выше
-        return ET.fromstring(xml_text)  # nosec B314 — сущности отклоняются safe_fromstring
+        # nosec B314: запасная ветка без defusedxml; сущности отсечены выше
+        return ET.fromstring(xml_text)  # nosec B314
     return _defused(xml_text, forbid_dtd=False,
                     forbid_entities=True, forbid_external=True)
 
 
-def _xml_findtext_ns(xml_text: str, local_name: str) -> str | None:
-    """Текст ПЕРВОГО элемента с заданным ЛОКАЛЬНЫМ именем (без NS)."""
+def _local(tag: str) -> str:
+    return (tag or "").rsplit("}", 1)[-1]
+
+
+def xml_text(xml_text: str, local_name: str) -> str | None:
+    """Текст ПЕРВОГО элемента с заданным локальным именем (без NS).
+
+    v1.70.70: именно так разбираются ответы ФНС — в документации элементы
+    приходят с префиксами (`<ns2:Token>`, `<ns2:Ticket>`), поэтому поиск
+    подстрокой «<Token>» не находил ничего и токен считался неполученным.
+    """
     import xml.etree.ElementTree as ET
     try:
         root = safe_fromstring(xml_text)
     except (ET.ParseError, ValueError):
-        # v1.70.38: ValueError ловит DefusedXmlException — атака/мусор
-        # превращаются в «нет данных», а не в 500 или в смерть воркера.
         return None
     for el in root.iter():
-        if el.tag.rsplit('}', 1)[-1] == local_name and (el.text or '').strip():
+        if _local(el.tag) == local_name and (el.text or "").strip():
             return el.text.strip()
     return None
 
 
-def _xml_find_element_ns(xml_text: str, local_name: str):
-    """Первый элемент с заданным ЛОКАЛЬНЫМ именем (без NS) или None."""
+def xml_element(xml_text: str, local_name: str):
+    """Первый элемент с заданным локальным именем или None."""
     import xml.etree.ElementTree as ET
     try:
-        root = safe_fromstring(xml_text)          # v1.70.38: без сущностей
+        root = safe_fromstring(xml_text)
     except (ET.ParseError, ValueError):
         return None
     for el in root.iter():
-        if el.tag.rsplit('}', 1)[-1] == local_name:
+        if _local(el.tag) == local_name:
             return el
     return None
 
 
+def _fault_text(text: str) -> str:
+    """Текст ошибки SOAP (faultstring) или пустая строка."""
+    return (xml_text(text, "faultstring")
+            or xml_text(text, "Message") or "").strip()
+
+
+def error_text(resp) -> str:
+    """Текст ошибки из ответа ФНС: faultstring, иначе начало тела."""
+    body = getattr(resp, "text", "") or ""
+    fault = xml_text(body, "faultstring") or xml_text(body, "Message")
+    return (fault or body[:400]).strip()
+
+
+def classify_error(text: str, http_status: int = 0) -> tuple[str, str]:
+    """Человеческое объяснение ошибки ФНС: (класс, текст).
+
+    Классы: quota | ip | token | contract | not_found | network | unknown.
+    Тексты — по «Перечню ошибок Открытых SOAP API».
+    """
+    low = (text or "").lower()
+    # «Превышен общий дневной лимит…» — формулировка ФНС; наши собственные
+    # сообщения говорят «суточный лимит», их тоже узнаём
+    if "лимит" in low and ("дневн" in low or "суточн" in low
+                           or "превышен" in low):
+        return ("quota", "ФНС: исчерпан суточный лимит запросов приложения "
+                         "(1000 в сутки) — проверка возобновится после "
+                         "сброса лимита")
+    if "accessdenied" in low or "доступ к сервису для переданного ip" in low:
+        return ("ip", "ФНС: доступ с этого IP запрещён — добавьте адрес "
+                      "сервера в список разрешённых в ФНС")
+    if (("token" in low or "токен" in low)
+            and ("не верн" in low or "истек" in low
+                 or "отказ в доступе" in low or "недействит" in low)):
+        return ("token", "ФНС: временный токен не принят — он будет получен "
+                         "заново")
+    if "unmarshalling" in low or "валидац" in low:
+        return ("contract", "ФНС: запрос не прошёл проверку по схеме "
+                            f"({text[:160]})")
+    if "сообщение не найдено" in low or "messagenotfound" in low:
+        return ("not_found", "ФНС: сообщение с результатом не найдено "
+                             "(истекло время ожидания)")
+    if http_status == 401 or http_status == 403:
+        return ("token", "ФНС: доступ запрещён (HTTP %d)" % http_status)
+    if http_status:
+        return ("unknown", f"ФНС: HTTP {http_status}")
+    return ("network", "ФНС: сеть недоступна")
+
+
+def classify_ticket_code(code: str, message: str = "") -> str:
+    """Код из Result/Code → статус проверки (valid | invalid | not_found)."""
+    code = str(code or "").strip()
+    low = (message or "").lower()
+    if code == SUCCESS_CODE:
+        return "valid"
+    if "не найден" in low or "отсутств" in low or code in ("404", "204"):
+        return "not_found"
+    if "некоррект" in low or "не совпад" in low or "чек" in low and "недейств" in low:
+        return "invalid"
+    return "not_found"
+
+
+# --------------------------------------------------------------------------
+#  Клиент ФНС
+# --------------------------------------------------------------------------
 class FnsClient:
-    """Клиент «Открытого API проверки чека ККТ» (openapi.nalog.ru)."""
+    """Клиент Открытых API ФНС: аутентификация и GetTicket."""
 
-    def __init__(self, api_base: str | None = None, master_token: str | None = None,
-                 client_app_id: str | None = None, timeout: int | None = None):
-        self.api_base = (api_base or settings.FNS_API_BASE).rstrip("/")
-        # Приоритет: явный аргумент → настройка из админки (БД) → переменная окружения
-        self.master_token = master_token or _db_master_token() or settings.FNS_MASTER_TOKEN
-        self.client_app_id = client_app_id or settings.FNS_CLIENT_APP_ID
+    def __init__(self, api_base: str | None = None,
+                 master_token: str | None = None,
+                 client_app_id: str | None = None,
+                 timeout: int | None = None):
+        self.api_base = (api_base or settings.FNS_API_BASE
+                         or FNS_BASE_DEFAULT).rstrip("/")
+        self.master_token = (master_token or _db_setting("fns_master_token")
+                             or settings.FNS_MASTER_TOKEN or "").strip()
+        self.client_app_id = (client_app_id
+                              or _db_setting("fns_client_app_id")
+                              or settings.FNS_CLIENT_APP_ID or "").strip()
         self.timeout = timeout or settings.FNS_TIMEOUT_SECONDS
-        self._temp_token: str | None = None
-        self._temp_token_issued_at: float = 0.0
+        self._token: str | None = None
+        self._token_at: float = 0.0
+        self._lock = threading.Lock()
+        self.requests_made = 0          # сколько запросов ушло в этой проверке
 
-    # --- Временный токен (SOAP) ----------------------------------------
-    def _get_temp_token(self) -> str:
-        # Кэш токена на 6 часов
-        if self._temp_token and (time.time() - self._temp_token_issued_at) < 6 * 3600:
-            return self._temp_token
-        url = f"{self.api_base}/open-api/AuthService/0.1"
-        body = _SOAP_AUTH_TEMPLATE.format(master_token=self.master_token)
-        resp = httpx.post(
-            url, content=body.encode("utf-8"),
-            headers={"Content-Type": "text/xml; charset=utf-8",
-                     "ClientAppId": self.client_app_id},
-            timeout=self.timeout,
-        )
-        resp.raise_for_status()
-        text = resp.text
-        # Извлекаем <Token>...</Token> из SOAP-ответа
-        start = text.find("<Token>")
-        end = text.find("</Token>")
-        if start == -1 or end == -1:
-            raise RuntimeError(
-                f"ФНС: не удалось получить временный токен. Ответ: {text[:300]}"
-            )
-        self._temp_token = text[start + 7:end].strip()
-        self._temp_token_issued_at = time.time()
-        return self._temp_token
+    # --- низкий уровень: один запрос к ФНС с учётом лимита ---------------
+    def _post(self, path: str, body: str, headers: dict) -> httpx.Response:
+        from . import fns_quota
+        if not fns_quota.spend(1):
+            raise FnsQuotaExceeded(fns_quota.exhausted_message())
+        self.requests_made += 1
+        full = dict(headers)
+        if self.client_app_id:
+            full["ClientAppId"] = self.client_app_id
+        resp = httpx.post(self.api_base + path, content=body.encode("utf-8"),
+                          headers=full, timeout=self.timeout)
+        # v1.70.70: в журнале видно каждый обмен с ФНС (без токенов в теле)
+        log.info("📩 ФНС %s: HTTP %s, ответ %d байт", path, resp.status_code,
+                 len(resp.text or ""))
+        if resp.status_code != 200:
+            log.warning("⚠️ ФНС %s: %s", path,
+                        (resp.text or "")[:400].replace("\n", " "))
+        return resp
 
-    # --- Полные данные чека (GetTicket, v1.27.0) -------------------------
+    # --- 1. временный токен ---------------------------------------------
+    def token(self, force: bool = False) -> str:
+        """Временный токен ФНС (кэш 40 минут, как в документации)."""
+        with self._lock:
+            fresh = (self._token
+                     and (time.time() - self._token_at) < TOKEN_TTL_S)
+            if fresh and not force:
+                return self._token or ""
+            if not self.master_token:
+                raise RuntimeError("Не задан Мастер-токен ФНС")
+            body = AUTH_TEMPLATE.format(master=self.master_token)
+            resp = self._post(AUTH_PATH, body, {
+                "Content-Type": "text/xml; charset=utf-8",
+                "SOAPAction": '"urn:GetMessageRequest"',
+            })
+            if resp.status_code != 200:
+                raw = error_text(resp)
+                kind, text = classify_error(raw, resp.status_code)
+                if kind == "unknown" and raw and "Exception" in raw:
+                    text = f"ФНС: {raw[:200]}"
+                raise RuntimeError(text)
+            token = xml_text(resp.text, "Token")
+            fault = _fault_text(resp.text)
+            if not token:
+                kind, text = classify_error(fault or resp.text)
+                raise RuntimeError(text if fault else
+                                   "ФНС: в ответе аутентификации нет токена")
+            self._token = token
+            self._token_at = time.time()
+            return token
+
+    def _headers(self, token: str, action: str,
+                 user_id: str) -> dict:
+        return {
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": f'"urn:{action}"',
+            "FNS-OpenApi-Token": token,
+            "FNS-OpenApi-UserToken": base64.b64encode(
+                (user_id or "ymaster-check").encode("utf-8")).decode("ascii"),
+        }
+
+    # --- 2. проверка чека = GetTicket ------------------------------------
     def get_ticket(self, fn: str, fd: str, fp: str, total_sum: float,
                    receipt_date: datetime, operation: int = 1,
                    user_id: str = "ymaster-check") -> FnsResult:
-        """
-        Официальный метод GetTicket (SOAP KktService/0.1): ФНС возвращает
-        ПОЛНЫЙ чек — позиции, ИНН, адрес и т.д. Сумма — в КОПЕЙКАХ,
-        дата — %Y-%m-%dT%H:%M:%S (протокол fnsapi/документация ФНС).
+        """Полный документ чека из ФНС (единственный официальный метод).
+
+        Успех означает: чек существует в базе ФНС и реквизиты совпали —
+        иначе сервис вернул бы код ошибки. Возвращаем и полные данные
+        (позиции, ИНН, адрес расчётов) для карточки чека.
         """
         if not self.master_token:
             return FnsResult("unknown", "Не задан Мастер-токен ФНС",
-                             {"provider": "fns", "error": "no_master_token"}, False)
-        url = f"{self.api_base}/open-api/ais3/KktService/0.1"
-        send_body = _SOAP_KKT_SEND_TEMPLATE.format(
-            request_type="Get", sum=int(round((total_sum or 0) * 100)),
-            date=(receipt_date or datetime.utcnow()).strftime("%Y-%m-%dT%H:%M:%S"),
-            fn=fn, operation=1 if operation != 2 else 2, fd=fd, fp=fp)
-        user_token = base64.b64encode(user_id.encode("ascii")).decode("ascii")
-
-        def _headers(tok: str) -> dict:
-            return {"Content-Type": "text/xml; charset=utf-8",
-                    "FNS-OpenApi-Token": tok,
-                    "FNS-OpenApi-UserToken": user_token,
-                    "ClientAppId": self.client_app_id}
-
+                             {"provider": "fns", "error": "no_master_token"},
+                             False)
+        send_body = SEND_TEMPLATE.format(
+            total=int(round((total_sum or 0) * 100)),
+            date=(receipt_date or datetime.utcnow()).strftime(
+                "%Y-%m-%dT%H:%M:%S"),
+            fn=_esc(fn), fd=_esc(fd), fp=_esc(fp),
+            operation=2 if operation == 2 else 1,
+        )
         try:
-            token = self._get_temp_token()
-            resp = httpx.post(url, content=send_body.encode("utf-8"),
-                              headers=_headers(token), timeout=self.timeout)
-            if resp.status_code in (401, 403):            # токен протух
-                self._temp_token = None
-                token = self._get_temp_token()
-                resp = httpx.post(url, content=send_body.encode("utf-8"),
-                                  headers=_headers(token), timeout=self.timeout)
-            if resp.status_code != 200:
-                return FnsResult("unknown", f"ФНС GetTicket: HTTP {resp.status_code}",
-                                 {"provider": "fns"}, False)
-            message_id = _xml_findtext_ns(resp.text, "MessageId")
-            if not message_id:
-                return FnsResult("unknown", "ФНС GetTicket: нет MessageId в ответе",
-                                 {"provider": "fns", "raw": resp.text[:300]}, False)
-            # Опрос результата: до 15 попыток с паузой 2 с (как в fnsapi)
-            get_body_tpl = _SOAP_KKT_GET_TEMPLATE
-            for _ in range(15):
-                time.sleep(2)
-                poll = httpx.post(url, content=get_body_tpl.format(
-                    message_id=message_id).encode("utf-8"),
-                    headers=_headers(token), timeout=self.timeout)
-                if poll.status_code != 200:
-                    return FnsResult("unknown",
-                                     f"ФНС GetTicket: HTTP {poll.status_code} при опросе",
-                                     {"provider": "fns"}, False)
-                status = _xml_findtext_ns(poll.text, "ProcessingStatus") or ""
-                if status != "COMPLETED":
-                    continue
-                result_el = _xml_find_element_ns(poll.text, "Result")
-                fault_el = _xml_find_element_ns(poll.text, "Fault")
-                if fault_el is not None:
-                    msg = (fault_el[0].text or "ошибка ФНС") if len(fault_el) else "ошибка ФНС"
-                    return FnsResult("not_found", f"ФНС GetTicket: {msg}",
-                                     {"provider": "fns"}, True)
-                if result_el is None:
-                    return FnsResult("unknown", "ФНС GetTicket: нет Result в ответе",
-                                     {"provider": "fns", "raw": poll.text[:300]}, False)
-                code = _xml_findtext_ns(ET_tostring_compat(result_el), "Code")
-                msg_text = _xml_findtext_ns(ET_tostring_compat(result_el), "Message")
-                if str(code) != "0":
-                    return FnsResult("not_found",
-                                     f"ФНС GetTicket: код {code}, {msg_text or 'без описания'}",
-                                     {"provider": "fns"}, True)
-                # Message — JSON-строка с полным чеком
-                ticket = json.loads(msg_text) if msg_text else {}
-                return FnsResult("valid", "Полные данные чека получены из ФНС",
-                                 {"provider": "fns", "ticket": ticket}, True)
-            return FnsResult("unknown", "ФНС GetTicket: таймаут ожидания результата",
-                             {"provider": "fns"}, False)
-        except httpx.HTTPError as e:
-            return FnsResult("unknown", f"Сеть при GetTicket: {e.__class__.__name__}",
-                             {"provider": "fns"}, False)
-        except (ValueError, KeyError) as e:
-            return FnsResult("unknown", f"Разбор ответа GetTicket: {e}",
-                             {"provider": "fns"}, False)
-
-    # --- Проверка чека ---------------------------------------------------
-
-    def check_receipt(self, fn: str, fd: str, fp: str, total_sum: float,
-                      receipt_date: datetime) -> FnsResult:
-        if not self.master_token:
-            return FnsResult(
-                status="unknown",
-                message="Не задан Мастер-токен ФНС. Укажите его в настройках или "
-                        "переключите провайдера на «mock».",
-                raw={"provider": "fns", "error": "no_master_token"},
-                ok=False,
-            )
-        url = f"{self.api_base}/open-api/api/2/check"
-        payload = [{
-            "date": receipt_date.strftime("%Y-%m-%dT%H:%M:%S"),
-            "sum": int(round(total_sum * 100)),
-            "fn": fn,
-            "fd": fd,
-            "fp": fp,
-            "type": "income" if total_sum >= 0 else "incomeRefund",
-        }]
-        try:
-            token = self._get_temp_token()
-            resp = httpx.post(
-                url, json=payload,
-                headers={"token": token, "ClientAppId": self.client_app_id},
-                timeout=self.timeout,
-            )
-            # Токен мог протухнуть — обновляем и пробуем ещё раз
+            token = self.token()
+            resp = self._post(KKT_PATH, send_body,
+                              self._headers(token, "SendMessageRequest",
+                                            user_id))
             if resp.status_code in (401, 403):
-                self._temp_token = None
-                token = self._get_temp_token()
-                resp = httpx.post(
-                    url, json=payload,
-                    headers={"token": token, "ClientAppId": self.client_app_id},
-                    timeout=self.timeout,
-                )
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") \
-                else {"raw": resp.text[:500]}
-            if resp.status_code == 200:
-                code = data.get("Code", 0)
-                if code == 0:
-                    return FnsResult("valid", "Чек найден в базе ФНС, ФП совпадает",
-                                     {"provider": "fns", **data}, True)
-                return FnsResult("not_found", f"ФНС: {data.get('Message', 'чек не найден')}",
-                                 {"provider": "fns", **data}, True)
-            return FnsResult("unknown", f"ФНС API вернул HTTP {resp.status_code}",
-                             {"provider": "fns", **data}, False)
+                # токен протух раньше срока — берём новый и повторяем один раз
+                token = self.token(force=True)
+                resp = self._post(KKT_PATH, send_body,
+                                  self._headers(token, "SendMessageRequest",
+                                                user_id))
+            if resp.status_code != 200:
+                raw = error_text(resp)
+                kind, text = classify_error(raw, resp.status_code)
+                if kind == "unknown" and raw and "Exception" in raw:
+                    text = f"ФНС: {raw[:200]}"
+                if kind == "token":
+                    self._token = None
+                return FnsResult(
+                    "quota" if kind == "quota" else "unknown", text,
+                    {"provider": "fns", "kind": kind,
+                     "raw": resp.text[:400]}, False)
+            message_id = xml_text(resp.text, "MessageId")
+            if not message_id:
+                kind, text = classify_error(_fault_text(resp.text)
+                                            or resp.text)
+                return FnsResult("unknown",
+                                 text or "ФНС: в ответе нет MessageId",
+                                 {"provider": "fns", "kind": kind,
+                                  "raw": resp.text[:400]}, False)
+
+            # --- 3. опрос результата -------------------------------------
+            for delay in POLL_DELAYS:
+                time.sleep(delay)
+                poll = self._post(KKT_PATH,
+                                  POLL_TEMPLATE.format(message_id=message_id),
+                                  self._headers(token, "GetMessageRequest",
+                                                user_id))
+                if poll.status_code != 200:
+                    kind, text = classify_error(error_text(poll),
+                                                poll.status_code)
+                    if kind == "not_found":
+                        return FnsResult("not_found", text,
+                                         {"provider": "fns", "kind": kind}, True)
+                    return FnsResult(
+                        "quota" if kind == "quota" else "unknown", text,
+                        {"provider": "fns", "kind": kind}, False)
+                status = (xml_text(poll.text, "ProcessingStatus") or "").upper()
+                if status == "PROCESSING":
+                    continue
+                if status and status != "COMPLETED":
+                    return FnsResult("unknown",
+                                     f"ФНС: состояние обработки {status}",
+                                     {"provider": "fns", "status": status},
+                                     False)
+                result_el = xml_element(poll.text, "Result")
+                if result_el is None:
+                    kind, text = classify_error(_fault_text(poll.text))
+                    return FnsResult("unknown",
+                                     text or "ФНС: в ответе нет Result",
+                                     {"provider": "fns", "kind": kind}, False)
+                code = xml_text(_et_text(result_el), "Code") or ""
+                message = xml_text(_et_text(result_el), "Message") or ""
+                ticket_raw = xml_text(_et_text(result_el), "Ticket") or ""
+                status_kind = classify_ticket_code(code, message)
+                ticket: dict = {}
+                if ticket_raw:
+                    try:
+                        ticket = json.loads(ticket_raw)
+                    except ValueError:
+                        ticket = {"raw": ticket_raw[:400]}
+                if status_kind == "valid":
+                    return FnsResult(
+                        "valid", "Чек найден в ФНС, реквизиты совпадают",
+                        {"provider": "fns", "code": code, "ticket": ticket},
+                        True)
+                return FnsResult(
+                    status_kind,
+                    message or ("Чек не найден в базе ФНС" if status_kind ==
+                                "not_found" else "Чек отклонён ФНС"),
+                    {"provider": "fns", "code": code, "message": message,
+                     "ticket": ticket}, True)
+            return FnsResult("unknown",
+                             "ФНС: время ожидания результата истекло — "
+                             "повторите проверку позже",
+                             {"provider": "fns", "timeout": True}, False)
+        except FnsQuotaExceeded as e:
+            return FnsResult("quota", str(e),
+                             {"provider": "fns", "kind": "quota"}, False)
         except httpx.HTTPError as e:
-            return FnsResult("unknown", f"Ошибка сети при обращении к ФНС: {e}",
-                             {"provider": "fns", "error": str(e)}, False)
-        except Exception as e:
-            return FnsResult("unknown", f"Непредвиденная ошибка проверки: {e}",
-                             {"provider": "fns", "error": str(e)}, False)
+            return FnsResult("unknown",
+                             f"ФНС: сеть недоступна ({e.__class__.__name__})",
+                             {"provider": "fns", "kind": "network"}, False)
+        except (ValueError, KeyError) as e:
+            return FnsResult("unknown", f"ФНС: разбор ответа не удался ({e})",
+                             {"provider": "fns"}, False)
+        except RuntimeError as e:                     # нет токена / отказ ФНС
+            text = str(e)
+            kind, human = classify_error(text)
+            if kind == "quota":
+                return FnsResult("quota", human,
+                                 {"provider": "fns", "kind": "quota"}, False)
+            return FnsResult("unknown", human, {"provider": "fns",
+                                                "kind": kind}, False)
+
+    # --- проверка чека (тот же метод; имя оставлено для совместимости) ---
+    def check_receipt(self, fn: str, fd: str, fp: str, total_sum: float,
+                      receipt_date: datetime, operation: int = 1) -> FnsResult:
+        return self.get_ticket(fn, fd, fp, total_sum, receipt_date, operation)
+
+    # --- проверка связи без расхода лимита на чек -----------------------
+    def probe(self) -> tuple[bool, str]:
+        """Проверить доступ: мастер-токен + адрес + IP (только auth-запрос)."""
+        if not self.master_token:
+            return False, "Мастер-токен ФНС не задан"
+        try:
+            self.token(force=True)
+            return True, "ФНС отвечает: токен получен"
+        except FnsQuotaExceeded as e:
+            return False, str(e)
+        except httpx.HTTPError as e:
+            return False, f"Сеть недоступна: {e.__class__.__name__}"
+        except RuntimeError as e:
+            return False, str(e)
 
 
-# ==========================================================================
-#  Фабрика провайдера + кэш результатов
-# ==========================================================================
-def _db_master_token() -> str:
-    """Мастер-токен ФНС, сохранённый администратором в настройках (v1.2.0)."""
+def _et_text(el) -> str:
+    import xml.etree.ElementTree as ET
+    return ET.tostring(el, encoding="unicode")
+
+
+def _esc(value) -> str:
+    return (str(value or "").replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def _db_setting(key: str) -> str:
+    """Значение настройки из БД (админка), иначе пустая строка."""
     try:
-        from ..models import AppSetting
+        from .appsettings import get_setting
         from ..database import SessionLocal
         db = SessionLocal()
         try:
-            from .appsettings import get_setting
-            return get_setting(db, "fns_master_token", "")
+            return (get_setting(db, key, "") or "").strip()
         finally:
             db.close()
-    except Exception:
+    except Exception:                                    # noqa: BLE001
         return ""
 
 
-def get_provider() -> str:
-    from ..models import AppSetting
-    from ..database import SessionLocal
-    db = SessionLocal()
-    try:
-        row = db.get(AppSetting, "fns_provider")
-        return (row.value if row and row.value else settings.FNS_PROVIDER)
-    finally:
-        db.close()
+# --------------------------------------------------------------------------
+#  Шаблоны SOAP (по «Примерам запросов (Потребитель)»)
+# --------------------------------------------------------------------------
+AUTH_TEMPLATE = (
+    '<soapenv:Envelope xmlns:soapenv='
+    '"http://schemas.xmlsoap.org/soap/envelope/" '
+    'xmlns:ns="{ns}">'
+    "<soapenv:Header/><soapenv:Body>"
+    "<ns:GetMessageRequest><ns:Message>"
+    '<tns:AuthRequest xmlns:tns="{auth}">'
+    "<tns:AuthAppInfo><tns:MasterToken>{master}</tns:MasterToken>"
+    "</tns:AuthAppInfo></tns:AuthRequest>"
+    "</ns:Message></ns:GetMessageRequest>"
+    "</soapenv:Body></soapenv:Envelope>"
+).format(ns=NS_SYNC, auth=NS_AUTH, master="{master}")
+
+SEND_TEMPLATE = (
+    '<soapenv:Envelope xmlns:soapenv='
+    '"http://schemas.xmlsoap.org/soap/envelope/" '
+    'xmlns:ns="{ns}">'
+    "<soapenv:Header/><soapenv:Body>"
+    "<ns:SendMessageRequest><ns:Message>"
+    '<tns:GetTicketRequest xmlns:tns="{kkt}">'
+    "<tns:GetTicketInfo>"
+    "<tns:Sum>{total}</tns:Sum>"
+    "<tns:Date>{date}</tns:Date>"
+    "<tns:Fn>{fn}</tns:Fn>"
+    "<tns:TypeOperation>{operation}</tns:TypeOperation>"
+    "<tns:FiscalDocumentId>{fd}</tns:FiscalDocumentId>"
+    "<tns:FiscalSign>{fp}</tns:FiscalSign>"
+    "<tns:RawData>true</tns:RawData>"
+    "</tns:GetTicketInfo></tns:GetTicketRequest>"
+    "</ns:Message></ns:SendMessageRequest>"
+    "</soapenv:Body></soapenv:Envelope>"
+).format(ns=NS_ASYNC, kkt=NS_KKT, total="{total}", date="{date}", fn="{fn}",
+         operation="{operation}", fd="{fd}", fp="{fp}")
+
+POLL_TEMPLATE = (
+    '<soapenv:Envelope xmlns:soapenv='
+    '"http://schemas.xmlsoap.org/soap/envelope/" '
+    'xmlns:ns="{ns}">'
+    "<soapenv:Header/><soapenv:Body>"
+    "<ns:GetMessageRequest><ns:MessageId>{message_id}</ns:MessageId>"
+    "</ns:GetMessageRequest>"
+    "</soapenv:Body></soapenv:Envelope>"
+).format(ns=NS_ASYNC, message_id="{message_id}")
 
 
+# --------------------------------------------------------------------------
+#  Проверка чека с кэшем (совместимый вход для старых вызовов)
+# --------------------------------------------------------------------------
 def check_receipt(fn: str, fd: str, fp: str, total_sum: float,
-                  receipt_date: datetime, cached_result: str | None = None,
+                  receipt_date: datetime,
+                  cached_result: str | None = None,
                   cached_at: datetime | None = None) -> FnsResult:
+    """Проверка чека в ФНС с учётом кэша результатов.
+
+    Свежий успешный результат (в пределах FNS_CACHE_TTL_DAYS) не
+    отправляется повторно — это экономит суточный лимит 1000 запросов.
     """
-    Проверка чека с учётом кэша: свежий успешный результат (в пределах
-    FNS_CACHE_TTL_DAYS) не отправляется повторно — экономия лимитов API.
-    """
-    provider = get_provider()
     ttl_ok = (
         cached_result in ("valid", "invalid", "not_found")
         and cached_at is not None
         and (datetime.utcnow() - cached_at).days < settings.FNS_CACHE_TTL_DAYS
     )
     if ttl_ok:
-        return FnsResult(cached_result, "Результат из кэша (повторная проверка не требовалась)",
-                         {"provider": provider, "cached": True}, True)
-
-    if provider == "fns":
-        client = FnsClient()
-        return client.check_receipt(fn, fd, fp, total_sum, receipt_date)
-    return check_mock(fn, fd, fp, total_sum, receipt_date)
+        return FnsResult(cached_result,
+                         "Результат из кэша (повторная проверка не требовалась)",
+                         {"provider": "fns", "cached": True}, True)
+    return FnsClient().get_ticket(fn, fd, fp, total_sum, receipt_date)

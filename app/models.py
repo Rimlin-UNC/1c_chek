@@ -443,7 +443,7 @@ class FnsLog(Base):
     receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     request_data: Mapped[str] = mapped_column(Text, default="")
     response_data: Mapped[str] = mapped_column(Text, default="")
-    provider: Mapped[str] = mapped_column(String(20), default="mock")
+    provider: Mapped[str] = mapped_column(String(20), default="fns")
     ok: Mapped[bool] = mapped_column(Boolean, default=False)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -457,6 +457,21 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
+
+
+class FnsUsage(Base):
+    """v1.70.70: суточный расход запросов к Открытым API ФНС.
+
+    У ФНС лимит 1000 запросов за 24 часа на приложение, и считаются ВСЕ
+    обращения: аутентификация, отправка запроса на чек и каждый опрос
+    результата. Счётчик хранится в базе (переживает перезапуск) и
+    сбрасывается с началом новых суток по Москве."""
+
+    __tablename__ = "fns_usage"
+
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)  # ГГГГ-ММ-ДД
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 # --------------------------------------------------------------------------

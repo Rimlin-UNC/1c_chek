@@ -111,27 +111,29 @@ def _mask(token: str) -> str:
 
 @router.get("/fns", summary="Настройки проверки ФНС")
 def get_fns(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    from ..services import fns_quota
     return {
-        "provider": _get_setting(db, "fns_provider", cfg.FNS_PROVIDER),
+        # v1.70.70: источник один — Открытые API ФНС, выбора провайдера нет
+        "provider": "fns",
         "api_base": _get_setting(db, "fns_api_base", cfg.FNS_API_BASE),
         "master_token_masked": _mask(_get_setting(db, "fns_master_token", cfg.FNS_MASTER_TOKEN)),
         "has_master_token": bool(_get_setting(db, "fns_master_token", cfg.FNS_MASTER_TOKEN)),
         "client_app_id": _get_setting(db, "fns_client_app_id", cfg.FNS_CLIENT_APP_ID),
         "cache_ttl_days": cfg.FNS_CACHE_TTL_DAYS,
+        "quota": fns_quota.stats(db),
     }
 
 
 @router.put("/fns", summary="Сохранить настройки ФНС")
 def put_fns(body: FnsSettingsPatch, db: Session = Depends(get_db),
             user: User = Depends(require_admin)):
-    _set_setting(db, "fns_provider", body.provider)
     if body.api_base:
         _set_setting(db, "fns_api_base", body.api_base.strip())
     if body.master_token is not None and "•" not in body.master_token:
         _set_setting(db, "fns_master_token", body.master_token.strip())
     if body.client_app_id:
         _set_setting(db, "fns_client_app_id", body.client_app_id.strip())
-    log_action(user, "fns_settings_updated", details={"provider": body.provider})
+    log_action(user, "fns_settings_updated", details={"provider": "fns"})
     return {"ok": True, "message": "Настройки ФНС сохранены"}
 
 
@@ -347,42 +349,39 @@ def put_policy(body: PolicyPatch, db: Session = Depends(get_db),
 
 
 # --------------------------------------------------------------------------
-#  v1.2.0: Источники данных о чеке (ФНС API / proverkacheka.com / свой сервис)
+#  v1.70.70: единственный источник данных о чеке — Открытые API ФНС
 # --------------------------------------------------------------------------
-@router.get("/external", summary="Настройки источников данных чека (админ)")
+@router.get("/external", summary="Настройки проверки чеков в ФНС (админ)")
 def get_external(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     from ..services.external import engine
+    from ..services import fns_quota
     return {
         "fns_master_token_masked": _mask(_get_setting(db, "fns_master_token", "")),
         "has_fns_master_token": bool(_get_setting(db, "fns_master_token", "")),
-        "proverkacheka_token_masked": _mask(_get_setting(db, "proverkacheka_token", "")),
-        "has_proverkacheka_token": bool(_get_setting(db, "proverkacheka_token", "")),
-        "external_order": _get_setting(db, "external_order",
-                                       "proverkacheka"),
-        "external_auto": _get_setting(db, "external_auto", "1") == "1",
+        "fns_client_app_id": _get_setting(db, "fns_client_app_id", ""),
+        "fns_api_base": cfg.FNS_API_BASE,
+        "quota": fns_quota.stats(db),
+        "quota_warning": fns_quota.warning(db),
         "engine": engine.status(),
     }
 
 
-@router.put("/external", summary="Сохранить источники данных чека (админ)")
+@router.put("/external", summary="Сохранить настройки проверки чеков (админ)")
 def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
                  user: User = Depends(require_admin)):
+    """Мастер-токен и AppId выдаются ФНС при регистрации приложения.
+
+    v1.70.70: настройки сторонних сервисов проверки чеков удалены — их
+    больше нет ни в схеме, ни в интерфейсе.
+    """
     if body.fns_master_token is not None and "•" not in body.fns_master_token:
         _set_setting(db, "fns_master_token", body.fns_master_token.strip())
-    if body.proverkacheka_token is not None and "•" not in body.proverkacheka_token:
-        _set_setting(db, "proverkacheka_token", body.proverkacheka_token.strip())
-    # v1.55.0/v1.57.0: выведенные источники (свои шлюзы, Приложение ФНС,
-    # Честный Знак, ОФД-ру) игнорируются — соответствующих полей в схеме
-    # больше нет; строки в БД не трогаем (миграции только добавляющие)
-    if body.external_order is not None:
-        allowed = {"fns_api", "proverkacheka"}
-        items = [x.strip() for x in body.external_order.split(",") if x.strip() in allowed]
-        _set_setting(db, "external_order",
-                     ",".join(items or ["proverkacheka"]))
-    if body.external_auto is not None:
-        _set_setting(db, "external_auto", "1" if body.external_auto else "0")
-    log_action(user, "external_settings_updated", details={"auto": body.external_auto})
-    return {"ok": True, "message": "Источники данных сохранены"}
+    if getattr(body, "fns_client_app_id", None) is not None:
+        _set_setting(db, "fns_client_app_id",
+                     (body.fns_client_app_id or "").strip())
+    log_action(user, "external_settings_updated",
+               details={"app_id": bool(getattr(body, "fns_client_app_id", ""))})
+    return {"ok": True, "message": "Настройки проверки чеков сохранены"}
 
 
 @router.post("/external/test", summary="Проверить источник контрольным чеком (админ)")
@@ -400,12 +399,8 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
     res = engine.fetch(db, qr, parsed.fn, parsed.fd, parsed.fp,
                        parsed.total_sum, parsed.date_time)
     ok, message = res.ok, res.message
-    # v1.7.0: mock-источник всегда «доступен» — чек не находится в ФНС это его
-    # нормальный режим, а не ошибка (раньше тест показывал сбой без причины)
-    if res.source == "mock" and not res.found:
-        ok = True
-        message = ("Мок-источник работает корректно: тестовый чек не найден "
-                   "в ФНС (эмуляция) — это ожидаемое поведение")
+    # v1.70.70: источник единственный — ФНС; «чек не найден» это нормальный
+    # ответ сервиса (ok=True), а не сбой связи
     return {
         "ok": ok,
         "source": res.source,

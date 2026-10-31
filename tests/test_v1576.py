@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.57.6: proverkacheka.com — всегда первый источник,
-# ФНС — только резерв при мастер-ключе ФНС.
+# Ямастер Чек — тесты v1.57.6 (обновлены в v1.70.70).
+# Раньше здесь закреплялся приоритет стороннего сервиса с резервом ФНС.
+# Теперь источник один — официальное API ФНС, и проверяется именно это.
 # ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
@@ -29,112 +30,79 @@ class TestVersion1576:
 
 
 class TestChainPriority:
-    """Решение владельца: proverkacheka.com — приоритет №1, ФНС — резерв."""
+    """v1.70.70: очередь источников не зависит от токенов — она одна."""
 
     def _eng(self):
         from app.services import external
         return external.ExternalFetchEngine()
 
-    def test_no_master_direct_pke(self, monkeypatch):
-        """Нет мастер-ключа ФНС → запрос напрямую в proverkacheka.com."""
+    def test_no_master_token_still_fns(self, monkeypatch):
+        """Нет мастер-ключа — цепочка та же (движок скажет, чего не хватает)."""
         eng = self._eng()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok", "fns_master_token": ""})
-        assert eng.provider_chain(None) == ["proverkacheka", "mock"]
+            "fns_master_token": ""})
+        assert eng.provider_chain(None) == ["fns_api"]
 
-    def test_master_fns_reserve_after_pke(self, monkeypatch):
-        """v1.57.7 (итоговая логика владельца): мастер-ключ задан →
-        ПЕРВЫЙ запрос в ФНС, proverkacheka.com — запасной после него."""
+    def test_master_token_same_chain(self, monkeypatch):
         eng = self._eng()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok", "fns_master_token": "master"})
-        assert eng.provider_chain(None) == ["fns_api", "proverkacheka", "mock"]
-
-    def test_master_without_pke_token(self, monkeypatch):
-        """Мастер-ключ есть, токена pke нет → очередь [fns_api, mock]."""
-        eng = self._eng()
-        monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "", "fns_master_token": "master"})
-        assert eng.provider_chain(None) == ["fns_api", "mock"]
+            "fns_master_token": "master"})
+        assert eng.provider_chain(None) == ["fns_api"]
 
     def test_stale_order_setting_ignored(self, monkeypatch):
-        """Устаревший external_order «fns_api,…» больше не ставит ФНС первой."""
+        """Устаревший external_order в базе больше ни на что не влияет."""
         eng = self._eng()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "external_order": "fns_api,proverkacheka",
+            "external_order": "proverkacheka,fns_api",
             "proverkacheka_token": "tok", "fns_master_token": "master"})
-        chain = eng.provider_chain(None)
-        assert chain == ["fns_api", "proverkacheka", "mock"]   # external_order игнорируется
+        assert eng.provider_chain(None) == ["fns_api"]
 
 
 class TestFetchOrder:
-    def test_pke_first_then_fns_reserve(self, monkeypatch):
-        """v1.57.7: ФНС первая; сбой ФНС → запрос уходит в proverkacheka."""
+    def test_fns_only_no_fallback(self, monkeypatch):
+        """Сбой ФНС → второго источника нет, чек не выдумывается."""
         from app.services import external
         eng = external.ExternalFetchEngine()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok", "fns_master_token": "master"})
-        monkeypatch.setattr(external, "MAX_SAME_PROVIDER_RETRIES", 0)
-        monkeypatch.setattr(external.time, "sleep", lambda s: None)
+            "fns_master_token": "master"})
+        monkeypatch.setattr(eng, "_polite_wait", lambda provider: None)
         calls = []
 
-        def _pke(qr, token):
-            calls.append("pke")
-            return True, "Данные получены", {"document": {"receipt": {}}}
-
-        def _fns(qr, fn, fd, fp, total, dtm, token):
+        def _fns(*a, **k):
             calls.append("fns")
-            return False, "сбой сети ФНС", {}
+            return False, "ФНС: сеть недоступна", {}
 
-        monkeypatch.setattr(external, "fetch_proverkacheka", _pke)
         monkeypatch.setattr(external, "fetch_fns", _fns)
-        monkeypatch.setattr(
-            external, "parse_receipt_payload",
-            lambda data, known: external.ExternalResult(
-                ok=True, source="", found=True, message="ok",
-                total_sum=known, items=[], raw=data))
         res = eng.fetch(None, "qr", "fn", "fd", "fp", 807.30, None)
-        assert calls == ["fns", "pke"], calls
-        assert res.ok and res.source == "proverkacheka"
+        assert calls == ["fns"], calls
+        assert res.ok is False and res.found is False
 
-    def test_no_fns_call_without_master(self, monkeypatch):
-        """Нет мастер-ключа → fetch_fns вообще не вызывается."""
+    def test_no_call_without_master(self, monkeypatch):
+        """Нет мастер-ключа → к ФНС не обращаемся вовсе."""
         from app.services import external
+        import app.config as cfg_mod
         eng = external.ExternalFetchEngine()
-        monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok", "fns_master_token": ""})
-        monkeypatch.setattr(external, "MAX_SAME_PROVIDER_RETRIES", 0)
-        monkeypatch.setattr(external.time, "sleep", lambda s: None)
+        monkeypatch.setattr(eng, "_settings", lambda db: {})
+        monkeypatch.setattr(cfg_mod.settings, "FNS_MASTER_TOKEN", "")
         calls = []
-
-        def _pke(qr, token):
-            calls.append("pke")
-            return True, "Данные получены", {"document": {"receipt": {}}}
-
-        def _fns(*a):
-            calls.append("fns")
-            return True, "ok", {}
-
-        monkeypatch.setattr(external, "fetch_proverkacheka", _pke)
-        monkeypatch.setattr(external, "fetch_fns", _fns)
-        monkeypatch.setattr(
-            external, "parse_receipt_payload",
-            lambda data, known: external.ExternalResult(
-                ok=True, source="", found=True, message="ok",
-                total_sum=known, items=[], raw=data))
+        monkeypatch.setattr(external, "fetch_fns",
+                            lambda *a, **k: calls.append("fns") or
+                            (False, "нет", {}))
         res = eng.fetch(None, "qr", "fn", "fd", "fp", 807.30, None)
-        assert calls == ["pke"], calls          # напрямую, без ФНС
-        assert res.ok and res.source == "proverkacheka"
+        assert calls == []
+        assert res.ok is False and "Мастер-токен" in res.message
 
 
 class TestSettingsUi:
     def test_order_fixed_by_system(self):
+        """v1.70.70: выбора источников в интерфейсе нет — остался лимит."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert 'id="ext-order"' not in js        # поле убрано — порядок задаёт система
         assert "добавится первым автоматически" not in js
-        assert "1️⃣ proverkacheka.com" in js            # без ключа — первый
-        assert "при мастер-ключе ФНС: 1️⃣ ФНС" in js    # с ключом — ФНС первый
-        assert "первый запрос в ФНС" in js
+        assert "1️⃣ proverkacheka.com" not in js
+        assert "при мастер-ключе ФНС: 1️⃣ ФНС" not in js
+        assert "1000 запросов" in js
+        assert "после сброса лимита" in js
 
     def test_blocks_bumped(self):
         from app.services import updater

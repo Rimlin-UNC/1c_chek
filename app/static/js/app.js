@@ -5460,7 +5460,7 @@ function _dtLocal(iso) {
 }
 
 // ==========================================================================
-//  v1.57.1: «Полные данные чека» — всё, что вернул proverkacheka.com
+//  v1.57.1: «Полные данные чека» — всё, что вернул источник (v1.70.70: ФНС)
 //  (receipts.ext_json): место расчётов, касса/смена, налог, свойства
 //  заказа, итоги НДС, ФФД и пр. Показывается в карточке чека.
 // ==========================================================================
@@ -5516,7 +5516,7 @@ function extBlockHTML(ext) {
   }
   if (!rows.length) return '';
   return `<details class="manual-check" style="margin-top:12px">
-    <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🧾 Полные данные чека — из proverkacheka.com</summary>
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🧾 Полные данные чека — из ФНС</summary>
     <dl class="kv" style="font-size:12.5px;margin:10px 0 4px">${rows.join('')}</dl>
   </details>`;
 }
@@ -5586,15 +5586,15 @@ function openEditReceipt(r, onSaved) {
       <span>🔔 Уведомление от сотрудника</span></label>
     ${extBlockHTML(r.ext) ||
       `<div class="info-callout" style="margin-top:12px">🧾 Полные данные чека ещё не получены.
-        <button type="button" class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из proverkacheka.com</button>
+        <button type="button" class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из ФНС</button>
         <div class="form-hint" id="er-fetch-msg" style="margin-top:6px"></div></div>`}
     ${r.ext ? `<div style="margin-top:8px"><button type="button" class="btn btn-sm" id="er-refetch"
-        title="Запросить свежие данные из proverkacheka.com; пустые поля заполнятся, ваши правки не затрутся">🔄 Обновить данные из источника</button>
+        title="Запросить свежие данные из ФНС; пустые поля заполнятся, ваши правки не затрутся">🔄 Обновить данные из источника</button>
         <span class="form-hint" id="er-fetch-msg" style="margin-left:8px"></span></div>` : ''}
     <details class="manual-check" style="margin-top:12px">
       <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🌐 Проверить чек вручную на сторонних сервисах</summary>
       <div class="manual-check-links">
-        <a href="https://proverkacheka.com/" target="_blank" rel="noopener">proverkacheka.com</a>
+        <a href="https://openapi.nalog.ru/" target="_blank" rel="noopener">Открытые API ФНС</a>
         <a href="https://xn--80aaemb2ac0aikd0g.xn--p1ai/" target="_blank" rel="noopener">проверкачека.рф</a>
         <a href="https://proverka-cheka.ru/" target="_blank" rel="noopener">proverka-cheka.ru</a>
         <a href="https://chek-pek.ru/" target="_blank" rel="noopener">chek-pek.ru</a>
@@ -6149,6 +6149,27 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.70': [
+    { icon: '🇷🇺', title: 'Проверка чеков — только через официальное API ФНС',
+      text: 'Получили мастер-токен ФНС и перевели проверку чеков на '
+        + 'единственный официальный источник — Открытые API ФНС '
+        + '(openapi.nalog.ru). Сторонние сервисы проверки чеков и '
+        + 'демонстрационный режим удалены из программы полностью: '
+        + 'ни в настройках, ни в проверке их больше нет.' },
+    { icon: '📐', title: 'Сверка с документацией API 2.0.9',
+      text: 'Сверили каждый запрос с официальным комплектом ФНС: '
+        + 'правильные пространства имён, обязательный SOAPAction, '
+        + 'временный токен живёт 40 минут (раньше держали шесть часов — '
+        + 'запросы уходили с просроченным токеном), успешный ответ '
+        + 'распознаётся по коду 200 и полному документу чека.' },
+    { icon: '📊', title: 'Лимит ФНС 1000 запросов в сутки — под контролем',
+      text: 'В настройках видно, сколько запросов израсходовано за сутки. '
+        + 'На 80 % администратор получает предупреждение (баннер и запись '
+        + 'в журнал). Когда лимит исчерпан, чек не теряется: он ждёт '
+        + 'проверки и проверяется автоматически после сброса лимита. '
+        + 'Повторная проверка того же чека берётся из кэша и лимит '
+        + 'не расходует.' },
+  ],
   '1.70.69': [
     { icon: '✈️', title: 'Вход через Telegram — как у Макса',
       text: 'На экране входа появилась кнопка в Telegram: человек '
@@ -7441,7 +7462,7 @@ const WHATS_NEW = {
     ['🔑 Больше прав админа', 'смена роли пользователя, временный пароль в 1 клик (сотрудник сменит сам), восстановление из архива.'],
   ],
   '1.2.0': [
-    ['📥 Данные чека из сервисов', 'полная информация (магазин, ИНН, все позиции) — из API ФНС, proverkacheka.com или своего источника. Паузы 2–7 с и ротация источников — без блокировок.'],
+    ['📥 Данные чека из ФНС', 'полная информация (магазин, ИНН, все позиции) — из официального API ФНС (метод GetTicket). Паузы 2–7 с, лимит 1000 запросов в сутки.'],
     ['✏️ Редактирование чеков', 'бухгалтер и администратор могут изменить любые поля чека и позиции — по одному или массово; изменения попадают в 1С и CSV.'],
     ['👤 «От кого прислал»', 'чеки от сотрудников автоматически помечаются отправителем.'],
     ['🔔 Уведомления сотрудников', 'флажок «уведомить бухгалтерию» и комментарий к своему чеку.'],
@@ -7450,7 +7471,7 @@ const WHATS_NEW = {
   '1.3.0': [
     ['🏦 Новый источник: ОФД-ру «QR Cash»', 'официальное API ofd.ru по базе ФНС — ещё один вариант получения полного чека (tokenSecret в Настройках).'],
     ['🔗 Несколько своих источников', 'теперь можно подключить до 10 своих сервисов проверки (списком, у каждого своё «остывание»).'],
-    ['🌐 Ручная проверка в 1 клик', 'в редакторе чека — кнопки открытия сервисов: proverkacheka.com, проверкачека.рф, proverka-cheka.ru, chek-pek.ru.'],
+    ['🌐 Ручная проверка в 1 клик', 'в редакторе чека — ссылки на официальные и справочные сервисы проверки: Открытые API ФНС, проверкачека.рф, proverka-cheka.ru, chek-pek.ru.'],
     ['🎨 Качество вёрстки', 'доработаны таблицы (липкие заголовки), модалки и сетки на телефоне, фокус с клавиатуры, безопасные отступы iOS.'],
     ['🔢 Версия теперь всегда видна и честна', 'единая версия в шапке, футере, API и кэше — обновляется из одного места.'],
   ],
@@ -7848,7 +7869,7 @@ async function viewReceipts(container) {
         <button type="button" class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
         <button type="button" class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
         ${isAdmin() ? '<button type="button" class="btn btn-sm" id="btn-bulk-move">🏢 Переместить в компанию</button>' : ''}
-        <button type="button" class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
+        <button type="button" class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из ФНС. Паузы 2–7 с, лимит 1000 запросов в сутки — без блокировок">📥 Данные сервисов</button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
         <button type="button" class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
         <button type="button" class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек</button>
@@ -8028,7 +8049,7 @@ async function viewReceipts(container) {
     const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
     const isOwner = r.created_by_id === state.me.id;
     const notifiedMark = r.notified ? ' <span title="Сотрудник уведомляет бухгалтерию">🔔</span>' : '';
-    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' || r.details_source === 'fns' ? 'ФНС' : '✎'}</span>` : '';
     // v1.23.0: полные данные получены → запрос не нужен, только изменение
     // v1.25.2: полные данные есть → только «изменить»; запрос показывается,
     // только если чек ещё НЕ получил данные полностью
@@ -8063,7 +8084,7 @@ async function viewReceipts(container) {
   // (📥) и «заполнить вручную» (✏️) — ВНИЗУ карточки, всегда под рукой
   function receiptCard(r, acc) {
     const isOwner = r.created_by_id === state.me.id;
-    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' || r.details_source === 'fns' ? 'ФНС' : '✎'}</span>` : '';
     const act = acc
       ? `${r.full_data
           ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
@@ -8318,7 +8339,7 @@ function rcptBlocks(r, qrUrl, qrFail) {
     blocks.push(`<div class="r-line rcpt-sub"><span>${r.cash_sum ? 'наличные: ' + Number(r.cash_sum).toFixed(2) : ''}</span><span>${r.ecash_sum ? 'безнал: ' + Number(r.ecash_sum).toFixed(2) : ''}</span></div>`);
   }
   blocks.push(rule);
-  const fnsMap = { valid: '✓ проверен ФНС', invalid: '✗ НЕ действителен', not_found: '? не найден в ФНС', unknown: 'не проверялся' };
+  const fnsMap = { valid: '✓ проверен ФНС', invalid: '✗ НЕ действителен', not_found: '? не найден в ФНС', pending: '⏸ ожидает проверки (лимит ФНС)', unknown: 'не проверялся' };
   blocks.push(`<div class="rcpt-foot">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>${fnsMap[r.fns_status] || ''}<br>Ямастер Чек · ymaster.ru</div>`);
   // v1.10.0: фискальный QR — как на настоящем кассовом чеке
   if (qrUrl) {
@@ -9875,22 +9896,26 @@ async function viewSettings(container) {
 
       ${isAdmin() && fns ? `
       <div class="glass card" id="st-fns" data-sec="checks" style="order:20">
-        <div class="card-title">Проверка чеков (ФНС)</div>
-        <div class="segmented" style="margin-bottom:14px">
-          <button type="button" id="seg-mock" class="${fns.provider === 'mock' ? 'active' : ''}">Демо (mock)</button>
-          <button type="button" id="seg-fns" class="${fns.provider === 'fns' ? 'active' : ''}">Реальное API ФНС</button>
-        </div>
-        <div class="info-callout" id="fns-hint" style="font-size:12.5px">
-          ${fns.provider === 'mock'
-            ? '<b>Демо-провайдер</b> имитирует ответы ФНС — для знакомства с системой и обучения.'
-            : '<b>Реальное API</b> (openapi.nalog.ru). Требуется Мастер-токен ФНС — заявка в ФНС (см. docs/knowledge/fns_auth.md).'}</div>
+        <div class="card-title">Проверка чеков (ФНС) <span class="form-hint">(v1.70.70)</span></div>
+        <div class="info-callout" style="font-size:12.5px;margin-bottom:12px">
+          Единственный источник проверки — <b>Открытые API ФНС</b> (openapi.nalog.ru).
+          Мастер-токен и AppId выдаются ФНС при регистрации приложения
+          (Brand <b>YmasterAPI</b>). Запросы идут только с разрешённых IP сервера.</div>
         <label class="field" style="margin-bottom:12px"><span>Мастер-токен ${fns.has_master_token ? '(задан: ' + esc(fns.master_token_masked) + ')' : '(не задан)'}</span>
           <input id="fns-token" type="password" placeholder="вставьте мастер-токен ФНС"></label>
-        <label class="field" style="margin-bottom:14px"><span>ClientAppId</span>
-          <input id="fns-appid" value="${esc(fns.client_app_id)}"></label>
+        <label class="field" style="margin-bottom:14px"><span>AppId (идентификатор приложения в ФНС)</span>
+          <input id="fns-appid" value="${esc(fns.client_app_id)}" placeholder="например, YmasterAPI"></label>
         <button type="button" class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
-        <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней (повторная проверка не расходует лимиты).</p>
-      </div>` : ''}
+        <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней — повторная проверка
+        того же чека лимит не расходует.</p>
+        ${fns.quota ? `<div class="info-callout" style="font-size:12.5px;margin-top:10px">
+          📊 Лимит ФНС на ${esc(fns.quota.day)}: израсходовано <b>${fns.quota.used}</b> из
+          ${fns.quota.limit} запросов (${fns.quota.percent} %), остаток ${fns.quota.remaining}.
+          ${fns.quota.exhausted ? 'Лимит исчерпан — новые чеки проверятся автоматически после сброса.'
+            : fns.quota.percent >= fns.quota.warn_percent ? '⚠️ Израсходовано больше 80 % суточного лимита.' : ''}
+        </div>` : ''}
+      </div>
+      ` : ''}
 
       ${isAdmin() && fns ? `
       <div class="glass card" id="st-checko" data-sec="integr" style="order:31">
@@ -10169,26 +10194,25 @@ async function viewSettings(container) {
 
       ${isAdmin() && appSet ? `
       <div class="glass card" id="st-sources" data-sec="checks" style="order:21">
-        <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.57.0)</span></div>
-        <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции, место расчётов,
-        касса, смена, налог, свойства заказа, итоги НДС) система получает из
-        <b>proverkacheka.com</b> — единственного стабильно работающего источника
-        (v1.57.0: Приложение ФНС, Честный Знак и ОФД-ру выведены из системы —
-        сервисы перестали отвечать; их поля из настроек игнорируются).
-        При блокировке источник «остывает» с растущей паузой, между запросами —
-        2–7 секунд. <b>API ФНС</b> (мастер-токен в карточке «Проверка чеков») —
-        итоговая логика: перед запросом смотрим мастер-ключ ФНС — нет ключа: сразу напрямую proverkacheka.com; есть ключ: первый запрос в ФНС, затем proverkacheka.com.</p>
-        <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
-          ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — возьмите «Токен доступа к API» на своей странице proverkacheka.com/user/…, формат 55035.хххххх)'}</span>
-          <input id="ext-pke" type="password" placeholder="55035.xxxxxxxxxxx"></label>
-        <div class="field" style="margin-bottom:10px"><span>Порядок источников (задан системой)</span>
-          <small class="form-hint">без мастер-ключа ФНС: 1️⃣ proverkacheka.com (токен, квота 12–14/сутки) → демо-источник; при мастер-ключе ФНС: 1️⃣ ФНС → 2️⃣ proverkacheka.com → демо. Журнал загрузки — в логе сервиса (grep «ДАННЫЕ ЧЕКА»)</small></div>
-        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
-          <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
-          <span>Автоматически получать данные после сканирования</span></label>
+        <div class="card-title">📥 Получение данных чека из ФНС <span class="form-hint">(v1.70.70)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции,
+        место расчётов, касса, смена, налог, итоги НДС) программа получает из официального
+        <b>API ФНС</b> одним методом GetTicket: он же и подтверждает подлинность чека.
+        Сторонние сервисы проверки чеков из программы удалены. Запросы последовательные,
+        с паузами 2–7 секунд; при сетевом сбое источник «остывает».</p>
+        <div class="info-callout" style="font-size:12.5px;margin-bottom:10px">
+          Суточный лимит — 1000 запросов на приложение (считаются все обращения: токен,
+          запрос чека, опрос результата). При 80 % администратор получает предупреждение,
+          при исчерпании чеки остаются «ожидают проверки» и проверяются автоматически
+          после сброса лимита. Повторная проверка того же чека берётся из кэша и лимит
+          не расходует.</div>
+        ${ext && ext.quota ? `<div class="info-callout" style="font-size:12.5px;margin-bottom:10px">
+          📊 Сегодня (${esc(ext.quota.day)}): <b>${ext.quota.used}</b> из ${ext.quota.limit}
+          запросов (${ext.quota.percent} %), остаток ${ext.quota.remaining}.
+          ${ext.quota.exhausted ? '<b>Лимит исчерпан</b> — чеки проверятся после сброса.'
+            : ext.quota.percent >= ext.quota.warn_percent ? '⚠️ Израсходовано больше 80 %.' : '✅ Запас есть.'}</div>` : ''}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button type="button" class="btn btn-primary btn-sm" id="ext-save">💾 Сохранить источники</button>
-          <button type="button" class="btn btn-sm" id="ext-test">🧪 Тест контрольным чеком</button>
+          <button type="button" class="btn btn-primary btn-sm" id="ext-test">🧪 Проверить связь с ФНС</button>
         </div>
         <p class="form-hint" id="ext-status" style="margin-top:10px"></p>
       </div>` : ''}
@@ -11692,16 +11716,6 @@ async function viewSettings(container) {
   }
 
   if (isAdmin() && ext) {
-    $('#ext-save').onclick = async () => {
-      try {
-        await api.put('/api/v1/settings/external', {
-          proverkacheka_token: $('#ext-pke').value.trim() || undefined,
-          external_auto: $('#ext-auto').checked,
-        });
-        toast('Источники данных сохранены', 'ok');
-        route(true);
-      } catch (e) { toast(e.message, 'err'); }
-    };
     $('#ext-test').onclick = async () => {
       const st = $('#ext-status');
       st.textContent = 'Проверяю (учтите паузу 2–7 с между запросами)…';
@@ -11765,18 +11779,10 @@ async function viewSettings(container) {
   }
 
   if (isAdmin() && fns) {
-    $('#seg-mock').onclick = async () => { await saveFns('mock'); };
-    $('#seg-fns').onclick = async () => {
-      const token = $('#fns-token').value.trim();
-      if (!token && !fns.has_master_token) {
-        return toast('Для реального API нужен Мастер-токен ФНС', 'err', 'Нет токена');
-      }
-      await saveFns('fns');
-    };
-    async function saveFns(provider) {
+    // v1.70.70: источник один — ФНС, выбора «демо/реальное» больше нет
+    $('#fns-save').onclick = async () => {
       try {
         await api.put('/api/v1/settings/fns', {
-          provider,
           master_token: $('#fns-token').value.trim() || undefined,
           client_app_id: $('#fns-appid').value.trim() || undefined,
         });
