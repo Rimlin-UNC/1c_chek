@@ -48,6 +48,15 @@ CREATE TABLE unified_receipt_item_origins (
     FOREIGN KEY(origin_kind, origin_id) REFERENCES unified_receipt_origins(origin_kind, origin_id)
 );
 CREATE INDEX ix_unified_item_origin ON unified_receipt_item_origins(origin_kind, origin_id);
+-- Единственное право компании на документ: одна строка на fiscal document.
+CREATE TABLE unified_company_claims (
+    document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
+    company_id TEXT NOT NULL CHECK (length(trim(company_id)) > 0),
+    pool_origin_id TEXT REFERENCES pool_receipts(id),
+    registry_receipt_id TEXT REFERENCES receipts(id),
+    assigned_at TEXT
+);
+CREATE INDEX ix_unified_company_claims_company ON unified_company_claims(company_id);
 """
 
 
@@ -97,6 +106,36 @@ def migrate_copy(source: str | Path, output: str | Path) -> dict:
         # Удаляем только файл, созданный этой попыткой; исходник не трогаем.
         dst.unlink(missing_ok=True)
         raise
+
+
+def _legacy_ownership(db: sqlite3.Connection, doc_id: str):
+    """Установить владельца только если он однозначно следует из источников."""
+    registry = db.execute("""
+        SELECT r.id, r.company_id FROM unified_receipt_origins o
+        JOIN receipts r ON r.id = o.origin_id
+        WHERE o.document_id = ? AND o.origin_kind = 'registry'
+    """, (doc_id,)).fetchall()
+    pool = db.execute("""
+        SELECT p.id, p.assigned_company_id, p.assigned_at FROM unified_receipt_origins o
+        JOIN pool_receipts p ON p.id = o.origin_id
+        WHERE o.document_id = ? AND o.origin_kind = 'pool'
+    """, (doc_id,)).fetchall()
+    # При нескольких источниках одного типа или неизвестном владельце реестра
+    # не выбираем владельца догадкой, даже если пул уже кем-то занят.
+    if len(registry) > 1 or len(pool) > 1:
+        return None
+    registry_id, registry_company = registry[0] if registry else (None, None)
+    pool_id, pool_company, assigned_at = pool[0] if pool else (None, None, None)
+    registry_company = registry_company if registry_company and registry_company.strip() else None
+    pool_company = pool_company if pool_company and pool_company.strip() else None
+    if registry and not registry_company:
+        return None
+    if registry_company and pool_company and registry_company != pool_company:
+        return None
+    owner = registry_company or pool_company
+    if not owner:
+        return None
+    return (owner, pool_id if pool_company == owner else None, registry_id, assigned_at if pool_company == owner else None)
 
 
 def _migrate(db: sqlite3.Connection) -> None:
@@ -158,6 +197,14 @@ def _migrate(db: sqlite3.Connection) -> None:
                   AND r.company_id IS NOT NULL AND p.assigned_company_id IS NOT NULL
                   AND r.company_id != p.assigned_company_id
             )""")
+        docs = db.execute('SELECT id FROM unified_fiscal_documents')
+        while batch := docs.fetchmany(500):
+            for (doc_id,) in batch:
+                ownership = _legacy_ownership(db, doc_id)
+                if ownership:
+                    db.execute('INSERT INTO unified_company_claims '
+                               '(document_id, company_id, pool_origin_id, registry_receipt_id, assigned_at) '
+                               'VALUES (?, ?, ?, ?, ?)', (doc_id, *ownership))
         db.commit()
     except BaseException:
         db.rollback()
@@ -168,7 +215,7 @@ def _validate(db: sqlite3.Connection) -> None:
     """Проверить связи и целостность до передачи новой копии оператору."""
     if db.execute('PRAGMA integrity_check').fetchone() != ('ok',):
         raise RuntimeError('Нарушена целостность копии')
-    for table in ('unified_receipt_origins', 'unified_receipt_item_origins'):
+    for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims'):
         if db.execute(f'PRAGMA foreign_key_check({table})').fetchone():
             raise RuntimeError('Обнаружена повреждённая ссылка на единый чек')
     for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
@@ -236,12 +283,24 @@ def _validate(db: sqlite3.Connection) -> None:
                 mask |= 8
             if (saved_date, saved_amount, saved_operation) != tuple(expected) or saved_mask != mask:
                 raise RuntimeError('Общие реквизиты или признаки конфликта не соответствуют источникам')
+            claim = db.execute('SELECT company_id, pool_origin_id, registry_receipt_id, assigned_at '
+                               'FROM unified_company_claims WHERE document_id=?', (doc_id,)).fetchone()
+            if claim != _legacy_ownership(db, doc_id):
+                raise RuntimeError('Владелец единого чека не соответствует исходным назначениям')
 
 
 def _summary(db: sqlite3.Connection) -> dict:
     scalar = lambda sql: db.execute(sql).fetchone()[0]
     return {
         'documents': scalar('SELECT count(*) FROM unified_fiscal_documents'),
+        'company_claims': scalar('SELECT count(*) FROM unified_company_claims'),
+        'unresolved_ownership': scalar("""SELECT count(DISTINCT d.id) FROM unified_fiscal_documents d
+            JOIN unified_receipt_origins o ON o.document_id = d.id
+            LEFT JOIN receipts r ON o.origin_kind = 'registry' AND r.id = o.origin_id
+            LEFT JOIN pool_receipts p ON o.origin_kind = 'pool' AND p.id = o.origin_id
+            LEFT JOIN unified_company_claims c ON c.document_id = d.id
+            WHERE c.document_id IS NULL AND (length(trim(coalesce(r.company_id, ''))) > 0
+                OR length(trim(coalesce(p.assigned_company_id, ''))) > 0)"""),
         'registry_links': scalar("SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),
         'pool_links': scalar("SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='pool'"),
         'needs_review': scalar('SELECT count(*) FROM unified_fiscal_documents WHERE review_mask != 0'),

@@ -2763,13 +2763,22 @@ class TestRateLimitHeaders:
 
     def test_reset_is_a_utc_unix_timestamp(self, client, admin_hdr):
         key = self._key(client, admin_hdr, name="Проба времени")
+        from datetime import datetime, timedelta, timezone
+        before = datetime.now(timezone.utc)
         r = client.get(self.API, headers={"X-API-Key": key})
-        from datetime import datetime, timezone
+        after = datetime.now(timezone.utc)
         for name in ("X-RateLimit-Reset", "X-Quota-Reset"):
             value = int(r.headers[name])
             moment = datetime.fromtimestamp(value, tz=timezone.utc)
             assert moment.year >= 2026, f"{name} = {value}"
-        assert int(r.headers["X-Quota-Reset"]) > int(r.headers["X-RateLimit-Reset"]) - 1
+        # В последний час месяца месячный сброс может наступить раньше
+        # часового: проверяем обе независимые границы, а не их порядок.
+        def next_month(now):
+            return (now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    + timedelta(days=32)).replace(day=1)
+        quota_reset = int(r.headers["X-Quota-Reset"])
+        assert quota_reset in {int(next_month(before).timestamp()), int(next_month(after).timestamp())}
+        assert int(before.timestamp()) <= int(r.headers["X-RateLimit-Reset"]) <= int(after.timestamp()) + 3600
 
     def test_429_tells_how_long_to_wait(self, client, admin_hdr):
         key = self._key(client, admin_hdr, rate=2, quota=1000,
@@ -2791,12 +2800,17 @@ class TestRateLimitHeaders:
                         name="Проба квоты")
         first = client.get(self.API, headers={"X-API-Key": key})
         assert first.status_code == 200
+        import time
+        before = time.time()
         second = client.get(self.API, headers={"X-API-Key": key})
+        after = time.time()
         assert second.status_code == 429
         assert "Квота тарифа исчерпана" in second.json()["detail"]
         assert second.headers["X-Quota-Remaining"] == "0"
-        assert int(second.headers["Retry-After"]) > 3600, \
-            "ждать до начала следующего месяца"
+        retry = int(second.headers["Retry-After"])
+        reset = int(second.headers["X-Quota-Reset"])
+        assert retry >= 1
+        assert before - 2 <= reset - retry <= after + 2, "ожидание до сброса месячной квоты"
 
     def test_post_methods_carry_headers_too(self, client, admin_hdr):
         key = self._key(client, admin_hdr, name="Проба POST")

@@ -10,23 +10,23 @@ def _source(path):
     with sqlite3.connect(path) as db:
         for table in ('receipts', 'pool_receipts'):
             db.execute(f'CREATE TABLE {table} (id TEXT PRIMARY KEY, fn TEXT, fd TEXT, fp TEXT, '
-                       'receipt_date TEXT, total_sum REAL, operation INTEGER, company_id TEXT, assigned_company_id TEXT)')
+                       'receipt_date TEXT, total_sum REAL, operation INTEGER, company_id TEXT, assigned_company_id TEXT, assigned_at TEXT)')
         db.execute('CREATE TABLE receipt_items (id TEXT PRIMARY KEY, receipt_id TEXT, name TEXT)')
         db.execute('CREATE TABLE pool_items (id TEXT PRIMARY KEY, receipt_id TEXT, name TEXT)')
         db.execute("INSERT INTO receipt_items VALUES ('ri1', 'r1', 'private item')")
         db.execute("INSERT INTO receipt_items VALUES ('ri2', 'r2', 'unmatched item')")
         db.execute("INSERT INTO pool_items VALUES ('pi1', 'p1', 'donor item')")
-        db.execute("INSERT INTO receipts VALUES ('r1','123','4','5','2026-01-01 12:00:00',100,1,NULL,NULL)")
-        db.execute("INSERT INTO pool_receipts VALUES ('p1','123','4','5','2026-01-01 12:00:00.000000',100,1,NULL,NULL)")
-        db.execute("INSERT INTO receipts VALUES ('r2','','7','8',NULL,NULL,NULL,NULL,NULL)")
-        db.execute("INSERT INTO pool_receipts VALUES ('p2','222','3','4',NULL,50,2,NULL,NULL)")
+        db.execute("INSERT INTO receipts VALUES ('r1','123','4','5','2026-01-01 12:00:00',100,1,NULL,NULL,NULL)")
+        db.execute("INSERT INTO pool_receipts VALUES ('p1','123','4','5','2026-01-01 12:00:00.000000',100,1,NULL,NULL,NULL)")
+        db.execute("INSERT INTO receipts VALUES ('r2','','7','8',NULL,NULL,NULL,NULL,NULL,NULL)")
+        db.execute("INSERT INTO pool_receipts VALUES ('p2','222','3','4',NULL,50,2,NULL,NULL,NULL)")
 
 
 def test_copy_migration_merges_only_complete_identities(tmp_path):
     source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
     _source(source)
     summary = migrate_copy(source, output)
-    assert summary == {'documents': 2, 'registry_links': 1, 'pool_links': 2, 'needs_review': 1,
+    assert summary == {'documents': 2, 'company_claims': 0, 'unresolved_ownership': 0, 'registry_links': 1, 'pool_links': 2, 'needs_review': 1,
                        'registry_without_identity': 1, 'pool_without_identity': 0,
                        'registry_items_linked': 1, 'pool_items_linked': 1,
                        'registry_items_unlinked': 1, 'pool_items_unlinked': 0}
@@ -96,3 +96,28 @@ def test_small_amount_disagreement_is_not_silently_rounded(tmp_path):
         amount, flags = db.execute(
             "SELECT total_sum, review_mask FROM unified_fiscal_documents WHERE fn='123'").fetchone()
         assert amount is None and flags & 2
+
+
+@pytest.mark.parametrize('registry_owner,pool_owner,expected,conflicts', [
+    ('company-A', 'company-A', 'company-A', 0),
+    ('company-A', None, 'company-A', 0),
+    ('company-A', 'company-B', None, 1),
+    (None, 'company-B', None, 1),
+])
+def test_copy_migration_preserves_ownership_without_inventing_it(
+        tmp_path, registry_owner, pool_owner, expected, conflicts):
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute("UPDATE receipts SET company_id=? WHERE id='r1'", (registry_owner,))
+        db.execute("UPDATE pool_receipts SET assigned_company_id=? WHERE id='p1'", (pool_owner,))
+    summary = migrate_copy(source, output)
+    assert summary['company_claims'] == int(expected is not None)
+    assert summary['unresolved_ownership'] == conflicts
+    with sqlite3.connect(output) as db:
+        owner = db.execute("SELECT c.company_id FROM unified_company_claims c "
+                           "JOIN unified_fiscal_documents d ON d.id=c.document_id WHERE d.fn='123'").fetchone()
+        assert (owner[0] if owner else None) == expected
+        # Источники, в том числе конфликтные, не меняются и не исчезают.
+        assert db.execute("SELECT company_id FROM receipts WHERE id='r1'").fetchone() == (registry_owner,)
+        assert db.execute("SELECT assigned_company_id FROM pool_receipts WHERE id='p1'").fetchone() == (pool_owner,)

@@ -677,3 +677,203 @@ def test_unified_preview_assigned_pool_permissions(client, setup_bridge, tmp_pat
                 assert err.value.status_code == 404
     finally:
         copied.dispose()
+
+
+def test_unified_claim_is_atomic_exclusive_and_preserves_donor(setup_bridge, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolPoint
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_claims import claim_pool_document
+    from qa.unified_receipt_preview import company_view, donor_view
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts.check_receipt', lambda *a, **k: pytest.fail('FNS request'))
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS fetch'))
+    with SessionLocal() as db:
+        donor = PoolUser(vid='claim_' + uuid4().hex, points=13)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded = donor_id, 13
+        db.add(PoolPoint(user_id=donor_id, delta=13, reason='receipt', ref_id=pid))
+        user_ids = {cid: db.query(User).filter_by(company_id=cid, role='accountant').first().id
+                    for cid in (c1, c2)}
+        db.commit()
+    path = tmp_path / 'claim-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    SessionCopy = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    with copied.connect() as conn:
+        doc_id = conn.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+    def attempt(cid):
+        with SessionCopy() as db:
+            user = db.get(User, user_ids[cid])
+            barrier.wait(timeout=10)
+            try:
+                created = claim_pool_document(db, doc_id, cid, user)
+                db.commit()
+                return cid, created, None
+            except HTTPException as err:
+                db.rollback()
+                return cid, False, err.status_code
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(attempt, (c1, c2)))
+        winners = [cid for cid, created, _ in results if created]
+        losers = [cid for cid, _, code in results if code == 409]
+        assert len(winners) == 1 and len(losers) == 1, results
+        winner, loser = winners[0], losers[0]
+        with Session(copied) as db:
+            claim = db.execute(text('SELECT company_id FROM unified_company_claims WHERE document_id=:doc'),
+                               {'doc': doc_id}).scalar_one()
+            assert claim == winner and db.get(PoolReceipt, pid).assigned_company_id == winner
+            assert db.query(Receipt).filter_by(fn=fn).count() == 0  # не создаём копию реестра
+            assert claim_pool_document(db, doc_id, winner, db.get(User, user_ids[winner])) is False
+            db.commit()
+            assert company_view(db, doc_id, db.get(User, user_ids[winner]), winner)['origin'] == 'pool'
+            with pytest.raises(HTTPException) as err:
+                company_view(db, doc_id, db.get(User, user_ids[loser]), loser)
+            assert err.value.status_code == 404
+            assert month_used(db, winner) == 1
+            assert db.get(PoolUser, donor_id).points == 13
+            assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 13
+            assert len(donor_view(db, doc_id, db.get(PoolUser, donor_id))['receipt']['items']) == 2
+        import sqlite3
+        with sqlite3.connect(path) as conn:
+            _validate(conn)
+        with SessionLocal() as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id is None  # исходная БД не затронута
+    finally:
+        copied.dispose()
+        with SessionLocal() as db:
+            db.query(PoolPoint).filter_by(ref_id=pid).delete()
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()
+
+
+def test_unified_claim_enforces_rights_quota_and_snapshot_freshness(client, setup_bridge, tmp_path):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_claims import claim_pool_document
+
+    hdr, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _mk_user(client, hdr, c1, 'claim_user_' + uuid4().hex[:8], role='user')
+    path = tmp_path / 'claim-rules.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            accountant = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            employee = db.query(User).filter_by(company_id=c1, role='user').first()
+            with pytest.raises(HTTPException) as err:
+                claim_pool_document(db, doc, c1, employee)
+            assert err.value.status_code == 403
+            with pytest.raises(HTTPException) as err:
+                claim_pool_document(db, doc, c2, accountant)
+            assert err.value.status_code == 403
+            db.rollback()
+            appsettings.set_setting(db, 'pool_pick_monthly_limit', '0')
+            with pytest.raises(HTTPException) as err:
+                claim_pool_document(db, doc, c1, accountant)
+            assert err.value.status_code == 409 and 'Квота' in err.value.detail
+            db.rollback()
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            appsettings.set_setting(db, 'pool_pick_monthly_limit', '10')
+            db.get(PoolReceipt, pid).total_sum += 1
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                claim_pool_document(db, doc, c1, accountant)
+            assert err.value.status_code == 409 and 'расхождения' in err.value.detail
+            db.rollback()
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            # Незавершённая транзакция не оставляет ни привязку, ни владельца.
+            db.get(PoolReceipt, pid).total_sum -= 1
+            db.commit()
+            assert claim_pool_document(db, doc, c1, accountant) is True
+            db.rollback()
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_unified_claim_race_respects_single_company_quota(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_claims import claim_pool_document
+
+    _, _, _, c1, _, pid, _, fn, fd, fp = setup_bridge
+    other_fn = '6' + fn[1:]
+    with SessionLocal() as db:
+        source = db.get(PoolReceipt, pid)
+        other = PoolReceipt(fn=other_fn, fd=fd, fp=fp, receipt_date=source.receipt_date,
+                            total_sum=source.total_sum, operation=source.operation, status='verified')
+        db.add(other)
+        db.commit()
+        other_id = other.id
+        uid = db.query(User).filter_by(company_id=c1, role='accountant').first().id
+        appsettings.set_setting(db, 'pool_pick_monthly_limit', '1')
+    path = tmp_path / 'quota-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    with copied.connect() as conn:
+        docs = list(conn.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn IN (:a,:b)'),
+                                 {'a': fn, 'b': other_fn}).scalars())
+    barrier = Barrier(2)
+    def attempt(doc):
+        with sessions() as db:
+            user = db.get(User, uid)
+            barrier.wait(timeout=10)
+            try:
+                ok = claim_pool_document(db, doc, c1, user)
+                db.commit()
+                return ok, None
+            except HTTPException as err:
+                db.rollback()
+                return False, err.status_code
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(attempt, docs))
+        assert sorted(results) == [(False, 409), (True, None)]
+        with sessions() as db:
+            assert month_used(db, c1) == 1
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE company_id=:c'),
+                              {'c': c1}).scalar_one() == 1
+    finally:
+        copied.dispose()
+        with SessionLocal() as db:
+            db.delete(db.get(PoolReceipt, other_id))
+            db.commit()

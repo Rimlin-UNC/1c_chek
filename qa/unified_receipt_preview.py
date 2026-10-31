@@ -36,8 +36,15 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
     """
     if not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
         raise HTTPException(404, 'Чек не найден')
+    claim = db.execute(text('SELECT company_id, registry_receipt_id, pool_origin_id '
+                            'FROM unified_company_claims WHERE document_id=:doc'),
+                       {'doc': document_id}).first()
+    # Неоднозначное старое владение не выбирается в пользу какой-либо компании.
+    if not claim or claim.company_id != company_id:
+        raise HTTPException(404, 'Чек не найден')
     registry_ids = _origin_ids(db, document_id, 'registry')
     candidates = db.query(Receipt).filter(Receipt.id.in_(registry_ids),
+                                          Receipt.id == claim.registry_receipt_id,
                                           Receipt.company_id == company_id).all()
     visible = [r for r in candidates if can_view_receipt(user, r) and _matches_identity(db, document_id, r)]
     if len(visible) > 1:
@@ -50,6 +57,7 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
     if registry_ids or user.role not in ('admin', 'accountant'):
         raise HTTPException(404, 'Чек не найден')
     pool = db.query(PoolReceipt).filter(PoolReceipt.id.in_(_origin_ids(db, document_id, 'pool')),
+                                        PoolReceipt.id == claim.pool_origin_id,
                                         PoolReceipt.assigned_company_id == company_id,
                                         PoolReceipt.status == 'verified').all()
     visible_pool = [r for r in pool if _matches_identity(db, document_id, r)]
