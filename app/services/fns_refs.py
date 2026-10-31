@@ -137,9 +137,13 @@ def taxation_name(code) -> str:
 
 
 def nds_name(rate) -> str:
-    """Ставка НДС в человеческом виде."""
+    """Показывать сохранённое значение, не принимая код источника за ставку."""
     key = str(rate if rate not in (None, "") else "none")
-    return NDS_RATES.get(key, f"{key} %")
+    if key == "none":
+        return "без НДС или не указано"
+    if key in ("10/110", "18/118", "20/120", "5/105", "7/107"):
+        return key
+    return f"значение {key} (ставка или код)"
 
 
 def measure_name(code) -> str:

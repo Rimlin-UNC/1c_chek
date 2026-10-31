@@ -211,12 +211,18 @@ function fullCardItemsHTML(d) {
 
 function fullCardRawHTML(card) {
   const d = card.document || {};
-  const payload = { document: { ...d, raw: undefined },
-                    fns_answer: d.fns_answer || {},
-                    extra: d.extra || {} };
-  return `<div class="fcard-note">Сырые данные, сохранённые при проверке —
-    пригодятся бухгалтеру и разработчику. Ничего не пересчитывается.</div>
-    <pre class="fcard-json">${esc(JSON.stringify(payload, null, 2))}</pre>`;
+  const document = { ...d };
+  delete document.raw; delete document.fns_answer; delete document.extra;
+  const saved = card.saved_data_json || JSON.stringify({
+    fns_answer: d.fns_answer || {}, extra: d.extra || {},
+  }, null, 2);
+  return `<div class="fcard-note">Карточка содержит нормализованные и вычисленные поля.
+    Ниже отдельно показаны сохранённые данные. Исходный документ ФНС доступен
+    в fns_answer.ticket, только если он был сохранён; ответ из кэша может содержать
+    лишь служебные сведения. Сохранённые данные отображаются без потери точности больших чисел.</div>
+    <h4>Сформированная карточка</h4>
+    <pre class="fcard-json">${esc(JSON.stringify(document, null, 2))}</pre>
+    <h4>Сохранённые данные</h4><pre class="fcard-json">${esc(saved)}</pre>`;
 }
 
 export { money0, qtyText, shopReceiptHTML, fullCardDetailsHTML,

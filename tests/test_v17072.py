@@ -94,7 +94,7 @@ class TestTicketDocument:
         assert first["product_type_name"] == "Товар"
         assert first["payment_type_name"] == "Полный расчёт"
         assert first["measure"] == "шт"
-        assert first["nds_name"] == "20 %"
+        assert first["nds_name"] == "значение 20 (ставка или код)"
 
     def test_item_marking_supplier_industry_details(self, doc):
         second = doc["items"][1]
@@ -202,7 +202,7 @@ class TestRefs:
         assert fns_refs.product_type_name(1) == "Товар"
         assert fns_refs.payment_type_name(4) == "Полный расчёт"
         assert fns_refs.taxation_name(2) == "УСН (доходы − расходы)"
-        assert fns_refs.nds_name("20") == "20 %"
+        assert fns_refs.nds_name("20") == "значение 20 (ставка или код)"
         assert fns_refs.measure_name("796") == "шт"
         assert "Минпромторг" in fns_refs.foiv_name("020")
 
@@ -210,7 +210,7 @@ class TestRefs:
         from app.services import fns_refs
         assert fns_refs.product_type_name(99) == "код 99"
         assert "код 999" in fns_refs.foiv_name("999")
-        assert fns_refs.nds_name("33") == "33 %"
+        assert fns_refs.nds_name("33") == "значение 33 (ставка или код)"
 
 
 # --------------------------------------------------------------------------
@@ -694,3 +694,29 @@ class TestRelease1710:
         for path in (CHANGELOG, JOURNAL):
             flat = re.sub(r"\s+", " ", _read(path)).lower()
             assert OWNER_QUOTE in flat, Path(path).name
+
+
+def test_saved_extra_not_overwritten_by_derived_values():
+    import json
+
+    from app.models import Receipt
+    from app.services import fns_refs
+    from app.services.receipt_card import apply_to_receipt, build_card
+
+    extra = {'source_code': 3, 'nds_totals': [{'nds': 11, 'ndsSum': 103941}],
+             'items_meta': [{'pos': 1, 'paymenttype': 4}], 'taxation': 'УСН (доходы)',
+             'kkt_reg_id': '0000117961055874', 'message_fiscal_sign': 9297247158114454001,
+             'source_empty': '', 'source_null': None}
+    receipt = Receipt(fn='7384440900770423', fd='3467', fp='2882574203',
+                      qr_data='example', total_sum=5764, ext_json=json.dumps(extra), raw_data='{}')
+    ticket = {'receipt': {'totalSum': 576400, 'items': [
+        {'name': 'Гипсокартон', 'quantity': 7, 'price': 66500, 'sum': 465500, 'nds': 11}]}}
+    apply_to_receipt(None, receipt, ticket)
+    saved = json.loads(receipt.ext_json)
+    for key, value in extra.items():
+        assert saved[key] == value
+    card = build_card(receipt)
+    assert card['document']['items'][0]['nds_name'] == 'значение 11 (ставка или код)'
+    assert '9297247158114454001' in card['saved_data_json']
+    assert fns_refs.nds_name(None) == 'без НДС или не указано'
+    assert fns_refs.nds_name('11') != '11 %'

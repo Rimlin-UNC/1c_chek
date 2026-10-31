@@ -182,3 +182,30 @@ def test_saved_marking_recognises_only_meaningful_data():
         assert not has_saved_marking(value)
     assert has_saved_marking('{"marking": [{"serial": "abc"}]}')
     assert has_saved_marking('{"marking": {"raw": "code"}}')
+
+
+def test_same_position_and_payment_components(client, data):
+    from app.database import SessionLocal
+    from app.models import Receipt, ReceiptItem
+
+    _, user, _, _, ids = data
+    with SessionLocal() as db:
+        rows = db.query(ReceiptItem).filter_by(receipt_id=ids[0]).order_by(ReceiptItem.id).all()
+        rows[0].name, rows[0].vat_rate, rows[0].price, rows[0].quantity = 'Гипсокартон', '11', 665, 7
+        rows[1].name, rows[1].vat_rate, rows[1].price, rows[1].quantity = 'Шпаклёвка', '20', 1109, 1
+        rec = db.get(Receipt, ids[0])
+        rec.ecash_sum, rec.cash_sum, rec.pay_type = 5764, 0, ''
+        db.commit()
+
+    def found(**params):
+        response = client.get('/api/v1/receipts', params=params, headers=user)
+        assert response.status_code == 200, response.text
+        return {x['id'] for x in response.json()['items']}
+
+    assert found(item_name='гипсокартон', vat_rate='11', item_price_max=700,
+                 item_quantity_min=7, payment_component='ecash') == {ids[0]}
+    assert not found(item_name='гипсокартон', vat_rate='20')
+    assert not found(item_name='гипсокартон', item_price_min=1000)
+    assert not found(item_name='шпаклёвка', item_quantity_min=7)
+    assert ids[0] not in found(payment_component='cash')
+    assert client.get('/api/v1/receipts', params={'item_price_min': -1}, headers=user).status_code == 422

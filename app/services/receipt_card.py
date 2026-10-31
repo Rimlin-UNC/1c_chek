@@ -149,7 +149,6 @@ def normalize_ticket(ticket: dict, receipt_total: float | None = None) -> dict:
         name = str(_get(raw_item, "name", "itemName", default="") or
                    f"Позиция {pos + 1}")
         product_type = _get(raw_item, "productType")
-        industry, group = goods.classify_name(name, product_type)
         unit_code = _get(raw_item, "measurementUnit", "unitCode",
                          "itemsQuantityMeasure", "quantityMeasure")
         industry, group = goods.classify_name(name, product_type)
@@ -395,7 +394,7 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
         ext = ext if isinstance(ext, dict) else {}
     except ValueError:
         ext = {}
-    ext.update({
+    derived_ext = {
         "taxation": tax["taxation_name"],
         "pay_type": money["pay_type"],
         "region": seller["region_name"] or seller["region_code"],
@@ -413,7 +412,6 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
         "ffd_version": doc["kkt"]["ffd"],
         "retail_place": seller["place"],
         "ofd_id": doc["ofd_id"],
-        "source_code": "200",
         "properties": doc["properties"],
         "industry_details": doc["industry_details"],
         "items_meta": [
@@ -423,10 +421,13 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
             for it in doc["items"] if it["product_type"] or it["payment_type"]]
         if any(it["product_type"] or it["payment_type"] for it in doc["items"])
         else [],
-    })
-    receipt.ext_json = json.dumps(
-        {k: v for k, v in ext.items() if v not in (None, "", [], {})},
-        ensure_ascii=False)
+    }
+    # Сохранённые реквизиты источника не заменять пересчитанными значениями
+    # или пустыми полями неполного документа.
+    for key, value in derived_ext.items():
+        if value not in (None, "", [], {}):
+            ext.setdefault(key, value)
+    receipt.ext_json = json.dumps(ext, ensure_ascii=False)
     receipt.details_source = receipt.details_source or source
     receipt.full_data = bool(receipt.full_data or doc["items"])
     return doc
@@ -557,6 +558,8 @@ def build_card(receipt) -> dict:
             extra = json.loads(row.extra_json) if row.extra_json else {}
         except ValueError:
             extra = {}
+        if not isinstance(extra, dict):
+            extra = {}
         src = doc_items.get(idx + 1, {})
         industry = row.industry or src.get("industry") or ""
         group = row.product_group or src.get("group") or ""
@@ -598,8 +601,13 @@ def build_card(receipt) -> dict:
     except ValueError:
         ext = {}
 
+    # Строка JSON формируется на сервере: большие фискальные числа не должны
+    # терять точность при JSON.parse в браузере (JavaScript Number, 53 бита).
+    saved_data_json = json.dumps({"fns_answer": fns_raw, "extra": ext},
+                                 ensure_ascii=False, indent=2)
     return {
         "receipt_id": receipt.id,
+        "saved_data_json": saved_data_json,
         "document": {
             **{k: v for k, v in doc.items() if k != "raw"},
             "items": items,

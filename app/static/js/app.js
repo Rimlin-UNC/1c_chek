@@ -6150,6 +6150,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.77': [
+    { icon: '🎯', title: 'Точнее подбор позиций и сохранённые данные',
+      text: 'Название, НДС, цена и количество ищутся в одной позиции; '
+        + 'добавлен поиск по составляющей оплаты. Карточка отделяет сохранённый '
+        + 'ответ от вычисленных полей и не выдаёт код НДС за процент.' },
+  ],
   '1.70.76': [
     { icon: '🔎', title: 'НДС, маркировка и недостающие реквизиты',
       text: 'В реестре можно искать по сохранённому значению НДС и данным маркировки '
@@ -7991,6 +7997,13 @@ async function viewReceipts(container) {
           <option value="seller_name">название продавца</option><option value="seller_inn">ИНН продавца</option>
           <option value="address">адрес продавца</option><option value="fiscal">ФН, ФД или ФП</option>
           <option value="items">нет позиций</option></select></label>
+        <label class="field"><span>Цена позиции от</span><input id="f-item-price-min" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Цена позиции до</span><input id="f-item-price-max" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Количество позиции от</span><input id="f-item-qty-min" type="number" min="0" step="any"></label>
+        <label class="field"><span>Количество позиции до</span><input id="f-item-qty-max" type="number" min="0" step="any"></label>
+        <label class="field"><span>Состав оплаты</span><select id="f-payment-component">
+          <option value="">любой</option><option value="cash">есть наличные</option>
+          <option value="ecash">есть безналичные</option></select></label>
         <label class="field"><span>Продавец (ИНН или название)</span>
           <input id="f-merchant" placeholder="например 7801234567"></label>
         <label class="field"><span>Оплата</span>
@@ -8005,6 +8018,7 @@ async function viewReceipts(container) {
         ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разобрать до 2000 сохранённых чеков за раз; запросов в ФНС нет">🧭 Разобрать данные чеков</button>' : ''}
       </div>
       <p class="form-hint">Регион и город определяются по адресу, регион иногда по ИНН; отрасли и группы — по названиям позиций, это не классификация ФНС. При отсутствии полного чека часть фильтров может не сработать. «Разобрать данные чеков» обрабатывает до 2000 записей за раз без запроса в ФНС.</p>
+      <p class="form-hint">Название, НДС, цена и количество должны совпасть в одной позиции; отрасль, группа и маркировка проверяются по чеку в целом. Цена и количество используются как сохранены, при импорте могли быть подставлены значения по умолчанию. Состав оплаты проверяет положительную сохранённую сумму наличными или безналичными и не исключает другие способы оплаты.</p>
       <p class="form-hint">НДС показан как сохранённое значение: это может быть код ФНС, а «none» может означать как отсутствие НДС, так и отсутствие данных. Маркировка ищется только в сохранённых данных позиций; отсутствие записи не доказывает, что товар без маркировки. Чеки без позиций в выборку «данные не сохранены» не входят. Недостающие реквизиты: название, ИНН и адрес продавца, ФН/ФД/ФП и позиции.</p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
@@ -8045,6 +8059,7 @@ async function viewReceipts(container) {
     // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
     region: '', region_name: '', city: '', industry: '', product_group: '', item_name: '', operation: '', has_items: '', merchant: '',
     pay_type: '', sum_min: '', sum_max: '', vat_rate: '', marking: '', missing: '',
+    item_price_min: '', item_price_max: '', item_quantity_min: '', item_quantity_max: '', payment_component: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
@@ -8083,7 +8098,9 @@ async function viewReceipts(container) {
    ['#f-full', 'full_data'], ['#f-category', 'category'],
    ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to'],
    ['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
-   ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'], ['#f-merchant', 'merchant'],
+   ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'],
+   ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
+   ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
    ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
     .forEach(([sel, key]) => {
       const el = $(sel);
@@ -8354,7 +8371,9 @@ async function viewReceipts(container) {
     filters.date_to = $('#f-to').value;
     // v1.70.72: регион, отрасль, группа, продавец, оплата, суммы
     [['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
-     ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'], ['#f-merchant', 'merchant'],
+     ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'],
+   ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
+   ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
      ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],
      ['#f-sum-max', 'sum_max']].forEach(([sel, key]) => {
       const el = $(sel);
@@ -9292,7 +9311,7 @@ async function receiptFullCard(id) {
     ['shop', '🧾 Чек как в магазине', () => shopReceiptHTML(d)],
     ['details', '📋 Все реквизиты', () => fullCardDetailsHTML(d)],
     ['items', `📦 Товары (${(d.items || []).length})`, () => fullCardItemsHTML(d)],
-    ['raw', '🗄 Сырые данные', () => fullCardRawHTML(card)],
+    ['raw', '🗄 Данные и ответ источника', () => fullCardRawHTML(card)],
   ];
   const body = openModal(`
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">

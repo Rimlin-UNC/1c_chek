@@ -37,7 +37,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -386,6 +386,11 @@ def list_receipts(
     item_name: str | None = Query(None, max_length=200, description="Название позиции чека"),
     operation: int | None = Query(None, ge=1, le=4, description="Признак расчёта"),
     vat_rate: str | None = Query(None, max_length=10, description="Сохранённое значение НДС позиции"),
+    item_price_min: float | None = Query(None, ge=0, description="Цена позиции от"),
+    item_price_max: float | None = Query(None, ge=0, description="Цена позиции до"),
+    item_quantity_min: float | None = Query(None, ge=0, description="Количество позиции от"),
+    item_quantity_max: float | None = Query(None, ge=0, description="Количество позиции до"),
+    payment_component: Literal["cash", "ecash"] | None = Query(None, description="Есть сумма оплаты наличными или безналичными"),
     marking: Literal["present", "not_saved"] | None = Query(None, description="Сохранённые реквизиты маркировки"),
     missing: Literal["any", "seller_name", "seller_inn", "address", "fiscal", "items"] | None = Query(None, description="Отсутствующие реквизиты"),
     industry: str | None = Query(None, max_length=100,
@@ -463,12 +468,28 @@ def list_receipts(
         key = product_group.strip().casefold()
         query = query.filter(or_(folded(Receipt.product_group) == key,
                                  Receipt.items.any(folded(ReceiptItem.product_group) == key)))
+    # Все заданные параметры позиции относятся к одной и той же позиции.
+    item_conditions = []
     if item_name and item_name.strip():
-        query = query.filter(Receipt.items.any(contains(ReceiptItem.name, item_name)))
+        item_conditions.append(contains(ReceiptItem.name, item_name))
+    if vat_rate is not None and vat_rate != "":
+        item_conditions.append(ReceiptItem.vat_rate == vat_rate)
+    if item_price_min is not None:
+        item_conditions.append(ReceiptItem.price >= item_price_min)
+    if item_price_max is not None:
+        item_conditions.append(ReceiptItem.price <= item_price_max)
+    if item_quantity_min is not None:
+        item_conditions.append(ReceiptItem.quantity >= item_quantity_min)
+    if item_quantity_max is not None:
+        item_conditions.append(ReceiptItem.quantity <= item_quantity_max)
+    if item_conditions:
+        query = query.filter(Receipt.items.any(and_(*item_conditions)))
     if operation is not None:
         query = query.filter(Receipt.operation == operation)
-    if vat_rate is not None and vat_rate != "":
-        query = query.filter(Receipt.items.any(ReceiptItem.vat_rate == vat_rate))
+    if payment_component == "cash":
+        query = query.filter(Receipt.cash_sum > 0)
+    elif payment_component == "ecash":
+        query = query.filter(Receipt.ecash_sum > 0)
     if marking == "present":
         query = query.filter(Receipt.items.any(ReceiptItem.marking_present.is_(True)))
     elif marking == "not_saved":

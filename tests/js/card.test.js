@@ -175,6 +175,14 @@ describe('товары', () => {
 });
 
 describe('сырые данные', () => {
+  it('сохранённая строка JSON сохраняет большие числа и не дублирует блоки', () => {
+    const html = fullCardRawHTML({ document: { ...doc, extra: { message_fiscal_sign: 0 },
+      fns_answer: { cached: true } }, saved_data_json: '{"extra":{"message_fiscal_sign":9297247158114454001}}' });
+    expect(html).toContain('9297247158114454001');
+    expect((html.match(/message_fiscal_sign/g) || []).length).toBe(1);
+    expect(html).toContain('Исходный документ ФНС');
+  });
+
   it('выводятся как JSON и тоже экранируются', () => {
     const html = fullCardRawHTML({ document: { ...doc, extra: { a: '<b>' } } });
     expect(html).toContain('<pre class="fcard-json">');
