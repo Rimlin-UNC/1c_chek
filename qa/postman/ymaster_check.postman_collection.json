@@ -1,0 +1,350 @@
+{
+  "info": {
+    "name": "Ямастер Чек — типовые сценарии API",
+    "_postman_id": "ymaster-check-api-v17060",
+    "description": "v1.70.60: коллекция Newman (Postman) покрывает типовые сценарии API: вход, отказ входа, доступ с токеном и без, SPA-фолбэк, манифест, service worker, неизвестный маршрут API. Запуск: npm run test:api (сервер на порту 8002 поднимает тест-замок). Переменная baseUrl задаётся окружением или --env-var.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8002"
+    },
+    {
+      "key": "token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "компании без токена отклоняются",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/companies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "companies"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 401', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "неверный пароль отклоняется",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"admin\", \"password\": \"wrong-pass-1\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 401', () => pm.response.to.have.status(401));",
+              "pm.test('тело — JSON с причиной отказа', () => pm.expect(pm.response.json()).to.be.an('object'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "вход администратора даёт токен",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"admin\", \"password\": \"admin123\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('есть access_token', () => {",
+              "  const j = pm.response.json();",
+              "  pm.expect(j.access_token).to.be.a('string').and.not.empty;",
+              "  pm.collectionVariables.set('token', j.access_token);",
+              "});",
+              "pm.test('ответ быстрее 2 секунд', () => pm.expect(pm.response.responseTime).to.be.below(2000));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "профиль с токеном",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('роль администратора', () => {",
+              "  const j = pm.response.json();",
+              "  pm.expect(j.role).to.eql('admin');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "компании с токеном доступны",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/companies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "companies"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('список — массив', () => {",
+              "  const j = pm.response.json();",
+              "  const list = j.items || j;",
+              "  pm.expect(list).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "неизвестный маршрут API отдаёт 404 JSON",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/never-exists",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "never-exists"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 404', () => pm.response.to.have.status(404));",
+              "pm.test('не HTML-страница', () => pm.expect(pm.response.headers.get('content-type')).to.include('application/json'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "главная страница — HTML кабинета",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            ""
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('HTML с заголовком кабинета', () => pm.expect(pm.response.text()).to.include('Ямастер Чек'));",
+              "pm.test('страница быстрее 2 секунд', () => pm.expect(pm.response.responseTime).to.be.below(2000));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "манифест и service worker отдаются",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/manifest.webmanifest",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "manifest.webmanifest"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('JSON манифеста', () => pm.expect(pm.response.json()).to.be.an('object'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "service worker отдаётся как JS",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/sw.js",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "sw.js"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('имя кэша версии на месте', () => pm.expect(pm.response.text()).to.include('ymaster-check-v'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "SPA-фолбэк: правовой путь отдаёт оболочку",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/legal/oferta",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "legal",
+            "oferta"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', () => pm.response.to.have.status(200));",
+              "pm.test('оболочка кабинета', () => pm.expect(pm.response.text()).to.include('Ямастер Чек'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

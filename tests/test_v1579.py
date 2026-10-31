@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.57.9: тела-ошибки proverkacheka.com при HTTP 200
-# ({"code":401,"data":"Не авторизован (не представился)…"}) → внятная
-# причина, без бессмысленных повторов.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# Ямастер Чек — тесты v1.57.9 (обновлены в v1.70.70): ошибки источника
+# дают внятную причину (раньше — JSON-тела стороннего сервиса, теперь —
+# SOAP-ошибки официального API ФНС по «Перечню ошибок»).
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import logging
 import re
@@ -66,85 +66,161 @@ class TestVersion1579:
         assert reg["Чек-Пул"] == "1.56.1"                 # не задет
         assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 55, 1)              # не задет
 
-    def test_token_hint_new_format(self):
+    def test_settings_hint_fns(self):
+        """v1.70.70: в настройках только мастер-токен и AppId ФНС."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert "формат 55035.хххххх)" in js
-        assert 'placeholder="55035.xxxxxxxxxxx"' in js
-        assert "Справка → API)" not in js.split("📥 Источники данных чека")[1][:2000]
+        assert 'placeholder="вставьте мастер-токен ФНС"' in js
+        assert 'id="fns-appid"' in js
+        assert "55035.хххххх" not in js
+        assert 'placeholder="55035.xxxxxxxxxxx"' not in js
 
 
 def _reasons(res):
-    """Причины по каждому источнику — из raw.engine.errors."""
-    return " | ".join((res.raw.get("engine") or {}).get("errors") or [])
+    """Причина неудачи — из текста результата."""
+    return res.message or ""
 
 
 class TestBodyErrors:
-    """HTTP 200 с кодом ошибки в теле — то, что было на проде."""
+    """Ошибки API ФНС: каждая распознаётся и объясняется по-русски."""
 
-    def test_401_body_token_rejected(self, monkeypatch, caplog):
-        """Ровно прод-кейс: code 401 «Не авторизован (не представился)»."""
-        from app.services import external
+    AUTH = ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+            'envelope/"><soap:Body><ns2:GetMessageResponse xmlns:ns2="urn://'
+            'x-artefacts-gnivc-ru/inplat/servin/OpenApiMessageConsumerService'
+            '/types/1.0"><ns2:Message><ns2:Result><ns2:Token>T</ns2:Token>'
+            '</ns2:Result></ns2:Message></ns2:GetMessageResponse>'
+            '</soap:Body></soap:Envelope>')
+
+    def _client(self, monkeypatch, responder):
+        from app.services import fns
+        monkeypatch.setattr(fns, "_db_setting", lambda key: "")
+        monkeypatch.setattr(fns.time, "sleep", lambda s: None)
+        monkeypatch.setattr(fns.httpx, "post", responder)
+        return fns.FnsClient(master_token="MASTER")
+
+    def _resp(self, text, status=200):
+        from app.services import fns
+        return fns.httpx.Response(
+            status, text=text,
+            request=fns.httpx.Request("POST", "https://openapi.nalog.ru:8090"))
+
+    def _fault(self, text: str):
+        return ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+                'envelope/"><soap:Body><soap:Fault><faultstring>'
+                f"{text}</faultstring></soap:Fault></soap:Body>"
+                "</soap:Envelope>")
+
+    def test_token_rejected_is_named(self, monkeypatch, caplog):
+        """Отказ по токену: причина названа, токен будет получен заново."""
         caplog.set_level(logging.INFO)
-        eng, calls = _engine(monkeypatch, {
-            "code": 401,
-            "data": "Не авторизован (не представился). Для доступа к "
-                    "запрашиваемому ресурсу требуется аутентификация."})
-        res = eng.fetch(None, "t=…&s=890.00&fn=…&i=…&fp=…&n=1",
-                        "fn", "11100", "fp", 890.0, None)
-        # причина названа прямо, а не «данных чека нет»
-        assert "Токен не принят proverkacheka.com" in _reasons(res)
-        assert "обновите «Токен доступа к API»" in _reasons(res)
-        # v1.58.0: все 3 формата, затем переход дальше (без движковых повторов)
-        assert calls["n"] == 3, calls
-        assert res.source == "mock" and res.found is False
-        assert "Токен не принят" in caplog.text
+        state = {"n": 0}
 
-    def test_402_body_quota(self, monkeypatch):
-        from app.services import external
-        eng, calls = _engine(monkeypatch, {"code": 402, "data": "квота"})
-        res = eng.fetch(None, "qr", "fn", "fd", "fp", 890.0, None)
-        assert "Квота/тариф API исчерпаны (code 402" in _reasons(res)
-        assert calls["n"] == 1                      # без повторов
-        assert res.source == "mock"
+        def responder(*a, **k):
+            state["n"] += 1
+            if state["n"] == 1:
+                return self._resp(self.AUTH)
+            return self._resp(self._fault(
+                "Отказ в доступе: не верное значение token"), 500)
 
-    def test_404_body_not_found(self, monkeypatch):
-        from app.services import external
-        eng, _ = _engine(monkeypatch, {"code": 404, "data": "чек не найден"})
-        res = eng.fetch(None, "qr", "fn", "fd", "fp", 890.0, None)
-        assert "Чека нет в базе сервиса (code 404" in _reasons(res)
+        client = self._client(monkeypatch, responder)
+        res = client.get_ticket("1", "2", "3", 1.0,
+                                __import__("datetime").datetime(2026, 1, 1))
+        assert res.ok is False
+        assert "токен" in _reasons(res).lower()
 
-    def test_429_body_limit(self, monkeypatch):
-        from app.services import external
-        eng, _ = _engine(monkeypatch, {"code": 429, "data": "слишком много"})
-        res = eng.fetch(None, "qr", "fn", "fd", "fp", 890.0, None)
-        assert "Лимит/блокировка proverkacheka.com (code 429" in _reasons(res)
+    def test_daily_limit_is_quota(self, monkeypatch):
+        """«Превышен общий дневной лимит» → статус quota (чек в очередь)."""
+        state = {"n": 0}
 
-    def test_success_with_code_zero(self, monkeypatch):
-        """code:0 с чеком (позиции непустые) — обычный успешный разбор."""
-        from app.services import external
-        eng, _ = _engine(monkeypatch, {
-            "code": 0, "data": {"ticket": {"document": {"receipt": {
-                "totalSum": 89000,
-                "dateTime": "2026-10-01T09:08:00",
-                "items": [{"name": "Товар", "price": 89000,
-                           "sum": 89000, "quantity": 1}],
-                "user": "ООО Тест", "userInn": "5000000000",
-            }}}}})
-        res = eng.fetch(None, "qr", "fn", "fd", "fp", 890.0, None)
-        assert res.found is True and res.source == "proverkacheka"
+        def responder(*a, **k):
+            state["n"] += 1
+            if state["n"] == 1:
+                return self._resp(self.AUTH)
+            return self._resp(self._fault(
+                "Превышен общий дневной лимит запросов, приложением "
+                "YmasterAPI"), 500)
 
-    def test_field_auth_sends_token(self, monkeypatch):
-        """v1.58.0: токен уходит полем token, multipart-ом ПЕРВЫМ,
-        полное значение (с префиксом 55035.)."""
-        from app.services import external
-        calls = []
+        client = self._client(monkeypatch, responder)
+        res = client.get_ticket("1", "2", "3", 1.0,
+                                __import__("datetime").datetime(2026, 1, 1))
+        assert res.status == "quota"
+        assert "лимит" in res.message.lower()
 
-        def fake_post(url, *a, **k):
-            calls.append(k)
-            return _Resp({"code": 401, "data": "нет"})
+    def test_message_not_found(self, monkeypatch):
+        """Сообщение с результатом не найдено — понятная причина."""
+        state = {"n": 0}
 
-        monkeypatch.setattr(external.httpx, "post", fake_post)
-        external.fetch_proverkacheka("qr", "55035.TEMP")
-        assert calls, "запросов не было"
-        assert "files" in calls[0], "первый формат должен быть multipart"
-        assert calls[0]["files"]["token"][1] == "55035.TEMP"
+        def responder(*a, **k):
+            state["n"] += 1
+            if state["n"] == 1:
+                return self._resp(self.AUTH)
+            if state["n"] == 2:
+                return self._resp(
+                    '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/'
+                    'soap/envelope/"><soap:Body><ns2:SendMessageResponse '
+                    'xmlns:ns2="urn://x-artefacts-gnivc-ru/inplat/servin/'
+                    'OpenApiAsyncMessageConsumerService/types/1.0">'
+                    "<ns2:MessageId>m1</ns2:MessageId></ns2:SendMessageResponse>"
+                    "</soap:Body></soap:Envelope>")
+            return self._resp(self._fault(
+                "MessageNotFoundException: Сообщение не найдено"), 500)
+
+        client = self._client(monkeypatch, responder)
+        res = client.get_ticket("1", "2", "3", 1.0,
+                                __import__("datetime").datetime(2026, 1, 1))
+        assert res.status == "not_found"
+        assert "не найдено" in res.message.lower()
+
+    def test_contract_error_explained(self, monkeypatch):
+        """Ошибка валидации по схеме XSD объясняется как «не прошёл схему»."""
+        state = {"n": 0}
+
+        def responder(*a, **k):
+            state["n"] += 1
+            if state["n"] == 1:
+                return self._resp(self.AUTH)
+            return self._resp(self._fault(
+                "UnmarshallingFailureException: unexpected element"), 500)
+
+        client = self._client(monkeypatch, responder)
+        res = client.get_ticket("1", "2", "3", 1.0,
+                                __import__("datetime").datetime(2026, 1, 1))
+        assert "схем" in res.message
+
+    def test_success_with_code_200(self, monkeypatch):
+        """Code 200 + Ticket — успешный разбор чека."""
+        ticket = ('{"id":"t","ofdId":"ofd","receipt":{"totalSum":89000,'
+                  '"dateTime":"2026-10-01T09:08:00","user":"ООО Тест",'
+                  '"userInn":"5000000000","items":[{"name":"Товар",'
+                  '"price":89000,"sum":89000,"quantity":1}]}}')
+        result = ('<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/'
+                  'envelope/"><soap:Body><ns2:GetMessageResponse xmlns:ns2="'
+                  'urn://x-artefacts-gnivc-ru/inplat/servin/'
+                  'OpenApiAsyncMessageConsumerService/types/1.0"><ns2:Message>'
+                  "<ns2:ProcessingStatus>COMPLETED</ns2:ProcessingStatus>"
+                  "<ns2:Result><ns3:Code xmlns:ns3=\"urn://x-artefacts-gnivc-"
+                  'ru/ais3/kkt/KktTicketService/types/1.0">200</ns3:Code>'
+                  "<ns3:Ticket xmlns:ns3=\"urn://x-artefacts-gnivc-ru/ais3/"
+                  f'kkt/KktTicketService/types/1.0">{ticket}</ns3:Ticket>'
+                  "</ns2:Result></ns2:Message></ns2:GetMessageResponse>"
+                  "</soap:Body></soap:Envelope>")
+        state = {"n": 0}
+
+        def responder(*a, **k):
+            state["n"] += 1
+            if state["n"] == 1:
+                return self._resp(self.AUTH)
+            if state["n"] == 2:
+                return self._resp(
+                    '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/'
+                    'soap/envelope/"><soap:Body><ns2:SendMessageResponse '
+                    'xmlns:ns2="urn://x-artefacts-gnivc-ru/inplat/servin/'
+                    'OpenApiAsyncMessageConsumerService/types/1.0">'
+                    "<ns2:MessageId>m1</ns2:MessageId></ns2:SendMessageResponse>"
+                    "</soap:Body></soap:Envelope>")
+            return self._resp(result)
+
+        client = self._client(monkeypatch, responder)
+        res = client.get_ticket("1", "2", "3", 890.0,
+                                __import__("datetime").datetime(2026, 1, 1))
+        assert res.ok and res.status == "valid"
+        assert res.raw["ticket"]["ofdId"] == "ofd"

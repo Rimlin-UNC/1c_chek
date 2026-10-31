@@ -3,12 +3,13 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Конфигурация приложения (переменные окружения / файл .env).
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -33,24 +34,51 @@ def _env(key: str, default: str = "") -> str:
     return default
 
 
+def _int_env(key: str, default: int, minimum: int = 1) -> int:
+    """Целое из окружения/.env с защитой от опечатки (v1.70.38).
+
+    Раньше числа читались как `int(_env(...))`, и значение вроде «12 Мб» или
+    «240 » роняло приложение НА ИМПОРТЕ КОНФИГА: systemd-юнит падал с
+    питоновским трейсбеком, владелец видел 502 без единой подсказки, что дело
+    в одной строке .env. Теперь неразборчивое или слишком маленькое значение —
+    это понятное предупреждение в журнале и рабочее значение по умолчанию:
+    ошибка конфигурации не должна превращаться в отказ всего сервиса.
+    """
+    raw = (_env(key, "") or "").strip()
+    if not raw:
+        return default
+    log = logging.getLogger("ymaster")
+    try:
+        val = int(raw)
+    except ValueError:
+        log.warning("%s=%r не целое число — взято значение по умолчанию %s",
+                    key, raw, default)
+        return default
+    if val < minimum:
+        log.warning("%s=%s меньше допустимого минимума %s — взято %s",
+                    key, val, minimum, default)
+        return default
+    return val
+
+
 class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.70.15"
-    DEFAULT_BRANCH: str = "arena/01a0caaa-1c-chek"   # ветка для обновлений из приложения
+    APP_VERSION: str = "1.70.80"
+    DEFAULT_BRANCH: str = "main"   # v1.70.18: канал обновлений из приложения — main
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
     # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
     # управляет нестандартный супервизор
     SELF_REEXEC: bool = True
     VENDOR: str = "ООО «Ямастер»"
     VENDOR_SITE: str = "https://ymaster.ru"
-    VENDOR_EMAIL: str = "info@ymaster.ru"
+    VENDOR_EMAIL: str = "chek@ymaster.ru"
 
     # --- Безопасность -------------------------------------------------
     SECRET_KEY: str = _env("SECRET_KEY", "ymaster-dev-secret-change-me-in-production")
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(_env("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))  # 12 часов
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = _int_env("ACCESS_TOKEN_EXPIRE_MINUTES", 720)  # 12 часов
 
     # --- База данных ----------------------------------------------------
     # SQLite по умолчанию (работает из коробки), PostgreSQL для production:
@@ -61,20 +89,26 @@ class Settings:
     )
 
     # --- Интеграция с ФНС ------------------------------------------------
-    # Провайдер проверки чеков: "mock" (демо) | "fns" (реальное API ФНС)
-    FNS_PROVIDER: str = _env("FNS_PROVIDER", "mock")
+    # v1.70.70: единственный источник проверки чеков — Открытые API ФНС.
+    # Мастер-токен и AppId выдаются ФНС при регистрации приложения
+    # (Brand YmasterAPI, лимит 1000 запросов за 24 часа) и вводятся
+    # администратором в настройках программы.
     FNS_API_BASE: str = _env("FNS_API_BASE", "https://openapi.nalog.ru:8090")
     FNS_MASTER_TOKEN: str = _env("FNS_MASTER_TOKEN", "")
+    # Суточный лимит запросов к ФНС и предупреждение при 80 %
+    FNS_DAILY_LIMIT: int = _int_env("FNS_DAILY_LIMIT", 1000)
+    FNS_DAILY_LIMIT_ENABLED: bool = _env("FNS_DAILY_LIMIT_ENABLED",
+                                         "1") not in ("0", "false", "")
     # v1.29.0: прокси для Telegram-бота (api.telegram.org часто заблокирован)
     TELEGRAM_PROXY: str = _env("TELEGRAM_PROXY", "")
     FNS_CLIENT_APP_ID: str = _env("FNS_CLIENT_APP_ID", "YMASTER-CHECK")
-    FNS_CACHE_TTL_DAYS: int = int(_env("FNS_CACHE_TTL_DAYS", "30"))
-    FNS_TIMEOUT_SECONDS: int = int(_env("FNS_TIMEOUT_SECONDS", "15"))
+    FNS_CACHE_TTL_DAYS: int = _int_env("FNS_CACHE_TTL_DAYS", 30)
+    FNS_TIMEOUT_SECONDS: int = _int_env("FNS_TIMEOUT_SECONDS", 15)
 
     # --- Интеграция с 1С ---------------------------------------------------
     # Токен, по которому 1С обращается к сервису выгрузки (endpoint /onec/v1/*)
     ONEC_API_TOKEN: str = _env("ONEC_API_TOKEN", "ymaster-onec-token-change-me")
-    ONEC_BATCH_SIZE: int = int(_env("ONEC_BATCH_SIZE", "100"))
+    ONEC_BATCH_SIZE: int = _int_env("ONEC_BATCH_SIZE", 100)
 
     # --- Общие -----------------------------------------------------------
     # v1.70.11: без wildcard-дефолта — веб-клиент и мини-app работают
@@ -83,10 +117,28 @@ class Settings:
     # v1.70.12: адрес Telegram Bot API — свой шлюз/мост вместо официального
     # (поле настройки «Адрес API» важнее env; bridge: deploy/tg-bridge)
     TELEGRAM_API_BASE: str = _env("TELEGRAM_API_BASE", "https://api.telegram.org")
-    MAX_UPLOAD_MB: int = int(_env("MAX_UPLOAD_MB", "12"))
+    MAX_UPLOAD_MB: int = _int_env("MAX_UPLOAD_MB", 12)
     # v1.65.0: лимит размера PDF-чека (концепция: 2–5 МБ, 1 ГБ RAM)
-    PDF_MAX_MB: int = int(_env("PDF_MAX_MB", "5"))
+    PDF_MAX_MB: int = _int_env("PDF_MAX_MB", 5)
     FIRST_RUN_SEED: bool = _env("FIRST_RUN_SEED", "1") == "1"
+    # v1.70.38: потолок номера страницы. Без него offset = (page-1)*page_size
+    # на значении вроде page=4981997847802869367351279616 переполнял 64-битный
+    # INTEGER SQLite: OverflowError → 500 «Internal Server Error» на ровном
+    # месте (нашёл фаззинг по схеме OpenAPI). Миллион страниц по 200 строк —
+    # это 2·10^8: заведомо больше любой реальной выборки и безопасно для СУБД.
+    PAGE_MAX: int = _int_env("PAGE_MAX", 1000000)
+
+    # --- Ограничение частоты запросов (v1.70.38) -------------------------
+    # Пороги вынесены в окружение: нагрузочное тестирование и фаззинг API
+    # (locust, schemathesis) иначе упираются в 429 раньше, чем успевают
+    # проверить само приложение, а боевые значения у владельца могут
+    # отличаться (за одним IP прокси бывает много людей).
+    # ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ РАВНЫ прежним зашитым в коде — поведение боя не
+    # меняется; их фиксирует тест TestRateLimitConfig в test_v17038.py.
+    RATE_LIMIT_LOGIN: int = _int_env("RATE_LIMIT_LOGIN", 25)        # вход: 25/мин
+    RATE_LIMIT_REGISTER: int = _int_env("RATE_LIMIT_REGISTER", 40)  # регистрация: 40/час
+    RATE_LIMIT_ONEC: int = _int_env("RATE_LIMIT_ONEC", 120)         # обмен с 1С: 120/мин
+    RATE_LIMIT_API: int = _int_env("RATE_LIMIT_API", 240)           # прочее API: 240/мин
 
 
 settings = Settings()

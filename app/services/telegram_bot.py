@@ -10,7 +10,7 @@
 #     secretbox), в логи не пишется, ошибки обезличены;
 #   • напоминания: раз в день в заданное время сотрудникам, у которых
 #     НЕСКОЛЬКО нет чеков за сегодня (собираемость чеков 60% → 90%+).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -244,6 +244,24 @@ def handle_update(db: Session, upd: dict) -> None:
         if bal:
             _send(bal)
         return
+    # --- v1.70.69: вход/регистрация на сайте — код «tglogin_…» ---
+    # Deep-link https://t.me/БОТ?start=tglogin_… приходит текстом
+    # «/start tglogin_…» — перехватываем раньше привязки, чтобы длинный
+    # код входа не спутать с коротким 6-значным кодом привязки.
+    m_tgl = re.search(r"tglogin_[A-Za-z0-9_-]{16,120}", text)
+    if m_tgl:
+        from . import telegram_login
+        frm = msg.get("from") or {}
+        display = " ".join(str(x) for x in (frm.get("first_name"),
+                                            frm.get("last_name")) if x)
+        ok = telegram_login.confirm(db, m_tgl.group(0), chat_id,
+                                    username=str(frm.get("username") or ""),
+                                    display=display)
+        _send("✅ Вход на сайт подтверждён — вернитесь в браузер, вход "
+              "выполнится автоматически." if ok else
+              "⚠️ Код входа не найден или устарел — на сайте нажмите "
+              "«Войти через Telegram» ещё раз.")
+        return
     if text_low.startswith("/start"):
         code = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
         uid = consume_bind_code(code)
@@ -254,7 +272,7 @@ def handle_update(db: Session, upd: dict) -> None:
                     "👋 Это бот «Ямастер Чек».\n\n"
                     "🎁 Пришлите строку QR чека (текстом) — проверим по "
                     "официальным источникам и начислим балл.\n"
-                    f"📜 {ingest_offerta()}\n\n"
+                    f"📜 {ingest_offerta(db)}\n\n"
                     "Сотрудники компаний: код привязки — в Настройках "
                     "приложения (Настройки → Telegram → «Получить код»), "
                     "затем /start КОД.")
@@ -302,10 +320,17 @@ def handle_update(db: Session, upd: dict) -> None:
 # --------------------------------------------------------------------------
 #  v1.30.0: «Чек-Пул» — приём чеков через бота
 # --------------------------------------------------------------------------
-def ingest_offerta() -> str:
-    """Краткая оферта пула для приветствия бота (v1.30.0)."""
-    from ..pool import ingest as pool
-    return pool.OFFERTA_SHORT
+def ingest_offerta(db: Session) -> str:
+    """Краткая оферта пула для приветствия бота (v1.30.0).
+
+    v1.70.47: сообщение читают в мессенджере, где относительный адрес
+    страницы не откроется, поэтому в краткий текст подставляется полный
+    адрес документа. Адрес берётся из настройки, из которой собираются
+    ссылки в письмах (`pool.mailer.base_url`), — второй источник адреса
+    сайта разъехался бы с первым при переезде домена.
+    """
+    from ..legal import offerta
+    return offerta.short_terms_absolute(db)
 
 
 def process_pool_message(db: Session, chat_id: str, from_id: str | None,
@@ -321,6 +346,11 @@ def process_pool_message(db: Session, chat_id: str, from_id: str | None,
         return "ℹ Приём чеков в «Чек-Пул» сейчас выключен. Попробуйте позже."
     user = pool.get_or_create_user(db, tg_user_id=from_id or chat_id,
                                    tg_username=from_username)
+    # v1.70.37: канал регистрации участника — администратор видит, откуда он
+    # пришёл (Telegram-бот, а не мини-приложение MAX).
+    if not (user.reg_source or ""):
+        user.reg_source = "tg"
+        db.commit()
     if user.is_blocked:
         return "⛔ Приём чеков от этого аккаунта остановлен."
     res = pool.ingest_receipt(db, text.strip(), "telegram_bot", user)
@@ -378,7 +408,6 @@ def _pool_balance_text(db: Session, from_id: str | None, chat_id: str) -> str | 
 # --------------------------------------------------------------------------
 _worker: threading.Thread | None = None
 _stop = threading.Event()
-_wake = threading.Event()
 _bot_username: str = ""
 
 
@@ -523,11 +552,18 @@ def ping_proxy(db: Session, samples: int = 3,
                scheduled: bool = False) -> dict:
     """v1.70.14: средний пинг настроенного пути до Telegram (3 запроса).
 
-    Замеряем фактический путь бота: через прокси (AdGuard VPN
-    socks5://127.0.0.1:1080 и т.п.) или напрямую. Любой HTTP-ответ
-    считается успехом (важна латентность, не статус). Результат хранится
-    в настройках и показывается в карточке Telegram. Экономно: 3
-    коротких запроса; scheduled=True — суточный автозамер 15:00 МСК.
+    Замеряем фактический путь бота: через прокси, если он задан в настройках,
+    иначе напрямую. Любой HTTP-ответ считается успехом (важна латентность, не
+    статус). Результат хранится в настройках и показывается в карточке
+    Telegram. Экономно: 3 коротких запроса; scheduled=True — суточный
+    автозамер 15:00 МСК.
+
+    v1.70.24: при схеме AdGuard VPN «TUN + selective» поле прокси пусто, и
+    «напрямую» — это НЕ обход VPN: трафик до api.telegram.org уводится в
+    туннель прозрачно по доменному исключению, а DNS уходит в туннель. То
+    есть замер при пустом прокси измеряет ровно тот путь, которым реально
+    ходит бот. Прежняя схема SOCKS5 (прокси socks5://127.0.0.1:1080) тоже
+    продолжает замеряться корректно — просто через прокси.
     """
     proxy = get_proxy(db)
     origin = get_api_base(db).rstrip("/")
@@ -590,11 +626,12 @@ def _send_digest(db: Session) -> None:
         lines.append(f"🪝 Вебхуки: {_stuck} недоставлено (исчерпаны "
                      "повторы) — проверьте приёмник в «Настройках»")
     text = "\n".join(lines)
-    staff = [u for u in db.query(User).filter(
+    # v1.70.38: .all() и так возвращает список — копия в генераторе лишняя
+    staff = db.query(User).filter(
         User.is_active.is_(True),
         User.telegram_chat_id.isnot(None),
         User.telegram_chat_id != "",
-        User.role.in_(("admin", "accountant"))).all()]
+        User.role.in_(("admin", "accountant"))).all()
     proxy = get_proxy(db)
     base = get_api_base(db)                              # v1.70.12
     sent = 0
@@ -746,11 +783,6 @@ def diagnose(db: Session) -> dict:
             "verdict": v[0], "message": v[1]}
 
 
-def wake() -> None:
-    """Разбудить цикл после изменений настроек."""
-    _wake.set()
-
-
 # --------------------------------------------------------------------------
 #  Уведомления из бизнес-логики (fire-and-forget)
 # --------------------------------------------------------------------------
@@ -789,10 +821,17 @@ def notify_user(user_id: str, text: str) -> None:
 
 
 def refresh_username(db: Session) -> str:
-    """Обновить кэш username бота (для настроек)."""
+    """Обновить кэш username бота (для настроек и ссылок t.me).
+
+    v1.70.69 (исправление): запрос шёл на официальный адрес, игнорируя
+    настройку «Адрес API» (v1.70.12). В условиях блокировки это значило,
+    что имя бота не обновлялось и ссылка https://t.me/… в окне входа через
+    Telegram не появлялась — вход оставался только «кодом текстом».
+    """
     global _bot_username
     try:
-        me = get_me(get_token(db), proxy=get_proxy(db))  # v1.29.0
+        me = get_me(get_token(db), proxy=get_proxy(db),   # v1.29.0
+                    base=get_api_base(db))                # v1.70.12/69
         _bot_username = me.get("username") or ""
     except Exception:                                    # noqa: BLE001
         _bot_username = ""

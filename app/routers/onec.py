@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Push-режим интеграции с 1С: чеки забирает сервер 1С (HTTP-сервис ↔ HTTP-сервис).
 
@@ -49,7 +49,7 @@ def ping(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
     pending = db.query(Receipt).filter(Receipt.exported == False).count()  # noqa: E712
     return {
         "service": "Ямастер Чек",
-        "vendor": "ООО Ямастер (ymaster.ru)",
+        "vendor": "ООО «Ямастер» (ymaster.ru)",
         "pending_receipts": pending,
         "server_time": dt.datetime.utcnow().isoformat() + "Z",
     }

@@ -2,11 +2,11 @@
 // Ямастер Чек — UI-harness v1.13.0/v1.14.0 (Node vm DOM-песочница): карточка
 // компании (ЕГРЮЛ/Checko), диалог умного удаления (move/wipe).
 // Запуск: node tests/ui_harness.js  (бандл строит tests/test_v*.py)
-// ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+// ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 // ======================================================================
 // ======================================================================
 // UI-harness v1.13.0/v1.14.0: карточка компании + диалог удаления (DOM-песочница)
-// ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+// ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 // ======================================================================
 const fs = require('fs');
 const vm = require('vm');
@@ -76,6 +76,7 @@ const apiLog = [];
 const toasts = [];
 
 const sandbox = {
+  crypto: { randomUUID: () => 'abc00000-0000-4000-8000-000000000000' },
   document, window: { addEventListener: () => {}, print: () => {}, matchMedia: () => ({ matches: false, addEventListener: () => {} }), location: { reload() {}, pathname: '/' } },
   navigator: { clipboard: { writeText: async () => {} }, userAgent: 'harness' },
   print: () => {},
@@ -124,7 +125,7 @@ const advancePayloads = [
     period: { from: '2026-10-01', to: '2026-10-31' },
     company: { id: 'x1', name: 'ООО «Ямастер»', inn: '7801234564' },
     rows: [
-      { id: 'r1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
+      { id: 'r1', company_id: 'x1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
         merchant_name: 'ООО Лента', merchant_inn: '7802000000', fn: '1', fd: '11',
         fp: '111', operation: 1, category: 'Хозрасходы', total_sum: 100.0,
         fns_status: 'valid', exported: false },
@@ -138,11 +139,11 @@ const advancePayloads = [
     period: { from: '2026-10-01', to: '2026-10-31' },
     company: { id: 'x1', name: 'ООО «Ямастер»', inn: '7801234564' },
     rows: [
-      { id: 'r1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
+      { id: 'r1', company_id: 'x1', receipt_date: '2026-10-05T12:00', assignee: 'Иван Отчётный',
         merchant_name: 'ООО Лента', merchant_inn: '7802000000', fn: '1', fd: '11',
         fp: '111', operation: 1, category: 'Хозрасходы', total_sum: 100.0,
         fns_status: 'valid', exported: false },
-      { id: 'r2', receipt_date: '2026-10-06T13:00', assignee: 'Пётр Готовый',
+      { id: 'r2', company_id: 'x1', receipt_date: '2026-10-06T13:00', assignee: 'Пётр Готовый',
         merchant_name: 'АЗС', merchant_inn: '7803000000', fn: '2', fd: '12',
         fp: '222', operation: 1, category: 'Топливо', total_sum: 250.5,
         fns_status: 'invalid', exported: false },
@@ -207,7 +208,8 @@ sandbox.fetch = async (url, opts) => {
     payload = { total: 0, by_fns: {}, by_day: [], by_company: {}, by_source: {},
                 by_user: {}, by_status: {}, valid: 0, invalid: 0 };
   if (String(url).includes('/delete')) payload = { ok: true, message: 'Компания удалена' };
-  if (String(url).includes('/advance-report'))
+  if (String(url).includes('/advance-report/number')) payload = { number: 'АО-2026-10-01' };
+  else if (String(url).includes('/advance-report'))
     payload = advancePayloads[advanceIdx++ % advancePayloads.length];
   if (String(url).includes('/settings/checko') && (opts && opts.method) === 'PUT')
     payload = { ok: true, key_masked: 'x•••000' };
@@ -282,6 +284,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   let aoSlot = root._cls['.modal-slot'];
   aoSlot.querySelector('#ao-from').value = '2026-10-01';
   aoSlot.querySelector('#ao-to').value = '2026-10-31';
+  aoSlot.querySelector('#ao-date').value = '2026-10-31';
   const mkBtn = aoSlot.querySelector('#ao-make');
   await mkBtn.onclick({ target: mkBtn });
   await new Promise(r => setTimeout(r, 30));
@@ -305,7 +308,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(bundle.includes('Напечатать чек') &&
      !bundle.includes('Печать PDF (выбранные)'),
      'печать: кнопка «Напечатать чек»');
-  ok(bundle.includes('whenImagesReady') && bundle.includes('Фискальные QR'),
+  ok(bundle.includes('whenImagesReady') && bundle.includes('/qr.png'),
      'v1.24.1: печать ждёт загрузки QR');
   // второй прогон — два сотрудника → сводная форма с подытогами
   root._cls['.modal-slot'].innerHTML = '';
@@ -313,6 +316,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   aoSlot = root._cls['.modal-slot'];
   aoSlot.querySelector('#ao-from').value = '2026-10-01';
   aoSlot.querySelector('#ao-to').value = '2026-10-31';
+  aoSlot.querySelector('#ao-date').value = '2026-10-31';
   const mkBtn2 = aoSlot.querySelector('#ao-make');
   await mkBtn2.onclick({ target: mkBtn2 });
   await new Promise(r => setTimeout(r, 30));
@@ -636,16 +640,186 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.10: возврат из «Все настройки» всегда виден');
   ok(bundle.includes("'1.70.12':") && bundle.includes('tg-apibase'),
      'v1.70.12: Telegram — сменный адрес API (мост/шлюз)');
-  ok(bundle.includes("'1.70.13':") && bundle.includes('tg-adguard') &&
-     bundle.includes('socks5://127.0.0.1:1080'),
-     'v1.70.13: пресет AdGuard VPN для Telegram');
+  // v1.70.13 ставил в карточку Telegram кнопку-пресет; с v1.70.28 управление
+  // живёт в собственном блоке, поэтому проверяем только след в истории.
+  ok(bundle.includes("'1.70.13':") && bundle.includes('deploy/adguard-vpn'),
+     'v1.70.13: пресет AdGuard VPN для Telegram (с 1.70.28 — отдельный блок)');
   ok(bundle.includes("'1.70.14':") && bundle.includes('tg-ping') &&
      bundle.includes('settings/telegram/ping'),
      'v1.70.14: пинг пути Telegram в карточке (3 запроса, среднее)');
   ok(bundle.includes('/telegram/adguard/setup') && bundle.includes('ag-setup-log') &&
-     bundle.includes('ag-sudo-pw') && bundle.includes('adguard/setup/preflight') &&
-     bundle.includes("'1.70.15':"),
-     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + sudo-пароль + живой журнал)');
+     bundle.includes('adguard/setup/preflight') && bundle.includes("'1.70.15':"),
+     'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + живой журнал)');
+  ok(bundle.includes("'1.70.16':") && bundle.includes('ag-cmd') &&
+     bundle.includes('ag-copy-cmd') && bundle.includes('ag-recheck') &&
+     bundle.includes('one_time_cmd') && bundle.includes('ymaster-adguard-setup') &&
+     bundle.includes('/etc/sudoers.d/ymaster-adguard'),
+     'v1.70.16: мастер AdGuard без пароля — одна команда для терминала и «Проверить снова»');
+  // Пароль окна обновления (своя механика, v1.17.0) остаётся — проверяем,
+  // что из панели AdGuard исчезли ЕЁ идентификаторы пароля.
+  ok(!bundle.includes('ag-sudo-pw') && !bundle.includes('ag-sudo-row') &&
+     !bundle.includes('agNeedPassword') &&
+     !/agLaunch\([^)]*sudo_password/.test(bundle),
+     'v1.70.16: поле пароля сервера (sudo) из панели AdGuard удалено');
+  ok(bundle.includes("'1.70.17':") && bundle.includes('refspec') &&
+     bundle.includes('Источник обновлений') &&
+     bundle.includes('ambiguous argument'),
+     'v1.70.17: обновление на другую ветку — fetch явным refspec (без «ambiguous argument»)');
+  ok(bundle.includes("'1.70.18':") && bundle.includes('placeholder="main"') &&
+     !bundle.includes('placeholder="arena/01a0caaa-1c-chek"'),
+     'v1.70.18: канал обновлений — main (подсказка поля «Ветка»)');
+  ok(bundle.includes("'1.70.19':") && bundle.includes('OPT_BRANCH') &&
+     bundle.includes('deploy.conf') && bundle.includes('Ветка задана явно'),
+     'v1.70.19: deploy.sh — приоритет --branch= > BRANCH= > deploy.conf > main');
+  ok(bundle.includes("'1.70.20':") && bundle.includes('unbound variable') &&
+     bundle.includes('install-rule') && bundle.includes('причина'),
+     'v1.70.20: помощник AdGuard ставится (install-rule), причина отказа видна в логе');
+  ok(bundle.includes("'1.70.21':") && bundle.includes('двух воркеров') &&
+     bundle.includes('сирот') && bundle.includes('причина'),
+     'v1.70.21: атомарный старт мастера, отмена убивает группу, причина таймаута видна');
+  ok(bundle.includes("'1.70.22':") &&
+     bundle.includes('помечается прерванным') && bundle.includes('pipefail') &&
+     bundle.includes('последней команде'),
+     'v1.70.22: панель не застревает после рестарта, отказ curl не выглядит успехом');
+  ok(bundle.includes("'1.70.23':") && bundle.includes('.nosymlink') &&
+     bundle.includes('ExecStart') && bundle.includes('tg-health.sh'),
+     'v1.70.23: установщику AdGuard передаётся -a y, ссылка /usr/local/bin создаётся безусловно');
+  // v1.70.24: SOCKS5 → TUN + selective. Прокси в карточке больше не
+  // подставляется (в TUN нет слушателя 1080), а шаг режима его очищает.
+  ok(bundle.includes("'1.70.24':") && bundle.includes('selective') &&
+     bundle.includes('socks5h'),
+     'v1.70.24: AdGuard переведён на TUN + selective — через VPN только Telegram');
+  ok(!bundle.includes("prx.value = 'socks5://127.0.0.1:1080'"),
+     'v1.70.24: после установки прокси socks5://127.0.0.1:1080 не подставляется');
+  // v1.70.25: одна кнопка-переключатель (зелёная = работает, красная = выключен)
+  ok(bundle.includes("'1.70.25':") && bundle.includes('agPaint') &&
+     bundle.includes('agTurnOff') && bundle.includes("action: 'off'"),
+     'v1.70.25: AdGuard VPN — кнопка-переключатель включить/выключить');
+  ok(bundle.includes('agVpnOn') && bundle.includes("sw.setAttribute('data-pos',") &&
+     bundle.includes("busy ? 'mid'"),
+     'v1.70.25: состояние берётся с сервера (с 1.70.28 — положение переключателя)');
+  // v1.70.26: успех доказывается по факту, а не по коду возврата. Режим
+  // исключений перечитывается (general = смысл списка наоборот), поддержка TUN
+  // проверяется до установки CLI и до ссылки входа.
+  ok(bundle.includes("'1.70.26':") && bundle.includes('/dev/net/tun') &&
+     bundle.includes('selective'),
+     'v1.70.26: режим «через VPN только Telegram» перечитывается, а не предполагается');
+  ok(bundle.includes('1080') && bundle.includes('КРОМЕ Telegram'),
+     'v1.70.26: владельцу объяснены инверсия general-режима и остаточный SOCKS-порт');
+  // v1.70.27: проверки вне документации AdGuard больше не прерывают установку —
+  // только предупреждения. Фатальны коды возврата документированных команд.
+  ok(bundle.includes("'1.70.27':") && bundle.includes('документаци') &&
+     bundle.includes('60 секунд'),
+     'v1.70.27: AdGuard VPN — документированная последовательность, ожидание туннеля 60 с');
+  ok(bundle.includes('предупреждени') && bundle.includes('selective'),
+     'v1.70.27: расхождение показаний CLI — предупреждение, а не отказ');
+
+  // v1.70.28: AdGuard VPN — собственный блок в «Устройство и служебное» с
+  // трёхпозиционным переключателем; из карточки Telegram-бота удалён. Ссылка
+  // регистрации приходит В БЛОК и не прячется при остановке задания: условие
+  // «login_url && running» и было причиной «ссылка не пришла».
+  ok(bundle.includes("'1.70.28':") && bundle.includes('st-adguard') &&
+     bundle.includes('data-sec="device"') && bundle.includes('ag-switch') &&
+     bundle.includes('ag-sw-off') && bundle.includes('ag-sw-on') &&
+     bundle.includes('ag-sw-knob'),
+     'v1.70.28: собственный блок AdGuard VPN с трёхпозиционным переключателем');
+  ok(!bundle.includes('tg-adguard'),
+     'v1.70.28: из карточки Telegram-бота AdGuard VPN удалён');
+  ok(bundle.includes('ag-link-box') &&
+     bundle.includes('Ссылка для регистрации сервера') &&
+     !/st\.login_url && st\.running/.test(bundle),
+     'v1.70.28: ссылка регистрации приходит в блок и не скрывается при остановке');
+  ok(bundle.includes('ag-sw-left') && bundle.includes('ag-sw-right') &&
+     bundle.includes("busy ? 'mid' : (known ? (agVpnOn ? 'right' : 'left') : 'mid')"),
+     'v1.70.28: влево — выключено, вправо — включено, середина — неизвестно/идёт');
+
+  // v1.70.29: «вход уже выполнен» — не ошибка (CLI на привязанном аккаунте
+  // может вернуть ненулевой код); обе ловушки ручной инструкции описаны.
+  ok(bundle.includes("'1.70.29':") && bundle.includes('вход уже выполнен') &&
+     bundle.includes('Unit file does not exist'),
+     'v1.70.29: привязанный аккаунт не останавливает мастер; ловушки инструкции закрыты');
+  // Сам заполнитель в бандле остаётся — но только внутри объяснения ловушки
+  // («что нового»). Отсутствие его в КОМАНДАХ инструкции проверяет
+  // tests/test_v17029.py::test_no_placeholder_domain_command по README.
+  ok(bundle.includes('заполнитель') && bundle.includes('это не команда'),
+     'v1.70.29: владельцу объяснено, что заполнитель в инструкции — не команда');
+
+  // v1.70.30: ссылка входа со сменяемого домена AdGuard принимается — ответ
+  // разработчика в #188: в странах, блокирующих VPN, это штатный механизм.
+  // Белый список доменов молча отбрасывал рабочую ссылку.
+  ok(bundle.includes("'1.70.30':") && bundle.includes('guidedeficit.blog') &&
+     bundle.includes('сменяемые домены'),
+     'v1.70.30: сменяемые домены авторизации AdGuard — штатно, ссылка не отбрасывается');
+  ok(bundle.includes('set-protocol http2') && bundle.includes('#176') &&
+     bundle.includes('Unable to fetch locations'),
+     'v1.70.30: отказ туннеля объяснён журналом и документированными причинами');
+
+  // v1.70.31: отказ туннеля откатывается — сервер не остаётся без сети, а
+  // настоящая причина (CLI v1.7.12, TUN auto, собственный трафик в tun0)
+  // названа по открытому обращению AdGuard #161.
+  ok(bundle.includes("'1.70.31':") && bundle.includes('#161') &&
+     bundle.includes('Failed to start the VPN service in the background'),
+     'v1.70.31: причина отказа туннеля названа по обращению AdGuard #161');
+  ok(bundle.includes('disconnect') && bundle.includes('чёрной дырой'),
+     'v1.70.31: отказ туннеля откатывается, сервер не остаётся без сети');
+
+  // v1.70.32: вёрстка и дизайн — мелкий текст читаем (WCAG AA), остатки
+  // тёмной темы убраны, необъявленные токены не ломают правила молча.
+  ok(bundle.includes("'1.70.32':") && bundle.includes('1.69:1') &&
+     bundle.includes('#fca5a5') && bundle.includes('WCAG AA'),
+     'v1.70.32: нечитаемый мелкий текст исправлен, измерение в описании есть');
+  ok(bundle.includes('--ok-text') && bundle.includes('--bad-text') &&
+     bundle.includes('ui_journal.md'),
+     'v1.70.32: текст-токены и журнал интерфейса');
+
+  // v1.70.33: вёрстка — валидные форматы и структура под устройства.
+  // Разметку целиком проверяет tests/test_v17033.py и внешний html-validate;
+  // здесь — то, что видно в клиентском коде: явные type у кнопок шаблонов,
+  // последствия превращения #user-chip в нативную кнопку и описание выпуска.
+  const btnTags = bundle.match(/<button\b[^>]*>/g) || [];
+  const btnNoType = btnTags.filter(t => !/\btype\s*=/.test(t));
+  ok(btnTags.length > 250 && btnNoType.length === 0,
+     `v1.70.33: все ${btnTags.length} кнопок шаблонов с явным type ` +
+     `(без type: ${btnNoType.length}) — иначе кнопка в форме означает submit`);
+  ok(bundle.includes("chip.disabled = !chipActive") &&
+     !bundle.includes('chip.onkeydown') &&
+     !bundle.includes("closest('#btn-logout')"),
+     'v1.70.33: #user-chip — нативная кнопка; убран двойной keydown и мёртвая ветка');
+  ok(bundle.includes(".user-area"),
+     'v1.70.33: «Выйти» вынесена из переключателя профиля в соседнюю обёртку');
+  ok(bundle.includes("'1.70.33':") && bundle.includes('1.4.11') &&
+     bundle.includes('Вложенные интерактивные элементы невалидны'),
+     'v1.70.33: выпуск описан, порог контраста кольца фокуса назван');
+
+  // v1.70.34: кнопок чёрного цвета в программе нет. Основная кнопка была
+  // графитовой (#333333) из-за остатка отменённой в v1.25.0 тёмной темы:
+  // правило стояло ниже фирменного и перебивало его.
+  ok(!bundle.includes("'1.70.34':") === false &&
+     bundle.includes('#333333') && bundle.includes('графит'),
+     'v1.70.34: выпуск описан, причина чёрной кнопки названа');
+  ok(bundle.includes('#1a1a1a') && bundle.includes('6.66:1'),
+     'v1.70.34: тёмный текст на корпоративном оранжевом и его контраст указаны');
+
+  // v1.70.35: текст на сайте читаем — цвета графиков и шаблонов переведены на
+  // токены темы, остатки тёмной темы в charts.js убраны.
+  // Проверяется именно модуль графиков, а не весь бандл: описание выпуска в
+  // WHATS_NEW законно цитирует прежние значения, иначе проверка ловила бы свой
+  // же текст (та же ошибка, что с литералами в комментариях CSS).
+  const chartsFrom = bundle.indexOf('лёгкие SVG-графики');
+  const chartsTo = bundle.indexOf('Ямастер Чек —', chartsFrom + 10);
+  const charts = bundle.slice(chartsFrom, chartsTo > chartsFrom ? chartsTo : undefined);
+  ok(chartsFrom > 0 && charts.length > 500,
+     'v1.70.35: модуль графиков найден в бандле (иначе проверка пуста)');
+  ok(!charts.includes('#e8ecf8') && !charts.includes('#6b7494') &&
+     !charts.includes('rgba(255,255,255,.0') && !charts.includes('#6366f1'),
+     'v1.70.35: в графиках не осталось цветов отменённой тёмной темы');
+  ok(bundle.includes('chart-center') && bundle.includes('chart-grid') &&
+     bundle.includes('#4b0082') && bundle.includes('#2e8b57'),
+     'v1.70.35: цвета графиков вынесены в классы CSS, палитра серий фирменная');
+  ok(bundle.includes("var(--ok-text)") && !/color:\s*var\(--ok\)/.test(bundle),
+     'v1.70.35: зелёный как текст — через --ok-text (4.25:1 у --ok не проходит)');
+  ok(bundle.includes('1.18:1') && bundle.includes('1.67:1') && bundle.includes('stylelint'),
+     'v1.70.35: в описании выпуска названы измеренные значения и валидатор');
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

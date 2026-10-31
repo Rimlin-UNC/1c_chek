@@ -49,6 +49,24 @@ class TestSettingsMenuStructure:
     def js(self):
         return open("app/static/js/app.js", encoding="utf-8").read()
 
+    def osm_js(self):
+        """Разметка карточки «Мониторинг OpenStack» (v1.70.51).
+
+        У карточки четыре вкладки, графики и журнал, поэтому её разметка
+        вынесена из app.js в отдельный модуль osm.js — тот же приём, что
+        для графиков в charts.js и печати в printpack.js.
+        """
+        return open("app/static/js/osm.js", encoding="utf-8").read()
+
+    def settings_js(self):
+        """Вся разметка раздела настроек: app.js и osm.js.
+
+        Замок обязан видеть обе части: иначе раздел считается по 30
+        карточкам, а 31-я остаётся без присмотра, и молча суженный замок
+        хуже сломанного — регрессию в новой карточке он уже не поймает.
+        """
+        return self.js() + "\n" + self.osm_js()
+
     def test_five_groups(self):
         js = self.js()
         for key in ("data", "checks", "integr", "personal", "device"):
@@ -61,23 +79,54 @@ class TestSettingsMenuStructure:
         # область шаблона настроек
         i0 = js.index("async function viewSettings(container)")
         i1 = js.index("settings-layout")
-        seg = js[i0:i0 + 60000]
+        # v1.70.51: карточка «Мониторинг OpenStack» живёт в osm.js, поэтому
+        # к шаблону настроек добавлен весь модуль — иначе 31-я карточка
+        # осталась бы за пределами замка.
+        seg = js[i0:i0 + 60000] + "\n" + self.osm_js()
         cards = re.findall(
             r'<div class="glass card"(?: id="([\w-]+)")?'
             r'(?: data-sec="(\w+)")? style="order:(\d+)', seg)
         with_sec = [(cid, sec, order) for cid, sec, order in cards if sec]
-        assert len(with_sec) == 26, with_sec
+        # v1.70.28: карточек 27 — у AdGuard VPN появился собственный блок
+        # st-adguard в разделе «Устройство и служебное».
+        # v1.70.37: карточек 28 — добавлен блок st-consent «Согласие 152-ФЗ:
+        # данные участников из MAX» в разделе «Интеграции» (реквизиты оператора
+        # для текста согласия, который показывается в мини-приложении MAX).
+        # v1.70.50: карточек 30 — по требованию владельца в разделе «Данные»
+        # рядом с блоком «Сервер и команды» появились st-clients «Клиенты
+        # приложения» (порядок 14) и st-transfer «Передача данных и сеть»
+        # (порядок 15); обе только для администратора и на одном запросе.
+        # v1.70.51: карточек 31 — по ТЗ docs/Monitor.md в разделе «Чек-Пул и
+        # интеграции» добавлен блок st-openstack «Мониторинг OpenStack»
+        # (порядок 39, только для администратора). Подключение к внешнему
+        # облаку по API с параметрами Keystone и кнопкой «Проверить
+        # подключение» структурно повторяет st-checko, st-onec и
+        # st-webhooks, поэтому раздел выбран integr, а не device или data.
+        assert len(with_sec) == 31, with_sec
+        assert ("st-consent", "integr", "38") in with_sec
+        assert ("st-adguard", "device", "49") in with_sec
+        assert ("st-clients", "data", "14") in with_sec
+        assert ("st-transfer", "data", "15") in with_sec
+        assert ("st-openstack", "integr", "39") in with_sec
         assert all(cid and cid.startswith(("st-", "wa-", "mail-"))
                    for cid, _s, _o in with_sec)
         secs = {s for _c, s, _o in with_sec}
         assert secs == {"data", "checks", "integr", "personal", "device"}
 
     def test_expected_distribution(self):
-        js = self.js()
-        expect = {"data": 4, "checks": 6, "integr": 6, "personal": 6, "device": 4}
+        # v1.70.28: device 4 -> 5 (блок AdGuard VPN); из карточки
+        # Telegram-бота он удалён, но сама карточка st-tgbot осталась в integr.
+        # v1.70.37: integr 6 -> 7 — карточка реквизитов оператора в согласии.
+        # v1.70.50: data 4 -> 6 — «Клиенты приложения» и «Передача данных
+        # и сеть» встали в раздел «Данные» рядом с «Сервер и команды».
+        # v1.70.51: integr 7 -> 8 — блок «Мониторинг OpenStack». Считаем по
+        # app.js и osm.js вместе: разметку новой карточки рисует osm.js.
+        expect = {"data": 6, "checks": 6, "integr": 8, "personal": 6,
+                  "device": 5}
+        js_all = self.settings_js()
         for sec, n in expect.items():
-            assert f'data-sec="{sec}"' in js
-            assert js.count(f'data-sec="{sec}"') == n, sec
+            assert f'data-sec="{sec}"' in js_all
+            assert js_all.count(f'data-sec="{sec}"') == n, sec
 
     def test_old_flat_sections_removed(self):
         js = self.js()

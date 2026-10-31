@@ -1,6 +1,6 @@
 // ======================================================================
 // Ямастер Чек — UI-хелперы: тосты, модалки, форматирование
-// Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+// Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 // ======================================================================
 
 // --- Тосты -------------------------------------------------------------
@@ -46,6 +46,7 @@ export function fmtDate(iso) {
 const STATUS_LABELS = {
   new: 'Новый', verifying: 'Проверяется', verified: 'Проверен', failed: 'Отклонён ФНС',
   valid: 'Действителен', invalid: 'Недействителен', not_found: 'Не найден в ФНС',
+  pending: 'Ожидает проверки (лимит ФНС)',
   unknown: 'Не проверен', exported: 'Выгружен в 1С',
 };
 export function statusLabel(s) { return STATUS_LABELS[s] || s || '—'; }
@@ -67,7 +68,7 @@ export function openModal(html, { onClose } = {}) {
   root.classList.remove('hidden');
   const slot = root.querySelector('.modal-slot');
   slot.className = 'modal-slot glass';
-  slot.innerHTML = `<button class="btn-icon modal-close" title="Закрыть">✕</button>` + html;
+  slot.innerHTML = `<button type="button" class="btn-icon modal-close" title="Закрыть">✕</button>` + html;
   const close = () => { root.classList.add('hidden'); slot.innerHTML = ''; onClose && onClose(); };
   root.querySelector('.modal-backdrop').onclick = close;
   slot.querySelector('.modal-close').onclick = close;

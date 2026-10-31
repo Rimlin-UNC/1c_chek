@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Главный модуль: FastAPI-приложение, WebSocket-канал статусов, раздача SPA.
 """
@@ -89,12 +89,25 @@ async def lifespan(app: FastAPI):
 
     # v1.68.0: демоны очереди автозагрузки деталей чеков (2 воркера)
     try:
-        from .routers.receipts import start_fetch_workers
+        from .routers.receipts import (start_fetch_workers,
+                                       start_limit_retry_worker)
         _n = start_fetch_workers()
         if _n:
             log.info("fetch queue workers started: %d", _n)
+        # v1.70.70: чеки, ожидавшие сброса суточного лимита ФНС,
+        # проверяются автоматически после его сброса
+        if start_limit_retry_worker():
+            log.info("fns limit retry worker started")
     except Exception:                                    # noqa: BLE001
         log.exception("fetch queue workers start failed")
+
+    # v1.70.51: мониторинг OpenStack — поток опроса, если включён в настройках
+    try:
+        from .openstack_monitor import worker as os_worker
+        if os_worker.start_worker():
+            log.info("openstack monitor worker auto-started")
+    except Exception:                                    # noqa: BLE001
+        log.exception("openstack monitor worker start failed")
 
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:
@@ -140,7 +153,7 @@ app = FastAPI(
     description=(
         "REST API системы сканирования кассовых чеков и загрузки их в 1С.\n\n"
         "Разработчик и владелец идеи: **ООО «Ямастер»** — [ymaster.ru](https://ymaster.ru), "
-        "info@ymaster.ru\n\n"
+        "chek@ymaster.ru\n\n"
         "Разделы: Аутентификация · Чеки · Аналитика · Настройки · Пользователи · Интеграция 1С"
     ),
     lifespan=lifespan,
@@ -148,6 +161,83 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+
+# --------------------------------------------------------------------------
+#  v1.70.38: честная схема OpenAPI
+#
+#  Фаззинг по схеме (schemathesis, 36 723 тест-кейса) показал 110 расхождений
+#  между документацией и тем, что приложение отдаёт на самом деле. Причины три,
+#  все лечатся в одном месте и НЕ меняют поведение приложения — только описание:
+#   • на 422 FastAPI документирует {"detail": [{loc, msg, type}, …]}, а наш
+#     обработчик (_safe_validation_handler ниже) отдаёт {"detail": "текст"} —
+#     строку человеческим языком, её показывает интерфейс. Сгенерированный
+#     клиент спотыкался бы об это на каждой ошибке валидации;
+#   • ответы 401/403/429 не были объявлены вовсе, хотя приложение их
+#     возвращает: авторизация, права роли и лимит частоты по IP;
+#   • CSV-выгрузки отдают text/csv, а схема обещала application/json.
+#  Проверка «документация = факт» зафиксирована тестами TestOpenApiContract в
+#  tests/test_v17038.py.
+# --------------------------------------------------------------------------
+_API_ERROR_SCHEMA = {
+    "type": "object",
+    "title": "ApiError",
+    "properties": {
+        "detail": {
+            "type": "string",
+            "description": "Причина отказа человеческим языком",
+        },
+    },
+    "required": ["detail"],
+}
+
+
+def _error_response(description: str) -> dict:
+    """Описание ответа-ошибки: у всех отказов приложения одна форма тела."""
+    return {
+        "description": description,
+        "content": {"application/json": {
+            "schema": {"$ref": "#/components/schemas/ApiError"}}},
+    }
+
+
+_default_openapi = app.openapi
+
+
+def custom_openapi() -> dict:
+    """Штатная схема, приведённая к фактическим ответам приложения."""
+    schema = _default_openapi()          # собирает и кэширует штатную схему
+    schema.setdefault("components", {}).setdefault(
+        "schemas", {})["ApiError"] = _API_ERROR_SCHEMA
+    for path, item in (schema.get("paths") or {}).items():
+        for method, op in (item or {}).items():
+            if not isinstance(op, dict) or not isinstance(op.get("responses"), dict):
+                continue
+            responses = op["responses"]
+            if "422" in responses:
+                responses["422"] = _error_response(
+                    "Запрос не прошёл проверку: поле пустое, значение вне "
+                    "диапазона или не того типа")
+            if op.get("security"):
+                responses.setdefault("401", _error_response(
+                    "Нет токена, токен истёк или подделан"))
+                responses.setdefault("403", _error_response(
+                    "Прав недостаточно: роль не та или объект чужой"))
+            if path.startswith(("/api/", "/onec/")):
+                responses.setdefault("429", _error_response(
+                    "Слишком много запросов: повторите позже "
+                    "(интервал — в заголовке Retry-After)"))
+            if path.endswith(("export.csv", "export-csv")) and "200" in responses:
+                ok = responses["200"]
+                if isinstance(ok, dict):
+                    ok["description"] = ("CSV-файл: разделитель «;», "
+                                         "кодировка UTF-8")
+                    ok["content"] = {"text/csv": {
+                        "schema": {"type": "string", "format": "binary"}}}
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 @app.exception_handler(RequestValidationError)
@@ -284,8 +374,12 @@ async def ws_status(ws: WebSocket):
 # --------------------------------------------------------------------------
 #  Служебные эндпоинты
 # --------------------------------------------------------------------------
-@app.api_route("/health", methods=["GET", "HEAD"], tags=["Служебные"],
-               summary="Проверка работоспособности")
+# v1.70.38: было @app.api_route(..., methods=["GET", "HEAD"]) — FastAPI
+# выдавал ОБА operation с одним operationId (health_health_get), схема
+# OpenAPI получалась с дублем: генераторы клиентов и фаззеры на такой схеме
+# спотыкаются. HEAD для GET-маршрута Starlette добавляет сам, поэтому
+# достаточно @app.get — и проверка nginx/systemd (`curl -I /health`) работает.
+@app.get("/health", tags=["Служебные"], summary="Проверка работоспособности")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION,
             "vendor": settings.VENDOR, "site": settings.VENDOR_SITE}
@@ -310,7 +404,7 @@ def about():
         "email": settings.VENDOR_EMAIL,
         "max_bot_username": mx_username,
         "receipts_total": receipts_count,
-        "fns_provider_default": settings.FNS_PROVIDER,
+        "fns_provider": "fns",
     }
 
 
@@ -346,6 +440,30 @@ app.include_router(pool_api.router)        # v1.39.0: /api/v1/pool-api/* (агр
 app.include_router(pool_my.router)         # v1.32.0: /api/v1/pool-my/*
 app.include_router(maxapp.router)          # v1.69.0: /api/v1/maxapp/* (мини-приложение MAX)
 
+# v1.70.45: контур B2B — доступ компаний и ИП к платному API. Третий контур
+# (ядро, Чек-Пул, B2B): свой JWT typ=b2b, свои таблицы b2b_*, свои страницы.
+from .b2b import router_admin as b2b_admin  # noqa: E402
+from .b2b import router_public as b2b_public  # noqa: E402
+
+app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
+app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
+
+# v1.70.51: мониторинг OpenStack (docs/Monitor.md). Внутренний контур для
+# администратора: настройки подключения, показатели, история и журнал.
+# Префикс общий для всей программы — /api/v1/openstack/*, поэтому в список
+# исключений SPA-перехвата ниже он уже входит (api/).
+from .openstack_monitor import router as openstack_router  # noqa: E402
+
+app.include_router(openstack_router.router)  # /api/v1/openstack/* (админ)
+
+# v1.70.47: публичная оферта. Страница /oferta должна отдаваться ДО
+# SPA-перехвата ниже, иначе запрос уйдёт в веб-клиент и пользователь,
+# поставивший галочку «согласен с условиями оферты», не увидел бы условий.
+# Без авторизации: документ читается до принятия его условий.
+from .legal import page as legal_page  # noqa: E402
+
+app.include_router(legal_page.router)      # /oferta, /oferta.txt, /api/v1/legal/*
+
 
 # --------------------------------------------------------------------------
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static
@@ -376,10 +494,31 @@ async def maxapp_page(fname: str = ""):
     return FileResponse(static / "index.html")
 
 
+@app.get("/b2b", include_in_schema=False)
+@app.get("/b2b/", include_in_schema=False)
+@app.get("/b2b/{fname}", include_in_schema=False)
+async def b2b_page(fname: str = ""):
+    """Кабинет компании для доступа к платному API (v1.70.45).
+
+    Страница отдельная (как /maxapp/) и НЕ связана ссылками с публичным
+    лендингом: раздел «API для бизнеса» виден только компаниям,
+    подтвердившим статус. Содержимое раздела отдаёт /api/v1/b2b/content
+    после проверки статуса — сама статика данных не содержит.
+    """
+    if "/" in fname or ".." in fname or fname.startswith("."):
+        raise HTTPException(status_code=404)
+    static = BASE_DIR / "app" / "static" / "b2b"
+    if fname:
+        f = static / fname
+        return FileResponse(f) if f.is_file() \
+            else JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(static / "index.html")
+
+
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(full_path: str):
     """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
-    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/")):
+    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/", "b2b/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     if ".." in full_path:
         # v1.70.11: страховка от траверсала сверх нормализации сервера

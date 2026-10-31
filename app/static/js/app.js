@@ -1,7 +1,7 @@
 // ======================================================================
 // Ямастер Чек — веб-клиент (SPA)
 // Разработчик и владелец идеи: ООО «Ямастер»
-// Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+// Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 //
 // Роли: Администратор (один, все права) · Бухгалтер (расширенные) ·
 //       Пользователь (сканирует и видит свои чеки).
@@ -13,7 +13,9 @@ import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, open
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
-import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
+import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
+import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
+import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -57,6 +59,7 @@ const VIEW_TITLES = {
   poolpeople: 'Чек-Пул: участники',    // v1.41.0: список + просмотр кабинета
   fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
   poolpick: 'Чек-Пул: подбор для компании', // v1.37.0: бухгалтер
+  b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -93,6 +96,30 @@ function shortOpfName(name) {
 const isAccountant = () => state.me && (state.me.role === 'admin' || state.me.role === 'accountant');
 const isManager = () => state.me && state.me.role === 'manager';   // v1.64.0: только просмотр
 const isAdmin = () => state.me && state.me.role === 'admin';
+// v1.70.61: иерархия ролей и пространства — зеркало app/services/rbac.py
+// (замок выпуска сверяет оба источника). Роль видит только свои экраны
+// и свои разделы настроек; пространство донора — только контур пула.
+const ROLE_SPACE = {
+  admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
+                        'poolpick', 'boss', 'users', 'audit', 'companies',
+                        'pooladmin', 'poolpeople', 'fraud', 'b2badmin',
+                        'settings'],
+                secs: ['data', 'checks', 'integr', 'personal', 'device'] },
+  accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
+                        'poolpick', 'settings'],
+                secs: ['checks', 'personal'] },
+  manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
+                secs: ['personal'] },
+  user:       { views: ['dashboard', 'scan', 'receipts', 'settings'],
+                secs: ['personal'] },
+  donor:      { views: ['public', 'my', 'partners'], secs: [] },
+};
+const roleSpace = () => ROLE_SPACE[(state.me && state.me.role) || 'donor'] || ROLE_SPACE.donor;
+const spaceHas = (key) => {
+  const kind = key.slice(0, key.indexOf(':')), name = key.slice(key.indexOf(':') + 1);
+  const space = roleSpace();
+  return (kind === 'view' ? space.views : space.secs).includes(name);
+};
 
 // --------------------------------------------------------------------------
 //  Точка входа
@@ -117,8 +144,16 @@ async function boot() {
 
   // Регистрация по приглашению: #/register/<token>
   // v1.70.0: вход по одноразовому билету из мини-приложения MAX
-  const mxl = location.hash.match(/^#\/max-login\/([A-Za-z0-9_-]{16,150})$/);
-  if (mxl) { showLogin(); maxLoginFlow(mxl[1], true); return; }
+  // v1.70.65: билет может прийти в запросе (?maxlogin=) — мини-приложение
+  // открывает сайт без фрагмента в адресе: браузер и установленное
+  // приложение открывают такую ссылку одинаково надёжно
+  const mq = location.search.match(/[?&]maxlogin=([A-Za-z0-9_-]{16,150})/);
+  const mxl = location.hash.match(/^#\/max-login\/([A-Za-z0-9_-]{16,150})$/)
+    || (mq ? [null, mq[1]] : null);
+  // v1.70.66: ветка билета обязана снять заставку — иначе вход и модальное
+  // окно ожидания остаются ПОД ней (заставка z-index 300): со стороны это
+  // «зависает на логотипе», как видел владелец на скрине
+  if (mxl) { showSplash(false); showLogin(); maxLoginFlow(mxl[1], true); return; }
   const m = location.hash.match(/^#\/register\/(.+)$/);
   if (m) { showSplash(false); showRegister(m[1]); return; }
 
@@ -223,7 +258,7 @@ function bindLanding() {
         });
         try { localStorage.setItem('ymaster-lead-email', $('#land-email').value.trim()); } catch (err) {}
         msg.textContent = r.message || 'Заявка принята';
-        msg.style.color = 'var(--ok)';
+        msg.style.color = 'var(--ok-text)';
         btn.textContent = 'Заявка принята';
       } catch (err) {
         msg.textContent = err.message || 'Не получилось — попробуйте ещё раз';
@@ -256,6 +291,48 @@ function showScreen(...ids) {
 
 // v1.70.0: вход/регистрация через MAX — одноразовый код, подтверждение
 // в MAX (мини-приложение бота или сообщение боту), затем сессия сайта.
+// ==========================================================================
+// v1.70.37: подсказка первого визита — два способа сделать всё в MAX.
+// Показываем один раз: отметка в localStorage (не в cookie — на сервер ничего
+// не уходит). Любое действие человека (крестик или одна из кнопок) гасит
+// подсказку навсегда: она не должна мешать при следующих входах.
+// ==========================================================================
+const MAX_INTRO_KEY = 'ymaster_max_intro_seen';
+
+function maxBotLink(startParam) {
+  return 'https://max.ru/' + (window.MXBOT || 'chek.ymaster.bot')
+    + '?startapp=' + encodeURIComponent(startParam);
+}
+
+function initMaxIntro() {
+  const box = $('#max-intro');
+  if (!box) return;
+  let seen;
+  try { seen = localStorage.getItem(MAX_INTRO_KEY) || ''; } catch (e) { seen = '1'; }
+  if (seen) return;                       // уже показывали — не мешаем
+  box.classList.remove('hidden');
+  const hide = (remember) => {
+    box.classList.add('hidden');
+    if (remember) {
+      try { localStorage.setItem(MAX_INTRO_KEY, new Date().toISOString()); } catch (e) {}
+    }
+  };
+  const close = $('#max-intro-close');
+  if (close) close.onclick = () => hide(true);
+  const reg = $('#max-intro-reg');
+  if (reg) reg.onclick = () => {
+    window.open(maxBotLink('reg_site'), '_blank', 'noopener');
+    hide(true);
+  };
+  const scan = $('#max-intro-scan');
+  if (scan) scan.onclick = () => {
+    window.open(maxBotLink('scan_site'), '_blank', 'noopener');
+    hide(true);
+  };
+  const doc = $('#max-intro-doc');
+  if (doc) doc.onclick = () => { openManual(); hide(true); };
+}
+
 async function maxLoginFlow(code, isTicket) {
   const { slot } = openModal(`
     <div class="modal-title">🛡 Вход через MAX</div>
@@ -265,11 +342,11 @@ async function maxLoginFlow(code, isTicket) {
       сообщение</b> с кодом ниже (в чате бота): вход подтвердится и без
       приложения.</span>
       <div class="token-line" style="margin-top:8px"><input readonly
-        value="${esc(code)}" id="mxl-code"><button class="btn btn-sm"
+        value="${esc(code)}" id="mxl-code"><button type="button" class="btn btn-sm"
         id="mxl-copy">копировать</button></div></div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="mxl-open">🛡 Открыть MAX</button></div>`);
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="mxl-open">🛡 Открыть MAX</button></div>`);
   const stop = { v: false };
   const mxcp = slot.querySelector('#mxl-copy');
   if (mxcp) mxcp.onclick = () => {
@@ -298,6 +375,12 @@ async function maxLoginFlow(code, isTicket) {
       state.me = p.user;
       enterApp();
       toast('Вход через MAX выполнен', 'ok', '🛡');
+      // v1.70.64: приехали из мини-приложения по одноразовому билету —
+      // убираем билет из адреса и спрашиваем, где продолжать работу
+      if (isTicket) {
+        history.replaceState(null, '', location.pathname + '#/dashboard');
+        maxBackDialog();
+      }
       return;
     }
     if (p.status === 'expired') {
@@ -309,16 +392,111 @@ async function maxLoginFlow(code, isTicket) {
   if (!stop.v) $('#mxl-status').innerHTML = '⏳ Время ожидания вышло — попробуйте ещё раз.';
 }
 
+// v1.70.69: вход/регистрация через Telegram. Тот же приём, что у MAX
+// (v1.70.0): сайт получает одноразовый код, человек подтверждает его
+// боту — по кнопке «Открыть Telegram» (deep-link /start КОД) или просто
+// отправив код в чат. Окно закрывается само, сессия сайта — та же, что
+// при входе по паролю.
+async function telegramLoginFlow(code, tgLink) {
+  const { slot } = openModal(`
+    <div class="modal-title">✈️ Вход через Telegram</div>
+    <div class="info-callout" id="tgl-status">Ждём подтверждение в Telegram…<br>
+      <span class="form-hint">Нажмите «Открыть Telegram» и подтвердите вход у
+      бота — окно закроется само. Если приложение не открылось —
+      <b>отправьте боту сообщение</b> с кодом ниже (в чате бота): вход
+      подтвердится и без кнопки.</span>
+      <div class="token-line" style="margin-top:8px"><input readonly
+        value="${esc(code)}" id="tgl-code"><button type="button" class="btn btn-sm"
+        id="tgl-copy">копировать</button></div></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-close>Отмена</button>
+      ${tgLink ? '<button type="button" class="btn btn-primary" id="tgl-open">✈️ Открыть Telegram</button>' : ''}</div>`);
+  const stop = { v: false };
+  const tgcp = slot.querySelector('#tgl-copy');
+  if (tgcp) tgcp.onclick = () => {
+    try {
+      navigator.clipboard && navigator.clipboard.writeText(code);
+      toast('Код скопирован — вставьте его в чат бота в Telegram', 'ok', '📋');
+    } catch (e) {}
+  };
+  const tgo = slot.querySelector('#tgl-open');
+  if (tgo) tgo.onclick = () => window.open(tgLink, '_blank');
+  slot.querySelector('[data-close]').onclick = () => {
+    stop.v = true; $('#modal-root').classList.add('hidden');
+  };
+  const t0 = Date.now();
+  while (!stop.v && Date.now() - t0 < 5 * 60 * 1000) {
+    await new Promise(r => setTimeout(r, 2500));
+    if (stop.v) return;
+    let p;
+    try { p = await api.post('/api/v1/auth/telegram/poll', { code }); }
+    catch (e) { $('#tgl-status').innerHTML = esc(e.message); return; }
+    if (p.status === 'ok') {
+      $('#modal-root').classList.add('hidden');
+      setToken(p.access_token);
+      state.me = p.user;
+      enterApp();
+      toast('Вход через Telegram выполнен', 'ok', '✈️');
+      return;
+    }
+    if (p.status === 'expired') {
+      $('#tgl-status').innerHTML =
+        '⏳ Код устарел или уже использован — нажмите «Войти через Telegram» ещё раз.';
+      return;
+    }
+  }
+  if (!stop.v) $('#tgl-status').innerHTML = '⏳ Время ожидания вышло — попробуйте ещё раз.';
+}
+
+// v1.70.64: владелец — «на сайте или в приложении всплывало окошко с
+// вопросом вернуться в мини приложение Макс или остаться здесь (в нашем
+// стиле корпоративном)». Показываем только тому, кто пришёл из
+// мини-приложения по билету #/max-login/: основной вклад сайта уже вошёл
+// своим поллингом и окно ему не нужно.
+function maxBackDialog() {
+  const { slot } = openModal(`
+    <div class="modal-title">🛡 Продолжить в мини-приложении MAX?</div>
+    <p class="modal-text">Вы вошли через MAX. Нажмите «В мини-приложение» —
+      ваш кабинет участника откроется сразу, ничего нажимать в чате бота не
+      придётся. Или останьтесь на сайте.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="mxb-stay">Остаться здесь</button>
+      <button type="button" class="btn btn-primary" id="mxb-go">🛡 В мини-приложение</button>
+    </div>`);
+  slot.querySelector('#mxb-go').onclick = () => {
+    $('#modal-root').classList.add('hidden');
+    // v1.70.67: диплинк со startapp=back — мини-приложение открывается
+    // сразу в кабинете участника. Голая ссылка вела в чат бота, где
+    // человеку приходилось вручную нажимать «Старт» (отчёт владельца).
+    window.open(maxBotLink('back'), '_blank');
+  };
+  slot.querySelector('#mxb-stay').onclick = () =>
+    $('#modal-root').classList.add('hidden');
+}
+
 function showLogin() {
   showScreen('login-screen');             // v1.59.1: единый переключатель
   bindLanding();                            // v1.54.0: лендинг на главной
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   // v1.70.0: кнопка входа/регистрации через MAX на форме входа
+  // v1.70.37: подсказка при первом визите — «регистрация через MAX» и
+  // «сдать чек в MAX» (камера или фото QR). Безопасно и ненавязчиво: блок
+  // показывается один раз на браузер (отметка в localStorage), ничего сам не
+  // открывает и не отправляет, закрывается крестиком; обе кнопки ведут в MAX
+  // по явному нажатию человека, третья — в инструкцию приложения.
+  initMaxIntro();
   const lm = $('#login-max');
   if (lm) lm.onclick = async () => {
     try {
       const r = await api.post('/api/v1/auth/max/start', {});
       maxLoginFlow(r.code, false);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  const lt = $('#login-telegram');            // v1.70.69
+  if (lt) lt.onclick = async () => {
+    try {
+      const r = await api.post('/api/v1/auth/telegram/start', {});
+      telegramLoginFlow(r.code, r.tg_link || '');
     } catch (e) { toast(e.message, 'err'); }
   };
   const form = $('#login-form');
@@ -378,6 +556,40 @@ async function waPlatformAvailable() {
   } catch (e) { return false; }
 }
 
+// v1.70.62: профессиональный сценарий (web.dev, MDN, Chrome IO25):
+// модальный селектор аккаунтов (лист Google Менеджера паролей) всплывает
+// у discoverable-запроса с пустым allowCredentials и медиацией по
+// умолчанию. Убираем лишний шаг тремя приёмами:
+//  1) mediation: 'immediate' — если ключ есть на устройстве, браузер
+//     сразу просит биометрию, нет — молча выходит без всяких листов;
+//  2) allowCredentials по логину (или последнему входу) — церемония
+//     привязана к учётке, платформе нечего предлагать на выбор;
+//  3) условный autofill: mediation: 'conditional' +
+//     autocomplete="username webauthn" — passkey в подсказках клавиатуры,
+//     касание подсказки даёт биометрию сразу, без модального окна.
+let waCondAbort = null;
+
+function waRememberLogin(user) {
+  try {
+    if (user && user.username) {
+      localStorage.setItem('ymaster-wa-last', user.username);
+    }
+  } catch (e) { /* приватный режим: быстрый вход и так не сохранится */ }
+}
+
+function waAbortConditional() {
+  if (waCondAbort) { waCondAbort.abort(); waCondAbort = null; }
+}
+
+// Логин для привязки церемонии: поле формы, иначе последний успешный вход
+function waLoginUsername() {
+  const field = $('#login-username');
+  const typed = field ? field.value.trim() : '';
+  if (typed) return typed;
+  try { return localStorage.getItem('ymaster-wa-last') || ''; }
+  catch (e) { return ''; }
+}
+
 // Проверка поддержки: показать кнопку на экране входа
 async function waInitLoginScreen() {
   const wrap = $('#login-passkey-wrap');
@@ -388,26 +600,67 @@ async function waInitLoginScreen() {
     const btn = $('#login-passkey');
     btn.disabled = true;
     btn.textContent = 'Подтвердите себя на устройстве…';
+    waAbortConditional();            // одномоментно живёт один WebAuthn-запрос
     try {
-      const r = await waLoginCore('');
+      const r = await waLoginCore(waLoginUsername(), 'immediate');
       setToken(r.access_token);
       state.me = r.user;
       enterApp();
     } catch (e) {
       const el = $('#login-error');
-      el.textContent = e.waCancelled
-        ? 'Вход отменён — подтвердите отпечаток/лицо или введите пароль'
-        : (e.message || 'Не удалось войти по ключу устройства');
+      el.textContent = e.waNoKey
+        ? 'На этом устройстве ключа нет — войдите по паролю и включите быстрый вход'
+        : e.waCancelled
+          ? 'Вход отменён — подтвердите отпечаток/лицо или введите пароль'
+          : (e.message || 'Не удалось войти по ключу устройства');
       el.classList.remove('hidden');
     }
     btn.disabled = false;
     btn.textContent = '🔑 Войти по отпечатку пальца / Face ID';
   };
+  waStartConditional();              // v1.70.62: passkey в autofill клавиатуры
 }
 
-async function waLoginCore(username) {
-  const opts = await api.post('/api/v1/auth/passkey/login/options',
-    { username: username || null });
+// Условный autofill: запрос молча ждёт, пока пользователь не коснётся
+// passkey в подсказках клавиатуры; коснулся — сразу биометрия без листов.
+async function waStartConditional() {
+  try {
+    if (!window.PublicKeyCredential ||
+        !PublicKeyCredential.isConditionalMediationAvailable) return;
+    if (!await PublicKeyCredential.isConditionalMediationAvailable()) return;
+  } catch (e) { return; }
+  waAbortConditional();
+  waCondAbort = new AbortController();
+  const signal = waCondAbort.signal;
+  try {
+    // для autofill allowCredentials обязан быть пустым (web.dev)
+    const r = await waLoginCore('', 'conditional', signal);
+    setToken(r.access_token);
+    state.me = r.user;
+    enterApp();
+  } catch (e) { /* отменён, введён пароль или уход со страницы — молча */ }
+}
+
+// Отмена vs «ключа на устройстве нет» (NotFoundError): во втором случае
+// браузер по mediation 'immediate' молча выходит — показываем парольный
+// экран вместо тревожного «отменено» (подход Chrome IO25).
+function waGetError(e) {
+  const err = new Error(e && e.message ? e.message : 'Отменено на устройстве');
+  if (e && e.name === 'NotFoundError') err.waNoKey = true;
+  else err.waCancelled = true;
+  return err;
+}
+
+async function waLoginCore(username, mediation, signal) {
+  let opts;
+  try {
+    opts = await api.post('/api/v1/auth/passkey/login/options',
+      { username: username || null });
+  } catch (e) {
+    // у логина нет ключа или он неизвестен — discoverable-запрос
+    opts = await api.post('/api/v1/auth/passkey/login/options',
+      { username: null });
+  }
   const get = {
     challenge: WA_B64.dec(opts.challenge),
     rpId: opts.rpId,
@@ -419,13 +672,25 @@ async function waLoginCore(username) {
       type: c.type || 'public-key', id: WA_B64.dec(c.id),
     }));
   }
+  const req = { publicKey: get };
+  if (mediation) req.mediation = mediation;   // 'immediate' | 'conditional'
+  if (signal) req.signal = signal;
   let assertion;
   try {
-    assertion = await navigator.credentials.get({ publicKey: get });
+    assertion = await navigator.credentials.get(req);
   } catch (e) {
-    const err = new Error('Отменено на устройстве');
-    err.waCancelled = true;
-    throw err;
+    // старый браузер не знает mediation 'immediate' (TypeError на
+    // словаре опций) — повторяем без медиации: allowCredentials всё равно
+    // привязывает церемонию к учётке и сокращает путь до биометрии
+    if (mediation === 'immediate' && e instanceof TypeError) {
+      try {
+        assertion = await navigator.credentials.get({ publicKey: get });
+      } catch (e2) {
+        throw waGetError(e2);
+      }
+    } else {
+      throw waGetError(e);
+    }
   }
   return api.post('/api/v1/auth/passkey/login/verify', {
     id: assertion.id,
@@ -496,8 +761,8 @@ async function maybeOfferPasskey(user) {
        <b>лица</b> или PIN этого устройства? Пароль больше не понадобится —
        устройство само подтвердит вас. Биометрия не отправляется на сервер.</p>
        <div class="modal-actions">
-         <button class="btn" id="wa-skip">Не сейчас</button>
-         <button class="btn btn-primary" id="wa-go">Включить</button>
+         <button type="button" class="btn" id="wa-skip">Не сейчас</button>
+         <button type="button" class="btn btn-primary" id="wa-go">Включить</button>
        </div>`);
     $('#wa-skip', slot).onclick = () => {
       try { localStorage.setItem('ymaster-wa-skip-' + user.id, String(Date.now())); }
@@ -537,41 +802,176 @@ function poolStatusChip(st) {
 //  v1.51.0: живая камера там, где сдаётся чек — тот же модуль scanner.js,
 //  что в разделе «Сканирование»: распознавание в браузере, антисбливание.
 // ==========================================================================
+// v1.70.43: ОДНА механика «чек прилетает в свою фазу». Раньше одинаковый полёт
+// был нарисован в трёх местах, а при сканировании камерой значок оказывался ПОД
+// модальным окном и летел к счётчикам формы, которых человек не видит: смотрел
+// он в камеру. Теперь host задаёт окно, внутри которого летит значок, а целью
+// становится фаза в строке счётчиков самого окна.
+function pulsePhase(el) {
+  if (!el) return;
+  el.classList.remove('pulse');
+  void el.offsetWidth;                          // перезапуск импульса
+  el.classList.add('pulse');
+}
+
+function flyChipTo(state, srcEl, targetEl, hostEl) {
+  if (!targetEl) return;
+  pulsePhase(targetEl);
+  let reduced;
+  try {
+    reduced = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) { reduced = false; }
+  if (reduced) return;                          // «меньше движения»: фаза
+  const src = srcEl || targetEl;                // мигнула, полёт не рисуем
+  const a = src.getBoundingClientRect();
+  const b = targetEl.getBoundingClientRect();
+  const chipEl = document.createElement('div');
+  chipEl.className = `fly-chip s-${state}`;
+  chipEl.textContent = state === 'bad' ? '✕' : '🧾';
+  const base = hostEl ? hostEl.getBoundingClientRect() : { left: 0, top: 0 };
+  if (hostEl) chipEl.classList.add('in-host');
+  chipEl.style.left = `${Math.round(a.left + a.width / 2 - 14 - base.left)}px`;
+  chipEl.style.top = `${Math.round(a.top + 4 - base.top)}px`;
+  chipEl.style.setProperty('--fly-x',
+    `${Math.round(b.left + b.width / 2 - a.left - a.width / 2)}px`);
+  chipEl.style.setProperty('--fly-y', `${Math.round(b.top - a.top)}px`);
+  (hostEl || document.body).appendChild(chipEl);
+  setTimeout(() => { try { chipEl.remove(); } catch (e) { /* уже удалён */ } }, 700);
+}
+
+// Строка счётчиков окна камеры: те же три фазы и три фирменных цвета, что у
+// плиток формы; каждая фаза — цель прилёта чека. Числа свои и целые, поэтому
+// разметка собирается без вставок пользовательского текста.
+function camCountsHTML(c) {
+  return `принято <span class="seg seg-ok" id="poolcam-seg-ok">${c.ok}</span>`
+    + ` · на модерации <span class="seg seg-pend" id="poolcam-seg-pend">${c.pend}</span>`
+    + ` · не принято <span class="seg seg-bad" id="poolcam-seg-bad">${c.bad}</span>`;
+}
+
 function openPoolCameraScan(onText) {
+  // v1.70.42: ОДНА камера на все случаи. Владелец: «не стоит плодить пакетное
+  // сканирование и сканирование qr-чеком» — отдельной «камеры пачки» больше нет.
+  // Камера не закрывается после чека: донор сканирует один за другим, счётчики
+  // видны прямо в окне, сдачу завершает кнопка «Готово». Один чек — это та же
+  // сессия, в которой один чек; второго режима и второго конвейера нет.
   let cam = null;
+  const handle = { slot: null, close: null, countsEl: null, onFinish: null };
   const { slot, close } = openModal(`
-    <div class="modal-title">📸 Сканирование QR-кода чека</div>
+    <div class="modal-title">📷 Сканирование QR-кода чека</div>
     <div class="camera-viewport" style="max-width:440px">
       <video id="poolcam-video" playsinline muted></video>
       <div class="scan-frame" id="poolcam-frame" style="display:none"><span class="corner"></span></div>
       <div class="scan-line" id="poolcam-line" style="display:none"></div>
       <div class="camera-overlay" id="poolcam-overlay">
         <span class="big-ico">📷</span>
-        <div>Наведите камеру на QR-код чека.<br>Код распознаётся автоматически.</div>
-        <button class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
+        <div>Наведите камеру на QR-код чека.<br>После каждого чека камера остаётся включённой.</div>
+        <button type="button" class="btn btn-primary" id="poolcam-start">▶ Включить камеру</button>
       </div>
     </div>
+    <div class="batch-cam-counts" id="poolcam-counts" role="status" aria-live="polite">${camCountsHTML({ ok: 0, pend: 0, bad: 0 })}</div>
     <p class="form-hint" style="margin-top:8px">Совет: QR с экрана другого телефона тоже сканируется.
-    Чужой QR-код (не чек) игнорируется — ждём реквизиты 54-ФЗ.</p>`,
+    Чужой QR-код (не чек) игнорируется — ждём реквизиты 54-ФЗ. Каждый чек сразу проверяется
+    на дубликат по ФН+ФД+ФП: уже сданный идёт в красный счётчик и в базу не попадает,
+    новый — в синий «на модерации», а после подтверждения официальным источником счётчик
+    становится оранжевым и балл начисляется.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="poolcam-camoff">⏹ Выключить камеру</button>
+      <button type="button" class="btn btn-primary" id="poolcam-done">✅ Готово — закончить сдачу</button>
+    </div>`,
     { onClose: () => { if (cam) { cam.stop(); cam = null; } } });
+  handle.slot = slot;
+  handle.close = close;
+  handle.countsEl = slot.querySelector('#poolcam-counts');
   const start = slot.querySelector('#poolcam-start');
   if (start) start.onclick = async () => {
     const video = slot.querySelector('#poolcam-video');
     try {
       cam = new CameraScanner(video, (text) => {
         const p = parseQrClient(text);
-        if (!p) return;                       // не чековый QR — ждём дальше
-        if (cam) { cam.stop(); cam = null; }
-        close();
-        onText(text, p);
+        if (!p) return;                       // не чековый QR — ждём следующий
+        onText(text, p);                      // камера остаётся включённой
       });
       await cam.start();
       slot.querySelector('#poolcam-overlay').classList.add('hidden');
       slot.querySelector('#poolcam-frame').style.display = '';
       slot.querySelector('#poolcam-line').style.display = '';
-      toast('Камера включена — наведите на QR-код чека', 'info', '📸');
+      toast('Камера включена — сканируйте чеки один за другим', 'info', '📷 Сканер');
     } catch (e) { toast(e.message, 'err', 'Камера недоступна'); }
   };
+  const off = slot.querySelector('#poolcam-camoff');
+  if (off) off.onclick = () => { if (cam) { cam.stop(); cam = null; } };
+  const done = slot.querySelector('#poolcam-done');
+  if (done) done.onclick = () => {
+    if (cam) { cam.stop(); cam = null; }
+    close();
+    if (typeof handle.onFinish === 'function') handle.onFinish();
+  };
+  return handle;
+}
+
+// ==========================================================================
+//  v1.70.40: сдача чеков пачкой (до 100 за сессию) — сайт и мини-приложение
+//  MAX работают по одному сценарию: каждый чек проверяется сразу, дубликат
+//  не принимается, статусы уточняются опросом, счётчики перекрашиваются.
+//
+//  Цвета (фирменная палитра): оранжевый — принят после проверки, голубой —
+//  на модерации, терракота — не принят (дубликат или отказ источника).
+//
+//  Ниже — чистые помощники (без DOM): их проверяют юнит-тесты на node,
+//  поэтому логика счётчиков и итога сессии не зависит от вёрстки.
+// ==========================================================================
+const PUB_BATCH_CAP = 100;        // рубеж сессии = суточный лимит антифрода
+const PUB_BATCH_POLL_MS = 2500;   // интервал опроса статусов
+const PUB_BATCH_POLL_MAX = 40;    // ~100 с: дальше статусы видны в списке «мои чеки»
+const PUB_BATCH_ROWS = 8;         // сколько последних чеков показывать в панели
+
+function pubBatchKey(fn, fd, fp) {
+  return `${fn || ''}|${fd || ''}|${fp || ''}`;
+}
+
+// состояние чека в сессии: 'pend' (синий) → 'ok' (оранжевый) | 'bad' (красный)
+function pubBatchState(status) {
+  if (status === 'verified') return 'ok';
+  if (status === 'pending') return 'pend';
+  if (status === 'rejected') return 'bad';
+  return 'pend';
+}
+
+function pubBatchLabel(state) {
+  return state === 'ok' ? 'принят' : (state === 'pend' ? 'на модерации' : 'не принят');
+}
+
+function pubBatchCount(items) {
+  const c = { ok: 0, pend: 0, bad: 0, points: 0 };
+  (items || []).forEach((x) => {
+    if (c[x.state] !== undefined) c[x.state] += 1;
+    c.points += Number(x.points || 0);
+  });
+  return c;
+}
+
+function pubBatchRowHTML(x) {
+  const who = x.fd ? `ФД ${esc(String(x.fd))}` : esc(x.who || 'чек');
+  const sum = x.sum ? ` · ${fmtSum(x.sum)}` : '';
+  return `<div class="brow s-${x.state}"><span class="bdot"></span>`
+    + `<span class="bwho">${who}</span>`
+    + `<span class="bst">${esc(pubBatchLabel(x.state) + sum)}</span></div>`;
+}
+
+function pubBatchDayText(day) {
+  const left = Number(day && day.left);
+  const tail = left > 0 ? ` — осталось ${left}` : ' — суточный лимит исчерпан';
+  return `Сегодня сдано ${day ? day.today : 0} из ${day ? day.limit : PUB_BATCH_CAP}${tail}`;
+}
+
+function pubBatchSummaryText(items, ms) {
+  const c = pubBatchCount(items);
+  const secs = Math.max(1, Math.round((ms || 0) / 1000));
+  const mins = Math.floor(secs / 60);
+  const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
+  return `Итог сдачи: принято ${c.ok}, на модерации ${c.pend}, не принято ${c.bad}`
+    + ` · баллов +${c.points} · время ${dur}`;
 }
 
 // v1.52.0: ручной ввод реквизитов там же, где сканируют (резерв —
@@ -607,8 +1007,8 @@ function poolManualDialog(onQr) {
         <input id="pm-fp" placeholder="1234567890" required></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="pm-send">Собрать QR</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="pm-send">Собрать QR</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#pm-send').onclick = () => {
@@ -639,8 +1039,8 @@ function poolEnableBanner() {
   bar.className = 'pool-off-banner';
   bar.innerHTML = '<span>⏸ Приём чеков в Чек-Пул выключен — доноры не могут '
     + 'сдать чек и посмотреть свои баллы.</span>'
-    + '<button class="btn btn-sm" id="pool-off-on">▶ Включить приём чеков</button>'
-    + '<button class="btn btn-sm" id="pool-off-hide" title="Скрыть до следующего входа">Не сейчас</button>';
+    + '<button type="button" class="btn btn-sm" id="pool-off-on">▶ Включить приём чеков</button>'
+    + '<button type="button" class="btn btn-sm" id="pool-off-hide" title="Скрыть до следующего входа">Не сейчас</button>';
   if (typeof shell.insertBefore === 'function') shell.insertBefore(bar, shell.firstChild);
   else shell.appendChild(bar);
   const on = bar.querySelector('#pool-off-on'), hide = bar.querySelector('#pool-off-hide');
@@ -667,23 +1067,42 @@ function publicFormHTML() {
   <div class="form-hint" style="margin:2px 0 8px">Подтвердите e-mail в кабинете — чеки автоматически будут уходить
     вашей компании, минуя общий пул.</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-    <button class="btn btn-sm btn-primary" id="pub-cam"
-            title="Живое сканирование камерой — как в разделе «Сканирование»">📸 Сканировать камерой</button>
-    <button class="btn btn-sm" id="pub-manual"
+    <button type="button" class="btn btn-sm btn-primary" id="pub-cam"
+            title="Один поток сдачи: камера не закрывается после чека, до 100 чеков за сессию, каждый сразу проверяется на дубликат">📷 Сканировать чек</button>
+    <button type="button" class="btn btn-sm" id="pub-manual"
             title="Резервный способ: QR повреждён — реквизиты с чека">⌨ Ввести вручную</button>
     <label class="btn btn-sm" style="cursor:pointer;margin:0">📷 Фото QR
       <input id="pub-photo" type="file" accept="image/*" capture="environment" class="hidden"></label>
     <span class="form-hint" style="align-self:center">фото чека можно просто перетащить на форму</span>
   </div>
   <div id="pub-photo-hint" class="form-hint hidden" style="margin:4px 0 8px"></div>
+  <div id="pub-batch" class="batch-panel hidden">
+    <div class="batch-head">
+      <span class="batch-title">🧾 Сдача чеков</span>
+      <span class="batch-prog" id="pub-batch-prog">0 / 100</span>
+    </div>
+    <div class="batch-counts" role="status" aria-live="polite">
+      <span class="bcount b-ok" id="pub-bc-ok"><b>0</b><i>принято</i></span>
+      <span class="bcount b-pend" id="pub-bc-pend"><b>0</b><i>на модерации</i></span>
+      <span class="bcount b-bad" id="pub-bc-bad"><b>0</b><i>не принято</i></span>
+    </div>
+    <div class="batch-day" id="pub-batch-day">Сегодня сдано 0 из 100</div>
+    <div class="batch-list" id="pub-batch-list"></div>
+    <div class="batch-sum hidden" id="pub-batch-sum"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button type="button" class="btn btn-sm" id="pub-batch-stop">✅ Готово — закончить сдачу</button>
+      <button type="button" class="btn btn-sm" id="pub-batch-hide" title="Панель скрывается, но статусы чеков продолжают уточняться">Скрыть панель</button>
+    </div>
+  </div>
   <input id="pub-hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true"
          style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
   <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin:10px 0">
     <input type="checkbox" id="pub-offerta" style="width:auto;margin-top:3px">
-    <span style="font-size:13.5px">Согласен с офертой (<a href="#" id="pub-offerta-link">текст</a>) —
+    <span style="font-size:13.5px">Согласен с офертой (<a href="#" id="pub-offerta-link">кратко</a> ·
+    <a href="/oferta" target="_blank" rel="noopener">полный текст</a>) —
     чек мой, передаю его фискальные данные в открытую базу</span></label>
   <div id="pub-offerta-text" class="info-callout hidden" style="font-size:13px;margin-bottom:10px"></div>
-  <button class="btn btn-primary btn-block" id="pub-submit">Отправить чек — получить балл</button>
+  <button type="button" class="btn btn-primary btn-block" id="pub-submit">Отправить чек — получить балл</button>
   <div id="pub-msg" class="form-error hidden" style="margin-top:8px"></div>
   <div id="pub-leaders" style="margin-top:14px"></div>
   <div id="pub-status" class="hidden" style="margin-top:12px"></div>
@@ -746,16 +1165,12 @@ function bindPoolForm(root, opts) {
       .filter((f) => /^image\//.test(f.type));
     if (fs.length) decodeToQr(fs[0]);
   });
-  // живая камера — тот же модуль scanner.js, что в разделе «Сканирование»
-  const camPick = () => openPoolCameraScan((text, p) => {
-    $p('pub-qr').value = text;
-    const hint = $p('pub-photo-hint');
-    show('pub-photo-hint', true);
-    if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + p.fn
-      + (p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
-  });
+  // v1.70.42: живая камера — тот же модуль scanner.js, что в разделе
+  // «Сканирование», но ОДНА на все случаи: кнопка запускает единый поток сдачи
+  // (камера не закрывается после чека, счётчики общие со вставкой строки, фото
+  // и ручным вводом). Отдельного режима «пачкой» больше нет.
   const camBtn = $p('pub-cam');
-  if (camBtn) camBtn.onclick = camPick;
+  if (camBtn) camBtn.onclick = () => pbStart(false);
   // v1.54.0/v1.59.0: пришли с главной «Сканировать чек» — камера откроется
   // сама, но только когда подтвердится, что приём включён (раньше была
   // гонка: камера открывалась до ответа сервера, донор сканировал, а форма
@@ -822,8 +1237,8 @@ function bindPoolForm(root, opts) {
       <label class="field"><span>E-mail</span>
         <input type="email" id="rcpt-email" required value="${esc(saved)}" autocomplete="email"></label>
       <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="rcpt-send">Отправить</button>
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn btn-primary" id="rcpt-send">Отправить</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#rcpt-send').onclick = async (e) => {
@@ -843,29 +1258,290 @@ function bindPoolForm(root, opts) {
     };
   };
 
+  // ---- v1.70.40: сдача пачкой (до 100 чеков за сессию) --------------------
+  // Механизм тот же, что в мини-приложении MAX: мгновенная проверка
+  // дубликата, счётчики «принято / на модерации / не принято», анимация
+  // «чек улетает в пул», окно на рубеже 100 чеков и уточнение статусов
+  // опросом /batch-status (приём асинхронный: ответ «принят — проверяем»
+  // приходит сразу, а verified/pending/rejected определяется в фоне).
+  const PB = {
+    active: false, items: [], seen: {}, cap: PUB_BATCH_CAP, tries: 0,
+    accepted: 0, timer: 0, t0: Date.now(), camCounts: null, camClose: null,
+    camSlot: null,
+    day: { today: 0, limit: PUB_BATCH_CAP, left: PUB_BATCH_CAP },
+  };
+  const pbSetCount = (id, n) => {
+    const el = $p(id);
+    if (el) { const b = el.querySelector('b'); if (b) b.textContent = n; }
+  };
+  const pbRender = () => {
+    const c = pubBatchCount(PB.items);
+    pbSetCount('pub-bc-ok', c.ok);
+    pbSetCount('pub-bc-pend', c.pend);
+    pbSetCount('pub-bc-bad', c.bad);
+    const prog = $p('pub-batch-prog');
+    if (prog) prog.textContent = `${PB.items.length} / ${PB.cap}`;
+    const day = $p('pub-batch-day');
+    if (day) day.textContent = pubBatchDayText(PB.day);
+    const list = $p('pub-batch-list');
+    if (list) {
+      list.innerHTML = PB.items.slice(-PUB_BATCH_ROWS).reverse()
+        .map(pubBatchRowHTML).join('');
+    }
+    if (PB.camCounts) {
+      PB.camCounts.innerHTML = camCountsHTML(c);
+    }
+  };
+  const pbFly = (state) => {
+    const id = state === 'ok' ? 'ok' : (state === 'pend' ? 'pend' : 'bad');
+    const formTarget = $p(`pub-bc-${id}`);
+    const slot = PB.camSlot;
+    const seg = slot ? slot.querySelector(`#poolcam-seg-${id}`) : null;
+    if (seg) {
+      // окно камеры открыто: чек прилетает в свою фазу прямо в окне — туда,
+      // куда смотрит человек, — а плитка счётчика в форме мигает вместе с ним
+      flyChipTo(state, slot.querySelector('#poolcam-video') || slot, seg, slot);
+      pulsePhase(formTarget);
+      return;
+    }
+    flyChipTo(state, $p('pub-cam'), formTarget, null);
+  };
+  const pbAdd = (item) => { PB.items.push(item); pbRender(); pbFly(item.state); };
+  const pbSetDay = (d) => {
+    if (d && typeof d.today === 'number') {
+      const limit = d.limit || d.daily_limit || PB.day.limit;
+      PB.day = {
+        today: d.today, limit,
+        left: typeof d.left === 'number' ? d.left : Math.max(0, limit - d.today),
+      };
+    }
+  };
+  const pbPoll = async () => {
+    PB.timer = 0;
+    const pend = PB.items.filter((x) => x.state === 'pend' && x.key);
+    if (!pend.length || PB.tries >= PUB_BATCH_POLL_MAX) return;
+    PB.tries += 1;
+    let d;
+    try {
+      d = await poolApi('POST', '/api/v1/public/pool/batch-status',
+        { keys: pend.map((x) => ({ fn: x.fn, fd: x.fd, fp: x.fp })) });
+    } catch (e) { pbPollSoon(); return; }       // сеть мигнула — попробуем ещё
+    let changed = 0;
+    (d.items || []).forEach((it) => {
+      if (!it || !it.found || !it.status) return;
+      const key = pubBatchKey(it.fn, it.fd, it.fp);
+      const row = PB.items.find((x) => x.key === key);
+      if (!row) return;
+      const st = pubBatchState(it.status);
+      row.sum = it.sum || row.sum || 0;
+      row.points = it.points || 0;
+      if (it.message) row.message = it.message;
+      if (st !== row.state) { row.state = st; changed += 1; pbFly(st); }
+    });
+    pbSetDay(d);
+    if (changed) {
+      pbRender();
+      const c = pubBatchCount(PB.items);
+      toast(`Проверка прошла: принято ${c.ok}, на модерации ${c.pend}, не принято ${c.bad}`,
+        c.bad ? 'warn' : 'ok', '🧾 Сдача');
+    }
+    if (PB.items.some((x) => x.state === 'pend')) pbPollSoon();
+  };
+  const pbPollSoon = () => {
+    if (!PB.timer) PB.timer = setTimeout(pbPoll, PUB_BATCH_POLL_MS);
+  };
+  const pbAskMore = () => new Promise((resolve) => {
+    const { slot, close } = openModal(`
+      <div class="modal-title">📦 Сдано ${PB.items.length} чеков</div>
+      <p class="form-hint" style="margin-bottom:12px">Вы отсканировали ${PB.items.length}
+      чеков за эту сессию. Продолжаем сдачу или закончим и посмотрим итог?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="pb-finish">Закончить и посмотреть итог</button>
+        <button type="button" class="btn btn-primary" id="pb-more">Продолжить — ещё ${PUB_BATCH_CAP}</button>
+      </div>`, { onClose: () => resolve(false) });
+    const more = slot.querySelector('#pb-more');
+    const fin = slot.querySelector('#pb-finish');
+    if (more) more.onclick = () => { close(); resolve(true); };
+    if (fin) fin.onclick = () => { close(); resolve(false); };
+  });
+  const pbStop = (reason) => {
+    const was = PB.active;
+    PB.active = false;
+    if (PB.camClose) {
+      const c = PB.camClose; PB.camClose = null; PB.camCounts = null;
+      PB.camSlot = null;
+      try { c(); } catch (e) { /* окно уже закрыто */ }
+    }
+    if (PB.timer) { clearTimeout(PB.timer); PB.timer = 0; }
+    const summary = pubBatchSummaryText(PB.items, Date.now() - PB.t0);
+    const sum = $p('pub-batch-sum');
+    if (sum) {
+      let text = `${summary}. ${pubBatchDayText(PB.day)}.`;
+      if (reason === 'flood') {
+        text = `Суточный лимит исчерпан — дальше чеки не принимаются. ${text}`;
+      } else if (reason === 'limit') {
+        text = `Слишком много отправок с этого адреса — сделайте паузу. ${text}`;
+      }
+      sum.textContent = text;
+      sum.classList.remove('hidden');
+    }
+    if (was) {
+      const c = pubBatchCount(PB.items);
+      toast(summary, c.bad ? 'warn' : 'ok', '🧾 Сдача');
+    }
+    pbRender();
+    loadMine();
+    // статусы продолжают уточняться и после завершения — опрос начинается заново
+    if (PB.items.some((x) => x.state === 'pend')) { PB.tries = 0; pbPollSoon(); }
+  };
+  // сообщение рядом с кнопкой отправки — для вставки строки и ручного ввода;
+  // камера живёт в своём окне, ей достаточно тоста
+  const pbMsg = (text, fromCamera) => {
+    if (fromCamera === true) return;
+    const msg = $p('pub-msg');
+    if (!msg) return;
+    msg.textContent = text || '';
+    msg.classList.toggle('hidden', !text);
+  };
+  // v1.70.42: согласие с офертой — единственный рубильник отправки (152-ФЗ:
+  // согласие до передачи данных). Чек, прочитанный камерой до отметки, на сервер
+  // не уходит, но и не теряется: строка QR паркуется в поле, донор видит
+  // реквизиты и что осталось сделать.
+  const pbPark = (text, p) => {
+    const qr = $p('pub-qr');
+    if (qr) qr.value = text;
+    const hint = $p('pub-photo-hint');
+    show('pub-photo-hint', true);
+    if (hint) hint.textContent = 'QR отсканирован камерой: ФН ' + (p && p.fn ? p.fn : '—')
+      + (p && p.sum ? ', сумма ' + p.sum : '') + '. Осталось отметить оферту и отправить.';
+    toast('Отметьте согласие с офертой — тогда чек уйдёт в пул', 'warn', '🧾 Сдача');
+  };
+  const pbHandle = async (text, parsed, fromCamera) => {
+    const raw = String(text || '').trim();
+    if (!raw) return;
+    const offerta = $p('pub-offerta');
+    if (offerta && !offerta.checked) {
+      if (fromCamera === true) { pbPark(raw, parsed); return; }
+      const warn = 'Отметьте согласие с офертой — без него чек принять нельзя';
+      pbMsg(warn, fromCamera);
+      toast(warn, 'warn', '🧾 Сдача');
+      return;
+    }
+    pbEnsure();                              // сессия начинается с первого чека
+    pbMsg('', fromCamera);
+    const norm = raw.replace(/\s+/g, '');
+    if (PB.seen[norm]) {
+      // повтор внутри сессии: отвечаем мгновенно, запрос на сервер не уходит
+      pbAdd({ state: 'bad', who: 'повтор в этой сессии' });
+      toast('Этот чек вы уже сдали в этой сессии — дважды он в базу не попадёт',
+        'warn', '🧾 Сдача');
+      return;
+    }
+    PB.seen[norm] = true;
+    let d;
+    try {
+      d = await poolApi('POST', '/api/v1/public/pool/check', {
+        qr_text: raw.slice(0, 4000),
+        offerta: !!(offerta && offerta.checked),
+        hp: $p('pub-hp') ? $p('pub-hp').value : '',
+        // время жизни формы, а не одного чека: пачка сдаётся быстро, и честный
+        // form_ms не даёт антифроду принять её за бота (BOT_PATTERN < 800 мс)
+        form_ms: Date.now() - t0,
+        employee_email: $p('pub-emp') ? $p('pub-emp').value.trim() : '',
+      });
+    } catch (e) {
+      PB.seen[norm] = false;                    // не отправлено — можно повторить
+      pbAdd({ state: 'bad', who: 'не отправлено' });
+      const net = e.status === 429 ? 'Слишком много отправок — сделайте паузу'
+        : (e.message || 'Ошибка сети');
+      pbMsg(net, fromCamera);
+      toast(net, 'err', '🧾 Сдача');
+      if (e.status === 429) pbStop('limit');
+      return;
+    }
+    if (!d || d.ok === false) {
+      pbAdd({ state: 'bad', who: 'не принято' });
+      pbMsg((d && d.message) || 'Чек не принят', fromCamera);
+      toast((d && d.message) || 'Чек не принят', 'err', '🧾 Сдача');
+      return;
+    }
+    pbSetDay(d);
+    if (!d.accepted) {
+      const dup = d.result === 'duplicate';
+      pbAdd({ state: 'bad', who: dup ? 'дубликат' : 'не принято', message: d.message || '' });
+      toast(dup ? (d.message || 'Такой чек уже есть в базе — не принят')
+        : (d.message || 'Не принято'), dup ? 'warn' : 'err',
+        dup ? '🧾 Дубликат' : '🧾 Сдача');
+      if (d.result === 'flood') pbStop('flood');
+      return;
+    }
+    pbAdd({
+      state: 'pend', fn: d.fn, fd: d.fd, fp: d.fp,
+      key: pubBatchKey(d.fn, d.fd, d.fp), sum: 0, points: 0,
+      message: d.message || 'Чек принят — проверяем',
+    });
+    PB.accepted += 1;
+    // одиночная сдача видит то же, что и раньше: подробный статус, электронный
+    // чек и письмо на почту; поточная — панель со счётчиками
+    if (PB.accepted === 1 && d.fn) pollStatus(d.fn);
+    beep();
+    pbPollSoon();
+    if (PB.items.length >= PB.cap) {
+      // рубеж сессии: камеру закрываем и спрашиваем «продолжаем или закончим?»
+      if (PB.camClose) {
+        const c = PB.camClose; PB.camClose = null; PB.camCounts = null;
+        PB.camSlot = null;
+        try { c(); } catch (e) { /* уже закрыто */ }
+      }
+      const more = await pbAskMore();
+      if (more) { PB.cap += PUB_BATCH_CAP; pbRender(); pbStart(true); }
+      else pbStop('cap');
+    }
+  };
+  // сессия начинается с первого чека любым способом ввода — отдельной кнопки
+  // «начать пачку» нет ни в разметке, ни в логике
+  const pbEnsure = () => {
+    if (PB.active) return;
+    PB.active = true; PB.items = []; PB.seen = {}; PB.cap = PUB_BATCH_CAP;
+    PB.tries = 0; PB.accepted = 0; PB.t0 = Date.now();
+    const sum = $p('pub-batch-sum');
+    if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+    show('pub-batch', true);
+    pbRender();
+  };
+  const pbStart = (resume) => {
+    pbEnsure();
+    show('pub-batch', true);
+    pbRender();
+    if (resume === true && PB.camClose) return;  // камера уже открыта
+    const cam = openPoolCameraScan((text, p) => { pbHandle(text, p, true); });
+    cam.onFinish = () => pbStop('manual');
+    PB.camCounts = cam.countsEl;
+    PB.camSlot = cam.slot;
+    PB.camClose = cam.close;
+    pbRender();
+  };
+  const pbStopBtn = $p('pub-batch-stop');
+  if (pbStopBtn) pbStopBtn.onclick = () => pbStop('manual');
+  const pbHideBtn = $p('pub-batch-hide');
+  if (pbHideBtn) pbHideBtn.onclick = () => show('pub-batch', false);
+
   const submit = $p('pub-submit');
   if (submit) submit.onclick = async () => {
-    const msg = $p('pub-msg');
-    msg.classList.add('hidden');
+    // v1.70.42: второй путь отправки удалён. Вставка строки, фото и ручной ввод
+    // идут в ту же сессию, что и камера: те же счётчики, та же проверка
+    // дубликата по ФН+ФД+ФП, то же уточнение статусов опросом.
+    pbMsg('');
+    const qrEl = $p('pub-qr');
+    const val = qrEl ? qrEl.value.trim() : '';
+    if (!val) {
+      pbMsg('Вставьте строку QR-кода чека или отсканируйте его камерой');
+      return;
+    }
     submit.disabled = true;
-    try {
-      const res = await poolApi('POST', '/api/v1/public/pool/check', {
-        qr_text: $p('pub-qr').value,
-        offerta: !!$p('pub-offerta').checked,
-        hp: $p('pub-hp').value,
-        form_ms: Date.now() - t0,
-        employee_email: ($p('pub-emp') ? $p('pub-emp').value.trim() : ''),
-      });
-      if (!res.ok || !res.accepted) {
-        msg.textContent = res.message || 'Не получилось отправить чек';
-        msg.classList.remove('hidden');
-        return;
-      }
-      pollStatus(res.fn);
-    } catch (e) {
-      msg.textContent = e.message || 'Ошибка сети';
-      msg.classList.remove('hidden');
-    } finally { submit.disabled = false; }
+    try { await pbHandle(val, null, false); }
+    finally { submit.disabled = false; }
+    if (qrEl) qrEl.value = '';
   };
 
   const olink = $p('pub-offerta-link');
@@ -900,7 +1576,7 @@ function bindPoolForm(root, opts) {
       banner.className = 'info-callout';
       banner.innerHTML = '⏸ <b>Приём чеков сейчас на паузе</b> — отправить чек '
         + 'пока нельзя. Загляните позже или проверьте ещё раз.'
-        + '<br><button class="btn btn-sm" id="pub-retry" style="margin-top:8px">🔄 Проверить ещё раз</button>';
+        + '<br><button type="button" class="btn btn-sm" id="pub-retry" style="margin-top:8px">🔄 Проверить ещё раз</button>';
       if (typeof root.insertBefore === 'function') root.insertBefore(banner, root.firstChild);
       else root.appendChild(banner);
       const sbm = $p('pub-submit');
@@ -927,7 +1603,7 @@ function bindPoolForm(root, opts) {
       poolLoadLeadersPub(root);          // v1.36.0: лидерборд месяца
     }
     await loadMine();
-    if (camWanted) camPick();          // v1.59.0: камера — при включённом приёме
+    if (camWanted) pbStart(false);     // v1.70.42: камера — при включённом приёме
   })();
 }
 
@@ -1021,9 +1697,9 @@ async function poolConsume(kind, raw) {
 function poolAuthHTML() {
   return `
   <div style="display:flex;gap:8px;margin-bottom:12px">
-    <button class="btn btn-sm btn-primary" id="ptab-login">Вход</button>
-    <button class="btn btn-sm" id="ptab-reg">Регистрация</button>
-    <button class="btn btn-sm" id="ptab-magic">Вход по ссылке</button>
+    <button type="button" class="btn btn-sm btn-primary" id="ptab-login">Вход</button>
+    <button type="button" class="btn btn-sm" id="ptab-reg">Регистрация</button>
+    <button type="button" class="btn btn-sm" id="ptab-magic">Вход по ссылке</button>
   </div>
   <form id="pf-login">
     <label class="field"><span>E-mail</span><input id="pl-email" type="email" required autocomplete="email"></label>
@@ -1048,7 +1724,7 @@ function poolAuthHTML() {
 function poolDashHTML() {
   return `
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-    <button class="btn btn-primary btn-sm" id="pool-submit-open"
+    <button type="button" class="btn btn-primary btn-sm" id="pool-submit-open"
             title="Камера, фото или строка QR — как на странице «Сдать чек»">📸 Сдать чек сканером</button>
     <span class="form-hint">камера, фото или вставка строки — баллы зачисляются автоматически</span>
   </div>
@@ -1066,22 +1742,22 @@ function poolDashHTML() {
     <span class="form-hint">(Этап 7 · v1.36.0)</span></div>
   <div id="pool-engage" class="form-hint" style="margin:6px 0">Загружаем…</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
-    <button class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
-    <button class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
+    <button type="button" class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
+    <button type="button" class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
   </div>
   <div class="card-title" style="margin-top:14px">Профиль</div>
   <div class="form-grid" style="margin:8px 0">
     <label class="field"><span>Старый пароль</span><input id="pool-oldp" type="password" autocomplete="current-password"></label>
     <label class="field"><span>Новый пароль (мин. 8 символов)</span><input id="pool-newp" type="password" autocomplete="new-password"></label>
   </div>
-  <button class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
+  <button type="button" class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
   <div class="form-grid" style="margin:8px 0">
     <label class="field"><span>Новый e-mail</span><input id="pool-newemail" type="email"></label>
   </div>
-  <button class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
+  <button type="button" class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
   <div style="display:flex;gap:8px;margin-top:16px">
-    <button class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
-    <button class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
+    <button type="button" class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
+    <button type="button" class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
   </div>
   <div id="pool-msg" class="form-error hidden" style="margin-top:8px"></div>`;
 }
@@ -1095,10 +1771,19 @@ async function poolLoadSummary(root) {
   try {
     const d = await poolApi('GET', '/api/v1/pool-my/summary');
     const box = root.querySelector('#pool-summary');
-    if (box) box.innerHTML = `Кабинет: <b>${esc(d.email)}</b>
-      ${d.email_verified ? '<span class="chip exported"><span class="dot"></span>e-mail подтверждён</span>'
-      : `<span class="chip new"><span class="dot"></span>e-mail не подтверждён</span>
-         <a href="#" id="pool-resend-verify">Подтвердить</a>`}`;
+    if (box) {
+      // v1.70.37: у участника из MAX может не быть e-mail — тогда показываем
+      // имя из MAX (если дано согласие) и метку канала; чип про e-mail имеет
+      // смысл только когда e-mail действительно привязан.
+      const nm = d.display_name || d.email || 'участник';
+      box.innerHTML = `Кабинет: ${srcBadge(d.reg_source)}<b>${esc(nm)}</b>
+      ${d.email
+        ? (d.email_verified ? '<span class="chip exported"><span class="dot"></span>e-mail подтверждён</span>'
+          : `<span class="chip new"><span class="dot"></span>e-mail не подтверждён</span>
+             <a href="#" id="pool-resend-verify">Подтвердить</a>`)
+        : `<span class="chip verified"><span class="dot"></span>${d.consent_given
+            ? 'данные из MAX (согласие 152-ФЗ)' : 'без e-mail'}</span>`}`;
+    }
     const rv = root.querySelector('#pool-resend-verify');
     if (rv) rv.onclick = async (e) => {
       e.preventDefault();
@@ -1136,9 +1821,9 @@ async function poolLoadReceipts(root, page) {
         <td class="num">${r.points ? '+' + r.points : '—'}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="form-hint">Пока пусто — сдайте первый чек на странице «Сдать чек».</p>'}
       ${pages > 1 ? `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-        <button class="btn btn-sm" id="pool-prev" ${page <= 1 ? 'disabled' : ''}>← Назад</button>
+        <button type="button" class="btn btn-sm" id="pool-prev" ${page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">стр. ${page} из ${pages}</span>
-        <button class="btn btn-sm" id="pool-next" ${page >= pages ? 'disabled' : ''}>Вперёд →</button></div>` : ''}`;
+        <button type="button" class="btn btn-sm" id="pool-next" ${page >= pages ? 'disabled' : ''}>Вперёд →</button></div>` : ''}`;
     box.querySelectorAll('tr[data-rid]').forEach(tr => {
       tr.onclick = () => poolShowReceipt(tr.dataset.rid);
     });
@@ -1197,7 +1882,7 @@ function poolPrintList(root) {
       'th{background:#f5f5f5}.num{text-align:right;font-variant-numeric:tabular-nums}</style></head><body>' +
       '<h1>Ямастер Чек-Пул — мои чеки</h1>' +
       '<table><thead><tr><th>Дата</th><th>Магазин</th><th>ФН</th><th>Сумма</th><th>Статус</th><th>Баллы</th></tr></thead>' +
-      `<tbody>${rows}</tbody></table><p style="font-size:12px;color:#777">ООО «Ямастер» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>` +
+      `<tbody>${rows}</tbody></table><p style="font-size:12px;color:#6b6b6b">ООО «Ямастер» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>` +
       '</body></html>');
     w.document.close();
     w.focus();
@@ -1284,7 +1969,7 @@ function poolLoadInvite(root) {
       плюс 5% с чеков приглашённого — до 200 баллов в месяц.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
       <input id="pool-inv-link" value="${esc(d.link)}" readonly style="max-width:330px">
-      <button class="btn btn-sm" id="pool-inv-copy">📋 Копировать ссылку</button>
+      <button type="button" class="btn btn-sm" id="pool-inv-copy">📋 Копировать ссылку</button>
     </div>
     ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
       <thead><tr><th>Дата</th><th>Кто</th><th>Чеков</th><th>Баллов принес</th></tr></thead>
@@ -1356,7 +2041,7 @@ function renderEcheck(anchor, r) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <input type="email" id="ec-email" class="field-input" placeholder="ваш e-mail"
                autocomplete="email" style="flex:1;min-width:200px">
-        <button class="btn btn-primary btn-sm" id="ec-send">✉ Прислать HTML-чек</button>
+        <button type="button" class="btn btn-primary btn-sm" id="ec-send">✉ Прислать HTML-чек</button>
       </div>
       <div class="form-hint" id="ec-msg" style="margin-top:6px"></div>
     </div>
@@ -1365,7 +2050,7 @@ function renderEcheck(anchor, r) {
       <ul><li>+1 балл за каждый чек, кэшбэк у партнёров — до 100 за чек</li>
       <li>история и статусы всех ваших чеков в одном месте</li>
       <li>кабинет за минуту — по e-mail или временной ссылке входа; чеки этого браузера присоединятся сами</li></ul>
-      <button class="btn btn-sm" id="ec-cabinet">Открыть кабинет →</button>
+      <button type="button" class="btn btn-sm" id="ec-cabinet">Открыть кабинет →</button>
     </div>`;
   anchor.appendChild(wrap);
   const send = wrap.querySelector('#ec-send');
@@ -1378,7 +2063,7 @@ function renderEcheck(anchor, r) {
         { fn: r.fn || '', email, hp: '' });
       try { localStorage.setItem('ymaster-lead-email', email); } catch (e) {}
       if (msg) { msg.textContent = resp.message || 'Отправлено — проверьте почту';
-                 msg.style.color = 'var(--ok)'; }
+                 msg.style.color = 'var(--ok-text)'; }
       toast(resp.message, 'ok', '✉ Чек-Пул');
     } catch (err) {
       if (msg) { msg.textContent = err.message || 'Не удалось отправить'; msg.style.color = ''; }
@@ -1418,15 +2103,15 @@ function poolLoadEngage(root) {
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px">${chips}</div>
       <div class="form-hint" style="margin:2px 0">🎯 Цель вывода: <b>${fmtInt(wd.points)}</b> из
         <b>${fmtInt(wd.goal)}</b> баллов · минимум заявки — ${wd.min}.</div>
-      <div style="background:#e8e8e8;border-radius:6px;height:10px;max-width:360px;overflow:hidden;margin:6px 0">
-        <div style="background:#e5770f;height:100%;width:${pct}%"></div></div>
+      <div style="background:var(--bg-soft);border-radius:6px;height:10px;max-width:360px;overflow:hidden;margin:6px 0">
+        <div style="background:var(--accent-text);height:100%;width:${pct}%"></div></div>
       ${wd.active ? `<div class="form-hint">Активная заявка на ${fmtInt(wd.active.points)} баллов —
         статус «${wd.active.status === 'pending_sms' ? 'ожидает SMS-подтверждение' : 'принята'}».
         ${wd.active.sms_required ? 'Первый вывод подтверждается по SMS: код придёт, когда подключим шлюз.' : ''}</div>` : ''}
       ${wd.can_withdraw ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
         <input id="pool-wd-pts" type="number" min="${wd.min}" max="${wd.points}" value="${wd.min}" style="max-width:110px" aria-label="Сколько баллов вывести">
         <input id="pool-wd-phone" placeholder="+7 900 000-00-00" style="max-width:190px" autocomplete="tel" aria-label="Телефон для выплаты">
-        <button class="btn btn-sm" id="pool-wd-send">Вывести баллы</button></div>
+        <button type="button" class="btn btn-sm" id="pool-wd-send">Вывести баллы</button></div>
         <div class="form-hint">Телефон нужен только для выплаты и хранится только хэшем.</div>` : ''}
       ${poolLeadersHTML(lead, lead.me)}
       ${wd.history.length ? `<div class="form-hint" style="margin-top:6px">Заявки: ${wd.history.map((h) =>
@@ -1455,25 +2140,24 @@ function poolLoadEngage(root) {
 const poolPk = {
   company: '', tab: 'search', page: 1, minePage: 1, dicts: null,
   picked: new Set(), minePicked: new Set(), auto: null,
-  f: { from: '', to: '', region: '', city: '', industry: '', inn: '', sumMin: '', sumMax: '', q: '' },
+  f: { from: '', to: '', region: '', city: '', industry: '', inn: '', sumMin: '', sumMax: '', q: '', itemName: '', vatRate: '', itemMin: '', itemMax: '', priceMin: '', priceMax: '', qtyMin: '', qtyMax: '', operation: '' },
 };
 
 function poolPkShell() {
   return `
   <div class="glass card">
-    <div class="card-title">🧩 Подбор из пула <span class="form-hint">(Этап 8 · v1.37.0)</span></div>
-    <p class="form-hint" style="margin-bottom:10px">Верифицированные чеки открытой базы — под авансовые отчёты.
-      Привязанный чек чужим компаниям не виден; участник сохраняет свои баллы.
+    <div class="card-title">🧩 Подбор из Чек-Пула</div>
+    <p class="form-hint" style="margin-bottom:10px">Здесь только чеки, сданные в общий пул, а не все проверенные чеки реестра. Выберите, привяжите к компании и перенесите во вкладке «Мои чеки компании» без повторного запроса в ФНС. История участника и баллы сохраняются. Одобрение в пуле не всегда означает подтверждение ФНС.
       <a href="#/public">Сдать чек в пул →</a></p>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
       <label class="field" id="poolpk-comp-wrap" style="max-width:340px"><span>Компания</span><select id="poolpk-comp"></select></label>
       <div id="poolpk-quota" class="form-hint" style="flex:1;min-width:260px">Загружаем…</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-      <button class="btn btn-sm ${poolPk.tab === 'search' ? 'btn-primary' : ''}" id="poolpk-tab-search">1 · Найти чеки</button>
-      <button class="btn btn-sm ${poolPk.tab === 'mine' ? 'btn-primary' : ''}" id="poolpk-tab-mine">2 · Мои чеки компании</button>
-      <button class="btn btn-sm ${poolPk.tab === 'auto' ? 'btn-primary' : ''}" id="poolpk-tab-auto">3 · Авто-подбор ±5%</button>
-      <button class="btn btn-sm ${poolPk.tab === 'staff' ? 'btn-primary' : ''}" id="poolpk-tab-staff">Сотрудники</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'search' ? 'btn-primary' : ''}" id="poolpk-tab-search">1 · Найти чеки</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'mine' ? 'btn-primary' : ''}" id="poolpk-tab-mine">2 · Мои чеки компании</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'auto' ? 'btn-primary' : ''}" id="poolpk-tab-auto">3 · Авто-подбор ±5%</button>
+      <button type="button" class="btn btn-sm ${poolPk.tab === 'staff' ? 'btn-primary' : ''}" id="poolpk-tab-staff">Сотрудники</button>
     </div>
     <div id="poolpk-body"></div>
   </div>`;
@@ -1493,10 +2177,22 @@ function poolPkFline(showGo = true) {
         .map((i) => `<option value="${i.code}" ${f.industry === i.code ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select></label>
     <label class="field" style="max-width:170px"><span>Город</span><input id="pk-city" value="${esc(f.city)}" placeholder="часть названия"></label>
     <label class="field" style="max-width:140px"><span>ИНН</span><input id="pk-inn" value="${esc(f.inn)}"></label>
+    ${showGo ? `
     <label class="field" style="max-width:120px"><span>Сумма от</span><input id="pk-smin" type="number" value="${esc(f.sumMin)}"></label>
     <label class="field" style="max-width:120px"><span>до</span><input id="pk-smax" type="number" value="${esc(f.sumMax)}"></label>
     <label class="field" style="max-width:220px"><span>Магазин или товар</span><input id="pk-q" value="${esc(f.q)}"></label>
-    ${showGo ? '<button class="btn btn-sm btn-primary" id="pk-go">🔍 Найти</button>' : ''}
+    <label class="field"><span>Название позиции</span><input id="pk-item" value="${esc(f.itemName || '')}"></label>
+    <label class="field"><span>НДС как сохранён</span><input id="pk-vat" value="${esc(f.vatRate || '')}" maxlength="8"></label>
+    <label class="field"><span>Сумма позиции от</span><input type="number" min="0" step="0.01" id="pk-item-min" value="${esc(f.itemMin || '')}"></label>
+    <label class="field"><span>Сумма позиции до</span><input type="number" min="0" step="0.01" id="pk-item-max" value="${esc(f.itemMax || '')}"></label>
+    <label class="field"><span>Цена позиции от</span><input type="number" min="0" step="0.01" id="pk-price-min" value="${esc(f.priceMin || '')}"></label>
+    <label class="field"><span>Цена позиции до</span><input type="number" min="0" step="0.01" id="pk-price-max" value="${esc(f.priceMax || '')}"></label>
+    <label class="field"><span>Количество от</span><input type="number" min="0" step="any" id="pk-qty-min" value="${esc(f.qtyMin || '')}"></label>
+    <label class="field"><span>Количество до</span><input type="number" min="0" step="any" id="pk-qty-max" value="${esc(f.qtyMax || '')}"></label>
+    <label class="field"><span>Операция</span><select id="pk-operation"><option value="">все</option>
+      ${[['1', 'Приход'], ['2', 'Возврат прихода'], ['3', 'Расход'], ['4', 'Возврат расхода']].map(([v, label]) => `<option value="${v}" ${f.operation === v ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    <button type="button" class="btn btn-sm btn-primary" id="pk-go">🔍 Найти</button>
+    <button type="button" class="btn btn-sm" id="pk-reset">Сбросить</button>` : ''}
   </div>`;
 }
 
@@ -1518,7 +2214,9 @@ async function poolPkLoadSearch() {
   const params = new URLSearchParams();
   const f = poolPk.f;
   [['from', 'date_from'], ['to', 'date_to'], ['region', 'region'], ['city', 'city'],
-   ['industry', 'industry'], ['inn', 'inn'], ['sumMin', 'sum_min'], ['sumMax', 'sum_max'], ['q', 'q']]
+   ['industry', 'industry'], ['inn', 'inn'], ['sumMin', 'sum_min'], ['sumMax', 'sum_max'], ['q', 'q'],
+   ['itemName', 'item_name'], ['vatRate', 'vat_rate'], ['itemMin', 'item_total_min'], ['itemMax', 'item_total_max'],
+   ['priceMin', 'item_price_min'], ['priceMax', 'item_price_max'], ['qtyMin', 'item_quantity_min'], ['qtyMax', 'item_quantity_max'], ['operation', 'operation']]
     .forEach(([k, p]) => { if (f[k]) params.set(p, f[k]); });
   params.set('page', poolPk.page); params.set('per_page', 20);
   try {
@@ -1532,15 +2230,16 @@ async function poolPkLoadSearch() {
     const pages = Math.max(1, Math.ceil(d.total / d.per_page));
     box.innerHTML = `
       ${poolPkFline()}
+      <div class="form-hint">Название, НДС, сумма, цена и количество относятся к одной позиции; выбранные чеки сохраняются при переходе между страницами. Данные старых чеков могут быть неполными; НДС может быть кодом, а ноль — значением по умолчанию.</div>
       <div class="form-hint" style="margin-bottom:6px">Найдено: <b>${fmtInt(d.total)}</b> · выбрано: <b id="pk-cnt">${poolPk.picked.size}</b></div>
       <div class="table-wrap"><table style="width:100%">
         <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8">Ничего не найдено — ослабьте фильтры</td></tr>'}</tbody></table></div>
+        <tbody>${rows || '<tr><td colspan="8">Нет доступных чеков пула по фильтрам. Проверенные чеки основного реестра автоматически в общий пул не публикуются.</td></tr>'}</tbody></table></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-        <button class="btn btn-sm" id="pk-prev" ${poolPk.page <= 1 ? 'disabled' : ''}>← Назад</button>
+        <button type="button" class="btn btn-sm" id="pk-prev" ${poolPk.page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.page} из ${pages}</span>
-        <button class="btn btn-sm" id="pk-next" ${poolPk.page >= pages ? 'disabled' : ''}>Вперёд →</button>
-        <button class="btn btn-sm btn-primary" id="pk-assign">🔗 Привязать выбранное (${poolPk.picked.size})</button>
+        <button type="button" class="btn btn-sm" id="pk-next" ${poolPk.page >= pages ? 'disabled' : ''}>Вперёд →</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pk-assign">🔗 Привязать выбранное (${poolPk.picked.size})</button>
       </div>`;
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
       cb.onchange = () => {
@@ -1554,8 +2253,14 @@ async function poolPkLoadSearch() {
     $('#pk-go').onclick = () => {
       const g = (id) => ($(id) ? $(id).value.trim() : '');
       poolPk.f = { from: g('#pk-from'), to: g('#pk-to'), region: g('#pk-region'), city: g('#pk-city'),
-                   industry: g('#pk-industry'), inn: g('#pk-inn'), sumMin: g('#pk-smin'), sumMax: g('#pk-smax'), q: g('#pk-q') };
-      poolPk.page = 1; poolPkLoadSearch();
+                   industry: g('#pk-industry'), inn: g('#pk-inn'), sumMin: g('#pk-smin'), sumMax: g('#pk-smax'), q: g('#pk-q'),
+                   itemName: g('#pk-item'), vatRate: g('#pk-vat'), itemMin: g('#pk-item-min'), itemMax: g('#pk-item-max'),
+                   priceMin: g('#pk-price-min'), priceMax: g('#pk-price-max'), qtyMin: g('#pk-qty-min'), qtyMax: g('#pk-qty-max'), operation: g('#pk-operation') };
+      poolPk.picked.clear(); poolPk.page = 1; poolPkLoadSearch();
+    };
+    $('#pk-reset').onclick = () => {
+      Object.keys(poolPk.f).forEach(key => { poolPk.f[key] = ''; });
+      poolPk.picked.clear(); poolPk.page = 1; poolPkLoadSearch();
     };
     $('#pk-assign').onclick = async () => {
       if (!poolPk.picked.size) { toast('Отметьте чеки в таблице', 'warn', '🧩'); return; }
@@ -1578,23 +2283,24 @@ async function poolPkLoadMine() {
     const d = await api.get('/api/v1/pool-company/mine?' + params.toString() + (poolPkCompId() ? '&' + poolPkCompId().slice(1) : ''));
     const rows = d.items.map((r) => `
       <tr>
-        <td><input type="checkbox" data-id="${r.id}" ${poolPk.minePicked.has(r.id) ? 'checked' : ''} style="width:auto" aria-label="Вернуть в пул"></td>
+        <td><input type="checkbox" data-id="${r.id}" ${poolPk.minePicked.has(r.id) ? 'checked' : ''} style="width:auto" aria-label="Выбрать чек"></td>
         <td class="num">${esc(r.date)}</td><td>${esc(r.merchant)}</td><td class="num">${esc(r.inn)}</td>
         <td class="num">${fmtSum(r.sum)}</td><td>${esc(r.city)}</td><td>${esc(r.industry)}</td>
         <td class="form-hint">${esc(r.items)}</td><td class="num form-hint">${esc(r.assigned_at)}</td></tr>`).join('');
     const pages = Math.max(1, Math.ceil(d.total / d.per_page));
     box.innerHTML = `
       <div class="form-hint" style="margin-bottom:6px">Привязано к компании: <b>${fmtInt(d.total)}</b> чеков.
-        Выгрузка — CSV для АО-1 и Excel.</div>
+        Выберите чеки для переноса в реестр без запроса в ФНС. После переноса вернуть их в общий пул нельзя, пока они есть в реестре.</div>
       <div class="table-wrap"><table style="width:100%">
         <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th><th>Привязан</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="9">Пока пусто — подберите чеки во вкладке «Найти чеки»</td></tr>'}</tbody></table></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
-        <button class="btn btn-sm" id="pk-m-prev" ${poolPk.minePage <= 1 ? 'disabled' : ''}>← Назад</button>
+        <button type="button" class="btn btn-sm" id="pk-m-prev" ${poolPk.minePage <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.minePage} из ${pages}</span>
-        <button class="btn btn-sm" id="pk-m-next" ${poolPk.minePage >= pages ? 'disabled' : ''}>Вперёд →</button>
-        <button class="btn btn-sm" id="pk-csv">⬇️ CSV (АО-1, Excel)</button>
-        <button class="btn btn-sm" id="pk-unassign">↩️ Вернуть в пул (${poolPk.minePicked.size})</button>
+        <button type="button" class="btn btn-sm" id="pk-m-next" ${poolPk.minePage >= pages ? 'disabled' : ''}>Вперёд →</button>
+        <button type="button" class="btn btn-sm" id="pk-csv">⬇️ CSV (АО-1, Excel)</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pk-transfer">📥 Перенести выбранные в реестр</button>
+        <button type="button" class="btn btn-sm" id="pk-unassign">↩️ Вернуть в пул (${poolPk.minePicked.size})</button>
       </div>`;
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
       cb.onchange = () => {
@@ -1609,6 +2315,14 @@ async function poolPkLoadMine() {
       if (poolPk.f.to) qs.set('date_to', poolPk.f.to);
       if (poolPk.company) qs.set('company_id', poolPk.company);
       window.location = '/api/v1/pool-company/export.csv?' + qs.toString();
+    };
+    $('#pk-transfer').onclick = async () => {
+      if (!poolPk.minePicked.size) { toast('Отметьте чеки', 'warn', '🧩'); return; }
+      try {
+        const r = await api.post('/api/v1/pool-company/transfer' + poolPkCompId(),
+                                 { receipt_ids: [...poolPk.minePicked] });
+        toast(r.message, r.unconfirmed ? 'warn' : 'ok', '🧩'); poolPk.minePicked.clear(); poolPkLoadMine();
+      } catch (e) { toast(e.message, 'warn', '🧩'); }
     };
     $('#pk-unassign').onclick = async () => {
       if (!poolPk.minePicked.size) { toast('Отметьте чеки', 'warn', '🧩'); return; }
@@ -1628,8 +2342,9 @@ async function poolPkLoadAuto() {
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
       <label class="field" style="max-width:200px"><span>Сумма отчёта, ₽</span>
         <input id="pk-target" type="number" min="100" placeholder="например, 5000"></label>
-      <button class="btn btn-sm btn-primary" id="pk-auto-go">🎯 Подобрать набор ±5%</button>
+      <button type="button" class="btn btn-sm btn-primary" id="pk-auto-go">🎯 Подобрать набор ±5%</button>
     </div>
+    <p class="form-hint">Автоподбор рассматривает до 500 подходящих чеков и до 50 в наборе; он не гарантирует лучший набор. Перед учётом проверьте принадлежность и допустимость расходов.</p>
     <div id="pk-auto-out"></div>`;
   const go = $('#pk-auto-go');
   if (go) go.onclick = async () => {
@@ -1649,7 +2364,7 @@ async function poolPkLoadAuto() {
           <thead><tr><th>Дата чека</th><th>Магазин</th><th>Сумма, ₽</th><th>Город</th></tr></thead>
           <tbody>${d.items.map((r) => `<tr><td class="num">${esc(r.date)}</td><td>${esc(r.merchant)}</td>
             <td class="num">${fmtSum(r.sum)}</td><td>${esc(r.city)}</td></tr>`).join('')}</tbody></table></div>
-          <button class="btn btn-primary btn-sm" id="pk-auto-assign" style="margin-top:8px">🔗 Привязать этот набор (${d.count})</button>` : ''}`;
+          <button type="button" class="btn btn-primary btn-sm" id="pk-auto-assign" style="margin-top:8px">🔗 Привязать этот набор (${d.count})</button>` : ''}`;
       const ab = $('#pk-auto-assign');
       if (ab) ab.onclick = async () => {
         try {
@@ -1697,23 +2412,26 @@ function poolPkBindTabs() {
 async function viewPoolPick(container) {
   container.innerHTML = poolPkShell();
   try { if (!poolPk.dicts) poolPk.dicts = await api.get('/api/v1/pool-company/dicts'); } catch (e) {}
-  // компания: админ выбирает; бухгалтер — своя (селектор скрыт, если одна)
-  try {
-    const q0 = await api.get('/api/v1/pool-company/quota');
-    const wrap = $('#poolpk-comp-wrap');
-    const comps = Array.isArray(state.companies) ? state.companies.filter((c) => c.is_active) : [];
-    if (comps.length > 1) {
-      wrap.classList.remove('hidden');
-      const sel = $('#poolpk-comp');
-      sel.innerHTML = comps.map((c) => `<option value="${c.id}">${esc(compName(c))}</option>`).join('');
-      if (poolPk.company) sel.value = poolPk.company;
-      poolPk.company = sel.value;
-      sel.onchange = () => { poolPk.company = sel.value; poolPk.picked.clear(); poolPk.minePicked.clear(); void poolPkLoadQuota(); };
-    } else {
-      wrap.classList.add('hidden');
-      poolPk.company = comps.length === 1 ? comps[0].id : poolPk.company;
-    }
-  } catch (e) {}
+  // Администратор выбирает компанию явно; бухгалтеру назначена своя.
+  const wrap = $('#poolpk-comp-wrap');
+  const comps = Array.isArray(state.companies) ? state.companies.filter(c => c.is_active) : [];
+  if (isAdmin() && comps.length) {
+    wrap.classList.remove('hidden');
+    const sel = $('#poolpk-comp');
+    sel.innerHTML = '<option value="">Выберите компанию</option>' + comps.map(c =>
+      `<option value="${esc(c.id)}">${esc(compName(c))}</option>`).join('');
+    sel.value = poolPk.company || '';
+    poolPk.company = sel.value;
+    sel.onchange = () => {
+      poolPk.company = sel.value; poolPk.picked.clear(); poolPk.minePicked.clear();
+      poolPk.page = 1; poolPk.minePage = 1;
+      void poolPkLoadQuota();
+      ({ search: poolPkLoadSearch, mine: poolPkLoadMine, auto: poolPkLoadAuto, staff: poolPkLoadStaff })[poolPk.tab]();
+    };
+  } else {
+    wrap.classList.add('hidden');
+    poolPk.company = '';
+  }
   poolPkBindTabs();
   void poolPkLoadQuota();
   ({ search: poolPkLoadSearch, mine: poolPkLoadMine, auto: poolPkLoadAuto, staff: poolPkLoadStaff })[poolPk.tab]();
@@ -1729,7 +2447,7 @@ async function poolApiKeysLoad() {
         <label class="field" style="max-width:240px"><span>Партнёр</span><input id="pool-api-name" placeholder="ООО «Аналитика»"></label>
         <label class="field" style="max-width:110px"><span>Запросов/час</span><input id="pool-api-rate" type="number" min="1" value="60"></label>
         <label class="field" style="max-width:110px"><span>Квота/мес</span><input id="pool-api-quota" type="number" min="1" value="5000"></label>
-        <button class="btn btn-sm btn-primary" id="pool-api-create">🔑 Выдать ключ</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pool-api-create">🔑 Выдать ключ</button>
       </div>
       <div id="pool-api-newkey"></div>
       ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
@@ -1741,7 +2459,7 @@ async function poolApiKeysLoad() {
           <td class="num">${fmtInt(k.used_month)}</td>
           <td class="num form-hint">${esc(k.last_used_at)}</td>
           <td>${k.active
-            ? `<button class="btn btn-sm" data-revoke="${k.id}">Отозвать</button>`
+            ? `<button type="button" class="btn btn-sm" data-revoke="${k.id}">Отозвать</button>`
             : '<span class="chip failed"><span class="dot"></span>отозван</span>'}</td></tr>`).join('')}
         </tbody></table></div>`
         : '<div class="form-hint">Ключей пока нет — выдайте первый партнёру.</div>'}`;
@@ -1754,7 +2472,7 @@ async function poolApiKeysLoad() {
         $('#pool-api-newkey').innerHTML = `
           <div class="info-callout" style="margin-bottom:8px">🔑 Ключ партнёру (покажите сейчас — полностью он больше не виден):<br>
             <input value="${esc(r.key)}" readonly style="max-width:420px;margin-top:4px">
-            <button class="btn btn-sm" id="pool-api-copy">📋 Копировать</button></div>`;
+            <button type="button" class="btn btn-sm" id="pool-api-copy">📋 Копировать</button></div>`;
         $('#pool-api-copy').onclick = () => {
           try { navigator.clipboard.writeText(r.key); toast('Ключ скопирован', 'ok', '🔑'); }
           catch (e) { toast('Скопируйте вручную', 'warn', '🔑'); }
@@ -1836,8 +2554,8 @@ function bindPoolDashboard(root) {
       Сданные чеки останутся в открытой базе обезличенными (это согласовано офертой).</p>
       <label class="field"><span>Пароль для подтверждения</span><input id="pool-del-pass" type="password"></label>
       <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-sm" data-close>Отмена</button>
-        <button class="btn btn-sm" id="pool-del-go" style="color:#b3261e">Удалить навсегда</button>
+        <button type="button" class="btn btn-sm" data-close>Отмена</button>
+        <button type="button" class="btn btn-sm" id="pool-del-go" style="color:#b3261e">Удалить навсегда</button>
       </div>`);
     slot.querySelector('#pool-del-go').onclick = async () => {
       try {
@@ -1907,8 +2625,8 @@ function poolAdmShell() {
       </select>
       <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="pooladm-mgeo" style="width:auto"> Без региона</label>
       <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="pooladm-mind" style="width:auto"> Без отрасли</label>
-      <button class="btn btn-sm" id="pooladm-enrich">🪄 Разметить недостающее</button>
-      <button class="btn btn-sm" id="pooladm-csv">⬇️ CSV</button>
+      <button type="button" class="btn btn-sm" id="pooladm-enrich">🪄 Разметить недостающее</button>
+      <button type="button" class="btn btn-sm" id="pooladm-csv">⬇️ CSV</button>
     </div>
     <div id="pooladm-table"></div>
   </div>`;
@@ -1956,9 +2674,9 @@ async function poolAdmLoadTable() {
         <td>${r.industry ? esc(inm(r.industry)) : '<span class="form-hint">—</span>'}</td>
         <td>${poolStatusChip(r.status)}</td>
         <td style="white-space:nowrap">
-          ${r.status === 'pending' ? `<button class="btn btn-sm pooladm-ok" data-id="${r.id}" title="Одобрить">✅</button>
-             <button class="btn btn-sm pooladm-no" data-id="${r.id}" title="Отклонить">❌</button>` : ''}
-          <button class="btn btn-sm pooladm-edit" data-id="${r.id}" title="Разметить вручную">✏️</button>
+          ${r.status === 'pending' ? `<button type="button" class="btn btn-sm pooladm-ok" data-id="${r.id}" title="Одобрить">✅</button>
+             <button type="button" class="btn btn-sm pooladm-no" data-id="${r.id}" title="Отклонить">❌</button>` : ''}
+          <button type="button" class="btn btn-sm pooladm-edit" data-id="${r.id}" title="Разметить вручную">✏️</button>
         </td></tr>`).join('')
       : '<tr><td colspan="8" class="form-hint">Ничего не найдено по фильтрам.</td></tr>'}</tbody>
     </table></div>
@@ -1987,8 +2705,8 @@ function poolAdmRejectDialog(id) {
     <label class="field"><span>Причина (необязательно)</span>
       <input id="pooladm-reject-comment" placeholder="например: данные не подтвердились"></label>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-sm" data-close>Отмена</button>
-      <button class="btn btn-sm" id="pooladm-reject-go" style="color:#b3261e">Отклонить</button>
+      <button type="button" class="btn btn-sm" data-close>Отмена</button>
+      <button type="button" class="btn btn-sm" id="pooladm-reject-go" style="color:#b3261e">Отклонить</button>
     </div>`);
   slot.querySelector('#pooladm-reject-go').onclick = () => {
     poolAdmModerate(id, 'reject', slot.querySelector('#pooladm-reject-comment').value);
@@ -2010,8 +2728,8 @@ function poolAdmMarkDialog(id) {
       <select id="pooladm-ed-industry"><option value="">— не задана —</option>
         ${opts(poolAdm.dicts.industries, '')}</select></label>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-sm" data-close>Отмена</button>
-      <button class="btn btn-sm btn-primary" id="pooladm-ed-save">Сохранить</button>
+      <button type="button" class="btn btn-sm" data-close>Отмена</button>
+      <button type="button" class="btn btn-sm btn-primary" id="pooladm-ed-save">Сохранить</button>
     </div>`);
   api.get(`/api/v1/pool-admin/receipts?page=1&page_size=200`).then(d => {
     const r = d.items.find(x => x.id === id);
@@ -2047,7 +2765,7 @@ async function viewPoolPeople(container) {
     Ядро-логин администратора при этом не прерывается.</div>
     <div class="glass card">
       <div class="card-title">Участники <span class="spacer"></span>
-        <input id="pp-q" placeholder="Поиск по e-mail" style="max-width:240px" value=""></div>
+        <input id="pp-q" placeholder="Поиск по e-mail или имени" style="max-width:240px" value=""></div>
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>E-mail</th><th>Статус</th><th>Чеков</th><th>Баллов</th><th>Риск</th><th>В пуле с</th><th></th>
       </tr></thead><tbody id="pp-rows"><tr style="cursor:default"><td colspan="7"><span class="spinner"></span></td></tr></tbody></table></div>
@@ -2058,8 +2776,13 @@ async function viewPoolPeople(container) {
     try {
       const d = await api.get('/api/v1/pool-admin/participants?limit=200'
         + (qv ? '&q=' + encodeURIComponent(qv) : ''));
-      rows.innerHTML = d.items.length ? d.items.map(u => `<tr data-id="${esc(u.id)}" style="cursor:default">
-          <td><b>${esc(u.email || '—')}</b>${u.nickname ? `<div class="form-hint">${esc(u.nickname)}</div>` : ''}${u.email_verified ? '' : ' <span class="chip unknown mono">e-mail не подтверждён</span>'}</td>
+      rows.innerHTML = d.items.length ? d.items.map(u => {
+        // v1.70.37: значок MAX перед именем + имя из MAX, если участник дал
+        // согласие (152-ФЗ); без согласия карточка пуста и в списке тоже.
+        const nm = participantName(u);
+        const sub = nm && nm !== u.email ? u.email : (u.nickname || '');
+        return `<tr data-id="${esc(u.id)}" style="cursor:default">
+          <td>${srcBadge(u.reg_source)}<b>${esc(nm || '—')}</b>${sub ? `<div class="form-hint">${esc(sub)}</div>` : ''}${u.email ? (u.email_verified ? '' : ' <span class="chip unknown mono">e-mail не подтверждён</span>') : ''}${u.reg_source === 'max' && !u.consent_given ? ' <span class="chip unknown">согласие 152-ФЗ не дано</span>' : ''}</td>
           <td>${u.is_blocked
             ? '<span class="chip failed"><span class="dot"></span>заблокирован</span>'
             : '<span class="chip verified"><span class="dot"></span>активен</span>'}</td>
@@ -2067,11 +2790,13 @@ async function viewPoolPeople(container) {
           <td class="cell-num">${fmtInt(u.points)}</td>
           <td class="cell-num">${fmtInt(u.risk_score)}</td>
           <td class="cell-date">${fmtDate(u.created_at)}</td>
-          <td>${u.is_blocked ? '—' : `<button class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(u.email || u.nickname || u.id)}" title="Открыть кабинет глазами участника">👁</button>`}</td>
-        </tr>`).join('')
+          <td>${u.is_blocked ? '—' : `<button type="button" class="btn btn-sm pp-view" data-id="${esc(u.id)}" data-name="${esc(nm || u.id)}" data-src="${esc(u.reg_source || '')}" data-consent="${esc(u.consent_at || '')}" title="Открыть кабинет глазами участника">👁</button>`}</td>
+        </tr>`;
+      }).join('')
         : `<tr style="cursor:default"><td colspan="7">${emptyState('🧩', 'Участников не найдено')}</td></tr>`;
       rows.querySelectorAll('.pp-view').forEach(b => {
-        b.onclick = () => startViewAsPool(b.dataset.id, b.dataset.name);
+        b.onclick = () => startViewAsPool(b.dataset.id, b.dataset.name,
+                                          b.dataset.src, b.dataset.consent);
       });
     } catch (e) {
       rows.innerHTML = `<tr style="cursor:default"><td colspan="7">${esc(e.message || 'Не удалось загрузить')}</td></tr>`;
@@ -2163,10 +2888,10 @@ function fraudShell() {
         <option value="3">S3+ (серьёзные)</option>
         <option value="4">S4+ (критичные)</option>
       </select>
-      <button class="btn btn-sm" id="fraud-bulk-fp" disabled>Ложное срабатывание (выбранные)</button>
-      <button class="btn btn-sm" id="fraud-bulk-confirm" disabled>Подтвердить (выбранные)</button>
-      <button class="btn btn-sm" id="fraud-purge" title="152-ФЗ: техданные храним ≤ 12 месяцев">🧹 Чистка техданных &gt; года</button>
-      <button class="btn btn-sm" id="fraud-graph-btn">🕸 Граф связей</button>
+      <button type="button" class="btn btn-sm" id="fraud-bulk-fp" disabled>Ложное срабатывание (выбранные)</button>
+      <button type="button" class="btn btn-sm" id="fraud-bulk-confirm" disabled>Подтвердить (выбранные)</button>
+      <button type="button" class="btn btn-sm" id="fraud-purge" title="152-ФЗ: техданные храним ≤ 12 месяцев">🧹 Чистка техданных &gt; года</button>
+      <button type="button" class="btn btn-sm" id="fraud-graph-btn">🕸 Граф связей</button>
     </div>
     <div id="fraud-graph" class="hidden" style="margin-bottom:10px"></div>
     <div id="fraud-table"></div>
@@ -2208,8 +2933,8 @@ async function fraudLoadTable() {
         <td class="form-hint" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.details || '—')}</td>
         <td>${esc(x.status)}${x.resolved_by ? '<div class="form-hint">' + esc(x.resolved_by) + '</div>' : ''}</td>
         <td style="white-space:nowrap">
-          <button class="btn btn-sm fraud-fp" data-id="${x.id}" title="Ложное срабатывание">🙂</button>
-          <button class="btn btn-sm fraud-conf" data-id="${x.id}" title="Подтвердить">⚠️</button>
+          <button type="button" class="btn btn-sm fraud-fp" data-id="${x.id}" title="Ложное срабатывание">🙂</button>
+          <button type="button" class="btn btn-sm fraud-conf" data-id="${x.id}" title="Подтвердить">⚠️</button>
         </td></tr>`).join('')
       : '<tr><td colspan="7" class="form-hint">Сигналов нет — честные участники не помечаются.</td></tr>'}</tbody>
     </table></div>
@@ -2259,10 +2984,10 @@ async function fraudUserCard(uid) {
         <tbody>${d.signals.map(x => `<tr><td>${esc(x.code)}</td><td class="num">+${x.points}</td><td>${esc(x.status)}</td></tr>`).join('')}</tbody>
       </table></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        ${u.quarantined ? '<button class="btn btn-sm btn-primary" id="fu-release">Снять карантин</button>' : ''}
-        ${u.points > 0 ? '<button class="btn btn-sm" id="fu-annul" style="color:#b3261e">Аннулировать баллы</button>' : ''}
-        <button class="btn btn-sm" id="fu-trust1">Доверие: 1</button>
-        <button class="btn btn-sm" id="fu-trust0">Доверие: 0</button>
+        ${u.quarantined ? '<button type="button" class="btn btn-sm btn-primary" id="fu-release">Снять карантин</button>' : ''}
+        ${u.points > 0 ? '<button type="button" class="btn btn-sm" id="fu-annul" style="color:#b3261e">Аннулировать баллы</button>' : ''}
+        <button type="button" class="btn btn-sm" id="fu-trust1">Доверие: 1</button>
+        <button type="button" class="btn btn-sm" id="fu-trust0">Доверие: 0</button>
       </div>`);
     const rel = slot.querySelector('#fu-release');
     if (rel) rel.onclick = async () => {
@@ -2309,7 +3034,7 @@ async function viewPartners(container) {
         <td><img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(p.code)}"
              alt="QR партнёра ${esc(p.name)}" width="88" height="88"
              style="border:1px solid #e3e3e3;border-radius:6px;background:#fff"></td>
-        <td><button class="btn btn-sm" data-code="${esc(p.code)}" data-name="${esc(p.name)}">🖨 Печать QR</button></td>
+        <td><button type="button" class="btn btn-sm" data-code="${esc(p.code)}" data-name="${esc(p.name)}">🖨 Печать QR</button></td>
       </tr>`).join('');
     $('#partners-table').innerHTML = `
       <div class="form-hint" style="margin-bottom:6px">QR ведёт на страницу «Сдать чек» — участник сдаёт чек партнёра
@@ -2326,7 +3051,7 @@ async function viewPartners(container) {
           <h2>${esc(b.dataset.name)}</h2>
           <p>Сдайте чек в «Чек-Пул» — получите кэшбэк баллами</p>
           <img src="/api/v1/public/pool/partners/qr.svg?code=${encodeURIComponent(b.dataset.code)}" width="320" height="320" style="margin:0 auto">
-          <p style="color:#777;font-size:12px">ООО «Ямастер» · ymaster.ru</p>
+          <p style="color:#6b6b6b;font-size:12px">ООО «Ямастер» · ymaster.ru</p>
           </body></html>`);
         w.document.close();
         w.focus();
@@ -2367,7 +3092,11 @@ async function viewFraud(container) {
 }
 
 // v1.38.0: граф связей — SVG-кластеры участников (устройство/подсеть/реферал)
-const FRAUD_EDGE_COLORS = { device: '#c0392b', subnet: '#e5770f', referral: '#2471a3' };
+// v1.70.35: цвета графа переведены на токены темы и на style= вместо
+// атрибута, чтобы var() гарантированно разрешался. Прежняя пара
+// #e5770f (2.88:1 на канве) и запасной #999 (2.73:1) не дотягивали до 3:1
+// для графики; #c0392b, #2471a3 и #4a7f4a проходили, но были вне палитры.
+const FRAUD_EDGE_COLORS = { device: 'var(--bad-text)', subnet: 'var(--warn)', referral: 'var(--info)' };
 
 async function fraudLoadGraph(box) {
   box.innerHTML = '<div class="form-hint">Строим граф…</div>';
@@ -2406,21 +3135,21 @@ async function fraudLoadGraph(box) {
     const byId = {}; d.nodes.forEach((n) => byId[n.id] = n);
     const lines = edges.map((e) => {
       const [x1, y1] = pos[e.a], [x2, y2] = pos[e.b];
-      const c = FRAUD_EDGE_COLORS[e.kind] || '#999';
-      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${c}" stroke-width="1.6" stroke-opacity="0.75"><title>${e.kind === 'device' ? 'общее устройство' : e.kind === 'subnet' ? 'общая подсеть /24' : 'реферальная пара'}</title></line>`;
+      const c = FRAUD_EDGE_COLORS[e.kind] || 'var(--text-faint)';
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" style="stroke:${c}" stroke-width="1.6" stroke-opacity="0.75"><title>${e.kind === 'device' ? 'общее устройство' : e.kind === 'subnet' ? 'общая подсеть /24' : 'реферальная пара'}</title></line>`;
     }).join('');
     const dots = d.nodes.map((n) => {
       const [x, y] = pos[n.id];
-      const fill = n.quarantined ? '#c0392b' : n.risk >= 40 ? '#e5770f' : '#4a7f4a';
+      const fill = n.quarantined ? 'var(--bad-text)' : n.risk >= 40 ? 'var(--warn)' : 'var(--ok)';
       return `<g class="fraud-node" data-uid="${n.id}" style="cursor:pointer">
-        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" fill="${fill}" stroke="#fff" stroke-width="1.5"><title>${esc(n.label)} · риск ${n.risk}${n.quarantined ? ' · карантин' : ''}</title></circle>
-        <text x="${x.toFixed(1)}" y="${(y + 24).toFixed(1)}" text-anchor="middle" font-size="10" fill="#555">${esc(n.label.slice(0, 16))}</text></g>`;
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" style="fill:${fill}" stroke="#fff" stroke-width="1.5"><title>${esc(n.label)} · риск ${n.risk}${n.quarantined ? ' · карантин' : ''}</title></circle>
+        <text x="${x.toFixed(1)}" y="${(y + 24).toFixed(1)}" text-anchor="middle" font-size="10" fill="#5c5c5c">${esc(n.label.slice(0, 16))}</text></g>`;
     }).join('');
     box.innerHTML = `
       <div class="info-callout" style="margin-bottom:6px">Группы участников за ${d.days} дн. Цвет точки: красный — карантин, оранжевый — риск ≥ 40, зелёный — норма.
-        Рёбра: <span style="color:#c0392b">■</span> общее устройство · <span style="color:#e5770f">■</span> общая подсеть · <span style="color:#2471a3">■</span> реферальная пара.
+        Рёбра: <span style="color:var(--bad-text)">■</span> общее устройство · <span style="color:var(--warn)">■</span> общая подсеть · <span style="color:var(--info)">■</span> реферальная пара.
         Нажмите на участника — карточка. Групп: <b>${comps.length}</b>.</div>
-      <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="${Math.min(W, 900)}" height="${H * Math.min(W, 900) / W}" style="background:#fafafa;border:1px solid #e3e3e3;border-radius:8px">${lines}${dots}</svg></div>`;
+      <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="${Math.min(W, 900)}" height="${H * Math.min(W, 900) / W}" style="background:var(--bg);border:1px solid #e3e3e3;border-radius:8px">${lines}${dots}</svg></div>`;
     box.querySelectorAll('.fraud-node').forEach((g) => {
       g.onclick = () => fraudUserCard(g.dataset.uid);
     });
@@ -2487,6 +3216,10 @@ async function showRegister(token) {
 //  Оболочка приложения
 // --------------------------------------------------------------------------
 function enterApp() {
+  showSplash(false);                        // v1.70.66: страховка от висячей
+                                            // заставки на любом пути входа
+  waAbortConditional();                     // v1.70.62: autofill больше не ждёт
+  waRememberLogin(state.me);                // v1.70.62: вход в одно касание
   showScreen('app-shell');                  // v1.59.1: единый переключатель
   $('#user-name').textContent = state.me.full_name || state.me.username;
   $('#user-role').textContent = roleLabel(state.me.role);
@@ -2501,6 +3234,11 @@ function enterApp() {
     state.poolEnabled = !!info.enabled;
     $$('.pool-only').forEach(el => el.classList.toggle('hidden', !state.poolEnabled));
     if (!state.poolEnabled && isAdmin()) poolEnableBanner();   // v1.59.0
+    // v1.70.61: матрица ролей — пункт меню вне пространства роли скрыт,
+    // даже если прежние классовые фильтры его оставили видимым.
+    $$('.nav-item').forEach(a => {
+      if (a.dataset.view && !spaceHas('view:' + a.dataset.view)) a.classList.add('hidden');
+    });
   }).catch(() => {});
   applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
@@ -2556,6 +3294,23 @@ function logout() {
 // ==========================================================================
 const VIEWAS_TOK = 'ymaster_viewas_master_token';   // админ-токен на время просмотра
 const VIEWAS_NAME = 'ymaster_viewas_admin_name';    // имя администратора для полосы
+// v1.70.37: метка канала регистрации участника. Участник, который пришёл
+// через мини-приложение MAX, помечается значком MAX перед именем — и в списке
+// участников, и в кабинете (в том числе когда администратор смотрит кабинет
+// «глазами участника»). Метка — факт о способе входа, не персональные данные.
+function srcBadge(src) {
+  if (src !== 'max') return '';
+  return `<span class="src-max" role="img" title="Регистрация через мини-приложение MAX" ` +
+    `aria-label="Зарегистрировался через MAX">MAX</span> `;
+}
+
+// Имя участника для списков: имя из MAX (если дано согласие 152-ФЗ), иначе
+// e-mail, иначе ник. До согласия имя не хранится — показывать нечего.
+function participantName(u) {
+  const full = [u.first_name, u.last_name].filter(Boolean).join(' ');
+  return full || u.email || u.nickname || '';
+}
+
 // v1.41.0: просмотр кабинета участника Чек-Пула (ядро-логин админа не меняется)
 const VIEWAS_POOL = 'ymaster_viewas_pool';            // {id, name} участника
 const VIEWAS_POOL_PREV = 'ymaster_viewas_pool_prev';  // прежний токен кабинета
@@ -2593,8 +3348,14 @@ function applyViewAsMode() {
     const info = viewAsPoolInfo();
     $('#viewas-text').innerHTML =
       `Вы смотрите <b>кабинет Чек-Пула</b> глазами участника ` +
+      `${srcBadge(info && info.src)}` +
       `<b>${esc((info && info.name) || '')}</b> ` +
-      `<span class="viewas-role">(участник пула)</span>`;
+      `<span class="viewas-role">(участник пула)</span>` +
+      (info && info.src === 'max'
+        ? ` <span class="viewas-role">${info.consent
+            ? 'согласие 152-ФЗ от ' + esc(fmtDate(info.consent))
+            : 'согласие 152-ФЗ не дано — профиль пуст'}</span>`
+        : '');
     $('#btn-viewas-back').onclick = stopViewAsPool;
   }
   if (viewing) {
@@ -2609,18 +3370,18 @@ function applyViewAsMode() {
   chip.setAttribute('aria-expanded', 'false');
   // v1.42.0: меню профиля/переключения ролей — только администратор
   // (в режиме просмотра — возврат). Бухгалтер и сотрудник меню не видят.
-  if (isAdmin() || viewing) {
-    chip.onclick = (e) => {
-      if (e.target.closest('#btn-logout')) return; // «Выйти» — отдельное действие
-      togglePersonaMenu();
-    };
-    chip.onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePersonaMenu(); }
-    };
-  } else {
-    chip.onclick = null;
-    chip.onkeydown = null;
-  }
+  // v1.70.33: #user-chip стал нативной кнопкой, а «Выйти» — отдельной кнопкой
+  // рядом (не внутри). Отсюда три следствия:
+  //   - обработчик keydown больше не нужен: Enter и Space нативная кнопка сама
+  //     превращает в click, а прежний preventDefault() вместе с ним давал бы
+  //     двойное переключение меню;
+  //   - прежняя проверка «кликнулся ли выход внутри чипа» стала недостижимой:
+  //     «Выйти» больше не потомок #user-chip;
+  //   - неинтерактивное состояние объявляется честно через disabled: элемент не
+  //     выглядит кликабельным и не попадает в порядок обхода клавиатурой.
+  const chipActive = isAdmin() || viewing;
+  chip.disabled = !chipActive;
+  chip.onclick = chipActive ? () => togglePersonaMenu() : null;
 }
 
 function closePersonaMenu() {
@@ -2644,7 +3405,7 @@ async function renderPersonaMenu(m) {
       `<div class="pm-head">👁 Режим просмотра</div>
        <div class="pm-note">Вы вошли как <b>${esc(state.me.full_name || state.me.username)}</b>
        (${roleLabel(state.me.role)}). Действия выполняются от его имени.</div>
-       <button class="pm-item pm-back" id="pm-return">🛡 Вернуться в администратора</button>`;
+       <button type="button" class="pm-item pm-back" id="pm-return">🛡 Вернуться в администратора</button>`;
     $('#pm-return').onclick = stopViewAs;
     return;
   }
@@ -2671,7 +3432,7 @@ async function renderPersonaMenu(m) {
     const mgr = act.filter(u => u.role === 'manager');   // v1.64.0
     const usr = act.filter(u => u.role === 'user');
     const row = (u) =>
-      `<button class="pm-item" data-uid="${esc(u.id)}" role="menuitem">
+      `<button type="button" class="pm-item" data-uid="${esc(u.id)}" role="menuitem">
          <span class="pm-dot ${u.role === 'accountant' ? 'acc' : 'usr'}"></span>
          <span class="pm-name">${esc(u.full_name || u.username)}</span>
          <span class="pm-sub">${esc(u.username)}${u.company_name ? ' · ' + esc(u.company_name) : ''}</span>
@@ -2698,7 +3459,7 @@ async function renderPersonaMenu(m) {
       try {
         const ppl = await api.get('/api/v1/pool-admin/participants?limit=6');
         const prow = (u) =>
-          `<button class="pm-item" data-pid="${esc(u.id)}" role="menuitem">
+          `<button type="button" class="pm-item" data-pid="${esc(u.id)}" role="menuitem">
              <span class="pm-dot ${u.is_blocked ? '' : 'acc'}"></span>
              <span class="pm-name">${esc(u.email || u.nickname || u.id)}</span>
              <span class="pm-sub">${fmtInt(u.points)} баллов · ${fmtInt(u.receipts)} чеков${u.is_blocked ? ' · заблокирован' : ''}</span>
@@ -2707,7 +3468,7 @@ async function renderPersonaMenu(m) {
           (ppl.items.length
             ? ppl.items.map(prow).join('')
             : '<div class="pm-none">участников пока нет</div>') +
-          `<button class="pm-item" id="pm-people-all" role="menuitem">
+          `<button type="button" class="pm-item" id="pm-people-all" role="menuitem">
              <span class="pm-name">Все участники →</span>
              <span class="pm-sub">раздел «Чек-Пул: участники»</span></button>`;
         pb.querySelectorAll('.pm-item[data-pid]').forEach(b => {
@@ -2738,8 +3499,8 @@ async function startViewAs(uid, name) {
      Экран перезагрузится в его профиле; действия будут выполняться от его имени.
      Возврат — кнопка «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
      <div class="modal-actions">
-       <button class="btn" id="va-cancel">Отмена</button>
-       <button class="btn btn-primary" id="va-go">Открыть его профиль</button>
+       <button type="button" class="btn" id="va-cancel">Отмена</button>
+       <button type="button" class="btn btn-primary" id="va-go">Открыть его профиль</button>
      </div>`);
   $('#va-cancel', slot).onclick = close;
   $('#va-go', slot).onclick = async () => {
@@ -2778,17 +3539,17 @@ async function stopViewAs() {
 
 // v1.41.0: просмотр кабинета участника Чек-Пула глазами самого участника.
 // Ядро-логин администратора сохраняется; кабинету выдаётся его pool-токен.
-async function startViewAsPool(pid, name) {
+async function startViewAsPool(pid, name, src, consentAt) {
   closePersonaMenu();
   const { slot, close } = openModal(
     `<div class="modal-title">👁 Режим просмотра · Чек-Пул</div>
-     <p class="modal-text">Открыть <b>кабинет участника</b> глазами <b>${esc(name)}</b>?<br>
+     <p class="modal-text">Открыть <b>кабинет участника</b> глазами ${srcBadge(src)}<b>${esc(name)}</b>?<br>
      Вы увидите его чеки, баллы и настройки пула ровно так, как видит их он.
      Действия будут выполняться от его имени. Возврат — кнопка
      «↩ Вернуться в администратора» вверху. Пароль не требуется.</p>
      <div class="modal-actions">
-       <button class="btn" id="pv-cancel">Отмена</button>
-       <button class="btn btn-primary" id="pv-go">Открыть кабинет</button>
+       <button type="button" class="btn" id="pv-cancel">Отмена</button>
+       <button type="button" class="btn btn-primary" id="pv-go">Открыть кабинет</button>
      </div>`);
   $('#pv-cancel', slot).onclick = close;
   $('#pv-go', slot).onclick = async () => {
@@ -2796,7 +3557,8 @@ async function startViewAsPool(pid, name) {
       const r = await api.post(`/api/v1/pool-admin/impersonate-pool/${pid}`);
       try {
         sessionStorage.setItem(VIEWAS_POOL_PREV, pGet());
-        sessionStorage.setItem(VIEWAS_POOL, JSON.stringify({ id: pid, name }));
+        sessionStorage.setItem(VIEWAS_POOL, JSON.stringify(
+          { id: pid, name, src: src || '', consent: consentAt || '' }));
       } catch (e) {}
       pSet(r.pool_token);
       close();
@@ -2844,8 +3606,8 @@ function forcePasswordChange() {
         <label class="field"><span>Повторите новый пароль</span>
           <input type="password" id="fc-new2"></label>
         <div id="fc-error" class="form-error hidden"></div>
-        <button class="btn btn-primary btn-block" id="fc-save">Сохранить пароль</button>
-        <button class="btn btn-block" id="fc-logout">Выйти из системы</button>
+        <button type="button" class="btn btn-primary btn-block" id="fc-save">Сохранить пароль</button>
+        <button type="button" class="btn btn-block" id="fc-logout">Выйти из системы</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -3005,6 +3767,7 @@ function handleWsEvent(type, p) {
       if (state.view === 'receipts' || state.view === 'dashboard') scheduleRouteRefresh();
       break;
     case 'receipt_verified': {
+      scanSessNote(p.id, p.status || 'verified', p.fns_status);   // v1.70.40
       const ok = p.fns_status === 'valid';
       toast(`ФНС: чек ФД ${p.fd} — ${statusLabel(p.fns_status)}`, ok ? 'ok' : (p.fns_status === 'invalid' ? 'err' : 'warn'), 'Проверка ФНС');
       refreshBadges();
@@ -3053,6 +3816,7 @@ document.addEventListener('click', (e) => {
 
 function route(silent = false) {
   if (state.camera) { state.camera.stop(); state.camera = null; }
+  osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
   const hash = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
   const parts = hash.split('/');
   const view = parts[0].split('?')[0];
@@ -3072,12 +3836,19 @@ function route(silent = false) {
     poolpeople: isAdmin(),               // v1.41.0: участники + просмотр
     fraud: isAdmin(),                    // v1.34.0: антифрод
     poolpick: isAccountant(),            // v1.37.0: подбор для компании
+    b2badmin: isAdmin(),                 // v1.70.45: модерация B2B
     boss: isManager() || isAdmin(),      // v1.64.0: отчёт руководителя
   };
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
   // v1.58.1: пул выключен → страницы пула недоступны, меню их скрывает
   if ((view === 'public' || view === 'my' || view === 'partners') &&
       state.poolEnabled === false) { location.hash = '#/dashboard'; return; }
+  // v1.70.61: матрица пространств — раздел вне роли недоступен даже
+  // прямой ссылкой: компания уходит на дашборд, гость — на сдачу чека.
+  if (!spaceHas('view:' + view)) {
+    location.hash = getToken() ? '#/dashboard' : '#/public';
+    return;
+  }
 
   const renderers = {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
@@ -3090,6 +3861,7 @@ function route(silent = false) {
     poolpeople: viewPoolPeople,           // v1.41.0: участники + просмотр кабинета
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
+    b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
   // v1.55.0: сбой отрисовки не оставляет белый экран — возвращаем
@@ -3204,9 +3976,9 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
           <input id="iv-maxlogin" placeholder="username из MAX или цифровой ID"></label>
       </div>
       <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn" id="iv-save">Создать ссылку</button>
-        <button class="btn btn-primary" id="iv-save-max">📨 Создать и отправить в MAX</button>
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn" id="iv-save">Создать ссылку</button>
+        <button type="button" class="btn btn-primary" id="iv-save-max">📨 Создать и отправить в MAX</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     const ivSel = slot.querySelector('#iv-company-select');
@@ -3258,12 +4030,12 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
           <div class="info-callout">Роль: <b>${roleLabel(inv.role)}</b> ·
             использований: ${inv.max_uses} · действует до ${inv.expires_at ? fmtDate(inv.expires_at) : '∞'}</div>
           <div class="token-line"><input readonly value="${esc(url)}" id="iv-url">
-            <button class="btn btn-sm" id="iv-copy">копировать</button>
-            <button class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
+            <button type="button" class="btn btn-sm" id="iv-copy">копировать</button>
+            <button type="button" class="btn btn-sm btn-primary" id="iv-qr">▣ QR-код</button></div>
           <p class="form-hint" style="margin-top:10px">Отправьте ссылку сотруднику (мессенджер, почта)
             или покажите QR-код — ему достаточно навести камеру телефона.
             После перехода он создаст логин и пароль — роль присвоится автоматически.</p>
-          <div class="modal-actions"><button class="btn btn-primary" data-close>Готово</button></div>`);
+          <div class="modal-actions"><button type="button" class="btn btn-primary" data-close>Готово</button></div>`);
         s2.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
         s2.querySelector('#iv-copy').onclick = () => {
           navigator.clipboard && navigator.clipboard.writeText(url);
@@ -3291,9 +4063,9 @@ async function viewCompanies(container) {
   container.innerHTML = `
     <div class="glass card">
       <div class="card-title">🏢 Компании-клиенты <span class="spacer"></span>
-        <button class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button>
-        <button class="btn btn-sm btn-primary" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
-        <button class="btn btn-sm btn-primary" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
+        <button type="button" class="btn btn-primary btn-sm" id="cp-add">＋ Новая компания</button>
+        <button type="button" class="btn btn-sm btn-primary" id="cp-bulk-refresh" title="Актуализировать реквизиты ЕГРЮЛ всех компаний с ИНН (лимит Checko — 100 запросов/день)">⟳ Обновить ЕГРЮЛ (все)</button>
+        <button type="button" class="btn btn-sm btn-primary" id="cp-ao-all" title="Сводный авансовый отчёт по всем компаниям за период">🧾 АО по всем</button></div>
       <p class="form-hint" style="margin-bottom:12px">Каждая компания (ООО, ИП) — изолированное пространство:
       свои сотрудники, свои чеки, своя отчётность. Сотрудники видят только свою компанию,
       вы видите всё и можете перемещать чеки между компаниями.</p>
@@ -3308,10 +4080,10 @@ async function viewCompanies(container) {
       <td>${fmtInt(c.receipts)} на ${fmtSum(c.receipts_sum)}</td>
       <td>${c.last_activity ? fmtDate(c.last_activity) : '—'}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-sm cp-card" data-id="${c.id}" title="Карточка компании: ЕГРЮЛ, сотрудники, удаление">🗂</button>
-        <button class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
-        <button class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
-        <button class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
+        <button type="button" class="btn btn-sm cp-card" data-id="${c.id}" title="Карточка компании: ЕГРЮЛ, сотрудники, удаление">🗂</button>
+        <button type="button" class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
+        <button type="button" class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
+        <button type="button" class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
       </td>
     </tr>`).join('');
   $('#cp-table').innerHTML = comps.length ? `
@@ -3331,7 +4103,7 @@ async function viewCompanies(container) {
       const r = await api.post('/api/v1/companies/bulk-refresh', { limit: 40 });
       toast(r.message, 'ok', '🗂');
       if (r.errors && r.errors.length) console.warn('bulk-refresh errors:', r.errors);
-      load();
+      route(true);
     } catch (e) { toast(e.message, 'err'); }
     cbr.disabled = false; cbr.textContent = '⟳ Обновить ЕГРЮЛ (все)';
   };
@@ -3373,8 +4145,8 @@ function companyDialog(c = null) {
         <input id="cp-note" value="${esc(c?.note || '')}"></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="cp-save">Сохранить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="cp-save">Сохранить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
 
@@ -3458,9 +4230,14 @@ async function openCompanyCard(id) {
   const k = d.card || {};
   // v1.16.0: светофор контрагента
   const RISK = {
-    green: { icon: '🟢', label: 'Риск не выявлен', color: 'var(--ok, #34d399)' },
-    yellow: { icon: '🟡', label: 'Требует внимания', color: '#fbbf24' },
-    red: { icon: '🔴', label: 'ВЫСОКИЙ РИСК', color: '#f87171' },
+    // v1.70.35: цвет идёт в border-left: 4px solid — это нетекстовый
+    // индикатор состояния, порог 3:1 (WCAG 1.4.11). Жёлтый #fbbf24 давал
+    // 1.67:1, красный #f87171 — 2.77:1, то есть полоса «ВЫСОКИЙ РИСК»
+    // почти не читалась. Запасное значение в var(--ok, …) убрано: --ok
+    // объявлен в :root, а запасной Tailwind-зелёный лишь прятал бы ошибку.
+    green: { icon: '🟢', label: 'Риск не выявлен', color: 'var(--ok)' },
+    yellow: { icon: '🟡', label: 'Требует внимания', color: 'var(--warn)' },
+    red: { icon: '🔴', label: 'ВЫСОКИЙ РИСК', color: 'var(--bad)' },
     none: { icon: '⚪', label: 'Нет данных ЕГРЮЛ', color: 'var(--text-faint)' },
   };
   const rk = RISK[(d.risk && d.risk.level) || 'none'] || RISK.none;
@@ -3482,8 +4259,8 @@ async function openCompanyCard(id) {
       ${k.okpo ? `<div>ОКПО: ${esc(k.okpo)}</div>` : ''}
       ${k.region ? `<div>Регион: ${esc(k.region)}</div>` : ''}
       ${k.reg_date ? `<div>Зарегистрирован(о): ${esc(k.reg_date)}</div>` : ''}
-      ${k.address_invalid ? `<div style="color:#f87171">⚠ Адрес признан недостоверным (ЕГРЮЛ)${k.address_invalid_note ? ': ' + esc(k.address_invalid_note) : ''}</div>` : ''}
-      ${(k.mass_address_count || 0) >= 10 ? `<div style="color:#fbbf24">⚠ Массовый адрес: ещё ${k.mass_address_count} организаций по тому же адресу</div>` : ''}
+      ${k.address_invalid ? `<div style="color:var(--bad-text)">⚠ Адрес признан недостоверным (ЕГРЮЛ)${k.address_invalid_note ? ': ' + esc(k.address_invalid_note) : ''}</div>` : ''}
+      ${(k.mass_address_count || 0) >= 10 ? `<div style="color:var(--warn-text)">⚠ Массовый адрес: ещё ${k.mass_address_count} организаций по тому же адресу</div>` : ''}
       ${(k.founders_count || 0) ? `<div>Учредителей: ${k.founders_count}</div>` : ''}
       ${(k.branches_count || 0) ? `<div>Филиалов/представительств: ${k.branches_count}</div>` : ''}
       ${k.director ? `<div>Руководитель: ${esc(k.director)}${k.management_post ? ' (' + esc(k.management_post) + ')' : ''}</div>` : ''}
@@ -3510,16 +4287,16 @@ async function openCompanyCard(id) {
     <div class="form-hint">ИНН: ${esc(c.inn || 'не указан')} · ${c.is_active ? 'активна' : 'в архиве'}</div>
     ${egryl}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-      <button class="btn btn-sm btn-accent" id="cc-reg" title="Свежие данные реестра: сначала официальный сайт ФНС (PDF), затем Checko.ru">⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП</button>
-      <button class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
-      <button class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
-      <button class="btn btn-sm" id="cc-ao">🧾 Авансовый отчёт</button>
-      <button class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
-      ${c.is_active ? '<button class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
+      <button type="button" class="btn btn-sm btn-accent" id="cc-reg" title="Свежие данные реестра: сначала официальный сайт ФНС (PDF), затем Checko.ru">⬇ Скачать свежие данные ЕГРЮЛ/ЕГРИП</button>
+      <button type="button" class="btn btn-sm" id="cc-refresh">⟳ Обновить из Checko</button>
+      <button type="button" class="btn btn-sm" id="cc-csv">⬇ CSV все чеки</button>
+      <button type="button" class="btn btn-sm" id="cc-ao">🧾 Авансовый отчёт</button>
+      <button type="button" class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
+      ${c.is_active ? '<button type="button" class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
     </div>
     <div class="modal-actions" style="justify-content:space-between">
-      <button class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
-      <button class="btn" data-close>Закрыть</button>
+      <button type="button" class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
+      <button type="button" class="btn" data-close>Закрыть</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = close;
   slot.querySelector('#cc-inn').onclick = () => { close(); companyDialog(c); };
@@ -3592,8 +4369,8 @@ function openCompanyDelete(d) {
       <b>Удалить чеки безвозвратно</b> — все ${d.receipts} чеков будут стёрты, сотрудники открепятся
       (других активных компаний нет — переносить некуда)</label>`}
     <div class="modal-actions" style="justify-content:space-between">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-bad" id="dl-go">Удалить компанию</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-bad" id="dl-go">Удалить компанию</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = close;
   slot.querySelector('#dl-go').onclick = async () => {
@@ -3634,8 +4411,8 @@ function openMoveDialog() {
         <input id="mv-assignee" placeholder="Иванов И.И. — оставить как есть, если пусто"></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="mv-save">Переместить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="mv-save">Переместить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#mv-save').onclick = async () => {
@@ -3663,7 +4440,7 @@ function bindShell() {
     document.addEventListener('click', (e) => {
       const m = document.getElementById('persona-menu');
       if (m && !m.classList.contains('hidden') &&
-          !e.target.closest('#persona-menu') && !e.target.closest('#user-chip')) {
+          !e.target.closest('#persona-menu') && !e.target.closest('.user-area')) {
         closePersonaMenu();
       }
     });
@@ -3757,7 +4534,7 @@ async function viewDashboard(container) {
 
   container.innerHTML = `
     <div class="dash-toolbar">
-      <button class="btn btn-sm" id="btn-focus" title="Остаться только на задачах, требующих внимания">🎯 Умный фокус</button>
+      <button type="button" class="btn btn-sm" id="btn-focus" title="Остаться только на задачах, требующих внимания">🎯 Умный фокус</button>
       <span class="form-hint">затемняет всё, кроме задач, требующих внимания · выход — Esc</span>
     </div>
     <div class="grid kpi-grid">
@@ -3796,7 +4573,7 @@ async function viewDashboard(container) {
     <div class="glass card ym-focus-target" id="card-assignee" style="margin-top:16px">
       <div class="card-title">👥 По подотчётным лицам <span class="spacer"></span>
         <span class="form-hint">кто сколько принёс (все чеки)</span>
-        <button class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
+        <button type="button" class="btn btn-sm" id="btn-statement" style="margin-left:10px">📋 Ведомость за месяц</button></div>
       <div id="dash-assignee"><div class="skeleton" style="height:80px"></div></div>
     </div>` : ''}
     ${isAdmin() && !companyIdParam() && dashStats.by_company && dashStats.by_company.length ? `
@@ -3807,7 +4584,7 @@ async function viewDashboard(container) {
         <th>Компания</th><th>Чеков</th><th>Сумма, ₽</th><th></th></tr></thead><tbody>
         ${dashStats.by_company.map(c => `<tr>
           <td title="${esc(c.name)}">${esc(compName(c))}</td><td>${fmtInt(c.count)}</td><td>${fmtSum(c.sum)}</td>
-          <td><button class="btn btn-sm c-open" data-id="${c.id}">открыть пространство</button></td></tr>`).join('')}
+          <td><button type="button" class="btn btn-sm c-open" data-id="${c.id}">открыть пространство</button></td></tr>`).join('')}
       </tbody></table></div>
     </div>` : ''}
     <div id="demo-zone"></div>`;
@@ -3863,10 +4640,14 @@ async function viewDashboard(container) {
 
   barChart($('#chart-daily'), stats.daily);
   donutChart($('#chart-fns'), [
-    { label: 'Действителен', value: stats.by_fns.valid || 0, color: '#34d399' },
-    { label: 'Не найден', value: stats.by_fns.not_found || 0, color: '#fbbf24' },
-    { label: 'Недействителен', value: stats.by_fns.invalid || 0, color: '#f87171' },
-    { label: 'Не проверен', value: stats.by_fns.unknown || 0, color: '#6b7494' },
+    // v1.70.35: цвета сегментов — значения тех же токенов, что у статусных
+    // чипов в списке чеков (--ok, --warn, --bad, --text-faint): язык цвета
+    // теперь один и там, и там. Прежние #34d399, #fbbf24, #f87171 из палитры
+    // Tailwind давали 1.67–2.77:1 на белой карточке при пороге 3:1 для графики.
+    { label: 'Действителен', value: stats.by_fns.valid || 0, color: '#2e8b57' },
+    { label: 'Не найден', value: stats.by_fns.not_found || 0, color: '#b45309' },
+    { label: 'Недействителен', value: stats.by_fns.invalid || 0, color: '#d9534f' },
+    { label: 'Не проверен', value: stats.by_fns.unknown || 0, color: '#6b6b6b' },
   ], { centerTitle: fmtInt(stats.total), centerSub: 'всего чеков' });
 
   const srcLabels = { camera: 'Камера (PWA)', image: 'Изображение', web: 'Веб-вставка', manual: 'Вручную', api: 'API', mobile: 'Мобильный' };
@@ -3891,7 +4672,7 @@ async function viewDashboard(container) {
         <h3 style="margin-bottom:8px">Пустая база — посмотрите систему в действии</h3>
         <p style="color:var(--text-dim);margin-bottom:14px">Загрузите демонстрационные чеки за 14 дней
         (реальные ФН не используются), затем удалите их или начните сканировать свои.</p>
-        <button class="btn btn-primary" id="btn-demo">✨ Загрузить демо-чеки</button>
+        <button type="button" class="btn btn-primary" id="btn-demo">✨ Загрузить демо-чеки</button>
       </div>`;
     $('#btn-demo').onclick = async () => {
       const r = await api.post('/api/v1/dashboard/demo-data?count=32', {});
@@ -3920,6 +4701,16 @@ function makeSettingsCollapsible(container) {
     const title = card.querySelector('.card-title');
     if (!title || card.classList.contains('foldable')) return;
     card.classList.add('foldable');
+    // v1.70.58: ведущий текст оглавления — в отдельный пролёт .ct-text.
+    // Без него флекс на узком экране сжимал безымянный текстовый фрагмент
+    // в столбик слогов («МОНИТ/ОРИНГ/OPENST/ACK»), а версию — в столбик
+    // букв: overflow-wrap: anywhere разрешает перенос внутри слова.
+    const ctText = document.createElement('span');
+    ctText.className = 'ct-text';
+    while (title.firstChild && title.firstChild.nodeType === 3) {
+      ctText.appendChild(title.firstChild);
+    }
+    if (ctText.childNodes.length) title.insertBefore(ctText, title.firstChild);
     // тело = всё, кроме заголовка
     const body = document.createElement('div');
     body.className = 'fold-body';
@@ -4016,7 +4807,7 @@ async function viewBoss(container) {
   const drill = async (title, params) => {
     const { slot } = openModal(`<div class="modal-title">🔍 ${esc(title)}</div>
       <div id="drill-body"><div class="form-hint">Загружаю…</div></div>
-      <div class="modal-actions"><button class="btn" data-close>Закрыть</button></div>`);
+      <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     try {
       const r = await api.get('/api/v1/receipts?page=1&page_size=50&' + params);
@@ -4127,7 +4918,7 @@ async function openBossReceipt(id) {
         ${r.items.map((it) => `<tr><td>${esc(it.name)}</td><td class="num">${it.quantity}</td>
           <td class="num">${fmtSum(it.price)}</td><td class="num">${fmtSum(it.total)}</td></tr>`).join('')}
         </tbody></table></div>` : ''}
-      <div class="modal-actions"><button class="btn" data-close>Закрыть</button></div>`);
+      <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   } catch (e) { toast(e.message, 'err', 'Чек'); }
 }
@@ -4148,19 +4939,19 @@ async function openManual() {
   }
   const { slot, close } = openModal(
     `<div class="manual-shell" id="manual-shell">
-       <button class="btn btn-sm" id="manual-close" style="float:right">✕ Закрыть</button>
+       <button type="button" class="btn btn-sm" id="manual-close" style="float:right">✕ Закрыть</button>
        <div class="card-title font-accent" style="margin-bottom:2px">📖 Инструкция</div>
        <div class="manual-meta">Ямастер Чек · актуально для версии
          <b>v${esc(data.version)}</b> · ${esc(data.vendor || '')}</div>
        ${data.show_tabs ? `<div class="manual-tabs" id="manual-tabs">
-         <button class="manual-tab" data-aud="admin">Администратор</button>
-         <button class="manual-tab" data-aud="accountant">Бухгалтер</button>
-         <button class="manual-tab" data-aud="manager">Руководитель</button>
-         <button class="manual-tab" data-aud="user">Сотрудник</button>
+         <button type="button" class="manual-tab" data-aud="admin">Администратор</button>
+         <button type="button" class="manual-tab" data-aud="accountant">Бухгалтер</button>
+         <button type="button" class="manual-tab" data-aud="manager">Руководитель</button>
+         <button type="button" class="manual-tab" data-aud="user">Сотрудник</button>
        </div>` : ''}
        <div id="manual-body"></div>
        <div class="manual-foot">© ООО «Ямастер» — разработка и идея · ymaster.ru ·
-         info@ymaster.ru. Инструкция обновляется вместе с программой.</div>
+         chek@ymaster.ru. Инструкция обновляется вместе с программой.</div>
      </div>`, { onClose: null });
   $('#manual-close', slot).onclick = close;
   const body = $('#manual-body', slot);
@@ -4207,8 +4998,8 @@ function showLogoutDialog() {
      <p class="modal-text">Вы всегда сможете вернуться — данные и настройки
      сохранятся на сервере.</p>
      <div class="modal-actions">
-       <button class="btn btn-primary" id="lo-stay">Остаться</button>
-       <button class="btn btn-danger" id="lo-exit">Выйти</button>
+       <button type="button" class="btn btn-primary" id="lo-stay">Остаться</button>
+       <button type="button" class="btn btn-danger" id="lo-exit">Выйти</button>
      </div>`);
   const stay = $('#lo-stay', slot);
   const exit = $('#lo-exit', slot);
@@ -4304,15 +5095,15 @@ async function viewScan(container) {
           <div class="camera-overlay" id="camera-overlay">
             <span class="big-ico">📷</span>
             <div>Наведите камеру на QR-код чека.<br>Система распознаёт код автоматически, с антисбливанием.</div>
-            <button class="btn btn-primary" id="btn-camera-start">▶ Включить камеру</button>
+            <button type="button" class="btn btn-primary" id="btn-camera-start">▶ Включить камеру</button>
             <span class="form-hint">или используйте способы ниже</span>
           </div>
         </div>
         <div class="scan-actions">
-          <button class="btn" id="btn-upload">🖼 Загрузить фото чека</button>
-          <button class="btn" id="btn-pdf">📄 Загрузить PDF-чек</button>
-          <button class="btn" id="btn-paste">📋 Вставить QR-текст</button>
-          <button class="btn" id="btn-manual">⌨ Ввести вручную</button>
+          <button type="button" class="btn" id="btn-upload">🖼 Загрузить фото чека</button>
+          <button type="button" class="btn" id="btn-pdf">📄 Загрузить PDF-чек</button>
+          <button type="button" class="btn" id="btn-paste">📋 Вставить QR-текст</button>
+          <button type="button" class="btn" id="btn-manual">⌨ Ввести вручную</button>
           <input type="file" id="file-input" accept="image/*" multiple class="hidden">
           <input type="file" id="pdf-input" accept="image/*,.pdf,application/pdf" class="hidden">
         </div>
@@ -4331,8 +5122,28 @@ async function viewScan(container) {
           <div class="card-title">⚡ Офлайн-очередь: ${queueSize}</div>
           <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
             Эти сканы были сделаны без связи с сервером и ждут синхронизации.</p>
-          <button class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
         </div>` : ''}
+        <div class="glass card" style="margin-bottom:16px">
+          <div class="card-title">🧾 Сдача чеков <span class="spacer"></span>
+            <span class="batch-prog" id="scan-batch-prog">0 / 100</span></div>
+          <div class="batch-counts" role="status" aria-live="polite">
+            <span class="bcount b-ok" id="scan-bc-ok"><b>0</b><i>принято</i></span>
+            <span class="bcount b-pend" id="scan-bc-pend"><b>0</b><i>на проверке</i></span>
+            <span class="bcount b-bad" id="scan-bc-bad"><b>0</b><i>не принято</i></span>
+          </div>
+          <div class="batch-day" id="scan-batch-day">Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи</div>
+          <div class="batch-list" id="scan-batch-list"></div>
+          <div class="batch-sum hidden" id="scan-batch-sum"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button type="button" class="btn btn-sm" id="btn-scan-sess-reset"
+                    title="Обнулить счётчики и начать новую сдачу">🔄 Новая сессия</button>
+          </div>
+          <div class="form-hint" style="margin-top:8px">Каждый чек проверяется сразу:
+          дубликат в базу не попадает и идёт в красный счётчик, новый — в синий «на проверке»,
+          а после подтверждения официальным источником становится оранжевым «принят».
+          На рубеже 100 чеков спросим, продолжать или закончить.</div>
+        </div>
         <div class="glass card">
           <div class="card-title">Последние сканы</div>
           <div id="scan-recents"></div>
@@ -4358,6 +5169,15 @@ async function viewScan(container) {
       ? `Новые чеки попадут в компанию: <b>${esc(c.name)}</b> (меняется селектором в шапке)`
       : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
   }
+  // v1.70.40: сессия сдачи — счётчики живут, пока сотрудник на этом экране
+  if (!scanSess.t0) scanSessReset();
+  scanSessRender();
+  const sessReset = $('#btn-scan-sess-reset');
+  if (sessReset) sessReset.onclick = () => {
+    scanSessReset();
+    toast('Новая сессия сдачи: счётчики обнулены', 'info', '🧾 Сдача');
+  };
+
   $('#btn-camera-start').onclick = async () => {
     const video = $('#scan-video');
     try {
@@ -4369,7 +5189,28 @@ async function viewScan(container) {
       const stopBtn = document.createElement('button');
       stopBtn.className = 'btn btn-sm';
       stopBtn.textContent = '⏹ Остановить камеру';
-      stopBtn.onclick = () => { state.camera.stop(); state.camera = null; stopBtn.remove(); route(true); };
+      stopBtn.dataset.camstop = '1';
+      // v1.70.40: остановка без перерисовки экрана — нужна окну рубежа сессии
+      // («продолжаем или закончим?»), чтобы счётчики не пропадали из-под него
+      const doStop = (rerender) => {
+        if (state.camera) { state.camera.stop(); state.camera = null; }
+        const b = document.querySelector('.scan-actions [data-camstop]');
+        if (b) b.remove();
+        const ov = document.getElementById('camera-overlay');
+        if (ov) ov.classList.remove('hidden');
+        const fr = document.getElementById('scan-frame');
+        if (fr) fr.style.display = 'none';
+        const ln = document.getElementById('scan-line');
+        if (ln) ln.style.display = 'none';
+        scanCamStop = null;
+        if (rerender) route(true);
+      };
+      stopBtn.onclick = () => doStop(true);
+      scanCamStop = () => doStop(false);
+      scanCamStart = async () => {
+        const btn = document.getElementById('btn-camera-start');
+        if (btn && btn.onclick) await btn.onclick();
+      };
       $('.scan-actions').appendChild(stopBtn);
       toast('Камера включена — наведите на QR-код чека', 'info');
     } catch (e) {
@@ -4412,10 +5253,228 @@ function renderRecents() {
     </div>`).join('') : emptyState('🧾', 'Пока ничего не отсканировано');
 }
 
-function pushRecent(r) {
+// ==========================================================================
+//  v1.70.40: сессия сдачи на экране «Сканирование» (сотрудники и бухгалтеры)
+//  Те же три счётчика, что у доноров Чек-Пула и в мини-приложении MAX, но по
+//  статусам чеков компании: оранжевый — принят (официальный источник
+//  подтвердил), синий — на проверке, терракота — не принят (дубликат или
+//  ошибка проверки). Каждый чек проверяется сразу: дубликат в базу не
+//  попадает, отправитель видит явное уведомление, счётчик краснеет, а чек
+//  «улетает» в него анимацией.
+// ==========================================================================
+const SCAN_CAP = 100;          // рубеж сессии: «продолжаем или закончим?»
+const SCAN_POLL_MS = 4000;     // опрос статусов (WS сообщает раньше, это резерв)
+const SCAN_POLL_MAX = 30;      // ~2 минуты уточнений
+const SCAN_ROWS = 8;
+const scanSess = {
+  items: [], seen: {}, cap: SCAN_CAP, t0: 0, timer: 0, tries: 0, asking: false,
+};
+let scanCamStop = null;        // выключить камеру на время окна рубежа
+let scanCamStart = null;       // включить снова после «продолжить»
+
+function scanSessKey(fn, fd, fp) {
+  return `${fn || ''}|${fd || ''}|${fp || ''}`;
+}
+
+function scanSessStateOf(r) {
+  const st = String((r && r.status) || '');
+  if (st === 'verified') {
+    return (r && r.fns_status && r.fns_status !== 'valid') ? 'bad' : 'ok';
+  }
+  if (st === 'failed') return 'bad';
+  return 'pend';               // new / verifying — проверка ещё идёт
+}
+
+function scanSessLabel(state) {
+  return state === 'ok' ? 'принят' : (state === 'pend' ? 'на проверке' : 'не принят');
+}
+
+function scanSessCount(items) {
+  const c = { ok: 0, pend: 0, bad: 0, sum: 0 };
+  (items || []).forEach((x) => {
+    if (c[x.state] !== undefined) c[x.state] += 1;
+    c.sum += Number(x.sum || 0);
+  });
+  return c;
+}
+
+function scanSessRowHTML(x) {
+  const who = x.fd ? `ФД ${esc(String(x.fd))}` : esc(x.who || 'чек');
+  const sum = x.sum ? ` · ${fmtSum(x.sum)}` : '';
+  return `<div class="brow s-${x.state}"><span class="bdot"></span>`
+    + `<span class="bwho">${who}</span>`
+    + `<span class="bst">${esc(scanSessLabel(x.state) + sum)}</span></div>`;
+}
+
+function scanSessSummaryText(items, ms) {
+  const c = scanSessCount(items);
+  const secs = Math.max(1, Math.round((ms || 0) / 1000));
+  const mins = Math.floor(secs / 60);
+  const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
+  return `Итог сессии: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`
+    + ` · сумма ${fmtSum(c.sum)} · время ${dur}`;
+}
+
+function scanSessRender() {
+  const c = scanSessCount(scanSess.items);
+  const set = (id, n) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const b = el.querySelector('b');
+    if (b) b.textContent = n;
+  };
+  set('scan-bc-ok', c.ok);
+  set('scan-bc-pend', c.pend);
+  set('scan-bc-bad', c.bad);
+  const prog = document.getElementById('scan-batch-prog');
+  if (prog) prog.textContent = `${scanSess.items.length} / ${scanSess.cap}`;
+  const hint = document.getElementById('scan-batch-day');
+  if (hint) {
+    hint.textContent = scanSess.items.length
+      ? 'Дубликат отсеян и в базу не попал: он учтён в красном счётчике'
+      : 'Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи';
+  }
+  const list = document.getElementById('scan-batch-list');
+  if (list) {
+    list.innerHTML = scanSess.items.slice(-SCAN_ROWS).reverse()
+      .map(scanSessRowHTML).join('');
+  }
+}
+
+function scanSessFly(state) {
+  const id = state === 'ok' ? 'scan-bc-ok'
+    : (state === 'pend' ? 'scan-bc-pend' : 'scan-bc-bad');
+  const target = document.getElementById(id);
+  if (!target) return;
+  // камера сотрудника встроена в панель и не перекрывает счётчики, поэтому
+  // значок летит по странице — окно-хозяин не нужно
+  const src = document.getElementById('btn-camera-start')
+    || document.getElementById('btn-upload') || target;
+  flyChipTo(state, src, target, null);
+}
+
+function scanSessAdd(item) {
+  scanSess.items.push(item);
+  scanSessRender();
+  scanSessFly(item.state);
+  scanSessPollSoon();
+}
+
+// WS-событие уточнило статус чека — перекрашиваем счётчик без опроса
+function scanSessNote(id, status, fnsStatus) {
+  const row = scanSess.items.find((x) => x.id === id);
+  if (!row) return;
+  const st = scanSessStateOf({ status, fns_status: fnsStatus || row.fns || '' });
+  if (st === row.state) return;
+  row.state = st;
+  row.status = status || row.status;
+  scanSessRender();
+  scanSessFly(st);
+  if (st === 'ok') toast('Проверка пройдена: чек принят', 'ok', '🧾 Статус');
+}
+
+function scanSessPollSoon() {
+  const pend = scanSess.items.some((x) => x.state === 'pend' && x.id);
+  if (!pend || scanSess.timer) return;
+  scanSess.timer = setTimeout(scanSessPoll, SCAN_POLL_MS);
+}
+
+// Резервный опрос: если WS недоступен, статусы всё равно уточнятся
+async function scanSessPoll() {
+  scanSess.timer = 0;
+  const ids = scanSess.items.filter((x) => x.state === 'pend' && x.id)
+    .map((x) => x.id).slice(0, 100);
+  if (!ids.length || scanSess.tries >= SCAN_POLL_MAX) return;
+  scanSess.tries += 1;
+  let d;
+  try { d = await api.get(`/api/v1/receipts?ids=${ids.join(',')}`); }
+  catch (e) { scanSessPollSoon(); return; }      // сеть мигнула — попробуем ещё
+  let changed = 0;
+  (d.items || []).forEach((r) => {
+    const row = scanSess.items.find((x) => x.id === r.id);
+    if (!row) return;
+    const st = scanSessStateOf(r);
+    row.status = r.status;
+    row.fns = r.fns_status || row.fns || '';
+    row.sum = r.total_sum || row.sum || 0;
+    if (st !== row.state) { row.state = st; changed += 1; scanSessFly(st); }
+  });
+  if (changed) {
+    scanSessRender();
+    const c = scanSessCount(scanSess.items);
+    toast(`Проверка прошла: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`,
+      c.bad ? 'warn' : 'ok', '🧾 Статусы');
+  }
+  scanSessPollSoon();
+}
+
+// Рубеж сессии: окно «продолжаем или закончим?»
+function scanSessAskMore() {
+  return new Promise((resolve) => {
+    const { slot, close } = openModal(`
+      <div class="modal-title">📦 Отсканировано ${scanSess.items.length} чеков</div>
+      <p class="modal-text" style="margin-bottom:12px">Вы отсканировали
+      ${scanSess.items.length} чеков за эту сессию. Продолжаем или закончим?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="scan-finish">Закончить и посмотреть итог</button>
+        <button type="button" class="btn btn-primary" id="scan-more">Продолжить — ещё ${SCAN_CAP}</button>
+      </div>`, { onClose: () => resolve(false) });
+    const more = slot.querySelector('#scan-more');
+    const fin = slot.querySelector('#scan-finish');
+    if (more) more.onclick = () => { close(); resolve(true); };
+    if (fin) fin.onclick = () => { close(); resolve(false); };
+  });
+}
+
+async function scanSessCheckpoint() {
+  if (scanSess.items.length < scanSess.cap || scanSess.asking) return;
+  scanSess.asking = true;
+  // на время решения камера выключается: иначе она продолжит сыпать чеки
+  const stop = scanCamStop;
+  if (stop) { try { stop(); } catch (e) { /* уже выключена */ } }
+  try {
+    const more = await scanSessAskMore();
+    if (more) {
+      scanSess.cap += SCAN_CAP;
+      scanSessRender();
+      if (scanCamStart) { try { await scanCamStart(); } catch (e) { /* пользователь включит сам */ } }
+    } else {
+      scanSessFinish();
+    }
+  } finally { scanSess.asking = false; }
+}
+
+function scanSessFinish() {
+  if (scanSess.timer) { clearTimeout(scanSess.timer); scanSess.timer = 0; }
+  const text = scanSessSummaryText(scanSess.items, Date.now() - scanSess.t0);
+  const sum = document.getElementById('scan-batch-sum');
+  if (sum) { sum.textContent = text; sum.classList.remove('hidden'); }
+  toast(text, 'ok', '📦 Сессия сдачи');
+  scanSess.tries = 0;
+  scanSessPollSoon();                            // статусы ещё могут уточниться
+}
+
+function scanSessReset() {
+  if (scanSess.timer) { clearTimeout(scanSess.timer); scanSess.timer = 0; }
+  scanSess.items = [];
+  scanSess.seen = {};
+  scanSess.cap = SCAN_CAP;
+  scanSess.t0 = Date.now();
+  scanSess.tries = 0;
+  const sum = document.getElementById('scan-batch-sum');
+  if (sum) { sum.textContent = ''; sum.classList.add('hidden'); }
+  scanSessRender();
+}
+
+function pushRecent(r, duplicate) {
+  // v1.70.40: дубликат из чужой организации приходит без receipt — раньше
+  // здесь падал TypeError на r.fn (ошибка тонула в async-вызывающем коде,
+  // а отправитель не получал никакого объяснения). Теперь: пустой ответ
+  // просто не попадает в «последние сканы», а флаг дубликата честный.
+  if (!r || typeof r !== 'object') return;
   state.recents.unshift({
     fn: r.fn, fd: r.fd, fp: r.fp, sum: r.total_sum,
-    duplicate: false,
+    duplicate: duplicate === true,
     at: new Date().toISOString(),
   });
   state.recents = state.recents.slice(0, 12);
@@ -4435,7 +5494,7 @@ function _dtLocal(iso) {
 }
 
 // ==========================================================================
-//  v1.57.1: «Полные данные чека» — всё, что вернул proverkacheka.com
+//  v1.57.1: «Полные данные чека» — всё, что вернул источник (v1.70.70: ФНС)
 //  (receipts.ext_json): место расчётов, касса/смена, налог, свойства
 //  заказа, итоги НДС, ФФД и пр. Показывается в карточке чека.
 // ==========================================================================
@@ -4491,7 +5550,7 @@ function extBlockHTML(ext) {
   }
   if (!rows.length) return '';
   return `<details class="manual-check" style="margin-top:12px">
-    <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🧾 Полные данные чека — из proverkacheka.com</summary>
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🧾 Полные данные чека — из ФНС</summary>
     <dl class="kv" style="font-size:12.5px;margin:10px 0 4px">${rows.join('')}</dl>
   </details>`;
 }
@@ -4553,7 +5612,7 @@ function openEditReceipt(r, onSaved) {
     </div>
     <div style="margin-top:14px">
       <b style="font-size:13.5px">Позиции чека (${(r.items || []).length})</b>
-      ${r.exported && !isAdminUser ? '' : '<button class="btn btn-sm" id="er-add-item" style="margin-left:8px">+ позиция</button>'}
+      ${r.exported && !isAdminUser ? '' : '<button type="button" class="btn btn-sm" id="er-add-item" style="margin-left:8px">+ позиция</button>'}
       <div id="er-items" style="margin-top:8px"></div>
     </div>
     <label style="display:flex;gap:10px;align-items:center;margin-top:12px;cursor:pointer">
@@ -4561,15 +5620,15 @@ function openEditReceipt(r, onSaved) {
       <span>🔔 Уведомление от сотрудника</span></label>
     ${extBlockHTML(r.ext) ||
       `<div class="info-callout" style="margin-top:12px">🧾 Полные данные чека ещё не получены.
-        <button class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из proverkacheka.com</button>
+        <button type="button" class="btn btn-sm" id="er-fetch" style="margin-left:8px">🔄 Получить данные из ФНС</button>
         <div class="form-hint" id="er-fetch-msg" style="margin-top:6px"></div></div>`}
-    ${r.ext ? `<div style="margin-top:8px"><button class="btn btn-sm" id="er-refetch"
-        title="Запросить свежие данные из proverkacheka.com; пустые поля заполнятся, ваши правки не затрутся">🔄 Обновить данные из источника</button>
+    ${r.ext ? `<div style="margin-top:8px"><button type="button" class="btn btn-sm" id="er-refetch"
+        title="Запросить свежие данные из ФНС; пустые поля заполнятся, ваши правки не затрутся">🔄 Обновить данные из источника</button>
         <span class="form-hint" id="er-fetch-msg" style="margin-left:8px"></span></div>` : ''}
     <details class="manual-check" style="margin-top:12px">
       <summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">🌐 Проверить чек вручную на сторонних сервисах</summary>
       <div class="manual-check-links">
-        <a href="https://proverkacheka.com/" target="_blank" rel="noopener">proverkacheka.com</a>
+        <a href="https://openapi.nalog.ru/" target="_blank" rel="noopener">Открытые API ФНС</a>
         <a href="https://xn--80aaemb2ac0aikd0g.xn--p1ai/" target="_blank" rel="noopener">проверкачека.рф</a>
         <a href="https://proverka-cheka.ru/" target="_blank" rel="noopener">proverka-cheka.ru</a>
         <a href="https://chek-pek.ru/" target="_blank" rel="noopener">chek-pek.ru</a>
@@ -4593,12 +5652,12 @@ function openEditReceipt(r, onSaved) {
           <input type="checkbox" id="mr-cmt" ${r.comment ? 'checked' : ''} style="width:auto">
           <span>Комментарий</span></label>
       </div>
-      <button class="btn btn-sm" id="er-remember">🧠 Запомнить</button>
+      <button type="button" class="btn btn-sm" id="er-remember">🧠 Запомнить</button>
       <span class="form-hint" id="er-remember-msg" style="margin-left:8px"></span>
     </details>` : ''}
     <div class="modal-actions">
-      <button class="btn btn-primary" id="er-save">💾 Сохранить</button>
-      <button class="btn" id="er-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="er-save">💾 Сохранить</button>
+      <button type="button" class="btn" id="er-cancel">Отмена</button>
     </div>`);
 
   // v1.57.3: «Получить/Обновить данные» прямо в карточке чека — доступно
@@ -4770,8 +5829,8 @@ function openNotifyDialog(r, onSaved) {
     <label class="field"><span>Комментарий к чеку</span>
       <textarea id="nt-comment" rows="3" maxlength="2000" placeholder="например: товар вернули, чек заменяю позже…">${esc(r.comment || '')}</textarea></label>
     <div class="modal-actions">
-      <button class="btn btn-primary" id="nt-send">Отправить</button>
-      <button class="btn" id="nt-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="nt-send">Отправить</button>
+      <button type="button" class="btn" id="nt-cancel">Отмена</button>
     </div>`);
   slot.querySelector('#nt-cancel').onclick = close;
   slot.querySelector('#nt-send').onclick = async () => {
@@ -4833,17 +5892,17 @@ function showInstallDialog() {
       ${win ? `
       <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите <b>Ямастер Чек</b>
       как приложение Windows 11 — работа в своём окне без браузера, иконка в «Пуск» и на панели задач.</p>
-      <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
+      <button type="button" class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
       <p class="form-hint" style="margin-top:10px">Если кнопка не сработала (Microsoft Edge): нажмите
       <b>⊕ / «Установить приложение»</b> в адресной строке, либо меню <b>⋯ → Приложения → Установить
       этот сайт как приложение</b>. Приложение появится в «Пуск» и будет запускаться в своём окне.</p>`
       : `
       <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px">Установите приложение
       на устройство — быстрый доступ с иконки, работа на весь экран, офлайн-сканирование.</p>
-      <button class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
+      <button type="button" class="btn btn-primary btn-block" id="pwa-go">⬇ Установить сейчас</button>
       <p class="form-hint" style="margin-top:10px">Если кнопка не сработала: меню браузера →
       «Установить приложение» / «Добавить на главный экран».</p>`}`}
-    <div class="modal-actions"><button class="btn" id="pwa-close">Понятно</button></div>`);
+    <div class="modal-actions"><button type="button" class="btn" id="pwa-close">Понятно</button></div>`);
   const go = document.getElementById('pwa-go');
   if (go) go.onclick = async () => {
     const p = window.__ymInstallPrompt;
@@ -4903,7 +5962,7 @@ function showUpdateDialog(checkInfo) {
     <div class="modal-title">🔄 Обновление системы</div>
     <dl class="kv" style="font-size:13.5px">
       <dt>Текущая версия</dt><dd>v${esc(r.current_version)}</dd>
-      <dt>Доступна</dt><dd><b style="color:var(--ok)">v${esc(r.remote_version)}</b></dd>
+      <dt>Доступна</dt><dd><b style="color:var(--ok-text)">v${esc(r.remote_version)}</b></dd>
       <dt>Ветка</dt><dd><code class="inline">${esc(r.branch)}</code></dd>
     </dl>
     <details style="margin:10px 0"><summary style="cursor:pointer;font-size:13px;color:var(--text-dim)">📋 Что изменится в новой версии</summary>
@@ -4920,8 +5979,8 @@ function showUpdateDialog(checkInfo) {
       поэтому ваш пароль из терминала тут не работал. Теперь перезапуск идёт без пароля.
       Используется только в момент обновления и нигде не сохраняется.</span></label>
     <div class="modal-actions">
-      <button class="btn" id="upd-close">Позже</button>
-      <button class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
+      <button type="button" class="btn" id="upd-close">Позже</button>
+      <button type="button" class="btn btn-primary" id="upd-apply">⬇ Обновить до v${esc(r.remote_version)}</button>
     </div>`);
   slot.querySelector('#upd-close').onclick = close;
   slot.querySelector('#upd-apply').onclick = async (e) => {
@@ -4971,7 +6030,7 @@ function openUpdateProgress() {
     <p class="form-hint" id="upd-metrics"><span id="upd-elapsed"></span> <span id="upd-bytes"></span></p>
     <pre class="codeblock" id="upd-log" style="max-height:180px;overflow:auto;font-size:11.5px"></pre>
     <div id="upd-summary" class="hidden" style="margin:10px 0"></div>
-    <div class="modal-actions"><button class="btn btn-primary hidden" id="upd-done">Готово</button></div>`,
+    <div class="modal-actions"><button type="button" class="btn btn-primary hidden" id="upd-done">Готово</button></div>`,
     { onClose: () => { state.updModalOpen = false; state.updAutoDismissed = autoKey;
                        clearInterval(state.updTimer); clearInterval(updTick); } });
   let finalShown = false;           // v1.50.0: ровно одно финальное уведомление
@@ -4991,10 +6050,10 @@ function openUpdateProgress() {
       const dur = p.finished_at && p.started_at
         ? Math.max(1, Math.round(p.finished_at - p.started_at)) : 0;
       const dtxt = dur ? ` · ${dur} с` : '';
-      if (p.status === 'done') return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
+      if (p.status === 'done') return `<div style="color:var(--ok-text)">✓ ${title}${dtxt}</div>`;
       if (p.status === 'failed') return `<div class="form-error">✗ ${title}${dtxt}</div>`;
       // после успеха активных фаз не бывает: рестарт мог не успеть закрыться
-      if (st.success) return `<div style="color:var(--ok)">✓ ${title}${dtxt}</div>`;
+      if (st.success) return `<div style="color:var(--ok-text)">✓ ${title}${dtxt}</div>`;
       const live = p.started_at
         ? ` · ${Math.max(1, Math.round((Date.now() - p.started_at * 1000) / 1000))} с` : '';
       return `<div style="color:var(--brand)"><span class="upd-active">●</span> ${title}${dtxt}${live}…</div>`;
@@ -5124,6 +6183,853 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.80': [
+    'Предупреждение о чеке, зарегистрированном за другой организацией, при добавлении любым способом.',
+    'Для фото и PDF учитывается выбранная администратором организация.',
+    'Офлайн-очередь сообщает о дубликатах и сохраняет выбранную организацию новых сканов.',
+    'Подготовлена диагностика пересечений реестра и Чек-Пула без изменения данных.',
+  ],
+  '1.70.79': [
+    { icon: '🧩', title: 'Чек-Пул и реестр работают вместе',
+      text: 'Закреплённые чеки можно перенести в реестр без запроса в ФНС; '
+        + 'повторное сканирование использует доступный чек пула. Дубликаты '
+        + 'исключаются из подбора, а статус ФНС показывается только при подтверждённом источнике.' },
+  ],
+  '1.70.78': [
+    { icon: '🎯', title: 'Сумма позиции и место расчёта',
+      text: 'В подборе доступны диапазон суммы отдельной позиции и поиск по сохранённому '
+        + 'названию места расчёта. Интерфейс показывает заполненность поля среди доступных чеков.' },
+  ],
+  '1.70.77': [
+    { icon: '🎯', title: 'Точнее подбор позиций и сохранённые данные',
+      text: 'Название, НДС, цена и количество ищутся в одной позиции; '
+        + 'добавлен поиск по составляющей оплаты. Карточка отделяет сохранённый '
+        + 'ответ от вычисленных полей и не выдаёт код НДС за процент.' },
+  ],
+  '1.70.76': [
+    { icon: '🔎', title: 'НДС, маркировка и недостающие реквизиты',
+      text: 'В реестре можно искать по сохранённому значению НДС и данным маркировки '
+        + 'позиций, а также по недостающим реквизитам. Отсутствие данных не означает '
+        + 'отсутствия маркировки; значения НДС могут быть кодами источника.' },
+  ],
+  '1.70.75': [
+    { icon: '🔎', title: 'Поиск чеков по региону, городу, товарам и отрасли',
+      text: 'Фильтры реестра используют регион и город продавца, отрасли и группы '
+        + 'как чека, так и отдельных позиций. Добавлены поиск товара, операция, '
+        + 'наличие позиций и сброс фильтров. Значения и счётчики ограничены '
+        + 'доступными чеками выбранной компании.' },
+  ],
+  '1.70.74': [
+    { icon: '📋', title: 'Нумерация авансовых отчётов и понятные имена PDF',
+      text: 'Номер резервируется отдельно для каждой компании и месяца; '
+        + 'в имя PDF входят номер, сокращённое название, дата отчёта и сумма. '
+        + 'При первом отчёте укажите последний ранее использованный номер.' },
+  ],
+  '1.70.73': [
+    { icon: '🖨️', title: 'Чеки 72 мм и экономный раскрой A4',
+      text: 'В PDF чеки выводятся шириной 72 мм без уменьшения, в две колонки. '
+        + 'Длинные чеки переносятся по блокам; используются данные полной карточки.' },
+    { icon: '📋', title: 'Авансовый отчёт с чеками в одном PDF',
+      text: 'Выберите только отчёт или комплект с пронумерованными чеками. '
+        + 'Форма и копии чеков требуют проверки бухгалтером; при возвратах, '
+        + 'личных расходах и смешении организаций печать остановится.' },
+  ],
+  '1.70.72': [
+    { icon: '🧾', title: 'Полная карточка чека: все данные и вид как в магазине',
+      text: 'В карточке чека появилась кнопка «Полная информация по чеку» с '
+        + 'четырьмя вкладками: «Чек как в магазине» — бумажный чек с позициями, '
+        + 'НДС, итогом, кассиром, ФН/ФД/ФПД и QR-кодом; «Все реквизиты» — '
+        + 'продавец, касса, оплата, налоги, кассир, дополнительные реквизиты; '
+        + '«Товары» — позиции с типом, единицей, маркировкой и поставщиком; '
+        + '«Сырые данные» — сохранённый ответ ФНС. Чек можно напечатать.' },
+    { icon: '🗺️', title: 'Регион продавца и отрасль покупки — для пула',
+      text: 'Из чека берётся всё, что отдаёт ФНС: наименование и ИНН продавца, '
+        + 'адрес места расчётов, КПП, касса, смена, система налогообложения, '
+        + 'НДС по ставкам, кассир, дополнительные реквизиты, а по позициям — '
+        + 'тип предмета расчёта, единица измерения, код маркировки, поставщик, '
+        + 'страна и отраслевой реквизит ФОИВ. Регион определяется по адресу, '
+        + 'а если адреса нет — по первым двум цифрам ИНН. Отрасль покупки — '
+        + 'по наименованиям позиций. Всё это можно поправить вручную.' },
+    { icon: '✅', title: 'Уведомление: сколько чеков проверено',
+      text: 'После пакетной проверки в ФНС программа показывает ход и итог: '
+        + '«Проверено чеков: 12 из 12 — подтверждено 10, не найдено 1, '
+        + 'ждут лимита 1». Одно уведомление вместо молчания, плюс промежуточные '
+        + 'отчёты каждые пять чеков.' },
+  ],
+  '1.70.71': [
+    { icon: '🔧', title: 'Проверка ФНС заработала после сохранения токена',
+      text: 'Исправили ошибку, из-за которой мастер-токен, введённый на '
+        + 'странице «Проверка чеков (ФНС)», не принимался: программа '
+        + 'отправляла в ФНС его зашифрованную копию вместо самого токена. '
+        + 'Теперь токен расшифровывается перед отправкой.' },
+    { icon: '🩺', title: 'Кнопка «Диагностика связи»',
+      text: 'Новая кнопка рядом с сохранением настроек показывает путь до '
+        + 'ФНС по шагам: настройки, адрес, DNS, порт 8090, шифрование и '
+        + 'приём мастер-токена. Сразу видно, что именно не работает — '
+        + 'закрытый порт на сервере, неверный токен или не тот адрес.' },
+    { icon: '💬', title: 'Понятные причины отказа',
+      text: 'Если ФНС не принимает мастер-токен, сообщение теперь так и '
+        + 'говорит — «мастер-токен не принят», а не «временный токен '
+        + 'истёк». Убрано и двойное «ФНС: ФНС:» в тексте ошибки.' },
+  ],
+  '1.70.70': [
+    { icon: '🇷🇺', title: 'Проверка чеков — только через официальное API ФНС',
+      text: 'Получили мастер-токен ФНС и перевели проверку чеков на '
+        + 'единственный официальный источник — Открытые API ФНС '
+        + '(openapi.nalog.ru). Сторонние сервисы проверки чеков и '
+        + 'демонстрационный режим удалены из программы полностью: '
+        + 'ни в настройках, ни в проверке их больше нет.' },
+    { icon: '📐', title: 'Сверка с документацией API 2.0.9',
+      text: 'Сверили каждый запрос с официальным комплектом ФНС: '
+        + 'правильные пространства имён, обязательный SOAPAction, '
+        + 'временный токен живёт 40 минут (раньше держали шесть часов — '
+        + 'запросы уходили с просроченным токеном), успешный ответ '
+        + 'распознаётся по коду 200 и полному документу чека.' },
+    { icon: '📊', title: 'Лимит ФНС 1000 запросов в сутки — под контролем',
+      text: 'В настройках видно, сколько запросов израсходовано за сутки. '
+        + 'На 80 % администратор получает предупреждение (баннер и запись '
+        + 'в журнал). Когда лимит исчерпан, чек не теряется: он ждёт '
+        + 'проверки и проверяется автоматически после сброса лимита. '
+        + 'Повторная проверка того же чека берётся из кэша и лимит '
+        + 'не расходует.' },
+  ],
+  '1.70.69': [
+    { icon: '✈️', title: 'Вход через Telegram — как у Макса',
+      text: 'На экране входа появилась кнопка в Telegram: человек '
+        + 'подтверждает вход в чате с ботом, пароль вводить не нужно.' },
+    { icon: '📝', title: 'Регистрация в один шаг',
+      text: 'Если чат с ботом ещё не привязан к учётной записи, она '
+        + 'создаётся автоматически — личный кабинет сотрудника, без '
+        + 'анкет и без приглашения.' },
+    { icon: '🔒', title: 'Коды одноразовые и короткоживущие',
+      text: 'Код живёт десять минут, на сервере хранится только его '
+        + 'хэш и гасится после входа — повторно им воспользоваться '
+        + 'нельзя.' },
+    { icon: '⭐', title: 'Остальное как прежде',
+      text: 'Вход через MAX и по паролю работают как раньше; '
+        + 'администратор может выключить регистрацию через Telegram — '
+        + 'тогда останется вход по логину.' },
+  ],
+  '1.70.68': [
+    { icon: '📨', title: 'Telegram-уведомления — устойчивый путь из Москвы',
+      text: 'Готовая схема против блокировок: на сервере поднимается '
+        + 'локальный прокси, а запросы к Telegram туннелируются через '
+        + 'бесплатный облачный worker. Блокировщик видит только адрес '
+        + 'посредника.' },
+    { icon: '🛡', title: 'Белый список и локальный слушатель',
+      text: 'Облачный ретранслятор пропускает только адрес Telegram и '
+        + 'только защищённый порт, а прокси на сервере слушает один '
+        + 'локальный интерфейс — снаружи им воспользоваться нельзя.' },
+    { icon: '📦', title: 'Готовый комплект установки',
+      text: 'Скрипт ретранслятора, служба автозапуска, установщик и '
+        + 'проверка связи — всё с пошаговой инструкцией для '
+        + 'администратора; второй сервер и зарубежный хостинг не нужны.' },
+    { icon: '⭐', title: 'Остальное как прежде',
+      text: 'Поле прокси в настройках Telegram работает как раньше: '
+        + 'укажите локальный адрес — и программа поведёт все запросы '
+        + 'бота через него. Отчёт о выборе решения — в документации.' },
+  ],
+  '1.70.67': [
+    { icon: '🛡', title: 'Кнопка «В мини-приложение» открывает кабинет сразу',
+      text: 'При возврате в MAX мини-приложение открывается сразу в '
+        + 'кабинете участника: вручную нажимать «Старт» в чате бота '
+        + 'больше не нужно.' },
+    { icon: '🔗', title: 'Все ссылки в MAX ведут прямо в мини-приложение',
+      text: 'Кнопка возврата и кнопки входа переходят с параметром '
+        + 'запуска: каждая кнопка ведёт человека в кабинет, без ручного '
+        + 'старта в чате бота.' },
+    { icon: '💬', title: 'Диалог возврата стал проще и понятнее',
+      text: 'Окно после входа через MAX словами объясняет, что произойдёт '
+        + 'после каждой кнопки: кабинет откроется сам, в переписку с '
+        + 'ботом заходить не придётся.' },
+    { icon: '🧪', title: 'Тесты стерегут новый путь',
+      text: 'Замки выпуска сверяют диплинк кнопки и сквозной поток '
+        + 'билета; прежний замок сужен до присутствия диалога.' },
+  ],
+  '1.70.66': [
+    { icon: '⏳', title: 'Заставка больше не виснет на входе по билету',
+      text: 'Ветка входа по билету из мини-приложения не снимала '
+        + 'заставку загрузки: вход и окно ожидания оставались под ней. '
+        + 'Теперь заставка гаснет сразу, а для верности гасится и при '
+        + 'входе в приложение.' },
+    { icon: '🎟', title: 'Билет из запроса виден с первой секунды',
+      text: 'Переход по ссылке с билетом открывает форму входа и окно '
+        + 'ожидания без перекрытия заставкой: человек видит, что '
+        + 'программа работает, а не зависла.' },
+    { icon: '🧪', title: 'Регрессия закрыта настоящим тестом',
+      text: 'В тесты добавлен прогон настоящего интерфейса: загрузка '
+        + 'программы с билетом в запросе и во фрагменте сверяет, что '
+        + 'заставка снята; на старом коде тест падает, на новом зелёный.' },
+    { icon: '⭐', title: 'Путь Максима прежний: касание, билет, выбор',
+      text: 'Кнопка открытия сайта в мини-приложении и окошко возврата '
+        + 'на сайте работают как в прошлом выпуске: касание открывает '
+        + 'сайт, билет одноразовый, контур выбирает человек.' },
+  ],
+  '1.70.65': [
+    { icon: '🌐', title: 'Подтверждение входа больше не зависает',
+      text: 'Убрано автооткрытие сайта без касания: андроид успевал '
+        + 'спросить, каким приложением открыть ссылку, и замирал на '
+        + 'выборе. Переход на сайт — одним надёжным нажатием.' },
+    { icon: '🎟', title: 'Билет в адресе без фрагмента',
+      text: 'Ссылка перехода на сайт идёт без решётки в адресе: браузер '
+        + 'и установленное приложение открывают её одинаково надёжно, '
+        + 'билет по-прежнему одноразовый и короткоживущий.' },
+    { icon: '⭐', title: 'Подтверждённому входу — большая кнопка',
+      text: 'На экране подтверждения вход выполнен сразу: кнопка '
+        + '«Открыть сайт» появляется мгновенно, ждать и возвращаться '
+        + 'вручную не нужно, рядом подсказка о выполненном входе.' },
+    { icon: '🛡', title: 'Окошко возврата и кнопка профиля на месте',
+      text: 'После входа сайт спросит, вернуться в мини-приложение или '
+        + 'остаться, а в профиле мини-приложения работает кнопка '
+        + 'открытия приложения — проверенный владельцем путь.' },
+  ],
+  '1.70.64': [
+    { icon: '🛡', title: 'Подтверждение входа само перекидывает на сайт',
+      text: 'После кнопки «Подтвердить вход» мини-приложение открывает '
+        + 'сайт с одноразовым билетом — возвращаться вручную больше не '
+        + 'нужно: кабинет уже открыт и вход выполнен.' },
+    { icon: '🪟', title: 'Окошко: вернуться в MAX или остаться',
+      text: 'На сайте после такого входа всплывает окошко в нашем '
+        + 'стиле: вернуться в кабинет мини-приложения MAX — или '
+        + 'остаться на сайте. Выбор одним касанием.' },
+    { icon: '⭐', title: 'Кнопка «Открыть приложение» в профиле',
+      text: 'В профиле мини-приложения появилась кнопка открытия сайта '
+        + 'в браузере или в установленном приложении — полный кабинет '
+        + 'с настройками и отчётами всегда под рукой.' },
+    { icon: '🎟', title: 'Одноразовый билет вместо ручного возврата',
+      text: 'Билет перехода живёт несколько минут и сгорает после '
+        + 'первого использования: чужая или старая ссылка не войдёт '
+        + 'в учётную запись повторно.' },
+  ],
+  '1.70.63': [
+    { icon: '🔑', title: 'Отпечаток снова входит с первого касания',
+      text: 'Исправлена двойная упаковка идентификатора ключа в списке '
+        + 'дозволенных: платформа снова узнаёт свой ключ, и вход '
+        + 'отпечатком идёт сразу — без листа «ключи не найдены» и без '
+        + 'отмен.' },
+    { icon: '🧬', title: 'Ключ привязан к учётке без искажений',
+      text: 'Сервер отдаёт идентификатор ключа в том же виде, в котором '
+        + 'устройство вернуло его при привязке, поэтому церемония '
+        + 'сходится с первого раза и в браузере, и в приложении.' },
+    { icon: '🛡', title: 'Замок от повторной упаковки',
+      text: 'Сквозной тест церемонии сверяет идентификатор в ответе '
+        + 'сервера с сохранённым при привязке: двойная упаковка больше '
+        + 'не проскочит незамеченной ни в одном сценарии входа.' },
+    { icon: '🪽', title: 'Подсказки клавиатуры на месте',
+      text: 'Условное автозаполнение работает как прежде: ключ устройства '
+        + 'доступен в подсказках поля логина и ведёт к биометрии без '
+        + 'модальных окон и лишних вопросов.' },
+  ],
+  '1.70.62': [
+    { icon: '🔑', title: 'Отпечаток сразу спрашивает отпечаток',
+      text: 'Кнопка быстрого входа больше не показывает лишний лист '
+        + 'выбора аккаунта: запрос привязан к учётке и просит только '
+        + 'биометрию. Коснулись кнопки — подтвердите себя, и всё.' },
+    { icon: '⌨️', title: 'Ключ устройства в подсказках клавиатуры',
+      text: 'На экране входа ключ появляется в подсказках поля логина, '
+        + 'как пароли в других программах: коснитесь подсказки — и '
+        + 'биометрия подтвердит вход без модальных окон.' },
+    { icon: '🧠', title: 'Повторный вход — в одно касание',
+      text: 'Программа запоминает последний успешный логин на '
+        + 'устройстве, поэтому кнопке отпечатка не нужно ничего '
+        + 'вводить: церемония сразу привязана к вашей учётке.' },
+    { icon: '🪽', title: 'Нет ключа — нет тревоги',
+      text: 'Если на устройстве ключа ещё нет, программа молча '
+        + 'предложит обычный вход по паролю и настройку быстрого '
+        + 'входа вместо пугающего сообщения об отмене.' },
+  ],
+  '1.70.61': [
+    { icon: '🪪', title: 'Каждой роли — своё пространство программы',
+      text: 'Построена ветка иерархии прав: администратор видит всё, '
+        + 'бухгалтер — чеки и выгрузку с мапингом, руководитель — только '
+        + 'просмотр и свой отчёт, сотрудник — рабочую зону сканирования '
+        + 'и реестра. Пространство роли заперто и в меню, и в маршрутах, '
+        + 'и в настройках: чужой раздел не открыть даже прямой ссылкой.' },
+    { icon: '🧭', title: 'Меню без лишнего: только пункты своей роли',
+      text: 'Раньше реестр, сканирование и настройки открывались любой '
+        + 'роли, а страницы пула мелькали в меню компании. Теперь пункт '
+        + 'меню вне пространства роли скрыт: участник-донор видит три '
+        + 'пункта пула, сотрудник — рабочую зону, бухгалтер — свой '
+        + 'набор, и ничего сверх полномочий.' },
+    { icon: '⚙️', title: 'Настройки соответствуют роли',
+      text: 'Меню настроек и карточки разделов показываются по роли: '
+        + 'администратору — все разделы, бухгалтеру — проверка чеков и '
+        + 'почта плюс личное, руководителю и сотруднику — только личное. '
+        + 'Служебные разделы устройства и данных остались прерогативой '
+        + 'администратора.' },
+    { icon: '🪽', title: 'Пространство донора упрощено до сути',
+      text: 'Участнику, который сдаёт чеки в пул ради бонуса, не нужен '
+        + 'мапинг и компании: его пространство — сдать чек, свои бонусы '
+        + 'и партнёры. Оно не пересекается с контуром компании: ни '
+        + 'дашборда, ни чужих чеков, ни настроек — только то, что '
+        + 'донору действительно интересно.' },
+  ],
+  '1.70.60': [
+    { icon: '🧪', title: 'Юнит-тесты модулей интерфейса',
+      text: 'Форматы чисел и дат, экранирование, подписи статусов и '
+        + 'раскрой термопечати покрыты юнит-тестами: двадцать семь '
+        + 'проверок идут около секунды и ловят огрехи до браузера, а не '
+        + 'на глазах пользователя.' },
+    { icon: '🎭', title: 'Браузерные сценарии пути пользователя',
+      text: 'Вход, отказ входа и настройки с читаемыми оглавлениями '
+        + 'блоков прогоняются в настоящем браузере: тест сам поднимает '
+        + 'сервер с отдельной базой и кладёт след только при падении. '
+        + 'Где браузеры недоступны, сценарии проверяются перечислением.' },
+    { icon: '📮', title: 'Коллекция запросов к программному интерфейсу',
+      text: 'Десять типовых сценариев — вход и токен, отказ входа, '
+        + 'доступ с токеном и без, ошибка маршрута, оболочка страниц, '
+        + 'манифест и рабочий скрипт — собраны в коллекцию, которая '
+        + 'гоняется одной командой: двадцать одно утверждение, всё '
+        + 'зелёное, средний ответ тридцать шесть миллисекунд.' },
+    { icon: '🚦', title: 'Все фильтры здоровья программы — одним набором команд',
+      text: 'Код — статический анализатор и юниты; интерфейс — '
+        + 'коллекция запросов; страницы — валидаторы разметки и стилей; '
+        + 'путь пользователя — браузер. Здоровье программы проверяется '
+        + 'сквозняком: от отдельной функции до экрана, быстро и по '
+        + 'расписанию каждой отгрузки.' },
+  ],
+  '1.70.59': [
+    { icon: '🔓', title: 'Кнопка квадратного кода приглашения снова работает',
+      text: 'Кнопка квадратного кода в диалоге создания приглашения молча '
+        + 'умирала: функция, рисующая код, была объявлена внутри другого '
+        + 'экрана, и клик падал ошибкой имени. Функция вынесена на уровень '
+        + 'модуля — код открывается и из диалога, и из списка приглашений.' },
+    { icon: '🗂', title: 'Список компаний обновляется после массового обновления',
+      text: 'После массового обновления карточек ЕГРЮЛ таблица не '
+        + 'перечитывалась, а в журнал браузера прилетала внутренняя '
+        + 'ошибка: обработчик звал функцию, которой на этом экране нет. '
+        + 'Теперь экран перечитывается, и администратор сразу видит '
+        + 'свежие статусы компаний.' },
+    { icon: '🌓', title: 'Формы не чернеют в тёмной теме браузера',
+      text: 'Страницы объявляют светлую цветовую схему: тёмная тема '
+        + 'браузера больше не перекрашивает поля ввода, списки и '
+        + 'календари в тёмное на светлом фоне — текст остаётся читаемым '
+        + 'у пользователей с ночным режимом устройства.' },
+    { icon: '📣', title: 'Результаты действий озвучиваются экранным чтецом',
+      text: 'Контейнер уведомлений получил роль статуса для экранных '
+        + 'чтецов: результат любого действия — сохранение, обновление, '
+        + 'ошибка — не только виден, но и озвучен. Дополнительно внедрён '
+        + 'статический анализатор кода: опечатки и мёртвые ветки ловятся '
+        + 'до браузера, а сторонние библиотеки из анализа исключены.' },
+  ],
+  '1.70.58': [
+    { icon: '📐', title: 'Оглавления блоков читаемы на телефоне',
+      text: 'На узком экране строка оглавления сжималась в столбики '
+        + 'слогов: название, версия и значок состояния делили остаток '
+        + 'ширины. Теперь на телефоне оглавление раскладывается сеткой: '
+        + 'первая строка — название и стрелка, вторая — подзаголовок, '
+        + 'третья — значок состояния; ничего не сжимается и не '
+        + 'переносится по буквам.' },
+    { icon: '🔄', title: 'Ориентация проведена: портрет и ландшафт',
+      text: 'Раскладку оглавлений проверили в обеих ориентациях. В '
+        + 'портрете до 640 пикселей работает сетка; в низком ландшафте '
+        + 'телефона — та же сетка тем же правилом; в широком ландшафте '
+        + 'строка помещается как прежде. Прогнаны ширины от 320 до 900 '
+        + 'пикселей.' },
+    { icon: '📱', title: 'Заголовок страницы не режется точками на телефоне',
+      text: 'На телефоне название раздела переносится на вторую строку '
+        + 'вместо обрезания точками после третьего знака: высота шапки '
+        + 'вмещает две строки. На планшете и выше осталось прежнее '
+        + 'правило — одна строка с многоточием, чтобы не выдавливать '
+        + 'правый блок шапки.' },
+    { icon: '🧹', title: 'Текст оглавления получил собственный пролёт',
+      text: 'Сборщик сворачиваемых карточек оборачивает ведущий текст '
+        + 'оглавления в отдельный пролёт, который стили адресуют '
+        + 'напрямую, — раньше это был безымянный кусок флекс-строки, '
+        + 'недоступный стилям. Разметка карточек не менялась, механизм '
+        + 'сворачивания не тронут.' },
+  ],
+  '1.70.57': [
+    { icon: '🛡️', title: 'Ответ облака о правах больше не путается с ошибкой пароля',
+      text: 'Когда учётные данные уже приняты, а облако отказало в операции '
+        + 'из-за политики ролей, программа говорит об этом прямо: учётные '
+        + 'данные приняты, статистика запрещена облаком, нужно попросить '
+        + 'провайдера выдать роль администратора проекта. Раньше такой отказ '
+        + 'помечался как «учётные данные не приняты» и показывал чек-лист про '
+        + 'пароль — бессмысленный, когда пароль уже принят.' },
+    { icon: '🔌', title: 'Подключение считается установленным, даже если статистика запрещена',
+      text: 'Если облако приняло учётные данные и каталог совпал, проверка '
+        + 'заканчивается успехом, а запрет политики на один запрос становится '
+        + 'примечанием на карточке, а не приговором. Мониторинг можно '
+        + 'включать: разрешённые данные — квоты, балансировщики, инвентарь — '
+        + 'соберутся, а причину запрещённого шага журнал запишет.' },
+    { icon: '📶', title: 'Трафик балансировщиков через документированный запрос',
+      text: 'Метода статистики по каждому балансировщику в свежей библиотеке '
+        + 'облака не существует, и шаг трафика вечно кончался ошибкой '
+        + '«атрибут не найден». Теперь программа делает один сквозной запрос '
+        + 'статистики балансировщиков самого облака — отправленные и '
+        + 'принятые байты; если он недоступен, пишет честную причину в '
+        + 'журнал.' },
+    { icon: '🧹', title: 'Три бага, найденные при проверке',
+      text: 'Сессия после ручной проверки теперь закрывается — раньше каждое '
+        + 'нажатие кнопки оставляло висящее соединение. Текст ошибки больше '
+        + 'не задваивает имя исключения. Ответ службы инвентаря в свежей '
+        + 'библиотеке приходит объектом ответа и теперь разбирается '
+        + 'правильно, а не записывается нечитаемым текстом.' },
+  ],
+  '1.70.56': [
+    { icon: '🔧', title: 'Запрос к облаку делается по документации библиотеки',
+      text: 'Проверка подключения и сборщик метрик звали способ получить '
+        + 'сводку гипервизоров, которого в современной облачной библиотеке '
+        + 'больше нет, — запрос отказывал ошибкой «атрибут не найден». '
+        + 'Прежние выпуски починили всё до шага статистики; теперь починен '
+        + 'последний шаг: программа запрашивает список гипервизоров с '
+        + 'подробностями — ровно так, как учит документация библиотеки, — '
+        + 'и считает сводку сама.' },
+    { icon: '📊', title: 'Сводка считается так же, как считало облако',
+      text: 'Суммарные процессоры, память, диски и запущенные машины — '
+        + 'сумма полей всех гипервизоров, свободный диск — минимум по '
+        + 'гипервизорам: ровно так сводку считал родной запрос облака. '
+        + 'Имена полей в ответе не изменились: карточка сервера, пороги и '
+        + 'история работают как прежде.' },
+    { icon: '🧮', title: 'Старые версии библиотеки тоже работают',
+      text: 'Если на сервере установлена прежняя версия и родной способ '
+        + 'получения сводки ещё жив, программа позовёт его. Переключение '
+        + 'автоматическое, настроек не требует: один помощник выбирает '
+        + 'документированный способ для установленной версии библиотеки.' },
+    { icon: '✅', title: 'Проверено подстановкой и настоящей библиотекой',
+      text: 'Сценарий отказа воспроизведён локально: в современной '
+        + 'библиотеке старого способа действительно нет, а новый даёт '
+        + 'точные числа; подстановные облака прежних выпусков сохранили '
+        + 'старый способ, и все прежние проверки подключения остались '
+        + 'зелёными. Полная батарея тестов, зондовый стенд, синтаксис '
+        + 'обоих скриптов и сканер безопасности.' },
+  ],
+  '1.70.55': [
+    { icon: '🔘', title: 'Кнопка подстановки региона и интерфейса из каталога',
+      text: 'Панель провайдера может противоречить собственному облаку: '
+        + 'скачанный файл задаёт один регион, а каталог, возвращённый '
+        + 'облаком на ваши учётные данные, — другой. Теперь под ошибкой '
+        + 'каталога программа показывает предложенную пару — регион и '
+        + 'интерфейс — и кнопку «Подставить из каталога». Кнопка заполняет '
+        + 'поля; верить ли ей, решает администратор: программа ничего не '
+        + 'меняет за его спиной.' },
+    { icon: '🧭', title: 'Файл противоречит каталогу — верьте каталогу',
+      text: 'Текст сверки теперь объясняет: каталог сервисов возвращает '
+        + 'само облако провайдера в ответ на ваши учётные данные, поэтому '
+        + 'он авторитетнее файла, скачанного из панели. Предложенные '
+        + 'значения перечислены и в ошибке на карточке, и в журнале '
+        + 'событий.' },
+    { icon: '🚦', title: 'Предложение даётся только без двусмысленности',
+      text: 'Программа предлагает пару, лишь когда выбор не вызывает '
+        + 'сомнений: интерфейс найден ровно у одного региона, либо регион '
+        + 'из формы есть в каталоге и интерфейс выбран из его собственных, '
+        + 'либо регион в каталоге единственный. При нескольких '
+        + 'равноправных вариантах кнопка не появляется — администратор '
+        + 'выбирает сам по списку в тексте ошибки.' },
+    { icon: '✅', title: 'Подстановка подтверждается уведомлением',
+      text: 'После нажатия кнопки поля заполняются, появляется '
+        + 'уведомление, а надпись кнопки меняется на «Подставлено», чтобы '
+        + 'её нельзя было нажать дважды по ошибке. Остаётся повторно '
+        + 'нажать «Проверить подключение».' },
+  ],
+  '1.70.54': [
+    { icon: '🔎', title: 'Значки сервисов больше не врут',
+      text: 'Прежде значки «сервис доступен» при проверке подключения '
+        + 'определялись не каталогом облака, а наличием заглушки сервиса: '
+        + 'каталог пытались обойти как список, но он списком не является, '
+        + 'и ошибка молча проглатывалась. Теперь каталог читается '
+        + 'по-настоящему: сервис, которого в каталоге нет или нет для '
+        + 'выбранных региона и интерфейса, показан честно, а не «доступен».' },
+    { icon: '🧭', title: 'Регион и интерфейс сверяются с каталогом до запроса',
+      text: 'Если в каталоге облака нет сервиса виртуальных машин для '
+        + 'выбранных региона и интерфейса, программа сообщает об этом '
+        + 'по-русски ещё до первого запроса: какая пара запрошена, какие '
+        + 'регионы и интерфейсы каталог предлагает и что верные значения '
+        + 'берутся из строк файла провайдера. Проверка не тратит время на '
+        + 'запрос, который заранее обречён.' },
+    { icon: '🚦', title: 'Отказ облака расшифрован по-русски',
+      text: 'Реальная жалоба владельца: авторизация уже проходила, а облако '
+        + 'отвечало сторонним отказом «сервис отключён» — в сохранённых '
+        + 'настройках остались введённые вручную прежде регион и служебный '
+        + 'интерфейс. Теперь программа сверяет их с каталогом провайдера и '
+        + 'прямо называет поля вкладки «Подключение», которые нужно '
+        + 'поправить.' },
+    { icon: '🛠️', title: 'Код «каталог» в журнале и подсказка под ошибкой',
+      text: 'Несовпадение региона или интерфейса записывается в журнал '
+        + 'событий отдельным кодом «каталог» вместо названия стороннего '
+        + 'исключения, а под ошибкой на карточке появляется подсказка: '
+        + 'открыть файл провайдера и перенести строки региона и интерфейса '
+        + 'в поля формы. По журналу сразу видно, что править — параметры '
+        + 'подключения, а не учётные данные.' },
+  ],
+  '1.70.53': [
+    { icon: '🔧', title: 'Отказ облака больше не безликий',
+      text: 'Когда облако не принимает учётные данные, программа теперь так '
+        + 'и говорит: отказ аутентификации, а не посторонний код ошибки. '
+        + 'Под сообщением появляется чек-лист на русском — что проверить '
+        + 'первым: секрет из файла провайдера (в файле часто лежит заглушка '
+        + 'из «x», а настоящий пароль виден в панели провайдера за кнопкой '
+        + '«Показать»), лишние пробелы при копировании, логин и проект, '
+        + 'домены.' },
+    { icon: '🗝️', title: 'Домен по идентификатору — как в файле провайдера',
+      text: 'Панели провайдеров отдают файл подключения, в котором домен '
+        + 'проекта записан идентификатором, а не именем. На вкладке '
+        + '«Подключение» появились два новых поля — домен пользователя и '
+        + 'домен проекта по идентификатору; при заполнении из файла они '
+        + 'подставляются сами. Идентификатор имеет приоритет над именем — '
+        + 'ровно так же, как это делает облачный клиент провайдера.' },
+    { icon: '📋', title: 'Файл провайдера разбирается дословно',
+      text: 'Служебные строки файла — удаление переменных, проверки условий, '
+        + 'комментарии — больше не смущают заполнение: в поля попадают '
+        + 'только значимые присваивания. Приём проверен на файле той самой '
+        + 'формы, которую панель провайдера отдаёт при скачивании.' },
+    { icon: '🛠️', title: 'Обновление не теряет сохранённое',
+      text: 'Новые поля добавляются в уже существующую базу добавляющей '
+        + 'миграцией: сохранённые параметры подключения и зашифрованный '
+        + 'секрет остаются на месте, повторный запуск миграции безопасен, '
+        + 'ручных действий с базой при обновлении сервера не нужно. Заодно '
+        + 'исправлен давний дефект: проверка подключения со свежим '
+        + 'секретом, который ещё не сохранён, теперь действительно '
+        + 'проверяет, а не падает.' },
+  ],
+  '1.70.52': [
+    { icon: '🔑', title: 'Подключение к облаку по файлу провайдера',
+      text: 'На вкладке «Подключение» карточки мониторинга облака появилось '
+        + 'поле для содержимого файла openrc.sh — такой файл провайдеры '
+        + 'облачных серверов отдают в панели управления рядом с логином '
+        + 'и паролем. Достаточно вставить его целиком и нажать «Заполнить '
+        + 'из openrc.sh»: адрес авторизации, имя пользователя, проект, '
+        + 'домены, регион и интерфейс каталога лягут в поля сами, а способ '
+        + 'аутентификации переключится на прикладные учётные данные, если '
+        + 'файл содержит их.' },
+    { icon: '🛡️', title: 'Файл разбирается в браузере и никуда не уходит',
+      text: 'Содержимое файла разбирается прямо на вашем устройстве: текст '
+        + 'не отправляется на сервер ни одним запросом, поэтому секрет не '
+        + 'попадает ни в журнал запросов, ни в ответы программы. На сервер '
+        + 'уходит только то, что сохранено кнопкой «Сохранить», — и секрет '
+        + 'там хранится зашифрованным, как и прежде.' },
+    { icon: '📋', title: 'Ручной ввод остаётся основным способом',
+      text: 'Переменные, которых в файле нет, не стирают то, что уже введено '
+        + 'руками: заполняются только найденные поля, а список заполненного '
+        + 'программа показывает в уведомлении. Если в тексте не нашлось ни '
+        + 'одной переменной облака, программа честно скажет об этом вместо '
+        + 'тихой пустой вставки.' },
+    { icon: '✅', title: 'Проверка подключения подскажет, что не так',
+      text: 'После заполнения нажмите «Проверить подключение»: программа '
+        + 'ответит по-русски — чего не хватает, если поля заполнены не '
+        + 'целиком, и что именно не понравилось облаку, если доступ не '
+        + 'получился. Затем «Сохранить» — и вкладка «Показатели» начнёт '
+        + 'собирать настоящую статистику сервера.' },
+  ],
+  '1.70.51': [
+    { icon: '☁️', title: 'Мониторинг облачной платформы',
+      text: 'В разделе «Чек-Пул и интеграции» появилась карточка мониторинга '
+        + 'облака: программа сама подключается к облачной платформе по '
+        + 'параметрам, которые задал администратор, и периодически снимает '
+        + 'показатели — загрузку процессоров, оперативной памяти и дисков, '
+        + 'квоты проекта и сетевой трафик. Доступ только администратору. '
+        + 'Карточка разбита на четыре вкладки: «Подключение», «Пороги и '
+        + 'опрос», «Показатели» и «Журнал».' },
+    { icon: '📈', title: 'Графики истории за четыре периода',
+      text: 'На вкладке «Показатели» — шесть плиток: процессор, оперативная '
+        + 'память, диск, квоты проекта, сеть и статус последнего сбора. '
+        + 'Ниже два графика истории: доли загрузки по времени и сетевой '
+        + 'трафик. Период выбирается четырьмя кнопками — час, сутки, '
+        + 'неделя и месяц; данные обновляются сами каждые 30 секунд, пока '
+        + 'вкладка открыта, и опрос прекращается, как только администратор '
+        + 'ушёл со страницы.' },
+    { icon: '🚦', title: 'Пороги и предупреждения цветом',
+      text: 'Пороги задаются в процентах отдельно для процессора, памяти и '
+        + 'диска, плюс необязательный порог трафика за сутки. Показатель '
+        + 'в норме остаётся зелёным, при достижении порога желтеет, а через '
+        + '10 процентных пунктов сверх порога краснеет. Превышение видно не '
+        + 'только цветом: на вкладке появляется список предупреждений, а в '
+        + 'журнал пишется отдельная запись.' },
+    { icon: '🔒', title: 'Секрет подключения не покидает программу',
+      text: 'Секрет хранится зашифрованным тем же механизмом, что и прочие '
+        + 'тайны программы, и не возвращается ни в одном ответе: вместо '
+        + 'значения интерфейс показывает только признак его наличия, поэтому '
+        + 'сохранение настроек не требует вводить секрет заново. В тексте '
+        + 'ошибок секрет заменяется маской. Журнал синхронизации показывает '
+        + 'время, уровень, сообщение и код ошибки, фильтруется по уровню и '
+        + 'не содержит ни секретов, ни токенов.' },
+    { icon: '⏱', title: 'Опрос облака не мешает остальной работе',
+      text: 'Сбор идёт в отдельном потоке по расписанию от 30 до 3600 секунд. '
+        + 'Отказ облака не роняет программу: причина уходит в журнал и в '
+        + 'статус, а последние собранные данные остаются на экране рядом '
+        + 'с сообщением об ошибке. Снимки старше заданной глубины хранения '
+        + 'удаляются автоматически.' },
+  ],
+  '1.70.50': [
+    { icon: '👥', title: 'Клиенты приложения одним списком',
+      text: 'В разделе «Данные» рядом с карточкой «Сервер и команды» появились две '
+        + 'новые карточки. Первая — справочник клиентских поверхностей: веб-клиент, '
+        + 'устанавливаемое приложение, мини-приложение в MAX, контур B2B, Telegram, '
+        + '1С, платный доступ и страница оферты. У каждой названы адрес, состав '
+        + 'пользователей, способ подключения и место в коде, а рядом стоят живые '
+        + 'счётчики — сколько пользователей, входов, компаний, привязанных чатов, '
+        + 'выгруженных чеков и обращений по ключам.' },
+    { icon: '🔀', title: 'Куда уходят данные и что известно о сети',
+      text: 'Вторая карточка показывает одиннадцать потоков данных: адреса, состав '
+        + 'передаваемого, способ защиты, журнал-свидетель и модуль-источник. '
+        + 'Отдельным блоком идут сетевые сведения о сервере — граница сети, обратный '
+        + 'прокси, сертификаты, защита от подбора пароля, служба, хранение, секреты '
+        + 'и личные данные. У каждого факта назван файл, которым он подтверждён.' },
+    { icon: '🧮', title: 'Счётчики только там, где есть журнал',
+      text: 'Числа берутся из журналов, которые программа уже ведёт: проверка чеков, '
+        + 'почта, вебхуки и платный доступ. У потока без журнала счётчиков не '
+        + 'появляется — карточка прямо пишет, что журнал не ведётся. Выдуманное '
+        + 'число хуже отсутствия числа, поэтому дописывать его от руки нельзя.' },
+    { icon: '🔒', title: 'Секреты в ответ не попадают',
+      text: 'Из устройств остаются метка и время, из ключей — префикс и лимиты. '
+        + 'Хэши токенов, открытые ключи, пароли почтовых ящиков и сами ключи не '
+        + 'отдаются ни в каком виде; проверка на восемь запрещённых имён в ответе '
+        + 'закреплена замком.' },
+    { icon: '🔖', title: 'Выпуск понадобился из-за кэш-бастеров',
+      text: 'Правка коснулась клиентского скрипта, а его адрес в разметке, в '
+        + 'service worker и в манифесте несёт номер версии. Без нового номера '
+        + 'браузер продолжил бы отдавать прежний файл из кэша, и карточки не '
+        + 'появились бы ни у кого.' },
+  ],
+  '1.70.49': [
+    { icon: '✉️', title: 'Один корпоративный адрес во всех полях',
+      text: 'Проверка по запросу владельца показала: прежний адрес уже перенесён на корпоративный chek@ymaster.ru в выпуске 1.70.45, но рядом с ним остались четыре других адреса того же домена — в подсказке поля, в примере сообщения об отказе и в двух плановых документах. Все четыре приведены к корпоративному, чтобы почта для связи по персональным данным, поддержка и обращения по плану не расходились по разным ящикам. Теперь в отслеживаемых файлах у домена только один адрес, и это закреплено замком.' },
+    { icon: '🧪', title: 'Почему в тесте остался чужой домен',
+      text: 'Тест заполнения реквизитов подставляет адрес, который администратор вводит сам. Если подставить корпоративный, проверка опустеет: тест перестанет отличать значение из настройки от значения по умолчанию из кода и начнёт проходить даже тогда, когда настройка не применяется. Поэтому в тесте оставлен зарезервированный для примеров домен, а отдельный замок требует, чтобы он отличался от значения по умолчанию.' },
+    { icon: '🗂', title: 'История не переписана',
+      text: 'Два прежних адреса остались там, где обязаны остаться: в стороже зонда и в замке, который запрещает прежнему адресу возвращаться в отслеживаемые файлы. Сторож обязан содержать запрещённое значение, иначе он ничего не запрещает, — поэтому в обоих местах адрес собран из двух частей и поиск по целой строке его не находит. Запись о переносе в журнале изменений тоже оставлена как есть: она сообщает, что прежний адрес встречался в двухстах сорока двух файлах, и это правда на момент той записи.' },
+    { icon: '🔖', title: 'Выпуск понадобился из-за кэш-бастеров',
+      text: 'Правка коснулась клиентского скрипта, а его адрес в разметке и в списке предзагрузки service worker несёт номер версии. Без нового номера браузер и кэш приложения продолжали бы отдавать прежний файл, и подсказка поля осталась бы старой. Версия поднята во всех шести точках синхронизации, запись выпуска сделана первой в списке «Что нового», а прежний класс выпуска переведён в историю — тем же приёмом, что и в предыдущих релизах.' },
+  ],
+  '1.70.48': [
+    { icon: '🧪', title: 'Командная тестировка: пять ролей, один прогон',
+      text: 'Проверка шла ролями, как в большой команде: прогон тестов, статический анализ, валидаторы разметки и стилей, живой стенд и редактор русского языка. Каждая роль снимала числа до правок и после, поэтому ни один вывод не опирается на глазок. База до правок — три тысячи четыреста пятнадцать пройденных тестов и одно известное падение, которое воспроизводится на основной ветке и к этой работе отношения не имеет.' },
+    { icon: '🔤', title: 'Латиница внутри русских слов',
+      text: 'Однородные знаки — это латиница внутри русских слов, неотличимая от кириллицы на глаз. Найдено пять. Самое опасное — адрес сайта в сообщении об ошибке входа: вместо кириллической буквы стояла латинская, и адрес выглядел рабочим, но не копировался и не находился поиском по проекту. Ещё четыре — в документации и журнале изменений, включая слово, наполовину набранное чужим письмом. Все пять исправлены, и проверка закреплена замком: теперь латинская буква внутри русского слова роняет прогон.' },
+    { icon: '✍️', title: '«ё» и знак номера — по канону',
+      text: 'Проект пишет «ё» там, где она меняет слово, а знак номера отделяет пробелом. Найдено четыре слова без «ё» и десять мест, где номер написан слитно, хотя двенадцать мест рядом уже были написаны правильно — приведено к канону. Слова, в которых «ё» по норме нет, записаны в тесте отдельным списком, чтобы следующая проверка не принялась «чинить» правильный текст.' },
+    { icon: '📖', title: 'Глоссарий и определённые термины',
+      text: 'Канон названий закреплён замком: Чек-Пул, Ямастер Чек, контур B2B и полное фирменное наименование в кавычках-ёлочках. Отклонений в прозе нет: глоссарий проверяется и по канону, и по запрещённым вариантам написания. В оферте найдено расхождение регистра у определённых терминов: документ определяет «Программа» и «Сервис», а в преамбуле они стояли со строчной — исправлено, потому что определённый термин отличается от слова в общем смысле именно регистром. Метка на странице документа приведена к тому же термину, а наименование продавца в интеграции — к канону настроек, вместе с примером ответа в документации.' },
+    { icon: '🛠', title: 'Два дефекта в коде, найденные не вкусом',
+      text: 'Из семи срабатываний правил, которые указывают на настоящую ошибку, а не на стиль, два оказались дефектами. Первое — замыкание в тесте гонки не связывало переменную цикла: сегодня потоки завершаются внутри итерации и ошибки нет, но стоит перенести запуск за пределы цикла, и все потоки возьмут последний барьер. Второе — два вызова проверки типа вместо одного со списком типов. Оба исправлены; остальные пять срабатываний отклонены как стиль и записаны.' },
+    { icon: '🗂', title: 'Отклонённые находки записаны, а не выброшены',
+      text: 'Первый прибор дал одиннадцать тысяч срабатываний, и почти все оказались его собственными артефактами: извлечение текста захватывало код между строками, служебное содержимое вырезалось в пустоту и на его месте возникали мнимые пробелы перед запятой, а список слов с обязательной «ё» содержал слова, где её по норме нет. Прибор переписан, каждое срабатывание проверено руками, а пятнадцать отклонённых находок записаны в реестр с причиной — чтобы следующий аудит не искал их заново.' },
+  ],
+  '1.70.47': [
+    { icon: '📜', title: 'Публичная оферта — на отдельной странице',
+      text: 'Программа с версии 1.31.0 писала в журнал согласий номер редакции оферты, а самого документа не существовало: галочка «согласен с условиями оферты» в кабинете компании никуда не вела, а ссылка «текст» в форме сдачи чека раскрывала только краткое пояснение. Условия опубликованы на отдельной странице: девятнадцать разделов, тринадцать терминов и восемьдесят пять пунктов. Страница отдаётся целиком с сервера, без входа и без клиентского скрипта, поэтому читается даже тогда, когда приложение не загрузилось.' },
+    { icon: '🛡️', title: 'Права на программу закреплены за нами',
+      text: 'Исключительное право на программу, сервис и базу чеков сохраняется за Правообладателем, и ничто в тексте не толкуется как его передача. Пользователю дана простая неисключительная лицензия: запрещено восстанавливать исходный код и декомпилировать программу — кроме случаев, которые разрешает закон, — распространять её, обходить средства защиты и лимиты ключа, собирать данные в обход интерфейса и создавать излишнюю нагрузку на серверы. Ключ показывается один раз, а все действия под ним считаются действиями владельца. За нарушение — убытки и компенсация по статьям Гражданского кодекса о защите исключительного права.' },
+    { icon: '🧾', title: 'Редакция оферты теперь одна',
+      text: 'Номер редакции больше не задан вторым литералом в коде: журнал согласий, страница документа и галочка в кабинете компании берут его из одного источника, поэтому разойтись не могут. Принятые раньше согласия остаются действительными — редакция не менялась, а полный текст раскрывает те же условия, что и краткое пояснение рядом с галочкой.' },
+    { icon: '🏢', title: 'Реквизиты Правообладателя — из настроек',
+      text: 'Реквизиты не выдуманы: они берутся из настроек тем же механизмом, что и согласие на обработку персональных данных, поскольку юридическое лицо у двух документов одно. Пока владелец не внёс номер налогоплательщика, регистрационный номер и адрес, раздел реквизитов сообщает об этом и указывает открытый государственный реестр и почту для запроса, а вверху страницы висит заметное предупреждение. Как только поля заполнены, реквизиты подставляются в документ и предупреждение исчезает.' },
+    { icon: '⚖️', title: 'Предел ответственности и порядок споров',
+      text: 'Ответственность ограничена совокупно: для тех, кто пользуется сервисом безвозмездно, — десятью тысячами рублей, для компаний и предпринимателей — десятью процентами стоимости услуг за расчётный период. Косвенные убытки и упущенная выгода исключены, ответственность наступает только при наличии вины, а оговорка сохраняет всё, что законом ограничить нельзя. Споры идут через обязательную претензию с тридцатью календарными днями на ответ, затем в арбитражный суд для компаний и предпринимателей и в суд по месту нахождения Правообладателя для физических лиц.' },
+    { icon: '🔗', title: 'Ссылки там, где условия принимаются',
+      text: 'Ссылки на документ стоят в форме сдачи чека — кратко и полный текст, в галочке регистрации кабинета компании, на экране согласия в MAX, в подвалах сайта и кабинета, в приветствии бота (там подставляется полный адрес из настроек, потому что в мессенджере относительный адрес не откроется), в инструкции пользователя и в документации. Рядом со страницей отдаётся текст для печати и архива.' },
+  ],
+  '1.70.46': [
+    { icon: '🧹', title: 'Вычищен мёртвый код',
+      text: 'Аудит нашёл двенадцать объектов, которые никто не вызывал: восемь вспомогательных функций в сервисах, событие потока, которое никто не выставлял и никто не ждал, регулярное выражение, оставшееся без хозяина, и два имени в импорте. Удалена 63 строка. Поведение не изменилось: на эти места не ссылался ни один маршрут, тест или сценарий развертывания.' },
+    { icon: '🎨', title: 'Линия сканирования снова фирменная',
+      text: 'В подсветке линии сканирования оставался цвет из старой палитры, от которой проект отказался: на светлом фоне он давал 1.81:1. Линия переведена на корпоративный оранжевый — тот же, что у уголков рамки видоискателя, — и получила тёмный ореол: теперь она читается и на ярком кадре с камеры, где прежде не дотягивала до порога для графики.' },
+    { icon: '🔍', title: 'Текст проверен построчно',
+      text: 'Проверено всё, что видит человек: кнопки, подсказки, письма, записи «Что нового», страницы кабинета и мини-приложения. Сканер извлекал только пользовательские строки, а не код. Дефектов пунктуации не найдено: срабатывания дали имена файлов, списки классов и склейки строк, где кавычка закрывается в соседней части.' },
+    { icon: '📏', title: 'Читаемость подтверждена измерением',
+      text: 'Кегль не мельче принятого порога — десять пикселей в интерфейсе и двенадцать с половиной в кабинете: нарушений ноль. Контраст текста не ниже 4.5:1 — нарушений ноль. Разметка трёх страниц проходит валидатор без замечаний, стили — без предупреждений, включая встроенные стили мини-приложения.' },
+    { icon: '🧩', title: 'Стили кабинета сверены с разметкой',
+      text: 'Проверено соответствие классов кабинета доступа компаний: мёртвых правил нет, классов без стиля нет. Отдельно зафиксирована зависимость порядка в правилах поля ввода — сокращение шрифта сбрасывает межстрочный интервал, поэтому правило поля комментария обязано стоять после общей группы.' },
+    { icon: '🗑️', title: 'Убраны остатки проверочного стенда',
+      text: 'Удалены файлы отдельной базы нагрузочного стенда, включая журнал предзаписи на 2,2 мегабайта. Рабочая база и база предпросмотра не тронуты: стенд создаёт свою базу заново при следующем прогоне.' },
+  ],
+  '1.70.45': [
+    { icon: '🔐', title: 'Раздел «API для бизнеса» закрыт от посторонних',
+      text: 'По решению владельца раздел убран с главной страницы: ни блока, ни ссылки, ни схем. Теперь его видят только компании и ИП, подтвердившие статус через корпоративную почту. Схемы вынесены из публичной папки за гейт — прежний прямой адрес больше не работает, а содержимое отдаётся только после подтверждения.' },
+    { icon: '🏢', title: 'Кабинет компании: регистрация, подтверждение, заявка',
+      text: 'Отдельная страница со своими экранами: регистрация с корпоративной почтой и согласием на обработку данных, подтверждение по ссылке из письма (действует 24 часа и один раз), после подтверждения открываются страницы «Документация API», «Тарифы и состав» и «Обсудить подключение». В кабинете видны результаты проверок, статус заявки, ключ и расход лимитов.' },
+    { icon: '✅', title: 'Проверка статуса: почта и карточка ЕГРЮЛ/ЕГРИП',
+      text: 'Сервис проверяет формат почты и домен (бесплатные почтовые домены не принимаются — такой ящик не доказывает, что заявку подал представитель организации), контрольную сумму ИНН и тип (10 цифр — ООО, 12 — ИП), запрашивает карточку реестра: организация существует, статус действующий, наименование совпадает с указанным. Дополнительно проверяются дубликаты и оценивается риск. Решение выносится только по фактически выполненным проверкам: если проверок нет, автоматического подтверждения не будет — вопрос уходит администратору.' },
+    { icon: '⚙️', title: 'Модерация с тремя режимами автоматизации',
+      text: 'Новый раздел администратора «API для бизнеса: модерация»: очередь заявок, карточки компаний с результатами всех проверок и журналом, одобрение с выдачей ключа в один клик, отказ с причиной (уходит в письме), блокировка и восстановление доступа, повторная проверка и повтор письма. Режим выбирает администратор: полная автоматизация, частичная (по умолчанию — проверки выполняет сервис, одобряет человек) или без автоматизации. Каждая поверхность раздела помечена «Это не видит никто».' },
+    { icon: '🔑', title: 'Ключ показывается один раз',
+      text: 'Ключ выдаёт прежний механизм платного API: в базе хранится только необратимый хэш, поэтому восстановить показанный ключ невозможно. В письмах полный ключ не отправляется — только ссылка на кабинет, потому что письмо может быть переслано. Отзыв ключа мгновенно прекращает доступ к API.' },
+    { icon: '✉️', title: 'Почта сервиса — chek@ymaster.ru',
+      text: 'Адрес chek@ymaster.ru теперь во всех письмах, формах, документах и настройках вместо прежнего служебного ящика.' },
+    { icon: '📊', title: 'Остаток лимита виден в каждом ответе API',
+      text: 'Платный API теперь сообщает остаток лимита в заголовках каждого ответа: сколько запросов осталось в текущем часе и в месячной квоте, когда освободится место и сколько секунд ждать после отказа. Интеграция замедляется заранее, а не угадывает паузу после ошибки — так устроены крупные площадки, и именно этого ждут разработчики, которые подключаются за деньги. Описание заголовков добавлено в документ и на закрытую страницу документации в кабинете.' },
+    { icon: '🛡️', title: 'Смена пароля закрывает прежние сессии',
+      text: 'Токен кабинета компании живёт 30 дней, поэтому раньше украденный токен переживал сброс пароля, а разблокировка кабинета оживляла прежние сессии. Теперь у компании есть номер эпохи сессий: смена пароля и блокировка увеличивают его, и все выданные до этого токены перестают работать сразу. Добавлены предел числа заявок в очереди модерации, срок хранения журнала контура 365 дней с чисткой штатным служебным маршрутом и отметка о серии неудачных входов — администратор видит попытку входа в чужой кабинет.' },
+    { icon: '📉', title: 'Динамика по дням, неделям и месяцам',
+      text: 'В платном API появился метод динамики: ряд по дням, неделям или месяцам с числом чеков, суммой и средним чеком, индексом к базовому периоду и сравнением с прошлым периодом той же длины. Это ответ на то, чего ждёт бизнес: снимок за период говорит «сколько», а динамика — «растёт или падает», «есть ли сезонность» и «как изменилось к прошлому месяцу». Ряд непрерывный: период без чеков показан нулём, а не пропуском. Есть фильтры по региону и отрасли. Как и остальные методы, отдаются только агрегаты — ни чеков, ни позиций, ни продавцов, ни покупателей.' },
+    { icon: '📈', title: 'Расход лимитов и очередь — наглядно',
+      text: 'В кабинете компании расход лимитов показан полосами: час и месяц, с уровнем «норма», «остаток мал», «почти исчерпано», подсказкой что делать и точными числами рядом. В разделе модерации добавлено распределение компаний по статусам — сразу видно, где застряли заявки: ждут подтверждения почты, на проверках, подтверждены, отклонены или закрыты. Полосы доступны вспомогательным технологиям: у них текстовое описание с числами, а цвет задан классами из таблицы стилей.' },
+  ],
+  '1.70.44': [
+    { icon: '📘', title: 'Документ API для тех, кто подключается за деньги',
+      text: 'Появились раздел на главной «API для бизнеса» и полный технический документ: шесть методов с примерами запросов и ответов, коды ошибок, правила фильтров, лимиты, раздел для администратора сервиса и планы развития. Описано только то, что работает сегодня: документ сверен с кодом, а соответствие состава методов закреплено автотестом — добавили метод в код, тест потребует описать его в документе.' },
+    { icon: '🧮', title: 'Тарифы показаны лимитами, а не ценником',
+      text: 'Тариф — это два числа: сколько запросов разрешено за час и сколько за месяц. «Старт», «Бизнес» и «Аналитика» отличаются только ими, состав методов одинаков на любом тарифе. Стоимость не публикуем: она зависит от лимитов и срока подписки и согласуется при подключении. Внутренние расчётные цифры в клиентский документ не попали — это тоже закреплено тестом.' },
+    { icon: '🖼', title: 'Три схемы: доступ, путь запроса и граница данных',
+      text: 'Схемы нарисованы в том же стиле, что и диаграммы в документации проекта: тёмный фон, фирменная полоса сверху, подпись разработчика. Первая показывает доступ и ключ, вторая — путь запроса с настоящим порядком проверок и дословными текстами отказов, третья — что сервис отдаёт и чего не отдаёт никогда.' },
+    { icon: '🛡', title: 'Данные обезличены — и это написано прямо',
+      text: 'В ответах только счётчики, суммы, средние и топы. Сырые чеки, позиции, фискальные реквизиты, участники и их контакты не отдаются ни на каком тарифе, а каждый ответ помечен признаком агрегата. Журнал вызовов хранит путь метода без параметров и чистится через 90 дней. Сервер и база не менялись: выпуск добавляет документацию, раздел на главной и три схемы.' },
+  ],
+  '1.70.43': [
+    { icon: '🧾', title: 'Чек прилетает в свою фазу — и это видно',
+      text: 'После каждого сканирования значок чека летит туда, куда чек попал: в оранжевый «принят», в синий «на модерации» или в красный «не принят». Сама фаза вспыхивает, а в списке сессии появляется строка чека. Так сразу понятно, что с чеком произошло, не вчитываясь в уведомление: принят он, ждёт подтверждения официальным источником или отклонён как дубликат.' },
+    { icon: '🎯', title: 'Прилёт виден и во время сканирования камерой',
+      text: 'Раньше при сканировании камерой значок рисовался под окном камеры и летел к счётчикам формы, которых человек в этот момент не видел: взгляд был в камере. Теперь окно камеры показывает те же три фазы своими цветами, и чек прилетает прямо в них — внутри окна. В мини-приложении MAX то же самое: когда сканер хоста недоступен и работает своя камера, чек прилетает в фазу в строке счётчиков камеры, а не летит из угла экрана.' },
+    { icon: '🎨', title: 'Три фазы — три фирменных цвета везде',
+      text: 'Оранжевый корпоративный — чек принят после проверки источником, синий — на модерации, терракота — не принят (дубликат или отказ). Те же цвета у плиток счётчиков, у строк списка сессии, у летящего значка и теперь у строки счётчиков в окне камеры. Один смысл — один цвет, на сайте и в MAX.' },
+    { icon: '♿', title: 'Настройка «меньше движения» уважается',
+      text: 'Если в системе включён режим без анимаций, полёт не рисуется: фаза просто вспыхивает, а счётчики и список обновляются как обычно. Смысл не теряется — куда попал чек, видно и без движения. Поведение закреплено автотестами: разметка окна камеры, цвета фаз и отключение полёта при системной настройке.' },
+  ],
+  '1.70.42': [
+    { icon: '📷', title: 'Одно сканирование вместо двух режимов',
+      text: 'Раньше рядом стояли две кнопки: «Сканировать QR чека» и «Сканировать пачкой». Это два режима одного действия, и вели они себя по-разному: одиночный скан закрывал камеру и не показывал счётчики, а поточный — показывал. Теперь кнопка одна. Она открывает непрерывный поток сдачи: обычный одиночный чек — это та же сессия, в которой один чек. То же самое на сайте: вместо «Сканировать камерой» и «Сканировать пачкой» осталась одна кнопка «Сканировать чек».' },
+    { icon: '🔁', title: 'Камера не закрывается после чека',
+      text: 'После каждого чека камера остаётся включённой, а в MAX сканер открывается снова сам — чеки сдаются один за другим без лишних нажатий. Завершает сдачу кнопка «Готово» или отмена сканера: после этого виден итог сессии — сколько принято, сколько на модерации, сколько не принято, начисленные баллы и время сдачи. Рубеж в 100 чеков сохранён: на нём открывается окно «Вы отсканировали 100 чеков — продолжаем или закончим?».' },
+    { icon: '🧮', title: 'Счётчики появляются с первого чека',
+      text: 'Сессия начинается с первого чека при любом способе ввода: сканер, своя камера, фото, вставка строки и ручной ввод считаются вместе. Каждый чек сразу проверяется на дубликат по ФН+ФД+ФП: уже сданный идёт в красный счётчик и в базу не попадает, новый — в синий «на модерации», а как только официальный источник подтверждает чек, счётчик становится оранжевым и балл начисляется. Суточный лимит виден заранее: «Сегодня сдано N из 100 — осталось M».' },
+    { icon: '🛡', title: 'Согласие осталось рубильником отправки — и тупика больше нет',
+      text: 'Без отметки согласия с офертой чек на сервер не уходит: это требование закона и правило сервиса. Раньше в таком случае камера просто не открывалась, и человек не понимал, что произошло. Теперь чек не теряется: отсканированная строка QR появляется в поле с подсказкой «Осталось отметить оферту и отправить». Сервер не менялся — те же проверка дубликата, тексты отказов и начисление баллов, поэтому ничего уже сданного выпуск не затрагивает.' },
+  ],
+  '1.70.41': [
+    { icon: '🔐', title: 'Регистрация и вход больше не ломаются, если вы уже сдавали чеки без регистрации',
+      text: 'Найдено и устранено собственными тестами. Обещание «сдал чеки без регистрации → зарегистрировался → всё на месте» обрывалось: при присоединении гостевой истории к аккаунту переносились только чеки и баллы, а строка гостя удалялась. Но на неё ссылаются ещё десять таблиц — согласия на обработку данных, одноразовые токены, отпечатки устройств, журнал IP, сигналы антифрода, приглашения, достижения и заявки на вывод. Если донор успевал получить хотя бы один сигнал антифрода (например, пять одинаковых сумм подряд) или достижение, регистрация, вход по ссылке и сдача чека из кабинета отвечали ошибкой сервера. Теперь переносится вся история целиком: сигналы антифрода и отпечатки устройств сохраняются, а не стираются — обнулить репутацию простой регистрацией больше нельзя. Конфликты уникальности разбираются явно: уже полученное аккаунтом достижение не дублируется, а своя реферальная привязка не затирается гостевой. Само присоединение выполняется в точке сохранения: даже непредвиденный сбой откатывает только его и больше не мешает зарегистрироваться.' },
+    { icon: '🧾', title: 'Чек не теряется, если зарегистрироваться, пока он ещё проверяется',
+      text: 'Приём отвечает «Чек принят — проверяем» сразу, а сама проверка у официального источника идёт секунды и выполняется в фоне. Если в это окно донор регистрировался или входил, строка гостя исчезала, и фоновая проверка не находила владельца: чек пропадал, хотя донору уже пообещали приём, а счётчик навсегда оставался синим. Теперь аккаунт наследует гостевой идентификатор посетителя, фоновая проверка переспрашивает актуального владельца и повторяет приём один раз — чек ложится в кабинет донора. Заодно устранено расщепление истории: последующие сдачи с того же браузера попадают в аккаунт, а не плодят нового пустого гостя.' },
+    { icon: '⚖️', title: 'Баллы при сдаче пачкой начисляются полностью, без потерь',
+      text: 'Каждый чек пачки проверяется своим фоновым потоком. Начисление баллов выполнялось привычным «прочитал — прибавил — записал», и два потока, прочитавшие одно и то же значение, теряли одно начисление: замер живого прогона показал 9 баллов на счёте при 10 принятых чеках. Баллы — расчётная единица вывода средств, поэтому терять их недопустимо. Начисление переведено на атомарное прибавление прямо в базе, а значение в счёте участника синхронизируется сразу, поэтому ответы «баллов на счёте» остаются точными. Журнал начислений по-прежнему совпадает со счётом.' },
+    { icon: '🧪', title: 'Выпуск проверен готовым набором инструментов тестировщика',
+      text: 'Прогнаны все существующие в проекте средства проверки: полный набор автотестов в два потока, покрытие кода, линтеры и проверка безопасности, а также живой сквозной прогон поточной сдачи на реальном сервере — порог IP для анонимного донора, пачка из 100 чеков в кабинете, опрос статусов одним запросом, цвета счётчиков после проверки, дубликат, отказ по суточному лимиту, мини-приложение MAX и защита ввода (SQL-инъекция, XSS, нулевые байты, переводы строк, мусорные тела). Отдельно замерена гонка: залп из 130 отправок при суточном потолке 100. Три найденных дефекта устранены и закрыты регрессионными тестами, чтобы не вернуться.' },
+  ],
+  '1.70.40': [
+    { icon: '📦', title: 'Сдача чеков пачкой: до 100 за одну сессию, на рубеже спрашиваем «продолжаем или закончим?»',
+      text: 'По вашему требованию сканирование стало поточным. В мини-приложении MAX появилась кнопка «Сканировать пачкой»: после каждого чека камера не закрывается, а сдача идёт один за другим, пока вы сами не нажмёте «Готово». Как только набрано 100 чеков, открывается окно «Вы отсканировали 100 чеков — продолжаем или закончим?»: можно продолжить (рубеж сдвигается ещё на 100) или закончить и посмотреть итог сессии. Тот же механизм встроен в форму сдачи чека на сайте (кнопка «Сканировать пачкой» с непрерывной камерой и счётчиками прямо в окне камеры) и в раздел «Сканирование» для сотрудников и бухгалтеров: там сессия считается по всем способам приёма — камера, фото, PDF и вставка текста. Рубеж 100 совпадает с суточным лимитом сдачи, поэтому честная пачка никогда не упирается в отказ.' },
+    { icon: '🧾', title: 'Каждый чек проверяется сразу: дубликат не принимается, новый — принимается, и это видно',
+      text: 'Проверка идёт в момент сканирования, а не «потом где-то». Если чек с такими же реквизитами (ФН, ФД, ФП) уже есть в базе, он не принимается повторно: появляется уведомление «Такой чек уже есть в базе» (для донора Чек-Пула — «Этот чек уже в пуле — спасибо, что проверили!»), строка в списке сессии окрашивается красным, а счётчик «не принято» увеличивается. Если чека в базе нет, он принимается: уведомление «Чек принят — проверяем», звуковой сигнал, синий счётчик «на модерации» и анимация — значок чека летит от кнопки сканирования в счётчик, а сам счётчик вспыхивает. Повтор одного и того же чека внутри сессии отсекается ещё до запроса к серверу: второй раз он не уйдёт и не будет принят. Анимация уважает системную настройку «меньше движения» — в этом случае счётчики обновляются без полёта.' },
+    { icon: '🎨', title: 'Три счётчика фирменными цветами: оранжевый — принят, синий — на модерации, красный — не принят',
+      text: 'Счётчики отвечают ровно на те вопросы, которые вы поставили. Синий — сколько чеков добавлено и сейчас на модерации (у донора Чек-Пула — ручная проверка, у сотрудника — проверка официальным источником). Красный — сколько не принято: дубликаты и отказы проверки. Оранжевый корпоративный — сколько прошло проверку и принято окончательно, с начисленным баллом. Статусы не застывают: приём асинхронный, поэтому панель сама уточняет их опросом (каждые 2,5 секунды в MAX и на сайте, до 40 попыток), а в кабинете сотрудника — ещё и по живому каналу: как только проверка завершается, синий счётчик становится оранжевым или красным без перезагрузки страницы. Рядом показаны прогресс сессии «N / 100», сколько сдано сегодня и сколько осталось из суточного лимита, последние восемь чеков с суммой и итог сессии: принято, на модерации, не принято, начисленные баллы и время сдачи.' },
+    { icon: '⚖️', title: 'Суточный лимит сдачи поднят до 100 чеков, а защита от спама согласована с пачкой',
+      text: 'Лимит сдачи чеков в сутки для участника Чек-Пула поднят с 50 до 100 — как вы и просили, одной константой, без новой настройки в админке: он виден в форме («Сегодня сдано N из 100 — осталось M») и в кабинете участника. Вместе с лимитом согласованы два порога защиты, иначе честная пачка попадала бы под собственные фильтры. Порог «поток чеков» в антифроде равнялся 20 чекам в час и помечал риском каждую пачку из 100 чеков; теперь он равен суточному лимиту, то есть сигнал означает «человек сдал всю суточную норму за один час» — это повод взглянуть модератору, а не блокировать: вес сигнала 30 при пороге изоляции 71, поэтому один он никого не изолирует. Ограничение по числу запросов с одного адреса разделено: для анонимных посетителей оно прежнее — 20 в час (это единственный тормоз против подмены метки посетителя), а для вошедшего участника с действительным токеном — 160, потому что кроме принятых чеков счётчик расходуют и честные повторы.' },
+    { icon: '🛠', title: 'Исправлены два дефекта приёма: тихое падение на дубликате чужой организации и отсутствие объяснения',
+      text: 'Первый дефект нашёлся при разборе потока сдачи. Когда сотрудник сканирует чек, который уже учтён в другой организации, сервер правильно не раскрывает чужие данные и отвечает без чека — а клиентский код добавления в «последние сканы» обращался к полям этого пустого ответа и падал с ошибкой обращения к несуществующему свойству. Ошибка тонула внутри асинхронного вызова: человек видел тишину и не понимал, сохранился чек или нет. Теперь пустой ответ просто не попадает в список последних сканов. Второй дефект — обратная связь: при дубликате звуковой сигнал не подавался, и никакого уведомления отправителю не было, поэтому повторный скан выглядел как «ничего не произошло». Теперь дубликат всегда даёт внятное уведомление с текстом сервера и красный счётчик, а признак дубликата честно сохраняется в списке последних сканов.' },
+  ],
+  '1.70.39': [
+    { icon: '📷', title: 'Сканер MAX снова сдаёт чек: камера находила код, но данные до сервера не доходили',
+      text: 'Владелец сообщил: в мини-приложении MAX при нажатии «Сканировать QR-чек» камера код находит, но чек не сдаётся и появляется сообщение «Не похоже на чек: В QR-коде нет обязательных реквизитов чека (fn, i/фд, fp/фпд)» — тогда как на сайте сканирование работает. Причина оказалась в форме ответа: нативный сканер MAX (openCodeReader) возвращает не строку, а объект { value: «текст QR» } — так описано в документации MAX SDK и так это объявлено в типах сторонних обвязок моста. Программа оборачивала ответ в String(…), поэтому на сервер вместо чека уходила строка «[object Object]»: 15 символов, проверку минимальной длины они проходили, парсер честно отвечал, что реквизитов ФН/ФД/ФП нет, и человек винил камеру или чек. Исправлено в трёх местах сразу: результат нативного сканера раскрывается в текст (принимаются формы value, result, data, text, code, qr, в том числе вложенный ответ моста), пустой результат больше не отправляется на сервер — вместо этого понятный совет повторить или сдать чек фотографией, а в функцию отправки добавлена нормализация, так что и своя камера (jsQR), и поле ручного ввода проходят через ту же проверку. Сервер тоже научился распознавать этот случай: если вместо текста пришёл объект, отказ теперь говорит «Вместо текста QR-кода передан объект — обновите страницу мини-приложения и повторите сканирование», то есть указывает на версию клиента, а не на якобы испорченный чек. На сайте ничего не менялось: приём чека по QR и по фотографии работает как прежде, что проверено отдельными тестами.' },
+    { icon: '🧪', title: 'Устранены плавающие падения в автоматических проверках',
+      text: 'При повторных прогонах два свойства из набора проверок (hypothesis) изредка падали сами, без изменения программы: один тест генерировал случайный текст длиной около 4000 символов и упирался в предел энтропии на пример, второй отбирал значения через assume и отбрасывал большую часть сгенерированного — в обоих случаях библиотека отвечала отказом FailedHealthCheck. Причины устранены, а не подавлены: длина теперь набирается постоянным хвостом при короткой случайной добавке, а значения генерируются сразу в допустимых пределах. Восемь прогонов подряд прошли без единого падения — проверки снова можно доверять, а их ложные срабатывания не будут маскировать настоящие дефекты.' },
+  ],
+  '1.70.38': [
+    { icon: '🧪', title: 'Приложение проверено целиком: профессиональный аудит, фаззинг API и нагрузочные тесты',
+      text: 'По вашему требованию проведена полная проверка — не просмотр кода глазами, а прогон готовыми инструментами, которыми пользуются профессиональные тестировщики. Статический анализ ruff (0 замечаний в воротах вместо 2 676 без конфигурации), поиск уязвимостей bandit (высоких и средних не осталось: было 1 и 11), фаззинг API по его же документации schemathesis (36 723 автоматически построенных запроса), собственные полезные нагрузки — SQL-инъекции, XSS-полиглоты, подделка заголовков через CRLF, выход за пределы каталога, SSRF, команды оболочки, шаблоны, Unicode и заведомо битый JSON (12 690 запросов по 177 операциям), свойства чистых функций на hypothesis (17 правил, каждое проверено на 60 автоматически подобранных значениях, включая пустую строку, nul, суррогаты и 4001 символ) и нагрузка locust: 20 пользователей, 60 секунд, 1 880 запросов, ни одной ошибки, 31,5 запроса в секунду, 95-й процентиль 31 мс, 99-й — 170 мс. Плюс отдельный ступенчатый прогон для поиска предела: нагрузка растёт шагами по 30 % от 40 % базового профиля и останавливается, когда доля ошибок превышает 2 % или время отклика уходит за 2 с. Найдено 18 дефектов, все исправлены и закреплены тестами. Инструменты остались в репозитории (tests/load) с инструкцией — проверку можно повторить в любой момент, например перед крупным обновлением.' },
+    { icon: '💥', title: 'Сервер больше не отвечает «внутренняя ошибка» на большой номер страницы и на пустой файл',
+      text: 'Два падения нашли инструменты, человек бы их не заметил. Первое: если попросить страницу с огромным номером (например page=4981997847802869367351279616), вычисление смещения переполняло 64-битное целое SQLite и сервер отвечал 500 «внутренняя ошибка». Так падали главный список чеков, список чеков Чек-Пула у администратора и список сигналов антифрода — то есть сбой получал и обычный пользователь, случайно вбивший лишний разряд. Введён потолок номера страницы (миллион, настраивается через .env) во всех шести местах пагинации: большой номер теперь даёт понятные 422 с текстом «должно быть меньше или равно 1000000». Второе: загрузка фотографии чека файлом нулевой длины роняла запрос с тем же 500 — декодер изображений OpenCV не принимает пустой буфер, а маршрут ловил только свои ошибки разбора. Пустой файл и любой битый JPEG/PNG теперь дают 422 и человеческий текст «Файл изображения пустой» или «Не удалось прочитать изображение». Исправление закрывает оба входа: и сайт, и мини-приложение MAX.' },
+    { icon: '🪟', title: 'Окно «Что нового» снова открывается — и вместе с ним заработала синхронизация отложенных чеков',
+      text: 'Самая неприятная находка аудита, и она не про сервер. Записи журнала «что нового» с версии 1.70.32 пишутся объектами { значок, заголовок, текст }, а функция отрисовки разбирала их как массивы из двух элементов. На объекте такое разбирательство бросает исключение, поэтому окно не открывалось вовсе — и, что важнее, обрывало всю последовательность запуска после входа: не выполнялся переход в раздел, не обновлялись счётчики, не привязывалась кнопка установки приложения, не запускалась автопроверка обновлений и не сбрасывалась офлайн-очередь, то есть чеки, отсканированные без связи, не уходили на сервер до следующего входа. Проверка соответствия данных и кода нашла расхождение, отрисовка теперь понимает обе формы записи, а настоящий код прогнан на всех 147 версиях журнала через node — ни одного исключения и ни одного undefined в разметке.' },
+    { icon: '📄', title: 'Документация API приведена в соответствие с фактом: 110 расхождений устранены',
+      text: 'Схема OpenAPI, по которой работают Swagger, генераторы клиентов и фаззеры, обещала не то, что делает программа. На любую ошибку ввода документация обещала {"detail": [{loc, msg, type}]} — список объектов, а приложение возвращает {"detail": "текст"} — строку, которую показывает интерфейс: сгенерированный клиент спотыкался бы на каждой ошибке. Коды 401 (не вошли), 403 (недостаточно прав) и 429 (слишком часто) не были объявлены вовсе, хотя приложение их возвращает на 168 и 227 операциях. Выгрузки CSV обещали application/json, а отдают text/csv. Добавлена постобработка схемы: компонент ApiError с полем detail-строка, реальные коды ответов на защищённых операциях и правильный тип содержимого у четырёх маршрутов выгрузки. Поведение программы не менялось — только её описание. Заодно устранён дубль идентификатора операции у /health (маршрут был объявлен на два метода сразу и давал две операции с одним именем — на такой схеме генераторы клиентов ломаются), при этом HEAD-запрос к /health по-прежнему работает: его добавляет сам фреймворк.' },
+    { icon: '🛡', title: 'Закрыты три способа вывести программу из строя: XML-бомба, потеря журнала и рост памяти',
+      text: 'Первое: разбор ответа ФНС раскрывал XML-сущности, и документ весом 493 байта разворачивался в 1,6 млн символов за 0,03 с и 41 МБ памяти — пара уровней вложенности убивала единственный воркер, то есть всё приложение; через внешние сущности читались и локальные файлы сервера. Разбор переведён на defusedxml — готовую библиотеку, которую рекомендует документация Python: бомба и чтение файлов отвергаются за 0,003 с, а безобидный DOCTYPE по-прежнему работает, чтобы не сломать боевой обмен. Второе: журнал аудита терял 38 % записей под нагрузкой (из 640 параллельных записей сохранялось 396) — таблица с первичным ключом без автоинкремента заставляла считать номер вручную, и два потока успевали прочитать одно и то же значение. Номер теперь выдаётся под замком процесса, а столкновение повторяется до восьми раз: 640 из 640 и 960 из 960 записей сохранены, номера уникальны. Именно в момент нагрузки журнал нужнее всего. Третье: защита от подбора пароля хранила пары «IP + логин» вечно, и перебор с подставными адресами превращал саму защиту в медленный отказ обслуживания по памяти — добавлена периодическая чистка протухших ключей и потолок в 5000 записей; блокировка после пяти неудач работает как прежде.' },
+    { icon: '⚙️', title: 'Опечатка в .env больше не мешает запуску, а «не настроено» не выглядит аварией',
+      text: 'Все числовые настройки читались прямым преобразованием в целое, поэтому значение вроде MAX_UPLOAD_MB=12 Мб или PDF_MAX_MB=0 роняло приложение ещё на импорте конфигурации: служба systemd падала, владелец видел 502 без единой подсказки в логе. Теперь неразборчивое или слишком маленькое значение пишет в журнал понятное предупреждение на русском и берёт рабочий дефолт — программа запускается. Пороги ограничения частоты (вход 25, регистрация 40, интеграция с 1С 120, остальной API 240 запросов в минуту) вынесены в .env: значения по умолчанию равны прежним зашитым, боевое поведение то же, но пороги можно поднять для нагрузочной проверки или опустить, если за одним IP прокси оказалось слишком много людей. Отдельно исправлена семантика ответов: «Мини-приложение ещё не настроено» и «Отправка писем пока не настроена» отвечали 503 Service Unavailable, хотя повторить позже не помогло бы — состояние не изменится, пока вы не впишете токен бота MAX или SMTP. Любой мониторинг и проверка «нет серверных ошибок» считали это аварией; теперь это 409 — тот же код, которым программа уже отвечает на «невозможно из-за состояния сервера». И последнее: число итераций хэша пароля бралось из самой записи, поэтому битая строка в базе заставляла процесс считать хэш часами — добавлен потолок.' },
+  ],
+  '1.70.37': [
+    { icon: '🛡', title: 'Участника из MAX теперь видно: значок MAX перед именем в списке участников, в кабинете и в полосе режима просмотра',
+      text: 'Раньше в карточке участника не было никакого признака того, откуда человек пришёл: идентификатор MAX и идентификатор Telegram-бота хранились в одном поле, и в списке «Чек-Пул: участники» оба выглядели одинаково. Добавлено отдельное поле канала регистрации — max, tg, web или пусто для гостя, — и на его основе рисуется значок MAX: оранжевая плашка с тёмным текстом (6.66:1, тот же приём, что у кнопок с версии 1.70.34) ставится перед именем в списке участников, в кабинете участника и в жёлтой полосе режима просмотра, когда администратор смотрит кабинет «глазами участника». Значок самодостаточен: у него собственный фон, поэтому контраст не зависит от подложки строки таблицы. Рядом в списке появилось состояние согласия: если участник из MAX согласия не давал, в строке стоит пометка «согласие 152-ФЗ не дано», а если давал — в полосе просмотра видна дата согласия. Поиск в списке участников теперь работает и по имени, а не только по e-mail: у участника из MAX e-mail может не быть вовсе. Существующие базы обновляются безопасно: колонки добавляются при запуске, прежние участники получают пустой канал и пустое согласие — задним числом ничего не приписывается.' },
+    { icon: '⚖️', title: 'Согласие на обработку данных по 152-ФЗ: карточка участника заполняется из MAX только после того, как человек согласился',
+      text: 'Мини-приложение технически может прочитать профиль MAX — имя, фамилию, ник, язык и ссылку на фото. По статье 9 Федерального закона 152-ФЗ обрабатывать эти данные можно только с согласия субъекта, данного свободно, своей волей и в своём интересе, поэтому порядок изменён: при первом входе приложение показывает экран согласия, и до нажатия «Согласен» в карточке не сохраняется ничего, кроме идентификатора MAX — он нужен, чтобы начислять баллы (пункт 5 части 1 статьи 6: исполнение условий сервиса). Текст согласия версионируется и содержит всё, что требует часть 4 статьи 9: оператора с реквизитами, цели обработки, перечень данных, действия с данными и способ обработки (только территория России, трансграничной передачи нет), срок действия, порядок отзыва и права субъекта, включая обжалование в Роскомнадзор или суд. Отдельно сказано, что остаётся вне этого согласия: технические данные обрабатываются в целях безопасности, а реквизиты чеков персональными данными участника не являются. Кнопка «Не сейчас» пропускает шаг без последствий: чеки и баллы работают как обычно, профиль остаётся пустым, а дать согласие можно позже во вкладке «Профиль». Согласие принимается только вместе с initData, подписанной платформой, и сервер сверяет идентификатор: согласиться за другого человека нельзя. Если редакция текста изменится, приложение предложит согласие заново, а старая пометка станет видимой администратору как устаревшая. Отзыв согласия — во вкладке «Профиль», в два нажатия, чтобы не стереть профиль случайно: после отзыва имя, фамилия, ник, фото и язык удаляются из карточки (статьи 14 и 21), а баллы и история чеков сохраняются обезличенными — обязательства перед участником не теряются. Фотографию сервер не скачивает и не хранит: в карточке остаётся только ссылка, и принята она будет лишь по https. Реквизиты оператора, которые по пункту 2 части 4 статьи 9 указываются в согласии (ИНН, ОГРН, юридический адрес, почта по вопросам персональных данных), заполняются администратором в Настройках, карточка «Согласие 152-ФЗ»: программа не подставляет юридические факты сама, а пока они не заполнены, в тексте вместо адреса честно указан источник — ЕГРЮЛ и почта для запроса. Там же кнопка «Показать текст согласия» — ровно тот, что видит участник.' },
+    { icon: '👋', title: 'Первый визит на сайт: подсказка с двумя способами сделать всё в MAX — регистрация и сдача чека камерой или фото',
+      text: 'Новичок на странице входа видел форму логина и пароль, хотя самое короткое его действие лежит в MAX. Добавлена подсказка «Первый раз здесь? Проще всего в MAX» с двумя кнопками: «Регистрация через MAX» — откроется мини-приложение, где регистрация происходит в один нажим и без письма с подтверждением, и «Сдать чек в MAX» — то же приложение, где чек принимается нативным сканером MAX, камерой в окне или фотографией QR-кода, если сканер недоступен. Третья кнопка открывает инструкцию приложения. Подсказка устроена безопасно и ненавязчиво: это не модальное окно и не редирект — она ничего не отправляет на сервер и никуда не ведёт сама, MAX открывается только по нажатию человека, а отметка о показе хранится в localStorage браузера (не в cookie), поэтому подсказка показывается один раз и больше не мешает. Крестик скрывает её навсегда. На узком экране кнопки становятся во всю ширину — попасть пальцем легко. Инструкция дополнена разделом о согласии, метке MAX и о том, что именно видит администратор.' },
+    { icon: '🧩', title: 'Починены отступы в приложении MAX: три класса использовались в разметке, но не были объявлены в стилях',
+      text: 'Проверка соответствия стилей разметке дошла и до мини-приложения MAX. Классы .gap-8 (вертикальный отступ), .mb-6 и .text-center применялись в разметке с версии 1.69.0 — десять, одно и одно использование, — но в таблице стилей объявлены не были: отступы просто не работали, и блоки слипались. Все три объявлены, в том числе потому, что на них опирается новый экран согласия. Новых цветов не добавлено: экран согласия и плашка MAX пользуются переменными темы хоста (--tg-theme-*), как и всё приложение, поэтому текст читается и в светлой, и в тёмной теме MAX; запасные значения — корпоративные.' },
+  ],
+  '1.70.36': [
+    { icon: '🖼', title: 'Картинки «Как это работает» стали крупными и читаются с телефона, текст поднят, у третьего шага появилась своя иллюстрация',
+      text: 'Иллюстрации шагов на стартовой странице раньше уменьшались именно там, где нужнее всего: 84 пикселя на десктопе, 62 на планшете и 54 на телефоне — на телефоне рисунок было не разглядеть. Теперь размер задаёт clamp: минимум 96 пикселей на самом узком экране и до 156 на широком, пропорцию держит aspect-ratio 4:3, кадрирует object-fit cover. То есть на телефоне картинка стала почти вдвое больше, а на десктопе — почти вдвое крупнее прежнего. Текст поднят к верхнему краю карточки: при высокой картинке он больше не висит по центру и не уезжает вниз. У третьего шага («Получайте баллы») картинки не было вовсе: стояла заглушка, из-за которой его текст ещё и съезжал влево относительно первых двух шагов. Добавлена иллюстрация в той же стилизации, что первые две — светло-серый фон, индиговые контуры, оранжевые и зелёные акценты: телефон с карточкой баллов, монеты, подарок и кошелёк. Структура карточек, порядок шагов и сами тексты не менялись: нить и стиль сохранены.' },
+    { icon: '🛡', title: 'Вход и регистрация через MAX заработали: найдена и исправлена причина «Подпись MAX не совпала»',
+      text: 'Сообщение «Подпись MAX не совпала с сохранённым токеном бота» появлялось даже при верном токене и верном боте, и человек не мог ни войти, ни зарегистрироваться через свой аккаунт MAX. Причина найдена проверкой на initData, собранной ровно так, как её отдаёт платформа: пробелы в ней кодируются знаком плюс, а сервер раскрывал только процент-коды и оставлял плюс как есть. В поле user всегда есть пробелы, поэтому строка подписи собиралась с плюсами вместо пробелов и контрольная сумма не сходилась ни на одном стандартном initData — мини-приложение не поднимало сессию, а вход на сайт через MAX (код подтверждается в мини-приложении) не работал вовсе. Разбор приведён к эталону (пары читаются как в официальном алгоритме: раскрытие и процент-кодов, и плюса), добавлена страховка на случай initData, закодированной целиком ещё раз. Проверено четырьмя видами кодирования, включая двойное. Коды ошибок снова различимы: устаревшая сессия и нераспознанные данные больше не маскируются под «подпись не совпала». И главное — человек больше не остаётся без входа: в отказ и в ошибку мини-приложения добавлен обходной путь, вход на сайт устроен как код подтверждения, который можно отправить боту сообщением в чате, подпись для этого не нужна; в мини-приложении при ошибке сессии появилась кнопка «Открыть сайт».' },
+  ],
+  '1.70.35': [
+    { icon: '👁', title: 'Текст на сайте стало видно: найдено семнадцать мест, где надписи не читались, в том числе невидимое число «всего чеков» на дашборде',
+      text: 'Проверили не отдельные места, а каждое объявление цвета в стилях и каждый цвет, который подставляют шаблоны, — всего 180 пар «текст и подложка», контраст считали по формулам WCAG. Порог для текста 4.5:1, для крупного текста 3:1, для графики и индикаторов состояния 3:1. Нашлось семнадцать мест ниже порога. Самое заметное: графики на дашборде были размечены ещё под тёмную тему, отменённую в версии 1.25.0, а рисуются они на белой карточке. Сетка графика белым цветом прозрачностью семь процентов и кольцо пончика белым шесть процентов на белом не видны вовсе — 1.00:1, а число в центре пончика («всего чеков») было набрано цветом #e8ecf8 — 1.18:1, то есть прочесть его было нельзя. Подписи осей #6b7494 давали 4.61:1 и были вне палитры. Все цвета графиков перенесены из скрипта в таблицу стилей: теперь до них дотягивается и тема, и проверка контраста, а число в центре пончика читается с контрастом 12.6:1. Второе заметное место — подсказка «Наведите камеру на QR-код чека» над видоискателем: тёмный текст на тёмной плашке, 1.26:1. Плашка полупрозрачная и лежит то на тёмном видоискателе, то на светлом кадре с камеры, поэтому текст сделан белым — он проходит в обоих крайних случаях (20.1:1 и 5.4:1). Третье — подвал программы был залит тёмно-синим rgba(10,14,30,.4), остатком базового цвета той же тёмной темы; на светлой теме получалась серая полоса, на которой подпись «ООО «Ямастер» · ymaster.ru» давала 2.01:1. Подложка переведена на белую панель — 5.33:1. Дальше восемь мест в стилях: предупреждение «этот пользователь ещё не сменил временный пароль» было янтарным #f59e0b — 2.15:1, самый нечитаемый текст в программе; подписи «подпись» и «расшифровка подписи» в акте оказания услуг — серым #8a8a8a размером 9.5 пикселя, 3.45:1 (цвет заменён на токен, размер поднят до 10.5); чернила электронного чека #8a7a5e на кремовой бумаге — 4.11:1; плашка на главной и заголовок чека — 4.17:1 и 4.94:1; счётчик в меню настроек держался на 4.51:1 при пороге 4.5, то есть на запасе в одну сотую. И девять мест в шаблонах, куда проверка стилей не заглядывала вовсе: предупреждения из ЕГРЮЛ «Адрес признан недостоверным» (2.77:1) и «Массовый адрес» (1.67:1) — практически невидимый текст о рисках контрагента; зелёный var(--ok) как текст в пяти местах (4.25:1) — сообщение «Заявка принята», «Доступна новая версия», отметки выполненных шагов обновления; в графе связей мошенников оранжевое ребро 2.88:1 и запасной цвет 2.73:1; полоса прогресса баллов против дорожки 2.6:1; подписи в двух автономных документах печати 4.48:1. Все переведены на токены темы, худшее место теперь 4.91:1. Отдельно проверены индикаторы состояния: точки в меню профиля, показывающие роль и блокировку пользователя, были янтарной #f59e0b (2.15:1) и зелёной #22c55e (2.28:1) из палитры Tailwind — при пороге 3:1 для графики обе не проходили, заменены на фирменные --warn и --ok. Палитра графиков и графа связей тоже была палитрой Tailwind: шесть цветов из семи ниже 3:1. Теперь это значения фирменных токенов, и язык цвета один и в графиках, и в статусных чипах списка чеков.' },
+    { icon: '🟠', title: 'Галочки во всём приложении стали фирменными оранжевыми: правило существовало, но не применялось никогда',
+      text: 'В версии 1.70.32 чекбоксы в окнах переводили с браузерной синей отметки на фирменную оранжевую и даже написали проверку. Правило было таким: .modal label > input[type="radio"], .modal label > input[type="checkbox"]. Проблема в том, что элемента с классом .modal в приложении нет: окно называется .modal-slot, а его содержимое лежит прямо в нём. Правило не применялось ни разу, поэтому все 35 чекбоксов и четыре радиокнопки в программе остались с синей браузерной отметкой — в настройках, в списке правил рассылки, в карточке быстрого входа, в сопоставлении реквизитов. Проверка при этом проходила: она искала в файле строку «accent-color: var(--accent)», а не применение правила. Строка в файле была. Правило сделано общим для всех чекбоксов и радиокнопок сразу: фирменная оранжевая отметка везде, плюс width: auto, чтобы галочка не растягивалась на всю ширину поля. Увеличенные цели касания на сенсорных экранах (22 пикселя) и крупные чекбоксы в сопоставлении реквизитов остались в силе — у них выше удельный вес селектора. Проверка версии 1.70.32 усилена структурным стражем: она больше не примет правило, привязанное к классу, которого нет в разметке. Тем же поиском найдено и удалено второе мёртвое правило .modal { max-height: 94vh } — ограничение высоты окна давно живёт в .modal-slot.' },
+    { icon: '🧾', title: 'Стили проверены внешним валидатором и приведены в соответствие с разметкой: 21 замечание, десять мёртвых объявлений и одиннадцать мёртвых классов убраны',
+      text: 'Как в прошлом выпуске для разметки (html-validate), для таблицы стилей подключён внешний валидатор — stylelint 16 с конфигом .stylelintrc.json, который лежит в репозитории. В конфиг включены только правила корректности, а не вкуса: неверный hex, неизвестное свойство или единица измерения, неизвестный at-rule или функция, пустой блок, отсутствие родового шрифта в стеке, переопределение длинного свойства сокращением и дубли свойств внутри одного правила. Было 21 замечание, стало 0 — и во встроенных стилях приложения для MAX, и в брендбуке тоже 0. Дубль свойств внутри блока разрешён только как фолбэк с разными значениями: min-height: 100vh; min-height: 100dvh — это приём для браузеров без dvh, он закреплён проверкой версии 1.55.1, и «чинить» его было бы ошибкой. Сокращение overflow в body глушило стоящее выше overflow-x: hidden из версии 1.56.0 — заменено на overflow-y: вычисленное значение то же, но намерение каждого объявления видно. Правило no-duplicate-selectors в конфиг НЕ включено, и это осознанно: слияние дублей небезопасно, потому что решает положение правила относительно media-блоков. Пример из этого же файла: у .topbar в шапке задан padding, в конце файла в блоке safe-area — padding-left и padding-right с env(), а между ними media-блок ≤860px с padding: 0 12px. Перенеси safe-area наверх — и сокращение padding из media-блока перебьёт env() на телефоне, «чёлка» iPhone наедет на содержимое. Вместо слияния проверяется отсутствие противоречий: их было четырнадцать, в прошлом выпуске стало одиннадцать, теперь ноль — и скан следит ещё и за тем, чтобы media-правило не глушилось безусловным правилом ниже (так в прошлом выпуске умерли отступы тостов на телефоне). Удалены десять мёртвых объявлений и одиннадцать классов, которые не встречаются ни в разметке, ни в шаблонах, ни в серверном коде: .mapping-grid вместе с тремя своими правилами в media-блоках, .mapping-head, .mg-label, .catalog-grid, .ao-preview, .cc-actions, .manual-hero, .print-cut, .rcpt .r-sum, .rcpt-totals и .filter-bar .grow. Два соседних блока @media (max-width: 920px) у главной слиты в один: верхний целиком перекрывался нижним, из-за чего размер заголовка 1.5625rem был мёртвым, а проверка версии 1.56.1 его фиксировала. Двадцать объявлений цвета текста были заданы литералом, равным токену (#333 двенадцать раз, #333333 восемь раз, #6b6b6b, #4B0082) — палитра жила в двух местах, и правка токена не дошла бы до экрана. Переведены на токены, значения те же, поэтому вид не изменился. Обратное соответствие тоже проверено: каждый класс из таблицы стилей применяется, а каждый класс из разметки имеет правило или объявлен крючком для скрипта. Три места в скриптах использовали переменную с запасным значением, и два из них прятали необъявленный токен --line: в стилях приложения его нет вовсе, он объявлен только в брендбуке, а запасное значение молча подставляло чужой цвет. Запасные значения убраны.' },
+  ],
+  '1.70.34': [
+    { icon: '🟠', title: 'Чёрных кнопок больше нет: основная кнопка вернула корпоративный оранжевый, а белый текст на оранжевом стал читаемым',
+      text: 'Основная кнопка программы рисовалась чёрной, и это не было замыслом. Правило .btn-primary встречалось в файле стилей дважды: в начале — фирменный оранжевый градиент, ниже — графит #333333 с ховером #454545 и пометкой «v1.25.0: primary-кнопка — графитовая, текст белый». Нижнее правило побеждало по порядку каскада, поэтому все 92 применения основной кнопки (4 в разметке и 88 в шаблонах экранов) были чёрными, хотя фирменный градиент в том же файле был объявлен. Графит — остаток тёмной темы, отменённой в v1.25.0: в десятке строк ниже стоял комментарий «тёмная тема удалена», а сама кнопка осталась. Правило удалено, действует фирменный градиент #ff7a00 → #ff9a3d. Вместе с ним пришлось исправить текст: белый на фирменном оранжевом даёт 2.61:1, а на светлом стопе градиента 2.11:1 при пороге 4.5:1 — то есть чёрная кнопка была ещё и читаемее оранжевой. Текст стал тёмным #1a1a1a: 6.66:1 на оранжевом и 8.24:1 на светлом стопе. Приём не новый — для кнопки .btn-accent он уже был закреплён тестом с пометкой «был #fff (2.3:1)», просто применялся непоследовательно. Тем же тёмным текстом на оранжевом исправлены ещё пять мест, которые аудит белого текста нашёл по всему файлу: номер пункта инструкции, значок-счётчик в боковом меню, буква аватара в шапке, активный пункт переключателя «Список / Карточки» и активный пункт сегментированного переключателя — все они рисовали белое на оранжевом градиенте и все проваливали 4.5:1. Кнопка опасного действия «Выйти» была белым по терракоте --bad #d9534f — 3.96:1; тёмный текст на том же фоне дал бы 4.39:1, тоже провал, потому что сам --bad для текста кнопки слишком светлый. Фон переведён на тёмный оттенок той же терракоты, --bad-text #c22e2a, который уже существовал с прошлого выпуска: белый на нём даёт 5.65:1, насыщенность и узнаваемо опасный вид сохранены, а красный не подменён оранжевым — это семантика действия, а не оформление. Фирменная палитра не изменена: #FF7A00, #4B0082, #2E8B57, #D9534F остались собой, исправлено их применение. Отдельно проверено приложение для MAX: запасным оранжевым там был #e8721c — свой оттенок, не корпоративный, и белый текст на нём давал 3.06:1, а оранжевый как текст на карточке 3.06:1 и на фоне 2.72:1. Запасные значения приведены к фирменным (#ff7a00 и тёмный текст #1a1a1a), а для оранжевого как текста добавлен отдельный оттенок, выведенный примесью цвета текста темы — так он читается и в светлой, и в тёмной теме мессенджера. Приоритет темы хоста (--tg-theme-*) сохранён полностью: это контракт Mini App, свои цвета мы ему не навязываем. Подсказка 13 px в том же приложении давала 3.82:1 на фоне, стала 4.64:1. Трёхпозиционный переключатель AdGuard VPN не тронут: он светлый (трек — пять процентов индиго, рукоятка белая, красная или зелёная), а его цвета — требование владельца «зелёный значит включён, красный выключен».' },
+    { icon: '🧩', title: 'Форма на телефоне снова в одну колонку: найден и убран блок, глушивший мобильную вёрстку',
+      text: 'Проверка «не задан ли один и тот же селектор дважды с противоречивыми значениями» нашла настоящий дефект. Поля формы должны становиться в одну колонку на экранах уже 860 пикселей — такое правило есть в мобильном блоке. Но ниже стоял отдельный блок с комментарием «Средние экраны: 3 колонки формы ужимаем в 2», который на той же ширине задавал две колонки и побеждал по порядку. Блок был написан, когда форма имела три колонки; база давно две, поэтому он ничего не ужимал, а только отменял мобильное правило. В итоге поля формы оставались в две колонки и на телефоне 360 пикселей. Блок удалён: шире 860 пикселей — две колонки, уже — одна. Тем же сканом убраны два мёртвых дубля объявлений: отступ пустого состояния (48 пикселей, который всё равно перекрывался значением 18) и шрифтовой стек, объявленный дважды — буквально и через переменную, посимвольно одинаково; оставлен вариант через переменную. Поведение в обоих случаях не изменилось, зато исчезли места, где правило говорит одно, а браузер делает другое. Одиннадцать оставшихся таких пар — мёртвые ранние значения, которые ниже осознанно уточнены (адаптивные размеры заголовков через clamp, отступ тостов с учётом безопасной области, полноэкранная шторка окна на телефоне) — оставлены как есть и записаны в журнал, а тест теперь не даст добавить новую пару.' },
+  ],
+  '1.70.33': [
+    { icon: '📐', title: 'Вёрстка: разметка проходит валидацию без ошибок, интерактивные элементы больше не вложены друг в друга',
+      text: 'Проверка разметки валидатором html-validate 11.16.4 нашла 64 ошибки в трёх HTML-файлах проекта; сейчас их ноль. Крупнейшая группа — 38 инлайн-стилей в самой разметке (31 в основном интерфейсе и 7 в MAX-приложении): они перенесены в классы-утилиты в конце файла стилей, а сам перенос защищён проверкой, что каждый класс из разметки действительно объявлен в CSS — иначе элемент молча потерял бы оформление, и браузер об этом не сообщил бы. Вторая находка серьёзнее и касается структуры. Переключатель профиля в шапке был псевдокнопкой: div с ролью button и tabindex, внутри которого лежала настоящая кнопка «Выйти». Вложенные интерактивные элементы невалидны и недоступны — скринридер не объявит вложенное действие, а клавиатура попадает в него непредсказуемо; при этом заменить такой div на нативную кнопку было нельзя, получилась бы кнопка внутри кнопки. Теперь переключатель профиля — настоящая кнопка, а «Выйти» стоит рядом с ней в общей обёртке, и оба элемента независимы. Из кода убран обработчик клавиатуры: нативная кнопка сама превращает Enter и Space в нажатие, а прежний preventDefault вместе с этим давал бы двойное переключение меню; неактивное состояние теперь объявляется честно через disabled, поэтому элемент не выглядит кликабельным и не попадает в порядок обхода. По тому же правилу явный тип получили 290 кнопок в шаблонах, которыми рисуется почти все экраны: кнопка без типа внутри формы означает «отправить», и случайный клик по ней отправил бы форму. Кольцо фокуса оказалось невидимым: действующим был фирменный оранжевый --accent с контрастом 2.21:1 на сером фоне и 2.61:1 на белом при пороге 3.00:1 для нетекстовых элементов (WCAG 1.4.11). Правило из блока v1.21.0 перебивало раннее правило с тёмно-синим, поэтому файл выглядел корректным, а фокус терялся; теперь контур рисуется токеном --accent-text — тот же фирменный оранжевый, но тёмный, 5.30–6.26:1. Из того же правила убран border-radius: он применялся к самому сфокусированному элементу и ломал его собственный радиус, карточка в 14px становилась 6px под фокусом. Найдены и два блока тач-целей для сенсорных экранов с противоречивыми числами: пункт меню 44px против 48px, компактная кнопка 40px против 42px — побеждал нижний, а часть верхнего была мертва, и именно эти мёртвые значения закреплял тест. Блок теперь один, с действующими значениями, и тест пинит их. На узких экранах шапка ломалась из-за длинного имени: правый блок шапки был объявлен несжимаемым, поэтому разрешение сжиматься у имени не работало и длинные фамилии выдавливали заголовок; добавлена цепочка сжатия и обрезка многоточием. Поля входа и регистрации получили правильные токены автозаполнения: пароль без парного поля имени менеджеры паролей не связывают, и на телефоне автозаполнение не срабатывает. У нативной кнопки снят системный appearance — иначе iOS Safari рисует её собственной краской. В брендбуке строки таблицы обёрнуты в thead и tbody (иначе браузер вставляет tbody сам, и селекторы строк съезжают), а восемь инлайн-стилей заменены классами, ссылающимися на токены самого брендбука. Фирменная палитра не изменена: #FF7A00, #4B0082, #2E8B57, #D9534F остались собой.' },
+  ],
+  '1.70.32': [
+    { icon: '🎨', title: 'Интерфейс: нечитаемые подписи исправлены, остатки тёмной темы убраны',
+      text: 'Аудит вёрстки и дизайна нашёл системную проблему: фирменные цвета успеха, ошибки, предупреждения и фирменный оранжевый использовались как цвет МЕЛКОГО текста (11–13 px), где стандарт доступности WCAG AA требует контраст 4.5:1, а они дают от 2.36 до 4.25. Хуже всего было сообщение об ошибке входа: светло-розовый текст #fca5a5 на своей же розовой подложке давал 1.69:1 — плашка была практически пустой на вид, и пользователь не понимал, почему вход не получился. Теперь там 4.57:1. Причина оказалась исторической: палитра #fca5a5, #c084fc и наборы rgba(248,113,113), rgba(52,211,153), rgba(96,165,250), rgba(251,191,36), rgba(192,132,252) — это оттенки Tailwind для ТЁМНОЙ темы, оставшиеся в стилях после перехода на единственную светлую тему в v1.25.0; на белом фоне светлые оттенки нечитаемы. Фирменная палитра при этом не тронута: #FF7A00, #4B0082, #2E8B57, #D9534F остались собой, их фиксируют и бренд, и тесты. Вместо изменения цвета исправлено его ИСПОЛЬЗОВАНИЕ — рядом с базовыми токенами добавлены отдельные текстовые оттенки --ok-text #27764a, --bad-text #c22e2a, --warn-text #a24b08, --info-text #217287, подобранные перебором по светлоте в том же тоне: каждый даёт не менее 4.5:1 не только на чистых фонах темы, но и на собственной подкраске поверх серого фона, то есть на худшей реальной подложке. Оранжевый как текст больше не используется нигде — для него в теме уже был правильный токен --accent-text #9a4a00 из v1.58.3, он просто не применялся последовательно, из-за чего иконка кнопки на ховере и номер пункта инструкции почти исчезали (2.36:1 и 2.40:1). Все 26 остатков тёмной палитры переведены на color-mix от токенов темы — приём, который в файле уже основной, поэтому подложки и границы больше не разъезжаются с темой. Исправлено 23 места мелкого текста: плашки статусов чеков, кнопки «успех» и «ошибка», подписи переключателя AdGuard VPN, индикатор «нет сети», тренды, бейджи, тепловая карта сроками. Попутно выяснилось, что три теста закрепляли старые нечитаемые значения дословно; их намерение сохранено, а пин переведён на читаемый оттенок. Заведён журнал интерфейса docs/ui_journal.md: находка записывается только с измерением и способом проверки, ложные срабатывания сканов фиксируются отдельно, а непроверенные кандидаты лежат в бэклоге — например, десять классов, похожих на мёртвые, но требующих проверки на динамическую склейку имени.' },
+  ],
+  '1.70.31': [
+    { icon: '🛟', title: 'AdGuard VPN: отказ туннеля больше не может оставить сервер без сети; найдена причина, по которой туннель не поднимается',
+      text: 'Живой прогон исключил три версии подряд: лицензия PREMIUM действительна до 2028 года, смена протокола на http2 не помогла (ошибки UDP_SOCKET остались даже на http2), принудительный IPv4 через connect -4 тоже не помог. Зато итоговая строка отказа — «Failed to start the VPN service in the background: Disconnected» — совпала дословно с открытым обращением AdguardTeam/AdGuardVPNCLI#161: на CLI v1.7.12 в режиме TUN с маршрутизацией auto клиент поднимает tun0, но не исключает из него собственный трафик, видит свои же соединения к конечным точкам пришедшими из туннеля и отбрасывает их — «Rejecting connection redirected to endpoint we are not connected to», затем «None of the endpoints are available». В том обращении лицензия и вход тоже были в порядке, а смена маршрутизации на none не помогла. В release-канале новее v1.7.12 (апрель 2026) сборок нет, поэтому check-update честно отвечает, что версия последняя; более свежие существуют только в каналах beta (v1.8.1-rc.2) и nightly (v1.8.2-nightly.7) и ставятся отдельными скриптами AdGuard — ставить ли их на боевой сервер, решает владелец, это описано в инструкции. Второе и не менее важное: к моменту, когда мастер понимал, что туннель не поднялся, служба уже успевала выполнить connect в TUN-режиме — создать tun0, поправить маршруты и при включённой смене системного DNS увести DNS сервера в неподнятый туннель. При Restart=always и включённом автозапуске сервер остался бы с чёрной дырой вместо сети и получил бы её же после перезагрузки, а вместе с ним легли бы приём чеков и телеграм-бот. Теперь при отказе мастер откатывается: сначала гасит службу (иначе она перезапустит connect и снова поднимет tun0), затем выполняет документированный disconnect, убирающий интерфейс, маршруты и правки DNS, и сообщает, что сервер работает как раньше. Отказ AdGuard VPN не должен стоить владельцу работающего сервера.' },
+  ],
+  '1.70.30': [
+    { icon: '🔗', title: 'AdGuard VPN: ссылка входа больше не отбрасывается из-за «чужого» домена; причина отказа туннеля видна в панели',
+      text: 'Нашлось второе, независимое объяснение, почему ссылка регистрации не появлялась. На живом сервере команда входа выдала ссылку вида https://guidedeficit.blog/device_code?user_code=… — домен не похож на AdGuard, и программа такую ссылку молча отбрасывала: панель не показывала ничего, а мастер ждал подтверждения до таймаута. Белый список доменов задумывался как защита от подмены (обращение #188), но разработчик AdGuard ответил в том обращении прямо: в странах, где VPN блокируют, основные домены не используются — «некоторые сменяемые домены применяются, и если вы в такой стране, это ожидаемое поведение». То есть защита ломала ровно тех, кому VPN нужнее всего. Теперь признаком ссылки служит её форма (OAuth device-code: /device_code?user_code=…), одинаковая у официального вида, у #188 и у живого сервера; форма отсекает случайные адреса из журнала. Домен показывается владельцу, и если он не из известных AdGuard — программа поясняет, что это штатно, и просит сверить код в ссылке с кодом в журнале. Решение открыть ссылку остаётся за владельцем: молча подставлять адрес неизвестного домена в кнопку неправильно, но и прятать рабочую ссылку нельзя. Второе: если вход прошёл, а туннель не поднялся, мастер теперь показывает в панели журнал службы (последние 25 строк) и документированные причины — нет лицензии, провайдер блокирует UDP (лечится config set-protocol http2), IPv6 не работает а CLI пробует IPv6 (обращение #176, сравните с connect -4), либо бэкенд AdGuard недоступен из этой сети («Unable to fetch locations. Backend error: Timed out»). Протокол и семейство адресов программа сама не меняет: выбирать между ними вслепую — значит маскировать настоящую причину.' },
+  ],
+  '1.70.29': [
+    { icon: '🛡', title: 'AdGuard VPN: «вход уже выполнен» больше не останавливает установку; закрыты две ловушки инструкции',
+      text: 'Выпуск сделан по живому прогону на сервере. Если аккаунт AdGuard уже привязан, команда входа отвечает «You are already logged in» и может вернуть ненулевой код — программа принимала это за отказ и останавливалась с «вход не завершён» ровно там, где всё уже готово и можно сразу поднимать туннель. Теперь собственный текст CLI важнее его кода возврата: мастер пишет «вход уже выполнен — ссылка не нужна, продолжаю» и идёт дальше. Направление безопасное: текст используется только чтобы НЕ падать, а успех по-прежнему доказывается ссылкой или документированным признаком, поэтому «Failed to get auth link» при отсутствии входа остаётся фатальным и по-прежнему подсказывает команду лечения сертификатов. Второе: закрыты две ловушки ручной инструкции, в которые легко упереться. В последовательности команд стоял заполнитель «site-exclusions add <домены Telegram>» — это не команда, bash на нём падает, а настоящий список доменов был только в другом разделе; теперь на его месте конкретный домен и ссылка на полный список. Отдельно объяснено, что пустой список в режиме selective означает «через VPN не идёт ничего, включая Telegram», а wildcards обязательны в кавычках. И вторая ловушка: служба adguard-vpn-telegram.service не существует, пока её не положил мастер (он берёт файлы из комплекта, разложенного командой install-rule), поэтому ранняя команда systemctl enable --now отвечает «Unit file does not exist» — это порядок шагов, а не поломка. Обе ловушки исчезают, если включить VPN переключателем в блоке «🛡 AdGuard VPN на сервере»: мастер выполняет команды сам, в правильном порядке и с настоящими доменами.' },
+  ],
+  '1.70.28': [
+    { icon: '🛡', title: 'AdGuard VPN: собственный блок, переключатель вместо кнопки — и ссылка регистрации теперь действительно приходит',
+      text: 'Главное — найдена и устранена причина, по которой ссылка для регистрации сервера не появлялась. Команда входа AdGuard VPN интерактивная: по её документации она показывает меню «b — открыть ссылку в браузере / s — ускорить проверку / x — отмена» и ждёт выбора. Программа запускала эту команду с закрытым входом, меню получало конец файла, и ссылка не выдавалась вовсе. В терминале SSH всё работало именно потому, что там «b» нажимали вы. Теперь команде даётся настоящий псевдотерминал, и программа отвечает «b» сама — ровно как в сеансе SSH. Ссылка показывается в блоке сразу, как только CLI её выдал, и больше не исчезает, если задание остановилось: она живёт около 30 минут, и терять её из-за перезапуска страницы неправильно. Второе: у AdGuard VPN появился собственный блок «🛡 AdGuard VPN на сервере» в разделе «Устройство и служебное» — из карточки Telegram-бота он удалён, там ему не место. Кнопка заменена трёхпозиционным переключателем: из среднего положения влево — выключить VPN, вправо — включить. Среднее положение честно означает «состояние неизвестно» или «операция идёт»; раньше до первого опроса сервера кнопка могла показывать «выключен» на работающем туннеле. Вправо — зелёный (VPN работает, через туннель идёт только Telegram), влево — красный (выключен, трафик напрямую). Третье: если CLI всё же отвечает «Failed to get auth link», программа прямо говорит, что это дефект самого AdGuard VPN CLI (обращения #142 и #169: причина в недоступных корневых сертификатах) и какой командой это лечится на сервере; отсутствие сертификатов видно предупреждением ещё до установки. Пароль сервера по-прежнему не спрашивается.' },
+  ],
+  '1.70.27': [
+    { icon: '🧭', title: 'AdGuard VPN: убрано всё, что могло помешать запуску — только документированная последовательность команд',
+      text: 'Программа выполняет ровно то, что описано в документации AdGuard: вход по ссылке подтверждения, режим TUN, маршрутизация AUTO, selective-исключения с доменами Telegram и служба автоподключения. Этим командам мастер верит по коду возврата — как и положено. Всё, что в прошлом выпуске вышло за рамки документации, переведено из отказов в предупреждения живого журнала: перечитанный режим исключений, слушатель на порту 1080, отсутствие /dev/net/tun на раннем шаге проверки и состояние автопилота при выключении. Причина простая: формат текстового ответа AdGuard нам не подконтролен, а прерывать установку из-за нераспознанной строки — значит мешать VPN запуститься. Предупреждения при этом видно: если режим исключений вдруг окажется general (тогда смысл списка противоположный — в VPN уходит всё, кроме Telegram), вы узнаете об этом сразу, но установка не оборвётся. От воскрешения выключенного VPN защищает автопилот: он не трогает VPN, снятый с автозапуска. И главное, что действительно мешало запуску: ожидание поднятия туннеля увеличено с 20 до 60 секунд — первое подключение в TUN-режиме на медленном канале в 20 секунд не укладывается, и мастер сообщал «туннель не поднялся» на живом подключении. Настоящая проверка пути осталась за последним шагом: он меряет фактический маршрут до api.telegram.org тем же способом, которым ходит бот.' },
+  ],
+  '1.70.26': [
+    { icon: '🔎', title: 'Перед установкой на сервер: «через VPN только Telegram» и красная кнопка теперь доказываются, а не предполагаются',
+      text: 'Перед первой установкой VPN всё перечитали и закрыли семь мест, где программа могла отрапортовать успех, не получив его. Главное — режим исключений AdGuard теперь перечитывается после настройки. Если selective-режим не применился, список работает наоборот: через VPN уходит весь трафик сервера КРОМЕ Telegram, то есть сайт, ФНС, MAX и 1С поехали бы в VPN, а Telegram остался прямым и заблокированным; прежняя проверка «api.telegram.org есть в списке» этого не замечала, потому что домен лежал бы в общем списке. Второе: живая служба туннеля больше не считается доказательством TUN-режима — если локальный порт 1080 всё ещё слушается, сервер остался в прежнем режиме SOCKS и трафик Telegram в VPN не уходит. Третье: выключение больше не проглатывает отказ автопилота, иначе таймер в 15:10 поднял бы VPN обратно, а кнопка горела бы красным; сам автопилот тоже не трогает VPN, который вы выключили. Проверка поддержки TUN (/dev/net/tun) перенесена в самое начало: раньше о её отсутствии сообщалось уже после установки CLI и после того, как вы подтвердили ссылку входа. Обновление на сервере теперь само освежает разложенные службы и скрипт автопилота — раньше они оставались старыми до следующего прогона мастера. Заодно из инструкции убрана несуществующая команда (старое имя фазы удалено в 1.70.25), а сообщение «туннель не поднялся» подсказывает проверить лицензию AdGuard.' },
+  ],
+  '1.70.25': [
+    { icon: '🔘', title: 'AdGuard VPN — одна кнопка-переключатель: включить (зелёная) и выключить (красная)',
+      text: 'Кнопка «🛡 AdGuard VPN» в настройках Telegram стала переключателем. Красная — VPN выключен: нажатие запускает мастер, который сам поставит CLI, покажет ссылку входа (первый раз это регистрация сервера в аккаунте AdGuard), включит режим «через VPN только Telegram», пропишет службы и проверит путь. Зелёная — VPN работает: нажатие останавливает туннель и автопилот, при этом вход и лицензия сохраняются, поэтому повторное включение идёт уже без ссылки. Цвет берётся из фактического состояния службы туннеля, а не из журнала установки: туннель могли остановить руками, и кнопка не должна врать. Если состояние определить не удалось, кнопка так и пишет вместо ложного «выключен». Выключение гасит сначала автопилот и только потом туннель — иначе автопилот в 15:10 увидел бы мёртвый путь и сам подключил VPN обратно за вашей спиной. Одновременно убрано лишнее: отдельный шаг «прокси» влит в шаг режима (в TUN прокси как понятие не применяется), из перечня команд помощника вычищено устаревшее второе имя фазы режима, а из панели — мёртвая ветка про пароль сервера, которого мастер не спрашивает с версии 1.70.16.' },
+  ],
+  '1.70.24': [
+    { icon: '🛡', title: 'AdGuard VPN переведён на TUN: через VPN идёт только Telegram, прокси в карточке больше не нужен',
+      text: 'Раньше мастер включал режим SOCKS5: AdGuard поднимал локальный прокси 127.0.0.1:1080, а программа прописывала его в поле «Прокси для Telegram». У этой схемы нашлось слабое место — библиотека, через которую программа ходит в SOCKS, не поддерживает удалённое разрешение имён (socks5h). Это значит, что адрес api.telegram.org определялся обычным DNS сервера, и при отравлении DNS бот получал подменённый адрес и молчал, хотя сам прокси был жив и зелёный. Теперь мастер включает штатный режим AdGuard: TUN-туннель с маршрутизацией AUTO и selective-исключениями, в список которых добавлены домены Telegram (api.telegram.org и поддомены). Через VPN идёт только Telegram, весь прочий трафик сервера — сайт, ФНС, MAX, 1С — остаётся прямым, а DNS уходит в туннель, поэтому подмена адреса больше не возможна. Поле «Прокси» мастер теперь очищает: в TUN-режиме локального прокси нет, и оставленное старое значение отправило бы бота в несуществующий порт. Замер пинга и автопилот сохранены и работают по тому же пути, которым реально ходит бот. Кнопка и ссылка подтверждения входа не изменились: «🛡 AdGuard VPN» → открыть ссылку → войти → установка продолжится сама.' },
+  ],
+  '1.70.23': [
+    { icon: '🔗', title: 'Мастер AdGuard: установка больше не остаётся без ссылки /usr/local/bin',
+      text: 'Проверка по исходнику официального установщика AdGuard показала, что программа передавала ему неверный флаг. Стоял -v в расчёте на «без вопросов», но -v это подробный вывод, и он уже включён по умолчанию; на вопросы он не отвечает. Установщик спрашивает «create a link in /usr/local/bin? [y/N]» и читает ответ с терминала, а у службы терминала нет — пустой ответ он понимает как «нет» и навсегда создаёт файл .nosymlink. Ссылка же обязательна: на /usr/local/bin/adguardvpn-cli жёстко прописаны ExecStart службы туннеля и путь CLI в автопилоте. Второй случай — установщик вообще не задаёт вопрос и не создаёт ссылку, если /usr/local/bin не входит в PATH, а у службы программы PATH короткий. Страховка в программе срабатывала только когда проверка версии проваливалась, но бинарник в /opt/adguardvpn_cli работает и проверка проходила — поэтому ссылка так и не появлялась, и установка ломалась на следующем шаге («Служба туннеля не запустилась»). Теперь установщику передаётся -a y, а ссылка создаётся безусловно, когда её нет. Попутно исправлена инструкция ручной установки: команды нужно выполнять через sudo, потому что служба запускает CLI от root, а вход и настройки хранятся в домашнем каталоге — login под обычным пользователем оставлял туннель без лицензии.' },
+  ],
+  '1.70.22': [
+    { icon: '🩺', title: 'Мастер AdGuard: панель больше не застревает, а причина отказа не теряется',
+      text: 'Найдено живым прогоном приложения. Первое: если программа перезапустилась во время установки AdGuard (а deploy.sh --update перезапускает службу после каждого обновления), панель вечно показывала «установка выполняется» — опрос не останавливался, а кнопка «Остановить» отвечала «Установка не выполняется», потому что в памяти задания уже не было. Сохранённое состояние «выполняется» после рестарта заведомо устарело: теперь оно помечается прерванным, журнал сохраняется, а владелец видит понятный текст и может запустить мастер заново. Второе: команда установки CLI была пайплайном curl … | sh, а код возврата пайплайна принадлежит последней команде — поэтому отказ curl (нет сети или DNS) выглядел как успешная установка, и мастер сообщал «CLI установлен, но не запускается:» с пустой причиной: вывод установщика затирался результатом проверки версии. Обойти это через pipefail нельзя — /bin/sh в Ubuntu/Debian это dash, где такой опции нет. Установка идёт двумя шагами, отказ загрузки больше не прячется, а текст различает «CLI не появился» и «CLI не запускается», показывая настоящую ошибку curl.' },
+  ],
+  '1.70.21': [
+    { icon: '🛡', title: 'Мастер AdGuard: закрыты гонка запуска, сирота при отмене и «Непредвиденная ошибка»',
+      text: 'Проверка на устойчивость нашла четыре дефекта в мастере. Первый — гонка: проверка «установка уже выполняется» и занятие задания разделялись окном, поэтому два одновременных запроса (двойной клик или повторный запрос из двух вкладок) поднимали двух воркеров, которые параллельно ставили CLI, перезапускали службы и писали в один журнал; воспроизведено 7 раз из 60 при 16 одновременных вызовах. Занятие задания теперь атомарно, а маршрут отвечает 409 вместо 500. Второй — отмена во время входа убивала только sudo, а привилегированный adguardvpn-cli login оставался висеть сиротой от root и продолжал ждать подтверждение: теперь убивается вся группа процессов. Третий — таймаут команды вылетал наружу исключением, и владелец видел «Непредвиденная ошибка: » без причины; теперь это код 124 и понятный текст, как в окне обновления. Четвёртый — сброс задания подменял объект замка, из-за чего поток отменённой установки терял взаимное исключение. Попутно: копирование комплекта юнитов больше не игнорирует коды возврата (отказ cp всплывал позже как «служба туннеля не запустилась»), а помощник не глушит вывод установщика AdGuard — при отказе видна «причина: …», а не только «CLI не появился».' },
+  ],
+  '1.70.20': [
+    { icon: '🛠', title: 'Мастер AdGuard снова ставится без пароля — причина отказа теперь видна',
+      text: 'Найдено на боевом сервере: фаза install-rule помощника ymaster-adguard-setup падала на «app_dir: unbound variable», поэтому sudoers-правило не устанавливалось и мастер просил команду в терминале. Причина — обе переменные объявлялись одним local: bash раскрывает слова до присваиваний в local, и при set -u вторая переменная ссылалась на ещё не существующую. Объявили двумя строками — install-rule проходит, правило ставится. deploy.sh больше не глушит вывод помощника (>/dev/null 2>&1): при отказе в логе печатается «причина: …», а не только общее предупреждение. Заодно метка локальной ветки выравнивается по каналу обновлений (git checkout -q -B после reset --hard) — раньше после смены канала HEAD оставался на прежней ветке, и git pull на сервере тянул бы старый канал.' },
+  ],
+  '1.70.19': [
+    { icon: '🎯', title: 'deploy.sh: --branch= больше не игнорируется молча',
+      text: 'Флаг --branch= писал значение прямо в BRANCH, а ниже по скрипту source /etc/ymaster-check/deploy.conf перезаписывал его запомненной веткой; страховка ${OPT_BRANCH:-$BRANCH} не работала, потому что OPT_BRANCH никто не выставлял (в отличие от OPT_DOMAIN и OPT_SSL). То же касалось BRANCH= из окружения. В итоге на любом сервере, где деплой уже запускался, «sudo bash deploy.sh --update --branch=нужная» молча обновлялся на запомненную — возможно, устаревшую — ветку. Теперь приоритет явный и проверен тестами: --branch= > BRANCH= (окружение) > deploy.conf > main; значение из окружения запоминается отдельно до чтения конфига, а подмену видно в логе («ℹ Ветка задана явно …»). Удачный запуск с --branch= запоминает эту ветку в deploy.conf, и --help теперь печатает шапку целиком.' },
+  ],
+  '1.70.18': [
+    { icon: '🌿', title: 'Канал обновлений — ветка main',
+      text: 'Веткой обновлений по умолчанию стала main (была временная рабочая ветка арены, которая после слияния остаётся на старой версии). Изменились DEFAULT_BRANCH в настройках программы и BRANCH в deploy.sh, а также все ссылки комплекта: быстрый старт, README, docs/DEPLOYMENT.md, docs/update_playbook.md, deploy/adguard-vpn/README.md и подсказка поля «Ветка» в окне обновления. Если источник задан явно (repo_branch в настройках или --branch= у deploy.sh) — он по-прежнему важнее значения по умолчанию. С v1.70.17 смена ветки источника не требует похода в SSH: fetch идёт явным refspec’ом, поэтому переход на main безопасен на уже развёрнутых серверах.' },
+  ],
+  '1.70.17': [
+    { icon: '🔄', title: 'Обновление на другую ветку больше не падает',
+      text: 'Если в «🎛 Источник обновлений» указать ветку, отличную от ветки установки, обновление заканчивалось ошибкой «git reset: fatal: ambiguous argument origin/…: unknown revision» и откатом. Причина в клоне «--depth 1 --branch»: git отслеживает только свою ветку, поэтому fetch чужой ветки проходил успешно (rc 0), но ref origin/<ветка> не создавался — на нём и падал reset. Теперь fetch идёт явным refspec’ом (+refs/heads/<ветка>:refs/remotes/origin/<ветка>), ветка дописывается в настройки origin, цель для reset проверяется заранее (origin/<ветка> → запасной FETCH_HEAD → понятная ошибка), а строка «Изменённых файлов: 0» больше не появляется при сбое сравнения. deploy.sh для свежих установок разрешает все ветки сразу.' },
+  ],
+  '1.70.16': [
+    { icon: '🔓', title: 'Мастер AdGuard — без пароля сервера',
+      text: 'Поле «🔑 Пароль сервера (sudo)» из панели AdGuard VPN убрано: мастер больше не принимает пароли вовсе. Привилегированные шаги (установка CLI, вход, SOCKS5, службы, автопилот) делает один помощник /usr/local/sbin/ymaster-adguard-setup, разрешённый узким правилом /etc/sudoers.d/ymaster-adguard на фиксированные фазы — произвольные команды от root из приложения не выполняются. deploy.sh ставит помощник и правило сам; на сервере, где их ещё нет, панель показывает ОДНУ готовую команду (кнопка «📋 Скопировать») — выполнили в SSH, нажали «Проверить снова», мастер пошёл дальше без пароля.' },
+  ],
   '1.70.15': [
     { icon: '🛡', title: 'AdGuard VPN ставится из программы — в один клик',
       text: 'Кнопка «🛡 AdGuard VPN» в карточке Telegram теперь всё делает сама: установит CLI, покажет ссылку для подтверждения входа (открыли — установка идёт дальше сама), пропишет автоподключение и суточный автопилот, подставит прокси и проверит путь. Весь процесс виден живым журналом, в конце — «завершено успешно» либо понятная ошибка.' },
@@ -5134,7 +7040,7 @@ const WHATS_NEW = {
   ],
   '1.70.13': [
     { icon: '🛡', title: 'Telegram через AdGuard VPN — второй сервер не нужен',
-      text: 'Если есть лицензия AdGuard VPN: её CLI ставится прямо на этот сервер, режим SOCKS5 поднимает локальный прокси socks5://127.0.0.1:1080, а бот отправляет через него напоминания и ответы (кнопка-пресет «🛡 AdGuard VPN» в настройках Telegram). Готовая пошаговая инструкция и автозапуск — deploy/adguard-vpn. Мост и канал MAX остаются как запасные пути.' },
+      text: 'Если есть лицензия AdGuard VPN: её CLI ставится прямо на этот сервер, и напоминания с ответами бота идут через туннель. Готовая пошаговая инструкция и автозапуск — deploy/adguard-vpn. Мост и канал MAX остаются как запасные пути. (С выпуска 1.70.28 управление VPN живёт в отдельном блоке «🛡 AdGuard VPN на сервере» в разделе «Устройство и служебное».)' },
   ],
   '1.70.12': [
     { icon: '🛰', title: 'Telegram-бот работает даже там, где Telegram заблокирован',
@@ -5572,7 +7478,7 @@ const WHATS_NEW = {
     { icon: '📋', title: 'Карточка предприятия — все реквизиты ЕГРЮЛ',
       text: 'Из Checko теперь подтягиваются полное и краткое названия, ОПФ, дата регистрации, уставный капитал, ИФНС, руководитель и его должность, контакты, основной и дополнительные ОКВЭД, статус. Пустой ИНН компании заполняется автоматически.' },
     { icon: '🧭', title: 'План уникальности продукта',
-      text: 'Составлен план docs/unique_features.md: что сделаем, чтобы «Ямастер Чек» стал №1 у бухгалтеров и коммерческих организаций — светофор контрагентов, партнёрский кабинет, Telegram-напоминания и другое.' },
+      text: 'Составлен план docs/unique_features.md: что сделаем, чтобы «Ямастер Чек» стал № 1 у бухгалтеров и коммерческих организаций — светофор контрагентов, партнёрский кабинет, Telegram-напоминания и другое.' },
   ],
   '1.14.0': [
     { icon: '🧾', title: 'Собрать авансовый отчёт за минуту — теперь по всей компании',
@@ -5679,7 +7585,7 @@ const WHATS_NEW = {
     ['🔑 Больше прав админа', 'смена роли пользователя, временный пароль в 1 клик (сотрудник сменит сам), восстановление из архива.'],
   ],
   '1.2.0': [
-    ['📥 Данные чека из сервисов', 'полная информация (магазин, ИНН, все позиции) — из API ФНС, proverkacheka.com или своего источника. Паузы 2–7 с и ротация источников — без блокировок.'],
+    ['📥 Данные чека из ФНС', 'полная информация (магазин, ИНН, все позиции) — из официального API ФНС (метод GetTicket). Паузы 2–7 с, лимит 1000 запросов в сутки.'],
     ['✏️ Редактирование чеков', 'бухгалтер и администратор могут изменить любые поля чека и позиции — по одному или массово; изменения попадают в 1С и CSV.'],
     ['👤 «От кого прислал»', 'чеки от сотрудников автоматически помечаются отправителем.'],
     ['🔔 Уведомления сотрудников', 'флажок «уведомить бухгалтерию» и комментарий к своему чеку.'],
@@ -5688,7 +7594,7 @@ const WHATS_NEW = {
   '1.3.0': [
     ['🏦 Новый источник: ОФД-ру «QR Cash»', 'официальное API ofd.ru по базе ФНС — ещё один вариант получения полного чека (tokenSecret в Настройках).'],
     ['🔗 Несколько своих источников', 'теперь можно подключить до 10 своих сервисов проверки (списком, у каждого своё «остывание»).'],
-    ['🌐 Ручная проверка в 1 клик', 'в редакторе чека — кнопки открытия сервисов: proverkacheka.com, проверкачека.рф, proverka-cheka.ru, chek-pek.ru.'],
+    ['🌐 Ручная проверка в 1 клик', 'в редакторе чека — ссылки на официальные и справочные сервисы проверки: Открытые API ФНС, проверкачека.рф, proverka-cheka.ru, chek-pek.ru.'],
     ['🎨 Качество вёрстки', 'доработаны таблицы (липкие заголовки), модалки и сетки на телефоне, фокус с клавиатуры, безопасные отступы iOS.'],
     ['🔢 Версия теперь всегда видна и честна', 'единая версия в шапке, футере, API и кэше — обновляется из одного места.'],
   ],
@@ -5703,12 +7609,22 @@ function showWhatsNew() {
   // v1.12.3: вертикальные карточки — аккуратно на любом экране
   // (раньше была сетка .kv «auto 1fr»: длинные заголовки раздували колонку
   // и ломали вёрстку на телефоне)
-  const rows = WHATS_NEW[v].map(([title, text]) =>
-    `<div class="wn-item"><div class="wn-title">${title}</div><div class="wn-text">${text}</div></div>`).join('');
+  // v1.70.38: записи журнала «что нового» бывают двух форм — старые
+  // ['заголовок', 'текст'] и современные { icon, title, text }. Разбирались
+  // только массивы, поэтому для всех версий начиная с 1.70.32 окно показывало
+  // ПУСТЫЕ карточки: на месте заголовка и текста был undefined. Нашла проверка
+  // соответствия данных и кода (аудит v1.70.38).
+  const rows = WHATS_NEW[v].map((item) => {
+    const title = Array.isArray(item)
+      ? (item[0] || '')
+      : ((item.icon ? item.icon + ' ' : '') + (item.title || '')).trim();
+    const text = Array.isArray(item) ? (item[1] || '') : (item.text || '');
+    return `<div class="wn-item"><div class="wn-title">${title}</div><div class="wn-text">${text}</div></div>`;
+  }).join('');
   const { slot, close } = openModal(`
     <div class="modal-title">🎉 Ямастер Чек v${esc(v)} — что нового</div>
     <div class="whats-new">${rows}</div>
-    <div class="modal-actions"><button class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="wn-ok">Понятно, работаем</button></div>`);
   slot.querySelector('#wn-ok').onclick = close;
 }
 
@@ -5721,17 +7637,28 @@ async function handleScannedText(text, source) {
   }
   if (navigator.onLine && state.wsOk) {
     try {
+      // v1.70.40: повтор внутри сессии отсекаем до запроса к серверу
+      const key = scanSessKey(parsed.fn, parsed.fd, parsed.fp);
+      if (scanSess.seen[key]) {
+        scanSessAdd({
+          state: 'bad', kind: 'duplicate', who: `ФД ${parsed.fd}`,
+          fn: parsed.fn, fd: parsed.fd, fp: parsed.fp, sum: 0,
+        });
+        toast('Этот чек уже отсканирован в текущей сессии — повторно не сохраняем',
+          'warn', '🧾 Дубликат');
+        return;
+      }
       const r = await api.post('/api/v1/receipts/scan',
                                { qr_data: text, source, company_id: scanCompanyId() });
-      pushRecent(r.receipt);
-      if (!r.duplicate) beep();
+      scanSess.seen[key] = true;
+      scanSessNoteServer(r, `ФД ${parsed.fd}`);   // счётчики, дубликат, анимация
       return;
     } catch (e) {
       if (e.status !== 0) { toast(e.message, 'err', 'Сервер отклонил скан'); return; }
     }
   }
   // Офлайн: в очередь
-  const n = offlineQueue.push({ qr_data: text, source });
+  const n = offlineQueue.push({ qr_data: text, source, company_id: scanCompanyId() });
   toast(`Нет связи — скан сохранён локально (в очереди: ${n})`, 'warn', 'Офлайн-режим');
   refreshBadges();
 }
@@ -5757,10 +7684,11 @@ async function flushOfflineQueue(manual = false) {
   while (offlineQueue.size() > 0) {
     const item = offlineQueue.all()[0];
     try {
-      await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
-                                                source: item.source || 'web', company_id: scanCompanyId() });
+      const result = await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
+                                                source: item.source || 'web', company_id: Object.prototype.hasOwnProperty.call(item, 'company_id') ? item.company_id : scanCompanyId() });
       offlineQueue.shift();
-      sent++;
+      if (result.duplicate) toast(result.message || 'Чек уже зарегистрирован', 'warn', 'Офлайн-очередь');
+      else sent++;
     } catch (e) {
       if (e.status === 422) { offlineQueue.shift(); continue; }
       break;
@@ -5803,13 +7731,58 @@ function rebuildQrString(p) {
   return `t=${t}&s=${sum.toFixed(2)}&fn=${p.fn}&i=${p.fd}&fp=${p.fp}&n=${p.op}`;
 }
 
+// v1.70.40: ответ серверного приёма (скан камерой, фото, PDF) учитывается в
+// сессии сдачи: дубликат — красный счётчик и внятное уведомление отправителю,
+// новый чек — синий «на проверке» с анимацией «чек улетает в пул».
+function scanSessNoteServer(r, label) {
+  if (!r) return;
+  const name = label || 'чек';
+  const rec = r.receipt;
+  if (r.duplicate) {
+    scanSessAdd({
+      id: rec ? rec.id : 0, state: 'bad', kind: 'duplicate', who: name,
+      fn: rec ? rec.fn : '', fd: rec ? rec.fd : '', fp: rec ? rec.fp : '',
+      sum: rec ? (rec.total_sum || 0) : 0,
+    });
+    // дубликат чужой организации приходит с receipt: null — pushRecent это
+    // переживёт (v1.70.40), а отправитель получит объяснение вместо тишины
+    if (rec && !r.created) pushRecent(rec, true);
+    refreshBadges();
+    toast(r.message || 'Такой чек уже есть в базе — повторно не сохраняем',
+      'warn', '🧾 Дубликат');
+    scanSessCheckpoint();
+    if (!r.created || !rec) return;
+  }
+  if (!rec) return;
+  const key = scanSessKey(rec.fn, rec.fd, rec.fp);
+  if (scanSess.seen[key]) {
+    scanSessAdd({
+      state: 'bad', kind: 'duplicate', who: name,
+      fn: rec.fn, fd: rec.fd, fp: rec.fp, sum: rec.total_sum || 0,
+    });
+    toast('Этот чек уже отсканирован в текущей сессии', 'warn', '🧾 Дубликат');
+    return;
+  }
+  scanSess.seen[key] = true;
+  pushRecent(rec);
+  scanSessAdd({
+    id: rec.id, state: scanSessStateOf(rec), who: name,
+    fn: rec.fn, fd: rec.fd, fp: rec.fp, sum: rec.total_sum || 0,
+    status: rec.status, fns: rec.fns_status || '',
+  });
+  beep();
+  refreshBadges();
+  scanSessCheckpoint();
+}
+
 async function serverScanImage(file) {
   const fd = new FormData();
   fd.append('file', file);
+  if (scanCompanyId()) fd.append('company_id', scanCompanyId());
   try {
     const r = await api.post('/api/v1/receipts/scan/image', fd);
-    pushRecent(r.receipt);
-    toast(r.message, 'ok', 'Сервер распознал QR');
+    scanSessNoteServer(r, file.name);            // v1.70.40: счётчики сессии
+    if (!r.duplicate) toast(r.message, 'ok', 'Сервер распознал QR');
   } catch (e) {
     if (e.status === 300) {
       const variants = (e.data && e.data.detail && e.data.detail.variants) || [];
@@ -5826,10 +7799,11 @@ async function serverScanImage(file) {
 async function serverScanPdf(file) {
   const fd = new FormData();
   fd.append('file', file);
+  if (scanCompanyId()) fd.append('company_id', scanCompanyId());
   try {
     const r = await api.post('/api/v1/receipts/scan/pdf', fd);
-    if (r.receipt) pushRecent(r.receipt);
-    toast(r.message || 'Готово', 'ok', 'Чек из PDF');
+    scanSessNoteServer(r, file.name);            // v1.70.40: счётчики сессии
+    if (!r.duplicate) toast(r.message || 'Готово', 'ok', 'Чек из PDF');
   } catch (e) {
     if (e.status === 300) {
       const variants = (e.data && e.data.detail && e.data.detail.variants) || [];
@@ -5845,8 +7819,8 @@ function pickVariantDialog(variants) {
     <div class="modal-title">🔎 Найдено несколько чеков</div>
     <p style="color:var(--text-dim);margin-bottom:14px">На изображении распознано несколько разных QR-кодов. Выберите, какие добавить:</p>
     <div id="variants-box"></div>
-    <div class="modal-actions"><button class="btn" data-close>Закрыть</button>
-    <button class="btn btn-primary" id="btn-add-selected">Добавить выбранные</button></div>`);
+    <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button>
+    <button type="button" class="btn btn-primary" id="btn-add-selected">Добавить выбранные</button></div>`);
   slot.querySelector('#variants-box').innerHTML = variants.map((v, i) => `
     <label class="recent-scan-item" style="cursor:pointer">
       <input type="checkbox" class="variant-check" data-i="${i}" checked style="width:auto">
@@ -5873,8 +7847,8 @@ function pasteDialog() {
     <label class="field"><span>Строка QR-кода</span>
       <textarea id="paste-text" rows="4" placeholder="t=...&s=...&fn=...&i=...&fp=...&n=1"></textarea></label>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="btn-paste-send">Отправить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="btn-paste-send">Отправить</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#btn-paste-send').onclick = async () => {
@@ -5905,8 +7879,8 @@ function manualDialog() {
         <input id="m-fp" placeholder="1234567890" required></label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="btn-manual-send">Добавить чек</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="btn-manual-send">Добавить чек</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#btn-manual-send').onclick = async () => {
@@ -5922,7 +7896,7 @@ function manualDialog() {
       payload.company_id = scanCompanyId();   // v1.11.0
       const r = await api.post('/api/v1/receipts/manual', payload);
       $('#modal-root').classList.add('hidden');
-      pushRecent(r.receipt);
+      pushRecent(r.receipt, r.duplicate);
       toast(r.message, r.duplicate ? 'warn' : 'ok');
       refreshBadges();
     } catch (e) {
@@ -5968,6 +7942,46 @@ function fillCats(sel, cats, keepValue) {
   sel.value = keepValue || '';
 }
 
+// v1.70.72: «Проверено N чеков» — ход и итог пакетной проверки ФНС.
+// Человек отправил несколько чеков и должен увидеть, сколько из них
+// реально проверено, сколько подтверждено, а сколько ждёт сброса лимита.
+const verifyWatch = { timer: null, jobId: '' };
+async function watchVerifyJob(jobId) {
+  if (!jobId) return;
+  if (verifyWatch.timer) clearInterval(verifyWatch.timer);
+  verifyWatch.jobId = jobId;
+  let announced = 0;
+  const tick = async () => {
+    let snap = null;
+    try {
+      const r = await api.get(`/api/v1/receipts/verify/${jobId}`);
+      snap = r.job;
+      if (snap && snap.finished) {
+        clearInterval(verifyWatch.timer);
+        verifyWatch.timer = null;
+        const c = snap.counters || {};
+        const parts = [];
+        if (c.valid) parts.push(`подтверждено ${c.valid}`);
+        if (c.not_found) parts.push(`не найдено ${c.not_found}`);
+        if (c.invalid) parts.push(`отклонено ${c.invalid}`);
+        if (c.quota) parts.push(`ждут лимита ${c.quota}`);
+        if (c.unknown || c.error) parts.push(`без ответа ${c.unknown + c.error}`);
+        toast(`Проверено чеков: ${snap.done} из ${snap.total}${parts.length ? ' — ' + parts.join(', ') : ''}`,
+          c.not_found || c.invalid || c.unknown || c.error ? 'warn' : 'ok', 'Проверка ФНС завершена');
+        if (typeof viewReceipts._refresh === 'function') viewReceipts._refresh();
+        return;
+      }
+      // промежуточный отчёт — на каждые 5 проверенных чеков
+      if (snap && snap.done >= announced + 5) {
+        announced = snap.done;
+        toast(`Проверено ${snap.done} из ${snap.total}…`, 'info', 'Проверка ФНС');
+      }
+    } catch (e) { /* задание могло исчезнуть — молча ждём следующего */ }
+  };
+  verifyWatch.timer = setInterval(tick, 2000);
+  setTimeout(tick, 1500);
+}
+
 async function viewReceipts(container) {
   const acc = isAccountant();
   // v1.8.0: срок сдачи авансового отчёта (настройка приказа руководителя)
@@ -6007,30 +8021,84 @@ async function viewReceipts(container) {
             <option value="true">только уведомления</option></select></label>` : ''}
         <label class="field"><span>С даты</span><input type="date" id="f-from"></label>
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
-        <button class="btn" id="btn-filter">Найти</button>
+        <button type="button" class="btn" id="btn-filter">Найти</button>
       </div>
+      <div class="filter-bar" style="margin-top:10px">
+        <label class="field"><span>Регион продавца</span>
+          <select id="f-region"><option value="">все регионы</option></select></label>
+        <label class="field"><span>Город продавца</span>
+          <select id="f-city"><option value="">все города</option></select></label>
+        <label class="field"><span>Отрасль покупки</span>
+          <select id="f-industry"><option value="">все отрасли</option></select></label>
+        <label class="field"><span>Группа товаров</span>
+          <select id="f-group"><option value="">все группы</option></select></label>
+        <label class="field"><span>Товар или услуга</span>
+          <input id="f-item-name" placeholder="название позиции"></label>
+        <label class="field"><span>Операция</span><select id="f-operation">
+          <option value="">все операции</option><option value="1">Приход</option>
+          <option value="2">Возврат прихода</option><option value="3">Расход</option>
+          <option value="4">Возврат расхода</option></select></label>
+        <label class="field"><span>Позиции</span><select id="f-items"><option value="">любые</option>
+          <option value="true">есть позиции</option><option value="false">нет позиций</option></select></label>
+        <label class="field"><span>НДС позиции (как сохранён)</span>
+          <select id="f-vat"><option value="">любое значение</option></select></label>
+        <label class="field"><span>Маркировка в данных</span><select id="f-marking">
+          <option value="">любая</option><option value="present">данные сохранены</option>
+          <option value="not_saved">данные не сохранены (есть позиции)</option></select></label>
+        <label class="field"><span>Отсутствующие реквизиты</span><select id="f-missing">
+          <option value="">не проверять</option><option value="any">хотя бы один из перечисленных</option>
+          <option value="seller_name">название продавца</option><option value="seller_inn">ИНН продавца</option>
+          <option value="address">адрес продавца</option><option value="fiscal">ФН, ФД или ФП</option>
+          <option value="items">нет позиций</option></select></label>
+        <label class="field"><span>Сумма позиции от</span><input id="f-item-total-min" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Сумма позиции до</span><input id="f-item-total-max" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Место расчёта (название)</span><input id="f-retail-place" maxlength="300" placeholder="магазин, сайт…"></label>
+        <label class="field"><span>Цена позиции от</span><input id="f-item-price-min" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Цена позиции до</span><input id="f-item-price-max" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>Количество позиции от</span><input id="f-item-qty-min" type="number" min="0" step="any"></label>
+        <label class="field"><span>Количество позиции до</span><input id="f-item-qty-max" type="number" min="0" step="any"></label>
+        <label class="field"><span>Состав оплаты</span><select id="f-payment-component">
+          <option value="">любой</option><option value="cash">есть наличные</option>
+          <option value="ecash">есть безналичные</option></select></label>
+        <label class="field"><span>Продавец (ИНН или название)</span>
+          <input id="f-merchant" placeholder="например 7801234567"></label>
+        <label class="field"><span>Оплата</span>
+          <select id="f-pay"><option value="">любая</option>
+            <option value="наличные">наличные</option>
+            <option value="безналичные">безналичные</option>
+            <option value="смешанная">смешанная</option></select></label>
+        <label class="field"><span>Сумма от</span><input id="f-sum-min" type="number" min="0" step="0.01" placeholder="0"></label>
+        <label class="field"><span>Сумма до</span><input id="f-sum-max" type="number" min="0" step="0.01" placeholder="∞"></label>
+        <button type="button" class="btn" id="btn-filter2">Найти</button>
+        <button type="button" class="btn" id="btn-filter-reset">Сбросить фильтры</button>
+        ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разобрать до 2000 сохранённых чеков за раз; запросов в ФНС нет">🧭 Разобрать данные чеков</button>' : ''}
+      </div>
+      <p class="form-hint">Регион и город определяются по адресу, регион иногда по ИНН; отрасли и группы — по названиям позиций, это не классификация ФНС. При отсутствии полного чека часть фильтров может не сработать. «Разобрать данные чеков» обрабатывает до 2000 записей за раз без запроса в ФНС.</p>
+      <p class="form-hint">Название, НДС, сумма, цена и количество должны совпасть в одной позиции; отрасль, группа и маркировка проверяются по чеку в целом. Сумма, цена и количество используются как сохранены, при импорте могли быть подставлены значения по умолчанию; ноль не обязательно подтверждён источником. Состав оплаты проверяет положительную сохранённую сумму наличными или безналичными и не исключает другие способы оплаты.</p>
+      <p class="form-hint" id="f-place-coverage">Место расчёта ищется по сохранённому названию, не по адресу или названию продавца; в старых чеках поле может отсутствовать.</p>
+      <p class="form-hint">НДС показан как сохранённое значение: это может быть код ФНС, а «none» может означать как отсутствие НДС, так и отсутствие данных. Маркировка ищется только в сохранённых данных позиций; отсутствие записи не доказывает, что товар без маркировки. Чеки без позиций в выборку «данные не сохранены» не входят. Недостающие реквизиты: название, ИНН и адрес продавца, ФН/ФД/ФП и позиции.</p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
-          <button class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
-          <button class="btn btn-sm" id="rc-view-cards" title="Карточки чеков">🗂 Карточки</button>
+          <button type="button" class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
+          <button type="button" class="btn btn-sm" id="rc-view-cards" title="Карточки чеков">🗂 Карточки</button>
         </div>
       </div>
       ${acc ? `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">
-        <button class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
-        <button class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
-        <button class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
-        ${isAdmin() ? '<button class="btn btn-sm" id="btn-bulk-move">🏢 Переместить в компанию</button>' : ''}
-        <button class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из сервисов (ФНС/proverkacheka). Паузы 2–7 с — без блокировок">📥 Данные сервисов</button>
-        <button class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
-        <button class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
-        <button class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек</button>
-        <button class="btn btn-sm" id="btn-ao1">🧾 Собрать авансовый отчёт</button>
-        <button class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
+        <button type="button" class="btn btn-sm btn-ok" id="btn-bulk-verify">✓ Проверить в ФНС (выбранные)</button>
+        <button type="button" class="btn btn-sm" id="btn-bulk-verify-all">✓✓ Проверить все новые</button>
+        <button type="button" class="btn btn-sm" id="btn-bulk-assign">👤 Назначить сотрудника</button>
+        ${isAdmin() ? '<button type="button" class="btn btn-sm" id="btn-bulk-move">🏢 Переместить в компанию</button>' : ''}
+        <button type="button" class="btn btn-sm" id="btn-bulk-fetch" title="Получить полные данные выбранных чеков из ФНС. Паузы 2–7 с, лимит 1000 запросов в сутки — без блокировок">📥 Данные сервисов</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-bulk-export">⬇ Выгрузить в 1С (выбранные)</button>
+        <button type="button" class="btn btn-sm" id="btn-csv">📊 CSV-сводка</button>
+        <button type="button" class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек</button>
+        <button type="button" class="btn btn-sm" id="btn-ao1">🧾 Собрать авансовый отчёт</button>
+        <button type="button" class="btn btn-sm btn-bad" id="btn-bulk-delete">🗑 Удалить выбранные</button>
         <span class="form-hint" style="align-self:center" id="sel-info">не выбрано</span>
       </div>` : `
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-        <button class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек (выбранные)</button>
+        <button type="button" class="btn btn-sm" id="btn-print-pdf">🖨 Напечатать чек (выбранные)</button>
         <span class="form-hint" style="align-self:center" id="sel-info-user">не выбрано</span>
       </div>
       <p class="form-hint" style="margin-bottom:12px">Режим пользователя: видны только ваши чеки.
@@ -6045,14 +8113,58 @@ async function viewReceipts(container) {
     q: '', status: '', fns_status: '', exported: '', assignee: '',
     creator: '', full_data: '',
     category: '', notified: '', date_from: '', date_to: '', page: 1,
+    // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
+    region: '', region_name: '', city: '', industry: '', product_group: '', item_name: '', operation: '', has_items: '', merchant: '',
+    pay_type: '', sum_min: '', sum_max: '', vat_rate: '', marking: '', missing: '',
+    item_price_min: '', item_price_max: '', item_total_min: '', item_total_max: '', retail_place: '', item_quantity_min: '', item_quantity_max: '', payment_component: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
+  // Справочники строятся из доступных чеков выбранной компании и обновляются
+  // при каждом открытии списка и после разбора сохранённых данных.
+  async function loadFacets() {
+    const company = companyIdParam() || '';
+    const requestId = viewReceipts._facetRequest = (viewReceipts._facetRequest || 0) + 1;
+    try {
+      const f = await api.get('/api/v1/receipts/facets' + (company
+        ? '?company_id=' + encodeURIComponent(company) : ''));
+      if ((companyIdParam() || '') !== company || viewReceipts._facetRequest !== requestId) return;
+      const fillSel = (selector, list, label, key) => {
+        const sel = container.querySelector(selector);
+        if (!sel) return;
+        const keep = filters[key] || '';
+        sel.innerHTML = `<option value="">${label}</option>` + list.map(x =>
+          `<option value="${esc(x.value)}">${esc(x.value)} · ${x.count}</option>`).join('');
+        // Сохраняем выбранный фильтр даже если список обновился и он исчез.
+        if (keep && !list.some(x => x.value === keep)) {
+          sel.insertAdjacentHTML('beforeend', `<option value="${esc(keep)}">${esc(keep)}</option>`);
+        }
+        sel.value = keep;
+      };
+      fillSel('#f-region', f.region_names || [], 'все регионы', 'region_name');
+      fillSel('#f-city', f.cities || [], 'все города', 'city');
+      fillSel('#f-industry', f.industries || [], 'все отрасли', 'industry');
+      fillSel('#f-group', f.product_groups || [], 'все группы', 'product_group');
+      fillSel('#f-vat', f.vat_rates || [], 'любое значение', 'vat_rate');
+      const coverage = container.querySelector('#f-place-coverage');
+      if (coverage && f.retail_place_coverage) {
+        const c = f.retail_place_coverage;
+        coverage.textContent = `Место расчёта сохранено у ${fmtInt(c.saved)} из ${fmtInt(c.total)} доступных чеков с учётом выбранной компании. Поиск по названию, не по адресу или продавцу; отсутствие записи не означает отсутствие места расчёта.`;
+      }
+    } catch (e) { toast('Не удалось загрузить значения фильтров: ' + e.message, 'warn'); }
+  }
+  loadFacets();
   // вернуть значения в поля формы — чтобы видно было, что фильтр применён
   [['#f-q', 'q'], ['#f-status', 'status'], ['#f-fns', 'fns_status'],
    ['#f-exp', 'exported'], ['#f-creator', 'creator'],
    ['#f-full', 'full_data'], ['#f-category', 'category'],
-   ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to']]
+   ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to'],
+   ['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
+   ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'],
+   ['#f-item-total-min', 'item_total_min'], ['#f-item-total-max', 'item_total_max'], ['#f-retail-place', 'retail_place'],
+   ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
+   ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
+   ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
     .forEach(([sel, key]) => {
       const el = $(sel);
       if (el && filters[key]) el.value = filters[key];
@@ -6177,8 +8289,8 @@ async function viewReceipts(container) {
     const pages = Math.max(1, Math.ceil(data.total / data.page_size));
     pager.innerHTML = `
       <span>Стр. ${data.page} из ${pages} · всего ${fmtInt(data.total)} на ${fmtSum(data.total_sum)}</span>
-      <button class="btn btn-sm" id="pg-prev" ${data.page <= 1 ? 'disabled' : ''}>←</button>
-      <button class="btn btn-sm" id="pg-next" ${data.page >= pages ? 'disabled' : ''}>→</button>`;
+      <button type="button" class="btn btn-sm" id="pg-prev" ${data.page <= 1 ? 'disabled' : ''}>←</button>
+      <button type="button" class="btn btn-sm" id="pg-next" ${data.page >= pages ? 'disabled' : ''}>→</button>`;
     $('#pg-prev').onclick = () => { filters.page--; viewReceipts._filters = { ...filters }; load(); };
     $('#pg-next').onclick = () => { filters.page++; viewReceipts._filters = { ...filters }; load(); };
     updateSelInfo();
@@ -6190,7 +8302,7 @@ async function viewReceipts(container) {
       if (el) el.innerHTML = `<div class="empty-state"><span class="big-ico">📡</span>
         <b>Не удалось загрузить чеки</b>
         <span class="form-hint">${esc(e.message || 'нет связи с сервером')}</span>
-        <button class="btn btn-primary" id="rc-retry" style="margin-top:10px">Повторить</button></div>`;
+        <button type="button" class="btn btn-primary" id="rc-retry" style="margin-top:10px">Повторить</button></div>`;
       const rb = $('#rc-retry');
       if (rb) rb.onclick = () => load();
     }
@@ -6201,7 +8313,7 @@ async function viewReceipts(container) {
     const canDel = isAdmin() || (!r.exported && r.created_by_id === state.me.id);
     const isOwner = r.created_by_id === state.me.id;
     const notifiedMark = r.notified ? ' <span title="Сотрудник уведомляет бухгалтерию">🔔</span>' : '';
-    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' || r.details_source === 'fns' ? 'ФНС' : '✎'}</span>` : '';
     // v1.23.0: полные данные получены → запрос не нужен, только изменение
     // v1.25.2: полные данные есть → только «изменить»; запрос показывается,
     // только если чек ещё НЕ получил данные полностью
@@ -6209,17 +8321,19 @@ async function viewReceipts(container) {
       ? `<td class="cell-actions" style="white-space:nowrap">
            ${r.full_data
              ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
-             : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
+             : `<button type="button" class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
                 title="Получить полные данные чека из сервиса проверки">📥</button>`}
-           <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
+           <button type="button" class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
          </td>`
-      : (isOwner ? `<td><button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+      : (isOwner ? `<td><button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
             title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button></td>` : '<td></td>');
     return `<tr data-id="${r.id}">
       <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
         ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
       <td class="cell-date" data-label="Дата чека">${fmtDate(r.receipt_date)}${notifiedMark}
-        ${acc ? advanceBadge(r) : ''}</td>
+        ${acc ? advanceBadge(r) : ''}
+        ${(r.region_name || r.region_city) ? `<div class="form-hint">${esc([r.region_name, r.region_city].filter(Boolean).join(' · '))}</div>` : ''}
+        ${(r.industry || r.product_group) ? `<div class="form-hint" title="Основная отрасль и группа чека">${esc([r.industry, r.product_group].filter(Boolean).join(' · '))}</div>` : ''}</td>
       <td class="cell-sum" data-label="Сумма">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
         ? `<div class="form-hint">к учёту: ${fmtSum((r.total_sum || 0) - r.personal_sum)}</div>` : ''}</td>
       <td class="cell-mono" data-label="ФН">${r.fn}</td><td class="cell-mono" data-label="ФД">${r.fd}</td><td class="cell-mono" data-label="ФП">${r.fp}</td>
@@ -6236,15 +8350,15 @@ async function viewReceipts(container) {
   // (📥) и «заполнить вручную» (✏️) — ВНИЗУ карточки, всегда под рукой
   function receiptCard(r, acc) {
     const isOwner = r.created_by_id === state.me.id;
-    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' ? 'ФНС' : r.details_source === 'proverkacheka' ? 'ПК' : r.details_source === 'custom' ? 'свой' : '✎'}</span>` : '';
+    const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' || r.details_source === 'fns' ? 'ФНС' : '✎'}</span>` : '';
     const act = acc
       ? `${r.full_data
           ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
-          : `<button class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
+          : `<button type="button" class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
               title="Получить полные данные чека из сервиса проверки">📥 Данные</button>`}
-         <button class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}"
+         <button type="button" class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}"
            title="Изменить чек и позиции (ручное заполнение)">✏️ Заполнить</button>`
-      : (isOwner ? `<button class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+      : (isOwner ? `<button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
             title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button>` : '');
     return `<div class="rc-card" data-id="${r.id}">
       <div class="rc-head"><span class="rc-date">${fmtDate(r.receipt_date)}${r.notified ? ' 🔔' : ''}</span>
@@ -6318,21 +8432,56 @@ async function viewReceipts(container) {
     }
     filters.date_from = $('#f-from').value;
     filters.date_to = $('#f-to').value;
+    // v1.70.72: регион, отрасль, группа, продавец, оплата, суммы
+    [['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
+     ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'],
+   ['#f-item-total-min', 'item_total_min'], ['#f-item-total-max', 'item_total_max'], ['#f-retail-place', 'retail_place'],
+   ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
+   ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
+     ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],
+     ['#f-sum-max', 'sum_max']].forEach(([sel, key]) => {
+      const el = $(sel);
+      filters[key] = el ? el.value : '';
+    });
+    filters.region = ''; // старый фильтр по коду заменён названием
     filters.page = 1;
     viewReceipts._filters = { ...filters };   // v1.25.1: переживают перестроение вида
     load();
   };
   $('#f-q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn-filter').click(); });
+  $('#btn-filter-reset').onclick = () => {
+    for (const key of Object.keys(filters)) filters[key] = key === 'page' ? 1 : '';
+    viewReceipts._filters = { ...filters };
+    container.querySelectorAll('.filter-bar input, .filter-bar select').forEach(el => { el.value = ''; });
+    viewReceipts._creatorKeep = ''; viewReceipts._catKeep = '';
+    load();
+  };
+  const btnF2 = $('#btn-filter2');
+  if (btnF2) btnF2.onclick = () => $('#btn-filter').click();
 
   if (acc) {
     $('#btn-bulk-verify').onclick = async () => {
       if (!state.receiptsSelected.size) return toast('Выберите чеки галочками', 'warn');
       const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [...state.receiptsSelected] });
       toast(r.message, 'info', 'Проверка ФНС');
+      watchVerifyJob(r.job_id);
     };
     $('#btn-bulk-verify-all').onclick = async () => {
       const r = await api.post('/api/v1/receipts/verify', { receipt_ids: [] });
       toast(r.message, 'info', 'Проверка ФНС');
+      watchVerifyJob(r.job_id);
+    };
+    // v1.70.72: разбор сохранённых данных — регион, отрасль, группы товаров
+    const btnEnrich = $('#btn-enrich');
+    if (btnEnrich) btnEnrich.onclick = async () => {
+      btnEnrich.disabled = true;
+      try {
+        const r = await api.post('/api/v1/receipts/enrich', { only_empty: true, company_id: companyIdParam() || null });
+        toast(r.message, 'ok', 'Разбор данных чеков');
+        loadFacets();
+        load();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { btnEnrich.disabled = false; }
     };
     $('#btn-bulk-assign').onclick = () => bulkAssignDialog();
     $('#btn-bulk-fetch').onclick = async () => {
@@ -6429,8 +8578,8 @@ async function viewReceipts(container) {
           ${[...new Set([...(viewReceipts._names || [])])].map(n => `<option value="${esc(n)}">`).join('')}
         </datalist></label>
       <div class="modal-actions">
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="ba-save">Назначить</button>
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn btn-primary" id="ba-save">Назначить</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#ba-save').onclick = async () => {
@@ -6451,58 +8600,8 @@ async function viewReceipts(container) {
   await load();
 }
 
-// ==========================================================================
-//  v1.7.0: Печать чеков PDF — раскрой листов A4 под чеки 80 мм
-//  Чеки печатаются реального размера (как из кассового аппарата), длинные
-//  разрезаются по строкам позиций и продолжаются в соседней колонке.
-//  Геометрия — в app/static/js/printpack.js (чистые функции, тесты node).
-// ==========================================================================
-function rcptDate(v) {
-  try { const d = new Date(v); return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
-  catch { return String(v || ''); }
-}
-
-function rcptBlocks(r, qrUrl, qrFail) {
-  const op = Number(r.operation) === 2 ? 'ВОЗВРАТ ПРИХОДА' : 'ПРИХОД';
-  const rule = '<div class="rcpt-rule"></div>';
-  const blocks = [];
-  blocks.push(`<div class="rcpt-head">${esc(r.merchant_name || 'КАССОВЫЙ ЧЕК')}</div>`);
-  if (r.merchant_inn || r.merchant_address) {
-    blocks.push(`<div class="rcpt-sub">${r.merchant_inn ? 'ИНН ' + esc(r.merchant_inn) : ''}${r.merchant_inn && r.merchant_address ? ' · ' : ''}${esc(r.merchant_address || '')}</div>`);
-  }
-  blocks.push(rule);
-  blocks.push(`<div style="text-align:center"><b>${op}</b> · ${rcptDate(r.receipt_date)}</div>`);
-  blocks.push(rule);
-  const items = r.items || [];
-  if (items.length) {
-    for (const it of items) {
-      const qty = Number(it.quantity) || 0;
-      const price = Number(it.price) || 0;
-      const sum = Number(it.sum ?? qty * price) || 0;
-      blocks.push(`<div class="r-item"><div class="r-name">${esc(it.name || 'товар')}</div>
-        <div class="r-line"><span>${qty} × ${price.toFixed(2)}</span><span>${sum.toFixed(2)}</span></div></div>`);
-    }
-  } else {
-    blocks.push('<div class="rcpt-part">(позиции чека не загружены — получите данные сервисов)</div>');
-  }
-  blocks.push(rule);
-  blocks.push(`<div class="r-line" style="font-weight:700"><span>ИТОГ:</span><span>${Number(r.total_sum || 0).toFixed(2)} ₽</span></div>`);
-  if (r.cash_sum || r.ecash_sum) {
-    blocks.push(`<div class="r-line rcpt-sub"><span>${r.cash_sum ? 'наличные: ' + Number(r.cash_sum).toFixed(2) : ''}</span><span>${r.ecash_sum ? 'безнал: ' + Number(r.ecash_sum).toFixed(2) : ''}</span></div>`);
-  }
-  blocks.push(rule);
-  const fnsMap = { valid: '✓ проверен ФНС', invalid: '✗ НЕ действителен', not_found: '? не найден в ФНС', unknown: 'не проверялся' };
-  blocks.push(`<div class="rcpt-foot">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>${fnsMap[r.fns_status] || ''}<br>Ямастер Чек · ymaster.ru</div>`);
-  // v1.10.0: фискальный QR — как на настоящем кассовом чеке
-  if (qrUrl) {
-    blocks.push(`<div style="text-align:center;margin-top:1.5mm"><img src="${qrUrl}" alt="Фискальный QR чека" style="width:26mm;height:26mm;margin:0 auto"></div>`);
-  } else if (qrFail && r.fn) {
-    // v1.24.1: код не получен (нет реквизитов/ошибка) — место под код остаётся помечено
-    blocks.push('<div class="rcpt-part" style="margin-top:1.5mm">(фискальный QR не получен)</div>');
-  }
-  return blocks;
-}
-
+// Печать чеков на A4: карточка чека без масштабирования, две колонки 72 мм.
+// Длинные чеки режутся только по границам блоков с отметкой продолжения.
 // v1.24.1: чеки печатаются С фискальным QR-кодом — дожидаемся загрузки
 // всех картинок раскроя (PNG с сервера через object URL) до вызова
 // диалога печати, иначе браузер печатает лист раньше, чем отрисуются коды.
@@ -6530,96 +8629,117 @@ function setPrintPageMargin(css, ao1) {
   document.body.classList.toggle('print-ao1', !!ao1);
 }
 
-async function printReceiptsPDF(ids) {
+async function printReceiptsPDF(ids, report = null) {
   const { close } = openModal(`<div class="modal-title">🖨 Напечатать чек</div>
-    <p class="form-hint" id="pp-status">Готовлю раскрой листов A4: загружаю фискальные QR-коды…</p><div class="spinner"></div>`);
+    <p class="form-hint" id="pp-status">Готовлю чеки и раскрой A4… Для PDF в окне печати выберите масштаб 100% и отключите поля и колонтитулы.</p><div class="spinner"></div>`);
+  const urls = [];
+  let root;
+  let printing = false;
   try {
-    const data = await api.get('/api/v1/receipts?ids=' + ids.join(','));
-    if (!data.items.length) { close(); return toast('Чеки не найдены', 'err'); }
-    const MM = 25.4 / 96;                                   // CSS px → мм
-    let root = document.getElementById('print-root');
-    if (root) root.remove();
+    if (!ids.length) throw new Error('Не выбраны чеки');
+    const MM = 25.4 / 96;
+    document.getElementById('print-root')?.remove();
     root = document.createElement('div');
     root.id = 'print-root';
     document.body.appendChild(root);
     const meas = document.createElement('div');
-    meas.style.cssText = `width:${RCPT_W}mm;position:absolute;left:0;top:0;`; // v1.24.0: меряем в проектной ширине 80 мм
+    meas.style.cssText = `width:${RCPT_W}mm;position:absolute;left:0;top:0;`;
     root.appendChild(meas);
-
-    // 1) Фискальные QR-коды чеков (PNG с сервера) — чеки печатаются С КОДОМ:
-    //    качаем для всех выбранных чеков (v1.24.1: без лимита 60), с прогрессом
-    const qrUrls = {}, qrFail = {};
-    const status = document.getElementById('pp-status');
-    const qrList = data.items.slice(0, 300);           // страховка от гигантских выборок
-    for (let i = 0; i < qrList.length; i++) {
-      const r = qrList[i];
-      if (status) status.textContent = `Загружаю фискальные QR: ${i + 1} из ${qrList.length}…`;
+    const pieces = [];
+    let missingQr = 0, missingItems = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const status = document.getElementById('pp-status');
+      if (status) status.textContent = `Готовлю чек ${i + 1} из ${ids.length}…`;
+      // Не используем список: он ограничен 100 ID и страницей из 50 чеков.
+      // При ошибке карточки останавливаем печать, не теряя выбранные чеки.
+      const card = await api.get(`/api/v1/receipts/${encodeURIComponent(ids[i])}/card`);
+      const d = card.document;
+      if (!d) throw new Error(`Не удалось получить карточку чека ${ids[i]}`);
+      if (!d.items?.length) missingItems++;
+      let qrUrl = '';
       try {
-        const { blob } = await api.download(`/api/v1/receipts/${r.id}/qr.png`);
-        qrUrls[r.id] = URL.createObjectURL(blob);
-      } catch { qrFail[r.id] = true; }                 // чек без реквизитов — пометка на листе
-    }
-
-    // 2) Рендерим чеки и режем длинные по строкам позиций
-    const pieces = [];                                      // { html, h }
-    for (const r of data.items) {
-      const blocks = rcptBlocks(r, qrUrls[r.id], qrFail[r.id]);   // v1.24.1: с QR / пометкой
-      const full = document.createElement('div');
-      full.className = 'rcpt';
-      full.innerHTML = blocks.join('');
-      meas.appendChild(full);
-      let hFull = full.getBoundingClientRect().height * MM;
-      hFull *= SCALE;                                   // v1.24.0: эффективная высота на листе
-      if (hFull <= COL_H) {
-        pieces.push({ html: full.outerHTML, h: hFull });
-        meas.removeChild(full);
-        continue;
+        const { blob } = await api.download(`/api/v1/receipts/${encodeURIComponent(ids[i])}/qr.png`);
+        qrUrl = URL.createObjectURL(blob);
+        urls.push(qrUrl);
+      } catch { missingQr++; }
+      const temp = document.createElement('div');
+      temp.innerHTML = shopReceiptHTML({ ...d, receipt_id: ids[i] });
+      const ticket = temp.querySelector('.ticket');
+      const qr = ticket.querySelector('.ticket-qr');
+      if (qrUrl) qr.querySelector('img').src = qrUrl;
+      else qr.innerHTML = '<div class="ticket-small">Фискальный QR не получен</div>';
+      // Каждый блок — отдельная неделимая единица, включая позицию и её НДС.
+      const children = [...ticket.children];
+      ticket.replaceChildren(...children.map(child => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ticket-block';
+        wrapper.appendChild(child);
+        return wrapper;
+      }));
+      meas.appendChild(ticket);
+      if (report) {
+        const label = document.createElement('div');
+        label.className = 'ticket-block rcpt-part';
+        label.textContent = `Приложение № ${i + 1} к отчёту`;
+        ticket.prepend(label);
       }
-      // длинный: режем по блокам, части продолжаются в соседней колонке
-      const nodes = [...full.children];
-      const hs = nodes.map(n => n.getBoundingClientRect().height * MM * SCALE); // v1.24.0: позиционная нарезка в масштабе листа
-      meas.removeChild(full);
-      const parts = splitBlocks(hs);
+      const nodes = [...ticket.children];
+      const hs = nodes.map(n => n.getBoundingClientRect().height * MM);
+      const total = ticket.getBoundingClientRect().height * MM;
+      const parts = total <= COL_H ? [[0, nodes.length]] : splitBlocks(hs, 16);
+      meas.removeChild(ticket);
       for (let pi = 0; pi < parts.length; pi++) {
         const [a, b] = parts[pi];
         const part = document.createElement('div');
-        part.className = 'rcpt';
-        let html = pi > 0
-          ? `<div class="rcpt-part">— продолжение чека ФД ${esc(r.fd || '')} —</div>` : '';
+        part.className = 'ticket';
+        let html = pi ? `<div class="rcpt-part">— продолжение ${report ? 'приложения № ' + (i + 1) + ', ' : ''}чека ФД ${esc((d.kkt || {}).fd || '')} —</div>` : '';
         html += nodes.slice(a, b).map(n => n.outerHTML).join('');
-        if (pi < parts.length - 1) {
-          html += `<div class="rcpt-part">↓ продолжение — часть ${pi + 2} из ${parts.length} ↓</div>`;
-        }
+        if (pi < parts.length - 1) html += `<div class="rcpt-part">↓ продолжение — часть ${pi + 2} из ${parts.length} ↓</div>`;
         part.innerHTML = html;
         meas.appendChild(part);
-        pieces.push({ html: part.outerHTML, h: part.getBoundingClientRect().height * MM });
+        const height = part.getBoundingClientRect().height * MM * SCALE;
+        if (height > COL_H) throw new Error(`Чек ${ids[i]} содержит слишком высокий блок для A4. Сократите слишком длинное поле или позицию.`);
+        pieces.push({ html: part.outerHTML, h: height });
         meas.removeChild(part);
       }
     }
-
-    // 2) Раскрой по страницам A4 (каждый кусок ЦЕЛИКОМ на странице)
-    setPrintPageMargin('@page { size: A4 portrait; margin: 0; }', false); // v1.24.0
+    setPrintPageMargin('@page { size: A4 portrait; margin: 0; }', false);
     const pages = packCut(pieces.map(p => p.h));
-
-    // 3) Собираем страницы печати
-    root.innerHTML = pages.map(page =>
-      `<div class="print-page">${page.map(pl =>
-        `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${pl.y}mm">${pieces[pl.piece].html}</div>`
-      ).join('')}</div>`).join('');
-    await whenImagesReady(root);          // v1.24.1: QR должны быть в листе, не в «пустоте»
+    root.innerHTML = pages.map(page => `<div class="print-page receipt-sheet">${page.map(pl =>
+      `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${MARGIN_Y + pl.y}mm">${pieces[pl.piece].html}</div>`
+    ).join('')}</div>`).join('');
+    if (report) {
+      // Отчёт и приложения отправляются в один вызов печати. Разные поля
+      // страниц задаются именованной страницей receipt в @page.
+      const sheets = [...root.children];
+      root.remove();
+      root = report(pages.length);
+      root.append(...sheets);
+      setPrintPageMargin('@page { size: A4 portrait; margin: 10mm 15mm 10mm 20mm; } @page receipt { size: A4 portrait; margin: 0; }', true);
+    }
+    await whenImagesReady(root);
     close();
-    const withQr = Object.keys(qrUrls).length;
-    toast(`Раскрой готов: ${pages.length} стр. × 3 колонки · ${data.items.length} чек · QR на ${withQr}. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
-    window.print();
+    const warnings = [missingItems ? `без позиций: ${missingItems}` : '', missingQr ? `без QR: ${missingQr}` : ''].filter(Boolean).join(', ');
+    const marginHint = report ? 'поля по умолчанию (CSS)' : 'поля — нет';
+    toast(`Готово: ${dataCount(ids.length)} · ${pages.length} стр. чеков A4 · 72 мм${warnings ? ' · ' + warnings : ''}. Для PDF выберите «Сохранить как PDF», масштаб 100%, ${marginHint}.`, warnings ? 'warn' : 'ok', '🖨');
     window.addEventListener('afterprint', () => {
-      const el = document.getElementById('print-root');
-      if (el) el.remove();
+      root.remove();
+      urls.forEach(url => URL.revokeObjectURL(url));
     }, { once: true });
+    if (report?.filename) printWithTitle(report.filename); else window.print();
+    printing = true;
   } catch (e) {
     close();
     toast(e.message, 'err');
+  } finally {
+    if (!printing) {
+      root?.remove();
+      urls.forEach(url => URL.revokeObjectURL(url));
+    }
   }
 }
+
+function dataCount(n) { return `чеков: ${n}`; }
 
 // ==========================================================================
 //  v1.10.0: АВАНСОВЫЙ ОТЧЁТ АО-1 (бухгалтер/админ).
@@ -6652,9 +8772,12 @@ async function openAO1Modal(opts = {}) {
       <label class="field"><span>Организация</span>
         <input id="ao-org" value="${esc(state.me?.organization || 'ООО «Ямастер»')}"></label>
       <label class="field"><span>Номер документа</span>
-        <input id="ao-num" value="АО-${ym}-${String(Math.floor(Math.random() * 90) + 10)}"></label>
+        <input id="ao-num" readonly placeholder="Присваивается при сборке"></label>
+      <label class="field"><span>Последний ранее использованный номер за месяц</span>
+        <input id="ao-start-after" type="number" min="0" max="999999" step="1" value="0">
+        <small>До первого отчёта укажите максимальный номер, уже использованный в этом месяце, включая отчёты вне программы. Поле действует только при создании счётчика; позже номера идут автоматически.</small></label>
       <label class="field"><span>Дата составления</span>
-        <input id="ao-date" type="date" value="${now.toISOString().slice(0, 10)}"></label>
+        <input id="ao-date" type="date" value="${ym}-${String(now.getDate()).padStart(2, '0')}"></label>
       <label class="field"><span>Период: с</span>
         <input id="ao-from" type="date" value="${mFrom}"></label>
       <label class="field"><span>Период: по</span>
@@ -6698,8 +8821,8 @@ async function openAO1Modal(opts = {}) {
         только подтверждённые ФНС</label>
     </div>
     <div class="modal-actions">
-      <button class="btn" data-close>Отмена</button>
-      <button class="btn btn-primary" id="ao-make">🧾 Собрать отчёт</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn btn-primary" id="ao-make">🧾 Собрать отчёт</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   slot.querySelector('#ao-make').onclick = async (e) => {
@@ -6707,6 +8830,11 @@ async function openAO1Modal(opts = {}) {
     const dFrom = slot.querySelector('#ao-from').value;
     const dTo = slot.querySelector('#ao-to').value;
     if (!dFrom || !dTo) return toast('Укажите период: с … по …', 'warn');
+    const reportDate = slot.querySelector('#ao-date').value;
+    const startAfter = Number(slot.querySelector('#ao-start-after').value || 0);
+    if (!reportDate || !Number.isInteger(startAfter) || startAfter < 0 || startAfter > 999999) {
+      return toast('Укажите дату отчёта и корректный последний номер', 'warn');
+    }
     btn.disabled = true; btn.textContent = '…собираю';
     try {
       const body = {
@@ -6722,9 +8850,18 @@ async function openAO1Modal(opts = {}) {
         btn.disabled = false; btn.textContent = '🧾 Собрать отчёт';
         return toast('За период чеков нет — измените фильтры', 'warn');
       }
+      const ids = new Set(rep.rows.map(r => r.company_id));
+      if (!rep.company?.id || ids.size !== 1 || !ids.has(rep.company.id)) {
+        throw new Error('Выберите одну компанию: номер отчёта ведётся отдельно для каждой компании.');
+      }
+      const reservation = await api.post('/api/v1/receipts/advance-report/number', {
+        company_id: rep.company.id, report_date: reportDate,
+        request_id: crypto.randomUUID(), start_after: startAfter,
+      });
+      slot.querySelector('#ao-num').value = reservation.number;
       aoShowPreview(slot, rep, {
         'ao-org': slot.querySelector('#ao-org').value,
-        'ao-num': slot.querySelector('#ao-num').value,
+        'ao-num': reservation.number,
         'ao-date': slot.querySelector('#ao-date').value,
         'ao-post': slot.querySelector('#ao-post').value,
         'ao-purpose': slot.querySelector('#ao-purpose').value,
@@ -6746,6 +8883,26 @@ async function openAO1Modal(opts = {}) {
   };
 }
 
+// Имя безопасно для Windows/macOS. Браузер может позволить изменить его в диалоге.
+function aoReportFilename(rep, meta) {
+  const company = rep.requisites?.['Организация']?.['НаименованиеСокращенное'] || rep.company?.name || meta['ao-org'] || 'Организация';
+  // Управляющие символы запрещены в именах файлов.
+  // eslint-disable-next-line no-control-regex
+  const clean = v => String(v || '').replace(/[\\/\u0000-\u001f<>:"|?*]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/g, '');
+  const amount = (Math.round((Number(rep.total?.sum) || 0) * 100) / 100).toFixed(2).replace('.', '-');
+  return [meta['ao-num'], company, meta['ao-date'], amount].map(clean).join('-');
+}
+
+// Браузер предлагает document.title в качестве имени PDF; смену имени можно отменить.
+function printWithTitle(name) {
+  const previous = document.title;
+  document.title = name;
+  const restore = () => { document.title = previous; };
+  window.addEventListener('afterprint', restore, { once: true });
+  try { window.print(); }
+  catch (err) { window.removeEventListener('afterprint', restore); restore(); throw err; }
+}
+
 // --- v1.14.0: предпросмотр собранного отчёта -------------------------------
 function aoShowPreview(slot, rep, meta) {
   aoShowPreview._meta = meta;   // v1.23.0: поля формы для JSON
@@ -6759,6 +8916,7 @@ function aoShowPreview(slot, rep, meta) {
       исключите их из учёта или перепроверьте.</div>` : ''}
     ${rep.truncated ? `<div class="info-callout" style="margin-bottom:8px">⚠ Показаны первые
       1000 чеков — сузьте период.</div>` : ''}
+    <div class="form-hint">Номер: <b>${esc(meta['ao-num'] || '—')}</b> · Предлагаемое имя PDF: ${esc(aoReportFilename(rep, meta))}.pdf</div>
     <div class="form-hint">Период: ${esc(rep.period.from)} — ${esc(rep.period.to)} ·
       ${esc(rep.company ? rep.company.name : 'все компании')}</div>
     <table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
@@ -6770,12 +8928,16 @@ function aoShowPreview(slot, rep, meta) {
         <tr><td style="padding:4px"><b>ИТОГО</b></td><td><b>${rep.total.count}</b></td>
         <td><b>${sum(rep.total.sum)}</b></td></tr></tbody>
     </table>
+    <label class="field"><span>Состав PDF</span>
+      <select id="ao-include"><option value="report">${many ? 'Только сводная ведомость' : 'Только АО-1'}</option>
+        <option value="receipts">${many ? 'Ведомость' : 'АО-1'} + чеки одним PDF</option></select></label>
+    <p class="form-hint">${many ? 'Сводная ведомость не заменяет отдельные отчёты подотчётных лиц. ' : 'АО-1 — проект отчёта; заполните и проверьте реквизиты и подписи. '}Копии чеков не заменяют обязательные подтверждающие документы. Проверьте операции возврата, личные расходы и требования бухгалтерии. Для комплекта с чеками используйте Chrome/Edge: в предпросмотре проверьте поля формы и ширину чеков 72 мм.</p>
     <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
-      <button class="btn" id="ao-back">← Изменить параметры</button>
+      <button type="button" class="btn" id="ao-back">← Изменить параметры</button>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="ao-csv">⬇ CSV (Excel)</button>
-        <button class="btn" id="ao-json" title="Структура документа в стиле 1С — для интеграции">⬇ JSON для 1С</button>
-        <button class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
+        <button type="button" class="btn" id="ao-csv">⬇ CSV (Excel)</button>
+        <button type="button" class="btn" id="ao-json" title="Структура документа в стиле 1С — для интеграции">⬇ JSON для 1С</button>
+        <button type="button" class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
       </div>
     </div>`;
   slot.querySelector('#ao-back').onclick = () => { $('#modal-root').classList.add('hidden'); openAO1Modal(); };
@@ -6789,7 +8951,29 @@ function aoShowPreview(slot, rep, meta) {
     toast('JSON для 1С скачан — структура готова к загрузке', 'ok', '⬇ 1С');
   };
   slot.querySelector('#ao-print').onclick = () => {
-    if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep, { ...meta, assignee: rep.by_assignee[0].name, month: rep.period.from.slice(0, 7) });
+    if (rep.truncated) return toast('Отчёт обрезан: сузьте выборку перед печатью', 'warn');
+    if (rep.rows.some(r => Number(r.operation) !== 1 || Number(r.personal_sum || 0) !== 0)) {
+      return toast('В выборке есть возврат, неизвестный тип операции или личные расходы. Сверьте и оформите отчёт в бухгалтерской системе.', 'warn');
+    }
+    const companies = new Set(rep.rows.map(r => r.company_id).filter(Boolean));
+    if (companies.size > 1 || (companies.size && rep.rows.some(r => !r.company_id))) {
+      return toast('В выборке несколько организаций или не указана организация чека. Сформируйте отдельный отчёт для каждой организации.', 'warn');
+    }
+    const include = slot.querySelector('#ao-include')?.value === 'receipts';
+    const individual = { ...meta, assignee: rep.by_assignee[0]?.name || '', month: rep.period.from.slice(0, 7) };
+    if (!include) {
+      if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep, individual);
+      return;
+    }
+    // В сводной ведомости строки группируются по подотчётнику; нумерация
+    // приложений должна следовать именно этому порядку, а не исходному списку.
+    const rows = many ? rep.by_assignee.flatMap(a => rep.rows.filter(r => r.assignee === a.name)) : rep.rows;
+    if (rows.length !== rep.rows.length || rows.some(r => !r.id) || new Set(rows.map(r => r.id)).size !== rows.length) {
+      return toast('Не удалось сопоставить все строки с чеками — комплект не создан', 'err');
+    }
+    const makeReport = count => many ? aoMultiPrint(rep, meta, true) : ao1Print(slot, rep, { ...individual, attachmentPages: count }, true);
+    makeReport.filename = aoReportFilename(rep, meta);
+    printReceiptsPDF(rows.map(r => r.id), makeReport);
   };
 }
 
@@ -6816,9 +9000,9 @@ function aoCsvDownload(rep) {
 }
 
 // --- v1.14.0: сводная печать (несколько подотчётников) ----------------------
-function aoMultiPrint(rep, meta) {
+function aoMultiPrint(rep, meta, prepareOnly = false) {
   const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
-  const ops = { 1: ' (возврат)' };
+  const ops = { 2: ' (возврат)' };
   let rows = '';
   let n = 0;
   for (const a of rep.by_assignee) {
@@ -6871,8 +9055,10 @@ function aoMultiPrint(rep, meta) {
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>
     </div>`;
   document.body.appendChild(root);
+  setPrintPageMargin('@page { size: A4 portrait; margin: 10mm 15mm 10mm 20mm; }', true);
+  if (prepareOnly) return root;
   toast(`Сводный АО: ${rep.total.count} чек(ов), ${rep.by_assignee.length} подотчётник(ов) — «Сохранить как PDF»`, 'ok', '🧾');
-  window.print();
+  printWithTitle(aoReportFilename(rep, meta));
 }
 
 // ==========================================================================
@@ -6929,7 +9115,7 @@ function ao1Json(rep, meta, cash, card) {
         СчетУчета: meta['ao-acc'] || '44.01',
       })),
       Итого: { Сумма: ao1Money(total), КоличествоДокументов: rep.rows.length,
-               Листов: Math.max(1, Math.ceil(rep.rows.length / 18)) },
+               Листов: null },
       ГлавныйБухгалтер: meta['ao-buh'] || '',
       Руководитель: meta['ao-head'] || '',
       Источник: 'Ямастер Чек v' + (state.appVersion || ''),
@@ -6937,7 +9123,7 @@ function ao1Json(rep, meta, cash, card) {
   };
 }
 
-function ao1Print(f, rep, meta) {
+function ao1Print(f, rep, meta, prepareOnly = false) {
   const items = rep.rows;
   const sum = ao1Money;
   const total = items.reduce((a, r) => a + (r.total_sum || 0), 0);
@@ -7019,7 +9205,7 @@ function ao1Print(f, rep, meta) {
         </tbody>
       </table>
       <p class="ao1-line">Приложение <b>${items.length}</b> документов на
-        <b>${Math.max(1, Math.ceil(items.length / 18))}</b> лист(ах)</p>
+        <b>${meta.attachmentPages ?? '_____'}</b> лист(ах)</p>
       <p class="ao1-line">Отчёт проверен. К утверждению в сумме
         <b>${sum(total)}</b> руб. (${ruMoney(total)}).</p>
       <table class="ao1-signs">
@@ -7034,7 +9220,7 @@ function ao1Print(f, rep, meta) {
         <b>Расписка.</b> Принят к проверке от <b>${esc(fio)}</b> авансовый отчёт
         № <b>${esc((meta['ao-num'] || dash).split('-').pop())}</b> от <b>${esc(meta['ao-date'] || dash)}</b>
         на сумму <b>${sum(total)}</b> руб., документов — <b>${items.length}</b> на
-        <b>${Math.max(1, Math.ceil(items.length / 18))}</b> листах.
+        <b>${meta.attachmentPages ?? '_____'}</b> листах.
         <div class="ao1-sigrow">Бухгалтер <span class="ao1-sigline"></span> подпись <span class="ao1-sigline"></span></div>
       </div>
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')} · лицевая сторона</p>
@@ -7062,8 +9248,9 @@ function ao1Print(f, rep, meta) {
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · оборотная сторона</p>
     </div>`;
   document.body.appendChild(root);
-  toast(`АО-1 (официальная форма): ${items.length} докум. на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
-  window.print();
+  if (prepareOnly) return root;
+  toast(`АО-1 (проект на основе формы): ${items.length} докум. на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
+  printWithTitle(aoReportFilename(rep, meta));
 }
 
 function ruMoney(n) {
@@ -7107,8 +9294,8 @@ async function openStatementModal() {
     <div class="modal-title">📋 Ведомость подотчётников</div>
     <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px">
       <label class="field"><span>Месяц</span><input type="month" id="st-month" value="${ym}"></label>
-      <button class="btn btn-sm btn-primary" id="st-load">Показать</button>
-      <button class="btn btn-sm" id="st-csv">⬇ CSV</button>
+      <button type="button" class="btn btn-sm btn-primary" id="st-load">Показать</button>
+      <button type="button" class="btn btn-sm" id="st-csv">⬇ CSV</button>
     </div>
     <div id="st-body"><div class="skeleton" style="height:120px"></div></div>
     <p class="form-hint" style="margin-top:8px">«К учёту» = сумма чека минус личные покупки.
@@ -7171,6 +9358,65 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 }
 
+// ==========================================================================
+//  v1.70.72: ПОЛНАЯ КАРТОЧКА ЧЕКА
+//  Две задачи владельца: (1) увидеть ВСЁ, что есть по чеку, (2) увидеть
+//  чек так, как он выглядел в магазине. Плюс продавец, регион и отрасль —
+//  чтобы потом раскладывать пул.
+// ==========================================================================
+async function receiptFullCard(id) {
+  let card;
+  try {
+    card = await api.get(`/api/v1/receipts/${encodeURIComponent(id)}/card`);
+  } catch (e) { return toast(e.message, 'err'); }
+  const d = card.document || {};
+  d.receipt_id = id;
+  const tabs = [
+    ['shop', '🧾 Чек как в магазине', () => shopReceiptHTML(d)],
+    ['details', '📋 Все реквизиты', () => fullCardDetailsHTML(d)],
+    ['items', `📦 Товары (${(d.items || []).length})`, () => fullCardItemsHTML(d)],
+    ['raw', '🗄 Данные и ответ источника', () => fullCardRawHTML(card)],
+  ];
+  const body = openModal(`
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">Полная информация по чеку</h3>
+      ${chip(d.receipt_note ? d.receipt_note.fns_status : 'unknown')}
+      <span class="badge-soft">${fmtSum(d.money ? d.money.total : 0)}</span>
+      <button type="button" class="btn btn-sm" id="fcard-print" style="margin-left:auto">🖨 Напечатать</button>
+    </div>
+    <div class="fcard-note">${esc((d.seller || {}).name || 'Продавец не указан')} ·
+      ${esc((d.region || {}).name || 'регион не определён')} ·
+      ${esc((d.industry || {}).industry || 'отрасль не определена')}</div>
+    <div class="fcard-tabs">${tabs.map((t, i) => `<button type="button"
+      class="btn btn-sm ${i === 0 ? 'active' : ''}" data-ftab="${t[0]}">${t[1]}</button>`).join('')}</div>
+    <div id="fcard-body"></div>`, {});
+  const slot = body.slot;
+  const pane = slot.querySelector('#fcard-body');
+  const show = (key) => {
+    const tab = tabs.find(t => t[0] === key) || tabs[0];
+    slot.querySelectorAll('[data-ftab]').forEach(b =>
+      b.classList.toggle('active', b.dataset.ftab === tab[0]));
+    pane.innerHTML = tab[2]();
+  };
+  // QR-код тянем с авторизацией (blob): <img src> токен не передаёт
+  async function hydrateQr() {
+    const img = slot.querySelector('#shop-ticket img');
+    if (!img || img.dataset.ready) return;
+    try {
+      const { blob } = await api.download(`/api/v1/receipts/${id}/qr.png`);
+      const url = URL.createObjectURL(blob);
+      img.src = url;
+      img.dataset.ready = '1';
+    } catch (e) { img.style.display = 'none'; }
+  }
+  slot.querySelectorAll('[data-ftab]').forEach(b =>
+    b.onclick = () => { show(b.dataset.ftab); hydrateQr(); });
+  show('shop');
+  hydrateQr();
+  const pr = slot.querySelector('#fcard-print');
+  if (pr) pr.onclick = () => printReceiptsPDF([id]);
+}
+
 // --- Drawer: карточка чека --------------------------------------------------
 async function receiptDrawer(id) {
   // v1.28.0: один чек — одна карточка. Повторные клики по тому же чеку
@@ -7193,7 +9439,7 @@ async function receiptDrawer(id) {
     <div class="drawer-head">
       <b>Чек ${fmtSum(r.total_sum)}</b>
       ${chip(r.status)} ${chip(r.fns_status)}
-      <button class="btn-icon modal-close" style="margin-left:auto">✕</button>
+      <button type="button" class="btn-icon modal-close" style="margin-left:auto">✕</button>
     </div>
     <div class="drawer-body">
       <div class="qr-box" title="Нажмите, чтобы скопировать">${esc(r.qr_data)}</div>
@@ -7225,9 +9471,10 @@ async function receiptDrawer(id) {
           <td class="cell-sum">${fmtSum(it.price)}</td><td class="cell-sum">${fmtSum(it.total)}</td></tr>`).join('')}</tbody></table>`
         : emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)')}
       <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
-        ${acc ? '<button class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
-        ${acc ? '<button class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
-        ${canDel ? '<button class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
+        <button type="button" class="btn btn-sm" id="d-fullcard">📄 Полная информация по чеку</button>
+        ${acc ? '<button type="button" class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
+        ${acc ? '<button type="button" class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
+        ${canDel ? '<button type="button" class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
       </div>
     </div>`;
   document.body.appendChild(drawer);
@@ -7251,6 +9498,8 @@ async function receiptDrawer(id) {
     navigator.clipboard && navigator.clipboard.writeText(r.qr_data);
     toast('Строка QR скопирована', 'info');
   };
+  const fullBtn = drawer.querySelector('#d-fullcard');
+  if (fullBtn) fullBtn.onclick = () => receiptFullCard(id);
   const save = drawer.querySelector('#d-save');
   if (save) save.onclick = async () => {
     try {
@@ -7305,8 +9554,8 @@ async function viewExport(container) {
             <option value="xml">EnterpriseData XML</option>
           </select></label>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn btn-primary" id="btn-export-all">⬇ Выгрузить ожидающие (${stats.pending_export})</button>
-          <button class="btn" id="btn-export-verified">⬇ Все проверенные</button>
+          <button type="button" class="btn btn-primary" id="btn-export-all">⬇ Выгрузить ожидающие (${stats.pending_export})</button>
+          <button type="button" class="btn" id="btn-export-verified">⬇ Все проверенные</button>
         </div>
         <p class="form-hint" style="margin-top:12px">После скачивания чеки помечаются как выгруженные.
         Повторная загрузка в 1С не создаст дублей: ключ ФН+ФД+ФП.</p>
@@ -7319,7 +9568,7 @@ async function viewExport(container) {
             В 1С создайте HTTP-соединение к этому серверу: <code class="inline" id="pull-url">/onec/v1/receipts/pull</code></div></div>
           <div class="step"><span class="step-num"></span><div>
             Заголовок авторизации: <code class="inline">X-API-Token: …</code>
-            ${onecSettings ? '<button class="btn btn-sm" id="btn-reveal" style="margin-left:6px">показать токен</button>' : '(токен показывает администратор)'}</div></div>
+            ${onecSettings ? '<button type="button" class="btn btn-sm" id="btn-reveal" style="margin-left:6px">показать токен</button>' : '(токен показывает администратор)'}</div></div>
           <div class="step"><span class="step-num"></span><div>
             Регламентным заданием выполняйте выборку и подтверждение: <code class="inline">/onec/v1/receipts/ack</code></div></div>
           <div class="step"><span class="step-num"></span><div>
@@ -7355,7 +9604,7 @@ async function viewExport(container) {
       const s = await api.get('/api/v1/settings/onec/reveal');
       $('#token-zone').innerHTML =
         `<div class="token-line"><input readonly value="${esc(s.api_token)}" id="token-input">
-         <button class="btn btn-sm" id="btn-copy-token">копировать</button></div>`;
+         <button type="button" class="btn btn-sm" id="btn-copy-token">копировать</button></div>`;
       $('#btn-copy-token').onclick = () => {
         navigator.clipboard && navigator.clipboard.writeText(s.api_token);
         toast('Токен скопирован', 'ok');
@@ -7381,10 +9630,10 @@ async function viewMapping(container) {
     <div class="glass card">
       <div class="card-title">Правила преобразования <span class="spacer"></span>
         <span class="form-hint" id="m-count"></span>
-        ${admin ? '<button class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
+        ${admin ? '<button type="button" class="btn btn-sm" id="m-add">+ Добавить правило</button>' : ''}</div>
       <div id="mapping-rows"></div>
       <div class="modal-actions" style="justify-content:flex-start">
-        ${admin ? '<button class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
+        ${admin ? '<button type="button" class="btn btn-primary" id="m-save">💾 Сохранить маппинг</button>' : ''}
       </div>
     </div>
     <div class="grid cards-2-even" style="margin-top:16px">
@@ -7492,7 +9741,7 @@ async function viewUsers(container) {
 
     <div class="glass card" style="margin-bottom:16px">
       <div class="card-title">Приглашения <span class="spacer"></span>
-        <button class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
+        <button type="button" class="btn btn-sm btn-primary" id="i-add">+ Создать приглашение</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>Компания (группа)</th><th>Роль</th><th>Использовано</th><th>Действует до</th>
         <th>Статус</th><th>Действия</th></tr></thead><tbody>
@@ -7504,9 +9753,9 @@ async function viewUsers(container) {
           <td>${i.valid ? '<span class="chip verified"><span class="dot"></span>активно</span>' : '<span class="chip failed"><span class="dot"></span>' + (i.revoked ? 'отозвано' : 'исчерпано') + '</span>'}</td>
           <td>${i.valid
             ? `<div class="row-actions">
-                 <button class="btn btn-sm i-link" data-token="${esc(i.token)}" title="Скопировать ссылку-приглашение">🔗 Ссылка</button>
-                 <button class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>
-                 <button class="btn btn-sm btn-bad i-revoke" data-id="${i.id}" title="Отозвать — ссылка перестанет работать">Отозвать</button>
+                 <button type="button" class="btn btn-sm i-link" data-token="${esc(i.token)}" title="Скопировать ссылку-приглашение">🔗 Ссылка</button>
+                 <button type="button" class="btn btn-sm i-qr" data-id="${i.id}" data-token="${esc(i.token)}" title="Показать QR-код">▣ QR</button>
+                 <button type="button" class="btn btn-sm btn-bad i-revoke" data-id="${i.id}" title="Отозвать — ссылка перестанет работать">Отозвать</button>
                </div>` : '—'}</td>
         </tr>`).join('') : `<tr style="cursor:default"><td colspan="6">${emptyState('✉️', 'Приглашений для этой группы нет')}</td></tr>`}
       </tbody></table></div>
@@ -7514,7 +9763,7 @@ async function viewUsers(container) {
 
     <div class="glass card">
       <div class="card-title">Пользователи системы <span class="spacer"></span>
-        <button class="btn btn-sm" id="u-add">+ Создать вручную</button></div>
+        <button type="button" class="btn btn-sm" id="u-add">+ Создать вручную</button></div>
       <div class="table-wrap"><table class="data"><thead><tr>
         <th>Логин</th><th>ФИО</th><th>Роль</th><th>Компания</th><th>Статус</th>
         <th>Последний вход</th><th></th></tr></thead><tbody>
@@ -7526,12 +9775,12 @@ async function viewUsers(container) {
           <td>${u.is_active ? '<span class="chip verified"><span class="dot"></span>активен</span>' : '<span class="chip failed"><span class="dot"></span>отключён</span>'}</td>
           <td class="cell-date">${fmtDate(u.last_login_at)}</td>
           <td style="white-space:nowrap">
-            ${u.role === 'accountant' && u.is_active ? `<button class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
-            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
-            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
-            ${u.role !== 'admin' && u.is_active ? `<button class="btn btn-sm u-view" data-id="${u.id}" data-name="${esc(u.full_name || u.username)}" title="Посмотреть приложение глазами сотрудника (режим просмотра)">👁</button>` : ''}
-            ${!u.is_active ? `<button class="btn btn-sm u-unarchive" data-id="${u.id}" data-name="${esc(u.username)}" title="Восстановить из архива">♻</button>` : ''}
-            <button class="btn btn-sm u-edit" title="Изменить данные">✎</button>
+            ${u.role === 'accountant' && u.is_active ? `<button type="button" class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
+            ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-view" data-id="${u.id}" data-name="${esc(u.full_name || u.username)}" title="Посмотреть приложение глазами сотрудника (режим просмотра)">👁</button>` : ''}
+            ${!u.is_active ? `<button type="button" class="btn btn-sm u-unarchive" data-id="${u.id}" data-name="${esc(u.username)}" title="Восстановить из архива">♻</button>` : ''}
+            <button type="button" class="btn btn-sm u-edit" title="Изменить данные">✎</button>
           </td></tr>`).join('')}
       </tbody></table></div>
     </div>`;
@@ -7565,29 +9814,6 @@ async function viewUsers(container) {
     route(true);
   });
 
-  // v1.8.2: модал QR-кода приглашения — показать/скачать PNG
-  async function openInviteQr(inv, url) {
-    const { slot } = openModal(`
-      <div class="modal-title">▣ QR-код приглашения</div>
-      <div class="invite-qr-box"><div class="skeleton" style="height:220px;width:220px"></div></div>
-      <p class="form-hint" style="margin-top:10px">Пусть сотрудник наведёт камеру телефона
-      (сканер QR — камера или «Google Объектив») — откроется страница регистрации,
-      роль присвоится автоматически. Ссылка: <span class="mono" style="font-size:11px">${esc(url || '')}</span></p>
-      <div class="modal-actions">
-        <button class="btn" data-close>Закрыть</button>
-        <button class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
-      </div>`);
-    slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
-    const box = slot.querySelector('.invite-qr-box');
-    try {
-      const { blob, filename } = await api.download(`/api/v1/invites/${inv.id}/qr`);
-      const objUrl = URL.createObjectURL(blob);
-      box.innerHTML = `<img src="${objUrl}" alt="QR-код приглашения" width="220" height="220">`;
-      slot.querySelector('#iv-qr-dl').onclick = () => downloadBlob(blob, filename);
-    } catch (e) {
-      box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`;
-    }
-  }
 
 
   // --- Пользователи ---
@@ -7607,8 +9833,8 @@ async function viewUsers(container) {
           <option value="manager">Руководитель — только просмотр своей компании</option>
         </select></label>
       <div class="modal-actions">
-        <button class="btn" id="ur-cancel">Отмена</button>
-        <button class="btn btn-primary" id="ur-save">Сменить роль</button></div>`);
+        <button type="button" class="btn" id="ur-cancel">Отмена</button>
+        <button type="button" class="btn btn-primary" id="ur-save">Сменить роль</button></div>`);
     slot.querySelector('#ur-cancel').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#ur-save').onclick = async () => {
       const to = slot.querySelector('#ur-role').value;
@@ -7627,7 +9853,7 @@ async function viewUsers(container) {
       openModal(`<div class="modal-title">🔑 Временный пароль для ${esc(btn.dataset.name)}</div>
         <p class="form-hint" style="margin-bottom:10px">Передайте его сотруднику — при входе система потребует сменить пароль.</p>
         <div class="qr-box" style="font-size:16px;justify-content:center">${esc(r.temp_password)}</div>
-        <div class="modal-actions"><button class="btn btn-primary" id="tp-ok">Передал</button></div>`).slot.querySelector('#tp-ok').onclick = function(){ this.closest('.modal-root').classList.add('hidden'); };
+        <div class="modal-actions"><button type="button" class="btn btn-primary" id="tp-ok">Передал</button></div>`).slot.querySelector('#tp-ok').onclick = function(){ this.closest('.modal-root').classList.add('hidden'); };
       route(true);
     } catch (e) { toast(e.message, 'err'); }
   });
@@ -7674,9 +9900,9 @@ async function viewUsers(container) {
           </select></label>` : ''}
       </div>
       <div class="modal-actions">
-        ${u && u.id !== state.me.id ? '<button class="btn btn-bad" id="u-delete">Архивировать</button>' : ''}
-        <button class="btn" data-close>Отмена</button>
-        <button class="btn btn-primary" id="u-save">Сохранить</button>
+        ${u && u.id !== state.me.id ? '<button type="button" class="btn btn-bad" id="u-delete">Архивировать</button>' : ''}
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn btn-primary" id="u-save">Сохранить</button>
       </div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
     slot.querySelector('#u-save').onclick = async () => {
@@ -7743,8 +9969,8 @@ function showUpdateBanner(newVer) {
     `<span class="ub-text">✅ Программа обновилась на сервере` +
     (newVer ? ` — <b>v<span class="ub-ver">${esc(newVer)}</span></b>` : '') +
     `. Можно перезагрузиться, чтобы увидеть новую версию.</span>` +
-    ` <button class="btn btn-sm btn-primary" id="ub-reload">🔄 Перезагрузиться</button>` +
-    ` <button class="btn btn-sm" id="ub-later">Позже</button>`;
+    ` <button type="button" class="btn btn-sm btn-primary" id="ub-reload">🔄 Перезагрузиться</button>` +
+    ` <button type="button" class="btn btn-sm" id="ub-later">Позже</button>`;
   document.body.appendChild(b);
   $('#ub-reload', b).onclick = () => hardReset(false);
   $('#ub-later', b).onclick = () => b.remove();
@@ -7897,15 +10123,22 @@ async function viewAudit(container) {
 //  ЭКРАН: Настройки
 // ==========================================================================
 async function viewSettings(container) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null, whSet = null;   // v1.66.0: + MAX, v1.67.0: + webhooks
+  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null, whSet = null, consentSet = null;   // v1.66.0: + MAX, v1.67.0: + webhooks, v1.70.37: + реквизиты оператора в согласии
   let pol = null, companies = null, mrules = null;   // v1.62.0/v1.63.0
   try { me = await api.get('/api/v1/auth/me'); } catch {}
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); whSet = await api.get('/api/v1/settings/webhooks'); } }   // v1.66.0: + MAX, v1.67.0: + webhooks
+  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); whSet = await api.get('/api/v1/settings/webhooks'); consentSet = await api.get('/api/v1/settings/consent'); } }   // v1.66.0: + MAX, v1.67.0: + webhooks
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
-  let appSum = null, sysInfo = null;
+  let appSum = null, sysInfo = null, clientsInfo = null;
   try { appSum = await api.get('/api/v1/settings/app/summary'); } catch {}
   if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
+  // v1.70.50: клиенты приложения и передача данных — один запрос на две карточки
+  if (isAdmin()) { try { clientsInfo = await api.get('/api/v1/admin/clients'); } catch {} }
+  // v1.70.51: мониторинг OpenStack — настройки и состояние контура.
+  // Отдельные try/catch: отказ одного запроса не должен снимать всю карточку.
+  let osSet = null, osStatus = null;
+  if (isAdmin()) { try { osSet = await api.get('/api/v1/openstack/settings'); } catch {} }
+  if (isAdmin()) { try { osStatus = await api.get('/api/v1/openstack/status'); } catch {} }
   // v1.62.0: политика расходов — бухгалтер и админ
   if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
   if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
@@ -7935,7 +10168,7 @@ async function viewSettings(container) {
   container.innerHTML = `
     <div class="settings-layout">
     <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">${
-      SETTINGS_GROUPS.map((g) => `
+      SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
       <div class="snav-group" data-grp="${g.key}">
         <button type="button" class="snav-head" aria-expanded="false">
           <span class="snav-ico">${g.icon}</span><span class="snav-title">${g.title}</span>
@@ -7981,9 +10214,9 @@ async function viewSettings(container) {
             <input id="mc-signature" value=""></label>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-          <button class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
+          <button type="button" class="btn btn-sm btn-primary" id="mc-save">💾 Сохранить</button>
           <input id="mc-testto" placeholder="куда отправить тест" style="max-width:230px">
-          <button class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
+          <button type="button" class="btn btn-sm" id="mc-test">✉ Тестовое письмо</button>
         </div>
         <div class="form-hint" style="margin:4px 0 10px">Для доставляемости добавьте в DNS домена
           SPF и DKIM своего почтового сервера: <code>v=spf1 mx ~all</code> и подпись DKIM.</div>
@@ -7995,7 +10228,7 @@ async function viewSettings(container) {
             <span>включён</span></label></div>
         <div id="mc-rules" class="form-hint" style="margin:6px 0">Загружаем…</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
-          <button class="btn btn-sm" id="mc-newrule">+ Новое правило</button>
+          <button type="button" class="btn btn-sm" id="mc-newrule">+ Новое правило</button>
         </div>
         <div id="mc-log" style="margin-top:8px"></div>
       </div>` : ''}
@@ -8012,7 +10245,7 @@ async function viewSettings(container) {
           <span class="form-hint">По умолчанию 10. Подотчётник обязан отчитаться не позднее 3 рабочих
           дней после израсходования (п. 6.3 Указания ЦБ 3210-У) — срок в организации устанавливает
           руководитель приказом; просрочка подсвечивается в «Базе чеков».</span></label>
-        <button class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
+        <button type="button" class="btn btn-primary btn-sm" id="app-save" style="margin-top:12px">💾 Сохранить</button>
       </div>` : ''}
 
       ${isAccountant() && pol ? `
@@ -8036,7 +10269,7 @@ async function viewSettings(container) {
           <input id="pol-cats" placeholder="Алкоголь, Табак, Подарки" value="${esc((pol.forbidden_categories || []).join(', '))}">
           <span class="form-hint">Регистр не важен. Статья указывается в чеке
           (поле «Статья расходов»). Чеков с нарушениями сейчас: <b>${pol.flagged || 0}</b>.</span></label>
-        <button class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
+        <button type="button" class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
         <div id="pol-msg" class="form-hint" style="margin-top:6px"></div>
       </div>` : ''}
 
@@ -8055,8 +10288,8 @@ async function viewSettings(container) {
             <td title="${esc(m.value)}">${esc((m.value || '').slice(0, 55))}${(m.value || '').length > 55 ? '…' : ''}</td>
             <td>${m.applied_count || 0}</td>
             <td style="white-space:nowrap">
-              <button class="btn btn-sm mr-backfill" data-id="${m.id}" title="Заполнить пустые поля у старых чеков этого поставщика">⏪ к старым</button>
-              <button class="btn btn-sm mr-del" data-id="${m.id}" title="Удалить правило">🗑</button></td>
+              <button type="button" class="btn btn-sm mr-backfill" data-id="${m.id}" title="Заполнить пустые поля у старых чеков этого поставщика">⏪ к старым</button>
+              <button type="button" class="btn btn-sm mr-del" data-id="${m.id}" title="Удалить правило">🗑</button></td>
           </tr>`).join('')}</tbody></table></div>`
           : '<div class="form-hint">Правил ещё нет. Откройте чек (✏️), заполните статью/сотрудника/комментарий и нажмите «🧠 Запомнить» в блоке «Запомнить для поставщика».</div>'}
         <div id="mr-msg" class="form-hint" style="margin-top:6px"></div>
@@ -8064,22 +10297,30 @@ async function viewSettings(container) {
 
       ${isAdmin() && fns ? `
       <div class="glass card" id="st-fns" data-sec="checks" style="order:20">
-        <div class="card-title">Проверка чеков (ФНС)</div>
-        <div class="segmented" style="margin-bottom:14px">
-          <button id="seg-mock" class="${fns.provider === 'mock' ? 'active' : ''}">Демо (mock)</button>
-          <button id="seg-fns" class="${fns.provider === 'fns' ? 'active' : ''}">Реальное API ФНС</button>
-        </div>
-        <div class="info-callout" id="fns-hint" style="font-size:12.5px">
-          ${fns.provider === 'mock'
-            ? '<b>Демо-провайдер</b> имитирует ответы ФНС — для знакомства с системой и обучения.'
-            : '<b>Реальное API</b> (openapi.nalog.ru). Требуется Мастер-токен ФНС — заявка в ФНС (см. docs/knowledge/fns_auth.md).'}</div>
+        <div class="card-title">Проверка чеков (ФНС) <span class="form-hint">(v1.70.70)</span></div>
+        <div class="info-callout" style="font-size:12.5px;margin-bottom:12px">
+          Единственный источник проверки — <b>Открытые API ФНС</b> (openapi.nalog.ru).
+          Мастер-токен и AppId выдаются ФНС при регистрации приложения
+          (Brand <b>YmasterAPI</b>). Запросы идут только с разрешённых IP сервера.</div>
         <label class="field" style="margin-bottom:12px"><span>Мастер-токен ${fns.has_master_token ? '(задан: ' + esc(fns.master_token_masked) + ')' : '(не задан)'}</span>
           <input id="fns-token" type="password" placeholder="вставьте мастер-токен ФНС"></label>
-        <label class="field" style="margin-bottom:14px"><span>ClientAppId</span>
-          <input id="fns-appid" value="${esc(fns.client_app_id)}"></label>
-        <button class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
-        <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней (повторная проверка не расходует лимиты).</p>
-      </div>` : ''}
+        <label class="field" style="margin-bottom:14px"><span>AppId (идентификатор приложения в ФНС)</span>
+          <input id="fns-appid" value="${esc(fns.client_app_id)}" placeholder="например, YmasterAPI"></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
+          <button type="button" class="btn btn-sm" id="fns-diag">🩺 Диагностика связи</button>
+        </div>
+        <div id="fns-diag-out" style="margin-top:10px"></div>
+        <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней — повторная проверка
+        того же чека лимит не расходует.</p>
+        ${fns.quota ? `<div class="info-callout" style="font-size:12.5px;margin-top:10px">
+          📊 Лимит ФНС на ${esc(fns.quota.day)}: израсходовано <b>${fns.quota.used}</b> из
+          ${fns.quota.limit} запросов (${fns.quota.percent} %), остаток ${fns.quota.remaining}.
+          ${fns.quota.exhausted ? 'Лимит исчерпан — новые чеки проверятся автоматически после сброса.'
+            : fns.quota.percent >= fns.quota.warn_percent ? '⚠️ Израсходовано больше 80 % суточного лимита.' : ''}
+        </div>` : ''}
+      </div>
+      ` : ''}
 
       ${isAdmin() && fns ? `
       <div class="glass card" id="st-checko" data-sec="integr" style="order:31">
@@ -8097,9 +10338,9 @@ async function viewSettings(container) {
           <input id="checko-key" type="password" autocomplete="off" spellcheck="false"
                  placeholder="вставьте ключ из личного кабинета"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="checko-save">💾 Сохранить ключ</button>
-          <button class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
-          <button class="btn btn-sm" id="checko-test" title="Живой запрос ЕГРЮЛ по тестовому ИНН — тратит 1 запрос из 100 дневных">🧪 Проверить ключ</button>
+          <button type="button" class="btn btn-primary btn-sm" id="checko-save">💾 Сохранить ключ</button>
+          <button type="button" class="btn btn-sm" id="checko-reveal">👁 Показать ключ</button>
+          <button type="button" class="btn btn-sm" id="checko-test" title="Живой запрос ЕГРЮЛ по тестовому ИНН — тратит 1 запрос из 100 дневных">🧪 Проверить ключ</button>
         </div>
         <p class="form-hint" id="checko-status" style="margin-top:10px">${esc(checkoSet && checkoSet.hint || '')}</p>
       </div>` : ''}
@@ -8119,27 +10360,6 @@ async function viewSettings(container) {
         <label class="field" style="margin-bottom:10px"><span>Прокси для Telegram
           ${tgSet.proxy_configured ? '(задан: ' + esc(tgSet.proxy_masked || '•••') + ')' : '(не задан — классический способ обхода блокировки)'}</span>
           <input id="tg-proxy" autocomplete="off" placeholder="socks5://логин:пароль@хост:порт (пусто — не менять; «-» — убрать)"></label>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px">
-          <button type="button" class="btn btn-sm" id="tg-adguard">🛡 AdGuard VPN</button>
-          <span class="form-hint">установит и настроит всё сама: CLI, вход по ссылке, службы, прокси, проверка пути (v1.70.15). Руками — <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a></span>
-        </div>
-        <div id="ag-setup" class="hidden" style="border:2px solid #d8d4ec;border-radius:10px;padding:10px 12px;margin:0 0 10px;background:rgba(59,42,126,.04)">
-          <div id="ag-steps" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px"></div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-            <a id="ag-link" class="btn btn-sm hidden" target="_blank" rel="noopener" href="#">🔗 Подтвердить вход в AdGuard</a>
-            <span class="form-hint hidden" id="ag-link-hint">ссылка действует ~30 минут — откройте, войдите, установка продолжится сама</span>
-            <span class="form-hint" id="ag-state"></span>
-          </div>
-          <pre id="ag-setup-log" style="max-height:170px;overflow:auto;font-size:12px;background:#fff;border:1px solid #d8d4ec;border-radius:8px;padding:8px;margin:0 0 8px"></pre>
-          <label class="field hidden" id="ag-sudo-row" style="margin:0 0 8px"><span>🔑 Пароль сервера (sudo)</span>
-            <input type="password" id="ag-sudo-pw" autocomplete="off" placeholder="пароль служебного пользователя программы">
-            <span class="form-hint">программа работает без root, а sudo просит пароль — как в окне обновления: sudo проверяет пароль служебного пользователя приложения, не ваш. Используется только на время установки и нигде не сохраняется.</span></label>
-          <div style="display:flex;gap:8px">
-            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-start">Установить</button>
-            <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
-            <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
-          </div>
-        </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px">
           <button type="button" class="btn btn-sm" id="tg-ping" title="3 коротких запроса, среднее">📏 Пинг</button>
           <span class="form-hint" id="tg-ping-out">${tgSet.ping_ms != null && tgSet.ping_ms !== '' ? ('последний замер: ' + tgSet.ping_ms + ' мс · ' + esc(tgSet.ping_at || '') + (tgSet.ping_ok ? '' : ' · ⚠ путь недоступен — tg-health.sh сменит локацию')) : 'ещё не измерялся — автоматически в 15:00 МСК или кнопкой'}</span>
@@ -8166,10 +10386,10 @@ async function viewSettings(container) {
             <input id="tg-text" value="${esc(tgSet.reminder_text)}"></label>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="tg-save">💾 Сохранить и запустить</button>
-          <button class="btn btn-sm" id="tg-diag">🔍 Диагностика</button>
-          <button class="btn btn-sm" id="tg-test">🧪 Тест себе</button>
-          <button class="btn btn-sm" id="tg-refresh"> ⟳ Обновить данные бота</button>
+          <button type="button" class="btn btn-primary btn-sm" id="tg-save">💾 Сохранить и запустить</button>
+          <button type="button" class="btn btn-sm" id="tg-diag">🔍 Диагностика</button>
+          <button type="button" class="btn btn-sm" id="tg-test">🧪 Тест себе</button>
+          <button type="button" class="btn btn-sm" id="tg-refresh"> ⟳ Обновить данные бота</button>
         </div>
         <p class="form-hint" id="tg-diag-out" style="margin-top:10px"></p>
         <p class="form-hint" style="margin-top:6px">${tgSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'} ·
@@ -8202,17 +10422,57 @@ async function viewSettings(container) {
             <input type="checkbox" id="mx-digest" ${maxSet.digest_enabled ? 'checked' : ''} style="width:auto">
             <span>Утренний дайджест бухгалтеру и администратору (в 08:00)</span></label>
         </div>
-        <p class="form-hint" style="margin:0 0 6px">Токен принадлежит боту: <b>${esc(maxSet.token_bot || '—')}</b>${maxSet.token_mismatch ? ' — <b style="color:#c0392b">служебное имя не совпадает с публичным ником: подписи/ссылки работают только у бота из токена. Вставьте токен бота из публичного ника.</b>' : ''}</p>
+        <p class="form-hint" style="margin:0 0 6px">Токен принадлежит боту: <b>${esc(maxSet.token_bot || '—')}</b>${maxSet.token_mismatch ? ' — <b style="color:var(--bad-text)">служебное имя не совпадает с публичным ником: подписи/ссылки работают только у бота из токена. Вставьте токен бота из публичного ника.</b>' : ''}</p>
         <label class="field full" style="margin-top:8px"><span>Публичный ник бота — для ссылок max.ru/ник (вход через MAX, приглашения). Служебный username вида id…_bot из платформы не подходит</span>
           <input id="mx-nick" value="${esc(maxSet.bot_nick || '')}" placeholder="chek.ymaster.bot"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
-          <button class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
-          <button class="btn btn-sm" id="mx-who">🪪 Чей токен?</button>
+          <button type="button" class="btn btn-primary btn-sm" id="mx-save">💾 Сохранить и запустить</button>
+          <button type="button" class="btn btn-sm" id="mx-test">🧪 Тест себе</button>
+          <button type="button" class="btn btn-sm" id="mx-who">🪪 Чей токен?</button>
         </div>
         <p class="form-hint" style="margin-top:10px">${maxSet.worker_running ? '✅ Воркер запущен' : '⏸ Воркер не запущен'}${maxSet.last_update_ago != null ? ` · события ${maxSet.last_update_ago < 90 ? 'сейчас' : Math.round(maxSet.last_update_ago / 60) + ' мин назад'}` : ''} ·
           статус виден после сохранения</p>
       </div>` : ''}
+
+      ${isAdmin() && consentSet ? `
+      <div class="glass card" id="st-consent" data-sec="integr" style="order:38">
+        <div class="card-title">⚖️ Согласие 152-ФЗ: данные участников из MAX <span class="form-hint">(v1.70.37)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Участник, который заходит через мини-приложение MAX,
+        даёт согласие на обработку данных профиля: имя, фамилия, ник, язык и ссылка на фото.
+        <b>До согласия в карточке хранится только идентификатор MAX</b> — без него нельзя начислять
+        баллы (п. 5 ч. 1 ст. 6 152-ФЗ). Текст согласия показывается в мини-приложении при первом входе,
+        его редакция — <b>${esc(consentSet.version)}</b>; согласие принимается только по подписанной
+        MAX сессии, отзыв очищает профиль. Здесь заполняются сведения об операторе, которые попадают в текст.</p>
+        <div class="form-grid">
+          <label class="field"><span>ИНН оператора</span>
+            <input id="cs-inn" inputmode="numeric" autocomplete="off" maxlength="20"
+                   value="${esc(consentSet.inn || '')}" placeholder="10 цифр (ИП — 12)"></label>
+          <label class="field"><span>ОГРН</span>
+            <input id="cs-ogrn" inputmode="numeric" autocomplete="off" maxlength="20"
+                   value="${esc(consentSet.ogrn || '')}" placeholder="13 цифр (ОГРНИП — 15)"></label>
+          <label class="field full"><span>Юридический адрес оператора — обязателен по п. 2 ч. 4 ст. 9 152-ФЗ</span>
+            <input id="cs-address" autocomplete="off" maxlength="300"
+                   value="${esc(consentSet.address || '')}" placeholder="индекс, город, улица, дом, офис"></label>
+          <label class="field"><span>Почта по вопросам персональных данных и для отзыва согласия</span>
+            <input id="cs-contact" type="email" autocomplete="off" maxlength="120"
+                   value="${esc(consentSet.contact || '')}" placeholder="chek@ymaster.ru"></label>
+        </div>
+        <p class="form-hint" style="margin:8px 0">Строка «Оператор» в тексте согласия сейчас:
+          <b>${esc(consentSet.operator_line)}</b></p>
+        <p class="form-hint" style="margin:0 0 10px">${consentSet.complete
+          ? '<span class="chip verified"><span class="dot"></span>реквизиты заполнены — текст согласия полон</span>'
+          : '<span class="chip new"><span class="dot"></span>реквизиты не заполнены</span> в тексте вместо адреса — ссылка на ЕГРЮЛ и почта для запроса. Программа не выдумывает юридические факты: заполните ИНН, ОГРН и адрес своими.'}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary btn-sm" id="cs-save">💾 Сохранить реквизиты</button>
+          <button type="button" class="btn btn-sm" id="cs-preview">👁 Показать текст согласия</button>
+        </div>
+        <p class="form-hint" style="margin-top:10px">Существенное изменение текста (цели, перечень данных,
+        срок) — это новая редакция: поднимите <code>CONSENT_VERSION</code> в
+        <code>app/services/consent.py</code>, и участники увидят текст заново, а в списке участников
+        старое согласие отметится как устаревшее.</p>
+      </div>` : ''}
+
+      ${isAdmin() && osSet ? osmCardHtml(osSet.settings || {}, osStatus || {}) : ''}
 
       ${isAdmin() && poolSet ? `
       <div class="glass card" id="st-pool" data-sec="integr" style="order:30">
@@ -8242,7 +10502,7 @@ async function viewSettings(container) {
           <input id="pool-pick-limit" type="number" min="0" value="${poolSet.pick_monthly_limit ?? 100}"></label>
         <p class="form-hint" style="margin:8px 0">1 чек = ${poolSet.points_per_receipt} балл ·
           лимит ${poolSet.daily_limit} чеков/сутки с человека · дубль баллов не приносит.</p>
-        <button class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
+        <button type="button" class="btn btn-primary btn-sm" id="pool-save">💾 Сохранить</button>
         <div class="card-title" style="margin-top:16px;font-size:15px">🔌 Платное API для внешних клиентов
           <span class="form-hint">(v1.39.0: анонимные агрегаты — не «продажа чеков»)</span></div>
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0">
@@ -8269,9 +10529,9 @@ async function viewSettings(container) {
           <input type="checkbox" id="pool-smtp-tls" ${smtpSet.tls ? 'checked' : ''} style="width:auto">
           <span>STARTTLS (обычно включён)</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn btn-primary btn-sm" id="pool-smtp-save">💾 Сохранить почту</button>
+          <button type="button" class="btn btn-primary btn-sm" id="pool-smtp-save">💾 Сохранить почту</button>
           <input id="pool-smtp-test-email" type="email" placeholder="куда прислать тест" style="max-width:230px">
-          <button class="btn btn-sm" id="pool-smtp-test">✉️ Тест письма</button>
+          <button type="button" class="btn btn-sm" id="pool-smtp-test">✉️ Тест письма</button>
         </div>
         ${smtpSet.configured ? '<p class="form-hint" style="margin-top:6px">Почта настроена — вход по ссылке и подтверждение e-mail работают.</p>'
           : '<p class="form-hint" style="margin-top:6px">Без SMTP кабинет работает по паролю: вход по ссылке и письма подтверждения отключены.</p>'}` : ''}
@@ -8283,11 +10543,11 @@ async function viewSettings(container) {
         ${me.telegram_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат привязан — уведомления приходят в Telegram.
                Напоминание приходит, если за день ни одного чека.</div>
-             <button class="btn btn-sm btn-bad" id="tg-unbind">🔌 Отвязать</button>`
+             <button type="button" class="btn btn-sm btn-bad" id="tg-unbind">🔌 Отвязать</button>`
           : `<p class="form-hint" style="margin-bottom:10px">Получайте уведомления о чеках и напоминания.
              Нажмите «Получить код», затем в Telegram отправьте боту: <b>/start КОД</b>.</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-               <button class="btn btn-primary btn-sm" id="tg-code">🔑 Получить код</button>
+               <button type="button" class="btn btn-primary btn-sm" id="tg-code">🔑 Получить код</button>
                <span id="tg-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="tg-code-hint" style="margin-top:8px"></p>`}
@@ -8298,11 +10558,11 @@ async function viewSettings(container) {
         <div class="card-title">🛡 MAX — личное <span class="form-hint">(v1.66.0)</span></div>
         ${me.max_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
-             <button class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
+             <button type="button" class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
           : `<p class="form-hint" style="margin-bottom:10px"><b>Войти через MAX</b> — мини-приложение бота MAX: скан QR и баллы. Для напоминаний здесь — классика: «Получить код» → боту <b>/start КОД</b> (или войдите с логином, совпадающим с username MAX — привяжем сами).</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-               <button class="btn btn-primary btn-sm" id="mx-open">🛡 Войти через MAX</button>
-               <button class="btn btn-sm" id="mx-code">🔑 Получить код</button>
+               <button type="button" class="btn btn-primary btn-sm" id="mx-open">🛡 Войти через MAX</button>
+               <button type="button" class="btn btn-sm" id="mx-code">🔑 Получить код</button>
                <span id="mx-code-out" style="font-size:20px;font-weight:700;letter-spacing:2px"></span>
              </div>
              <p class="form-hint" id="mx-code-hint" style="margin-top:8px"></p>`}
@@ -8329,8 +10589,8 @@ async function viewSettings(container) {
           <input type="checkbox" id="wh-ev-verified" ${whSet.events.includes('receipt_verified') ? 'checked' : ''} style="width:auto">
           <span>Событие «чек проверен» (receipt_verified)</span></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="wh-save">💾 Сохранить</button>
-          <button class="btn btn-sm" id="wh-test">🧪 Тестовый POST</button>
+          <button type="button" class="btn btn-primary btn-sm" id="wh-save">💾 Сохранить</button>
+          <button type="button" class="btn btn-sm" id="wh-test">🧪 Тестовый POST</button>
         </div>
         <p class="form-hint" style="margin-top:10px">В очереди: ${whSet.stats.pending} ждёт ·
           ${whSet.stats.delivered} доставлено · воркер: ${whSet.worker_running ? '✅ запущен' : '⏸ стоит'} ·
@@ -8339,26 +10599,25 @@ async function viewSettings(container) {
 
       ${isAdmin() && appSet ? `
       <div class="glass card" id="st-sources" data-sec="checks" style="order:21">
-        <div class="card-title">📥 Источники данных чека <span class="form-hint">(v1.57.0)</span></div>
-        <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции, место расчётов,
-        касса, смена, налог, свойства заказа, итоги НДС) система получает из
-        <b>proverkacheka.com</b> — единственного стабильно работающего источника
-        (v1.57.0: Приложение ФНС, Честный Знак и ОФД-ру выведены из системы —
-        сервисы перестали отвечать; их поля из настроек игнорируются).
-        При блокировке источник «остывает» с растущей паузой, между запросами —
-        2–7 секунд. <b>API ФНС</b> (мастер-токен в карточке «Проверка чеков») —
-        итоговая логика: перед запросом смотрим мастер-ключ ФНС — нет ключа: сразу напрямую proverkacheka.com; есть ключ: первый запрос в ФНС, затем proverkacheka.com.</p>
-        <label class="field" style="margin-bottom:10px"><span>Токен proverkacheka.com
-          ${ext && ext.has_proverkacheka_token ? '(задан: ' + esc(ext.proverkacheka_token_masked) + ')' : '(не задан — возьмите «Токен доступа к API» на своей странице proverkacheka.com/user/…, формат 55035.хххххх)'}</span>
-          <input id="ext-pke" type="password" placeholder="55035.xxxxxxxxxxx"></label>
-        <div class="field" style="margin-bottom:10px"><span>Порядок источников (задан системой)</span>
-          <small class="form-hint">без мастер-ключа ФНС: 1️⃣ proverkacheka.com (токен, квота 12–14/сутки) → демо-источник; при мастер-ключе ФНС: 1️⃣ ФНС → 2️⃣ proverkacheka.com → демо. Журнал загрузки — в логе сервиса (grep «ДАННЫЕ ЧЕКА»)</small></div>
-        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
-          <input type="checkbox" id="ext-auto" ${ext && ext.external_auto ? 'checked' : ''} style="width:auto">
-          <span>Автоматически получать данные после сканирования</span></label>
+        <div class="card-title">📥 Получение данных чека из ФНС <span class="form-hint">(v1.70.70)</span></div>
+        <p class="form-hint" style="margin-bottom:10px">Полные данные чека (магазин, ИНН, позиции,
+        место расчётов, касса, смена, налог, итоги НДС) программа получает из официального
+        <b>API ФНС</b> одним методом GetTicket: он же и подтверждает подлинность чека.
+        Сторонние сервисы проверки чеков из программы удалены. Запросы последовательные,
+        с паузами 2–7 секунд; при сетевом сбое источник «остывает».</p>
+        <div class="info-callout" style="font-size:12.5px;margin-bottom:10px">
+          Суточный лимит — 1000 запросов на приложение (считаются все обращения: токен,
+          запрос чека, опрос результата). При 80 % администратор получает предупреждение,
+          при исчерпании чеки остаются «ожидают проверки» и проверяются автоматически
+          после сброса лимита. Повторная проверка того же чека берётся из кэша и лимит
+          не расходует.</div>
+        ${ext && ext.quota ? `<div class="info-callout" style="font-size:12.5px;margin-bottom:10px">
+          📊 Сегодня (${esc(ext.quota.day)}): <b>${ext.quota.used}</b> из ${ext.quota.limit}
+          запросов (${ext.quota.percent} %), остаток ${ext.quota.remaining}.
+          ${ext.quota.exhausted ? '<b>Лимит исчерпан</b> — чеки проверятся после сброса.'
+            : ext.quota.percent >= ext.quota.warn_percent ? '⚠️ Израсходовано больше 80 %.' : '✅ Запас есть.'}</div>` : ''}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="ext-save">💾 Сохранить источники</button>
-          <button class="btn btn-sm" id="ext-test">🧪 Тест контрольным чеком</button>
+          <button type="button" class="btn btn-primary btn-sm" id="ext-test">🧪 Проверить связь с ФНС</button>
         </div>
         <p class="form-hint" id="ext-status" style="margin-top:10px"></p>
       </div>` : ''}
@@ -8371,6 +10630,27 @@ async function viewSettings(container) {
         Первая — одноразовая: разрешает приложению перезапускать себя без пароля
         (после неё обновления из приложения идут полностью автоматически).</p>
         <div id="sys-cmds"></div>
+      </div>
+
+      <div class="glass card" id="st-clients" data-sec="data" style="order:14">
+        <div class="card-title">👥 Клиенты приложения <span class="form-hint">(v1.70.50)</span></div>
+        <p class="form-hint" style="margin:0 0 10px">Кто подключается к серверу: справочник
+          клиентских поверхностей и живые счётчики по каждой из них.</p>
+        <div id="cl-surfaces"><div class="skeleton" style="height:34px"></div></div>
+        <details style="margin-top:10px">
+          <summary>Подключённые устройства и последние входы</summary>
+          <div id="cl-connections" style="margin-top:8px">
+            <div class="skeleton" style="height:34px"></div></div>
+        </details>
+      </div>
+
+      <div class="glass card" id="st-transfer" data-sec="data" style="order:15">
+        <div class="card-title">🔀 Передача данных и сеть <span class="form-hint">(v1.70.50)</span></div>
+        <p class="form-hint" style="margin:0 0 10px">Куда уходят данные и что известно о сети
+          сервера. Счётчики берутся из журналов, которые программа уже ведёт;
+          у потока без журнала счётчиков не появляется.</p>
+        <dl class="kv" style="font-size:13px" id="tr-network"><dt>Загрузка…</dt><dd></dd></dl>
+        <div id="tr-flows" style="margin-top:10px"></div>
       </div>
 
       <div class="glass card" id="st-update" data-sec="data" style="order:11">
@@ -8387,7 +10667,7 @@ async function viewSettings(container) {
         <div id="upd-avail" class="hidden" style="margin:10px 0">
           <div class="info-callout" style="margin-bottom:10px">🆕 Доступна версия <b id="upd-remote">v—</b>.
             <a href="#" id="upd-whats" style="margin-left:6px">Что изменится?</a></div>
-          <button class="btn btn-primary btn-sm" id="btn-apply-update">⬇ Обновить (данные и настройки сохранятся)</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-apply-update">⬇ Обновить (данные и настройки сохранятся)</button>
         </div>
         <p class="form-error hidden" id="upd-err" style="margin:8px 0"></p>
         <div id="upd-manual" class="hidden" style="margin:10px 0">
@@ -8404,14 +10684,14 @@ async function viewSettings(container) {
             <label class="field"><span>Репозиторий (owner/repo)</span>
               <input id="upd-repo" placeholder="Rimlin-UNC/1c_chek"></label>
             <label class="field"><span>Ветка</span>
-              <input id="upd-branch-input" placeholder="arena/01a0caaa-1c-chek"></label>
+              <input id="upd-branch-input" placeholder="main"></label>
           </div>
-          <button class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
+          <button type="button" class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
         </details>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-          <button class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
-          <button class="btn btn-sm" id="btn-changelog">📜 История версий</button>
-          <button class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
+          <button type="button" class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
+          <button type="button" class="btn btn-sm" id="btn-changelog">📜 История версий</button>
+          <button type="button" class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
         </div>
         <p class="form-hint" style="margin-top:10px">Обновление ставится прямо отсюда: копия БД → только изменения с GitHub →
         установка зависимостей → проверка целостности → рестарт. При сбое — автоматический откат.
@@ -8432,7 +10712,7 @@ async function viewSettings(container) {
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <input id="rb-commit" class="cell-mono" placeholder="хеш коммита, например 3944e7e"
                    style="max-width:300px" autocomplete="off">
-            <button class="btn btn-sm" id="rb-commit-go">↩ Откатиться к коммиту</button>
+            <button type="button" class="btn btn-sm" id="rb-commit-go">↩ Откатиться к коммиту</button>
           </div>
           <p class="form-hint" style="margin-top:6px">Хеш виден в журнале версий на GitHub
           («история» файла) или на сервере: <span class="cell-mono">git -C /opt/ymaster-check log --oneline -10</span></p>
@@ -8444,8 +10724,8 @@ async function viewSettings(container) {
         <div class="card-title">Интеграция с 1С</div>
         <label class="field" style="margin-bottom:12px"><span>Токен Push-доступа</span>
           <div class="token-line"><input id="onec-token" readonly value="${esc(onec.api_token_masked)}">
-          <button class="btn btn-sm" id="onec-reveal">показать</button></div></label>
-        <button class="btn btn-sm" id="onec-regen" style="margin-bottom:12px">♻ Сгенерировать новый токен</button>
+          <button type="button" class="btn btn-sm" id="onec-reveal">показать</button></div></label>
+        <button type="button" class="btn btn-sm" id="onec-regen" style="margin-bottom:12px">♻ Сгенерировать новый токен</button>
         <div class="info-callout" style="font-size:12.5px;margin-bottom:0">
           Адрес для 1С: <code class="inline">${location.origin}/onec/v1/receipts/pull</code><br>
           Заголовок: <code class="inline">X-API-Token</code>. Подробности — вкладка «Выгрузка в 1С» и
@@ -8475,7 +10755,7 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin-bottom:10px">Если после обновления сервера что-то
         отображается по-старому (иконки, цифры, интерфейс) — сбросьте локальный кэш приложения.
         Обычно сброс происходит автоматически.</p>
-        <button class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
+        <button type="button" class="btn btn-sm" id="btn-cache-reset">🧹 Сбросить кэш приложения</button>
       </div>
 
       <div class="glass card" id="st-notify" data-sec="device" style="order:50">
@@ -8483,7 +10763,7 @@ async function viewSettings(container) {
         <p class="form-hint" style="margin-bottom:8px">«Спокойный час» прячет некритичные
         уведомления на выбранный срок; ошибки показываются всегда.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn btn-sm" id="btn-quiet">Отключить</button>
+          <button type="button" class="btn btn-sm" id="btn-quiet">Отключить</button>
           <select id="quiet-dur" class="company-select" style="max-width:150px">
             <option value="30">на 30 минут</option>
             <option value="60" selected>на 1 час</option>
@@ -8498,7 +10778,7 @@ async function viewSettings(container) {
         <p class="pwa-hint">Установите Ямастер Чек как приложение: иконка на домашнем экране,
         полноэкранный режим, быстрый доступ к сканеру. Работает на Android, iPhone/iPad,
         Windows и macOS — без магазина приложений.</p>
-        <button class="btn btn-primary btn-sm" id="btn-pwa" style="margin-top:10px">📲 Установить / как установить</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-pwa" style="margin-top:10px">📲 Установить / как установить</button>
       </div>
 
       ${isAdmin() ? `
@@ -8514,13 +10794,13 @@ async function viewSettings(container) {
             <option value="weekly">Недельная — хранятся 2</option>
             <option value="archive">Месячный архив — хранятся 12</option>
           </select>
-          <button class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
+          <button type="button" class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
           <p class="form-hint" style="margin:8px 0 0">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
           1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
           Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.
           Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит файл и добавит его в список («загруженные», хранятся 10).</p>
-          <button class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
-          <button class="btn btn-sm" id="btn-bk-import"
+          <button type="button" class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
+          <button type="button" class="btn btn-sm" id="btn-bk-import"
                   title="Загрузить копию из файла: .db, .sqlite, .sqlite3">⬆ Загрузить копию</button>
           <input type="file" id="bk-import-file" accept=".db,.sqlite,.sqlite3" style="display:none">
         </div>
@@ -8539,7 +10819,7 @@ async function viewSettings(container) {
           <label class="field"><span>Старый пароль</span><input id="p-old" type="password"></label>
           <label class="field"><span>Новый пароль</span><input id="p-new" type="password"></label>
         </div>
-        <button class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
+        <button type="button" class="btn btn-sm btn-primary" id="p-save" style="margin-top:12px">Сменить пароль</button>
       </div>
 
       <div class="glass card" id="st-security" data-sec="personal" style="order:42">
@@ -8551,6 +10831,58 @@ async function viewSettings(container) {
           <dt>Лимиты запросов</dt><dd>включены (защита от перебора и DoS)</dd>
         </dl>
       </div>
+
+      ${isAdmin() ? `
+      <div class="glass card" id="st-adguard" data-sec="device" style="order:49">
+        <div class="card-title">🛡 AdGuard VPN на сервере <span class="form-hint">(v1.70.28)</span></div>
+        <p class="form-hint" style="margin-bottom:12px">Через туннель идёт <b>только Telegram</b>,
+        остальной трафик сервера — напрямую. Переключатель из среднего положения:
+        <b>влево — выключить</b>, <b>вправо — включить</b>. При первом включении программа сама
+        поставит CLI, покажет здесь ссылку для регистрации сервера, переведёт VPN в режим
+        «через него только Telegram» и проверит путь. Вводить пароль не нужно: привилегированные
+        шаги делает помощник, разрешённый узким правилом.</p>
+        <div class="ag-sw" id="ag-switch" data-pos="mid" role="group" aria-label="AdGuard VPN на сервере">
+          <button type="button" class="ag-sw-zone ag-sw-left" id="ag-sw-off"
+                  title="Выключить AdGuard VPN" aria-label="Выключить AdGuard VPN">
+            <span class="ag-sw-ico" aria-hidden="true">⏻</span>
+            <span class="ag-sw-lbl">выключить</span></button>
+          <span class="ag-sw-knob" id="ag-sw-knob" aria-hidden="true"></span>
+          <button type="button" class="ag-sw-zone ag-sw-right" id="ag-sw-on"
+                  title="Включить AdGuard VPN" aria-label="Включить AdGuard VPN">
+            <span class="ag-sw-ico" aria-hidden="true">🛡</span>
+            <span class="ag-sw-lbl">включить</span></button>
+        </div>
+        <div class="form-hint" id="ag-sw-state" style="margin:10px 0 0">состояние VPN выясняется…</div>
+        <div id="ag-link-box" class="ag-linkbox hidden">
+          <div class="ag-linkbox-title">🔗 Ссылка для регистрации сервера</div>
+          <a id="ag-link" class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="#">Подтвердить вход в AdGuard</a>
+          <div class="form-hint" id="ag-link-hint">Откроется страница входа AdGuard: войдите в свой
+          аккаунт или создайте его. Ссылка действует около 30 минут — после подтверждения установка
+          продолжится сама, ничего нажимать больше не нужно.</div>
+          <div class="form-hint ag-linkurl" id="ag-link-url"></div>
+        </div>
+        <div id="ag-setup" class="hidden ag-panel">
+          <div id="ag-steps" class="ag-steps"></div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <span class="form-hint" id="ag-state"></span>
+          </div>
+          <pre id="ag-setup-log" class="ag-log"></pre>
+          <div class="field hidden" id="ag-rule-row" style="margin:0 0 8px"><span>🔓 Правило для помощника — одна команда, один раз</span>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="ag-cmd" readonly autocomplete="off" style="flex:1 1 320px;min-width:220px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px" value="">
+              <button type="button" class="btn btn-sm" id="ag-copy-cmd">📋 Скопировать</button>
+            </div>
+            <span class="form-hint">мастер AdGuard <b>не спрашивает пароль сервера</b>: привилегированные шаги делает помощник <code>/usr/local/sbin/ymaster-adguard-setup</code>, разрешённый узким правилом <code>/etc/sudoers.d/ymaster-adguard</code>. Откройте SSH, выполните команду один раз (deploy.sh ставит её сам при установке/обновлении) и нажмите «Проверить снова» — дальше мастер пойдёт без пароля.</span></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-sm btn-primary hidden" id="ag-recheck">Проверить снова</button>
+            <button type="button" class="btn btn-sm" id="ag-cancel">Остановить</button>
+            <button type="button" class="btn btn-sm" id="ag-close">Скрыть</button>
+          </div>
+        </div>
+        <p class="form-hint" style="margin:12px 0 0">Автопилот: трижды в сутки замер скорости
+        (Германия → самая быстрая локация, порог 30 мс). Руками —
+        <a href="/deploy/adguard-vpn/README.md" target="_blank" rel="noopener">инструкция</a>.</p>
+      </div>` : ''}
 
       <div class="glass card" id="st-about" data-sec="device" style="order:53">
         <div class="card-title">О системе</div>
@@ -8566,6 +10898,12 @@ async function viewSettings(container) {
       </div>
     </div>
     </div>`;
+
+  // v1.70.61: карточки настроек вне разделов роли скрыты — участник
+  // компании не видит чужих разделов, донор настроек не имеет вовсе.
+  container.querySelectorAll('.glass.card[data-sec]').forEach((c) => {
+    if (!spaceHas('sec:' + c.dataset.sec)) c.classList.add('hidden');
+  });
 
   // v1.70.9: тулбар и поведение меню-иерархии настроек
   const settingsApply = (nav, cur) => {
@@ -8725,9 +11063,9 @@ async function viewSettings(container) {
              <td>${rowsText(b)}</td>
              <td>${b.size_kb} КБ</td>
              <td style="white-space:nowrap">
-               <button class="btn btn-sm" data-verify="${esc(b.name)}"
+               <button type="button" class="btn btn-sm" data-verify="${esc(b.name)}"
                        title="Проверить копию: целостность базы и хеш">🛡</button>
-               <button class="btn btn-sm" data-restore="${esc(b.name)}"
+               <button type="button" class="btn btn-sm" data-restore="${esc(b.name)}"
                        title="Восстановить базу из этой копии">↩ Восстановить</button>
                <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download title="Скачать копию">⬇</a>
              </td>
@@ -8855,7 +11193,7 @@ async function viewSettings(container) {
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
         `<span class="form-hint">Сейчас работает: <b>v${esc(cur ? cur.version : '…')}</b> · ` +
         `в реестре ${relItems.length} из 3</span>` +
-        '<button class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
+        '<button type="button" class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
       if (!relItems.length) {
         relBox.innerHTML = head +
           '<p class="form-hint">Реестр пока пуст. Записи появляются автоматически: ' +
@@ -8880,7 +11218,7 @@ async function viewSettings(container) {
             <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
             <td>${v.current
               ? '<span class="form-hint">—</span>'
-              : `<button class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
+              : `<button type="button" class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
           </tr>`).join('') + '</tbody></table>';
       }
       // откат к версии из реестра
@@ -9095,11 +11433,129 @@ async function viewSettings(container) {
       <div style="margin-bottom:10px">
         <div class="form-hint" style="margin-bottom:4px">${esc(name)}</div>
         <div class="cmd-line"><code>${esc(cmd)}</code>
-          <button class="btn btn-sm cmd-copy" data-cmd="${esc(cmd)}">копировать</button></div>
+          <button type="button" class="btn btn-sm cmd-copy" data-cmd="${esc(cmd)}">копировать</button></div>
       </div>`).join('');
     sc && sc.querySelectorAll('.cmd-copy').forEach(b => {
       b.onclick = () => copyCmd(b.dataset.cmd, b);
     });
+  }
+
+  // v1.70.50: «Клиенты приложения» + «Передача данных и сеть»
+  if (isAdmin() && clientsInfo) {
+    const _v = (x) => (x === null || x === undefined || x === '' ? '—' : String(x));
+    const DIR = { out: 'наружу', in: 'внутрь', both: 'в обе стороны',
+                  browser: 'браузер, не сервер' };
+    const ACT = {
+      login: 'пароль', login_passkey: 'быстрый вход', login_max: 'через MAX',
+      login_failed: 'пароль — отказ', login_passkey_failed: 'быстрый вход — отказ',
+    };
+
+    const cs = $('#cl-surfaces');
+    if (cs) {
+      cs.innerHTML = (clientsInfo.surfaces || []).map((s) => {
+        const live = (s.live || []).map((m) =>
+          `<dt>${esc(m.label)}</dt><dd>${esc(_v(m.value))}</dd>`).join('');
+        return `
+        <details style="margin-bottom:6px">
+          <summary>${esc(s.icon)} ${esc(s.name)}
+            <span class="form-hint" style="margin-left:6px">${esc(s.address)}</span></summary>
+          <div style="margin:6px 0 8px;font-size:13px">${esc(s.text)}</div>
+          <dl class="kv" style="font-size:13px">
+            <dt>Кто пользуется</dt><dd>${esc(s.audience)}</dd>
+            <dt>Как подключается</dt><dd>${esc(s.transport)}</dd>
+            <dt>Код поверхности</dt><dd><code class="inline">${esc(s.source)}</code></dd>
+          </dl>
+          ${live ? `<dl class="kv" style="font-size:13px;margin-top:6px">${live}</dl>` : ''}
+        </details>`;
+      }).join('') || '<p class="form-hint">Справочник пуст</p>';
+    }
+
+    const cc = $('#cl-connections');
+    if (cc) {
+      const c = clientsInfo.connections || {};
+      const tbl = (head, rows) => rows ? `
+        <table class="data" style="font-size:12.5px;margin-top:4px">
+          <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+          <tbody>${rows}</tbody></table>` : '';
+      const pk = (c.passkeys || []).map((p) =>
+        `<tr><td>${esc(_v(p.label))}</td><td>${esc(_v(p.username))}</td>
+         <td>${esc(_v(p.created_at))}</td><td>${esc(_v(p.last_used_at))}</td></tr>`).join('');
+      const lg = (c.logins || []).map((l) =>
+        `<tr><td>${esc(_v(l.username))}</td><td>${esc(ACT[l.action] || l.action)}</td>
+         <td>${esc(_v(l.ip))}</td><td>${esc(_v(l.at))}</td></tr>`).join('');
+      const ks = (c.api_keys || []).map((k) =>
+        `<tr><td>${esc(_v(k.name))}</td><td><code class="inline">${esc(_v(k.prefix))}…</code></td>
+         <td>${k.active ? '✅ да' : '⛔ нет'}</td><td>${esc(_v(k.rate_per_hour))}</td>
+         <td>${esc(_v(k.monthly_quota))}</td><td>${esc(_v(k.last_used_at))}</td></tr>`).join('');
+      cc.innerHTML = `
+        <dl class="kv" style="font-size:13px">
+          <dt>Устройств с быстрым входом</dt><dd>${esc(_v(c.passkeys_total))}</dd>
+          <dt>Входов за 24 часа</dt><dd>${esc(_v(c.logins_24h))}</dd>
+          <dt>Отказов входа за 24 часа</dt><dd>${esc(_v(c.logins_failed_24h))}</dd>
+          <dt>Участников Чек-Пула</dt><dd>${esc(_v(c.pool_users))}</dd>
+        </dl>
+        ${pk ? `<div class="form-hint" style="margin-top:10px">Устройства</div>
+          ${tbl(['Метка', 'Владелец', 'Добавлено', 'Последний вход'], pk)}` : ''}
+        ${lg ? `<div class="form-hint" style="margin-top:10px">Последние входы</div>
+          ${tbl(['Пользователь', 'Способ', 'Адрес', 'Когда'], lg)}` : ''}
+        ${ks ? `<div class="form-hint" style="margin-top:10px">Ключи платного API</div>
+          ${tbl(['Название', 'Префикс', 'Действует', 'В час', 'Квота', 'Последний вызов'], ks)}` : ''}`;
+    }
+
+    const tn = $('#tr-network');
+    if (tn) {
+      const n = clientsInfo.network || {};
+      const q = n.fetch_queue || {};
+      tn.innerHTML = `
+        <dt>Адрес сайта</dt><dd><code class="inline">${esc(_v(n.site_url))}</code></dd>
+        <dt>База данных</dt><dd>${esc(_v(n.database_kind))} · ${esc(_v(n.db_size_mb))} МБ</dd>
+        <dt>Файл базы</dt><dd><code class="inline">${esc(_v(n.db_path))}</code></dd>
+        <dt>Резервных копий</dt><dd>${esc(_v(n.backups_total))}</dd>
+        <dt>Очередь загрузки</dt><dd>${esc(_v(q.queued))}</dd>
+        <dt>Сборка</dt><dd><code class="inline">${esc(_v(n.commit))}</code> ·
+          ветка ${esc(_v(n.branch))}</dd>`;
+    }
+
+    const tf = $('#tr-flows');
+    if (tf) {
+      const facts = (clientsInfo.network_facts || []).map((f) => `
+        <div style="margin-bottom:8px">
+          <div style="font-size:13px;font-weight:600">${esc(f.label)}</div>
+          <div class="form-hint" style="margin-top:2px">${esc(f.value)}</div>
+          <div class="form-hint" style="margin-top:2px">Источник:
+            <code class="inline">${esc(f.source)}</code></div>
+        </div>`).join('');
+      const flows = (clientsInfo.flows || []).map((f) => {
+        const stats = (f.stats || []).map((m) =>
+          `<dt>${esc(m.label)}</dt><dd>${esc(_v(m.value))}</dd>`).join('');
+        const hosts = (f.hosts || []).map((h) =>
+          `<code class="inline">${esc(h)}</code>`).join(' ');
+        return `
+        <details style="margin-bottom:6px">
+          <summary>${esc(f.icon)} ${esc(f.service)}
+            <span class="form-hint" style="margin-left:6px">${esc(DIR[f.direction] || f.direction)}</span></summary>
+          <div style="margin:6px 0 8px">
+            <div style="font-size:13px">Что передаётся: ${esc(f.sends)}</div>
+            <div class="form-hint" style="margin-top:4px">Защита: ${esc(f.protection)}</div>
+            ${hosts ? `<div class="form-hint" style="margin-top:4px">Адреса: ${hosts}</div>` : ''}
+            <div class="form-hint" style="margin-top:4px">Источник:
+              <code class="inline">${esc(f.source)}</code>${f.log ? ` · журнал:
+              <code class="inline">${esc(f.log)}</code>` : ''}</div>
+            ${stats ? `<dl class="kv" style="font-size:13px;margin-top:6px">${stats}</dl>`
+              : '<div class="form-hint" style="margin-top:6px">Счётчиков нет: поток не ведёт журнал</div>'}
+          </div>
+        </details>`;
+      }).join('');
+      tf.innerHTML = `
+        <details>
+          <summary>Сеть и размещение сервера</summary>
+          <div style="margin-top:8px">${facts}</div>
+        </details>
+        <details style="margin-top:6px">
+          <summary>Потоки данных</summary>
+          <div style="margin-top:8px">${flows}</div>
+        </details>`;
+    }
   }
   makeSettingsCollapsible(container);   // v1.21.0: сворачиваемые блоки
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
@@ -9192,7 +11648,9 @@ async function viewSettings(container) {
       } catch (e) { toast(e.message, 'err'); }
       tts.disabled = false;
     };
-    const tga = $('#tg-adguard');                     // v1.70.15: автоустановка AdGuard
+    // v1.70.28: управление AdGuard VPN переехало в собственный блок
+    // «🛡 AdGuard VPN на сервере» (раздел «Устройство и служебное») — в
+    // карточке Telegram-бота ему больше не место.
     let agTimer = 0;
     const AG_ICONS = { done: '\u2705', active: '\u23f3', failed: '\u274c', skip: '\u2796', pending: '\u00b7' };
     function agRender(st) {
@@ -9205,12 +11663,19 @@ async function viewSettings(container) {
         '<span style="width:20px;text-align:center;flex:none">' + (AG_ICONS[s.status] || '\u00b7') + '</span>' +
         '<span>' + esc(s.title) + (s.message ? ' — <span class="form-hint">' + esc(s.message) + '</span>' : '') + '</span></div>'
       ).join('');
-      const link = $('#ag-link'), hint = $('#ag-link-hint');
-      if (link && hint) {
-        if (st.login_url && st.running) {
+      // v1.70.28: ссылка для регистрации сервера живёт В БЛОКЕ AdGuard VPN и
+      // показывается сразу, как только CLI её выдал. Раньше её скрывало
+      // условие «login_url && running»: стоило заданию остановиться (ошибка,
+      // отмена, перезапуск страницы) — и владелец терял ссылку, хотя она живёт
+      // ещё около 30 минут. Прячем только после успешного завершения.
+      const lbox = $('#ag-link-box'), link = $('#ag-link'),
+            lurl = $('#ag-link-url');
+      if (lbox && link) {
+        if (st.login_url && !(st.finished && st.success)) {
           link.href = st.login_url;
-          link.classList.remove('hidden'); hint.classList.remove('hidden');
-        } else { link.classList.add('hidden'); hint.classList.add('hidden'); }
+          if (lurl) lurl.textContent = st.login_url;
+          lbox.classList.remove('hidden');
+        } else { lbox.classList.add('hidden'); }
       }
       const log = $('#ag-setup-log');
       if (log) { log.textContent = (st.log || []).join('\n'); log.scrollTop = log.scrollHeight; }
@@ -9219,17 +11684,57 @@ async function viewSettings(container) {
         ? ('идёт установка\u2026 ' + (st.progress || 0) + '%')
         : (st.success ? '\u2705 Установка завершена успешно' : '\u274c Ошибка: ' + (st.error || 'неизвестно'));
       if (st.finished && st.success) {
+        // v1.70.24: режим TUN + selective — трафик до Telegram уходит в
+        // туннель прозрачно, локального SOCKS-слушателя 127.0.0.1:1080 нет.
+        // Раньше сюда подставлялся socks5://127.0.0.1:1080: сохранив его,
+        // владелец отправил бы бота в несуществующий прокси и бот замолчал.
+        // Мастер сам очистил настройку, поэтому поле приводим к пустому
+        // («пусто — не менять») и убираем за собой возможное старое значение.
         const prx = $('#tg-proxy');
-        if (prx && !prx.value) prx.value = 'socks5://127.0.0.1:1080';
+        if (prx) prx.value = '';
+        agHideRule();
+      }
+      // v1.70.16: остановились на правах — показываем одну команду (без пароля)
+      if (st.finished && !st.success && st.one_time_cmd) {
+        agNeedRule({ one_time_cmd: st.one_time_cmd }, '');
       }
       const cancel = $('#ag-cancel');
       if (cancel) cancel.classList.toggle('hidden', !st.running);
+    }
+    // v1.70.28: трёхпозиционный переключатель вместо кнопки. Среднее
+    // положение — состояние неизвестно или операция идёт; влево — VPN
+    // выключен (нажатие выключает), вправо — VPN включён (нажатие включает:
+    // первый раз — со ссылкой регистрации сервера прямо в этом блоке).
+    // Положение берётся из ФАКТИЧЕСКОГО состояния юнита туннеля, а не из
+    // факта «установка когда-то завершилась успешно»: туннель могли
+    // остановить руками или он мог упасть.
+    let agVpnOn = false;
+    function agPaint(vpn, busy) {
+      const sw = $('#ag-switch');
+      if (!sw) return;
+      agVpnOn = !!(vpn && vpn.on);
+      const known = !!(vpn && vpn.known);
+      sw.setAttribute('data-pos',
+        busy ? 'mid' : (known ? (agVpnOn ? 'right' : 'left') : 'mid'));
+      sw.classList.toggle('ag-sw-busy', !!busy);
+      const off = $('#ag-sw-off'), on = $('#ag-sw-on');
+      if (off) off.disabled = !!busy || !agVpnOn;
+      if (on) on.disabled = !!busy || agVpnOn;
+      const stt = $('#ag-sw-state');
+      if (stt) stt.innerHTML = busy
+        ? '\u23f3 <b>работаю\u2026</b> \u2014 пока идёт операция переключатель в среднем положении'
+        : (known
+          ? (agVpnOn
+            ? '\ud83d\udfe2 VPN <b>включён</b>: через туннель идёт только Telegram, остальной трафик сервера прямой. Переключите влево, чтобы выключить \u2014 вход и лицензия сохранятся, повторное включение пойдёт без ссылки.'
+            : '\ud83d\udd34 VPN <b>выключен</b>: трафик сервера идёт напрямую. Переключите вправо, чтобы включить \u2014 при первом включении здесь появится ссылка для регистрации сервера.')
+          : '\u26aa состояние VPN неизвестно (сервер не ответил или туннель ещё не ставили). Переключение вправо запустит установку.');
     }
     async function agPoll() {
       try {
         const r = await api.get('/api/v1/settings/telegram/adguard/setup');
         const st = r.job || {};
         agRender(st);
+        agPaint(r.vpn, !!st.running);
         if (!st.running && agTimer) { clearInterval(agTimer); agTimer = 0; }
       } catch (e) { /* страница ушла — тишина */ }
     }
@@ -9240,51 +11745,126 @@ async function viewSettings(container) {
     };
     const agClose = $('#ag-close');
     if (agClose) agClose.onclick = () => { agStop(); const b = $('#ag-setup'); if (b) b.classList.add('hidden'); };
-    async function agLaunch(extra) {
+    // v1.70.16: мастер БЕЗ пароля — никаких полей пароля, только одна
+    // команда для терминала (её ставит deploy.sh) и кнопка «Проверить снова».
+    async function agLaunch() {
       const r = await api.post('/api/v1/settings/telegram/adguard/setup',
-        Object.assign({ action: 'start' }, extra || {}));
+        { action: 'start' });
+      if (r && r.warning) toast(r.warning, 'warn', '\ud83d\udd13');
       toast(r.message || 'Установка запущена', 'ok', '\ud83d\udee1 AdGuard');
-      const row = $('#ag-sudo-row'), st = $('#ag-start');
-      if (row) row.classList.add('hidden');
-      if (st) st.classList.add('hidden');
+      agHideRule();
       agStop(); agPoll(); agTimer = setInterval(agPoll, 1500);
     }
-    function agNeedPassword(msg) {
-      const row = $('#ag-sudo-row'), st = $('#ag-start');
+    function agHideRule() {
+      const row = $('#ag-rule-row'), rc = $('#ag-recheck');
+      if (row) row.classList.add('hidden');
+      if (rc) rc.classList.add('hidden');
+    }
+    function agNeedRule(pf, msg) {
+      const row = $('#ag-rule-row'), rc = $('#ag-recheck');
+      const cmd = (pf && pf.one_time_cmd) || '';
       if (row) row.classList.remove('hidden');
-      if (st) st.classList.remove('hidden');
+      if (rc) rc.classList.remove('hidden');
+      const inp = $('#ag-cmd');
+      if (inp) inp.value = cmd;
       const box = $('#ag-setup');
       if (box) box.classList.remove('hidden');
       const state = $('#ag-state');
-      if (state) state.textContent = 'нужен пароль сервера (sudo) — введите ниже и нажмите «Установить»';
-      toast(msg || 'Нужен пароль сервера (sudo) — как в окне обновления', 'warn', '\ud83d\udee1');
+      if (state) state.textContent = 'нужно правило помощника: выполните команду в SSH один раз и нажмите «Проверить снова» (пароль сервера мастер не спрашивает)';
+      toast(msg || 'Нужна одна команда в терминале — после неё мастер работает без пароля', 'warn', '\ud83d\udd13');
     }
-    if (tga) tga.onclick = async () => {
+    const agCopy = $('#ag-copy-cmd');
+    if (agCopy) agCopy.onclick = async () => {
+      const inp = $('#ag-cmd');
+      const txt = inp && inp.value ? inp.value : '';
+      if (!txt) { toast('Команда пуста — откройте блок «🛡 AdGuard VPN на сервере»', 'warn'); return; }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
+        else { if (inp) { inp.select(); document.execCommand('copy'); } }
+        toast('Команда скопирована — выполните её в SSH один раз', 'ok', '\ud83d\udccb');
+      } catch (e) { toast('Скопируйте команду вручную (выделите поле)', 'warn'); }
+    };
+    // v1.70.25: одна кнопка на два действия. VPN включён — выключаем,
+    // выключен — запускаем мастер (первый раз он покажет ссылку регистрации
+    // сервера). Состояние берём из фактического состояния юнита, а не из
+    // журнала установки: туннель могли остановить руками.
+    // v1.70.25: перечитать ФАКТИЧЕСКОЕ состояние VPN с сервера и покрасить
+    // кнопку по нему. Нужно после любой неудачи выключения: угадывать
+    // состояние нельзя. Отказ может быть частичным (автопилот погашен, туннель
+    // выжил — помощник в этом случае честно падает с «туннель не
+    // остановился»), а может быть и полным (нет правила помощника). В обоих
+    // случаях VPN остаётся включённым, и кнопка обязана продолжать предлагать
+    // «выключить»: стань она красной «включить», следующий клик запустил бы
+    // мастер поверх работающего туннеля.
+    async function agRefreshVpn() {
+      try {
+        const r = await api.get('/api/v1/settings/telegram/adguard/setup');
+        agPaint(r.vpn, !!(r.job && r.job.running));
+      } catch (e) { agPaint(null, false); }
+    }
+    async function agTurnOff() {
+      agPaint(null, true);
+      try {
+        const r = await api.post('/api/v1/settings/telegram/adguard/setup',
+          { action: 'off' });
+        if (r && r.need_rule) { agNeedRule(r, r.message); await agRefreshVpn(); return; }
+        toast(r.message || 'VPN выключен', 'ok', '\ud83d\udee1 AdGuard');
+        // ответ мог прийти без vpn (старый сервер) — тогда перечитываем сами
+        if (r && r.vpn) agPaint(r.vpn, false); else await agRefreshVpn();
+      } catch (e) {
+        if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
+        else toast(e.message, 'err');
+        await agRefreshVpn();
+      }
+    }
+    // v1.70.28: вправо — включить (мастер установки), влево — выключить.
+    // Состояние «неизвестно» не блокирует включение: мастер сам разберётся,
+    // а вот выключать несуществующий туннель нечего.
+    const agOn = $('#ag-sw-on'), agOff = $('#ag-sw-off');
+    if (agOn) agOn.onclick = async () => {
+      if (agOn.disabled) return;
+      agPaint(null, true);
       try {
         let pf = null;
         try { pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight'); } catch (e) { pf = null; }
-        if (pf && pf.need_password) { agNeedPassword(pf.hint); return; }
-        await agLaunch({});
+        if (pf && pf.ready === false) { agNeedRule(pf, pf.hint); await agRefreshVpn(); return; }
+        await agLaunch();
       } catch (e) {
-        if (/root|sudo|парол/i.test(e.message || '')) agNeedPassword(e.message);
+        if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
         else toast(e.message, 'err');
+        await agRefreshVpn();
       }
     };
-    const agStart = $('#ag-start');
-    if (agStart) agStart.onclick = async () => {
-      const pwEl = $('#ag-sudo-pw');
-      const pw = pwEl && pwEl.value ? pwEl.value : '';
-      try { await agLaunch(pw ? { sudo_password: pw } : {}); }
-      catch (e) { toast(e.message, 'err'); }
+    if (agOff) agOff.onclick = async () => {
+      if (agOff.disabled) return;
+      await agTurnOff();
+    };
+    const agRecheck = $('#ag-recheck');
+    if (agRecheck) agRecheck.onclick = async () => {
+      agRecheck.disabled = true;
+      try {
+        const pf = await api.get('/api/v1/settings/telegram/adguard/setup/preflight');
+        if (pf && pf.ready) {
+          toast('Права есть (' + (pf.mode || 'helper') + ') — запускаю мастер', 'ok', '\u2705');
+          await agLaunch();
+        } else {
+          agNeedRule(pf, 'Правило ещё не видно: выполните команду в SSH и повторите');
+        }
+      } catch (e) { toast(e.message, 'err'); }
+      agRecheck.disabled = false;
     };
     // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
+    // v1.70.25: здесь же красим кнопку-переключатель по фактическому
+    // состоянию VPN — иначе до первого опроса она показывала бы «выключен»
+    // на работающем туннеле.
     api.get('/api/v1/settings/telegram/adguard/setup').then(r => {
       const st = r.job || {};
+      agPaint(r.vpn, !!st.running);
       if (st.running || (st.finished && st.finished_at && Date.now() / 1000 - st.finished_at < 900)) {
         agRender(st);
         if (st.running) { agStop(); agTimer = setInterval(agPoll, 1500); }
       }
-    }).catch(() => {});
+    }).catch(() => { agPaint(null, false); });
     const tgp = $('#tg-ping');                        // v1.70.14: замер пинга
     if (tgp) tgp.onclick = async () => {
       const out = $('#tg-ping-out');
@@ -9340,6 +11920,10 @@ async function viewSettings(container) {
         toast(r.message, 'ok', '🪝'); }
       catch (e) { toast(e.message, 'err'); }
     };
+    // v1.70.51: мониторинг OpenStack — вкладки, графики, журнал и опрос
+    // облака. Всё поведение живёт в osm.js, здесь только запуск; reload
+    // перерисовывает раздел после сохранения настроек.
+    if ($('#st-openstack')) osmWire(() => route(true));
     // v1.66.0: сохранение настроек MAX
     const mxSave = $('#mx-save');
     if (mxSave) mxSave.onclick = async () => {
@@ -9376,7 +11960,7 @@ async function viewSettings(container) {
             <b>${esc(r.bot)}</b>);<br>
             2) «Сохранить и запустить» — ник обновится из MAX сам;<br>
             3) откройте мини-приложение из чата бота и повторите вход.</p>
-            <div class="modal-actions"><button class="btn btn-primary" data-close>Понятно</button></div>`)
+            <div class="modal-actions"><button type="button" class="btn btn-primary" data-close>Понятно</button></div>`)
             .slot.querySelector('[data-close]').onclick = () =>
               $('#modal-root').classList.add('hidden');
         } else {
@@ -9391,6 +11975,47 @@ async function viewSettings(container) {
       try { const r = await api.post('/api/v1/settings/max/test', {});
         toast(r.message, 'ok', '🛡'); }
       catch (e) { toast(e.message, 'err'); }
+    };
+    // v1.70.37: реквизиты оператора для текста согласия 152-ФЗ. Сохранение
+    // перерисовывает экран: сразу видны новая строка «Оператор» и пометка
+    // полноты (п. 2 ч. 4 ст. 9). Программа не подставляет значения за владельца.
+    const csSave = $('#cs-save');
+    if (csSave) csSave.onclick = async () => {
+      try {
+        const r = await api.put('/api/v1/settings/consent', {
+          inn: $('#cs-inn').value.trim(),
+          ogrn: $('#cs-ogrn').value.trim(),
+          address: $('#cs-address').value.trim(),
+          contact: $('#cs-contact').value.trim(),
+        });
+        toast(r.message, r.complete ? 'ok' : 'warn', '⚖️ Согласие 152-ФЗ');
+        route(true);
+      } catch (e) {
+        toast(e.message || 'Реквизиты не сохранены', 'err', '⚖️ Согласие 152-ФЗ');
+      }
+    };
+    const csPrev = $('#cs-preview');
+    if (csPrev) csPrev.onclick = async () => {
+      try {
+        const d = await api.get('/api/v1/maxapp/consent');
+        const { slot, close } = openModal(
+          `<div class="modal-title">⚖️ ${esc(d.title)} · редакция ${esc(d.version)}</div>
+           <div class="modal-text" style="max-height:58vh;overflow:auto">
+             <p>${esc(d.lead)}</p>
+             ${d.sections.map(sec => `<p style="margin:10px 0 4px"><b>${esc(sec.title)}</b></p>
+               <ul style="margin:0 0 0 18px">${sec.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`).join('')}
+             <p class="form-hint" style="margin-top:10px">Оператор: ${esc(d.operator)}.
+               Связь и отзыв согласия: ${esc(d.contact)}.
+               ${d.requisites_complete ? 'Реквизиты заполнены.'
+                 : 'Реквизиты не заполнены — в тексте вместо адреса ссылка на ЕГРЮЛ.'}</p>
+           </div>
+           <div class="modal-actions">
+             <button type="button" class="btn" data-close>Закрыть</button>
+           </div>`);
+        slot.querySelector('[data-close]').onclick = close;
+      } catch (e) {
+        toast(e.message || 'Не удалось показать текст', 'err', '⚖️ Согласие 152-ФЗ');
+      }
     };
     const tgr = $('#tg-refresh');
     if (tgr) tgr.onclick = async () => {
@@ -9496,16 +12121,6 @@ async function viewSettings(container) {
   }
 
   if (isAdmin() && ext) {
-    $('#ext-save').onclick = async () => {
-      try {
-        await api.put('/api/v1/settings/external', {
-          proverkacheka_token: $('#ext-pke').value.trim() || undefined,
-          external_auto: $('#ext-auto').checked,
-        });
-        toast('Источники данных сохранены', 'ok');
-        route(true);
-      } catch (e) { toast(e.message, 'err'); }
-    };
     $('#ext-test').onclick = async () => {
       const st = $('#ext-status');
       st.textContent = 'Проверяю (учтите паузу 2–7 с между запросами)…';
@@ -9569,18 +12184,26 @@ async function viewSettings(container) {
   }
 
   if (isAdmin() && fns) {
-    $('#seg-mock').onclick = async () => { await saveFns('mock'); };
-    $('#seg-fns').onclick = async () => {
-      const token = $('#fns-token').value.trim();
-      if (!token && !fns.has_master_token) {
-        return toast('Для реального API нужен Мастер-токен ФНС', 'err', 'Нет токена');
+    // v1.70.70: источник один — ФНС, выбора «демо/реальное» больше нет
+    $('#fns-diag').onclick = async () => {
+      const box = $('#fns-diag-out');
+      box.innerHTML = '<div class="form-hint">Проверяю: настройки → DNS → порт → шифрование → токен…</div>';
+      try {
+        const r = await api.post('/api/v1/settings/fns/diagnose', {});
+        const rows = (r.steps || []).map((s) => `<li style="margin:3px 0">${
+          s.ok === true ? '✅' : s.ok === false ? '❌' : '•'} <b>${esc(s.name)}</b> — ${esc(s.detail)}</li>`).join('');
+        box.innerHTML = `<div class="info-callout" style="font-size:12.5px">
+          <div style="margin-bottom:6px">${r.ok ? '✅ <b>Связь с ФНС работает</b>' : '❌ <b>' + esc(r.verdict) + '</b>'}</div>
+          <ul style="margin:0;padding-left:18px">${rows}</ul>
+          ${r.quota ? `<div class="form-hint" style="margin-top:8px">Лимит за сутки: ${r.quota.used} из ${r.quota.limit}</div>` : ''}
+        </div>`;
+      } catch (e) {
+        box.innerHTML = `<div class="form-error">Ошибка диагностики: ${esc(e.message)}</div>`;
       }
-      await saveFns('fns');
     };
-    async function saveFns(provider) {
+    $('#fns-save').onclick = async () => {
       try {
         await api.put('/api/v1/settings/fns', {
-          provider,
           master_token: $('#fns-token').value.trim() || undefined,
           client_app_id: $('#fns-appid').value.trim() || undefined,
         });
@@ -9617,7 +12240,7 @@ async function viewSettings(container) {
 async function bindMailCenter() {
   const $m = (id) => document.getElementById(id);
   if (!$m('mail-card')) return;
-  let cfg = null, rules = [];
+  let cfg, rules = [];
   const DAY_TITLES = { daily: 'ежедневно', mon: 'понедельник', tue: 'вторник',
     wed: 'среда', thu: 'четверг', fri: 'пятница', sat: 'суббота', sun: 'воскресенье' };
   const AUD = {
@@ -9675,15 +12298,15 @@ async function bindMailCenter() {
         '(условие, аудитория «без подтверждённого e-mail», 3 дня) — бот сам напишет каждому.';
     } else {
       box.innerHTML = rules.map(r => `
-        <div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line,#eef0f4)">
+        <div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">
           <input type="checkbox" data-rr="${r.id}" ${r.enabled ? 'checked' : ''} style="width:auto" title="включено">
           <div style="flex:1"><b>${esc(r.name)}</b>
             <div class="form-hint">${r.trigger === 'schedule'
               ? (DAY_TITLES[r.schedule] || r.schedule) + ' в ' + esc(r.hh_mm)
               : 'условие: ' + esc(AUD[r.condition_key] || r.condition_key) + ' (' + r.cond_days + ' дн.), после ' + esc(r.hh_mm)}
             · ${esc(r.subject)}${r.last_result ? ' · ' + esc(r.last_result) : ''}</div></div>
-          <button class="btn btn-sm" data-run="${r.id}" title="Запустить сейчас">▶</button>
-          <button class="btn btn-sm btn-bad" data-del="${r.id}" title="Удалить">✕</button>
+          <button type="button" class="btn btn-sm" data-run="${r.id}" title="Запустить сейчас">▶</button>
+          <button type="button" class="btn btn-sm btn-bad" data-del="${r.id}" title="Удалить">✕</button>
         </div>`).join('');
       box.querySelectorAll('[data-rr]').forEach(c => c.onchange = async () => {
         try { await api.patch('/api/v1/mail-admin/rules/' + c.dataset.rr,
@@ -9742,8 +12365,8 @@ async function bindMailCenter() {
           <input id="nr-rcpt" placeholder="dir@company.ru"></label>
       </div>
       <div class="modal-actions">
-        <button class="btn" id="nr-cancel">Отмена</button>
-        <button class="btn btn-primary" id="nr-ok">Создать</button>
+        <button type="button" class="btn" id="nr-cancel">Отмена</button>
+        <button type="button" class="btn btn-primary" id="nr-ok">Создать</button>
       </div>`);
     const trig = slot.querySelector('#nr-trigger');
     trig.onchange = () => {
@@ -9807,18 +12430,18 @@ async function waBindSettingsCard() {
       'Вход по паролю работает как раньше.';
     return;
   }
-  let items = [];
+  let items;
   try { items = (await api.get('/api/v1/auth/passkeys')).items; }
   catch (e) { list.textContent = e.message || 'Не удалось загрузить'; return; }
   list.innerHTML = items.length ? items.map(k =>
-    `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#eef0f4)">
+    `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
        <span aria-hidden="true">🔑</span>
        <div style="flex:1"><b>${esc(k.label)}</b>
          <div class="form-hint">привязано: ${fmtDate(k.created_at)}${k.last_used_at ? ' · последний вход: ' + fmtDate(k.last_used_at) : ''}</div></div>
-       <button class="btn btn-sm btn-bad" data-wa="${esc(k.id)}" data-name="${esc(k.label)}">Отвязать</button>
+       <button type="button" class="btn btn-sm btn-bad" data-wa="${esc(k.id)}" data-name="${esc(k.label)}">Отвязать</button>
      </div>`).join('')
     : 'Привяжите это устройство — и входить можно будет по отпечатку/лицу, без пароля.';
-  actions.innerHTML = '<button class="btn btn-sm btn-primary" id="wa-add">+ Привязать это устройство</button>';
+  actions.innerHTML = '<button type="button" class="btn btn-sm btn-primary" id="wa-add">+ Привязать это устройство</button>';
   $('#wa-add').onclick = async () => {
     const name = prompt('Название устройства (например, «Телефон Марии»)', '') || '';
     try {
@@ -9840,6 +12463,468 @@ async function waBindSettingsCard() {
       } catch (e) { toast(e.message, 'err'); }
     };
   });
+}
+
+
+// --------------------------------------------------------------------------
+//  v1.70.45: МОДЕРАЦИЯ КОНТУРА B2B (#/b2badmin, только администратор).
+//
+//  Требование владельца: администратор видит всё, но каждая такая поверхность
+//  помечена «Это не видит никто» — пометка приходит с сервера (поле marker в
+//  каждом ответе /api/v1/b2b-admin/*), а не выдумана на клиенте.
+//
+//  Здесь переключаются режимы автоматизации (полная / частичная / отмена),
+//  одобряются заявки с выдачей ключа в один клик, подтверждаются и
+//  отклоняются статусы компаний. Полный ключ показывается ОДИН раз: в базе
+//  хранится только SHA-256 хэш (тот же механизм, что у ключей Чек-Пула).
+//  Данные компании вводит она сама, поэтому всё экранируется через esc().
+// --------------------------------------------------------------------------
+const B2B_ADM = { tab: 'queue', status: '', q: '', company: '', cfg: null, key: '' };
+
+function b2bAdmMark(marker) {
+  const text = marker || 'Это не видит никто';
+  return `<span class="b2badm-mark" title="Внутренняя поверхность сервиса: клиентам не показывается">${esc(text)}</span>`;
+}
+
+function b2bAdmShell() {
+  return `
+  <div class="glass card">
+    <div class="card-title">🔐 API для бизнеса: модерация</div>
+    <div id="b2badm-marker" class="b2badm-markerline"></div>
+    <div id="b2badm-counters" class="form-hint" style="margin-bottom:10px">Загружаем…</div>
+    <div id="b2badm-funnel" class="b2badm-funnel"></div>
+    <div class="b2badm-config" id="b2badm-config"></div>
+    <div class="b2badm-tabs">
+      <button type="button" class="btn btn-sm b2badm-tab" data-tab="queue">Очередь заявок</button>
+      <button type="button" class="btn btn-sm b2badm-tab" data-tab="companies">Компании</button>
+      <button type="button" class="btn btn-sm b2badm-tab" data-tab="events">Журнал контура</button>
+    </div>
+    <div id="b2badm-body" class="b2badm-body"></div>
+  </div>
+  <div class="glass card b2badm-keycard" id="b2badm-keycard" hidden>
+    <div class="card-title">🔑 Ключ выдан — показывается один раз</div>
+    <p class="form-hint">Скопируйте ключ сейчас и передайте компании: повторно
+      увидеть его нельзя, в базе хранится только хэш. В письме компании уходит
+      ссылка на кабинет, а не сам ключ.</p>
+    <code class="b2badm-key" id="b2badm-key"></code>
+    <div class="b2badm-actions">
+      <button type="button" class="btn btn-sm" id="b2badm-key-copy">📋 Скопировать</button>
+      <button type="button" class="btn btn-sm" id="b2badm-key-close">Скрыть</button>
+    </div>
+  </div>`;
+}
+
+/* Уровень статуса: зелёный — доступ открыт, синий — ждёт действий компании
+   или сервиса, красный — отказ или закрытие. Совпадает со смыслом цветов
+   в остальном продукте. */
+const B2B_ADM_LEVELS = {
+  verified: 'ok',
+  new: 'wait',
+  email_pending: 'wait',
+  checks: 'wait',
+  rejected: 'bad',
+  blocked: 'bad'
+};
+
+function b2bAdmFunnel(counters, titles) {
+  const c = counters || {};
+  const keys = Object.keys(c).filter(k => k !== 'total' && k !== 'queue');
+  const total = Number(c.total || 0);
+  if (!keys.length) return '';
+  if (!total) {
+    return '<p class="form-hint">Компаний пока нет: распределение по статусам '
+      + 'появится после первых регистраций.</p>';
+  }
+  const label = keys.map(k => `${(titles || {})[k] || k}: ${fmtInt(c[k] || 0)}`).join(', ');
+  const segs = keys.filter(k => Number(c[k] || 0) > 0).map(k => {
+    const n = Number(c[k] || 0);
+    // минимум 3%, чтобы единичную компанию было видно на общей полосе
+    const p = Math.max(3, Math.round((n / total) * 100));
+    const lvl = B2B_ADM_LEVELS[k] || 'wait';
+    return `<span class="b2badm-seg ${lvl}" style="width:${p}%"></span>`;
+  }).join('');
+  const legend = keys.map(k => {
+    const lvl = B2B_ADM_LEVELS[k] || 'wait';
+    return `<span class="b2badm-lg"><i class="b2badm-dot ${lvl}"></i>`
+      + `${esc((titles || {})[k] || k)}: <b>${fmtInt(c[k] || 0)}</b></span>`;
+  }).join('');
+  return `<div class="b2badm-bar" role="img" aria-label="Распределение компаний по статусам — ${esc(label)}">${segs}</div>
+    <div class="b2badm-legend">${legend}
+      <span class="b2badm-lg"><i class="b2badm-dot queue"></i>Заявок в очереди: <b>${fmtInt(c.queue || 0)}</b></span>
+    </div>`;
+}
+
+function b2bAdmRenderConfig(cfg, modes) {
+  const box = $('#b2badm-config');
+  if (!box) return;
+  const opts = (modes || []).map(m =>
+    `<option value="${esc(m.code)}"${m.code === cfg.auto_mode ? ' selected' : ''}>${esc(m.title)}</option>`).join('');
+  const notes = {};
+  (modes || []).forEach(m => { notes[m.code] = m.note; });
+  box.innerHTML = `
+    <div class="b2badm-cfgrow">
+      <label class="b2badm-cfgfield" for="b2badm-mode">Режим автоматизации
+        <select id="b2badm-mode">${opts}</select>
+      </label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-enabled"${cfg.enabled ? ' checked' : ''}> Контур включён (регистрация открыта)</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-autokey"${cfg.auto_issue_key ? ' checked' : ''}> В полной автоматизации ключ выдаёт сервис</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-registry"${cfg.require_registry ? ' checked' : ''}> Карточка ЕГРЮЛ/ЕГРИП обязательна</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-free"${cfg.allow_free_domains ? ' checked' : ''}> Разрешить бесплатные почтовые домены</label>
+      <label class="b2badm-check"><input type="checkbox" id="b2badm-notify"${cfg.notify_admin ? ' checked' : ''}> Уведомлять о новых заявках</label>
+      <button type="button" class="btn btn-sm" id="b2badm-save">💾 Сохранить режим</button>
+    </div>
+    <p class="form-hint" id="b2badm-mode-note">${esc(notes[cfg.auto_mode] || cfg.auto_mode_note || '')}</p>`;
+
+  $('#b2badm-mode').onchange = (e) => {
+    const note = $('#b2badm-mode-note');
+    if (note) note.textContent = notes[e.target.value] || '';
+  };
+  $('#b2badm-save').onclick = async () => {
+    const payload = {
+      auto_mode: $('#b2badm-mode').value,
+      enabled: $('#b2badm-enabled').checked,
+      auto_issue_key: $('#b2badm-autokey').checked,
+      require_registry: $('#b2badm-registry').checked,
+      allow_free_domains: $('#b2badm-free').checked,
+      notify_admin: $('#b2badm-notify').checked,
+    };
+    try {
+      const d = await api.put('/api/v1/b2b-admin/config', payload);
+      B2B_ADM.cfg = d.config;
+      toast(d.message || 'Режим сохранён', 'ok');
+      b2bAdmLoad();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+async function b2bAdmLoad() {
+  try {
+    const d = await api.get('/api/v1/b2b-admin/overview');
+    B2B_ADM.cfg = d.config;
+    const markBox = $('#b2badm-marker');
+    if (markBox) markBox.innerHTML = b2bAdmMark(d.marker);
+    const c = d.counters || {};
+    const box = $('#b2badm-counters');
+    if (box) {
+      const parts = Object.keys(c).filter(k => k !== 'total' && k !== 'queue')
+        .map(k => `${esc((d.status_titles || {})[k] || k)}: <b>${fmtInt(c[k])}</b>`);
+      box.innerHTML = `Компаний всего <b>${fmtInt(c.total || 0)}</b> · ${parts.join(' · ')}<br>`
+        + `В очереди заявок: <b>${fmtInt(c.queue || 0)}</b> · режим: <b>${esc(d.config.auto_mode_title)}</b>`;
+    }
+    const funnel = $('#b2badm-funnel');
+    if (funnel) funnel.innerHTML = b2bAdmFunnel(c, d.status_titles || {});
+    b2bAdmRenderConfig(d.config, d.modes);
+    b2bAdmRenderBody(d);
+  } catch (e) {
+    const box = $('#b2badm-counters');
+    if (box) box.textContent = e.message;
+  }
+}
+
+function b2bAdmRenderBody(d) {
+  if (B2B_ADM.tab === 'companies') return b2bAdmCompanies();
+  if (B2B_ADM.tab === 'events') return b2bAdmEvents();
+  return b2bAdmQueue(d);
+}
+
+function b2bAdmQueue(d) {
+  const body = $('#b2badm-body');
+  if (!body) return;
+  const items = (d && d.queue) || [];
+  if (!items.length) {
+    body.innerHTML = '<p class="form-hint">Очередь пуста: заявок, ожидающих '
+      + 'решения, нет. Полный список — во вкладке «Компании».</p>';
+    return;
+  }
+  body.innerHTML = `
+    <table class="table b2badm-table">
+      <thead><tr>
+        <th>Компания</th><th>Тариф</th><th>Проверки</th><th>Задача</th><th>Действия</th>
+      </tr></thead>
+      <tbody>${items.map(a => `
+        <tr data-aid="${esc(a.id)}" data-cid="${esc(a.company_id)}">
+          <td><b>${esc(a.company)}</b><br><span class="form-hint">${esc(a.email)} · ИНН ${esc(a.inn || '—')} · риск ${fmtInt(a.risk_score)}</span></td>
+          <td>${esc(a.tariff_title)}<br><span class="form-hint">${fmtInt(a.tariff_rate)}/час · ${fmtInt(a.tariff_quota)}/мес</span></td>
+          <td>${b2bAdmChecks(a.checks || [])}</td>
+          <td class="b2badm-task">${esc(a.task || '—')}<br><span class="form-hint">${esc(a.status_title)} · ${esc(a.auto_mode || '')}</span></td>
+          <td class="b2badm-actions">
+            <button type="button" class="btn btn-sm b2badm-approve">✅ Одобрить и выдать ключ</button>
+            <button type="button" class="btn btn-sm b2badm-reject">✖ Отклонить</button>
+            <button type="button" class="btn btn-sm b2badm-open">👁 Карточка</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  $$('#b2badm-body .b2badm-approve').forEach(btn => btn.onclick = () => {
+    const aid = btn.closest('tr').dataset.aid;
+    b2bAdmApprove(aid);
+  });
+  $$('#b2badm-body .b2badm-reject').forEach(btn => btn.onclick = () => {
+    const aid = btn.closest('tr').dataset.aid;
+    b2bAdmRejectApplication(aid);
+  });
+  $$('#b2badm-body .b2badm-open').forEach(btn => btn.onclick = () => {
+    B2B_ADM.company = btn.closest('tr').dataset.cid;
+    b2bAdmCompany();
+  });
+}
+
+function b2bAdmChecks(checks) {
+  if (!checks.length) return '<span class="form-hint">не выполнялись</span>';
+  return checks.map(c =>
+    `<span class="b2badm-checkchip ${c.ok ? 'ok' : 'bad'}" title="${esc(c.detail)}">${c.ok ? '✓' : '✕'} ${esc(c.title)}</span>`).join(' ');
+}
+
+async function b2bAdmApprove(aid) {
+  if (!confirm('Одобрить заявку и выдать ключ по лимитам тарифа?')) return;
+  try {
+    const d = await api.post(`/api/v1/b2b-admin/applications/${encodeURIComponent(aid)}/approve`, {});
+    toast(d.message || 'Заявка одобрена', 'ok');
+    if (d.key) b2bAdmShowKey(d.key);
+    b2bAdmLoad();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function b2bAdmShowKey(key) {
+  B2B_ADM.key = key;
+  const card = $('#b2badm-keycard');
+  const box = $('#b2badm-key');
+  if (!card || !box) return;
+  box.textContent = key;
+  card.hidden = false;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function b2bAdmRejectApplication(aid) {
+  const reason = prompt('Причина отказа по заявке (уйдёт в письме компании):');
+  if (reason === null) return;
+  if (!reason.trim()) { toast('Укажите причину отказа', 'err'); return; }
+  try {
+    const d = await api.post(`/api/v1/b2b-admin/applications/${encodeURIComponent(aid)}/reject`, { reason: reason.trim() });
+    toast(d.message || 'Заявка отклонена', 'ok');
+    b2bAdmLoad();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function b2bAdmCompanies() {
+  const body = $('#b2badm-body');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="b2badm-filters">
+      <input id="b2badm-q" placeholder="Поиск: почта, компания или ИНН" value="${esc(B2B_ADM.q)}">
+      <select id="b2badm-status">
+        <option value="">Все статусы</option>
+        <option value="email_pending">Ждут подтверждения почты</option>
+        <option value="checks">Проверки</option>
+        <option value="verified">Подтверждённые</option>
+        <option value="rejected">Отклонённые</option>
+        <option value="blocked">Закрытые</option>
+        <option value="new">Не завершили регистрацию</option>
+      </select>
+      <button type="button" class="btn btn-sm" id="b2badm-find">🔎 Найти</button>
+    </div>
+    <div id="b2badm-list" class="form-hint">Загружаем…</div>`;
+  $('#b2badm-status').value = B2B_ADM.status;
+  const run = async () => {
+    const q = encodeURIComponent(B2B_ADM.q), s = encodeURIComponent(B2B_ADM.status);
+    try {
+      const d = await api.get(`/api/v1/b2b-admin/companies?q=${q}&status=${s}`);
+      const list = $('#b2badm-list');
+      if (!list) return;
+      if (!d.items.length) { list.textContent = 'Компаний не найдено.'; return; }
+      list.innerHTML = `
+        <table class="table b2badm-table">
+          <thead><tr><th>Компания</th><th>Статус</th><th>Риск</th><th>Заявок</th><th></th></tr></thead>
+          <tbody>${d.items.map(c => `
+            <tr data-cid="${esc(c.id)}">
+              <td><b>${esc(c.company_name || '—')}</b><br><span class="form-hint">${esc(c.email)} · ИНН ${esc(c.inn || '—')}${c.kind ? ' · ' + esc(c.kind) : ''}</span></td>
+              <td>${esc(c.status_title)}</td>
+              <td>${fmtInt(c.risk_score)}</td>
+              <td>${fmtInt(c.applications)}</td>
+              <td class="b2badm-actions"><button type="button" class="btn btn-sm b2badm-open">👁 Карточка</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      $$('#b2badm-list .b2badm-open').forEach(btn => btn.onclick = () => {
+        B2B_ADM.company = btn.closest('tr').dataset.cid;
+        b2bAdmCompany();
+      });
+    } catch (e) {
+      const list = $('#b2badm-list');
+      if (list) list.textContent = e.message;
+    }
+  };
+  $('#b2badm-find').onclick = run;
+  $('#b2badm-q').oninput = (e) => { B2B_ADM.q = e.target.value.trim(); };
+  $('#b2badm-status').onchange = (e) => { B2B_ADM.status = e.target.value; run(); };
+  run();
+}
+
+async function b2bAdmCompany() {
+  const body = $('#b2badm-body');
+  const cid = B2B_ADM.company;
+  if (!body || !cid) return;
+  body.innerHTML = '<p class="form-hint">Загружаем карточку…</p>';
+  try {
+    const d = await api.get(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}`);
+    const c = d.company || {};
+    const key = d.key || {};
+    body.innerHTML = `
+      <div class="b2badm-card">
+        <div class="b2badm-cardhead">
+          <div><b>${esc(c.company_name || '—')}</b> · ${esc(c.status_title || c.status)} ${b2bAdmMark(d.marker)}</div>
+          <button type="button" class="btn btn-sm" id="b2badm-back">← К списку</button>
+        </div>
+        <dl class="b2badm-defs">
+          <dt>Почта</dt><dd>${esc(c.email)}</dd>
+          <dt>ИНН</dt><dd>${esc(c.inn || '—')}${c.kind ? ' · ' + esc(c.kind) : ''}</dd>
+          <dt>Контакт</dt><dd>${esc(c.contact_name || '—')}${c.phone ? ' · ' + esc(c.phone) : ''}</dd>
+          <dt>Риск</dt><dd>${fmtInt(c.risk_score)}</dd>
+          <dt>Согласие</dt><dd>редакция ${esc(c.consent_version || '—')}</dd>
+          <dt>Почта подтверждена</dt><dd>${c.email_verified_at ? esc(c.email_verified_at.slice(0, 10)) : 'нет'}</dd>
+          <dt>Причина отказа</dt><dd>${esc(c.reject_reason || '—')}</dd>
+          <dt>Пометки</dt><dd>${esc(c.notes || '—')}</dd>
+        </dl>
+        <div class="b2badm-actions">
+          <button type="button" class="btn btn-sm" id="b2badm-verify">✅ Подтвердить статус</button>
+          <button type="button" class="btn btn-sm" id="b2badm-recheck">🔁 Перепроверить</button>
+          <button type="button" class="btn btn-sm" id="b2badm-creject">✖ Отклонить</button>
+          <button type="button" class="btn btn-sm" id="b2badm-block">${c.status === 'blocked' ? '🔓 Восстановить доступ' : '⛔ Закрыть доступ'}</button>
+          <button type="button" class="btn btn-sm" id="b2badm-resend">✉ Выслать письмо</button>
+        </div>
+      </div>
+      <div class="b2badm-card">
+        <div class="card-title">Проверки статуса</div>
+        ${b2bAdmCheckList(d.checks || [], d.check_titles || {})}
+      </div>
+      <div class="b2badm-card">
+        <div class="card-title">Ключ и заявки</div>
+        <p class="form-hint">${key.issued
+          ? `Ключ ${esc(key.prefix)} ${key.active ? 'активен' : 'отозван'} · ${fmtInt(key.used_hour)} из ${fmtInt(key.rate_per_hour)} за час · ${fmtInt(key.used_month)} из ${fmtInt(key.monthly_quota)} за месяц · последний вызов ${esc(key.last_used_at || '—')}`
+          : 'Ключ не выдавался'}</p>
+        ${(d.applications || []).map(a => `
+          <div class="b2badm-app" data-aid="${esc(a.id)}">
+            <div><b>${esc(a.tariff)}</b> · ${esc(a.status_title)} · ${esc((a.created_at || '').slice(0, 10))}</div>
+            <div class="form-hint">${esc(a.task || '')}</div>
+            <div class="form-hint">${esc(a.auto_decision || '')}</div>
+            <div class="b2badm-actions">
+              ${a.status === 'approved' || a.status === 'parked' || a.status === 'new'
+                ? `<button type="button" class="btn btn-sm b2badm-app-approve">✅ Одобрить и выдать ключ</button>` : ''}
+              ${a.status === 'approved'
+                ? `<button type="button" class="btn btn-sm b2badm-app-revoke">⛔ Отозвать ключ</button>` : ''}
+              ${a.status !== 'rejected' && a.status !== 'revoked'
+                ? `<button type="button" class="btn btn-sm b2badm-app-reject">✖ Отклонить заявку</button>` : ''}
+            </div>
+          </div>`).join('') || '<p class="form-hint">Заявок нет</p>'}
+      </div>
+      <div class="b2badm-card">
+        <div class="card-title">Журнал компании</div>
+        <ul class="b2badm-events">${(d.events || []).map(e =>
+          `<li>${esc((e.created_at || '').slice(0, 16).replace('T', ' '))} · <b>${esc(e.actor)}</b> · ${esc(e.action)}${e.details ? ' — ' + esc(e.details) : ''}</li>`).join('')
+          || '<li>Событий нет</li>'}</ul>
+      </div>`;
+
+    $('#b2badm-back').onclick = () => { B2B_ADM.company = ''; b2bAdmCompanies(); };
+    $('#b2badm-verify').onclick = async () => {
+      const note = prompt('Пометка к подтверждению статуса (необязательно):') || '';
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/verify`, { note });
+        toast(r.message || 'Статус подтверждён', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-recheck').onclick = async () => {
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/recheck`, {});
+        toast(r.passed ? 'Проверки пройдены' : 'Есть замечания: ' + (r.problems || []).join('; '), r.passed ? 'ok' : 'warn');
+        b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-creject').onclick = async () => {
+      const reason = prompt('Причина отказа компании (уйдёт в письме):');
+      if (reason === null) return;
+      if (!reason.trim()) { toast('Укажите причину', 'err'); return; }
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/reject`, { reason: reason.trim() });
+        toast(r.message || 'Отклонено', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-block').onclick = async () => {
+      const blocked = c.status !== 'blocked';
+      const reason = blocked ? (prompt('Причина закрытия доступа:') || '') : '';
+      if (blocked && !reason.trim()) { toast('Укажите причину', 'err'); return; }
+      const path = blocked ? 'block' : 'unblock';
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/${path}`, { reason });
+        toast(r.message || 'Готово', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $('#b2badm-resend').onclick = async () => {
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/resend`, {});
+        toast(r.message || 'Письмо отправлено', r.sent ? 'ok' : 'warn');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $$('#b2badm-body .b2badm-app-approve').forEach(btn => btn.onclick = () =>
+      b2bAdmApprove(btn.closest('.b2badm-app').dataset.aid));
+    $$('#b2badm-body .b2badm-app-reject').forEach(btn => btn.onclick = () =>
+      b2bAdmRejectApplication(btn.closest('.b2badm-app').dataset.aid));
+    $$('#b2badm-body .b2badm-app-revoke').forEach(btn => btn.onclick = async () => {
+      if (!confirm('Отозвать выданный ключ? Доступ компании к API прекратится сразу.')) return;
+      try {
+        const r = await api.post(`/api/v1/b2b-admin/applications/${encodeURIComponent(btn.closest('.b2badm-app').dataset.aid)}/revoke`, {});
+        toast(r.message || 'Ключ отозван', 'ok'); b2bAdmCompany();
+      } catch (e) { toast(e.message, 'err'); }
+    });
+  } catch (e) { body.innerHTML = `<p class="form-hint">${esc(e.message)}</p>`; }
+}
+
+function b2bAdmCheckList(checks, titles) {
+  if (!checks.length) return '<p class="form-hint">Проверки не выполнялись — нажмите «Перепроверить».</p>';
+  return `<ul class="b2badm-checks">${checks.map(c => `
+    <li class="${c.ok ? 'ok' : 'bad'}">
+      <span class="b2badm-sign">${c.ok ? '✓' : '✕'}</span>
+      <span><b>${esc(c.title || titles[c.kind] || c.kind)}</b>
+      <span class="form-hint">${esc(c.detail)}</span></span>
+    </li>`).join('')}</ul>`;
+}
+
+async function b2bAdmEvents() {
+  const body = $('#b2badm-body');
+  if (!body) return;
+  body.innerHTML = '<p class="form-hint">Загружаем журнал…</p>';
+  try {
+    const d = await api.get('/api/v1/b2b-admin/events?limit=100');
+    body.innerHTML = `
+      <p class="form-hint">${esc(d.note || '')}</p>
+      <ul class="b2badm-events">${(d.items || []).map(e =>
+        `<li>${esc((e.created_at || '').slice(0, 16).replace('T', ' '))} · <b>${esc(e.actor)}</b> · ${esc(e.action)}${e.details ? ' — ' + esc(e.details) : ''}</li>`).join('')
+        || '<li>Событий нет</li>'}</ul>`;
+  } catch (e) { body.innerHTML = `<p class="form-hint">${esc(e.message)}</p>`; }
+}
+
+async function viewB2bAdmin(container) {
+  container.innerHTML = b2bAdmShell();
+  $$('.b2badm-tab').forEach(btn => btn.onclick = () => {
+    B2B_ADM.tab = btn.dataset.tab;
+    B2B_ADM.company = '';
+    $$('.b2badm-tab').forEach(b => b.classList.toggle('active', b === btn));
+    b2bAdmLoad();
+  });
+  const first = $('.b2badm-tab');
+  if (first) first.classList.add('active');
+  $('#b2badm-key-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(B2B_ADM.key);
+      toast('Ключ скопирован', 'ok');
+    } catch (e) { toast('Скопируйте ключ вручную', 'warn'); }
+  };
+  $('#b2badm-key-close').onclick = () => {
+    B2B_ADM.key = '';
+    const box = $('#b2badm-key');
+    if (box) box.textContent = '';
+    $('#b2badm-keycard').hidden = true;
+  };
+  await b2bAdmLoad();
 }
 
 // --------------------------------------------------------------------------
@@ -9871,3 +12956,31 @@ function registerServiceWorker() {
 
 // --------------------------------------------------------------------------
 boot();
+
+
+// v1.70.59: модал QR-кода приглашения — определение на уровне модуля.
+// Прежде функция была объявлена внутри экрана «Пользователи», и
+// кнопка «QR» диалога создания приглашения падала ReferenceError.
+  // v1.8.2: модал QR-кода приглашения — показать/скачать PNG
+async function openInviteQr(inv, url) {
+  const { slot } = openModal(`
+    <div class="modal-title">▣ QR-код приглашения</div>
+    <div class="invite-qr-box"><div class="skeleton" style="height:220px;width:220px"></div></div>
+    <p class="form-hint" style="margin-top:10px">Пусть сотрудник наведёт камеру телефона
+    (сканер QR — камера или «Google Объектив») — откроется страница регистрации,
+    роль присвоится автоматически. Ссылка: <span class="mono" style="font-size:11px">${esc(url || '')}</span></p>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-close>Закрыть</button>
+      <button type="button" class="btn btn-primary" id="iv-qr-dl">⬇ Скачать PNG</button>
+    </div>`);
+  slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  const box = slot.querySelector('.invite-qr-box');
+  try {
+    const { blob, filename } = await api.download(`/api/v1/invites/${inv.id}/qr`);
+    const objUrl = URL.createObjectURL(blob);
+    box.innerHTML = `<img src="${objUrl}" alt="QR-код приглашения" width="220" height="220">`;
+    slot.querySelector('#iv-qr-dl').onclick = () => downloadBlob(blob, filename);
+  } catch (e) {
+    box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`;
+  }
+  }

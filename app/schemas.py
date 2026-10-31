@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Pydantic-схемы для валидации запросов и ответов API.
 """
@@ -81,6 +81,13 @@ class AdvanceReportBody(BaseModel):
                              description="Только чеки, подтверждённые ФНС")
 
 
+class AdvanceReportNumberBody(BaseModel):
+    company_id: str = Field(min_length=1, max_length=36)
+    report_date: str = Field(min_length=10, max_length=10)
+    request_id: str = Field(min_length=36, max_length=36)
+    start_after: int = Field(default=0, ge=0, le=999999)
+
+
 class ExportRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=1000)
     format: Literal["json", "xml"] = "json"
@@ -105,7 +112,7 @@ class MappingSave(BaseModel):
 
 # --- Настройки ---------------------------------------------------------------
 class FnsSettingsPatch(BaseModel):
-    provider: Literal["mock", "fns"]
+    provider: Literal["fns"] = "fns"
     api_base: Optional[str] = None
     master_token: Optional[str] = None
     client_app_id: Optional[str] = None
@@ -165,6 +172,10 @@ class ReceiptPatch(BaseModel):
     merchant_inn: Optional[str] = Field(default=None, max_length=20)
     merchant_address: Optional[str] = Field(default=None, max_length=500)
     cashier: Optional[str] = Field(default=None, max_length=200)
+    # v1.70.72: отрасль и регион можно поправить вручную (уточнение пула)
+    industry: Optional[str] = Field(default=None, max_length=100)
+    region_code: Optional[str] = Field(default=None, max_length=4)
+    region_name: Optional[str] = Field(default=None, max_length=120)
     items: Optional[list["ReceiptItemPatch"]] = None
 
 
@@ -177,6 +188,13 @@ class ReceiptItemPatch(BaseModel):
     vat_sum: Optional[float] = Field(default=None, ge=0)
 
 
+class EnrichRequest(BaseModel):
+    """v1.70.72: разбор сохранённых данных чеков (без запросов в ФНС)."""
+    receipt_ids: list[str] = Field(default_factory=list, max_length=500)
+    company_id: Optional[str] = Field(default=None, max_length=36)
+    only_empty: bool = True          # только там, где регион/отрасль не заданы
+
+
 class FetchDetailsRequest(BaseModel):
     """Массовое получение данных чеков из внешних источников (v1.2.0)."""
     receipt_ids: list[str] = Field(min_length=1, max_length=200)
@@ -186,15 +204,13 @@ class FetchDetailsRequest(BaseModel):
 
 
 class ExternalSettingsPatch(BaseModel):
-    """Настройки источников данных о чеке (только администратор)."""
+    """v1.70.70: настройки единственного источника — Открытых API ФНС."""
     fns_master_token: Optional[str] = Field(default=None, max_length=500)
-    proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
-    external_order: Optional[str] = Field(default=None, max_length=100)
-    external_auto: Optional[bool] = None
+    fns_client_app_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class ExternalTestRequest(BaseModel):
-    provider: str = "chain"  # chain (весь порядок) | fns_api | proverkacheka
+    """Контрольный запрос к ФНС (сторонних провайдеров больше нет)."""
     qrraw: Optional[str] = None
 
 

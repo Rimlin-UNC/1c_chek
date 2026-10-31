@@ -1,9 +1,15 @@
 // ======================================================================
 // Ямастер Чек — лёгкие SVG-графики (без внешних зависимостей)
-// Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+// Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 // ======================================================================
 
-const PALETTE = ['#6366f1', '#22d3ee', '#34d399', '#fbbf24', '#f87171', '#c084fc', '#60a5fa'];
+// v1.70.35: палитра серий была палитрой Tailwind — шесть цветов из семи на
+// белой карточке не дотягивали до 3:1 для графики (WCAG 1.4.11): #fbbf24
+// 1.67:1, #22d3ee 1.81:1, #34d399 1.92:1, #60a5fa 2.54:1, #c084fc 2.64:1,
+// #f87171 2.77:1. Заменена на значения фирменных токенов, порядок — от самых
+// различимых по тону (индиго, янтарь, зелень, сине-зелёный, терракота).
+// Тест test_v17035 сверяет каждый цвет с токеном CSS и с порогом 3:1.
+const PALETTE = ['#4b0082', '#b45309', '#2e8b57', '#237a90', '#c22e2a', '#9a4a00', '#27764a'];
 
 function tooltipEl() {
   let el = document.querySelector('.chart-tooltip');
@@ -44,7 +50,7 @@ export function barChart(container, data, { height = 240 } = {}) {
   const xw = iw / data.length;
   const bw = Math.max(6, Math.min(34, xw * 0.62));
   const defs = `<defs><linearGradient id="barGrad" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#22d3ee"/>
+      <stop offset="0%" class="chart-bar-from"/><stop offset="100%" class="chart-bar-to"/>
     </linearGradient></defs>`;
 
   let grid = '';
@@ -52,8 +58,8 @@ export function barChart(container, data, { height = 240 } = {}) {
   for (let i = 0; i <= ySteps; i++) {
     const y = padT + ih - (ih * i / ySteps);
     const val = Math.round(maxCount * i / ySteps);
-    grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(255,255,255,.07)"/>
-             <text x="${padL - 8}" y="${y + 4}" text-anchor="end" font-size="10.5" fill="#6b7494">${val}</text>`;
+    grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="chart-grid"/>
+             <text x="${padL - 8}" y="${y + 4}" text-anchor="end" font-size="10.5" class="chart-axis">${val}</text>`;
   }
 
   let bars = '', labels = '';
@@ -67,7 +73,7 @@ export function barChart(container, data, { height = 240 } = {}) {
       </rect>`;
     const day = d.date.slice(8, 10), mon = d.date.slice(5, 7);
     if (data.length <= 20 || i % Math.ceil(data.length / 14) === 0) {
-      labels += `<text x="${x + bw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#6b7494">${day}.${mon}</text>`;
+      labels += `<text x="${x + bw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" class="chart-axis">${day}.${mon}</text>`;
     }
     // Прозрачная зона для тултипа
     const hit = `<rect x="${padL + i * xw}" y="${padT}" width="${xw}" height="${ih}" fill="transparent" data-hit="1"/>`;
@@ -108,10 +114,10 @@ export function donutChart(container, data, { size = 190, centerTitle = '', cent
   container.innerHTML = `
     <div style="display:flex;gap:22px;align-items:center;flex-wrap:wrap;justify-content:center">
       <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="${sw}"/>
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" class="chart-track" stroke-width="${sw}"/>
         ${segs}
-        <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="24" font-weight="800" fill="#e8ecf8">${centerTitle}</text>
-        <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="10.5" fill="#6b7494">${centerSub}</text>
+        <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="24" font-weight="800" class="chart-center">${centerTitle}</text>
+        <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="10.5" class="chart-center-sub">${centerSub}</text>
       </svg>
       <div class="legend" style="flex-direction:column;align-items:flex-start;gap:8px">${legend}</div>
     </div>`;

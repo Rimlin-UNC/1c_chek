@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import secrets
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
@@ -28,6 +29,7 @@ from ..database import get_db
 from ..models import Company, Invite, User, iso_z
 from ..schemas import LoginRequest, PasswordChange, RegisterRequest
 from ..security import login_guard
+from ..services import rbac as rbac_space   # v1.70.61: пространство роли
 from ..services.audit import log_action
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Аутентификация"])
@@ -110,6 +112,44 @@ def max_login_poll(body: MaxPollBody, request: Request,
 
 
 # --------------------------------------------------------------------------
+#  v1.70.69: вход/регистрация через Telegram — зеркало потока MAX:
+#  одноразовый код, подтверждение сообщением боту, та же сессия сайта.
+# --------------------------------------------------------------------------
+class TelegramPollBody(BaseModel):
+    code: str = Field(min_length=16, max_length=160)
+
+
+@router.post("/telegram/start",
+             summary="Вход через Telegram: создать одноразовый код")
+def telegram_login_start(request: Request,
+                         db: Annotated[Session, Depends(get_db)]):
+    from ..services import telegram_login
+    return telegram_login.create_code(db, client_ip(request))
+
+
+@router.post("/telegram/poll",
+             summary="Вход через Telegram: статус кода (ok → сессия сайта)")
+def telegram_login_poll(body: TelegramPollBody, request: Request,
+                        db: Annotated[Session, Depends(get_db)]):
+    from ..services import telegram_login
+    r = telegram_login.poll(db, body.code)
+    if r.get("status") != "ok":
+        return JSONResponse(r)
+    log_action(None, "login_telegram",
+               details={"ip": client_ip(request),
+                        "username": r["user"].get("username")})
+    resp = JSONResponse({"status": "ok", "access_token": r["access_token"],
+                         "token_type": "bearer", "user": r["user"]})
+    resp.set_cookie(
+        "ymaster_token", r["access_token"],
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True, samesite="lax", path="/",
+        secure=cookie_secure(request),          # v1.70.11: только по HTTPS
+    )
+    return resp
+
+
+# --------------------------------------------------------------------------
 #  Приглашения
 # --------------------------------------------------------------------------
 @router.get("/invite-info", summary="Информация о приглашении (для страницы регистрации)")
@@ -178,6 +218,9 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
     _comp = db.get(Company, user.company_id) if user.company_id else None
     d["company_name"] = ((_comp.short_name or _comp.name) if _comp else None)
     d["is_platform_admin"] = (user.role == "admin")
+    # v1.70.61: пространство роли — экраны и разделы настроек, которые
+    # роль действительно вправе видеть (иерархия app/services/rbac.py)
+    d["space"] = rbac_space.space_payload(user.role)
     # v1.16.0: Telegram-привязка для личного кабинета настроек
     d["telegram_bound"] = bool(user.telegram_chat_id)
     # v1.66.0: привязка ассистента MAX

@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 ORM-модели: чеки, позиции, маппинг, пользователи, аудит, журнал ФНС.
 """
@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Float, ForeignKey, Index,
-    Integer, String, Text, UniqueConstraint,
+    Integer, String, Text, UniqueConstraint, event,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,6 +29,15 @@ def uid() -> str:
 def utcnow() -> datetime:
     """Текущее UTC-время."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _safe_json(text: str):
+    """JSON из строки без исключений (пустая/битая строка → {})."""
+    import json
+    try:
+        return json.loads(text) if text else {}
+    except ValueError:
+        return {}
 
 
 def iso_z(dt: datetime | None) -> str | None:
@@ -172,6 +181,12 @@ class Invite(Base):
         return True
 
 
+class ReceiptIdentityLock(Base):
+    """Общий замок фискальной тройки для реестра и пула."""
+    __tablename__ = "receipt_identity_locks"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
 # --------------------------------------------------------------------------
 #  Чеки (54-ФЗ)
 # --------------------------------------------------------------------------
@@ -219,6 +234,8 @@ class Receipt(Base):
     comment: Mapped[str] = mapped_column(Text, default="")
     raw_data: Mapped[str] = mapped_column(Text, default="{}")       # JSON: полный разбор QR + данные ФНС
     ext_json: Mapped[str] = mapped_column(Text, default="")          # v1.55.0: расширенные поля источника (JSON)
+    # Поисковая копия сохранённого места расчёта; NULL = ещё не обработано.
+    retail_place_index: Mapped[str | None] = mapped_column(Text, nullable=True)
     # --- v1.2.0: полные данные чека из источников (ФНС / сервисы проверки) ---
     # v1.23.0: полные данные чека получены из сервиса проверки (позиции,
     # магазин, наличные/безнал) — список показывает это, кнопка запроса скрыта
@@ -242,6 +259,28 @@ class Receipt(Base):
     policy_flags: Mapped[str] = mapped_column(String(200), default="",
                                               server_default="")
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # --- v1.70.72: разбор чека для пула и фильтров ---
+    # Регион продавца: из адреса места расчётов, иначе из ИНН (первые 2 цифры)
+    region_code: Mapped[str] = mapped_column(String(4), default="",
+                                             server_default="", index=True)
+    region_name: Mapped[str] = mapped_column(String(120), default="",
+                                             server_default="")
+    region_city: Mapped[str] = mapped_column(String(120), default="",
+                                             server_default="")
+    # Отрасль покупки (по наименованиям позиций) и группа товаров
+    industry: Mapped[str] = mapped_column(String(100), default="",
+                                          server_default="")
+    industry_lc: Mapped[str] = mapped_column(String(100), default="",
+                                             server_default="", index=True)
+    product_group: Mapped[str] = mapped_column(String(100), default="",
+                                               server_default="")
+    # Налогообложение и способ оплаты — из полного документа ФНС
+    taxation: Mapped[str] = mapped_column(String(40), default="",
+                                          server_default="")
+    taxation_name: Mapped[str] = mapped_column(String(60), default="",
+                                               server_default="")
+    pay_type: Mapped[str] = mapped_column(String(20), default="",
+                                          server_default="")
 
     items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", lazy="selectin"
@@ -293,6 +332,15 @@ class Receipt(Base):
             "policy_flags": [f for f in (self.policy_flags or "").split(",")
                              if f],          # v1.62.0: нарушения политики
             "category": self.category or "",
+            # v1.70.72: регион, отрасль, налоги и способ оплаты
+            "region_code": self.region_code or "",
+            "region_name": self.region_name or "",
+            "region_city": self.region_city or "",
+            "industry": self.industry or "",
+            "product_group": self.product_group or "",
+            "taxation": self.taxation or "",
+            "taxation_name": self.taxation_name or "",
+            "pay_type": self.pay_type or "",
             # v1.12.3: кто добавил чек (ФИО/логин автора скана) —
             # user подгружен joined, доп. запроса нет
             "created_by_name": ((self.user.full_name or self.user.username)
@@ -301,6 +349,36 @@ class Receipt(Base):
         if with_items:
             d["items"] = [it.to_dict() for it in self.items]
         return d
+
+
+def saved_retail_place(ext_json: str | None, raw_data: str | None) -> str:
+    """Название места расчёта из сохранённых данных, не адрес и не продавец."""
+    ext = _safe_json(ext_json or "")
+    if isinstance(ext, dict):
+        place = ext.get("retail_place")
+        if isinstance(place, str) and place.strip():
+            return place.strip()
+    raw = _safe_json(raw_data or "")
+    fns = raw.get("fns") if isinstance(raw, dict) else None
+    ticket = fns.get("ticket") if isinstance(fns, dict) else None
+    if not isinstance(ticket, dict):
+        return ""
+    document = ticket.get("receipt") if isinstance(ticket.get("receipt"), dict) else ticket
+    for key, value in document.items():
+        if str(key).lower() in ("retailplace", "retailplacename") and isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+@event.listens_for(Receipt, "before_insert")
+@event.listens_for(Receipt, "before_update")
+def _sync_retail_place(_mapper, _connection, receipt):
+    from sqlalchemy import inspect
+
+    state = inspect(receipt)
+    if (receipt.retail_place_index is None or state.attrs.ext_json.history.has_changes()
+            or state.attrs.raw_data.history.has_changes()):
+        receipt.retail_place_index = saved_retail_place(receipt.ext_json, receipt.raw_data)
 
 
 class ReceiptItem(Base):
@@ -315,6 +393,23 @@ class ReceiptItem(Base):
     vat_rate: Mapped[str] = mapped_column(String(10), default="none")  # none|0|10|20|10/110|20/120
     vat_sum: Mapped[float] = mapped_column(Float, default=0.0)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # --- v1.70.72: полные реквизиты позиции из документа ФНС ---
+    product_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #   признак предмета расчёта (1 товар, 3 работа, 4 услуга, …)
+    payment_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #   признак способа расчёта (4 полный расчёт, 1 предоплата, …)
+    unit: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    #   единица измерения (ОКЕИ → «шт», «кг», «л»)
+    product_group: Mapped[str] = mapped_column(String(100), default="",
+                                               server_default="")
+    industry: Mapped[str] = mapped_column(String(100), default="",
+                                          server_default="")
+    extra_json: Mapped[str] = mapped_column(Text, default="",
+                                            server_default="")
+    # Индекс факта сохранённых данных маркировки; False не означает, что
+    # товар немаркированный: данных могло не быть в ответе или при импорте.
+    marking_present: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    #   маркировка, агент, поставщик, страна, таможенная декларация, ФОИВ
 
     receipt: Mapped[Receipt] = relationship(back_populates="items")
 
@@ -327,7 +422,41 @@ class ReceiptItem(Base):
             "total": self.total,
             "vat_rate": self.vat_rate,
             "vat_sum": self.vat_sum,
+            "product_type": self.product_type,
+            "payment_type": self.payment_type,
+            "unit": self.unit or "",
+            "product_group": self.product_group or "",
+            "industry": self.industry or "",
+            "extra": (_safe_json(self.extra_json)
+                      if getattr(self, "extra_json", "") else {}),
         }
+
+
+def has_saved_marking(extra_json: str | None) -> bool:
+    """Только непустые сохранённые реквизиты маркировки, не факт проверки ГИС МТ."""
+    parsed = _safe_json(extra_json or "")
+    if not isinstance(parsed, dict):
+        return False
+    entries = parsed.get("marking")
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return False
+    def meaningful(value):
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, dict):
+            return any(meaningful(v) for v in value.values())
+        if isinstance(value, list):
+            return any(meaningful(v) for v in value)
+        return bool(value)
+    return any(meaningful(entry) for entry in entries)
+
+
+@event.listens_for(ReceiptItem, "before_insert")
+@event.listens_for(ReceiptItem, "before_update")
+def _sync_saved_marking(_mapper, _connection, item):
+    item.marking_present = has_saved_marking(item.extra_json)
 
 
 # --------------------------------------------------------------------------
@@ -443,7 +572,7 @@ class FnsLog(Base):
     receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     request_data: Mapped[str] = mapped_column(Text, default="")
     response_data: Mapped[str] = mapped_column(Text, default="")
-    provider: Mapped[str] = mapped_column(String(20), default="mock")
+    provider: Mapped[str] = mapped_column(String(20), default="fns")
     ok: Mapped[bool] = mapped_column(Boolean, default=False)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -457,6 +586,21 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
+
+
+class FnsUsage(Base):
+    """v1.70.70: суточный расход запросов к Открытым API ФНС.
+
+    У ФНС лимит 1000 запросов за 24 часа на приложение, и считаются ВСЕ
+    обращения: аутентификация, отправка запроса на чек и каждый опрос
+    результата. Счётчик хранится в базе (переживает перезапуск) и
+    сбрасывается с началом новых суток по Москве."""
+
+    __tablename__ = "fns_usage"
+
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)  # ГГГГ-ММ-ДД
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 # --------------------------------------------------------------------------
@@ -552,3 +696,45 @@ class MaxLoginCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TelegramLoginCode(Base):
+    """v1.70.69: одноразовые коды входа/регистрации через Telegram (веб).
+    Зеркало MaxLoginCode: код хранится только хэшем (sha256);
+    подтверждение — сообщение боту (deep-link «/start tglogin_…» или код
+    текстом). tg_chat_id заполнен → код подтверждён; used_at → погашен."""
+
+    __tablename__ = "telegram_login_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(20), default="web")
+    tg_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tg_username: Mapped[str] = mapped_column(String(100), default="")
+    tg_name: Mapped[str] = mapped_column(String(200), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AdvanceReportCounter(Base):
+    """Последний выданный номер по компании и месяцу даты отчёта."""
+    __tablename__ = "advance_report_counters"
+
+    company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)
+    last_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class AdvanceReportReservation(Base):
+    """Резервация делает повтор HTTP-запроса идемпотентным."""
+    __tablename__ = "advance_report_reservations"
+    __table_args__ = (UniqueConstraint("company_id", "period", "number"),)
+
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    report_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

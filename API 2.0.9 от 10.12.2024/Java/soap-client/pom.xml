@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>soap-client</artifactId>
+        <groupId>ru.gnivc.inplat.servin.openapi.soap.client</groupId>
+        <version>1.0</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>consumer-async-service-signature-client</artifactId>
+
+
+    <dependencies>
+
+        <dependency>
+            <groupId>ru.gnivc.inplat.servin.openapi.soap.client</groupId>
+            <artifactId>soap-client-components</artifactId>
+            <version>1.0</version>
+        </dependency>
+
+        <!-- Для КриптоПро -->
+        <dependency>
+            <groupId>org.apache.cxf</groupId>
+            <artifactId>cxf-rt-ws-security</artifactId>
+            <version>${version-cxf}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.ws.security</groupId>
+            <artifactId>wss4j</artifactId>
+            <version>1.6.3</version>
+        </dependency>
+        <dependency>
+            <groupId>xalan</groupId>
+            <artifactId>xalan</artifactId>
+            <version>2.7.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.santuario</groupId>
+            <artifactId>xmlsec</artifactId>
+            <version>1.5.0</version>
+        </dependency>
+        <dependency>
+            <groupId>samples</groupId>
+            <artifactId>wss4j.utility</artifactId>
+            <version>1.0</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/CryptoProLib/samples.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>JCPxml</groupId>
+            <artifactId>ru.CryptoPro</artifactId>
+            <version>1.0</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/CryptoProLib/XMLDSigRI.jar</systemPath>
+        </dependency>
+    </dependencies>
+
+    <build>
+    <plugins>
+        <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${verion-maven-compile}</version>
+        <configuration>
+            <source>1.8</source>
+            <target>1.8</target>
+        </configuration>
+    </plugin>
+
+
+    <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+            <execution>
+                <goals>
+                    <goal>repackage</goal>
+                </goals>
+                <configuration>
+                    <classifier>executable-file</classifier>
+                    <mainClass>
+                        ru.gnivc.inplat.servin.openapi.soap.client.consumer.signature.asyncService.Application
+                    </mainClass>
+                </configuration>
+            </execution>
+        </executions>
+    </plugin>
+
+        <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>jaxws-maven-plugin</artifactId>
+            <version>2.5</version>
+            <configuration>
+                <verbose>true</verbose>
+            </configuration>
+            <executions>
+                <execution>
+                    <id>AsyncConsumerService-DigitalSignature-exec</id>
+                    <goals>
+                        <goal>wsimport</goal>
+                    </goals>
+                    <configuration>
+                        <wsdlFiles>
+                            <wsdlFile>OpenApiAsyncMessageConsumerService-v0.1.wsdl</wsdlFile>
+                        </wsdlFiles>
+                        <wsdlDirectory>../wsdl</wsdlDirectory>
+                        <wsdlLocation>wsdl/OpenApiAsyncMessageConsumerService-v0.1.wsdl</wsdlLocation>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+
+        <plugin>
+            <artifactId>maven-resources-plugin</artifactId>
+            <version>3.1.0</version>
+            <executions>
+                <execution>
+                    <id>copy-resources</id>
+                    <!-- here the phase you need -->
+                    <phase>validate</phase>
+                    <goals>
+                        <goal>copy-resources</goal>
+                    </goals>
+                    <configuration>
+                        <outputDirectory>target/data/WebContent</outputDirectory>
+                        <resources>
+                            <resource>
+                                <directory>data/WebContent</directory>
+                                <filtering>true</filtering>
+                            </resource>
+                        </resources>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+    </build>
+
+</project>

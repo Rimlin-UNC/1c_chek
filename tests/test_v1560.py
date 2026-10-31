@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.56.0: адаптив по ТЗ (320px → 1440px+).
 # Fluid-изображения, без горизонтальной прокрутки, таблицы прокручиваются
 # внутри блока, touch-цели 44px, поля 16px, aria сайдбара.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 
@@ -57,14 +57,28 @@ class TestNoHorizontalScroll:
 
 class TestTouchAndInputs:
     def test_touch_targets_44px(self):
-        css = open("app/static/css/app.css", encoding="utf-8").read()
+        """v1.70.33: блок тач-целей в файле ОДИН. Раньше их было два, с
+        противоречивыми числами (.nav-item 44px против 48px, .btn-sm 40px
+        против 42px): нижний перебивал верхний по порядку каскада, поэтому
+        прежние проверки 44px/40px пинили МЁРТВЫЕ объявления — тесты были
+        зелёные, а действовали совсем другие значения. Теперь пинится то, что
+        действительно применяется, а одиночество блока защищено отдельно."""
+        raw = open("app/static/css/app.css", encoding="utf-8").read()
+        # v1.70.35: считаем по коду БЕЗ комментариев. Пояснение к общему
+        # правилу чекбоксов упоминает этот блок по имени, и проверка падала на
+        # собственном тексте файла — тесты не должны ломаться о документацию.
+        css = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+        assert css.count("@media (pointer: coarse)") == 1, \
+            "блок тач-целей снова продублирован — значения разъедутся"
         coarse = css.split("@media (pointer: coarse)")[1][:500]
         assert ".btn { min-height: 44px; }" in coarse
         assert ".btn-icon { width: 44px; height: 44px; }" in coarse
-        assert ".nav-item { min-height: 44px; }" in coarse
         assert ".segmented button { min-height: 44px; }" in coarse
-        # компактные кнопки в таблицах — 40px, строки не раздуваются
-        assert ".btn-sm { min-height: 40px; }" in coarse
+        assert ".filter-bar .btn { min-height: 44px; }" in coarse
+        # пункт меню крупнее кнопки: по нему попадают вслепую большим пальцем
+        assert ".nav-item { min-height: 48px; }" in coarse
+        # компактные кнопки в таблицах — 42px, строки не раздуваются
+        assert ".btn-sm { min-height: 42px; min-width: 42px; padding: 9px 14px; }" in coarse
 
     def test_inputs_16px_on_phone(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()

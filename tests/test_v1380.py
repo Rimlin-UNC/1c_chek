@@ -1,6 +1,6 @@
 # Ямастер Чек — тесты v1.38.0: «Чек-Пул» этап 9 «Рост» — граф связей
 # антифрода и партнёрский кэшбэк с QR «на кассе».
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки Этапа 9 (docs/dev_plan_checkpool.md, выполненная часть):
 #  - граф-аналитика: /pool-fraud/graph отдаёт кластеры участников с рёбрами
@@ -187,7 +187,9 @@ class TestPartnerQr:
         import subprocess
         import sys
         r = subprocess.run(
-            ["node", "-e", """
+            # v1.70.38: r-строка — внутри JS-регулярки (\d), а Python на
+            # такое экранирование с 3.12 ругается SyntaxWarning
+            ["node", "-e", r"""
 const { execSync } = require('child_process');
 const svg = execSync(`python3 -c "
 from app.pool import partners

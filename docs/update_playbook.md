@@ -54,7 +54,7 @@
 ### Шаг 1. Чистая среда
 ```bash
 rm -rf /tmp/v15repo && git clone -q --no-hardlinks \
-  -b arena/01a0caaa-1c-chek https://github.com/Rimlin-UNC/1c_chek.git /tmp/v15repo
+  -b main https://github.com/Rimlin-UNC/1c_chek.git /tmp/v15repo
 cd /tmp/v15repo && python3 -m pip install -q -r requirements.txt pytest httpx
 ```
 Никогда не править «в живом» репозитории и не проверять на проде.
@@ -100,7 +100,7 @@ python3 -m pytest tests/ -q          # ~5 минут, ждать до конца
 ### Шаг 7. Коммит и пуш
 ```bash
 git add -A && git commit -m "vX.Y.Z: суть изменения; NNN passed"
-git push origin arena/01a0caaa-1c-chek
+git push origin main
 ```
 
 ### Шаг 8. Деплой и боевая проверка

@@ -1,17 +1,17 @@
 // ======================================================================
 // Ямастер Чек — Service Worker (PWA: офлайн-режим веб-клиента)
-// Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+// Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 //
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.70.15';
+const CACHE = 'ymaster-check-v1.70.80';
 // v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
 // SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.70.15', '/js/app.js?v=1.70.15',   // v1.12.2: как в index.html
+  '/css/app.css?v=1.70.80', '/js/app.js?v=1.70.80',   // v1.12.2: как в index.html
   '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
   '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',

@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.58.5 (часть 2): гигиена секретов.
 # Практики OWASP/ASVS: пароли и токены не возвращаются API в открытом
 # виде и не попадают в журнал (маскирование).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import logging
 
@@ -25,7 +25,8 @@ def _clean_mail_state():
     from app.database import SessionLocal
     from app.services import appsettings
     KEYS = ("smtp_host", "smtp_port", "smtp_user", "smtp_from",
-            "smtp_pass", "proverkacheka_token")
+            "smtp_pass", "fns_master_token", "fns_client_app_id",
+            "fns_limit_warning")
     db = SessionLocal()
     try:
         for k in KEYS:
@@ -52,36 +53,30 @@ class TestSmtpPasswordNotLeaked:
             assert "has_password" in body or "configured" in body
 
     def test_token_masked_in_settings(self, client):
-        """Токен proverkacheka отдаётся только маскированным."""
+        """v1.70.70: мастер-токен ФНС отдаётся только маскированным."""
         hdr = _login(client)
         tok = "55035.SuperSecretToken"
         r = client.put("/api/v1/settings/external", headers=hdr, json={
-            "proverkacheka_token": tok})
+            "fns_master_token": tok})
         assert r.status_code == 200, r.text
         body = client.get("/api/v1/settings/external", headers=hdr).text
         assert tok not in body, "полный токен утёк через настройки"
-        assert "proverkacheka_token_masked" in body   # маска на месте
+        assert "fns_master_token_masked" in body      # маска на месте
 
     def test_token_not_in_logs(self, client, monkeypatch, caplog):
-        """При отказе источника токен не печатается в журнал."""
+        """Мастер-токен ФНС не печатается в журнал целиком."""
         from app.services import external
         caplog.set_level(logging.INFO)
         eng = external.ExternalFetchEngine()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "55035.TopSecret", "fns_master_token": ""})
-        monkeypatch.setattr(external, "MAX_SAME_PROVIDER_RETRIES", 0)
-        monkeypatch.setattr(external.time, "sleep", lambda s: None)
-
-        def fake_post(*a, **k):
-            # даже запрос с токеном не логируется как есть
-            resp = external.httpx.Response(
-                200, json={"code": 401, "data": "Не авторизован"},
-                request=external.httpx.Request("POST", external.PROVERKACHEKA_URL))
-            return resp
-
-        monkeypatch.setattr(external.httpx, "post", fake_post)
+            "fns_master_token": "55035.TopSecretMasterToken"})
+        monkeypatch.setattr(eng, "_polite_wait", lambda provider: None)
+        monkeypatch.setattr(external, "fetch_fns", lambda *a, **k: (
+            False, "ФНС: сеть недоступна", {}))
         eng.fetch(None, "qr", "fn", "fd", "fp", 890.0, None)
-        assert "55035.TopSecret" not in caplog.text, "токен попал в журнал"
+        assert "55035.TopSecretMasterToken" not in caplog.text, \
+            "токен попал в журнал"
+        assert "TopS" not in caplog.text, "в журнал попал даже хвост токена"
 
     def test_master_key_masked_in_logs(self, client, monkeypatch, caplog):
         """Мастер-ключ ФНС в журнале — только хвост (…XXXX)."""
@@ -89,9 +84,8 @@ class TestSmtpPasswordNotLeaked:
         caplog.set_level(logging.INFO)
         eng = external.ExternalFetchEngine()
         monkeypatch.setattr(eng, "_settings", lambda db: {
-            "proverkacheka_token": "tok",
             "fns_master_token": "MasterSecretKeyAbcd"})
         chain = eng.provider_chain(None)
-        assert chain == ["fns_api", "proverkacheka", "mock"]
+        assert chain == ["fns_api"]
         # ключи логируются только при загрузке чека — маскированно
         assert "MasterSecretKeyAbcd" not in caplog.text

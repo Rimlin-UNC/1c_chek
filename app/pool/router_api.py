@@ -12,17 +12,17 @@
 # /мес (на ключ). Каждое обращение — в журнал pool_api_calls (path без
 # query, чистка старше 90 дней — 152-ФЗ). Включается администратором,
 # по умолчанию выключено.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -45,6 +45,52 @@ def _utcnow() -> datetime:
 def _month_start(now: datetime | None = None) -> datetime:
     n = now or _utcnow()
     return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _next_month(now: datetime) -> datetime:
+    """Начало следующего месяца по UTC — момент обнуления месячной квоты."""
+    return (_month_start(now) + timedelta(days=32)).replace(day=1)
+
+
+def _unix_utc(moment: datetime) -> int:
+    """Unix-время для заголовков: naive-datetime проекта считается UTC."""
+    return int(moment.replace(tzinfo=timezone.utc).timestamp())
+
+
+def _hour_slot_free(db: Session, key_id: str, now: datetime) -> datetime:
+    """Когда освободится место в скользящем часовом окне.
+
+    Окно скользящее, поэтому сброс лимита — это момент, когда покинет окно
+    самый старый вызов; при пустом окне место есть сразу (условно через час).
+    """
+    oldest = (db.query(PoolApiCall.created_at)
+              .filter(PoolApiCall.key_id == key_id,
+                      PoolApiCall.created_at >= now - timedelta(hours=1))
+              .order_by(PoolApiCall.created_at.asc()).first())
+    if oldest and oldest[0]:
+        return oldest[0] + timedelta(hours=1)
+    return now + timedelta(hours=1)
+
+
+def rate_headers(db: Session, key: PoolApiKey, used_hour: int,
+                 used_month: int, now: datetime | None = None) -> dict:
+    """Остаток лимитов ключа — для заголовков ответа и для 429.
+
+    Текущий запрос ещё не записан в журнал, поэтому из остатка вычитается
+    единица: клиент видит, сколько останется после этого обращения.
+    """
+    n = now or _utcnow()
+    slot_free = _hour_slot_free(db, key.id, n)
+    return {
+        "X-RateLimit-Limit": str(int(key.rate_per_hour)),
+        "X-RateLimit-Remaining": str(max(0, int(key.rate_per_hour) - used_hour - 1)),
+        "X-RateLimit-Reset": str(_unix_utc(slot_free)),
+        "X-RateLimit-Resource": "requests_per_hour",
+        "X-Quota-Limit": str(int(key.monthly_quota)),
+        "X-Quota-Remaining": str(max(0, int(key.monthly_quota) - used_month - 1)),
+        "X-Quota-Reset": str(_unix_utc(_next_month(n))),
+        "Retry-After": str(max(1, int((slot_free - n).total_seconds()))),
+    }
 
 
 def api_enabled(db: Session) -> bool:
@@ -73,7 +119,8 @@ def generate_key(db: Session, name: str, created_by: str = "",
     return rec, raw
 
 
-def _authenticate(db: Session, x_api_key: str) -> PoolApiKey:
+def _authenticate(db: Session, x_api_key: str,
+                  response: Response | None = None) -> PoolApiKey:
     """Проверка ключа + включённости API + лимитов (час/месяц)."""
     if not api_enabled(db):
         raise HTTPException(403, "API для внешних клиентов выключен — "
@@ -92,15 +139,34 @@ def _authenticate(db: Session, x_api_key: str) -> PoolApiKey:
                  .filter(PoolApiCall.key_id == key.id,
                          PoolApiCall.created_at >= hour_ago).count())
     if used_hour >= key.rate_per_hour:
+        heads = rate_headers(db, key, used_hour, 0, now)
         raise HTTPException(429, f"Лимит тарифа: {key.rate_per_hour} "
-                                 "запросов/час")
+                                 "запросов/час",
+                            headers={"Retry-After": heads["Retry-After"],
+                                     "X-RateLimit-Limit": heads["X-RateLimit-Limit"],
+                                     "X-RateLimit-Remaining": "0",
+                                     "X-RateLimit-Reset": heads["X-RateLimit-Reset"]})
     used_month = (db.query(PoolApiCall)
                   .filter(PoolApiCall.key_id == key.id,
                           PoolApiCall.created_at >= _month_start(now)).count())
     if used_month >= key.monthly_quota:
+        heads = rate_headers(db, key, used_hour, used_month, now)
+        month_reset = _next_month(now)
         raise HTTPException(429, f"Квота тарифа исчерпана: "
-                                 f"{key.monthly_quota} запросов/мес")
+                                 f"{key.monthly_quota} запросов/мес",
+                            headers={"Retry-After": str(max(
+                                         1, int((month_reset - now).total_seconds()))),
+                                     "X-Quota-Limit": heads["X-Quota-Limit"],
+                                     "X-Quota-Remaining": "0",
+                                     "X-Quota-Reset": heads["X-Quota-Reset"]})
     key.last_used_at = now
+    if response is not None:
+        # остаток лимита виден в каждом успешном ответе — клиент тормозит
+        # проактивно, а не угадывает паузу после 429
+        for name, value in rate_headers(db, key, used_hour, used_month,
+                                        now).items():
+            if name != "Retry-After":
+                response.headers[name] = value
     return key
 
 
@@ -173,8 +239,9 @@ class _F(BaseModel):
             summary="API: сводка пула (анонимные агрегаты)")
 def stats_overview(days: int = 30,
                    x_api_key: str = Header("", alias="X-API-Key"),
-                   db: Session = Depends(get_db)):
-    key = _authenticate(db, x_api_key)
+                   db: Session = Depends(get_db),
+                   response: Response = None):
+    key = _authenticate(db, x_api_key, response)
     _log_call(db, key, "v1/stats/overview")
     db.commit()
     _require_enabled(db)
@@ -201,12 +268,163 @@ def stats_overview(days: int = 30,
             "avg_receipt_sum": round(float(avg), 2)}
 
 
+# Допустимая группировка динамики: день, неделя ISO, месяц.
+DYNAMICS_BUCKETS = ("day", "week", "month")
+
+
+def _bucket_label(moment: datetime, kind: str) -> str:
+    """Метка периода: 2026-10-23, 2026-W43 (неделя ISO) или 2026-10."""
+    if kind == "week":
+        iso = moment.isocalendar()
+        return f"{iso[0]}-W{int(iso[1]):02d}"
+    if kind == "month":
+        return moment.strftime("%Y-%m")
+    return moment.strftime("%Y-%m-%d")
+
+
+@router.get("/v1/stats/dynamics",
+            summary="API: динамика по дням, неделям и месяцам (агрегаты)")
+def stats_dynamics(days: int = 30, bucket: str = "day",
+                   region_code: str = "", industry: str = "",
+                   x_api_key: str = Header("", alias="X-API-Key"),
+                   db: Session = Depends(get_db),
+                   response: Response = None):
+    """Динамика объёмов и среднего чека + сравнение с предыдущим периодом.
+
+    Снимок за период отвечает на вопрос «сколько», динамика — на вопросы
+    «растёт или падает», «есть ли сезонность» и «как изменилось к прошлому
+    периоду». Отдаются только агрегаты: числа чеков, суммы и среднее по
+    периодам, без самих чеков, позиций и участников.
+    """
+    key = _authenticate(db, x_api_key, response)
+    _log_call(db, key, "v1/stats/dynamics")
+    db.commit()
+    _require_enabled(db)
+
+    kind = (bucket or "day").strip().lower()
+    if kind not in DYNAMICS_BUCKETS:
+        raise HTTPException(422, "bucket — day, week или month")
+
+    # Ноль и отрицательное значение приводят к одному дню — так же, как в
+    # остальных GET-методах (max(1, min(days, 365))); «days or 30» превратило
+    # бы ноль в тридцать и разошлось бы с документом.
+    window = max(1, min(int(days or 0), 365))
+    now = _utcnow()
+    since = now - timedelta(days=window)
+    region = (region_code or "").strip()
+    trade = (industry or "").strip()
+    stamp = func.coalesce(PoolReceipt.verified_at, PoolReceipt.created_at)
+    # День как строка YYYY-MM-DD: CAST(... AS DATE) в SQLite приводит к
+    # числовому сродству и возвращает «2026» вместо даты, а диалектные
+    # strftime/date_trunc сломали бы переносимость между SQLite и PostgreSQL.
+    # substr(CAST(... AS VARCHAR), 1, 10) одинаково работает на обеих СУБД.
+    day_col = func.substr(cast(stamp, String), 1, 10)
+
+    def totals(start: datetime, end: datetime) -> tuple[int, float]:
+        """Число чеков и сумма за окно (только верифицированные)."""
+        q = (db.query(func.count(PoolReceipt.id),
+                      func.coalesce(func.sum(PoolReceipt.total_sum), 0.0))
+             .filter(PoolReceipt.status == "verified",
+                     stamp >= start, stamp < end))
+        if region:
+            q = q.filter(PoolReceipt.region_code == region)
+        if trade:
+            q = q.filter(PoolReceipt.industry == trade)
+        row = q.one()
+        return int(row[0] or 0), float(row[1] or 0.0)
+
+    def by_day(start: datetime, end: datetime) -> dict:
+        """Разбивка по дням одним запросом; недели и месяцы собрать в Python
+        дешевле и переносимее, чем диалектными функциями дат."""
+        q = (db.query(day_col, func.count(PoolReceipt.id),
+                      func.coalesce(func.sum(PoolReceipt.total_sum), 0.0))
+             .filter(PoolReceipt.status == "verified",
+                     stamp >= start, stamp < end))
+        if region:
+            q = q.filter(PoolReceipt.region_code == region)
+        if trade:
+            q = q.filter(PoolReceipt.industry == trade)
+        out: dict[str, tuple[int, float]] = {}
+        for day, count, amount in q.group_by(day_col).all():
+            out[str(day)[:10]] = (int(count or 0), float(amount or 0.0))
+        return out
+
+    daily = by_day(since, now + timedelta(seconds=1))
+
+    # Непрерывный ряд: период без чеков — это ноль, а не пропуск. Обход всегда
+    # по дням, а метка периода вычисляется для каждого дня — иначе неделя или
+    # месяц собрали бы только один свой день и потеряли остальные.
+    order: list[str] = []
+    sums: dict[str, list] = {}
+    cursor = since.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_window = now + timedelta(seconds=1)
+    while cursor < end_of_window:
+        label = _bucket_label(cursor, kind)
+        if label not in sums:
+            order.append(label)
+            sums[label] = [0, 0.0]
+        day_key = cursor.strftime("%Y-%m-%d")
+        if day_key in daily:
+            sums[label][0] += daily[day_key][0]
+            sums[label][1] += daily[day_key][1]
+        cursor += timedelta(days=1)
+
+    points = []
+    base_sum = base_avg = 0.0
+    for label in order:
+        count, amount = sums[label]
+        avg = (amount / count) if count else 0.0
+        if not base_sum and count:
+            # базовый период — первый непустой: индекс считается от него
+            base_sum, base_avg = amount, avg
+        points.append({
+            "label": label,
+            "receipts": count,
+            "sum": round(amount, 2),
+            "avg": round(avg, 2),
+            "index_sum": round(amount / base_sum * 100, 1) if base_sum else None,
+            "index_avg": round(avg / base_avg * 100, 1) if base_avg else None,
+        })
+
+    total_receipts, total_sum = totals(since, now + timedelta(seconds=1))
+    prev_receipts, prev_sum = totals(since - timedelta(days=window), since)
+    total_avg = (total_sum / total_receipts) if total_receipts else 0.0
+    prev_avg = (prev_sum / prev_receipts) if prev_receipts else 0.0
+
+    def growth(current: float, previous: float):
+        """Изменение к прошлому периоду в процентах (None, если сравнивать не с чем)."""
+        if not previous:
+            return None
+        return round((current - previous) / previous * 100, 1)
+
+    return {
+        "aggregated": True,
+        "period_days": days,
+        "window_days": window,
+        "bucket": kind,
+        "points": points,
+        "points_count": len(points),
+        "totals": {"receipts": total_receipts, "sum": round(total_sum, 2),
+                   "avg": round(total_avg, 2)},
+        "previous": {"receipts": prev_receipts, "sum": round(prev_sum, 2),
+                     "avg": round(prev_avg, 2)},
+        "lfl_pct": {"receipts": growth(total_receipts, prev_receipts),
+                    "sum": growth(total_sum, prev_sum),
+                    "avg": growth(total_avg, prev_avg)},
+        "base_note": ("index_sum и index_avg — процент к первому непустому "
+                      "периоду ряда (база = 100)"),
+        "filters": {"region_code": region, "industry": trade},
+        "receipts_excluded": True,
+    }
+
+
 @router.get("/v1/stats/regions",
             summary="API: чеки по регионам (анонимные агрегаты)")
 def stats_regions(days: int = 30, limit: int = 12,
                   x_api_key: str = Header("", alias="X-API-Key"),
-                  db: Session = Depends(get_db)):
-    key = _authenticate(db, x_api_key)
+                  db: Session = Depends(get_db),
+                  response: Response = None):
+    key = _authenticate(db, x_api_key, response)
     _log_call(db, key, "v1/stats/regions")
     db.commit()
     _require_enabled(db)
@@ -229,8 +447,9 @@ def stats_regions(days: int = 30, limit: int = 12,
             summary="API: чеки по отраслям (анонимные агрегаты)")
 def stats_industries(days: int = 30, limit: int = 18,
                      x_api_key: str = Header("", alias="X-API-Key"),
-                     db: Session = Depends(get_db)):
-    key = _authenticate(db, x_api_key)
+                     db: Session = Depends(get_db),
+                     response: Response = None):
+    key = _authenticate(db, x_api_key, response)
     _log_call(db, key, "v1/stats/industries")
     db.commit()
     _require_enabled(db)
@@ -255,8 +474,9 @@ def stats_industries(days: int = 30, limit: int = 18,
             summary="API: топ продавцов (публичные реквизиты, без чеков)")
 def stats_merchants(days: int = 30, limit: int = 10,
                     x_api_key: str = Header("", alias="X-API-Key"),
-                    db: Session = Depends(get_db)):
-    key = _authenticate(db, x_api_key)
+                    db: Session = Depends(get_db),
+                    response: Response = None):
+    key = _authenticate(db, x_api_key, response)
     _log_call(db, key, "v1/stats/merchants")
     db.commit()
     _require_enabled(db)
@@ -280,8 +500,9 @@ def stats_merchants(days: int = 30, limit: int = 10,
 @router.post("/v1/filters/count",
              summary="API: сколько чеков под фильтрами (без самих чеков)")
 def filters_count(body: _F, x_api_key: str = Header("", alias="X-API-Key"),
-                  db: Session = Depends(get_db)):
-    key = _authenticate(db, x_api_key)
+                  db: Session = Depends(get_db),
+                  response: Response = None):
+    key = _authenticate(db, x_api_key, response)
     _log_call(db, key, "v1/filters/count")
     db.commit()
     _require_enabled(db)
@@ -293,8 +514,9 @@ def filters_count(body: _F, x_api_key: str = Header("", alias="X-API-Key"),
 @router.post("/v1/filters/aggregate",
              summary="API: агрегаты под фильтрами (сумма/среднее/мин/макс)")
 def filters_aggregate(body: _F, x_api_key: str = Header("", alias="X-API-Key"),
-                      db: Session = Depends(get_db)):
-    key = _authenticate(db, x_api_key)
+                      db: Session = Depends(get_db),
+                      response: Response = None):
+    key = _authenticate(db, x_api_key, response)
     _log_call(db, key, "v1/filters/aggregate")
     db.commit()
     _require_enabled(db)

@@ -2,16 +2,20 @@
 # ======================================================================
 # Ямастер Чек — развёртывание на сервере Ubuntu 24.04 прямо из GitHub
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru = 94.183.236.179):
 #   ssh root@94.183.236.179
-#   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+#   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
 #   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
 #                                                #   в /etc/ymaster-check/deploy.conf
 #                                                #   и применяются автоматически)
+#   sudo bash deploy.sh --update --branch=main   # обновление с ЯВНОЙ веткой
+#                                                #   v1.70.19: приоритет ветки —
+#                                                #   --branch= > BRANCH= (окружение)
+#                                                #   > deploy.conf > main
 #   sudo bash rollback.sh                        # СПАСАТЕЛЬ: список рабочих версий
 #   sudo bash rollback.sh 1.44.2                 # откат к рабочей версии (когда
 #                                                #   приложение не запускается)
@@ -30,13 +34,18 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Rimlin-UNC/1c_chek.git}"
-BRANCH="${BRANCH:-arena/01a0caaa-1c-chek}"
+# v1.70.18: канал обновлений — main
+# v1.70.19: значение из окружения запоминаем ОТДЕЛЬНО (ENV_BRANCH) — иначе его
+# затирает source deploy.conf ниже, и явный BRANCH= молча игнорировался.
+ENV_BRANCH="${BRANCH:-}"
+BRANCH="${ENV_BRANCH:-main}"
 APP_DIR="/opt/ymaster-check"
 APP_USER="ymaster"
 SERVICE="ymaster-check"
 
 DOMAIN=""
 SSL_DOMAIN=""
+OPT_BRANCH=""     # v1.70.19: --branch= (важнее запомненного в deploy.conf)
 UPDATE=0
 DIAGNOSE=0
 FIXSSL=0
@@ -57,9 +66,9 @@ for arg in "$@"; do
     --no-ssl) OPT_SSL="none" ;;
     --domain=*) OPT_DOMAIN="${arg#*=}" ;;
     --repo=*) REPO_URL="${arg#*=}" ;;
-    --branch=*) BRANCH="${arg#*=}" ;;
+    --branch=*) OPT_BRANCH="${arg#*=}" ;;   # v1.70.19: см. разрешение ниже
     -h|--help)
-      sed -n '2,25p' "$0"; exit 0 ;;
+      sed -n '2,32p' "$0"; exit 0 ;;   # v1.70.19: шапка целиком
     *) echo "Неизвестный аргумент: $arg"; exit 1 ;;
   esac
 done
@@ -75,7 +84,14 @@ fi
 DOMAIN="${OPT_DOMAIN:-$DOMAIN}"
 SSL_DOMAIN="${OPT_SSL:-$SSL_DOMAIN}"
 [[ "$SSL_DOMAIN" == "none" ]] && SSL_DOMAIN=""
-BRANCH="${OPT_BRANCH:-$BRANCH}"
+# v1.70.19: приоритет ветки — --branch= > BRANCH= из окружения > deploy.conf >
+# main. Раньше --branch= писал прямо в BRANCH, и source deploy.conf его затирал:
+# на сервере с конфигом прошлого запуска флаг молча игнорировался, а --update
+# уезжал на запомненную (возможно, устаревшую) ветку.
+BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"
+if [[ -n "$OPT_BRANCH" || -n "$ENV_BRANCH" ]]; then
+  echo "  ℹ Ветка задана явно (--branch=${OPT_BRANCH:-—}, BRANCH=${ENV_BRANCH:-—}) → $BRANCH"
+fi
 
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
@@ -103,7 +119,7 @@ if [[ $FIXSSL -eq 1 ]]; then
     [[ "$DOMAIN_IP" != "$SERVER_IP" ]] && echo "   ⚠ DNS указывает не на этот сервер — Let's Encrypt не пройдёт!"
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
     "$CERTBOT_BIN" certonly --nginx -d "$D" --non-interactive --agree-tos \
-      -m info@ymaster.ru ; RC=$?
+      -m chek@ymaster.ru ; RC=$?
   fi
   if [[ ${RC:-1} -eq 0 ]]; then
     ok "SSL готов. Перезапускаю nginx и собираю HTTPS-конфиг: sudo bash deploy.sh --update"
@@ -122,10 +138,24 @@ if [[ $DIAGNOSE -eq 1 ]]; then
   journalctl -u "$SERVICE" -n 12 --no-pager 2>/dev/null | tail -12 || true
   echo "-- приложение напрямую (health):"
   curl -s -o /dev/null -w "   127.0.0.1:8000/health -> HTTP %{http_code}\n" --max-time 5 http://127.0.0.1:8000/health || echo "   127.0.0.1:8000 -> НЕ ОТВЕЧАЕТ"
+  echo "-- кабинет компании /b2b/ и его активы:"
+  for P in /b2b/ /b2b/b2b.css /b2b/b2b.js; do
+    curl -s -o /dev/null -w "   127.0.0.1:8000$P -> HTTP %{http_code}\n" --max-time 5 "http://127.0.0.1:8000$P" || echo "   $P -> НЕ ОТВЕЧАЕТ"
+  done
+  echo "-- контур B2B (включён ли приём заявок компаний):"
+  curl -s --max-time 5 http://127.0.0.1:8000/api/v1/b2b/status 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    print("   enabled: %s · контакт: %s" % (d.get("enabled"), d.get("contact")))
+except Exception:
+    print("   статус контура не прочитан")' || echo "   /api/v1/b2b/status -> НЕ ОТВЕЧАЕТ"
   echo "-- база данных:"
   if [[ -f "$DB_FILE" ]]; then
     ls -l "$DB_FILE" | awk '{print "   файл: " $9 " (" $5 " байт)"}'
     sqlite3 "$DB_FILE" "SELECT '   users: '||COUNT(*) FROM users; SELECT '   receipts: '||COUNT(*) FROM receipts;" 2>/dev/null || true
+    sqlite3 "$DB_FILE" "SELECT '   компании B2B: '||COUNT(*) FROM b2b_companies; SELECT '   заявки B2B: '||COUNT(*) FROM b2b_applications;" 2>/dev/null \
+      || echo "   таблиц контура B2B нет (сервис ещё не запускался после обновления)"
   else
     echo "   файл базы НЕ НАЙДЕН: $DB_FILE"
   fi
@@ -235,8 +265,25 @@ bold "3/9 Код с GitHub ($REPO_URL, ветка $BRANCH)"
 # не вынуждает к «чистой» переустановке с потерей данных.
 if [[ -d "$APP_DIR/.git" ]]; then
   OLD_SCRIPT_MD5=$(md5sum "$APP_DIR/deploy.sh" 2>/dev/null | cut -d" " -f1 || true)
-  sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin "$BRANCH"
+  # v1.70.17: клон «--depth 1 --branch» отслеживает ТОЛЬКО свою ветку, поэтому
+  # при --update --branch=<другая ветка> fetch проходил (rc 0), но ref
+  # origin/$BRANCH не создавался — и reset --hard ронял весь деплой (set -e)
+  # на «fatal: ambiguous argument 'origin/<ветка>'». Дописываем ветку в
+  # настройки origin и тянем явным refspec'ом.
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote set-branches --add origin "$BRANCH" >/dev/null 2>&1 || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin \
+    "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  # v1.70.20: выравниваем МЕТКУ локальной ветки по каналу. reset --hard меняет
+  # только содержимое и указатель текущей ветки, поэтому после смены канала HEAD
+  # оставался на старой ветке (код новый, а `git pull` тянул прежний канал).
+  # -B безопасен: коммит тот же, файлы не трогаются.
+  sudo -u "$APP_USER" git -C "$APP_DIR" checkout -q -B "$BRANCH" 2>/dev/null || true
+  # upstream — на новый канал, иначе `git pull` на сервере отвечает
+  # «Already up to date» и ничего не тянет. Работает, потому что ветка уже
+  # дописана в remote.origin.fetch шагом выше (set-branches --add).
+  sudo -u "$APP_USER" git -C "$APP_DIR" branch -q \
+    --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
   ok "обновлено из GitHub (данные не тронуты)"
   # v1.6.2: deploy.sh обновил сам себя — bash уже загрузил СТАРЫЙ текст в
   # память, поэтому перезапускаемся новой версией с теми же аргументами
@@ -254,8 +301,17 @@ elif [[ -d "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
   sudo -u "$APP_USER" git -C "$APP_DIR" init -q
   sudo -u "$APP_USER" git -C "$APP_DIR" remote remove origin 2>/dev/null || true
   sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL"
-  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin "$BRANCH"
-  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard FETCH_HEAD
+  # v1.70.17: сразу отслеживаем все ветки — иначе смена источника обновлений
+  # в программе снова упрётся в отсутствующий ref origin/<ветка>
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote set-branches origin '*' >/dev/null 2>&1 || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin \
+    "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  # v1.70.20: метка локальной ветки и upstream — по каналу
+  # (см. пояснение в --update пути)
+  sudo -u "$APP_USER" git -C "$APP_DIR" checkout -q -B "$BRANCH" 2>/dev/null || true
+  sudo -u "$APP_USER" git -C "$APP_DIR" branch -q \
+    --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
   sudo -u "$APP_USER" git -C "$APP_DIR" clean -fd \
     -e data -e .env -e venv -e '*.db' -e '*.db-*' -e backups >/dev/null || true
   ok "код получен; data/, .env, venv и база не тронуты"
@@ -273,6 +329,16 @@ else
   fi
 fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
+# v1.70.17: клон «--depth 1 --branch» отслеживает ТОЛЬКО свою ветку, из-за чего
+# смена источника обновлений в программе падала на
+# «git reset: fatal: ambiguous argument 'origin/<ветка>'». Разрешаем все ветки
+# сразу (апдейтер и сам дорисует refspec — это страховка для свежих установок).
+if sudo -u "$APP_USER" git -C "$APP_DIR" remote set-branches origin '*' >/dev/null 2>&1; then
+  ok "git: отслеживаются все ветки — смена источника обновлений работает без SSH"
+else
+  warn "git: не удалось расширить список веток (не критично, апдейтер дорисует сам)"
+fi
 
 # ------------------------------------------------------------------
 bold "4/9 Python-окружение"
@@ -364,6 +430,25 @@ if (
 else
   rm -f "$SUDOERS_FILE" 2>/dev/null || true
   warn "sudoers-правило не установлено — обновление из приложения потребует ручного рестарта"
+fi
+
+# v1.70.16: мастер AdGuard VPN работает БЕЗ пароля сервера — ставим
+# привилегированного помощника (root:root) и узкое sudoers-правило на его
+# фиксированные фазы. Блок защищён: ошибка не должна ронять деплой —
+# без правила панель мастера покажет одну команду для терминала.
+AG_HELPER_SRC="$APP_DIR/deploy/adguard-vpn/ymaster-adguard-setup.sh"
+# v1.70.20: вывод помощника больше НЕ глушим. Раньше `>/dev/null 2>&1` прятал
+# причину отказа, и в логе деплоя оставалось только общее «⚠ помощник AdGuard
+# не установлен» — так была скрыта настоящая ошибка install-rule
+# («app_dir: unbound variable»), из-за которой правило не ставилось вовсе.
+if [[ -f "$AG_HELPER_SRC" ]] \
+   && AG_HELPER_OUT=$(bash "$AG_HELPER_SRC" install-rule "$APP_DIR" 2>&1); then
+  ok "sudoers: мастер AdGuard VPN работает без пароля (помощник ymaster-adguard-setup)"
+else
+  warn "помощник AdGuard не установлен — мастер покажет одну команду для терминала"
+  if [[ -n "${AG_HELPER_OUT:-}" ]]; then
+    echo "$AG_HELPER_OUT" | tail -n 5 | sed 's/^/       причина: /'
+  fi
 fi
 
 # ------------------------------------------------------------------
@@ -473,7 +558,7 @@ elif [[ -n "$SSL_DOMAIN" ]]; then
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
     echo "  Выпускаю сертификат (вывод certbot ниже)…"
     if "$CERTBOT_BIN" --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos --redirect \
-        -m info@ymaster.ru 2>&1 | tail -6; then
+        -m chek@ymaster.ru 2>&1 | tail -6; then
       ok "сертификат выпущен, HTTPS включён, http -> https автоматически"
     else
       warn "certbot не смог выпустить сертификат (вывод выше — там точная причина)."
@@ -536,5 +621,5 @@ echo "  Логи:        journalctl -u $SERVICE -f"
 echo "  Безопасность: UFW + fail2ban + rate-limit активны"
 echo "  Диагностика: sudo bash deploy.sh --diagnose   (если сайт недоступен)"
 echo ""
-echo "  ООО «Ямастер» — https://ymaster.ru · info@ymaster.ru"
+echo "  ООО «Ямастер» — https://ymaster.ru · chek@ymaster.ru"
 echo "=============================================================="

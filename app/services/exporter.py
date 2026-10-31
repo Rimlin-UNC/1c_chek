@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Формирование пакетов выгрузки чеков в 1С (формат EnterpriseData).
 Поддержка: JSON и XML, применение настраиваемого маппинга реквизитов.
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
 from datetime import datetime
 
 from ..models import Receipt, ReceiptItem, MappingSetting
@@ -175,7 +174,7 @@ def build_enterprise_data_json(receipts: list[Receipt],
     return json.dumps({
         "ФорматВерсии": "1.3",
         "ИмяПакета": "ЯмастерЧек",
-        "Поставщик": "ООО Ямастер (ymaster.ru)",
+        "Поставщик": "ООО «Ямастер» (ymaster.ru)",
         "ДатаФормирования": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
         "Данные": {
             "Контейнер": [
@@ -188,13 +187,26 @@ def build_enterprise_data_json(receipts: list[Receipt],
 # --------------------------------------------------------------------------
 #  EnterpriseData: XML
 # --------------------------------------------------------------------------
+def _safe_parse_string(xml_text: str):
+    """v1.70.38: разбор XML через defusedxml (см. fns.safe_fromstring).
+    Здесь вход — наш собственный документ, но защита ставится, чтобы
+    случайная перестановка кода не открыла разбор недоверенного XML."""
+    try:
+        from defusedxml.minidom import parseString
+    except ImportError:                                  # pragma: no cover
+        # nosec B318: запасная ветка без defusedxml; на вход сюда приходит
+        # документ, который мы сами только что собрали (текст экранирован)
+        from xml.dom.minidom import parseString
+    return parseString(xml_text)  # nosec B318 — вход — документ, собранный нами же
+
+
 def build_enterprise_data_xml(receipts: list[Receipt],
                               mapping: list[MappingSetting],
                               target_object: str) -> str:
     """Полный пакет EnterpriseData в формате XML."""
     root = ET.Element("EnterpriseData", {
         "ФорматВерсии": "1.3", "ИмяПакета": "ЯмастерЧек",
-        "Поставщик": "ООО Ямастер (ymaster.ru)",
+        "Поставщик": "ООО «Ямастер» (ymaster.ru)",
     })
     container = ET.SubElement(root, "Данные")
     cont = ET.SubElement(container, "Контейнер")
@@ -226,7 +238,8 @@ def build_enterprise_data_xml(receipts: list[Receipt],
                 ):
                     ET.SubElement(row, tag).text = str(val)
     rough = ET.tostring(root, encoding="unicode")
-    pretty = minidom.parseString(rough).toprettyxml(indent="  ", encoding="utf-8")
+    pretty = _safe_parse_string(rough).toprettyxml(indent="  ",
+                                                   encoding="utf-8")
     return pretty.decode("utf-8")
 
 

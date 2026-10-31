@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — расширенные действия администратора (v1.4.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 #   • Обновление системы из приложения: проверка / применение / статус /
 #     история версий (CHANGELOG) — без терминала.
@@ -402,6 +402,226 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
         "secret_key_ok": not secret_is_weak(settings.SECRET_KEY),
         # v1.68.0: глубина очереди автозагрузки (наблюдаемость)
         "fetch_queue": _fetch_queue_stats(),
+    }
+
+
+@router.get("/clients", summary="Клиенты и передача данных (админ)")
+def clients_and_flows(db: Session = Depends(get_db),
+                      user: User = Depends(require_admin)):
+    """v1.70.50: кто подключается к серверу и куда уходят данные.
+
+    Справочная часть живёт в app/services/server_catalog.py: там только факты,
+    подтверждённые кодом проекта, и у каждого назван модуль-источник. Живая
+    часть считается по таблицам, которые программа уже ведёт. У потока без
+    таблицы-свидетеля счётчиков не появляется: выдуманное число хуже
+    отсутствия числа.
+
+    Секреты в ответ не попадают: из устройств — метка и время, из ключей —
+    префикс и лимиты. Хэши токенов, публичные ключи, пароли ящиков и сами
+    ключи не отдаются ни в каком виде.
+    """
+    import json
+    from datetime import timedelta
+
+    from sqlalchemy import func
+
+    from ..b2b.models import B2bCompany, B2bToken
+    from ..models import (
+        AuditLog,
+        FnsLog,
+        MaxLoginCode,
+        WebauthnCredential,
+        WebhookLog,
+        iso_z,
+        utcnow,
+    )
+    from ..pool.mailer import base_url
+    from ..pool.models import MailLog, PoolApiCall, PoolApiKey, PoolUser
+    from ..services.backups import _db_path, list_backups
+    from ..services.server_catalog import CLIENT_SURFACES, DATA_FLOWS, NETWORK_FACTS
+    from ..services.updater import _local_commit
+    from .receipts import fetch_queue_stats
+
+    now = utcnow()
+    day_ago = now - timedelta(hours=24)
+    login_actions = ("login", "login_passkey", "login_max")
+    failed_actions = ("login_failed", "login_passkey_failed")
+
+    def _count(model, *criterion) -> int:
+        q = db.query(func.count()).select_from(model)
+        for c in criterion:
+            q = q.filter(c)
+        return int(q.scalar() or 0)
+
+    def _last(model) -> str | None:
+        return iso_z(db.query(func.max(model.created_at)).scalar())
+
+    def _metric(label: str, value) -> dict:
+        return {"label": label, "value": value}
+
+    # ---- живые счётчики по клиентским поверхностям -------------------
+    live_by_surface: dict[str, list[dict]] = {
+        "web": [
+            _metric("Пользователей в базе", _count(User)),
+            _metric("Входов за 24 часа",
+                    _count(AuditLog, AuditLog.action.in_(login_actions),
+                           AuditLog.created_at >= day_ago)),
+            _metric("Неудачных входов за 24 часа",
+                    _count(AuditLog, AuditLog.action.in_(failed_actions),
+                           AuditLog.created_at >= day_ago)),
+        ],
+        "maxapp": [
+            _metric("Кодов входа выдано за 24 часа",
+                    _count(MaxLoginCode, MaxLoginCode.created_at >= day_ago)),
+            _metric("Кодов погашено", _count(MaxLoginCode,
+                                             MaxLoginCode.used_at.isnot(None))),
+        ],
+        "b2b": [
+            _metric("Компаний в контуре", _count(B2bCompany)),
+            _metric("Действующих токенов",
+                    _count(B2bToken, B2bToken.expires_at > now)),
+        ],
+        "telegram": [
+            _metric("Привязанных чатов",
+                    _count(User, User.telegram_chat_id.isnot(None))),
+        ],
+        "onec": [
+            _metric("Чеков выгружено в 1С",
+                    _count(Receipt, Receipt.exported.is_(True))),
+            _metric("Последняя выгрузка", _last(Receipt)),
+        ],
+        "poolapi": [
+            _metric("Действующих ключей",
+                    _count(PoolApiKey, PoolApiKey.active.is_(True))),
+            _metric("Вызовов всего", _count(PoolApiCall)),
+            _metric("Вызовов за 24 часа",
+                    _count(PoolApiCall, PoolApiCall.created_at >= day_ago)),
+        ],
+    }
+
+    surfaces = []
+    for s in CLIENT_SURFACES:
+        item = dict(s)
+        item["live"] = live_by_surface.get(s["id"], [])
+        surfaces.append(item)
+
+    # ---- живые подключения: устройства и последние входы -------------
+    passkeys = []
+    for c in (db.query(WebauthnCredential)
+              .order_by(WebauthnCredential.created_at.desc()).limit(8).all()):
+        owner = db.query(User.username).filter(User.id == c.user_id).first()
+        passkeys.append({
+            "label": c.label,
+            "username": owner[0] if owner else "",
+            "created_at": iso_z(c.created_at),
+            "last_used_at": iso_z(c.last_used_at),
+        })
+
+    logins = []
+    for r in (db.query(AuditLog)
+              .filter(AuditLog.action.in_(login_actions + failed_actions))
+              .order_by(AuditLog.created_at.desc()).limit(8).all()):
+        ip = ""
+        try:
+            ip = str((json.loads(r.details or "{}") or {}).get("ip", ""))
+        except (ValueError, TypeError, AttributeError):
+            ip = ""
+        logins.append({"username": r.username, "action": r.action,
+                       "ip": ip, "at": iso_z(r.created_at)})
+
+    api_keys = []
+    for k in (db.query(PoolApiKey)
+              .order_by(PoolApiKey.created_at.desc()).limit(8).all()):
+        api_keys.append({
+            "name": k.name, "prefix": k.prefix, "active": bool(k.active),
+            "rate_per_hour": k.rate_per_hour,
+            "monthly_quota": k.monthly_quota,
+            "last_used_at": iso_z(k.last_used_at),
+        })
+
+    connections = {
+        "passkeys_total": _count(WebauthnCredential),
+        "passkeys": passkeys,
+        "logins_24h": _count(AuditLog, AuditLog.action.in_(login_actions),
+                             AuditLog.created_at >= day_ago),
+        "logins_failed_24h": _count(AuditLog,
+                                    AuditLog.action.in_(failed_actions),
+                                    AuditLog.created_at >= day_ago),
+        "logins": logins,
+        "pool_users": _count(PoolUser),
+        "api_keys": api_keys,
+    }
+
+    # ---- потоки данных: счётчики по таблицам-свидетелям --------------
+    wh_delivered = _count(WebhookLog, WebhookLog.delivered_at.isnot(None))
+    wh_total = _count(WebhookLog)
+    wh_queued = _count(WebhookLog, WebhookLog.delivered_at.is_(None),
+                       WebhookLog.next_attempt_at > now)
+    fns_avg = db.query(func.avg(FnsLog.duration_ms)).scalar()
+    providers = [p[0] for p in
+                 db.query(FnsLog.provider).distinct().limit(6).all() if p[0]]
+    calls_keys = db.query(func.count(func.distinct(PoolApiCall.key_id))).scalar()
+
+    stats_by_log: dict[str, list[dict]] = {
+        "fns_log": [
+            _metric("Запросов к сервису проверки", _count(FnsLog)),
+            _metric("Успешных", _count(FnsLog, FnsLog.ok.is_(True))),
+            _metric("Среднее время ответа, мс",
+                    round(float(fns_avg)) if fns_avg is not None else 0),
+            _metric("Провайдеры в журнале", ", ".join(providers) or "—"),
+            _metric("Последний запрос", _last(FnsLog)),
+        ],
+        "mail_log": [
+            _metric("Писем в журнале", _count(MailLog)),
+            _metric("Отправлено", _count(MailLog, MailLog.status == "sent")),
+            _metric("С ошибкой", _count(MailLog, MailLog.status == "error")),
+            _metric("Пропущено", _count(MailLog, MailLog.status == "skipped")),
+            _metric("Последнее письмо", _last(MailLog)),
+        ],
+        "webhook_logs": [
+            _metric("Посылок в журнале", wh_total),
+            _metric("Доставлено", wh_delivered),
+            _metric("Ждёт повтора", wh_queued),
+            _metric("Не доставлено", wh_total - wh_delivered - wh_queued),
+            _metric("Последняя посылка", _last(WebhookLog)),
+        ],
+        "pool_api_calls": [
+            _metric("Вызовов записано", _count(PoolApiCall)),
+            _metric("Ключей обращалось", int(calls_keys or 0)),
+            _metric("Последний вызов", _last(PoolApiCall)),
+        ],
+    }
+
+    flows = []
+    for f in DATA_FLOWS:
+        item = dict(f)
+        item["hosts"] = list(f["hosts"])
+        item["stats"] = stats_by_log.get(f["log"], [])
+        item["measured"] = bool(item["stats"])
+        flows.append(item)
+
+    # ---- сеть и размещение: то, чего нет в карточке «Сервер и команды» --
+    db_path = _db_path()
+    repo, branch = _repo_branch(db)
+    network = {
+        "site_url": base_url(db),
+        "database_kind": settings.DATABASE_URL.split(":", 1)[0],
+        "db_path": db_path,
+        "db_size_mb": round(os.path.getsize(db_path) / 1_048_576, 1)
+                      if os.path.exists(db_path) else 0,
+        "backups_total": len(list_backups()),
+        "fetch_queue": fetch_queue_stats(),
+        "repo_url": repo,
+        "branch": branch,
+        "commit": _local_commit(),
+    }
+
+    return {
+        "surfaces": surfaces,
+        "connections": connections,
+        "network": network,
+        "network_facts": [dict(f) for f in NETWORK_FACTS],
+        "flows": flows,
     }
 
 

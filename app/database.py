@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Подключение к базе данных (SQLAlchemy).
 """
@@ -30,7 +30,6 @@ def _utcnow() -> "object":
 
 class Base(DeclarativeBase):
     """Базовый класс всех ORM-моделей."""
-    pass
 
 
 _connect_args = {}
@@ -54,6 +53,11 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def _set_sqlite_pragma(dbapi_connection, connection_record):  # pragma: no cover
     """Включаем WAL для SQLite, чтобы параллельные чтения не блокировали запись."""
     if settings.DATABASE_URL.startswith("sqlite"):
+        # SQLite lower() не обрабатывает кириллицу: для поиска по сохранённым
+        # полям используем один и тот же Unicode casefold на каждом соединении.
+        dbapi_connection.create_function("ym_casefold", 1,
+            lambda value: str(value).casefold() if value is not None else None,
+            deterministic=True)
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         # v1.67.1 (аудит/стресс): параллельные записи ждут блокировку до 5 с
@@ -85,8 +89,24 @@ def init_db() -> None:
     except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
         import traceback
         traceback.print_exc()
+    try:  # v1.70.45: таблицы контура B2B (доступ компаний к платному API)
+        from .b2b import models as _b2b_models  # noqa: F401
+        from .b2b.models import ensure_b2b_schema
+        ensure_b2b_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
+    try:  # v1.70.51: таблицы мониторинга OpenStack (docs/Monitor.md)
+        from .openstack_monitor import models as _os_models  # noqa: F401
+        from .openstack_monitor.models import ensure_openstack_schema
+        ensure_openstack_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
+    _backfill_marking()
+    _backfill_retail_place()
     _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
@@ -159,6 +179,27 @@ def _ensure_schema() -> None:
             ("forbidden_categories",
              "ALTER TABLE companies ADD COLUMN forbidden_categories VARCHAR(1000) DEFAULT ''"),
         ],
+        "pool_users": [
+            # v1.70.37: канал регистрации и метка «пришёл через MAX»
+            ("reg_source",
+             "ALTER TABLE pool_users ADD COLUMN reg_source VARCHAR(16) DEFAULT ''"),
+            # v1.70.37: профиль из MAX — заполняется только после согласия
+            ("first_name",
+             "ALTER TABLE pool_users ADD COLUMN first_name VARCHAR(64) DEFAULT ''"),
+            ("last_name",
+             "ALTER TABLE pool_users ADD COLUMN last_name VARCHAR(64) DEFAULT ''"),
+            ("photo_url",
+             "ALTER TABLE pool_users ADD COLUMN photo_url VARCHAR(512) DEFAULT ''"),
+            ("language",
+             "ALTER TABLE pool_users ADD COLUMN language VARCHAR(8) DEFAULT ''"),
+            # v1.70.37: согласие 152-ФЗ на данные из MAX (момент/версия/канал)
+            ("consent_at",
+             "ALTER TABLE pool_users ADD COLUMN consent_at DATETIME NULL"),
+            ("consent_version",
+             "ALTER TABLE pool_users ADD COLUMN consent_version VARCHAR(16) DEFAULT ''"),
+            ("consent_source",
+             "ALTER TABLE pool_users ADD COLUMN consent_source VARCHAR(16) DEFAULT ''"),
+        ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
         ],
@@ -174,6 +215,7 @@ def _ensure_schema() -> None:
             # v1.55.0: расширенные поля источника (proverkacheka: место
             # расчётов, касса, смена, налог, свойства заказа и др.)
             ("ext_json", "ALTER TABLE receipts ADD COLUMN ext_json TEXT DEFAULT ''"),
+            ("retail_place_index", "ALTER TABLE receipts ADD COLUMN retail_place_index TEXT NULL"),
             # --- v1.11.0: мультикомпанийность ---
             ("company_id", "ALTER TABLE receipts ADD COLUMN company_id VARCHAR(36) NULL"),
             # --- v1.2.0: полные данные чека + флаг уведомления ---
@@ -193,6 +235,42 @@ def _ensure_schema() -> None:
             # v1.62.0: нарушения политики расходов (мягкая пометка)
             ("policy_flags",
              "ALTER TABLE receipts ADD COLUMN policy_flags VARCHAR(200) DEFAULT ''"),
+            # --- v1.70.72: разбор чека для пула и фильтров ---
+            ("region_code",
+             "ALTER TABLE receipts ADD COLUMN region_code VARCHAR(4) DEFAULT ''"),
+            ("region_name",
+             "ALTER TABLE receipts ADD COLUMN region_name VARCHAR(120) DEFAULT ''"),
+            ("region_city",
+             "ALTER TABLE receipts ADD COLUMN region_city VARCHAR(120) DEFAULT ''"),
+            ("industry",
+             "ALTER TABLE receipts ADD COLUMN industry VARCHAR(100) DEFAULT ''"),
+            ("industry_lc",
+             "ALTER TABLE receipts ADD COLUMN industry_lc VARCHAR(100) DEFAULT ''"),
+            ("product_group",
+             "ALTER TABLE receipts ADD COLUMN product_group VARCHAR(100) DEFAULT ''"),
+            ("taxation",
+             "ALTER TABLE receipts ADD COLUMN taxation VARCHAR(40) DEFAULT ''"),
+            ("taxation_name",
+             "ALTER TABLE receipts ADD COLUMN taxation_name VARCHAR(60) DEFAULT ''"),
+            ("pay_type",
+             "ALTER TABLE receipts ADD COLUMN pay_type VARCHAR(20) DEFAULT ''"),
+        ],
+        # v1.70.72: полные реквизиты позиции (документ ФНС)
+        "receipt_items": [
+            ("product_type",
+             "ALTER TABLE receipt_items ADD COLUMN product_type INTEGER NULL"),
+            ("payment_type",
+             "ALTER TABLE receipt_items ADD COLUMN payment_type INTEGER NULL"),
+            ("unit",
+             "ALTER TABLE receipt_items ADD COLUMN unit VARCHAR(20) DEFAULT ''"),
+            ("product_group",
+             "ALTER TABLE receipt_items ADD COLUMN product_group VARCHAR(100) DEFAULT ''"),
+            ("industry",
+             "ALTER TABLE receipt_items ADD COLUMN industry VARCHAR(100) DEFAULT ''"),
+            ("extra_json",
+             "ALTER TABLE receipt_items ADD COLUMN extra_json TEXT DEFAULT ''"),
+            ("marking_present",
+             "ALTER TABLE receipt_items ADD COLUMN marking_present BOOLEAN NULL"),
         ],
     }
     insp = inspect(engine)
@@ -212,6 +290,12 @@ def _ensure_schema() -> None:
                 conn.execute(text(
                     "CREATE INDEX IF NOT EXISTS idx_receipts_company "
                     "ON receipts(company_id)"))
+        if "receipts" in existing_tables:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipts_place_pending "
+                              "ON receipts(id) WHERE retail_place_index IS NULL"))
+        if "receipt_items" in existing_tables:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipt_items_marking "
+                              "ON receipt_items(marking_present, receipt_id)"))
         _backfill_companies(conn, existing_tables)
         # v1.4.0: заполнить category_lc для существующих строк (lower() в SQLite
         # не понимает кириллицу — нормализуем в Python)
@@ -224,6 +308,56 @@ def _ensure_schema() -> None:
                 conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
                              {"lc": (cat or "").casefold(), "i": rid})
 
+
+
+def _backfill_retail_place() -> None:
+    """Пакетно индексировать старые записи без изменения исходных данных."""
+    from sqlalchemy import update
+
+    from .models import Receipt, saved_retail_place
+    db = SessionLocal()
+    try:
+        while True:
+            rows = (db.query(Receipt.id, Receipt.ext_json, Receipt.raw_data)
+                    .filter(Receipt.retail_place_index.is_(None)).limit(500).all())
+            if not rows:
+                break
+            for row in rows:
+                # Условие защищает свежие данные от конкурирующего backfill.
+                db.execute(update(Receipt).where(
+                    Receipt.id == row.id, Receipt.retail_place_index.is_(None)
+                ).values(retail_place_index=saved_retail_place(row.ext_json, row.raw_data)))
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _backfill_marking() -> None:
+    """Пакетно заполнить признак сохранённой маркировки для старых позиций."""
+    from sqlalchemy import update
+
+    from .models import ReceiptItem, has_saved_marking
+    db = SessionLocal()
+    try:
+        while True:
+            rows = (db.query(ReceiptItem.id, ReceiptItem.extra_json)
+                    .filter(ReceiptItem.marking_present.is_(None)).limit(500).all())
+            if not rows:
+                break
+            for row in rows:
+                # Не затирать более свежую правку другой транзакции или воркера.
+                db.execute(update(ReceiptItem).where(
+                    ReceiptItem.id == row.id, ReceiptItem.marking_present.is_(None)
+                ).values(marking_present=has_saved_marking(row.extra_json)))
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _backfill_full_data() -> None:

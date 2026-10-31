@@ -3,13 +3,16 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Настройки: маппинг реквизитов, параметры ФНС и 1С, справочники полей.
 """
 from __future__ import annotations
 
+import re
 import secrets
+
+from pydantic import BaseModel, Field
 
 from fastapi import (APIRouter, Depends, HTTPException, Query,
                      Request, status)
@@ -108,27 +111,29 @@ def _mask(token: str) -> str:
 
 @router.get("/fns", summary="Настройки проверки ФНС")
 def get_fns(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    from ..services import fns_quota
     return {
-        "provider": _get_setting(db, "fns_provider", cfg.FNS_PROVIDER),
+        # v1.70.70: источник один — Открытые API ФНС, выбора провайдера нет
+        "provider": "fns",
         "api_base": _get_setting(db, "fns_api_base", cfg.FNS_API_BASE),
         "master_token_masked": _mask(_get_setting(db, "fns_master_token", cfg.FNS_MASTER_TOKEN)),
         "has_master_token": bool(_get_setting(db, "fns_master_token", cfg.FNS_MASTER_TOKEN)),
         "client_app_id": _get_setting(db, "fns_client_app_id", cfg.FNS_CLIENT_APP_ID),
         "cache_ttl_days": cfg.FNS_CACHE_TTL_DAYS,
+        "quota": fns_quota.stats(db),
     }
 
 
 @router.put("/fns", summary="Сохранить настройки ФНС")
 def put_fns(body: FnsSettingsPatch, db: Session = Depends(get_db),
             user: User = Depends(require_admin)):
-    _set_setting(db, "fns_provider", body.provider)
     if body.api_base:
         _set_setting(db, "fns_api_base", body.api_base.strip())
     if body.master_token is not None and "•" not in body.master_token:
         _set_setting(db, "fns_master_token", body.master_token.strip())
     if body.client_app_id:
         _set_setting(db, "fns_client_app_id", body.client_app_id.strip())
-    log_action(user, "fns_settings_updated", details={"provider": body.provider})
+    log_action(user, "fns_settings_updated", details={"provider": "fns"})
     return {"ok": True, "message": "Настройки ФНС сохранены"}
 
 
@@ -193,6 +198,78 @@ def put_app_settings(body: AppSettingsPatch, db: Session = Depends(get_db),
         "auto_verify": body.auto_verify,
         "advance_deadline_days": body.advance_deadline_days})
     return {"ok": True, "message": "Настройки сохранены"}
+
+
+# --------------------------------------------------------------------------
+#  v1.70.37: реквизиты оператора в тексте согласия на обработку персональных
+#  данных (152-ФЗ). Текст согласия живёт в services.consent; здесь — только те
+#  сведения, которые знает владелец: ИНН, ОГРН, юридический адрес и почта для
+#  связи по персональным данным. В коде намеренно нет «значений по умолчанию»
+#  для реквизитов: выдуманные юридические факты в согласии — дефект хуже
+#  пустого поля, поэтому пока они не заполнены, в тексте вместо адреса
+#  указывается общеизвестный источник (ЕГРЮЛ) и почта для запроса, а
+#  администратор видит пометку о неполноте (п. 2 ч. 4 ст. 9 152-ФЗ).
+# --------------------------------------------------------------------------
+class ConsentRequisitesPatch(BaseModel):
+    # запас по длине — на ввод с проборами и дефисами («55 01-28 0595»):
+    # цифры извлекаются на сервере, в настройку пишется только число
+    inn: str | None = Field(default=None, max_length=32)
+    ogrn: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=300)
+    contact: str | None = Field(default=None, max_length=120)
+
+
+@router.get("/consent", summary="Реквизиты оператора в согласии 152-ФЗ (админ)")
+def get_consent_settings(db: Session = Depends(get_db),
+                         user: User = Depends(require_admin)):
+    from ..services import consent
+    r = consent.requisites(db)
+    return {**r,
+            "complete": consent.requisites_complete(db),
+            "version": consent.CONSENT_VERSION,
+            "operator_line": consent.operator_line(db)}
+
+
+@router.put("/consent", summary="Сохранить реквизиты оператора (админ)")
+def put_consent_settings(body: ConsentRequisitesPatch,
+                         db: Session = Depends(get_db),
+                         user: User = Depends(require_admin)):
+    from ..services import consent
+    if body.inn is not None:
+        inn = re.sub(r"\D", "", body.inn)
+        if inn and len(inn) not in (10, 12):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "ИНН: 10 цифр для юридического лица, 12 — для ИП")
+        appsettings.set_setting(db, consent.KEY_INN, inn)
+    if body.ogrn is not None:
+        ogrn = re.sub(r"\D", "", body.ogrn)
+        if ogrn and len(ogrn) not in (13, 15):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "ОГРН: 13 цифр (ОГРНИП — 15)")
+        appsettings.set_setting(db, consent.KEY_OGRN, ogrn)
+    if body.address is not None:
+        appsettings.set_setting(db, consent.KEY_ADDRESS,
+                                body.address.strip()[:300])
+    if body.contact is not None:
+        contact = body.contact.strip()[:120]
+        if contact and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Почта для связи по персональным данным: "
+                                "адрес вида chek@ymaster.ru")
+        appsettings.set_setting(db, consent.KEY_CONTACT, contact)
+    log_action(user, "consent_requisites_updated", details={
+        "inn": body.inn, "ogrn": body.ogrn,
+        "address_set": bool((body.address or "").strip()),
+        "contact": body.contact})
+    complete = consent.requisites_complete(db)
+    return {"ok": True, "complete": complete,
+            "operator_line": consent.operator_line(db),
+            "message": ("Реквизиты сохранены — текст согласия обновлён"
+                        if complete else
+                        "Сохранено. Для полноты по п. 2 ч. 4 ст. 9 152-ФЗ "
+                        "укажите ИНН, ОГРН и юридический адрес: пока в тексте "
+                        "согласия вместо адреса — ссылка на ЕГРЮЛ и почта для "
+                        "запроса")}
 
 
 # --------------------------------------------------------------------------
@@ -272,42 +349,39 @@ def put_policy(body: PolicyPatch, db: Session = Depends(get_db),
 
 
 # --------------------------------------------------------------------------
-#  v1.2.0: Источники данных о чеке (ФНС API / proverkacheka.com / свой сервис)
+#  v1.70.70: единственный источник данных о чеке — Открытые API ФНС
 # --------------------------------------------------------------------------
-@router.get("/external", summary="Настройки источников данных чека (админ)")
+@router.get("/external", summary="Настройки проверки чеков в ФНС (админ)")
 def get_external(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     from ..services.external import engine
+    from ..services import fns_quota
     return {
         "fns_master_token_masked": _mask(_get_setting(db, "fns_master_token", "")),
         "has_fns_master_token": bool(_get_setting(db, "fns_master_token", "")),
-        "proverkacheka_token_masked": _mask(_get_setting(db, "proverkacheka_token", "")),
-        "has_proverkacheka_token": bool(_get_setting(db, "proverkacheka_token", "")),
-        "external_order": _get_setting(db, "external_order",
-                                       "proverkacheka"),
-        "external_auto": _get_setting(db, "external_auto", "1") == "1",
+        "fns_client_app_id": _get_setting(db, "fns_client_app_id", ""),
+        "fns_api_base": cfg.FNS_API_BASE,
+        "quota": fns_quota.stats(db),
+        "quota_warning": fns_quota.warning(db),
         "engine": engine.status(),
     }
 
 
-@router.put("/external", summary="Сохранить источники данных чека (админ)")
+@router.put("/external", summary="Сохранить настройки проверки чеков (админ)")
 def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
                  user: User = Depends(require_admin)):
+    """Мастер-токен и AppId выдаются ФНС при регистрации приложения.
+
+    v1.70.70: настройки сторонних сервисов проверки чеков удалены — их
+    больше нет ни в схеме, ни в интерфейсе.
+    """
     if body.fns_master_token is not None and "•" not in body.fns_master_token:
         _set_setting(db, "fns_master_token", body.fns_master_token.strip())
-    if body.proverkacheka_token is not None and "•" not in body.proverkacheka_token:
-        _set_setting(db, "proverkacheka_token", body.proverkacheka_token.strip())
-    # v1.55.0/v1.57.0: выведенные источники (свои шлюзы, Приложение ФНС,
-    # Честный Знак, ОФД-ру) игнорируются — соответствующих полей в схеме
-    # больше нет; строки в БД не трогаем (миграции только добавляющие)
-    if body.external_order is not None:
-        allowed = {"fns_api", "proverkacheka"}
-        items = [x.strip() for x in body.external_order.split(",") if x.strip() in allowed]
-        _set_setting(db, "external_order",
-                     ",".join(items or ["proverkacheka"]))
-    if body.external_auto is not None:
-        _set_setting(db, "external_auto", "1" if body.external_auto else "0")
-    log_action(user, "external_settings_updated", details={"auto": body.external_auto})
-    return {"ok": True, "message": "Источники данных сохранены"}
+    if getattr(body, "fns_client_app_id", None) is not None:
+        _set_setting(db, "fns_client_app_id",
+                     (body.fns_client_app_id or "").strip())
+    log_action(user, "external_settings_updated",
+               details={"app_id": bool(getattr(body, "fns_client_app_id", ""))})
+    return {"ok": True, "message": "Настройки проверки чеков сохранены"}
 
 
 @router.post("/external/test", summary="Проверить источник контрольным чеком (админ)")
@@ -325,12 +399,8 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
     res = engine.fetch(db, qr, parsed.fn, parsed.fd, parsed.fp,
                        parsed.total_sum, parsed.date_time)
     ok, message = res.ok, res.message
-    # v1.7.0: mock-источник всегда «доступен» — чек не находится в ФНС это его
-    # нормальный режим, а не ошибка (раньше тест показывал сбой без причины)
-    if res.source == "mock" and not res.found:
-        ok = True
-        message = ("Мок-источник работает корректно: тестовый чек не найден "
-                   "в ФНС (эмуляция) — это ожидаемое поведение")
+    # v1.70.70: источник единственный — ФНС; «чек не найден» это нормальный
+    # ответ сервиса (ok=True), а не сбой связи
     return {
         "ok": ok,
         "source": res.source,
@@ -339,6 +409,23 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
         "message": message,
         "engine": engine.status(),
     }
+
+
+@router.post("/fns/diagnose",
+             summary="Пошаговая диагностика связи с ФНС (админ)")
+def diagnose_fns(db: Session = Depends(get_db),  # noqa: B008 — стиль роутеров
+                 user: User = Depends(require_admin)):  # noqa: B008
+    """Проверяет путь до ФНС по шагам: настройки → DNS → порт → TLS → токен.
+
+    v1.70.71: когда «не работает», видно ИМЕННО место обрыва, а не общее
+    «ошибка». Стоит один запрос из суточного лимита (только если связь есть).
+    """
+    from ..services import fns
+    token = _get_setting(db, "fns_master_token", cfg.FNS_MASTER_TOKEN)
+    base = _get_setting(db, "fns_api_base", cfg.FNS_API_BASE)
+    result = fns.diagnose(api_base=base, master_token=token)
+    log_action(user, "fns_diagnose", details={"ok": result.get("ok")})
+    return result
 
 
 @router.get("/checko", summary="Настройки Checko.ru — карточки компаний по ИНН (админ)")
@@ -493,7 +580,7 @@ def put_max_settings(body: dict, db: Session = Depends(get_db),
             _s(db, mx.SETT_USERNAME, "")
         elif not _re.fullmatch(r"[A-Za-z0-9._-]{2,64}", nick):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "Ник бота: латиница, цифры и . _ - "
+                                "Ник бота: латиница, цифры и знаки . _ - "
                                 "(как в ссылке max.ru/ник)")
         else:
             _s(db, mx.SETT_USERNAME, nick)
@@ -552,7 +639,11 @@ def get_telegram(db: Session = Depends(get_db), admin: User = Depends(require_ad
                 User.telegram_chat_id.isnot(None)).count(),
             "hint": "Токен от @BotFather хранится зашифрованным. Если сервер "
                     "не видит api.telegram.org (частая блокировка в РФ) — "
-                    "укажите прокси. Сотрудники подключаются сами: "
+                    "укажите прокси. Готовая схема без второго сервера: "
+                    "бесплатный Cloudflare Worker и локальный прокси "
+                    "http://127.0.0.1:8080 — комплект в deploy/tg-cf-worker "
+                    "(отчёт о выборе: docs/telegram_proxy_audit_v17068.md). "
+                    "Сотрудники подключаются сами: "
                     "Настройки → Telegram → код → /start КОД."}
 
 
@@ -653,30 +744,26 @@ def ping_telegram(db: Session = Depends(get_db), admin: User = Depends(require_a
 
 
 @router.get("/telegram/adguard/setup",
-            summary="Статус автоустановки AdGuard VPN (админ)")
+            summary="Статус AdGuard VPN: задание + включён ли VPN (админ)")
 def adguard_setup_status(admin: User = Depends(require_admin)):
+    """v1.70.25: добавлено `vpn` — по нему панель красит кнопку-переключатель
+    (зелёный = VPN работает, красный = выключен)."""
     from ..services import adguard_setup as ag
     return {"job": ag.setup_status(), "running": ag.job.running,
-            "hint": "Механика как у обновления: фазы по порядку, живой "
-                    "журнал; ссылка входа AdGuard появляется в job.login_url."}
+            "vpn": ag.vpn_status()}
 
 
 @router.get("/telegram/adguard/setup/preflight",
             summary="Готовность сервера к автоустановке AdGuard (админ)")
 def adguard_setup_preflight(admin: User = Depends(require_admin)):
+    """v1.70.16: мастер без пароля. Готов — запускаем; не готов — отдаём
+    ОДНУ команду для терминала (one_time_cmd), пароль не запрашиваем."""
     from ..services import adguard_setup as ag
-    pf = ag.preflight()
-    if pf["need_password"]:
-        pf["hint"] = ("Программа работает без root, а sudo просит пароль — "
-                      "введите пароль сервера в панели установки (как в "
-                      "окне обновления; sudo проверяет пароль служебного "
-                      "пользователя программы). Используется только на "
-                      "время установки и нигде не сохраняется.")
-    return pf
+    return ag.preflight()
 
 
 @router.post("/telegram/adguard/setup",
-             summary="Автоустановка AdGuard VPN из программы: start/cancel (админ)")
+             summary="AdGuard VPN из программы: start/cancel/off (админ)")
 def adguard_setup_action(body: dict, db: Session = Depends(get_db),
                          admin: User = Depends(require_admin)):
     from ..services import adguard_setup as ag
@@ -687,15 +774,42 @@ def adguard_setup_action(body: dict, db: Session = Depends(get_db),
                                 "Установка не выполняется")
         log_action(admin, "adguard_setup_cancel")
         return {"ok": True, "message": "Останавливаю…"}
+    if action == "off":
+        # v1.70.25: выключение VPN той же кнопкой. CLI и вход не удаляются,
+        # поэтому повторное включение идёт без ссылки подтверждения.
+        r = ag.turn_off()
+        if not r.get("ok"):
+            if r.get("need_rule"):
+                # правило помощника не установлено/устарело: это не конфликт,
+                # а «нужна одна команда в терминале» — отдаём её в ответе.
+                return {"ok": False, "need_rule": True,
+                        "one_time_cmd": r.get("one_time_cmd", ""),
+                        "message": r.get("error", "")}
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                r.get("error") or "Не выключить VPN")
+        log_action(admin, "adguard_off")
+        return {"ok": True, "vpn": r.get("vpn"), "message": r.get("message", "")}
     if ag.job.running:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Установка уже выполняется — смотрите журнал "
                             "в карточке Telegram")
-    # пароль — только в память задания (sudo -S на время установки)
-    ag.start_setup(db, sudo_password=(body or {}).get("sudo_password") or "")
+    # v1.70.16: пароль сервера больше не принимается вовсе — привилегированные
+    # шаги делает помощник (sudoers NOPASSWD). Старый клиент мог прислать поле
+    # sudo_password из кэша: молча игнорируем и говорим об этом в ответе.
+    ignored_pw = bool((body or {}).get("sudo_password"))
+    try:
+        ag.start_setup(db)
+    except RuntimeError as e:
+        # v1.70.21: гонка двух одновременных запусков — это 409, а не 500.
+        # Проверка выше не атомарна, поэтому страховка обязана быть здесь.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     log_action(admin, "adguard_setup_start")
     return {"ok": True,
-            "message": "Установка запущена — следите за процессом в карточке"}
+            "message": "Установка запущена — следите за процессом в карточке",
+            "passwordless": True,
+            **({"warning": "Пароль не использован: с v1.70.16 мастер AdGuard "
+                           "работает без пароля (обновите страницу, чтобы "
+                           "убрать устаревшее поле)."} if ignored_pw else {})}
 
 
 @router.post("/telegram/refresh-bot", summary="Обновить username бота (админ)")

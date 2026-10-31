@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.2.0: внешние источники данных чека,
 # редактирование чеков по ролям, авто-привязка «от кого прислал».
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import json
 
@@ -46,9 +46,16 @@ def _scan(client, hdr, qr=QR, unique=True):
 
 @pytest.fixture(autouse=True)
 def _no_pause(monkeypatch):
-    """В тестах отключаем вежливые паузы движка (2–7 с)."""
+    """В тестах отключаем паузы движка и сбрасываем «остывание».
+
+    v1.70.70: движок один на процесс, поэтому состояние между тестами
+    изолируем — иначе «остывание» после сбоя влияет на следующий тест.
+    """
     from app.services.external import engine
     monkeypatch.setattr(engine, "_polite_wait", lambda provider: None)
+    monkeypatch.setattr(engine, "_cooldown_until", {})
+    monkeypatch.setattr(engine, "_fail_streak", {})
+    monkeypatch.setattr(engine, "_last_call", {})
 
 
 # ---------------------------------------------------------------------------
@@ -139,35 +146,56 @@ class TestExternalFetch:
         r = client.post(f"/api/v1/receipts/{receipt['id']}/fetch-details", headers=hdr)
         assert r.status_code == 403
 
-    def test_mock_provider_fills_details(self, client, monkeypatch):
-        from app.services.external import engine
-        hdr = login(client, "admin", "admin123")
-        receipt = _scan(client, hdr)
-        # без токенов в цепочке только mock; паузы отключены фикстурой
-        assert engine.provider_chain.__self__ is engine
-        r = client.post(f"/api/v1/receipts/{receipt['id']}/fetch-details", headers=hdr)
-        assert r.status_code == 200, r.text
-        assert r.json()["queued"] is True
-        # BackgroundTasks в TestClient выполняются синхронно после ответа
-        r2 = client.get(f"/api/v1/receipts/{receipt['id']}", headers=hdr)
-        data = r2.json()
-        assert data["details_source"] == "mock"
-        assert data["details_fetched_at"] is not None
+    def test_fns_provider_fills_details(self, client, monkeypatch):
+        """v1.70.70: данные чека приходят из ФНС (клиент подставляется).
 
-    def test_engine_rotates_on_429(self, client, monkeypatch):
+        Сеть в тестах не нужна: подменяем один вызов движка — ответ ФНС с
+        полным документом чека. Проверяем, что движок разобрал его и
+        записал источник, а не «нашёл нечего».
+        """
         import app.services.external as ext_mod
-        from app.services.external import engine
-        # настраиваем токен proverkacheka, чтобы он попал в цепочку
         hdr = login(client, "admin", "admin123")
         client.put("/api/v1/settings/external",
-                   json={"proverkacheka_token": "test-token-123"}, headers=hdr)
+                   json={"fns_master_token": "master-token-test"}, headers=hdr)
+        receipt = _scan(client, hdr)
+
+        payload = {
+            "provider": "fns", "status": "valid", "code": "200",
+            "ticket": {},
+            "document": {"receipt": {
+                "totalSum": 215000, "dateTime": "2026-09-27T15:29:00",
+                "user": "ООО «Магазин»", "userInn": "7701234567",
+                "retailPlaceAddress": "Москва, ул. Тестовая, 1",
+                "items": [{"name": "Товар", "quantity": 1, "price": 215000,
+                           "sum": 215000, "nds": "20", "ndsSum": 35833}],
+            }},
+        }
+        monkeypatch.setattr(ext_mod, "fetch_fns",
+                            lambda *a, **k: (True, "Чек найден в ФНС", payload))
+
+        r = client.post(f"/api/v1/receipts/{receipt['id']}/fetch-details",
+                        headers=hdr)
+        assert r.status_code == 200, r.text
+        assert r.json()["queued"] is True
+        data = client.get(f"/api/v1/receipts/{receipt['id']}",
+                          headers=hdr).json()
+        assert data["details_source"] == "fns_api"
+        assert data["details_fetched_at"] is not None
+
+    def test_engine_cools_down_on_network_failure(self, client, monkeypatch):
+        """Сетевой сбой ФНС → источник «остывает», чек не считается проверенным."""
+        import app.services.external as ext_mod
+        from app.services.external import engine
+        hdr = login(client, "admin", "admin123")
+        client.put("/api/v1/settings/external",
+                   json={"fns_master_token": "master-token-test"}, headers=hdr)
         calls = []
 
-        def fake_pke(qr_raw, token):
-            calls.append("pke")
-            return False, "HTTP 429 (лимит/блокировка)", {}
+        def fake_fns(*args, **kwargs):
+            calls.append("fns")
+            return False, "ФНС: сеть недоступна (ConnectError)", {}
 
-        monkeypatch.setattr(ext_mod, "fetch_proverkacheka", fake_pke)
+        monkeypatch.setattr(ext_mod, "fetch_fns", fake_fns)
         from app.database import SessionLocal
         db = SessionLocal()
         try:
@@ -175,23 +203,66 @@ class TestExternalFetch:
                                "3673437411", 2150.0, None)
         finally:
             db.close()
-        assert calls == ["pke"], "источник должен быть вызван ровно один раз до остывания"
+        assert calls == ["fns"], "обращение к ФНС должно быть одно"
+        assert res.found is False and res.ok is False
         st = engine.status()
-        assert st["proverkacheka"]["available"] is False
-        assert st["proverkacheka"]["cooldown_sec"] > 0
-        # mock подхватывает — чек не теряется
-        assert res.source == "mock"
+        assert st["fns_api"]["available"] is False
+        assert st["fns_api"]["cooldown_sec"] > 0
+
+    def test_engine_reports_missing_master_token(self, monkeypatch):
+        """Без мастер-токена ФНС проверка не выполняется — понятная причина."""
+        from app.services.external import engine
+        import app.config as cfg_mod
+        monkeypatch.setattr(cfg_mod.settings, "FNS_MASTER_TOKEN", "")
+        # БД тестов общая по сессии — ключ мог остаться от другого теста
+        monkeypatch.setattr(engine, "_settings", lambda db: {})
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            res = engine.fetch(db, QR, "7381440777130934", "33080",
+                               "3673437412", 2150.0, None)
+        finally:
+            db.close()
+        assert res.ok is False
+        assert "Мастер-токен" in res.message
+
+    def test_quota_exhausted_keeps_receipt_pending(self, client, monkeypatch):
+        """Лимит ФНС исчерпан → чек «ожидает проверки», а не «не найден»."""
+        import app.services.fns as fns_mod
+        from app.services import fns_quota
+
+        def fake_ticket(self, *args, **kwargs):
+            return fns_mod.FnsResult("quota", fns_quota.exhausted_message(),
+                                     {"provider": "fns", "kind": "quota"},
+                                     False)
+
+        monkeypatch.setattr(fns_mod.FnsClient, "get_ticket", fake_ticket)
+        hdr = login(client, "admin", "admin123")
+        client.put("/api/v1/settings/external",
+                   json={"fns_master_token": "master-token-test"}, headers=hdr)
+        receipt = _scan(client, hdr)
+        client.post(f"/api/v1/receipts/{receipt['id']}/verify", headers=hdr,
+                    json={"force": True})
+        data = client.get(f"/api/v1/receipts/{receipt['id']}",
+                          headers=hdr).json()
+        assert data["fns_status"] == "pending"
+        assert data["status"] == "new"
+        assert "лимит" in (data["fns_message"] or "").lower()
 
     def test_settings_masked(self, client):
+        """v1.70.70: в настройках остался только мастер-токен ФНС."""
         hdr = login(client, "admin", "admin123")
         r = client.put("/api/v1/settings/external",
-                       json={"proverkacheka_token": "super-secret-token-value"},
+                       json={"fns_master_token": "super-secret-token-value"},
                        headers=hdr)
         assert r.status_code == 200
         g = client.get("/api/v1/settings/external", headers=hdr).json()
-        assert g["has_proverkacheka_token"] is True
-        assert "super-secret-token-value" not in g["proverkacheka_token_masked"]
-        assert "•" in g["proverkacheka_token_masked"]
+        assert g["has_fns_master_token"] is True
+        assert "super-secret-token-value" not in g["fns_master_token_masked"]
+        assert "•" in g["fns_master_token_masked"]
+        # настройки сторонних сервисов удалены из ответа
+        assert "has_proverkacheka_token" not in g
+        assert "external_order" not in g
 
 
 # ---------------------------------------------------------------------------

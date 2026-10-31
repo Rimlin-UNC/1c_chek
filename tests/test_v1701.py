@@ -18,9 +18,9 @@ class TestVersions1701:
         # v1.70.2: строгий замок версии переехал в test_v1702
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 1)
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.js?v={ver}" in idx and "?v=1.70.0" not in idx
+        assert f"app.js?v={ver}" in idx and '?v=1.70.0"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "1.70.0" not in sw
+        assert f"ymaster-check-v{ver}" in sw and "-v1.70.0'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         mapp = open("app/static/maxapp/index.html", encoding="utf-8").read()
@@ -37,8 +37,23 @@ class TestVersions1701:
             assert 'src="/maxapp/maxapp.js' in r.text
 
     def test_spa_prefix_slashed(self):
+        """Каждый префикс SPA-fallback обязан заканчиваться на «/».
+
+        Без завершающего «/» страница /maxapp попадала бы в 404, а служебным
+        считался бы любой путь вроде /maxappfoo. Раньше замок сверял
+        буквальный хвост кортежа, из-за чего ломался при добавлении префикса
+        (v1.70.45 — b2b/); теперь проверяется сам кортеж, и проверка строже:
+        она требует «/» у каждого элемента, а не у последнего.
+        """
         main = open("app/main.py", encoding="utf-8").read()
-        assert '"ws/", "maxapp/")' in main and '"ws/", "maxapp")' not in main
+        found = re.search(r"full_path\.startswith\(\(([^)]*)\)\)", main)
+        assert found, "кортеж префиксов SPA-fallback не найден в app/main.py"
+        prefixes = re.findall(r'"([^"]*)"', found.group(1))
+        assert prefixes, "кортеж префиксов пуст"
+        for prefix in prefixes:
+            assert prefix.endswith("/"), f"префикс {prefix!r} без завершающего «/»"
+        for expected in ("api/", "onec/", "ws/", "maxapp/"):
+            assert expected in prefixes, f"пропал служебный префикс {expected}"
 
     def test_changelog(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()
@@ -73,12 +88,26 @@ class TestBotUsername:
 
     def test_fallback_when_unknown(self, client, monkeypatch):
         from app.database import SessionLocal
-        from app.services import max_bot
+        from app.services import appsettings, max_bot
         monkeypatch.setattr(max_bot, "refresh_username", lambda db: "")
         s = SessionLocal()
         try:
-            # v1.70.2: служебный id-ник игнорируется — публичный по умолчанию
-            assert max_bot.bot_username(s, refresh=False) == "chek.ymaster.bot"
+            # v1.70.39: «имя неизвестно» надо подготовить — соседний тест
+            # (test_login_deep_link_uses_real_username) сохраняет в настройках
+            # «myshop_bot», и на общем сеансе БД fallback не срабатывал:
+            # проверка получала чужое имя вместо «chek.ymaster.bot».
+            saved = appsettings.get_setting(s, "max_bot_username", "") or ""
+            saved_cache = getattr(max_bot, "_username_cache", "")
+            appsettings.set_setting(s, "max_bot_username", "")
+            max_bot._username_cache = ""
+            s.commit()
+            try:
+                # v1.70.2: служебный id-ник игнорируется — публичный по умолчанию
+                assert max_bot.bot_username(s, refresh=False) == "chek.ymaster.bot"
+            finally:
+                appsettings.set_setting(s, "max_bot_username", saved)
+                max_bot._username_cache = saved_cache
+                s.commit()
         finally:
             s.rollback(); s.close()
 

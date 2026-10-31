@@ -47,4 +47,4 @@
   в контакты; SPF/DKIM домена настраиваются в панели Timeweb.
 
 ---
-ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+ООО «Ямастер» | ymaster.ru | chek@ymaster.ru

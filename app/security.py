@@ -56,16 +56,24 @@ limiter = SlidingWindowLimiter()
 
 # Зоны: (префикс пути, ключ, лимит, окно сек)
 def _zone_for(path: str):
+    """(зона, лимит, окно в секундах) для пути или None.
+
+    v1.70.38: лимиты берутся из настроек (RATE_LIMIT_* в .env) — значения по
+    умолчанию равны прежним зашитым числам, поэтому боевое поведение то же,
+    но пороги можно поднять для нагрузочного тестирования и опустить, если
+    за одним IP прокси оказалось слишком много людей.
+    """
+    from .config import settings
     if path.startswith("/api/v1/auth/login"):
         # Подбор пароля бессмыслен: LoginGuard блокирует по (IP+логин) после 5 неудач.
         # Лимит зоны выше, т.к. за одним IP превью/прокси могут быть несколько людей.
-        return "login", 25, 60
+        return "login", settings.RATE_LIMIT_LOGIN, 60
     if path.startswith(("/api/v1/auth/register", "/api/v1/auth/invite-info")):
-        return "register", 40, 3600
+        return "register", settings.RATE_LIMIT_REGISTER, 3600
     if path.startswith("/onec/"):
-        return "onec", 120, 60
+        return "onec", settings.RATE_LIMIT_ONEC, 60
     if path.startswith("/api/"):
-        return "api", 240, 60
+        return "api", settings.RATE_LIMIT_API, 60
     return None
 
 
@@ -134,10 +142,18 @@ class LoginGuard:
     MAX_FAILS = 5
     WINDOW_S = 15 * 60
     BLOCK_S = 15 * 60
+    # v1.70.38: память под контролем (как в SlidingWindowLimiter выше).
+    # Ключи (IP, логин) приходят из интернета: без чистки словари росли
+    # вечно, и перебор с подставными IP/логинами превращался в медленный
+    # отказ обслуживания по памяти — защита от перебора сама становилась
+    # вектором атаки.
+    MAX_KEYS = 5000
+    PRUNE_EVERY = 512
 
     def __init__(self):
         self._fails: dict[tuple, collections.deque] = {}
         self._blocked_until: dict[tuple, float] = {}
+        self._calls = 0
 
     def check(self, key: tuple) -> None:
         until = self._blocked_until.get(key)
@@ -147,9 +163,22 @@ class LoginGuard:
                 status.HTTP_429_TOO_MANY_REQUESTS,
                 f"Слишком много неудачных попыток входа. Повторите через {minutes} мин.",
             )
+        if until:
+            self._blocked_until.pop(key, None)   # истёк — освобождаем память
+
+    def _prune(self, now: float) -> None:
+        """Убирает протухшие ключи: и пустые окна неудач, и истёкшие блокировки."""
+        for k in [k for k, dq in self._fails.items()
+                  if not dq or dq[-1] <= now - self.WINDOW_S]:
+            self._fails.pop(k, None)
+        for k in [k for k, until in self._blocked_until.items() if until <= now]:
+            self._blocked_until.pop(k, None)
 
     def record_fail(self, key: tuple) -> None:
         now = time.monotonic()
+        self._calls += 1
+        if self._calls % self.PRUNE_EVERY == 0:
+            self._prune(now)
         dq = self._fails.setdefault(key, collections.deque())
         dq.append(now)
         while dq and dq[0] <= now - self.WINDOW_S:
@@ -157,6 +186,12 @@ class LoginGuard:
         if len(dq) >= self.MAX_FAILS:
             self._blocked_until[key] = now + self.BLOCK_S
             dq.clear()
+        if len(self._fails) > self.MAX_KEYS:
+            self._prune(now)
+            if len(self._fails) > self.MAX_KEYS:
+                # крайний случай (все ключи «свежие»): память важнее истории —
+                # активные блокировки при этом сохраняются
+                self._fails.clear()
 
     def record_ok(self, key: tuple) -> None:
         self._fails.pop(key, None)
@@ -181,4 +216,14 @@ async def security_headers_middleware(request: Request, call_next) -> Response:
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(), microphone=()")
+    # v1.70.38 (чек-лист API-безопасности: HSTS в списке обязательных
+    # заголовков) — но ТОЛЬКО когда запрос действительно пришёл по HTTPS:
+    # схема или X-Forwarded-Proto от локального nginx (та же логика, что у
+    # Secure-флага cookie в app/auth.py::cookie_secure). Отдать HSTS на голом
+    # http — значит заставить браузер навсегда ходить на этот хост по https,
+    # и локальное превью/ LAN перестанут открываться.
+    if (request.url.scheme == "https"
+            or (request.headers.get("x-forwarded-proto") or "").lower() == "https"):
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
