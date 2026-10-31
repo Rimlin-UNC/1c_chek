@@ -167,6 +167,10 @@ def classify_error(text: str, http_status: int = 0) -> tuple[str, str]:
     if "accessdenied" in low or "доступ к сервису для переданного ip" in low:
         return ("ip", "ФНС: доступ с этого IP запрещён — добавьте адрес "
                       "сервера в список разрешённых в ФНС")
+    if "master" in low:
+        return ("master", "ФНС: мастер-токен не принят. Проверьте, что он "
+                          "скопирован целиком и без лишних пробелов, и что "
+                          "срок действия приложения не истёк")
     if (("token" in low or "токен" in low)
             and ("не верн" in low or "истек" in low
                  or "отказ в доступе" in low or "недействит" in low)):
@@ -297,7 +301,7 @@ class FnsClient:
                              False)
         send_body = SEND_TEMPLATE.format(
             total=int(round((total_sum or 0) * 100)),
-            date=(receipt_date or datetime.utcnow()).strftime(
+            date=(receipt_date or _now_naive()).strftime(
                 "%Y-%m-%dT%H:%M:%S"),
             fn=_esc(fn), fd=_esc(fd), fp=_esc(fp),
             operation=2 if operation == 2 else 1,
@@ -428,9 +432,96 @@ class FnsClient:
             return False, str(e)
 
 
+def diagnose(api_base: str | None = None, master_token: str | None = None,
+             timeout: float = 10.0) -> dict:
+    """Пошаговая диагностика связи с ФНС (v1.70.71).
+
+    Отвечает на вопрос «почему не работает», разбирая путь по шагам:
+    настройки → DNS → TCP до порта 8090 → TLS → запрос аутентификации.
+    Первый же неудачный шаг показывает причину и что делать.
+    Стоимость: один запрос из суточного лимита (только при успешном DNS/TCP).
+    """
+    import socket
+    import ssl
+    from urllib.parse import urlparse
+
+    base = (api_base or settings.FNS_API_BASE or FNS_BASE_DEFAULT).rstrip("/")
+    parsed = urlparse(base)
+    host = parsed.hostname or "openapi.nalog.ru"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    token = (master_token or _db_setting("fns_master_token")
+             or settings.FNS_MASTER_TOKEN or "").strip()
+    steps: list[dict] = []
+
+    def step(name: str, ok: bool | None, detail: str) -> None:
+        steps.append({"name": name, "ok": ok, "detail": detail})
+
+    step("Настройки", bool(token),
+         "Мастер-токен задан" if token else
+         "Мастер-токен НЕ задан — впишите его в поле выше и нажмите "
+         "«Сохранить настройки ФНС»")
+    step("Адрес сервиса", True, base)
+    if not token:
+        return {"ok": False, "steps": steps,
+                "verdict": "Не задан мастер-токен ФНС"}
+
+    # --- DNS -------------------------------------------------------------
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        addr = sorted({i[4][0] for i in infos})
+        step("DNS", True, f"{host} → {', '.join(addr[:3])}")
+    except OSError as e:
+        step("DNS", False, f"Имя {host} не разрешается: {e}")
+        return {"ok": False, "steps": steps,
+                "verdict": "Сервер не видит адрес ФНС — проверьте DNS"}
+
+    # --- TCP -------------------------------------------------------------
+    sock = None
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.settimeout(timeout)
+        step("Соединение", True, f"порт {port} открыт")
+    except OSError as e:
+        step("Соединение", False,
+             f"Не удалось подключиться к {host}:{port} — {e}")
+        return {"ok": False, "steps": steps,
+                "verdict": "Порт 8090 закрыт: его блокирует хостинг или "
+                           "фаервол сервера. Разрешите исходящие соединения "
+                           "на openapi.nalog.ru:8090"}
+
+    # --- TLS -------------------------------------------------------------
+    if parsed.scheme == "https":
+        try:
+            ctx = ssl.create_default_context()
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                step("Шифрование (TLS)", True,
+                     f"сертификат {tls.version()}")
+        except (ssl.SSLError, OSError) as e:
+            step("Шифрование (TLS)", False, f"Ошибка TLS: {e}")
+            return {"ok": False, "steps": steps,
+                    "verdict": "Не удалось установить защищённое соединение"}
+    else:
+        sock.close()
+
+    # --- запрос аутентификации ------------------------------------------
+    client = FnsClient(api_base=base, master_token=token, timeout=int(timeout))
+    got, message = client.probe()
+    step("Мастер-токен принят", got, message)
+    from . import fns_quota
+    return {"ok": got, "steps": steps,
+            "verdict": "Связь с ФНС работает" if got else message,
+            "quota": fns_quota.stats() if got else None}
+
+
 def _et_text(el) -> str:
     import xml.etree.ElementTree as ET
     return ET.tostring(el, encoding="unicode")
+
+
+def _now_naive() -> datetime:
+    """Текущее время без пояса (совместимо с хранением в базе)."""
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
 
 
 def _esc(value) -> str:
@@ -441,8 +532,8 @@ def _esc(value) -> str:
 def _db_setting(key: str) -> str:
     """Значение настройки из БД (админка), иначе пустая строка."""
     try:
-        from .appsettings import get_setting
         from ..database import SessionLocal
+        from .appsettings import get_setting
         db = SessionLocal()
         try:
             return (get_setting(db, key, "") or "").strip()

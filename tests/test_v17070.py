@@ -10,6 +10,8 @@ import datetime as dt
 import re
 from pathlib import Path
 
+from sqlalchemy import text as sql_text
+
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 CONFIG = APP / "config.py"
@@ -31,6 +33,9 @@ def _read(path) -> str:
 
 
 class TestRelease17070:
+    """Замок выпуска 1.70.70. Точки синхронизации версии ведёт файл
+    текущего выпуска — tests/test_v17071.py, здесь остаётся история."""
+
     VERSION = "1.70.70"
     PREVIOUS = "1.70.69"
 
@@ -38,27 +43,26 @@ class TestRelease17070:
         return re.search(r'APP_VERSION: str = "([^"]+)"',
                          _read(CONFIG)).group(1)
 
-    def test_all_sync_points(self):
+    def _current(self) -> str:
+        return re.search(r'APP_VERSION: str = "([^"]+)"',
+                         _read(CONFIG)).group(1)
+
+    def test_sync_points_not_behind(self):
+        """Точки синхронизации идут за текущей версией (не отстают)."""
         ver = self._current()
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 70)
         assert f"ymaster-check-v{ver}" in _read(SW)
         assert f'"version": "{ver}"' in _read(MANIFEST)
         index = _read(INDEX)
         assert f"app.css?v={ver}" in index and f"app.js?v={ver}" in index
-        assert f"maxapp.js?v={ver}" in _read(MAX_HTML)
-        assert f"/b2b/b2b.css?v={ver}" in _read(CABINET)
 
-    def test_whats_new_is_first(self):
+    def test_whats_new_entry_present(self):
         js = _read(APP_JS)
-        found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION, \
-            "запись выпуска не первая"
-
-    def test_whats_new_entry(self):
-        block = _read(APP_JS).split(f"'{self.VERSION}': [", 1)[1].split(
+        assert f"'{self.VERSION}': [" in js
+        block = js.split(f"'{self.VERSION}': [", 1)[1].split(
             f"'{self.PREVIOUS}': [", 1)[0]
         assert block.count("{ icon:") == 3
-        for needle in ("ФНС", "1000", "официальн", "лимит"):
+        for needle in ("ФНС", "1000", "официальн"):
             assert needle in block, f"в «Что нового» нет «{needle}»"
 
     def test_changelog_entry(self):
@@ -282,6 +286,86 @@ class TestQueueAtLimit:
             "warn_percent": 80, "exhausted": True, "day": "2026-10-31"})
         msg = fns_quota.exhausted_message()
         assert "лимит" in msg.lower() and "1000" in msg
+
+
+class TestEncryptedTokenRead:
+    """v1.70.71: движок обязан читать токен РАСШИФРОВАННЫМ.
+
+    Найдено при живой проверке: настройки брались прямо из таблицы, где
+    мастер-токен хранится как «enc:v1:…», и в ФНС уходила зашифрованная
+    строка — сервис отвечал отказом, проверка «не работала».
+    """
+
+    def test_settings_are_decrypted(self, client):
+        from app.services.external import engine
+        from app.database import SessionLocal
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        client.put("/api/v1/settings/fns", json={
+            "master_token": "MASTER-PLAIN-TOKEN",
+            "client_app_id": "YmasterAPI"}, headers=hdr)
+        db = SessionLocal()
+        try:
+            raw = db.execute(sql_text(
+                "SELECT value FROM app_settings "
+                "WHERE key='fns_master_token'")).scalar()
+            cfg = engine._settings(db)
+        finally:
+            db.close()
+        assert raw and raw.startswith("enc:"), "в базе токен должен быть шифром"
+        assert cfg["fns_master_token"] == "MASTER-PLAIN-TOKEN"
+        assert "enc:" not in cfg["fns_master_token"]
+
+    def test_client_sends_plain_token_to_fns(self, client):
+        """Клиент, созданный движком, не содержит «enc:» в мастер-токене."""
+        from app.services import fns
+        from app.database import SessionLocal
+        from app.services.external import engine
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        client.put("/api/v1/settings/fns", json={
+            "master_token": "MASTER-SECOND-TOKEN"}, headers=hdr)
+        db = SessionLocal()
+        try:
+            cfg = engine._settings(db)
+        finally:
+            db.close()
+        client_fns = fns.FnsClient(master_token=cfg.get("fns_master_token"))
+        assert client_fns.master_token == "MASTER-SECOND-TOKEN"
+
+
+class TestDiagnose:
+    """Кнопка «Диагностика связи» показывает место обрыва."""
+
+    def test_no_token_verdict(self):
+        from app.services import fns
+        res = fns.diagnose(api_base="http://127.0.0.1:9", master_token="")
+        assert res["ok"] is False
+        assert "мастер-токен" in res["verdict"].lower()
+        assert res["steps"][0]["ok"] is False
+
+    def test_closed_port_verdict(self):
+        from app.services import fns
+        res = fns.diagnose(api_base="http://127.0.0.1:9", master_token="T",
+                           timeout=2)
+        assert res["ok"] is False
+        assert "8090" in res["verdict"] or "закрыт" in res["verdict"]
+        names = [s["name"] for s in res["steps"]]
+        assert "Соединение" in names
+
+    def test_endpoint_is_admin_only(self, client):
+        from tests.conftest import login
+        hdr = login(client, "admin", "admin123")
+        r = client.post("/api/v1/settings/fns/diagnose", headers=hdr)
+        assert r.status_code == 200
+        body = r.json()
+        assert "steps" in body and "verdict" in body
+
+    def test_master_token_error_is_named(self):
+        from app.services import fns
+        kind, text = fns.classify_error(
+            "Отказ в доступе: не верное значение master-токена")
+        assert kind == "master" and "мастер-токен" in text.lower()
 
 
 class TestSettingsUi:

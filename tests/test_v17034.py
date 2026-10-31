@@ -543,7 +543,7 @@ class TestRelease:
     # test_v17035; здесь остаётся соответствие файлов друг другу.
     # v1.70.41: точки синхронизации живут дальше; свою версию и
     # требование «своя запись первая» проверяет test_v17041.
-    VERSION = "1.70.70"
+    VERSION = "1.70.71"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

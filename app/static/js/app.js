@@ -6149,6 +6149,22 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.71': [
+    { icon: '🔧', title: 'Проверка ФНС заработала после сохранения токена',
+      text: 'Исправили ошибку, из-за которой мастер-токен, введённый на '
+        + 'странице «Проверка чеков (ФНС)», не принимался: программа '
+        + 'отправляла в ФНС его зашифрованную копию вместо самого токена. '
+        + 'Теперь токен расшифровывается перед отправкой.' },
+    { icon: '🩺', title: 'Кнопка «Диагностика связи»',
+      text: 'Новая кнопка рядом с сохранением настроек показывает путь до '
+        + 'ФНС по шагам: настройки, адрес, DNS, порт 8090, шифрование и '
+        + 'приём мастер-токена. Сразу видно, что именно не работает — '
+        + 'закрытый порт на сервере, неверный токен или не тот адрес.' },
+    { icon: '💬', title: 'Понятные причины отказа',
+      text: 'Если ФНС не принимает мастер-токен, сообщение теперь так и '
+        + 'говорит — «мастер-токен не принят», а не «временный токен '
+        + 'истёк». Убрано и двойное «ФНС: ФНС:» в тексте ошибки.' },
+  ],
   '1.70.70': [
     { icon: '🇷🇺', title: 'Проверка чеков — только через официальное API ФНС',
       text: 'Получили мастер-токен ФНС и перевели проверку чеков на '
@@ -9905,7 +9921,11 @@ async function viewSettings(container) {
           <input id="fns-token" type="password" placeholder="вставьте мастер-токен ФНС"></label>
         <label class="field" style="margin-bottom:14px"><span>AppId (идентификатор приложения в ФНС)</span>
           <input id="fns-appid" value="${esc(fns.client_app_id)}" placeholder="например, YmasterAPI"></label>
-        <button type="button" class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary btn-sm" id="fns-save">💾 Сохранить настройки ФНС</button>
+          <button type="button" class="btn btn-sm" id="fns-diag">🩺 Диагностика связи</button>
+        </div>
+        <div id="fns-diag-out" style="margin-top:10px"></div>
         <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней — повторная проверка
         того же чека лимит не расходует.</p>
         ${fns.quota ? `<div class="info-callout" style="font-size:12.5px;margin-top:10px">
@@ -11780,6 +11800,22 @@ async function viewSettings(container) {
 
   if (isAdmin() && fns) {
     // v1.70.70: источник один — ФНС, выбора «демо/реальное» больше нет
+    $('#fns-diag').onclick = async () => {
+      const box = $('#fns-diag-out');
+      box.innerHTML = '<div class="form-hint">Проверяю: настройки → DNS → порт → шифрование → токен…</div>';
+      try {
+        const r = await api.post('/api/v1/settings/fns/diagnose', {});
+        const rows = (r.steps || []).map((s) => `<li style="margin:3px 0">${
+          s.ok === true ? '✅' : s.ok === false ? '❌' : '•'} <b>${esc(s.name)}</b> — ${esc(s.detail)}</li>`).join('');
+        box.innerHTML = `<div class="info-callout" style="font-size:12.5px">
+          <div style="margin-bottom:6px">${r.ok ? '✅ <b>Связь с ФНС работает</b>' : '❌ <b>' + esc(r.verdict) + '</b>'}</div>
+          <ul style="margin:0;padding-left:18px">${rows}</ul>
+          ${r.quota ? `<div class="form-hint" style="margin-top:8px">Лимит за сутки: ${r.quota.used} из ${r.quota.limit}</div>` : ''}
+        </div>`;
+      } catch (e) {
+        box.innerHTML = `<div class="form-error">Ошибка диагностики: ${esc(e.message)}</div>`;
+      }
+    };
     $('#fns-save').onclick = async () => {
       try {
         await api.put('/api/v1/settings/fns', {

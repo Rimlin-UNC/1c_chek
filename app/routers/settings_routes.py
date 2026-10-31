@@ -411,6 +411,23 @@ def test_external(body: ExternalTestRequest, db: Session = Depends(get_db),
     }
 
 
+@router.post("/fns/diagnose",
+             summary="Пошаговая диагностика связи с ФНС (админ)")
+def diagnose_fns(db: Session = Depends(get_db),  # noqa: B008 — стиль роутеров
+                 user: User = Depends(require_admin)):  # noqa: B008
+    """Проверяет путь до ФНС по шагам: настройки → DNS → порт → TLS → токен.
+
+    v1.70.71: когда «не работает», видно ИМЕННО место обрыва, а не общее
+    «ошибка». Стоит один запрос из суточного лимита (только если связь есть).
+    """
+    from ..services import fns
+    token = _get_setting(db, "fns_master_token", cfg.FNS_MASTER_TOKEN)
+    base = _get_setting(db, "fns_api_base", cfg.FNS_API_BASE)
+    result = fns.diagnose(api_base=base, master_token=token)
+    log_action(user, "fns_diagnose", details={"ok": result.get("ok")})
+    return result
+
+
 @router.get("/checko", summary="Настройки Checko.ru — карточки компаний по ИНН (админ)")
 def get_checko(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     key = _get_setting(db, "checko_api_key", "")

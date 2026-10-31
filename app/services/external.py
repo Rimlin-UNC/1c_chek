@@ -370,10 +370,16 @@ class ExternalFetchEngine:
 
     # --- настройки из БД ---
     def _settings(self, db) -> dict:
-        from ..models import AppSetting
-        rows = {r.key: r.value for r in db.query(AppSetting).filter(
-            AppSetting.key.in_(["fns_master_token", "fns_client_app_id",
-                                "external_auto"])).all()}
+        """Настройки ФНС из БД — ТОЛЬКО через расшифровку (v1.70.71).
+
+        Раньше значения брались прямо из таблицы, а мастер-токен и AppId
+        хранятся зашифрованными («enc:v1:…») — в ФНС уходила зашифрованная
+        строка, и сервис отвечал отказом. Теперь читаем тем же способом,
+        каким их сохраняет админка: appsettings.get_setting расшифровывает.
+        """
+        from . import appsettings
+        rows = {key: appsettings.get_setting(db, key, "")
+                for key in ("fns_master_token", "fns_client_app_id")}
         return rows
 
     def provider_chain(self, db) -> list[str]:
@@ -458,7 +464,8 @@ class ExternalFetchEngine:
                 self._note_failure(msg)
                 log.warning("❌ ФНС: сбой: %s", msg)
                 return ExternalResult(ok=False, source="fns_api", found=False,
-                                      message=f"ФНС: {msg}")
+                                      message=msg if msg.startswith("ФНС")
+                                      else f"ФНС: {msg}")
 
             self._fail_streak["fns_api"] = 0
             if data.get("status") in ("not_found", "invalid"):
