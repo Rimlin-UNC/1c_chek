@@ -244,6 +244,24 @@ def handle_update(db: Session, upd: dict) -> None:
         if bal:
             _send(bal)
         return
+    # --- v1.70.69: вход/регистрация на сайте — код «tglogin_…» ---
+    # Deep-link https://t.me/БОТ?start=tglogin_… приходит текстом
+    # «/start tglogin_…» — перехватываем раньше привязки, чтобы длинный
+    # код входа не спутать с коротким 6-значным кодом привязки.
+    m_tgl = re.search(r"tglogin_[A-Za-z0-9_-]{16,120}", text)
+    if m_tgl:
+        from . import telegram_login
+        frm = msg.get("from") or {}
+        display = " ".join(str(x) for x in (frm.get("first_name"),
+                                            frm.get("last_name")) if x)
+        ok = telegram_login.confirm(db, m_tgl.group(0), chat_id,
+                                    username=str(frm.get("username") or ""),
+                                    display=display)
+        _send("✅ Вход на сайт подтверждён — вернитесь в браузер, вход "
+              "выполнится автоматически." if ok else
+              "⚠️ Код входа не найден или устарел — на сайте нажмите "
+              "«Войти через Telegram» ещё раз.")
+        return
     if text_low.startswith("/start"):
         code = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
         uid = consume_bind_code(code)

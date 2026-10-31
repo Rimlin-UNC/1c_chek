@@ -552,3 +552,23 @@ class MaxLoginCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TelegramLoginCode(Base):
+    """v1.70.69: одноразовые коды входа/регистрации через Telegram (веб).
+    Зеркало MaxLoginCode: код хранится только хэшем (sha256);
+    подтверждение — сообщение боту (deep-link «/start tglogin_…» или код
+    текстом). tg_chat_id заполнен → код подтверждён; used_at → погашен."""
+
+    __tablename__ = "telegram_login_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(20), default="web")
+    tg_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tg_username: Mapped[str] = mapped_column(String(100), default="")
+    tg_name: Mapped[str] = mapped_column(String(200), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

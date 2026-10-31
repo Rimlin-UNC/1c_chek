@@ -391,6 +391,62 @@ async function maxLoginFlow(code, isTicket) {
   if (!stop.v) $('#mxl-status').innerHTML = '⏳ Время ожидания вышло — попробуйте ещё раз.';
 }
 
+// v1.70.69: вход/регистрация через Telegram. Тот же приём, что у MAX
+// (v1.70.0): сайт получает одноразовый код, человек подтверждает его
+// боту — по кнопке «Открыть Telegram» (deep-link /start КОД) или просто
+// отправив код в чат. Окно закрывается само, сессия сайта — та же, что
+// при входе по паролю.
+async function telegramLoginFlow(code, tgLink) {
+  const { slot } = openModal(`
+    <div class="modal-title">✈️ Вход через Telegram</div>
+    <div class="info-callout" id="tgl-status">Ждём подтверждение в Telegram…<br>
+      <span class="form-hint">Нажмите «Открыть Telegram» и подтвердите вход у
+      бота — окно закроется само. Если приложение не открылось —
+      <b>отправьте боту сообщение</b> с кодом ниже (в чате бота): вход
+      подтвердится и без кнопки.</span>
+      <div class="token-line" style="margin-top:8px"><input readonly
+        value="${esc(code)}" id="tgl-code"><button type="button" class="btn btn-sm"
+        id="tgl-copy">копировать</button></div></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-close>Отмена</button>
+      ${tgLink ? '<button type="button" class="btn btn-primary" id="tgl-open">✈️ Открыть Telegram</button>' : ''}</div>`);
+  const stop = { v: false };
+  const tgcp = slot.querySelector('#tgl-copy');
+  if (tgcp) tgcp.onclick = () => {
+    try {
+      navigator.clipboard && navigator.clipboard.writeText(code);
+      toast('Код скопирован — вставьте его в чат бота в Telegram', 'ok', '📋');
+    } catch (e) {}
+  };
+  const tgo = slot.querySelector('#tgl-open');
+  if (tgo) tgo.onclick = () => window.open(tgLink, '_blank');
+  slot.querySelector('[data-close]').onclick = () => {
+    stop.v = true; $('#modal-root').classList.add('hidden');
+  };
+  const t0 = Date.now();
+  while (!stop.v && Date.now() - t0 < 5 * 60 * 1000) {
+    await new Promise(r => setTimeout(r, 2500));
+    if (stop.v) return;
+    let p;
+    try { p = await api.post('/api/v1/auth/telegram/poll', { code }); }
+    catch (e) { $('#tgl-status').innerHTML = esc(e.message); return; }
+    if (p.status === 'ok') {
+      $('#modal-root').classList.add('hidden');
+      setToken(p.access_token);
+      state.me = p.user;
+      enterApp();
+      toast('Вход через Telegram выполнен', 'ok', '✈️');
+      return;
+    }
+    if (p.status === 'expired') {
+      $('#tgl-status').innerHTML =
+        '⏳ Код устарел или уже использован — нажмите «Войти через Telegram» ещё раз.';
+      return;
+    }
+  }
+  if (!stop.v) $('#tgl-status').innerHTML = '⏳ Время ожидания вышло — попробуйте ещё раз.';
+}
+
 // v1.70.64: владелец — «на сайте или в приложении всплывало окошко с
 // вопросом вернуться в мини приложение Макс или остаться здесь (в нашем
 // стиле корпоративном)». Показываем только тому, кто пришёл из
@@ -433,6 +489,13 @@ function showLogin() {
     try {
       const r = await api.post('/api/v1/auth/max/start', {});
       maxLoginFlow(r.code, false);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  const lt = $('#login-telegram');            // v1.70.69
+  if (lt) lt.onclick = async () => {
+    try {
+      const r = await api.post('/api/v1/auth/telegram/start', {});
+      telegramLoginFlow(r.code, r.tg_link || '');
     } catch (e) { toast(e.message, 'err'); }
   };
   const form = $('#login-form');
@@ -6086,6 +6149,23 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.69': [
+    { icon: '✈️', title: 'Вход через Telegram — как у Макса',
+      text: 'На экране входа появилась кнопка в Telegram: человек '
+        + 'подтверждает вход в чате с ботом, пароль вводить не нужно.' },
+    { icon: '📝', title: 'Регистрация в один шаг',
+      text: 'Если чат с ботом ещё не привязан к учётной записи, она '
+        + 'создаётся автоматически — личный кабинет сотрудника, без '
+        + 'анкет и без приглашения.' },
+    { icon: '🔒', title: 'Коды одноразовые и короткоживущие',
+      text: 'Код живёт десять минут, на сервере хранится только его '
+        + 'хэш и гасится после входа — повторно им воспользоваться '
+        + 'нельзя.' },
+    { icon: '⭐', title: 'Остальное как прежде',
+      text: 'Вход через MAX и по паролю работают как раньше; '
+        + 'администратор может выключить регистрацию через Telegram — '
+        + 'тогда останется вход по логину.' },
+  ],
   '1.70.68': [
     { icon: '📨', title: 'Telegram-уведомления — устойчивый путь из Москвы',
       text: 'Готовая схема против блокировок: на сервере поднимается '
