@@ -15,7 +15,7 @@
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 import csv
 import datetime as dt
 import io
@@ -385,6 +385,9 @@ def list_receipts(
     city: str | None = Query(None, max_length=120, description="Город продавца"),
     item_name: str | None = Query(None, max_length=200, description="Название позиции чека"),
     operation: int | None = Query(None, ge=1, le=4, description="Признак расчёта"),
+    vat_rate: str | None = Query(None, max_length=10, description="Сохранённое значение НДС позиции"),
+    marking: Literal["present", "not_saved"] | None = Query(None, description="Сохранённые реквизиты маркировки"),
+    missing: Literal["any", "seller_name", "seller_inn", "address", "fiscal", "items"] | None = Query(None, description="Отсутствующие реквизиты"),
     industry: str | None = Query(None, max_length=100,
                                  description="Отрасль покупки (Аптека, АЗС, …)"),
     product_group: str | None = Query(None, max_length=100,
@@ -464,6 +467,24 @@ def list_receipts(
         query = query.filter(Receipt.items.any(contains(ReceiptItem.name, item_name)))
     if operation is not None:
         query = query.filter(Receipt.operation == operation)
+    if vat_rate is not None and vat_rate != "":
+        query = query.filter(Receipt.items.any(ReceiptItem.vat_rate == vat_rate))
+    if marking == "present":
+        query = query.filter(Receipt.items.any(ReceiptItem.marking_present.is_(True)))
+    elif marking == "not_saved":
+        query = query.filter(Receipt.items.any(),
+                             ~Receipt.items.any(ReceiptItem.marking_present.is_(True)))
+    if missing:
+        def empty(column):
+            return func.trim(func.coalesce(column, ""), " \t\r\n") == ""
+        fields = {
+            "seller_name": empty(Receipt.merchant_name),
+            "seller_inn": empty(Receipt.merchant_inn),
+            "address": empty(Receipt.merchant_address),
+            "fiscal": or_(empty(Receipt.fn), empty(Receipt.fd), empty(Receipt.fp)),
+            "items": ~Receipt.items.any(),
+        }
+        query = query.filter(or_(*fields.values()) if missing == "any" else fields[missing])
     if merchant_inn:
         query = query.filter(Receipt.merchant_inn == merchant_inn.strip()[:20])
     if merchant:
@@ -573,7 +594,13 @@ def receipt_facets(user: Annotated[User, Depends(get_current_user)],
                 .group_by(folded(values.c.value)).order_by(func.min(values.c.value)).all())
         return [{"value": value, "count": count} for value, count in rows]
 
+    scoped_ids = q.with_entities(Receipt.id).subquery()
+    vat_rows = (db.query(ReceiptItem.vat_rate, func.count(func.distinct(ReceiptItem.receipt_id)))
+                .join(scoped_ids, ReceiptItem.receipt_id == scoped_ids.c.id)
+                .filter(ReceiptItem.vat_rate.isnot(None), ReceiptItem.vat_rate != "")
+                .group_by(ReceiptItem.vat_rate).order_by(ReceiptItem.vat_rate).all())
     return {
+        "vat_rates": [{"value": value, "count": count} for value, count in vat_rows],
         "region_names": locations(Receipt.region_name),
         "cities": locations(Receipt.region_city),
         "regions": [{"code": code, "name": name or code, "count": cnt}

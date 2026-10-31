@@ -108,3 +108,77 @@ def test_enrich_populates_city_without_replacing_manual_region(client, data):
         r = db.get(Receipt, ids[1])
         assert r.region_city == 'Тихвин'
         assert r.region_name == 'Ручной регион' and r.region_code == '99'
+
+
+def test_vat_marking_and_missing_filters(client, data):
+    import json
+
+    from app.database import SessionLocal, _backfill_marking
+    from app.models import Receipt, ReceiptItem
+
+    hdr, user, c1, c2, ids = data
+    with SessionLocal() as db:
+        items = db.query(ReceiptItem).filter_by(receipt_id=ids[0]).order_by(ReceiptItem.id).all()
+        items[0].vat_rate = '1'  # код источника, не приписываем ему ставку
+        items[0].extra_json = json.dumps({'marking': [{'gtin': '012345'}]})
+        items[1].vat_rate = '1'
+        items[2].extra_json = '{invalid'
+        db.add(ReceiptItem(receipt_id=ids[1], name='другая', vat_rate='20', extra_json='{}'))
+        db.add(ReceiptItem(receipt_id=ids[2], name='чужая', vat_rate='secret',
+                           extra_json=json.dumps({'marking': [{'raw': 'code'}]})))
+        receipt = db.get(Receipt, ids[0])
+        receipt.merchant_inn = '  \t '
+        receipt.merchant_address = 'адрес'
+        receipt.total_sum = 0
+        db.commit()
+        assert items[0].marking_present is True
+        assert items[2].marking_present is False
+        # Имитируем данные до миграции и проверяем пакетное заполнение.
+        db.query(ReceiptItem).filter(ReceiptItem.id == items[0].id).update(
+            {ReceiptItem.marking_present: None}, synchronize_session=False)
+        db.commit()
+    _backfill_marking()
+
+    def search(**params):
+        response = client.get('/api/v1/receipts', params=params, headers=user)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def found(**params):
+        return {r['id'] for r in search(**params)['items']}
+
+    assert found(vat_rate='1', marking='present', city='санкт-петербург') == {ids[0]}
+    assert found(vat_rate='20', marking='not_saved') == {ids[1]}
+    assert found(marking='present') == {ids[0]}
+    assert found(marking='not_saved') == {ids[1]}
+    assert ids[2] not in found(marking='present', company_id=c2)
+    assert ids[0] in found(missing='seller_inn')
+    assert ids[0] not in found(missing='address')
+    assert ids[0] not in found(missing='fiscal')
+    assert not found(missing='items')
+    assert ids[0] in found(missing='any')
+    assert search(marking='present', page_size=1)['total'] == 1
+    facets = client.get('/api/v1/receipts/facets', headers=user).json()['vat_rates']
+    assert next(x['count'] for x in facets if x['value'] == '1') == 1
+    assert 'secret' not in {x['value'] for x in facets}
+    assert 'secret' in {x['value'] for x in client.get('/api/v1/receipts/facets',
+        params={'company_id': c2}, headers=hdr).json()['vat_rates']}
+    assert client.get('/api/v1/receipts', params={'marking': 'no'}, headers=user).status_code == 422
+
+    with SessionLocal() as db:
+        item = db.query(ReceiptItem).filter_by(receipt_id=ids[0], marking_present=True).first()
+        item.extra_json = '{}'
+        db.commit()
+        assert item.marking_present is False
+    assert not found(marking='present')
+    assert found(marking='not_saved') == set(ids[:2])
+
+
+def test_saved_marking_recognises_only_meaningful_data():
+    from app.models import has_saved_marking
+
+    for value in ('', 'broken', '{}', '{"marking": []}',
+                  '{"marking": [{"gtin": "  ", "type": 0}]}', '{"marking": "oops"}'):
+        assert not has_saved_marking(value)
+    assert has_saved_marking('{"marking": [{"serial": "abc"}]}')
+    assert has_saved_marking('{"marking": {"raw": "code"}}')

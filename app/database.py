@@ -105,6 +105,7 @@ def init_db() -> None:
         traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
+    _backfill_marking()
     _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
@@ -266,6 +267,8 @@ def _ensure_schema() -> None:
              "ALTER TABLE receipt_items ADD COLUMN industry VARCHAR(100) DEFAULT ''"),
             ("extra_json",
              "ALTER TABLE receipt_items ADD COLUMN extra_json TEXT DEFAULT ''"),
+            ("marking_present",
+             "ALTER TABLE receipt_items ADD COLUMN marking_present BOOLEAN NULL"),
         ],
     }
     insp = inspect(engine)
@@ -285,6 +288,9 @@ def _ensure_schema() -> None:
                 conn.execute(text(
                     "CREATE INDEX IF NOT EXISTS idx_receipts_company "
                     "ON receipts(company_id)"))
+        if "receipt_items" in existing_tables:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipt_items_marking "
+                              "ON receipt_items(marking_present, receipt_id)"))
         _backfill_companies(conn, existing_tables)
         # v1.4.0: заполнить category_lc для существующих строк (lower() в SQLite
         # не понимает кириллицу — нормализуем в Python)
@@ -297,6 +303,31 @@ def _ensure_schema() -> None:
                 conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
                              {"lc": (cat or "").casefold(), "i": rid})
 
+
+
+def _backfill_marking() -> None:
+    """Пакетно заполнить признак сохранённой маркировки для старых позиций."""
+    from sqlalchemy import update
+
+    from .models import ReceiptItem, has_saved_marking
+    db = SessionLocal()
+    try:
+        while True:
+            rows = (db.query(ReceiptItem.id, ReceiptItem.extra_json)
+                    .filter(ReceiptItem.marking_present.is_(None)).limit(500).all())
+            if not rows:
+                break
+            for row in rows:
+                # Не затирать более свежую правку другой транзакции или воркера.
+                db.execute(update(ReceiptItem).where(
+                    ReceiptItem.id == row.id, ReceiptItem.marking_present.is_(None)
+                ).values(marking_present=has_saved_marking(row.extra_json)))
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _backfill_full_data() -> None:

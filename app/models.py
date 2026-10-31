@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Float, ForeignKey, Index,
-    Integer, String, Text, UniqueConstraint,
+    Integer, String, Text, UniqueConstraint, event,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -368,6 +368,9 @@ class ReceiptItem(Base):
                                           server_default="")
     extra_json: Mapped[str] = mapped_column(Text, default="",
                                             server_default="")
+    # Индекс факта сохранённых данных маркировки; False не означает, что
+    # товар немаркированный: данных могло не быть в ответе или при импорте.
+    marking_present: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     #   маркировка, агент, поставщик, страна, таможенная декларация, ФОИВ
 
     receipt: Mapped[Receipt] = relationship(back_populates="items")
@@ -389,6 +392,33 @@ class ReceiptItem(Base):
             "extra": (_safe_json(self.extra_json)
                       if getattr(self, "extra_json", "") else {}),
         }
+
+
+def has_saved_marking(extra_json: str | None) -> bool:
+    """Только непустые сохранённые реквизиты маркировки, не факт проверки ГИС МТ."""
+    parsed = _safe_json(extra_json or "")
+    if not isinstance(parsed, dict):
+        return False
+    entries = parsed.get("marking")
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return False
+    def meaningful(value):
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, dict):
+            return any(meaningful(v) for v in value.values())
+        if isinstance(value, list):
+            return any(meaningful(v) for v in value)
+        return bool(value)
+    return any(meaningful(entry) for entry in entries)
+
+
+@event.listens_for(ReceiptItem, "before_insert")
+@event.listens_for(ReceiptItem, "before_update")
+def _sync_saved_marking(_mapper, _connection, item):
+    item.marking_present = has_saved_marking(item.extra_json)
 
 
 # --------------------------------------------------------------------------

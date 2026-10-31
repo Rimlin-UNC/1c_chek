@@ -6150,6 +6150,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.76': [
+    { icon: '🔎', title: 'НДС, маркировка и недостающие реквизиты',
+      text: 'В реестре можно искать по сохранённому значению НДС и данным маркировки '
+        + 'позиций, а также по недостающим реквизитам. Отсутствие данных не означает '
+        + 'отсутствия маркировки; значения НДС могут быть кодами источника.' },
+  ],
   '1.70.75': [
     { icon: '🔎', title: 'Поиск чеков по региону, городу, товарам и отрасли',
       text: 'Фильтры реестра используют регион и город продавца, отрасли и группы '
@@ -7975,6 +7981,16 @@ async function viewReceipts(container) {
           <option value="4">Возврат расхода</option></select></label>
         <label class="field"><span>Позиции</span><select id="f-items"><option value="">любые</option>
           <option value="true">есть позиции</option><option value="false">нет позиций</option></select></label>
+        <label class="field"><span>НДС позиции (как сохранён)</span>
+          <select id="f-vat"><option value="">любое значение</option></select></label>
+        <label class="field"><span>Маркировка в данных</span><select id="f-marking">
+          <option value="">любая</option><option value="present">данные сохранены</option>
+          <option value="not_saved">данные не сохранены (есть позиции)</option></select></label>
+        <label class="field"><span>Отсутствующие реквизиты</span><select id="f-missing">
+          <option value="">не проверять</option><option value="any">хотя бы один из перечисленных</option>
+          <option value="seller_name">название продавца</option><option value="seller_inn">ИНН продавца</option>
+          <option value="address">адрес продавца</option><option value="fiscal">ФН, ФД или ФП</option>
+          <option value="items">нет позиций</option></select></label>
         <label class="field"><span>Продавец (ИНН или название)</span>
           <input id="f-merchant" placeholder="например 7801234567"></label>
         <label class="field"><span>Оплата</span>
@@ -7989,6 +8005,7 @@ async function viewReceipts(container) {
         ${acc ? '<button type="button" class="btn btn-sm" id="btn-enrich" title="Разобрать до 2000 сохранённых чеков за раз; запросов в ФНС нет">🧭 Разобрать данные чеков</button>' : ''}
       </div>
       <p class="form-hint">Регион и город определяются по адресу, регион иногда по ИНН; отрасли и группы — по названиям позиций, это не классификация ФНС. При отсутствии полного чека часть фильтров может не сработать. «Разобрать данные чеков» обрабатывает до 2000 записей за раз без запроса в ФНС.</p>
+      <p class="form-hint">НДС показан как сохранённое значение: это может быть код ФНС, а «none» может означать как отсутствие НДС, так и отсутствие данных. Маркировка ищется только в сохранённых данных позиций; отсутствие записи не доказывает, что товар без маркировки. Чеки без позиций в выборку «данные не сохранены» не входят. Недостающие реквизиты: название, ИНН и адрес продавца, ФН/ФД/ФП и позиции.</p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
         <div class="seg" role="group" aria-label="Вид списка чеков">
           <button type="button" class="btn btn-sm" id="rc-view-list" title="Обычная таблица">📋 Список</button>
@@ -8027,7 +8044,7 @@ async function viewReceipts(container) {
     category: '', notified: '', date_from: '', date_to: '', page: 1,
     // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
     region: '', region_name: '', city: '', industry: '', product_group: '', item_name: '', operation: '', has_items: '', merchant: '',
-    pay_type: '', sum_min: '', sum_max: '',
+    pay_type: '', sum_min: '', sum_max: '', vat_rate: '', marking: '', missing: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
   let pageInfo = { total: 0, total_sum: 0, page_size: 50 };
@@ -8056,6 +8073,7 @@ async function viewReceipts(container) {
       fillSel('#f-city', f.cities || [], 'все города', 'city');
       fillSel('#f-industry', f.industries || [], 'все отрасли', 'industry');
       fillSel('#f-group', f.product_groups || [], 'все группы', 'product_group');
+      fillSel('#f-vat', f.vat_rates || [], 'любое значение', 'vat_rate');
     } catch (e) { toast('Не удалось загрузить значения фильтров: ' + e.message, 'warn'); }
   }
   loadFacets();
@@ -8065,7 +8083,7 @@ async function viewReceipts(container) {
    ['#f-full', 'full_data'], ['#f-category', 'category'],
    ['#f-notified', 'notified'], ['#f-from', 'date_from'], ['#f-to', 'date_to'],
    ['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
-   ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-merchant', 'merchant'],
+   ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'], ['#f-merchant', 'merchant'],
    ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
     .forEach(([sel, key]) => {
       const el = $(sel);
@@ -8336,7 +8354,7 @@ async function viewReceipts(container) {
     filters.date_to = $('#f-to').value;
     // v1.70.72: регион, отрасль, группа, продавец, оплата, суммы
     [['#f-region', 'region_name'], ['#f-city', 'city'], ['#f-industry', 'industry'],
-     ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-merchant', 'merchant'],
+     ['#f-group', 'product_group'], ['#f-item-name', 'item_name'], ['#f-operation', 'operation'], ['#f-items', 'has_items'], ['#f-vat', 'vat_rate'], ['#f-marking', 'marking'], ['#f-missing', 'missing'], ['#f-merchant', 'merchant'],
      ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],
      ['#f-sum-max', 'sum_max']].forEach(([sel, key]) => {
       const el = $(sel);
