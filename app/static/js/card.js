@@ -34,6 +34,7 @@ function shopReceiptHTML(d) {
   if (Number(m.ecash) > 0) pays.push(line('БЕЗНАЛИЧНЫМИ', money0(m.ecash)));
   if (Number(m.prepaid) > 0) pays.push(line('ПРЕДОПЛАТА', money0(m.prepaid)));
   if (Number(m.credit) > 0) pays.push(line('КРЕДИТ', money0(m.credit)));
+  if (Number(m.provision) > 0) pays.push(line('ВСТРЕЧНОЕ ПРЕДОСТАВЛЕНИЕ', money0(m.provision)));
   return `
     <div class="ticket-wrap"><div class="ticket" id="shop-ticket">
       <div class="ticket-head">
@@ -50,6 +51,9 @@ function shopReceiptHTML(d) {
       ${k.shift ? line('СМЕНА', k.shift) : ''}
       ${k.request ? line('ЧЕК ЗА СМЕНУ', k.request) : ''}
       ${d.cashier && d.cashier.name ? line('КАССИР', d.cashier.name) : ''}
+      ${d.cashier && d.cashier.inn ? line('ИНН КАССИРА', d.cashier.inn) : ''}
+      ${d.buyer && d.buyer.name ? line('ПОКУПАТЕЛЬ', d.buyer.name) : ''}
+      ${d.buyer && d.buyer.contact ? line('КОНТАКТ ПОКУПАТЕЛЯ', d.buyer.contact) : ''}
       <div class="ticket-sep"></div>
       ${items.length ? items.map(it => `
         <div class="ticket-item">
@@ -58,7 +62,9 @@ function shopReceiptHTML(d) {
             <span>${qtyText(it.quantity)}${it.measure ? ' ' + esc(it.measure) : ''} × ${money0(it.price)}</span>
             <span>${money0(it.total)}</span>
           </div>
-          ${Number(it.nds_sum) > 0 ? `<div class="ticket-small">НДС ${esc(it.nds_name || '')}: ${money0(it.nds_sum)}</div>` : ''}
+          ${it.nds_name ? `<div class="ticket-small">НДС ${esc(it.nds_name)}${Number(it.nds_sum) ? ': ' + money0(it.nds_sum) : ''}</div>` : ''}
+          ${it.payment_type_name ? `<div class="ticket-small">${esc(it.payment_type_name)}</div>` : ''}
+          ${it.product_type_name ? `<div class="ticket-small">${esc(it.product_type_name)}</div>` : ''}
         </div>`).join('')
       : `<div class="ticket-small">Позиции недоступны — полный документ ФНС не получен.</div>`}
       <div class="ticket-sep"></div>
@@ -75,8 +81,10 @@ function shopReceiptHTML(d) {
         ${k.reg_id ? line('РН ККТ', k.reg_id) : ''}
         ${k.ffd ? line('ФФД', k.ffd) : ''}
       </div>
+      ${d.receipt_note ? `<div class="ticket-small">Проверка ФНС: ${esc(statusLabel(d.receipt_note.fns_status))}</div>` : ''}
+      ${(d.properties || []).map(p => line(p.name || 'РЕКВИЗИТ', p.value ?? '')).join('')}
       <div class="ticket-qr"><img src="/api/v1/receipts/${encodeURIComponent(d.receipt_id || '')}/qr.png" alt="QR-код чека"></div>
-      <div class="ticket-center ticket-small">Спасибо за покупку!</div>
+      <div class="ticket-center ticket-small">Копия по данным системы</div>
     </div></div>`;
 }
 

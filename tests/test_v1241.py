@@ -26,20 +26,19 @@ class TestQRPrint:
         js = open(JS, encoding="utf-8").read()
         assert "slice(0, 60)" not in js                     # старый лимит убран
         seg = self._fn_segment(js)
-        assert "qrList = data.items.slice(0, 300)" in seg   # страховка от гигантских выборок
-        assert "Загружаю фискальные QR: ${i + 1} из ${qrList.length}" in seg
+        assert "i < ids.length" in seg   # все выбранные, без обрезания списка
+        assert "Готовлю чек ${i + 1} из ${ids.length}" in seg
 
     def test_qr_fail_marker(self):
         js = open(JS, encoding="utf-8").read()
-        assert "фискальный QR не получен" in js
-        assert "rcptBlocks(r, qrUrl, qrFail)" in js.replace('(r, qrUrl, qrFail) {', '(r, qrUrl, qrFail)')
-        # пометка только когда реквизиты есть, а код не получен
-        assert "qrFail && r.fn" in js
+        seg = self._fn_segment(js)
+        assert "Фискальный QR не получен" in seg
+        assert "missingQr++" in seg
 
     def test_qr_count_in_toast_and_status(self):
         js = open(JS, encoding="utf-8").read()
         seg = self._fn_segment(js)
-        assert "QR на ${withQr}" in seg
+        assert "без QR: ${missingQr}" in seg
         assert 'id="pp-status"' in js
 
     def test_modal_title_renamed(self):

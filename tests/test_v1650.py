@@ -213,7 +213,7 @@ class TestPdfEndpoint:
         """Пайплайн ПЕЧАТИ чеков (printpack, v1.24+) не тронут."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "function whenImagesReady(root)" in js
-        assert "qrList = data.items.slice(0, 300)" in js
+        assert "for (let i = 0; i < ids.length; i++)" in js
         assert "packCut" in js
 
 

@@ -11,19 +11,18 @@ describe('геометрия листа', () => {
   it('А4 и колонки', () => {
     expect(PAGE_W).toBe(210);
     expect(PAGE_H).toBe(297);
-    expect(COLS).toBe(3);
-    expect(COL_W).toBe(62);
+    expect(COLS).toBe(2);
+    expect(COL_W).toBe(72);
     expect(COL_H).toBe(281);
-    expect(MARGIN_X).toBe(7);
+    expect(MARGIN_X).toBe(20);
   });
   it('масштаб термоленты', () => {
-    expect(SCALE).toBeCloseTo(62 / 80, 6);
+    expect(SCALE).toBe(1);
   });
-  it('колонки не наезжают: третья заканчивается в поле листа', () => {
-    expect(columnX(0)).toBe(7);
-    expect(columnX(1)).toBe(74);
-    expect(columnX(2)).toBe(141);
-    expect(columnX(2) + COL_W).toBeLessThanOrEqual(PAGE_W - MARGIN_X);
+  it('колонки не наезжают: вторая заканчивается в поле листа', () => {
+    expect(columnX(0)).toBe(20);
+    expect(columnX(1)).toBe(118);
+    expect(columnX(1) + COL_W).toBeLessThanOrEqual(PAGE_W - MARGIN_X);
   });
 });
 
@@ -73,4 +72,15 @@ describe('packCut', () => {
       }
     }
   });
+});
+
+it('физически не выходит за лист и учитывает зазоры на границах', () => {
+  const heights = [COL_H, 100, 100, 78, 60, 100];
+  const pages = packCut(heights);
+  for (const page of pages) {
+    for (const p of page) {
+      expect(p.y + heights[p.piece]).toBeLessThanOrEqual(COL_H + 0.0001);
+      expect(columnX(p.col) + COL_W).toBeLessThanOrEqual(PAGE_W - MARGIN_X);
+    }
+  }
 });

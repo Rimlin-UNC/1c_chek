@@ -662,7 +662,7 @@ class TestRelease1710:
     def test_whats_new_is_first(self):
         js = _read(APP_JS)
         found = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert found and found.group(1) == self.VERSION
+        assert found and found.group(1) == self._current()
 
     def test_whats_new_entry(self):
         block = _read(APP_JS).split(f"'{self.VERSION}': [", 1)[1].split(

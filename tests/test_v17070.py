@@ -276,8 +276,8 @@ class TestQueueAtLimit:
         assert "start_limit_retry_worker" in _read(APP / "main.py")
 
     def test_pending_status_label(self):
-        js = _read(APP_JS)
-        assert "ожидает проверки" in js
+        js = _read(APP / "static/js/ui.js")
+        assert "ожидает проверки" in js.lower()
 
     def test_quota_exceeded_message(self, monkeypatch):
         from app.services import fns_quota

@@ -37,9 +37,9 @@ class TestPrintCutGeometry:
         out = _node(f"""
 import {{ PAGE_W, COL_W, MARGIN_X, COL_GAP, COLS, COL_H, SCALE, RCPT_W }}
   from '__PACK__';
-const total = MARGIN_X * 2 + COL_W * 3 + COL_GAP * 2;
-console.log([total === PAGE_W, COLS === 3, COL_H === 281,
-             Math.abs(SCALE - 62 / 80) < 1e-9, RCPT_W === 80].map(x => x ? 1 : 0).join(''));
+const total = MARGIN_X * 2 + COL_W * COLS + COL_GAP * (COLS - 1);
+console.log([total === PAGE_W, COLS === 2, COL_H === 281,
+             SCALE === 1, RCPT_W === 72].map(x => x ? 1 : 0).join(''));
 """)
         if not out:
             import pytest
@@ -49,7 +49,7 @@ console.log([total === PAGE_W, COLS === 3, COL_H === 281,
     def test_packcut_fills_columns_dense(self):
         out = _node(f"""
 import {{ packCut, COLS }} from '__PACK__';
-const pieces = [100, 100, 100, 50, 50, 200, 81];
+const pieces = [100, 100, 100, 50, 50, 100];
 const pages = packCut(pieces);
 const flat = pages.flat();
 // все куски размещены, колонок не больше COLS, y внутри колонки
@@ -96,8 +96,8 @@ console.log([covered ? 1 : 0, sequential ? 1 : 0, parts.length > 1 ? 1 : 0].join
 
     def test_ui_uses_new_pack(self):
         js = open(JS, encoding="utf-8").read()
-        assert "SCALE, RCPT_W" in js and "hFull *= SCALE" in js
-        assert "× 3 колонки" in js or "3 колонки" in js
+        assert "SCALE, RCPT_W" in js and "COL_H" in js
+        assert "width:${RCPT_W}mm" in js
 
     def test_button_renamed(self):
         js = open(JS, encoding="utf-8").read()

@@ -44,9 +44,10 @@ class TestBlockImages:
     def test_print_qr_compensated(self):
         """QR в печатных окнах центрировался text-align — нужен margin."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert js.count("margin:0 auto") >= 2
         assert 'width="320" height="320" style="margin:0 auto">' in js
-        assert 'style="width:26mm;height:26mm;margin:0 auto"' in js
+        css = open("app/static/css/app.css", encoding="utf-8").read()
+        assert ".ticket-qr { display: flex; justify-content: center;" in css
+        assert "#print-root .ticket-qr img { width: 26mm; height: 26mm; }" in css
 
     def test_flex_containers_unaffected(self):
         """Сайдбар-бренд и splash — flex: block-картинка не меняет раскладку."""

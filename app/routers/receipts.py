@@ -1762,12 +1762,12 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
             invalid_cnt += 1
         items.append({
             "id": d["id"], "receipt_date": d["receipt_date"],
-            "assignee": pname, "merchant_name": d.get("merchant_name") or "",
+            "company_id": d.get("company_id"), "assignee": pname, "merchant_name": d.get("merchant_name") or "",
             "merchant_inn": d.get("merchant_inn") or "",
             "fn": d.get("fn") or "", "fd": d.get("fd") or "", "fp": d.get("fp") or "",
             "operation": d.get("operation"), "category": d.get("category") or "",
-            "total_sum": s, "fns_status": d.get("fns_status"),
-            "exported": d.get("exported"),
+            "total_sum": s, "personal_sum": d.get("personal_sum") or 0,
+            "fns_status": d.get("fns_status"), "exported": d.get("exported"),
         })
     return {
         "period": {"from": body.date_from, "to": body.date_to},

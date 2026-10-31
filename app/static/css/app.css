@@ -850,31 +850,11 @@ pre.codeblock {
 .trend-down { color: var(--bad-text); font-weight: 700; }
 
 /* ======================================================================
-   v1.7.0 — ПЕЧАТЬ ЧЕКОВ PDF: раскрой листов A4 на колонки 80 мм.
+   ПЕЧАТЬ ЧЕКОВ PDF: раскрой A4 на две колонки по 72 мм.
    Экран: #print-root спрятан справа (в нём меряем высоты в мм).
    Печать: показываем только #print-root, каждая страница — .print-page.
    ====================================================================== */
 #print-root { position: fixed; left: -10000px; top: 0; width: 210mm; }
-.rcpt {
-  width: 80mm;
-  background: #fff;
-  color: #111;
-  font-family: "Courier New", ui-monospace, monospace;
-  font-size: 3.4mm;
-  line-height: 1.32;
-  padding: 3mm 2.5mm;
-  box-sizing: border-box;
-  word-break: break-word;
-}
-.rcpt-head { text-align: center; font-weight: 700; text-transform: uppercase; }
-.rcpt-sub  { text-align: center; font-size: 3mm; }
-.rcpt-rule { border-top: 1px dashed #444; margin: 1.6mm 0; }
-.rcpt table { width: 100%; border-collapse: collapse; font-size: 3.2mm; }
-.rcpt td { vertical-align: top; padding: 0.4mm 0; }
-.rcpt .r-item { margin: 0.6mm 0; }
-.rcpt .r-name { font-weight: 700; }
-.rcpt .r-line { display: flex; justify-content: space-between; gap: 2mm; }
-.rcpt-foot { font-size: 2.9mm; text-align: center; }
 .rcpt-part { font-size: 2.8mm; text-align: center; color: #444; }
 .print-page {
   width: 210mm; height: 296mm;
@@ -884,8 +864,8 @@ pre.codeblock {
 }
 .print-piece {
   position: absolute;
-  width: 80mm;                       /* проектная ширина чека (термолента) */
-  transform: scale(0.775);           /* v1.24.0: 80 мм -> 62 мм, 3 колонки на А4 */
+  width: 72mm;                       /* реальная ширина, масштаб 100% */
+  transform: none;
   transform-origin: top left;
 }
 
@@ -897,7 +877,6 @@ pre.codeblock {
   #print-root { position: static; left: 0; width: auto; }
   .print-page { page-break-after: always; box-shadow: none; }
   .print-page:last-child { page-break-after: auto; }
-  .print-piece .rcpt { box-shadow: none; }
 }
 
 /* v1.25.0: переключатель тем удалён из настроек */
@@ -2184,4 +2163,22 @@ label.field[hidden] { display: none; }
 @media print {
   .ticket { box-shadow: none; border-radius: 0; max-width: 100%; }
   .fcard-tabs, .fcard-note { display: none; }
+}
+
+/* Печать карточки: те же блоки, что на экране, в физической ширине 72 мм. */
+#print-root .ticket {
+  width: 72mm; max-width: none; box-sizing: border-box; padding: 0;
+  border-radius: 0; box-shadow: none; color: #111;
+}
+#print-root .ticket-block { display: flow-root; }
+#print-root .ticket-qr img { width: 26mm; height: 26mm; }
+
+#print-root .ticket-line span:last-child { white-space: normal; overflow-wrap: anywhere; text-align: right; }
+
+/* Комплект: у отчёта поля АО-1, у раскроя чеков — полная страница A4. */
+@media print {
+  body.print-ao1 .receipt-sheet {
+    page: receipt; width: 210mm; height: 296mm; overflow: hidden;
+  }
+  body.print-ao1 .receipt-sheet .print-piece { width: 72mm; transform: none; }
 }

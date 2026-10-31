@@ -13,7 +13,7 @@ import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, open
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
-import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
+import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 
@@ -6150,6 +6150,15 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.73': [
+    { icon: '🖨️', title: 'Чеки 72 мм и экономный раскрой A4',
+      text: 'В PDF чеки выводятся шириной 72 мм без уменьшения, в две колонки. '
+        + 'Длинные чеки переносятся по блокам; используются данные полной карточки.' },
+    { icon: '📋', title: 'Авансовый отчёт с чеками в одном PDF',
+      text: 'Выберите только отчёт или комплект с пронумерованными чеками. '
+        + 'Форма и копии чеков требуют проверки бухгалтером; при возвратах, '
+        + 'личных расходах и смешении организаций печать остановится.' },
+  ],
   '1.70.72': [
     { icon: '🧾', title: 'Полная карточка чека: все данные и вид как в магазине',
       text: 'В карточке чека появилась кнопка «Полная информация по чеку» с '
@@ -8446,58 +8455,8 @@ async function viewReceipts(container) {
   await load();
 }
 
-// ==========================================================================
-//  v1.7.0: Печать чеков PDF — раскрой листов A4 под чеки 80 мм
-//  Чеки печатаются реального размера (как из кассового аппарата), длинные
-//  разрезаются по строкам позиций и продолжаются в соседней колонке.
-//  Геометрия — в app/static/js/printpack.js (чистые функции, тесты node).
-// ==========================================================================
-function rcptDate(v) {
-  try { const d = new Date(v); return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
-  catch { return String(v || ''); }
-}
-
-function rcptBlocks(r, qrUrl, qrFail) {
-  const op = Number(r.operation) === 2 ? 'ВОЗВРАТ ПРИХОДА' : 'ПРИХОД';
-  const rule = '<div class="rcpt-rule"></div>';
-  const blocks = [];
-  blocks.push(`<div class="rcpt-head">${esc(r.merchant_name || 'КАССОВЫЙ ЧЕК')}</div>`);
-  if (r.merchant_inn || r.merchant_address) {
-    blocks.push(`<div class="rcpt-sub">${r.merchant_inn ? 'ИНН ' + esc(r.merchant_inn) : ''}${r.merchant_inn && r.merchant_address ? ' · ' : ''}${esc(r.merchant_address || '')}</div>`);
-  }
-  blocks.push(rule);
-  blocks.push(`<div style="text-align:center"><b>${op}</b> · ${rcptDate(r.receipt_date)}</div>`);
-  blocks.push(rule);
-  const items = r.items || [];
-  if (items.length) {
-    for (const it of items) {
-      const qty = Number(it.quantity) || 0;
-      const price = Number(it.price) || 0;
-      const sum = Number(it.sum ?? qty * price) || 0;
-      blocks.push(`<div class="r-item"><div class="r-name">${esc(it.name || 'товар')}</div>
-        <div class="r-line"><span>${qty} × ${price.toFixed(2)}</span><span>${sum.toFixed(2)}</span></div></div>`);
-    }
-  } else {
-    blocks.push('<div class="rcpt-part">(позиции чека не загружены — получите данные сервисов)</div>');
-  }
-  blocks.push(rule);
-  blocks.push(`<div class="r-line" style="font-weight:700"><span>ИТОГ:</span><span>${Number(r.total_sum || 0).toFixed(2)} ₽</span></div>`);
-  if (r.cash_sum || r.ecash_sum) {
-    blocks.push(`<div class="r-line rcpt-sub"><span>${r.cash_sum ? 'наличные: ' + Number(r.cash_sum).toFixed(2) : ''}</span><span>${r.ecash_sum ? 'безнал: ' + Number(r.ecash_sum).toFixed(2) : ''}</span></div>`);
-  }
-  blocks.push(rule);
-  const fnsMap = { valid: '✓ проверен ФНС', invalid: '✗ НЕ действителен', not_found: '? не найден в ФНС', pending: '⏸ ожидает проверки (лимит ФНС)', unknown: 'не проверялся' };
-  blocks.push(`<div class="rcpt-foot">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')} · ФП ${esc(r.fp || '—')}<br>${fnsMap[r.fns_status] || ''}<br>Ямастер Чек · ymaster.ru</div>`);
-  // v1.10.0: фискальный QR — как на настоящем кассовом чеке
-  if (qrUrl) {
-    blocks.push(`<div style="text-align:center;margin-top:1.5mm"><img src="${qrUrl}" alt="Фискальный QR чека" style="width:26mm;height:26mm;margin:0 auto"></div>`);
-  } else if (qrFail && r.fn) {
-    // v1.24.1: код не получен (нет реквизитов/ошибка) — место под код остаётся помечено
-    blocks.push('<div class="rcpt-part" style="margin-top:1.5mm">(фискальный QR не получен)</div>');
-  }
-  return blocks;
-}
-
+// Печать чеков на A4: карточка чека без масштабирования, две колонки 72 мм.
+// Длинные чеки режутся только по границам блоков с отметкой продолжения.
 // v1.24.1: чеки печатаются С фискальным QR-кодом — дожидаемся загрузки
 // всех картинок раскроя (PNG с сервера через object URL) до вызова
 // диалога печати, иначе браузер печатает лист раньше, чем отрисуются коды.
@@ -8525,96 +8484,117 @@ function setPrintPageMargin(css, ao1) {
   document.body.classList.toggle('print-ao1', !!ao1);
 }
 
-async function printReceiptsPDF(ids) {
+async function printReceiptsPDF(ids, report = null) {
   const { close } = openModal(`<div class="modal-title">🖨 Напечатать чек</div>
-    <p class="form-hint" id="pp-status">Готовлю раскрой листов A4: загружаю фискальные QR-коды…</p><div class="spinner"></div>`);
+    <p class="form-hint" id="pp-status">Готовлю чеки и раскрой A4… Для PDF в окне печати выберите масштаб 100% и отключите поля и колонтитулы.</p><div class="spinner"></div>`);
+  const urls = [];
+  let root;
+  let printing = false;
   try {
-    const data = await api.get('/api/v1/receipts?ids=' + ids.join(','));
-    if (!data.items.length) { close(); return toast('Чеки не найдены', 'err'); }
-    const MM = 25.4 / 96;                                   // CSS px → мм
-    let root = document.getElementById('print-root');
-    if (root) root.remove();
+    if (!ids.length) throw new Error('Не выбраны чеки');
+    const MM = 25.4 / 96;
+    document.getElementById('print-root')?.remove();
     root = document.createElement('div');
     root.id = 'print-root';
     document.body.appendChild(root);
     const meas = document.createElement('div');
-    meas.style.cssText = `width:${RCPT_W}mm;position:absolute;left:0;top:0;`; // v1.24.0: меряем в проектной ширине 80 мм
+    meas.style.cssText = `width:${RCPT_W}mm;position:absolute;left:0;top:0;`;
     root.appendChild(meas);
-
-    // 1) Фискальные QR-коды чеков (PNG с сервера) — чеки печатаются С КОДОМ:
-    //    качаем для всех выбранных чеков (v1.24.1: без лимита 60), с прогрессом
-    const qrUrls = {}, qrFail = {};
-    const status = document.getElementById('pp-status');
-    const qrList = data.items.slice(0, 300);           // страховка от гигантских выборок
-    for (let i = 0; i < qrList.length; i++) {
-      const r = qrList[i];
-      if (status) status.textContent = `Загружаю фискальные QR: ${i + 1} из ${qrList.length}…`;
+    const pieces = [];
+    let missingQr = 0, missingItems = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const status = document.getElementById('pp-status');
+      if (status) status.textContent = `Готовлю чек ${i + 1} из ${ids.length}…`;
+      // Не используем список: он ограничен 100 ID и страницей из 50 чеков.
+      // При ошибке карточки останавливаем печать, не теряя выбранные чеки.
+      const card = await api.get(`/api/v1/receipts/${encodeURIComponent(ids[i])}/card`);
+      const d = card.document;
+      if (!d) throw new Error(`Не удалось получить карточку чека ${ids[i]}`);
+      if (!d.items?.length) missingItems++;
+      let qrUrl = '';
       try {
-        const { blob } = await api.download(`/api/v1/receipts/${r.id}/qr.png`);
-        qrUrls[r.id] = URL.createObjectURL(blob);
-      } catch { qrFail[r.id] = true; }                 // чек без реквизитов — пометка на листе
-    }
-
-    // 2) Рендерим чеки и режем длинные по строкам позиций
-    const pieces = [];                                      // { html, h }
-    for (const r of data.items) {
-      const blocks = rcptBlocks(r, qrUrls[r.id], qrFail[r.id]);   // v1.24.1: с QR / пометкой
-      const full = document.createElement('div');
-      full.className = 'rcpt';
-      full.innerHTML = blocks.join('');
-      meas.appendChild(full);
-      let hFull = full.getBoundingClientRect().height * MM;
-      hFull *= SCALE;                                   // v1.24.0: эффективная высота на листе
-      if (hFull <= COL_H) {
-        pieces.push({ html: full.outerHTML, h: hFull });
-        meas.removeChild(full);
-        continue;
+        const { blob } = await api.download(`/api/v1/receipts/${encodeURIComponent(ids[i])}/qr.png`);
+        qrUrl = URL.createObjectURL(blob);
+        urls.push(qrUrl);
+      } catch { missingQr++; }
+      const temp = document.createElement('div');
+      temp.innerHTML = shopReceiptHTML({ ...d, receipt_id: ids[i] });
+      const ticket = temp.querySelector('.ticket');
+      const qr = ticket.querySelector('.ticket-qr');
+      if (qrUrl) qr.querySelector('img').src = qrUrl;
+      else qr.innerHTML = '<div class="ticket-small">Фискальный QR не получен</div>';
+      // Каждый блок — отдельная неделимая единица, включая позицию и её НДС.
+      const children = [...ticket.children];
+      ticket.replaceChildren(...children.map(child => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ticket-block';
+        wrapper.appendChild(child);
+        return wrapper;
+      }));
+      meas.appendChild(ticket);
+      if (report) {
+        const label = document.createElement('div');
+        label.className = 'ticket-block rcpt-part';
+        label.textContent = `Приложение № ${i + 1} к отчёту`;
+        ticket.prepend(label);
       }
-      // длинный: режем по блокам, части продолжаются в соседней колонке
-      const nodes = [...full.children];
-      const hs = nodes.map(n => n.getBoundingClientRect().height * MM * SCALE); // v1.24.0: позиционная нарезка в масштабе листа
-      meas.removeChild(full);
-      const parts = splitBlocks(hs);
+      const nodes = [...ticket.children];
+      const hs = nodes.map(n => n.getBoundingClientRect().height * MM);
+      const total = ticket.getBoundingClientRect().height * MM;
+      const parts = total <= COL_H ? [[0, nodes.length]] : splitBlocks(hs, 16);
+      meas.removeChild(ticket);
       for (let pi = 0; pi < parts.length; pi++) {
         const [a, b] = parts[pi];
         const part = document.createElement('div');
-        part.className = 'rcpt';
-        let html = pi > 0
-          ? `<div class="rcpt-part">— продолжение чека ФД ${esc(r.fd || '')} —</div>` : '';
+        part.className = 'ticket';
+        let html = pi ? `<div class="rcpt-part">— продолжение ${report ? 'приложения № ' + (i + 1) + ', ' : ''}чека ФД ${esc((d.kkt || {}).fd || '')} —</div>` : '';
         html += nodes.slice(a, b).map(n => n.outerHTML).join('');
-        if (pi < parts.length - 1) {
-          html += `<div class="rcpt-part">↓ продолжение — часть ${pi + 2} из ${parts.length} ↓</div>`;
-        }
+        if (pi < parts.length - 1) html += `<div class="rcpt-part">↓ продолжение — часть ${pi + 2} из ${parts.length} ↓</div>`;
         part.innerHTML = html;
         meas.appendChild(part);
-        pieces.push({ html: part.outerHTML, h: part.getBoundingClientRect().height * MM });
+        const height = part.getBoundingClientRect().height * MM * SCALE;
+        if (height > COL_H) throw new Error(`Чек ${ids[i]} содержит слишком высокий блок для A4. Сократите слишком длинное поле или позицию.`);
+        pieces.push({ html: part.outerHTML, h: height });
         meas.removeChild(part);
       }
     }
-
-    // 2) Раскрой по страницам A4 (каждый кусок ЦЕЛИКОМ на странице)
-    setPrintPageMargin('@page { size: A4 portrait; margin: 0; }', false); // v1.24.0
+    setPrintPageMargin('@page { size: A4 portrait; margin: 0; }', false);
     const pages = packCut(pieces.map(p => p.h));
-
-    // 3) Собираем страницы печати
-    root.innerHTML = pages.map(page =>
-      `<div class="print-page">${page.map(pl =>
-        `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${pl.y}mm">${pieces[pl.piece].html}</div>`
-      ).join('')}</div>`).join('');
-    await whenImagesReady(root);          // v1.24.1: QR должны быть в листе, не в «пустоте»
+    root.innerHTML = pages.map(page => `<div class="print-page receipt-sheet">${page.map(pl =>
+      `<div class="print-piece" style="left:${columnX(pl.col)}mm;top:${MARGIN_Y + pl.y}mm">${pieces[pl.piece].html}</div>`
+    ).join('')}</div>`).join('');
+    if (report) {
+      // Отчёт и приложения отправляются в один вызов печати. Разные поля
+      // страниц задаются именованной страницей receipt в @page.
+      const sheets = [...root.children];
+      root.remove();
+      root = report(pages.length);
+      root.append(...sheets);
+      setPrintPageMargin('@page { size: A4 portrait; margin: 10mm 15mm 10mm 20mm; } @page receipt { size: A4 portrait; margin: 0; }', true);
+    }
+    await whenImagesReady(root);
     close();
-    const withQr = Object.keys(qrUrls).length;
-    toast(`Раскрой готов: ${pages.length} стр. × 3 колонки · ${data.items.length} чек · QR на ${withQr}. В диалоге печати выберите «Сохранить как PDF»`, 'ok', '🖨');
-    window.print();
+    const warnings = [missingItems ? `без позиций: ${missingItems}` : '', missingQr ? `без QR: ${missingQr}` : ''].filter(Boolean).join(', ');
+    const marginHint = report ? 'поля по умолчанию (CSS)' : 'поля — нет';
+    toast(`Готово: ${dataCount(ids.length)} · ${pages.length} стр. чеков A4 · 72 мм${warnings ? ' · ' + warnings : ''}. Для PDF выберите «Сохранить как PDF», масштаб 100%, ${marginHint}.`, warnings ? 'warn' : 'ok', '🖨');
     window.addEventListener('afterprint', () => {
-      const el = document.getElementById('print-root');
-      if (el) el.remove();
+      root.remove();
+      urls.forEach(url => URL.revokeObjectURL(url));
     }, { once: true });
+    window.print();
+    printing = true;
   } catch (e) {
     close();
     toast(e.message, 'err');
+  } finally {
+    if (!printing) {
+      root?.remove();
+      urls.forEach(url => URL.revokeObjectURL(url));
+    }
   }
 }
+
+function dataCount(n) { return `чеков: ${n}`; }
 
 // ==========================================================================
 //  v1.10.0: АВАНСОВЫЙ ОТЧЁТ АО-1 (бухгалтер/админ).
@@ -8765,6 +8745,10 @@ function aoShowPreview(slot, rep, meta) {
         <tr><td style="padding:4px"><b>ИТОГО</b></td><td><b>${rep.total.count}</b></td>
         <td><b>${sum(rep.total.sum)}</b></td></tr></tbody>
     </table>
+    <label class="field"><span>Состав PDF</span>
+      <select id="ao-include"><option value="report">${many ? 'Только сводная ведомость' : 'Только АО-1'}</option>
+        <option value="receipts">${many ? 'Ведомость' : 'АО-1'} + чеки одним PDF</option></select></label>
+    <p class="form-hint">${many ? 'Сводная ведомость не заменяет отдельные отчёты подотчётных лиц. ' : 'АО-1 — проект отчёта; заполните и проверьте реквизиты и подписи. '}Копии чеков не заменяют обязательные подтверждающие документы. Проверьте операции возврата, личные расходы и требования бухгалтерии. Для комплекта с чеками используйте Chrome/Edge: в предпросмотре проверьте поля формы и ширину чеков 72 мм.</p>
     <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
       <button type="button" class="btn" id="ao-back">← Изменить параметры</button>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -8784,7 +8768,28 @@ function aoShowPreview(slot, rep, meta) {
     toast('JSON для 1С скачан — структура готова к загрузке', 'ok', '⬇ 1С');
   };
   slot.querySelector('#ao-print').onclick = () => {
-    if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep, { ...meta, assignee: rep.by_assignee[0].name, month: rep.period.from.slice(0, 7) });
+    if (rep.truncated) return toast('Отчёт обрезан: сузьте выборку перед печатью', 'warn');
+    if (rep.rows.some(r => Number(r.operation) !== 1 || Number(r.personal_sum || 0) !== 0)) {
+      return toast('В выборке есть возврат, неизвестный тип операции или личные расходы. Сверьте и оформите отчёт в бухгалтерской системе.', 'warn');
+    }
+    const companies = new Set(rep.rows.map(r => r.company_id).filter(Boolean));
+    if (companies.size > 1 || (companies.size && rep.rows.some(r => !r.company_id))) {
+      return toast('В выборке несколько организаций или не указана организация чека. Сформируйте отдельный отчёт для каждой организации.', 'warn');
+    }
+    const include = slot.querySelector('#ao-include')?.value === 'receipts';
+    const individual = { ...meta, assignee: rep.by_assignee[0]?.name || '', month: rep.period.from.slice(0, 7) };
+    if (!include) {
+      if (many) aoMultiPrint(rep, meta); else ao1Print(slot, rep, individual);
+      return;
+    }
+    // В сводной ведомости строки группируются по подотчётнику; нумерация
+    // приложений должна следовать именно этому порядку, а не исходному списку.
+    const rows = many ? rep.by_assignee.flatMap(a => rep.rows.filter(r => r.assignee === a.name)) : rep.rows;
+    if (rows.length !== rep.rows.length || rows.some(r => !r.id) || new Set(rows.map(r => r.id)).size !== rows.length) {
+      return toast('Не удалось сопоставить все строки с чеками — комплект не создан', 'err');
+    }
+    const makeReport = count => many ? aoMultiPrint(rep, meta, true) : ao1Print(slot, rep, { ...individual, attachmentPages: count }, true);
+    printReceiptsPDF(rows.map(r => r.id), makeReport);
   };
 }
 
@@ -8811,9 +8816,9 @@ function aoCsvDownload(rep) {
 }
 
 // --- v1.14.0: сводная печать (несколько подотчётников) ----------------------
-function aoMultiPrint(rep, meta) {
+function aoMultiPrint(rep, meta, prepareOnly = false) {
   const sum = (x) => (Math.round(x * 100) / 100).toFixed(2);
-  const ops = { 1: ' (возврат)' };
+  const ops = { 2: ' (возврат)' };
   let rows = '';
   let n = 0;
   for (const a of rep.by_assignee) {
@@ -8866,6 +8871,8 @@ function aoMultiPrint(rep, meta) {
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')}</p>
     </div>`;
   document.body.appendChild(root);
+  setPrintPageMargin('@page { size: A4 portrait; margin: 10mm 15mm 10mm 20mm; }', true);
+  if (prepareOnly) return root;
   toast(`Сводный АО: ${rep.total.count} чек(ов), ${rep.by_assignee.length} подотчётник(ов) — «Сохранить как PDF»`, 'ok', '🧾');
   window.print();
 }
@@ -8924,7 +8931,7 @@ function ao1Json(rep, meta, cash, card) {
         СчетУчета: meta['ao-acc'] || '44.01',
       })),
       Итого: { Сумма: ao1Money(total), КоличествоДокументов: rep.rows.length,
-               Листов: Math.max(1, Math.ceil(rep.rows.length / 18)) },
+               Листов: null },
       ГлавныйБухгалтер: meta['ao-buh'] || '',
       Руководитель: meta['ao-head'] || '',
       Источник: 'Ямастер Чек v' + (state.appVersion || ''),
@@ -8932,7 +8939,7 @@ function ao1Json(rep, meta, cash, card) {
   };
 }
 
-function ao1Print(f, rep, meta) {
+function ao1Print(f, rep, meta, prepareOnly = false) {
   const items = rep.rows;
   const sum = ao1Money;
   const total = items.reduce((a, r) => a + (r.total_sum || 0), 0);
@@ -9014,7 +9021,7 @@ function ao1Print(f, rep, meta) {
         </tbody>
       </table>
       <p class="ao1-line">Приложение <b>${items.length}</b> документов на
-        <b>${Math.max(1, Math.ceil(items.length / 18))}</b> лист(ах)</p>
+        <b>${meta.attachmentPages ?? '_____'}</b> лист(ах)</p>
       <p class="ao1-line">Отчёт проверен. К утверждению в сумме
         <b>${sum(total)}</b> руб. (${ruMoney(total)}).</p>
       <table class="ao1-signs">
@@ -9029,7 +9036,7 @@ function ao1Print(f, rep, meta) {
         <b>Расписка.</b> Принят к проверке от <b>${esc(fio)}</b> авансовый отчёт
         № <b>${esc((meta['ao-num'] || dash).split('-').pop())}</b> от <b>${esc(meta['ao-date'] || dash)}</b>
         на сумму <b>${sum(total)}</b> руб., документов — <b>${items.length}</b> на
-        <b>${Math.max(1, Math.ceil(items.length / 18))}</b> листах.
+        <b>${meta.attachmentPages ?? '_____'}</b> листах.
         <div class="ao1-sigrow">Бухгалтер <span class="ao1-sigline"></span> подпись <span class="ao1-sigline"></span></div>
       </div>
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · ${new Date().toLocaleString('ru-RU')} · лицевая сторона</p>
@@ -9057,7 +9064,8 @@ function ao1Print(f, rep, meta) {
       <p class="ao-foot">Сформировано в «Ямастер Чек» · ymaster.ru · оборотная сторона</p>
     </div>`;
   document.body.appendChild(root);
-  toast(`АО-1 (официальная форма): ${items.length} докум. на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
+  if (prepareOnly) return root;
+  toast(`АО-1 (проект на основе формы): ${items.length} докум. на ${sum(total)} ₽ — в диалоге печати «Сохранить как PDF»`, 'ok', '🧾');
   window.print();
 }
 
@@ -9215,7 +9223,6 @@ async function receiptFullCard(id) {
       const url = URL.createObjectURL(blob);
       img.src = url;
       img.dataset.ready = '1';
-      receiptFullCard._qr = url;
     } catch (e) { img.style.display = 'none'; }
   }
   slot.querySelectorAll('[data-ftab]').forEach(b =>
@@ -9223,26 +9230,7 @@ async function receiptFullCard(id) {
   show('shop');
   hydrateQr();
   const pr = slot.querySelector('#fcard-print');
-  if (pr) pr.onclick = () => {
-    const win = window.open('', '_blank', 'width=460,height=760');
-    if (!win) return toast('Разрешите всплывающие окна для печати', 'warn');
-    const qr = receiptFullCard._qr || '';
-    const html = shopReceiptHTML({ ...d, receipt_id: id })
-      .replace(/<img[^>]*>/, qr ? `<img src="${qr}" alt="QR">` : '');
-    win.document.write(`<html><head><meta charset="utf-8"><title>Чек</title>
-      <style>
-        body{font-family:"Courier New",monospace;margin:0;padding:10px;background:#fff;color:#111}
-        .ticket{max-width:100%;box-shadow:none;border-radius:0}
-        .ticket-qr img{width:150px;height:150px}
-        .ticket-line,.ticket-total{display:flex;justify-content:space-between;gap:10px}
-        .ticket-sep{border-top:1px dashed #8a8a8a;margin:8px 0}
-        .ticket-center{text-align:center}
-        .ticket-item-calc{display:flex;justify-content:space-between}
-        .ticket-title{font-weight:700}.ticket-small{font-size:11px;color:#555}
-      </style>
-      </head><body>${html}<scr` + `ipt>setTimeout(()=>window.print(),500)</scr` + `ipt></body></html>`);
-    win.document.close();
-  };
+  if (pr) pr.onclick = () => printReceiptsPDF([id]);
 }
 
 // --- Drawer: карточка чека --------------------------------------------------
