@@ -39,6 +39,12 @@ npm run test:e2e
 архива `al2023.tar.br` и переданы через `LD_LIBRARY_PATH`. В зависимостях
 приложения этот пакет не закреплён. Временные файлы и базы не являются бэкапом.
 
+Supabase демо-контур включается переменными `SUPABASE_DEMO_ENABLED=1`,
+`SUPABASE_URL` и `SUPABASE_PUBLISHABLE_KEY` (только publishable key). Он читает
+синтетический снимок `chek_demo` и не заменяет рабочую БД. Миграции и описание
+доступа лежат в `supabase/`. Для iframe предпросмотра можно задать
+`FRAME_ANCESTORS=https://*.e2b.app`; production-значение по умолчанию — `'none'`.
+
 Для конкурентного теста PostgreSQL необходима *отдельная тестовая база*,
 доступная по сети напрямую, и переменная окружения `UNIFIED_POSTGRES_TEST_URL`
 с SQLAlchemy-адресом `postgresql+psycopg://…`. Не сохраняйте адрес с паролем в

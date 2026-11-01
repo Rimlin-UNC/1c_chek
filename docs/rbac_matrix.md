@@ -40,7 +40,7 @@
 | dashboard | ✓ | ✓ | ✓ | ✓ | — |
 | scan | ✓ | ✓ | — | ✓ | — |
 | receipts | ✓ | ✓ | ✓ | ✓ | — |
-| export / mapping / poolpick | ✓ | ✓ | — | — | — |
+| export / mapping / poolpick / supabase | ✓ | ✓ | — | — | — |
 | boss (отчёт руководителя) | ✓ | — | ✓ | — | — |
 | users / audit / companies | ✓ | — | — | — | — |
 | pooladmin / poolpeople / fraud / b2badmin | ✓ | — | — | — | — |

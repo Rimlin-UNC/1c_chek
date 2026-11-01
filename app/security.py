@@ -204,16 +204,31 @@ login_guard = LoginGuard()
 # --------------------------------------------------------------------------
 #  Security headers
 # --------------------------------------------------------------------------
+def _frame_ancestors() -> str:
+    from .config import settings
+    value = (settings.FRAME_ANCESTORS or "'none'").strip()
+    return value or "'none'"
+
+
+def _connect_src() -> str:
+    from .config import settings
+    origins = ["'self'", "ws:", "wss:"]
+    if settings.SUPABASE_DEMO_ENABLED and settings.SUPABASE_URL.startswith("https://"):
+        origins.append(settings.SUPABASE_URL.rstrip("/"))
+    return " ".join(origins)
+
+
 async def security_headers_middleware(request: Request, call_next) -> Response:
     response: Response = await call_next(request)
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self' https://st.max.ru; "
         "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-        "connect-src 'self' ws: wss:; media-src 'self'; object-src 'none'; frame-ancestors 'none'",
+        f"connect-src {_connect_src()}; media-src 'self'; object-src 'none'; frame-ancestors {_frame_ancestors()}",
     )
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
+    if _frame_ancestors() == "'none'":
+        response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(), microphone=()")
     # v1.70.38 (чек-лист API-безопасности: HSTS в списке обязательных

@@ -32,6 +32,7 @@ Object.assign(globalThis, {
   packCut: stub(), splitBlocks: stub(), COL_H: 0, columnX: stub(),
   SCALE: 1, RCPT_W: 0,
   osmCardHtml: stub(), osmWire: stub(), osmStop: stub(),
+  viewSupabaseDemo: stub(),
 });
 
 const bodyHtml = indexHtml

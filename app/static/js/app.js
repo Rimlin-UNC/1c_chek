@@ -16,6 +16,7 @@ import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './s
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
+import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -59,6 +60,7 @@ const VIEW_TITLES = {
   poolpeople: 'Чек-Пул: участники',    // v1.41.0: список + просмотр кабинета
   fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
   poolpick: 'Чек-Пул: подбор для компании', // v1.37.0: бухгалтер
+  supabase: 'Supabase демо',
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -101,12 +103,12 @@ const isAdmin = () => state.me && state.me.role === 'admin';
 // и свои разделы настроек; пространство донора — только контур пула.
 const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'boss', 'users', 'audit', 'companies',
+                        'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
                         'pooladmin', 'poolpeople', 'fraud', 'b2badmin',
                         'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'settings'],
+                        'poolpick', 'supabase', 'settings'],
                 secs: ['checks', 'personal'] },
   manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
                 secs: ['personal'] },
@@ -3908,6 +3910,7 @@ function route(silent = false) {
     poolpeople: viewPoolPeople,           // v1.41.0: участники + просмотр кабинета
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
+    supabase: viewSupabaseDemo,           // отдельный read-only демо-контур
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
@@ -6238,6 +6241,9 @@ const WHATS_NEW = {
       text: 'Во вкладке «Мои чеки компании» появились фильтр и счётчики по участнику. '
         + 'Код действует только в этой компании и не раскрывает имя, почту или исходный ID; '
         + 'CSV выгружает тот же срез. Баллы и согласия не меняются.' },
+    { icon: '☁️', title: 'Supabase демо-контур',
+      text: 'Добавлена отдельная страница с синтетическими чеками из Supabase: компании, участники, '
+        + 'статусы и суммы. Контур read-only и не заменяет рабочую базу приложения.' },
     { icon: '🚧', title: 'Единая модель ещё не завершена',
       text: 'Источники пула и реестра пока хранятся раздельно. Это рабочий маршрут на прежней '
         + 'структуре, а не миграция; PostgreSQL и реальные данные требуют отдельной проверки.' },

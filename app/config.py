@@ -88,6 +88,16 @@ class Settings:
         f"sqlite:///{BASE_DIR / 'data' / 'ymaster_check.db'}",
     )
 
+    # --- Supabase: отдельный демонстрационный контур ---------------------
+    # Не заменяет DATABASE_URL рабочего приложения. Publishable key — публичный
+    # ключ клиента; secret/service_role ключи сюда запрещены.
+    SUPABASE_URL: str = _env("SUPABASE_URL", "").rstrip("/")
+    SUPABASE_PUBLISHABLE_KEY: str = _env("SUPABASE_PUBLISHABLE_KEY", "")
+    SUPABASE_DEMO_ENABLED: bool = _env("SUPABASE_DEMO_ENABLED", "0") == "1"
+    # Только для локального/предпросмотра: разрешить встраивание в доверенный
+    # iframe. По умолчанию production остаётся frame-ancestors 'none'.
+    FRAME_ANCESTORS: str = _env("FRAME_ANCESTORS", "'none'")
+
     # --- Интеграция с ФНС ------------------------------------------------
     # v1.70.70: единственный источник проверки чеков — Открытые API ФНС.
     # Мастер-токен и AppId выдаются ФНС при регистрации приложения

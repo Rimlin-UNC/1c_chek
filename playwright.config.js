@@ -27,7 +27,7 @@ export default defineConfig({
   },
   webServer: {
     command: '.venv/bin/python -m qa.playwright_seed && .venv/bin/python run.py --host 127.0.0.1 --port 8123',
-    env: { DATABASE_URL: `sqlite:///${join(dbDir, 'test.db')}`, YM_OSMON_OFF: '1' },
+    env: { DATABASE_URL: `sqlite:///${join(dbDir, 'test.db')}`, YM_OSMON_OFF: '1', SUPABASE_DEMO_ENABLED: '1', SUPABASE_URL: 'https://example.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_e2e' },
     url: 'http://127.0.0.1:8123/',
     reuseExistingServer: false,
     timeout: 60_000,

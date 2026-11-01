@@ -24,7 +24,7 @@ from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
-                      receipts, settings_routes, users, webauthn)
+                      receipts, settings_routes, supabase_demo, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
 
 import datetime as _dt
@@ -418,6 +418,7 @@ app.include_router(mail_admin.public_router)   # v1.44.0: отписка (пуб
 app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)
+app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

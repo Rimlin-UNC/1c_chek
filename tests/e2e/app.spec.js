@@ -112,3 +112,35 @@ test('выбор и перенос чеков разных участников 
   await expect(mineRows).toHaveCount(2);
   await expect(page.locator('#poolpk-body')).toContainText('по фильтрам: 2');
 });
+
+
+test('Supabase демо: read-only снимок и фильтры', async ({ page }) => {
+  await login(page);
+  const welcome = page.getByRole('button', { name: 'Понятно, работаем' });
+  await welcome.click();
+  await page.route('**/api/v1/supabase-demo/config', route => route.fulfill({
+    json: { enabled: true, mode: 'read_only_demo', url: 'https://example.supabase.co',
+      publishable_key: 'sb_publishable_e2e', rpc: 'chek_demo_snapshot' },
+  }));
+  await page.route('https://example.supabase.co/rest/v1/rpc/chek_demo_snapshot', route => route.fulfill({
+    json: { mode: 'read_only_demo', generated_at: '2026-11-01T00:00:00Z',
+      companies: [{ id: 'c1', name: 'Демо-Альфа' }, { id: 'c2', name: 'Демо-Бета' }],
+      participants: [{ id: 'p1', company_id: 'c1', label: 'Участник A' }],
+      receipts: [
+        { id: 'r1', company_id: 'c1', participant_id: 'p1', receipt_no: 'DEMO-1', receipt_date: '2026-10-20',
+          company_name: 'Демо-Альфа', participant_label: 'Участник A', merchant_name: 'Демо-маркет', total: 100, status: 'verified' },
+        { id: 'r2', company_id: 'c2', participant_id: null, receipt_no: 'DEMO-2', receipt_date: '2026-10-21',
+          company_name: 'Демо-Бета', participant_label: 'Без участника', merchant_name: 'Демо-кафе', total: 200, status: 'new' },
+      ],
+      items: [{ receipt_id: 'r1', name: 'Демо-товар', quantity: 1 }] },
+  }));
+  await page.locator('a[href="#/supabase"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Supabase демо');
+  await expect(page.locator('#sb-demo-out')).toContainText('DEMO-1');
+  await expect(page.locator('#sb-demo-out tbody tr')).toHaveCount(2);
+  await page.locator('#sb-demo-company').selectOption('c1');
+  await expect(page.locator('#sb-demo-out tbody tr')).toHaveCount(1);
+  await expect(page.locator('#sb-demo-out')).toContainText('Демо-маркет');
+  await page.locator('#sb-demo-reset').click();
+  await expect(page.locator('#sb-demo-out tbody tr')).toHaveCount(2);
+});
