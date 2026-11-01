@@ -39,6 +39,7 @@ CREATE TABLE unified_receipt_origins (
     origin_id TEXT NOT NULL,
     fiscal_source_hash TEXT,
     extra_fiscal_hash TEXT,
+    core_fiscal_hash TEXT,
     PRIMARY KEY(origin_kind, origin_id),
     UNIQUE(document_id, origin_kind, origin_id)
 );
@@ -101,6 +102,20 @@ CREATE TABLE unified_company_claims (
     UNIQUE(document_id, company_id)
 );
 CREATE INDEX ix_unified_company_claims_company ON unified_company_claims(company_id);
+-- Предложение не меняет фискальный документ и не снимает конфликт.
+CREATE TABLE unified_fiscal_resolution_proposals (
+    document_id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    origin_kind TEXT NOT NULL CHECK(origin_kind IN ('registry', 'pool')),
+    origin_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    review_digest TEXT NOT NULL CHECK(length(review_digest) = 64),
+    acknowledged_unverified INTEGER NOT NULL CHECK(acknowledged_unverified = 1),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(document_id, company_id) REFERENCES unified_company_claims(document_id, company_id),
+    FOREIGN KEY(document_id, origin_kind, origin_id)
+        REFERENCES unified_receipt_origins(document_id, origin_kind, origin_id)
+);
 -- Только личные учётные поля компании, фискальные данные не копируются.
 CREATE TABLE unified_company_accounts (
     document_id TEXT PRIMARY KEY,
@@ -287,6 +302,15 @@ def _migrate(db: sqlite3.Connection) -> None:
                 db.executemany("UPDATE unified_receipt_origins SET fiscal_source_hash=? "
                                "WHERE origin_kind=? AND origin_id=?",
                                [(_item_digest(row[1:]), kind, row[0]) for row in batch])
+        # Отдельный хеш исходных даты, суммы и операции нужен даже тогда,
+        # когда общий документ содержит NULL из-за исторического расхождения.
+        for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
+            cursor = db.execute(f'SELECT p.id, p.receipt_date, p.total_sum, p.operation FROM {table} p '
+                                'JOIN unified_receipt_origins o ON o.origin_kind=? AND o.origin_id=p.id', (kind,))
+            while batch := cursor.fetchmany(500):
+                db.executemany('UPDATE unified_receipt_origins SET core_fiscal_hash=? '
+                               'WHERE origin_kind=? AND origin_id=?',
+                               [(_item_digest(row[1:]), kind, row[0]) for row in batch])
         # Полные дополнительные данные источников не публикуем: хеш позволяет
         # обнаружить их замену после просмотра, не перенося значения.
         for kind, table, column in (('registry', 'receipts', 'ext_json'), ('pool', 'pool_receipts', 'extra_json')):
@@ -365,7 +389,8 @@ def _validate(db: sqlite3.Connection) -> None:
         raise RuntimeError('Нарушена целостность копии')
     for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims',
                   'unified_company_accounts', 'unified_company_account_events',
-                  'unified_fiscal_item_sets', 'unified_fiscal_item_refs', 'unified_item_resolution_events'):
+                  'unified_fiscal_item_sets', 'unified_fiscal_item_refs', 'unified_item_resolution_events',
+                  'unified_fiscal_resolution_proposals'):
         if db.execute(f'PRAGMA foreign_key_check({table})').fetchone():
             raise RuntimeError('Обнаружена повреждённая ссылка на единый чек')
     for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
@@ -392,6 +417,13 @@ def _validate(db: sqlite3.Connection) -> None:
         while batch := cursor.fetchmany(500):
             if any(not row[3] or row[3] != _item_digest(row[:3]) for row in batch):
                 raise RuntimeError('Реквизиты продавца изменились после миграции')
+    for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
+        cursor = db.execute(f'SELECT p.receipt_date, p.total_sum, p.operation, o.core_fiscal_hash '
+                            f'FROM unified_receipt_origins o JOIN {table} p ON o.origin_id=p.id '
+                            'WHERE o.origin_kind=?', (kind,))
+        while batch := cursor.fetchmany(500):
+            if any(not row[3] or row[3] != _item_digest(row[:3]) for row in batch):
+                raise RuntimeError('Фискальные реквизиты источника изменились после миграции')
     for kind, table, column in (('registry', 'receipts', 'ext_json'), ('pool', 'pool_receipts', 'extra_json')):
         cursor = db.execute(f'SELECT p.{column}, o.extra_fiscal_hash FROM unified_receipt_origins o '
                             f'JOIN {table} p ON o.origin_id=p.id WHERE o.origin_kind=?', (kind,))
@@ -500,13 +532,45 @@ def _validate(db: sqlite3.Connection) -> None:
                                'FROM unified_company_claims WHERE document_id=?', (doc_id,)).fetchone()
             if claim != _legacy_ownership(db, doc_id):
                 raise RuntimeError('Владелец единого чека не соответствует исходным назначениям')
+            proposal = db.execute('SELECT company_id, origin_kind, origin_id, actor_id, review_digest '
+                                  'FROM unified_fiscal_resolution_proposals WHERE document_id=?', (doc_id,)).fetchone()
+            if proposal:
+                from qa.unified_fiscal_proposal_fingerprint import fiscal_proposal_fingerprint
+                if (not claim or proposal[0] != claim[0] or not (mask & 7) or mask & 8
+                        or set(kind for kind, _ in source_ids) != {'registry', 'pool'} or len(source_ids) != 2
+                        or (proposal[1], proposal[2]) not in source_ids):
+                    raise RuntimeError('Предложение не соответствует конфликту или владельцу')
+                source_values = []
+                for kind, origin_id in source_ids:
+                    table = {'registry': 'receipts', 'pool': 'pool_receipts'}[kind]
+                    row = db.execute(f'SELECT receipt_date, total_sum, operation FROM {table} WHERE id=?',
+                                     (origin_id,)).fetchone()
+                    source_values.append((kind, origin_id, *_normalized(*row)))
+                selected = next(row for row in source_values if row[:2] == proposal[1:3])
+                if any(value is None for value in selected[2:]) or selected[3] <= 0:
+                    raise RuntimeError('Выбранный источник не содержит полных фискальных реквизитов')
+                fiscal = db.execute('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
+                                    'FROM unified_fiscal_documents WHERE id=?', (doc_id,)).fetchone()
+                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash, core_fiscal_hash '
+                                           'FROM unified_receipt_origins WHERE document_id=?', (doc_id,)).fetchall()
+                item_hashes = db.execute('SELECT i.origin_kind, i.origin_id, i.item_id, i.content_hash '
+                                         'FROM unified_receipt_item_origins i JOIN unified_receipt_origins o '
+                                         'ON o.origin_kind=i.origin_kind AND o.origin_id=i.origin_id '
+                                         'WHERE o.document_id=?', (doc_id,)).fetchall()
+                pool_id = next(origin_id for kind, origin_id in source_ids if kind == 'pool')
+                pool_state = db.execute('SELECT status, assigned_company_id, assigned_at FROM pool_receipts '
+                                        'WHERE id=?', (pool_id,)).fetchone()
+                expected_digest = fiscal_proposal_fingerprint(doc_id, proposal[3], claim[0], fiscal,
+                                                              source_values, origin_hashes, item_hashes, pool_state)
+                if proposal[4] != expected_digest:
+                    raise RuntimeError('Предложение не соответствует просмотренному снимку')
             if item_set[0] == 'resolved_registry' and (not claim or claim[2] != resolution[0]):
                 raise RuntimeError('Выбранный состав не соответствует владельцу чека')
             if item_set[0] == 'resolved_registry' and resolution[2] == 'reviewed_registry':
                 from qa.unified_review_fingerprint import review_fingerprint
                 fiscal = db.execute('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
                                     'FROM unified_fiscal_documents WHERE id=?', (doc_id,)).fetchone()
-                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash '
+                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash, core_fiscal_hash '
                                            'FROM unified_receipt_origins WHERE document_id=?', (doc_id,)).fetchall()
                 item_hashes = db.execute('SELECT i.origin_kind, i.origin_id, i.item_id, i.content_hash '
                                          'FROM unified_receipt_item_origins i JOIN unified_receipt_origins o '
@@ -546,6 +610,7 @@ def _summary(db: sqlite3.Connection) -> dict:
         'item_sets_needing_review': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='needs_review'"),
         'item_sets_resolved_registry': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='resolved_registry'"),
         'unified_item_refs': scalar('SELECT count(*) FROM unified_fiscal_item_refs'),
+        'fiscal_resolution_proposals': scalar('SELECT count(*) FROM unified_fiscal_resolution_proposals'),
         'registry_without_identity': scalar('SELECT count(*) FROM receipts') - scalar(
             "SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),
         'pool_without_identity': scalar('SELECT count(*) FROM pool_receipts') - scalar(

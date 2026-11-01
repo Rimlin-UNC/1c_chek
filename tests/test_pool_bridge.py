@@ -2306,3 +2306,375 @@ def test_review_shows_selected_registry_fiscal_metadata_without_raw_personal_val
             assert 'donor-private@example.com' in db.get(PoolReceipt, pid).extra_json
     finally:
         copied.dispose()
+
+
+def test_fiscal_proposal_preserves_conflict_ownership_and_source_data(setup_bridge, tmp_path, monkeypatch):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).raw = '{"email":"private-donor@example.com"}'
+        db.commit()
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    path = tmp_path / 'fiscal-proposal.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            accountant = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            with pytest.raises(HTTPException) as err:
+                preview_fiscal_conflict(db, doc, c1, accountant)
+            assert err.value.status_code == 403
+            with pytest.raises(HTTPException) as err:
+                preview_fiscal_conflict(db, doc, c2, admin)
+            assert err.value.status_code == 404
+            view = preview_fiscal_conflict(db, doc, c1, admin)
+            assert view['conflicts'] == {'receipt_date': False, 'total_sum': True, 'operation': False}
+            assert view['sources']['pool']['total_sum'] == 5764
+            assert view['sources']['registry']['total_sum'] == 5764.01
+            assert 'private accounting note' not in str(view)
+            assert 'private-donor@example.com' not in str(view)
+            revision = view['revision']
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                propose_fiscal_source(db, doc, c1, admin, origin_kind='pool', revision=revision,
+                                      confirm=True, acknowledge_unverified=False)
+            assert err.value.status_code == 422
+            assert propose_fiscal_source(db, doc, c1, admin, origin_kind='pool', revision=revision,
+                                         confirm=True, acknowledge_unverified=True)
+            db.rollback()
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_resolution_proposals WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert propose_fiscal_source(db, doc, c1, admin, origin_kind='pool', revision=revision,
+                                         confirm=True, acknowledge_unverified=True)
+            db.commit()
+            assert not propose_fiscal_source(db, doc, c1, admin, origin_kind='pool', revision=revision,
+                                             confirm=True, acknowledge_unverified=True)
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                propose_fiscal_source(db, doc, c1, admin, origin_kind='registry', revision=revision,
+                                      confirm=True, acknowledge_unverified=True)
+            assert err.value.status_code == 409
+            db.rollback()
+            proposal = db.execute(text('SELECT company_id, origin_kind, origin_id, acknowledged_unverified '
+                                       'FROM unified_fiscal_resolution_proposals WHERE document_id=:id'),
+                                  {'id': doc}).one()
+            assert proposal == (c1, 'pool', pid, 1)
+            assert db.execute(text('SELECT total_sum,review_mask FROM unified_fiscal_documents WHERE id=:id'),
+                              {'id': doc}).one() == (None, 2)
+            assert db.get(Receipt, rid).comment == 'private accounting note'
+            assert db.get(Receipt, rid).fns_status == 'unknown'
+            assert db.get(PoolReceipt, pid).raw == '{"email":"private-donor@example.com"}'
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.execute(text('SELECT company_id FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == c1
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('changed', ['before_preview', 'after_preview', 'pool_item', 'pool_extra', 'ownership', 'actor'])
+def test_fiscal_proposal_rejects_stale_sources_or_lost_rights(setup_bridge, tmp_path, changed):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    path = tmp_path / 'stale-fiscal.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            if changed == 'before_preview':
+                db.get(Receipt, rid).total_sum += 1
+                db.commit()
+                with pytest.raises(HTTPException) as err:
+                    preview_fiscal_conflict(db, doc, c1, admin)
+                assert err.value.status_code == 409
+                db.rollback()
+            else:
+                revision = preview_fiscal_conflict(db, doc, c1, admin)['revision']
+                db.commit()
+                if changed == 'after_preview':
+                    db.get(Receipt, rid).total_sum += 1
+                elif changed == 'pool_item':
+                    db.query(PoolItem).filter_by(receipt_id=pid).first().total += 1
+                elif changed == 'pool_extra':
+                    db.get(PoolReceipt, pid).extra_json = '{"new":"information"}'
+                elif changed == 'ownership':
+                    db.get(PoolReceipt, pid).assigned_company_id = c2
+                else:
+                    admin.is_active = False
+                db.commit()
+                with pytest.raises(HTTPException) as err:
+                    propose_fiscal_source(db, doc, c1, admin, origin_kind='pool', revision=revision,
+                                          confirm=True, acknowledge_unverified=True)
+                assert err.value.status_code == (403 if changed == 'actor' else 409)
+                db.rollback()
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_resolution_proposals WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.execute(text('SELECT review_mask FROM unified_fiscal_documents WHERE id=:id'),
+                              {'id': doc}).scalar_one() == 2
+    finally:
+        copied.dispose()
+
+
+def test_fiscal_proposal_refuses_incomplete_source_and_conflicting_owner(setup_bridge, tmp_path):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).receipt_date = None
+        db.commit()
+    path = tmp_path / 'incomplete-fiscal.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            view = preview_fiscal_conflict(db, doc, c1, admin)
+            assert view['conflicts']['receipt_date']
+            assert not view['sources']['pool']['selectable'] and view['sources']['registry']['selectable']
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                propose_fiscal_source(db, doc, c1, admin, origin_kind='pool', revision=view['revision'],
+                                      confirm=True, acknowledge_unverified=True)
+            assert err.value.status_code == 409
+            db.rollback()
+        # An ownership conflict on an independent source copy never creates a claim.
+        other = tmp_path / 'ownership-conflict.db'
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).assigned_company_id = c2
+            db.commit()
+        migrate_copy(engine.url.database, other)
+        conflict = create_engine('sqlite:///' + str(other))
+        try:
+            with Session(conflict) as db:
+                doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+                admin = db.query(User).filter_by(role='admin').first()
+                with pytest.raises(HTTPException) as err:
+                    preview_fiscal_conflict(db, doc, c1, admin)
+                assert err.value.status_code == 404
+                assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                                  {'id': doc}).scalar_one() == 0
+                assert db.execute(text('SELECT count(*) FROM unified_fiscal_resolution_proposals WHERE document_id=:id'),
+                                  {'id': doc}).scalar_one() == 0
+        finally:
+            conflict.dispose()
+    finally:
+        copied.dispose()
+
+
+def test_fiscal_proposal_competing_choices_record_only_one(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    path = tmp_path / 'fiscal-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    try:
+        with sessions() as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            uid, revision = actor.id, preview_fiscal_conflict(db, doc, c1, actor)['revision']
+        def propose(kind):
+            with sessions() as db:
+                actor = db.get(User, uid)
+                barrier.wait(timeout=10)
+                try:
+                    result = propose_fiscal_source(db, doc, c1, actor, origin_kind=kind, revision=revision,
+                                                   confirm=True, acknowledge_unverified=True)
+                    db.commit()
+                    return result
+                except HTTPException as err:
+                    db.rollback()
+                    return err.status_code
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(propose, ('pool', 'registry')))
+        assert sorted(results) == [True, 409]
+        with sessions() as db:
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_resolution_proposals WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+            assert db.execute(text('SELECT total_sum,review_mask FROM unified_fiscal_documents WHERE id=:id'),
+                              {'id': doc}).one() == (None, 2)
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('change', ['proposal_digest', 'registry_core', 'pool_core'])
+def test_fiscal_proposal_validator_rejects_corruption(setup_bridge, tmp_path, change):
+    import sqlite3
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    path = tmp_path / 'fiscal-corruption.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            revision = preview_fiscal_conflict(db, doc, c1, actor)['revision']
+            db.commit()
+            assert propose_fiscal_source(db, doc, c1, actor, origin_kind='registry', revision=revision,
+                                         confirm=True, acknowledge_unverified=True)
+            db.commit()
+            if change == 'registry_core':
+                db.get(Receipt, rid).total_sum += 1
+            elif change == 'pool_core':
+                db.get(PoolReceipt, pid).operation = 2
+            else:
+                db.execute(text('UPDATE unified_fiscal_resolution_proposals SET review_digest=:digest '
+                                'WHERE document_id=:doc'), {'digest': '0' * 64, 'doc': doc})
+            db.commit()
+        with sqlite3.connect(path) as db:
+            with pytest.raises(RuntimeError):
+                _validate(db)
+    finally:
+        copied.dispose()
+
+
+def test_fiscal_proposal_handles_multiple_core_conflicts_without_fns_request(setup_bridge, tmp_path, monkeypatch):
+    import sqlite3
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    with SessionLocal() as db:
+        receipt = db.get(Receipt, rid)
+        receipt.receipt_date = datetime(2026, 9, 21, 15, 56)
+        receipt.operation = 2
+        db.commit()
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    path = tmp_path / 'three-conflicts.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            view = preview_fiscal_conflict(db, doc, c1, actor)
+            assert view['conflicts'] == {'receipt_date': True, 'total_sum': True, 'operation': True}
+            db.commit()
+            assert propose_fiscal_source(db, doc, c1, actor, origin_kind='registry', revision=view['revision'],
+                                         confirm=True, acknowledge_unverified=True)
+            db.commit()
+            assert db.execute(text('SELECT receipt_date,total_sum,operation,review_mask '
+                                   'FROM unified_fiscal_documents WHERE id=:id'), {'id': doc}).one() == (
+                                       None, None, None, 7)
+            assert db.get(Receipt, rid).fns_status == 'unknown'
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        copied.dispose()
+
+
+def test_fiscal_proposal_preserves_donor_consent_and_points(setup_bridge, tmp_path):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolConsent, PoolPoint
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_fiscal_proposals import preview_fiscal_conflict, propose_fiscal_source
+    from qa.unified_receipt_preview import donor_view
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    with SessionLocal() as db:
+        donor = PoolUser(vid='fiscal_proposal_' + uuid4().hex, points=9)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded = donor_id, 9
+        db.add(PoolPoint(user_id=donor_id, delta=9, reason='receipt', ref_id=pid))
+        db.add(PoolConsent(vid=donor.vid, user_id=donor_id, offerta_version='1'))
+        db.commit()
+    path = tmp_path / 'fiscal-donor.db'
+    copied = None
+    try:
+        migrate_copy(engine.url.database, path)
+        copied = create_engine('sqlite:///' + str(path))
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            view = preview_fiscal_conflict(db, doc, c1, actor)
+            db.commit()
+            assert propose_fiscal_source(db, doc, c1, actor, origin_kind='registry', revision=view['revision'],
+                                         confirm=True, acknowledge_unverified=True)
+            db.commit()
+            assert db.get(PoolUser, donor_id).points == 9
+            assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 9
+            assert db.query(PoolConsent).filter_by(user_id=donor_id).one().offerta_version == '1'
+            assert 'private accounting note' not in str(donor_view(db, doc, db.get(PoolUser, donor_id)))
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+    finally:
+        if copied is not None:
+            copied.dispose()
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.query(PoolPoint).filter_by(user_id=donor_id).delete()
+            db.query(PoolConsent).filter_by(user_id=donor_id).delete()
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()

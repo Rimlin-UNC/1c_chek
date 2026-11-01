@@ -66,3 +66,13 @@ def source_extra_matches_snapshot(db: Session, kind: str, document_id: str, orig
                           'WHERE o.origin_kind=:kind AND o.origin_id=:id AND o.document_id=:doc'),
                      {'kind': kind, 'id': origin_id, 'doc': document_id}).first()
     return bool(row and row.extra_fiscal_hash and row.extra_fiscal_hash == _item_digest(row[:1]))
+
+
+def source_core_matches_snapshot(db: Session, kind: str, document_id: str, origin_id: str) -> bool:
+    """Проверить исходные дату, сумму и операцию, в том числе при конфликте."""
+    table = {'registry': 'receipts', 'pool': 'pool_receipts'}[kind]
+    row = db.execute(text(f'SELECT p.receipt_date, p.total_sum, p.operation, o.core_fiscal_hash FROM {table} p '
+                          'JOIN unified_receipt_origins o ON o.origin_id=p.id '
+                          'WHERE o.origin_kind=:kind AND o.origin_id=:id AND o.document_id=:doc'),
+                     {'kind': kind, 'id': origin_id, 'doc': document_id}).first()
+    return bool(row and row.core_fiscal_hash and row.core_fiscal_hash == _item_digest(row[:3]))

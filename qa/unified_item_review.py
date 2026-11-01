@@ -16,7 +16,7 @@ from app.models import User, utcnow
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _normalized
 from qa.unified_integrity import (
-    begin_read_snapshot, pool_seller_matches_snapshot, registry_seller_matches_snapshot, source_extra_matches_snapshot,
+    begin_read_snapshot, pool_seller_matches_snapshot, registry_seller_matches_snapshot, source_core_matches_snapshot, source_extra_matches_snapshot,
 )
 from qa.unified_item_comparison import common_positions_match, sellers_match
 from qa.unified_item_resolution import _current_item_hashes
@@ -65,7 +65,7 @@ def _context(db: Session, document_id: str, company_id: str, actor_id: str):
     if not doc or not claim or not company_id or claim.company_id != company_id:
         raise HTTPException(404, 'Чек не найден')
     company = db.execute(text('SELECT is_active FROM companies WHERE id=:id'), {'id': company_id}).first()
-    origins = db.execute(text('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash FROM unified_receipt_origins '
+    origins = db.execute(text('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash, core_fiscal_hash FROM unified_receipt_origins '
                               'WHERE document_id=:id'), {'id': document_id}).all()
     if (not company or not company.is_active or doc.review_mask or len(origins) != 2
             or {row.origin_kind for row in origins} != {'registry', 'pool'}):
@@ -88,6 +88,8 @@ def _context(db: Session, document_id: str, company_id: str, actor_id: str):
             raise HTTPException(409, 'Реквизиты источников изменились, нужна сверка')
     if (not registry_seller_matches_snapshot(db, document_id, ids['registry'])
             or not pool_seller_matches_snapshot(db, document_id, ids['pool'])
+            or not source_core_matches_snapshot(db, 'registry', document_id, ids['registry'])
+            or not source_core_matches_snapshot(db, 'pool', document_id, ids['pool'])
             or not source_extra_matches_snapshot(db, 'registry', document_id, ids['registry'])
             or not source_extra_matches_snapshot(db, 'pool', document_id, ids['pool'])
             or not _current_item_hashes(db, 'registry', ids['registry'])

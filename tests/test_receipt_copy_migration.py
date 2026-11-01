@@ -32,7 +32,7 @@ def test_copy_migration_merges_only_complete_identities(tmp_path):
     _source(source)
     summary = migrate_copy(source, output)
     assert summary == {'documents': 2, 'company_claims': 0, 'company_accounts': 0, 'unresolved_ownership': 0, 'registry_links': 1, 'pool_links': 2, 'needs_review': 1,
-                       'item_sets_single_source': 1, 'item_sets_needing_review': 1, 'item_sets_resolved_registry': 0, 'unified_item_refs': 0,
+                       'item_sets_single_source': 1, 'item_sets_needing_review': 1, 'item_sets_resolved_registry': 0, 'unified_item_refs': 0, 'fiscal_resolution_proposals': 0,
                        'registry_without_identity': 1, 'pool_without_identity': 0,
                        'registry_items_linked': 1, 'pool_items_linked': 1,
                        'registry_items_unlinked': 1, 'pool_items_unlinked': 0}
