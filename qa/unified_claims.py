@@ -16,6 +16,7 @@ from app.pool.router_company import month_used, pick_limit
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _normalized
 from qa.unified_integrity import pool_items_match_snapshot, pool_seller_matches_snapshot
+from qa.unified_permissions import require_accounting_rights
 
 
 def claim_pool_document(db: Session, document_id: str, company_id: str, user: User) -> bool:
@@ -28,6 +29,7 @@ def claim_pool_document(db: Session, document_id: str, company_id: str, user: Us
         raise HTTPException(403, 'Для подбора нужны права бухгалтера')
     if not company_id or (user.role != 'admin' and user.company_id != company_id):
         raise HTTPException(403, 'Подбор доступен только для своей компании')
+    actor_id = user.id
     document = db.execute(text('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
                                'FROM unified_fiscal_documents WHERE id=:id'), {'id': document_id}).first()
     pool_ids = list(db.execute(text("SELECT origin_id FROM unified_receipt_origins "
@@ -39,6 +41,7 @@ def claim_pool_document(db: Session, document_id: str, company_id: str, user: Us
     # Тот же замок используется действующим путём сканирования и подбора.
     lock_identity(db, fn, fd, fp)
     db.expire_all()
+    require_accounting_rights(db, actor_id, company_id)
     fresh_document = db.execute(text('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
                                      'FROM unified_fiscal_documents WHERE id=:id'), {'id': document_id}).first()
     fresh_ids = list(db.execute(text("SELECT origin_id FROM unified_receipt_origins "
@@ -78,7 +81,7 @@ def claim_pool_document(db: Session, document_id: str, company_id: str, user: Us
         raise HTTPException(409, 'Квота подбора исчерпана или выключена')
     pool.assigned_company_id = company_id
     pool.assigned_at = utcnow()
-    pool.assigned_by = user.id
+    pool.assigned_by = actor_id
     db.flush()
     db.execute(text('INSERT INTO unified_company_claims '
                     '(document_id, company_id, pool_origin_id, registry_receipt_id, assigned_at) '

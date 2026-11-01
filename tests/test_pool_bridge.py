@@ -2999,3 +2999,190 @@ def test_experimental_claim_trigger_refuses_conflicting_sources_even_if_mask_cle
             with pytest.raises(sqlite3.IntegrityError, match='ownership conflict'):
                 db.execute('INSERT INTO unified_company_claims(document_id, company_id) VALUES (?, ?)', (doc, owner))
         assert db.execute('SELECT count(*) FROM unified_company_claims WHERE document_id=?', (doc,)).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('operation', ['claim', 'promote', 'update'])
+@pytest.mark.parametrize('revocation', ['inactive', 'role', 'company', 'deleted'])
+def test_unified_writes_recheck_actor_after_identity_lock(setup_bridge, tmp_path, monkeypatch, operation, revocation):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa import unified_accounts, unified_claims
+    from qa.migrate_receipt_copy import migrate_copy
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'revoked-actor.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            uid = actor.id
+            if operation in ('promote', 'update'):
+                assert unified_claims.claim_pool_document(db, doc, c1, actor)
+                if operation == 'update':
+                    assert unified_accounts.promote_pool_claim(db, doc, c1, actor)
+                db.commit()
+            # Cache the actor before a separate transaction revokes access.
+            assert actor.role == 'accountant' and actor.is_active and actor.company_id == c1
+            module = unified_claims if operation == 'claim' else unified_accounts
+            original_lock = module.lock_identity
+            def revoke_before_lock(session, *identity):
+                with sqlite3.connect(path) as writer:
+                    if revocation == 'deleted':
+                        writer.execute('DELETE FROM users WHERE id=?', (uid,))
+                    else:
+                        column, value = {'inactive': ('is_active', 0), 'role': ('role', 'user'),
+                                         'company': ('company_id', c2)}[revocation]
+                        writer.execute(f'UPDATE users SET {column}=? WHERE id=?', (value, uid))
+                return original_lock(session, *identity)
+            monkeypatch.setattr(module, 'lock_identity', revoke_before_lock)
+            with pytest.raises(HTTPException) as denied:
+                if operation == 'claim':
+                    unified_claims.claim_pool_document(db, doc, c1, actor)
+                elif operation == 'promote':
+                    unified_accounts.promote_pool_claim(db, doc, c1, actor)
+                else:
+                    unified_accounts.update_account_private(db, doc, c1, actor, comment='not authorised')
+            assert denied.value.status_code == 403
+            db.rollback()
+            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation == 'claim' else c1)
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == (1 if operation == 'update' else 0)
+            assert db.execute(text("SELECT count(*) FROM unified_company_account_events "
+                                   "WHERE document_id=:id AND event_type='updated'"), {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_unified_atomic_pick_rechecks_cached_revoked_actor(setup_bridge, tmp_path):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'atomic-revocation.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            uid = actor.id
+            assert actor.is_active
+            with sqlite3.connect(path) as writer:
+                writer.execute('UPDATE users SET is_active=0 WHERE id=?', (uid,))
+            with pytest.raises(HTTPException) as denied:
+                claim_and_account_pool_document(db, doc, c1, actor)
+            assert denied.value.status_code == 403
+            db.commit()
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            for table in ('unified_company_claims', 'unified_company_accounts', 'unified_company_account_events'):
+                assert db.execute(text(f'SELECT count(*) FROM {table} WHERE document_id=:id'),
+                                  {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('projection', ['pool', 'account'])
+@pytest.mark.parametrize('revocation', ['inactive', 'company', 'deleted'])
+def test_unified_read_reloads_cached_actor(setup_bridge, tmp_path, projection, revocation):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view
+    from qa.unified_claims import claim_pool_document
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+    from qa.unified_receipt_preview import company_view
+
+    _, _, _, c1, c2, _, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'read-revoked.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            if projection == 'pool':
+                assert claim_pool_document(db, doc, c1, actor)
+            else:
+                assert claim_and_account_pool_document(db, doc, c1, actor) == (True, True)
+            db.commit()
+            uid = actor.id
+            assert actor.is_active and actor.company_id == c1
+            with sqlite3.connect(path) as writer:
+                if revocation == 'deleted':
+                    writer.execute('DELETE FROM users WHERE id=?', (uid,))
+                elif revocation == 'inactive':
+                    writer.execute('UPDATE users SET is_active=0 WHERE id=?', (uid,))
+                else:
+                    writer.execute('UPDATE users SET company_id=? WHERE id=?', (c2, uid))
+            with pytest.raises(HTTPException) as denied:
+                (company_view(db, doc, actor, c1) if projection == 'pool'
+                 else account_view(db, doc, c1, actor))
+            assert denied.value.status_code == 404
+            db.rollback()
+    finally:
+        copied.dispose()
+
+
+def test_unified_donor_read_reloads_cached_block_status(setup_bridge, tmp_path):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_receipt_preview import donor_view
+
+    _, _, _, _, _, pid, _, fn, _, _ = setup_bridge
+    with SessionLocal() as db:
+        donor = PoolUser(vid='donor_revoked_' + uuid4().hex, points=0)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        db.get(PoolReceipt, pid).pool_user_id = donor_id
+        db.commit()
+    path = tmp_path / 'donor-blocked.db'
+    copied = None
+    try:
+        migrate_copy(engine.url.database, path)
+        copied = create_engine('sqlite:///' + str(path))
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            donor = db.get(PoolUser, donor_id)
+            assert not donor.is_blocked
+            with sqlite3.connect(path) as writer:
+                writer.execute('UPDATE pool_users SET is_blocked=1 WHERE id=?', (donor_id,))
+            with pytest.raises(HTTPException) as denied:
+                donor_view(db, doc, donor)
+            assert denied.value.status_code == 404
+            db.rollback()
+    finally:
+        if copied is not None:
+            copied.dispose()
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()

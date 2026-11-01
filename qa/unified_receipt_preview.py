@@ -36,9 +36,11 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
     бухгалтер/руководитель — чеки своей компании. Назначенный чек пула
     доступен для подбора только бухгалтеру и администратору.
     """
-    if not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
-        raise HTTPException(404, 'Чек не найден')
+    actor_id = user.id
     begin_read_snapshot(db)
+    user = db.get(User, actor_id, populate_existing=True)
+    if not user or not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
+        raise HTTPException(404, 'Чек не найден')
     claim = db.execute(text('SELECT company_id, registry_receipt_id, pool_origin_id '
                             'FROM unified_company_claims WHERE document_id=:doc'),
                        {'doc': document_id}).first()
@@ -86,7 +88,10 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
 
 def donor_view(db: Session, document_id: str, donor: PoolUser) -> dict:
     """Участник видит только собственную запись и позиции, а не учёт компании."""
-    if donor.is_blocked:
+    donor_id = donor.id
+    begin_read_snapshot(db)
+    donor = db.get(PoolUser, donor_id, populate_existing=True)
+    if not donor or donor.is_blocked:
         raise HTTPException(404, 'Чек не найден')
     pool = db.query(PoolReceipt).filter(PoolReceipt.id.in_(_origin_ids(db, document_id, 'pool')),
                                         PoolReceipt.pool_user_id == donor.id).all()

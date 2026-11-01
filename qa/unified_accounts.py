@@ -17,6 +17,7 @@ from app.pool.models import PoolItem, PoolReceipt
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _normalized
 from qa.unified_integrity import begin_read_snapshot, pool_items_match_snapshot, pool_seller_matches_snapshot
+from qa.unified_permissions import require_accounting_rights
 
 
 def _document(db: Session, document_id: str):
@@ -35,12 +36,14 @@ def promote_pool_claim(db: Session, document_id: str, company_id: str, user: Use
         raise HTTPException(403, 'Для учёта нужны права бухгалтера')
     if not company_id or (user.role != 'admin' and user.company_id != company_id):
         raise HTTPException(403, 'Учёт доступен только для своей компании')
+    actor_id = user.id
     document = _document(db, document_id)
     if not document:
         raise HTTPException(404, 'Чек не найден')
     fn, fd, fp, receipt_date, total_sum, operation, mask = document
     lock_identity(db, fn, fd, fp)
     db.expire_all()
+    require_accounting_rights(db, actor_id, company_id)
     if _document(db, document_id) != document:
         raise HTTPException(409, 'Снимок чека изменился, нужна повторная сверка')
     company = db.query(Company).filter(Company.id == company_id).with_for_update().first()
@@ -94,10 +97,10 @@ def promote_pool_claim(db: Session, document_id: str, company_id: str, user: Use
                     '(document_id, company_id, pool_origin_id, created_by, created_at, '
                     'status, fns_status, fns_checked_at) '
                     'VALUES (:doc, :company, :pool, :user, :created, :status, :fns, :checked)'),
-               {'doc': document_id, 'company': company_id, 'pool': pool.id, 'user': user.id,
+               {'doc': document_id, 'company': company_id, 'pool': pool.id, 'user': actor_id,
                 'created': utcnow().isoformat(' '), 'status': 'verified' if confirmed else 'pending',
                 'fns': 'valid' if confirmed else 'unknown', 'checked': checked})
-    _record_event(db, document_id, user.id, 'created', '')
+    _record_event(db, document_id, actor_id, 'created', '')
     return True
 
 
@@ -111,9 +114,11 @@ def _record_event(db: Session, document_id: str, actor_id: str, event: str, fiel
 
 def account_view(db: Session, document_id: str, company_id: str, user: User) -> dict:
     """Вернуть только разрешённую учётную проекцию компании на снимке."""
-    if not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
-        raise HTTPException(404, 'Чек не найден')
+    actor_id = user.id
     begin_read_snapshot(db)
+    user = db.get(User, actor_id, populate_existing=True)
+    if not user or not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
+        raise HTTPException(404, 'Чек не найден')
     account = db.execute(text('SELECT company_id, legacy_receipt_id, pool_origin_id, created_by, '
                               'status, fns_status, fns_checked_at, assignee, comment, category, '
                               'personal_sum, exported FROM unified_company_accounts WHERE document_id=:id'),
@@ -176,11 +181,13 @@ def update_account_private(db: Session, document_id: str, company_id: str, user:
         raise HTTPException(403, 'Для изменения нужны права бухгалтера')
     if not company_id or (user.role != 'admin' and user.company_id != company_id):
         raise HTTPException(403, 'Изменение доступно только для своей компании')
+    actor_id = user.id
     doc = _document(db, document_id)
     if not doc:
         raise HTTPException(404, 'Чек не найден')
     lock_identity(db, doc.fn, doc.fd, doc.fp)
     db.expire_all()
+    require_accounting_rights(db, actor_id, company_id)
     if _document(db, document_id) != doc:
         raise HTTPException(409, 'Снимок чека изменился, нужна повторная сверка')
     company = db.query(Company).filter(Company.id == company_id).with_for_update().first()
@@ -213,5 +220,5 @@ def update_account_private(db: Session, document_id: str, company_id: str, user:
     assignments = ', '.join(f'{field}=:{field}' for field in values)
     db.execute(text(f'UPDATE unified_company_accounts SET {assignments} WHERE document_id=:document_id'),
                {**values, 'document_id': document_id})
-    _record_event(db, document_id, user.id, 'updated', ','.join(sorted(values)))
+    _record_event(db, document_id, actor_id, 'updated', ','.join(sorted(values)))
     return True
