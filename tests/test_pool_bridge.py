@@ -1158,7 +1158,210 @@ def test_unified_account_refuses_modified_position_and_revoked_fns(setup_bridge,
                 with pytest.raises(HTTPException) as err:
                     account_view(db, doc, c1, owner)
                 assert err.value.status_code == 409
+                db.rollback()
+                with pytest.raises(HTTPException) as err:
+                    promote_pool_claim(db, doc, c1, owner)
+                assert err.value.status_code == 409
+                db.rollback()
         finally:
             other.dispose()
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('change', ['delete', 'modify', 'add'])
+def test_unified_claim_rejects_stale_positions_without_consuming_quota(setup_bridge, tmp_path, change):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_claims import claim_pool_document
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'before-claim.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            item = db.query(PoolItem).filter_by(receipt_id=pid).first()
+            if change == 'delete':
+                db.delete(item)
+            elif change == 'modify':
+                item.name = 'modified item'
+            else:
+                db.add(PoolItem(receipt_id=pid, name='extra item', quantity=1, price=1, total=1))
+            db.commit()
+            used = month_used(db, c1)
+            with pytest.raises(HTTPException) as err:
+                claim_pool_document(db, doc, c1, owner)
+            assert err.value.status_code == 409
+            db.rollback()
+            assert month_used(db, c1) == used
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_unified_atomic_pick_rolls_back_partial_failure_and_outer_transaction(setup_bridge, tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import Company, User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    import qa.unified_pool_accounting as accounting
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'atomic-accounting.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            used = month_used(db, c1)
+            company = db.get(Company, c1)
+            company.name = 'unrelated outer change'
+            original = accounting.promote_pool_claim
+            def fail_promotion(*args, **kwargs):
+                assert original(*args, **kwargs)
+                raise HTTPException(409, 'injected failure after account creation')
+            monkeypatch.setattr(accounting, 'promote_pool_claim', fail_promotion)
+            with pytest.raises(HTTPException):
+                accounting.claim_and_account_pool_document(db, doc, c1, owner)
+            db.commit()  # A caller catching the error cannot accidentally commit the claim.
+            assert db.get(Company, c1).name == 'unrelated outer change'
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert month_used(db, c1) == used
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.execute(text('SELECT count(*) FROM unified_company_account_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            monkeypatch.setattr(accounting, 'promote_pool_claim', original)
+            assert accounting.claim_and_account_pool_document(db, doc, c1, owner) == (True, True)
+            db.rollback()
+        # A new session verifies the released savepoint did not commit on its own.
+        with Session(copied) as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert month_used(db, c1) == used
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            assert accounting.claim_and_account_pool_document(db, doc, c1, owner) == (True, True)
+            db.commit()
+            assert accounting.claim_and_account_pool_document(db, doc, c1, owner) == (False, False)
+            db.commit()
+            assert month_used(db, c1) == used + 1
+            assert db.execute(text("SELECT count(*) FROM unified_company_account_events WHERE document_id=:id"),
+                              {'id': doc}).scalar_one() == 1
+    finally:
+        copied.dispose()
+
+
+def test_unified_atomic_pick_concurrent_same_company(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'atomic-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    try:
+        with sessions() as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            uid = db.query(User).filter_by(company_id=c1, role='accountant').first().id
+            used = month_used(db, c1)
+        def pick():
+            with sessions() as db:
+                user = db.get(User, uid)
+                barrier.wait(timeout=10)
+                result = claim_and_account_pool_document(db, doc, c1, user)
+                db.commit()
+                return result
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assert sorted(executor.map(lambda _: pick(), range(2))) == [(False, False), (True, True)]
+        with sessions() as db:
+            assert month_used(db, c1) == used + 1
+            assert db.get(PoolReceipt, pid).assigned_company_id == c1
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+    finally:
+        copied.dispose()
+
+
+def test_unified_atomic_pick_concurrent_companies(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'atomic-companies.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    try:
+        with sessions() as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            uids = {c: db.query(User).filter_by(company_id=c, role='accountant').first().id for c in (c1, c2)}
+            before = {c: month_used(db, c) for c in (c1, c2)}
+        def pick(company):
+            with sessions() as db:
+                user = db.get(User, uids[company])
+                barrier.wait(timeout=10)
+                try:
+                    result = claim_and_account_pool_document(db, doc, company, user)
+                    db.commit()
+                    return company, result
+                except HTTPException as err:
+                    db.rollback()
+                    return company, err.status_code
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = dict(executor.map(pick, (c1, c2)))
+        winner = next(c for c, result in results.items() if result == (True, True))
+        loser = c2 if winner == c1 else c1
+        assert results[loser] == 409
+        with sessions() as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id == winner
+            assert month_used(db, winner) == before[winner] + 1
+            assert month_used(db, loser) == before[loser]
+            assert db.execute(text('SELECT company_id FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == winner
+            assert db.execute(text('SELECT count(*) FROM unified_company_account_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
     finally:
         copied.dispose()

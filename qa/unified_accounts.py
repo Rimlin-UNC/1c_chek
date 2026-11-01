@@ -15,22 +15,14 @@ from sqlalchemy.orm import Session
 from app.models import Company, Receipt, User, utcnow
 from app.pool.models import PoolItem, PoolReceipt
 from app.services.receipt_identity import lock_identity
-from qa.migrate_receipt_copy import _item_digest, _normalized
+from qa.migrate_receipt_copy import _normalized
+from qa.unified_integrity import pool_items_match_snapshot
 
 
 def _document(db: Session, document_id: str):
     return db.execute(text('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
                            'FROM unified_fiscal_documents WHERE id=:id'), {'id': document_id}).first()
 
-
-def _items_are_linked(db: Session, pool_id: str) -> bool:
-    result = db.execute(text('SELECT * FROM pool_items WHERE receipt_id=:id'), {'id': pool_id})
-    id_index = list(result.keys()).index('id')
-    current = {row[id_index]: _item_digest(row) for row in result}
-    linked = dict(db.execute(text(
-        "SELECT item_id, content_hash FROM unified_receipt_item_origins "
-        "WHERE origin_kind='pool' AND origin_id=:id"), {'id': pool_id}).all())
-    return current == linked
 
 
 def promote_pool_claim(db: Session, document_id: str, company_id: str, user: User) -> bool:
@@ -58,7 +50,7 @@ def promote_pool_claim(db: Session, document_id: str, company_id: str, user: Use
                             'FROM unified_company_claims WHERE document_id=:id'), {'id': document_id}).first()
     if not claim or claim.company_id != company_id:
         raise HTTPException(404, 'Чек не найден')
-    existing = db.execute(text('SELECT company_id, legacy_receipt_id, pool_origin_id '
+    existing = db.execute(text('SELECT company_id, legacy_receipt_id, pool_origin_id, fns_status, fns_checked_at '
                                'FROM unified_company_accounts WHERE document_id=:id'), {'id': document_id}).first()
     if existing:
         if (existing.company_id, existing.legacy_receipt_id, existing.pool_origin_id) != (
@@ -84,11 +76,15 @@ def promote_pool_claim(db: Session, document_id: str, company_id: str, user: Use
     if (not pool or pool.assigned_company_id != company_id or pool.status != 'verified'
             or (pool.fn, pool.fd, pool.fp) != (fn, fd, fp)
             or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (receipt_date, total_sum, operation)
-            or not _items_are_linked(db, claim.pool_origin_id)):
+            or not pool_items_match_snapshot(db, claim.pool_origin_id)):
         raise HTTPException(409, 'Сохранённый чек или его позиции изменились, нужна сверка')
     if db.query(Receipt.id).filter_by(fn=fn, fd=fd, fp=fp).first():
         raise HTTPException(409, 'Чек уже зарегистрирован в реестре')
     if existing:
+        if existing.fns_status == 'valid' and (
+                not pool.fns_confirmed or pool.fns_checked_at is None
+                or pool.fns_checked_at.isoformat(' ') != existing.fns_checked_at):
+            raise HTTPException(409, 'Подтверждение ФНС изменилось, нужна сверка')
         return False
     # Ручное одобрение и старые чеки не являются доказательством проверки ФНС.
     confirmed = bool(pool.fns_confirmed and pool.fns_checked_at is not None)
@@ -143,7 +139,7 @@ def account_view(db: Session, document_id: str, company_id: str, user: User) -> 
     if (mask or not origin or pool.assigned_company_id != company_id or pool.status != 'verified'
             or (pool.fn, pool.fd, pool.fp) != (fn, fd, fp)
             or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (receipt_date, total_sum, operation)
-            or not _items_are_linked(db, pool.id)):
+            or not pool_items_match_snapshot(db, pool.id)):
         raise HTTPException(409, 'Снимок чека устарел, нужна сверка')
     if db.query(Receipt.id).filter_by(fn=fn, fd=fd, fp=fp).first():
         raise HTTPException(409, 'Чек появился в старом реестре, нужна сверка')

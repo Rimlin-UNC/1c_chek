@@ -57,7 +57,7 @@ def test_failed_migration_does_not_leave_copy_and_never_overwrites(tmp_path):
     assert output.read_text() == 'do not overwrite'
 
 
-@pytest.mark.parametrize('corruption', ['deleted_origin', 'changed_fiscal_identity', 'missing_link', 'missing_document', 'missing_item', 'wrong_item_origin', 'altered_amount', 'removed_review_flag'])
+@pytest.mark.parametrize('corruption', ['deleted_origin', 'changed_fiscal_identity', 'missing_link', 'missing_document', 'missing_item', 'wrong_item_origin', 'altered_item', 'altered_item_hash', 'altered_amount', 'removed_review_flag'])
 def test_verification_rejects_corrupted_migration(tmp_path, corruption):
     from qa.migrate_receipt_copy import _validate
 
@@ -78,6 +78,10 @@ def test_verification_rejects_corrupted_migration(tmp_path, corruption):
             db.execute("DELETE FROM unified_receipt_item_origins WHERE item_id='pi1'")
         elif corruption == 'wrong_item_origin':
             db.execute("UPDATE pool_items SET receipt_id='p2' WHERE id='pi1'")
+        elif corruption == 'altered_item':
+            db.execute("UPDATE pool_items SET name='modified' WHERE id='pi1'")
+        elif corruption == 'altered_item_hash':
+            db.execute("UPDATE unified_receipt_item_origins SET content_hash='wrong' WHERE item_id='pi1'")
         elif corruption == 'altered_amount':
             db.execute("UPDATE unified_fiscal_documents SET total_sum=123 WHERE fn='123'")
         else:
