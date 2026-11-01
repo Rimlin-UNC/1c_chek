@@ -19,7 +19,12 @@ from urllib.parse import quote
 from uuid import uuid4
 
 
-_SCHEMA = """
+# SQLite trim() без второго аргумента удаляет лишь пробел ASCII, тогда как
+# Python str.strip() также считает пустыми табуляции и пробелы Unicode.
+# Состав набора фиксирован, чтобы ограничения и проверка видели одно состояние.
+_SQL_WHITESPACE = 'char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)'
+
+_SCHEMA = f"""
 CREATE TABLE unified_fiscal_documents (
     id TEXT PRIMARY KEY,
     fn TEXT NOT NULL,
@@ -95,7 +100,7 @@ CREATE TABLE unified_item_resolution_events (
 -- Единственное право компании на документ: одна строка на fiscal document.
 CREATE TABLE unified_company_claims (
     document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
-    company_id TEXT NOT NULL CHECK (length(trim(company_id)) > 0),
+    company_id TEXT NOT NULL CHECK (length(trim(company_id, {_SQL_WHITESPACE})) > 0),
     pool_origin_id TEXT REFERENCES pool_receipts(id),
     registry_receipt_id TEXT REFERENCES receipts(id),
     assigned_at TEXT,
@@ -109,10 +114,10 @@ WHEN EXISTS (SELECT 1 FROM unified_fiscal_documents d
              WHERE d.id=NEW.document_id AND (d.review_mask & 8) != 0)
  OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN receipts r ON r.id=o.origin_id
             WHERE o.document_id=NEW.document_id AND o.origin_kind='registry'
-              AND (r.company_id IS NULL OR trim(r.company_id)='' OR r.company_id != NEW.company_id))
+              AND (r.company_id IS NULL OR trim(r.company_id, {_SQL_WHITESPACE})='' OR r.company_id != NEW.company_id))
  OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN pool_receipts p ON p.id=o.origin_id
             WHERE o.document_id=NEW.document_id AND o.origin_kind='pool'
-              AND p.assigned_company_id IS NOT NULL AND trim(p.assigned_company_id) != ''
+              AND p.assigned_company_id IS NOT NULL AND trim(p.assigned_company_id, {_SQL_WHITESPACE}) != ''
               AND p.assigned_company_id != NEW.company_id)
 BEGIN
     SELECT RAISE(ABORT, 'ownership conflict');
@@ -122,10 +127,10 @@ WHEN EXISTS (SELECT 1 FROM unified_fiscal_documents d
              WHERE d.id=NEW.document_id AND (d.review_mask & 8) != 0)
  OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN receipts r ON r.id=o.origin_id
             WHERE o.document_id=NEW.document_id AND o.origin_kind='registry'
-              AND (r.company_id IS NULL OR trim(r.company_id)='' OR r.company_id != NEW.company_id))
+              AND (r.company_id IS NULL OR trim(r.company_id, {_SQL_WHITESPACE})='' OR r.company_id != NEW.company_id))
  OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN pool_receipts p ON p.id=o.origin_id
             WHERE o.document_id=NEW.document_id AND o.origin_kind='pool'
-              AND p.assigned_company_id IS NOT NULL AND trim(p.assigned_company_id) != ''
+              AND p.assigned_company_id IS NOT NULL AND trim(p.assigned_company_id, {_SQL_WHITESPACE}) != ''
               AND p.assigned_company_id != NEW.company_id)
 BEGIN
     SELECT RAISE(ABORT, 'ownership conflict');
@@ -133,7 +138,7 @@ END;
 -- Предложение по историческому конфликту владельцев не создаёт право учёта.
 CREATE TABLE unified_ownership_review_proposals (
     document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
-    registry_company_id TEXT NOT NULL CHECK(length(trim(registry_company_id)) > 0),
+    registry_company_id TEXT NOT NULL CHECK(length(trim(registry_company_id, {_SQL_WHITESPACE})) > 0),
     registry_origin_id TEXT NOT NULL REFERENCES receipts(id),
     pool_origin_id TEXT NOT NULL REFERENCES pool_receipts(id),
     actor_id TEXT NOT NULL,
@@ -390,7 +395,7 @@ def _migrate(db: sqlite3.Connection) -> None:
                                (doc_id,))
         # Фискальные данные могут совпадать, а назначение пула — нет.
         # Только помечаем конфликт, никогда не меняем владельцев автоматически.
-        db.execute("""UPDATE unified_fiscal_documents SET review_mask = review_mask | 8
+        db.execute(f"""UPDATE unified_fiscal_documents SET review_mask = review_mask | 8
             WHERE EXISTS (
                 SELECT 1 FROM unified_receipt_origins a
                 JOIN receipts r ON a.origin_kind = 'registry' AND r.id = a.origin_id
@@ -398,6 +403,8 @@ def _migrate(db: sqlite3.Connection) -> None:
                 JOIN pool_receipts p ON p.id = b.origin_id
                 WHERE a.document_id = unified_fiscal_documents.id
                   AND r.company_id IS NOT NULL AND p.assigned_company_id IS NOT NULL
+                  AND trim(r.company_id, {_SQL_WHITESPACE}) != ''
+                  AND trim(p.assigned_company_id, {_SQL_WHITESPACE}) != ''
                   AND r.company_id != p.assigned_company_id
             )""")
         docs = db.execute('SELECT id FROM unified_fiscal_documents')
@@ -444,8 +451,8 @@ def _validate(db: sqlite3.Connection) -> None:
         missing = db.execute(f"""
             SELECT count(*) FROM {table} r LEFT JOIN unified_receipt_origins o
             ON o.origin_kind = ? AND o.origin_id = r.id
-            WHERE r.fn IS NOT NULL AND trim(r.fn) != '' AND r.fd IS NOT NULL AND trim(r.fd) != ''
-              AND r.fp IS NOT NULL AND trim(r.fp) != '' AND o.origin_id IS NULL
+            WHERE r.fn IS NOT NULL AND trim(r.fn, {_SQL_WHITESPACE}) != '' AND r.fd IS NOT NULL AND trim(r.fd, {_SQL_WHITESPACE}) != ''
+              AND r.fp IS NOT NULL AND trim(r.fp, {_SQL_WHITESPACE}) != '' AND o.origin_id IS NULL
         """, (kind,)).fetchone()[0]
         if bad or missing:
             raise RuntimeError('Связи единого чека не соответствуют исходным записям')
@@ -559,8 +566,8 @@ def _validate(db: sqlite3.Connection) -> None:
                     expected.append(None)
                 else:
                     expected.append(values[0])
-            registries = {row[3] for row in origins if row[3] is not None}
-            pools = {row[4] for row in origins if row[4] is not None}
+            registries = {row[3] for row in origins if row[3] is not None and row[3].strip()}
+            pools = {row[4] for row in origins if row[4] is not None and row[4].strip()}
             if any(a != b for a in registries for b in pools):
                 mask |= 8
             if (saved_date, saved_amount, saved_operation) != tuple(expected) or saved_mask != mask:
@@ -584,7 +591,7 @@ def _validate(db: sqlite3.Connection) -> None:
                 pool_state = db.execute('SELECT assigned_company_id, status, assigned_at FROM pool_receipts '
                                         'WHERE id=?', (ownership_proposal[2],)).fetchone()
                 if (not registry_company or registry_company[0] != ownership_proposal[0] or not pool_state
-                        or not pool_state[0] or pool_state[0] == ownership_proposal[0]):
+                        or not pool_state[0] or not pool_state[0].strip() or pool_state[0] == ownership_proposal[0]):
                     raise RuntimeError('Назначения не соответствуют предложению по владению')
                 if db.execute('SELECT 1 FROM unified_company_accounts WHERE document_id=?', (doc_id,)).fetchone():
                     raise RuntimeError('При конфликте владения не должна создаваться учётная привязка')
@@ -665,13 +672,13 @@ def _summary(db: sqlite3.Connection) -> dict:
         'documents': scalar('SELECT count(*) FROM unified_fiscal_documents'),
         'company_claims': scalar('SELECT count(*) FROM unified_company_claims'),
         'company_accounts': scalar('SELECT count(*) FROM unified_company_accounts'),
-        'unresolved_ownership': scalar("""SELECT count(DISTINCT d.id) FROM unified_fiscal_documents d
+        'unresolved_ownership': scalar(f"""SELECT count(DISTINCT d.id) FROM unified_fiscal_documents d
             JOIN unified_receipt_origins o ON o.document_id = d.id
             LEFT JOIN receipts r ON o.origin_kind = 'registry' AND r.id = o.origin_id
             LEFT JOIN pool_receipts p ON o.origin_kind = 'pool' AND p.id = o.origin_id
             LEFT JOIN unified_company_claims c ON c.document_id = d.id
-            WHERE c.document_id IS NULL AND (length(trim(coalesce(r.company_id, ''))) > 0
-                OR length(trim(coalesce(p.assigned_company_id, ''))) > 0)"""),
+            WHERE c.document_id IS NULL AND (length(trim(coalesce(r.company_id, ''), {_SQL_WHITESPACE})) > 0
+                OR length(trim(coalesce(p.assigned_company_id, ''), {_SQL_WHITESPACE})) > 0)"""),
         'registry_links': scalar("SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),
         'pool_links': scalar("SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='pool'"),
         'needs_review': scalar('SELECT count(*) FROM unified_fiscal_documents WHERE review_mask != 0'),

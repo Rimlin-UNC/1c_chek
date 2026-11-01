@@ -13,6 +13,8 @@ from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 
+from qa.migrate_receipt_copy import _SQL_WHITESPACE
+
 
 def inspect_source(source: str | Path) -> dict:
     """Прочитать один согласованный снимок, не меняя содержимое исходной БД."""
@@ -40,8 +42,9 @@ def inspect_source(source: str | Path) -> dict:
         for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
             result['source_counts'][kind] = db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
             result['incomplete_identities'][kind] = db.execute(
-                f"SELECT count(*) FROM {table} WHERE fn IS NULL OR trim(fn)='' "
-                "OR fd IS NULL OR trim(fd)='' OR fp IS NULL OR trim(fp)=''").fetchone()[0]
+                f"SELECT count(*) FROM {table} WHERE fn IS NULL OR trim(fn, {_SQL_WHITESPACE})='' "
+                f"OR fd IS NULL OR trim(fd, {_SQL_WHITESPACE})='' "
+                f"OR fp IS NULL OR trim(fp, {_SQL_WHITESPACE})=''").fetchone()[0]
         for kind, items, receipts in (('registry', 'receipt_items', 'receipts'),
                                       ('pool', 'pool_items', 'pool_receipts')):
             result['orphan_items'][kind] = db.execute(

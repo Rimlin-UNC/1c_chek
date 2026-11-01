@@ -45,7 +45,7 @@ def _context(db: Session, document_id: str, company_id: str, actor_id: str):
         raise HTTPException(404, 'Чек не найден')
     company = db.execute(text('SELECT is_active FROM companies WHERE id=:id'), {'id': company_id}).first()
     if (not company or not company.is_active or not pool or not pool.assigned_company_id
-            or pool.assigned_company_id == company_id or not (doc.review_mask & 8)):
+            or not pool.assigned_company_id.strip() or pool.assigned_company_id == company_id or not (doc.review_mask & 8)):
         raise HTTPException(409, 'Состояние требует отдельного разбора')
     claim = db.execute(text('SELECT 1 FROM unified_company_claims WHERE document_id=:id'),
                        {'id': document_id}).first()

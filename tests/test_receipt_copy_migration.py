@@ -276,3 +276,59 @@ def test_preflight_reads_one_wal_snapshot(tmp_path, monkeypatch):
     assert result['source_counts']['pool'] == 2
     with original_connect(source) as db:
         assert db.execute('SELECT count(*) FROM pool_receipts').fetchone() == (3,)
+
+
+@pytest.mark.parametrize('blank', ['', ' ', '\t\n', '\u00a0', '\u2003', '\u3000', '\u001c'])
+@pytest.mark.parametrize('blank_owner', ['registry', 'pool', 'both'])
+def test_blank_company_assignment_never_invents_or_conflicts_with_owner(tmp_path, blank, blank_owner):
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    registry = blank if blank_owner in ('registry', 'both') else 'company-A'
+    pool = blank if blank_owner in ('pool', 'both') else 'company-B'
+    with sqlite3.connect(source) as db:
+        db.execute("UPDATE receipts SET company_id=? WHERE id='r1'", (registry,))
+        db.execute("UPDATE pool_receipts SET assigned_company_id=? WHERE id='p1'", (pool,))
+    summary = migrate_copy(source, output)
+    assert summary['company_claims'] == int(blank_owner == 'pool')
+    assert summary['unresolved_ownership'] == int(blank_owner == 'registry')
+    with sqlite3.connect(output) as db:
+        doc, mask = db.execute("SELECT id, review_mask FROM unified_fiscal_documents WHERE fn='123'").fetchone()
+        assert mask & 8 == 0
+        owner = db.execute('SELECT company_id, pool_origin_id FROM unified_company_claims WHERE document_id=?',
+                           (doc,)).fetchone()
+        assert owner == (('company-A', None) if blank_owner == 'pool' else None)
+        assert db.execute("SELECT company_id FROM receipts WHERE id='r1'").fetchone() == (registry,)
+        assert db.execute("SELECT assigned_company_id FROM pool_receipts WHERE id='p1'").fetchone() == (pool,)
+        if blank_owner != 'pool':
+            with pytest.raises(sqlite3.IntegrityError):
+                db.execute('INSERT INTO unified_company_claims(document_id, company_id) VALUES (?, ?)',
+                           (doc, 'company-B'))
+
+
+def test_sql_and_python_agree_on_company_whitespace():
+    from qa.migrate_receipt_copy import _SQL_WHITESPACE
+
+    with sqlite3.connect(':memory:') as db:
+        for code in range(0x3100):
+            value = chr(code)
+            sql = db.execute(f'SELECT length(trim(?, {_SQL_WHITESPACE}))', (value,)).fetchone()[0]
+            # SQLite TEXT length stops at NUL, so it is not a valid company identifier.
+            if code != 0:
+                assert (sql == 0) == (not value.strip()), hex(code)
+
+
+@pytest.mark.parametrize('identity_field', ['fn', 'fd', 'fp'])
+@pytest.mark.parametrize('blank', ['\t\n', '\u00a0', '\u2003', '\u001c'])
+def test_incomplete_unicode_identity_is_counted_and_excluded(tmp_path, identity_field, blank):
+    from qa.sqlite_migration_preflight import inspect_source
+
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute(f"UPDATE pool_receipts SET {identity_field}=? WHERE id='p1'", (blank,))
+    assert inspect_source(source)['incomplete_identities']['pool'] == 1
+    summary = migrate_copy(source, output)
+    assert summary['pool_without_identity'] == 1
+    with sqlite3.connect(output) as db:
+        assert db.execute("SELECT count(*) FROM unified_receipt_origins WHERE origin_id='p1'").fetchone() == (0,)
+        assert db.execute(f"SELECT {identity_field} FROM pool_receipts WHERE id='p1'").fetchone() == (blank,)
