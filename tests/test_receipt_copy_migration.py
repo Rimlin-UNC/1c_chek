@@ -23,6 +23,8 @@ def _source(path):
         for table in ('receipts', 'pool_receipts'):
             for field in ('merchant_name', 'merchant_inn', 'merchant_address'):
                 db.execute(f'ALTER TABLE {table} ADD COLUMN {field} TEXT')
+        db.execute('ALTER TABLE receipts ADD COLUMN ext_json TEXT')
+        db.execute('ALTER TABLE pool_receipts ADD COLUMN extra_json TEXT')
 
 
 def test_copy_migration_merges_only_complete_identities(tmp_path):
@@ -61,7 +63,7 @@ def test_failed_migration_does_not_leave_copy_and_never_overwrites(tmp_path):
     assert output.read_text() == 'do not overwrite'
 
 
-@pytest.mark.parametrize('corruption', ['deleted_origin', 'changed_fiscal_identity', 'missing_link', 'missing_document', 'missing_item', 'wrong_item_origin', 'altered_item', 'altered_item_hash', 'altered_seller', 'altered_seller_hash', 'altered_amount', 'removed_review_flag'])
+@pytest.mark.parametrize('corruption', ['deleted_origin', 'changed_fiscal_identity', 'missing_link', 'missing_document', 'missing_item', 'wrong_item_origin', 'altered_item', 'altered_item_hash', 'altered_seller', 'altered_seller_hash', 'altered_registry_extra', 'altered_pool_extra', 'missing_extra_hash', 'altered_amount', 'removed_review_flag'])
 def test_verification_rejects_corrupted_migration(tmp_path, corruption):
     from qa.migrate_receipt_copy import _validate
 
@@ -90,6 +92,12 @@ def test_verification_rejects_corrupted_migration(tmp_path, corruption):
             db.execute("UPDATE pool_receipts SET merchant_name='modified' WHERE id='p1'")
         elif corruption == 'altered_seller_hash':
             db.execute("UPDATE unified_receipt_origins SET fiscal_source_hash=NULL WHERE origin_id='p1'")
+        elif corruption == 'altered_registry_extra':
+            db.execute("UPDATE receipts SET ext_json='changed' WHERE id='r1'")
+        elif corruption == 'altered_pool_extra':
+            db.execute("UPDATE pool_receipts SET extra_json='changed' WHERE id='p1'")
+        elif corruption == 'missing_extra_hash':
+            db.execute("UPDATE unified_receipt_origins SET extra_fiscal_hash=NULL WHERE origin_id='p1'")
         elif corruption == 'altered_amount':
             db.execute("UPDATE unified_fiscal_documents SET total_sum=123 WHERE fn='123'")
         else:

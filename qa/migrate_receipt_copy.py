@@ -38,6 +38,7 @@ CREATE TABLE unified_receipt_origins (
     origin_kind TEXT NOT NULL CHECK(origin_kind IN ('registry', 'pool')),
     origin_id TEXT NOT NULL,
     fiscal_source_hash TEXT,
+    extra_fiscal_hash TEXT,
     PRIMARY KEY(origin_kind, origin_id),
     UNIQUE(document_id, origin_kind, origin_id)
 );
@@ -85,9 +86,10 @@ CREATE TABLE unified_item_resolution_events (
     actor_id TEXT NOT NULL,
     method TEXT NOT NULL CHECK(method IN ('equal_common_fields', 'reviewed_registry')),
     review_digest TEXT NOT NULL DEFAULT '',
+    acknowledged_incomplete INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged_incomplete IN (0,1)),
     created_at TEXT NOT NULL,
-    CHECK((method = 'equal_common_fields' AND review_digest = '')
-       OR (method = 'reviewed_registry' AND length(review_digest) = 64))
+    CHECK((method = 'equal_common_fields' AND review_digest = '' AND acknowledged_incomplete = 0)
+       OR (method = 'reviewed_registry' AND length(review_digest) = 64 AND acknowledged_incomplete = 1))
 );
 -- Единственное право компании на документ: одна строка на fiscal document.
 CREATE TABLE unified_company_claims (
@@ -285,6 +287,15 @@ def _migrate(db: sqlite3.Connection) -> None:
                 db.executemany("UPDATE unified_receipt_origins SET fiscal_source_hash=? "
                                "WHERE origin_kind=? AND origin_id=?",
                                [(_item_digest(row[1:]), kind, row[0]) for row in batch])
+        # Полные дополнительные данные источников не публикуем: хеш позволяет
+        # обнаружить их замену после просмотра, не перенося значения.
+        for kind, table, column in (('registry', 'receipts', 'ext_json'), ('pool', 'pool_receipts', 'extra_json')):
+            cursor = db.execute(f"SELECT p.id, p.{column} FROM {table} p JOIN unified_receipt_origins o "
+                                "ON o.origin_kind = ? AND o.origin_id = p.id", (kind,))
+            while batch := cursor.fetchmany(500):
+                db.executemany('UPDATE unified_receipt_origins SET extra_fiscal_hash=? '
+                               'WHERE origin_kind=? AND origin_id=?',
+                               [(_item_digest(row[1:]), kind, row[0]) for row in batch])
         # Позиции не склеиваются по порядку: разные источники могут содержать
         # различный состав, детали или недостоверные суммы. Сохраняем все связи.
         for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
@@ -381,6 +392,12 @@ def _validate(db: sqlite3.Connection) -> None:
         while batch := cursor.fetchmany(500):
             if any(not row[3] or row[3] != _item_digest(row[:3]) for row in batch):
                 raise RuntimeError('Реквизиты продавца изменились после миграции')
+    for kind, table, column in (('registry', 'receipts', 'ext_json'), ('pool', 'pool_receipts', 'extra_json')):
+        cursor = db.execute(f'SELECT p.{column}, o.extra_fiscal_hash FROM unified_receipt_origins o '
+                            f'JOIN {table} p ON o.origin_id=p.id WHERE o.origin_kind=?', (kind,))
+        while batch := cursor.fetchmany(500):
+            if any(not row[1] or row[1] != _item_digest(row[:1]) for row in batch):
+                raise RuntimeError('Дополнительные реквизиты изменились после миграции')
     for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
         bad = db.execute(f"""
             SELECT count(*) FROM unified_receipt_item_origins o
@@ -489,7 +506,7 @@ def _validate(db: sqlite3.Connection) -> None:
                 from qa.unified_review_fingerprint import review_fingerprint
                 fiscal = db.execute('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
                                     'FROM unified_fiscal_documents WHERE id=?', (doc_id,)).fetchone()
-                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash '
+                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash '
                                            'FROM unified_receipt_origins WHERE document_id=?', (doc_id,)).fetchall()
                 item_hashes = db.execute('SELECT i.origin_kind, i.origin_id, i.item_id, i.content_hash '
                                          'FROM unified_receipt_item_origins i JOIN unified_receipt_origins o '

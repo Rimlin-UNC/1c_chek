@@ -56,3 +56,13 @@ def registry_seller_matches_snapshot(db: Session, document_id: str, receipt_id: 
                           "WHERE o.origin_kind='registry' AND o.origin_id=:receipt AND o.document_id=:doc"),
                      {'receipt': receipt_id, 'doc': document_id}).first()
     return bool(row and row.fiscal_source_hash and row.fiscal_source_hash == _item_digest(row[:3]))
+
+
+def source_extra_matches_snapshot(db: Session, kind: str, document_id: str, origin_id: str) -> bool:
+    """Проверить дополнительные данные источника, не раскрывая их содержимое."""
+    table, column = {'registry': ('receipts', 'ext_json'), 'pool': ('pool_receipts', 'extra_json')}[kind]
+    row = db.execute(text(f'SELECT p.{column}, o.extra_fiscal_hash FROM {table} p '
+                          'JOIN unified_receipt_origins o ON o.origin_id=p.id '
+                          'WHERE o.origin_kind=:kind AND o.origin_id=:id AND o.document_id=:doc'),
+                     {'kind': kind, 'id': origin_id, 'doc': document_id}).first()
+    return bool(row and row.extra_fiscal_hash and row.extra_fiscal_hash == _item_digest(row[:1]))

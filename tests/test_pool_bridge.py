@@ -1980,19 +1980,22 @@ def test_reviewed_item_disagreement_preserves_both_sources(setup_bridge, tmp_pat
             revision = view['revision']
             db.commit()
             with pytest.raises(HTTPException) as denied:
-                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=False)
+                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=False, acknowledge_unreviewed=True)
             assert denied.value.status_code == 422
-            assert resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            with pytest.raises(HTTPException) as denied:
+                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            assert denied.value.status_code == 422
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True, acknowledge_unreviewed=True)
             db.rollback()
             assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
                               {'id': doc}).scalar_one() == 'needs_review'
-            assert resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True, acknowledge_unreviewed=True)
             db.commit()
-            assert not resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            assert not resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True, acknowledge_unreviewed=True)
             db.commit()
-            event = db.execute(text('SELECT method, review_digest, actor_id FROM unified_item_resolution_events '
-                                    'WHERE document_id=:id'), {'id': doc}).one()
-            assert event == ('reviewed_registry', revision, admin.id)
+            event = db.execute(text('SELECT method, review_digest, actor_id, acknowledged_incomplete '
+                                    'FROM unified_item_resolution_events WHERE document_id=:id'), {'id': doc}).one()
+            assert event == ('reviewed_registry', revision, admin.id, 1)
             assert 'private' not in str(event)
             assert db.query(PoolItem).filter_by(receipt_id=pid).count() == 2
             assert db.query(ReceiptItem).filter_by(receipt_id=rid).count() == 2
@@ -2030,7 +2033,7 @@ def test_explicit_review_handles_seller_or_missing_pool_positions(setup_bridge, 
             view = preview_item_disagreement(db, doc, c1, admin)
             assert (not view['seller_equal']) if mismatch == 'seller' else (not view['pool']['items'])
             db.commit()
-            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'], confirm=True)
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'], confirm=True, acknowledge_unreviewed=True)
             db.commit()
         with sqlite3.connect(path) as db:
             _validate(db)
@@ -2038,7 +2041,8 @@ def test_explicit_review_handles_seller_or_missing_pool_positions(setup_bridge, 
         copied.dispose()
 
 
-@pytest.mark.parametrize('change', ['registry_item', 'pool_item', 'registry_seller', 'pool_seller', 'ownership', 'token'])
+@pytest.mark.parametrize('change', ['registry_item', 'pool_item', 'registry_seller', 'pool_seller',
+                                    'registry_extra', 'pool_extra', 'ownership', 'token'])
 def test_review_rejects_stale_versions_and_does_not_create_decision(setup_bridge, tmp_path, change):
     from fastapi import HTTPException
     from sqlalchemy import create_engine, text
@@ -2068,13 +2072,17 @@ def test_review_rejects_stale_versions_and_does_not_create_decision(setup_bridge
                 db.get(Receipt, rid).merchant_name = 'changed'
             elif change == 'pool_seller':
                 db.get(PoolReceipt, pid).merchant_name = 'changed'
+            elif change == 'registry_extra':
+                db.get(Receipt, rid).ext_json = '{"new":"information"}'
+            elif change == 'pool_extra':
+                db.get(PoolReceipt, pid).extra_json = '{"new":"information"}'
             elif change == 'ownership':
                 db.get(PoolReceipt, pid).assigned_company_id = c2
             else:
                 revision = '0' * 64
             db.commit()
             with pytest.raises(HTTPException) as denied:
-                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True, acknowledge_unreviewed=True)
             assert denied.value.status_code == 409
             db.rollback()
             assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
@@ -2114,7 +2122,7 @@ def test_review_decision_concurrent_same_administrator(setup_bridge, tmp_path):
             with sessions() as db:
                 actor = db.get(User, uid)
                 barrier.wait(timeout=10)
-                result = resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True)
+                result = resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True, acknowledge_unreviewed=True)
                 db.commit()
                 return result
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -2152,7 +2160,7 @@ def test_review_decision_audit_failure_rolls_back_savepoint(setup_bridge, tmp_pa
             event.listen(copied, 'before_cursor_execute', fail_event)
             try:
                 with pytest.raises(RuntimeError, match='simulated audit failure'):
-                    resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True)
+                    resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True, acknowledge_unreviewed=True)
             finally:
                 event.remove(copied, 'before_cursor_execute', fail_event)
             db.commit()
@@ -2199,7 +2207,7 @@ def test_manual_review_keeps_donor_consent_points_and_history(setup_bridge, tmp_
             admin = db.query(User).filter_by(role='admin').first()
             view = preview_item_disagreement(db, doc, c1, admin)
             db.commit()
-            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'], confirm=True)
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'], confirm=True, acknowledge_unreviewed=True)
             db.commit()
             assert db.get(PoolUser, donor_id).points == 11
             assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 11
@@ -2238,7 +2246,7 @@ def test_review_snapshot_validator_detects_forged_digest(setup_bridge, tmp_path)
             actor = db.query(User).filter_by(role='admin').first()
             revision = preview_item_disagreement(db, doc, c1, actor)['revision']
             db.commit()
-            assert resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True)
+            assert resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True, acknowledge_unreviewed=True)
             db.commit()
             db.execute(text("UPDATE unified_item_resolution_events SET review_digest=:digest WHERE document_id=:doc"),
                        {'digest': '0' * 64, 'doc': doc})
@@ -2246,5 +2254,55 @@ def test_review_snapshot_validator_detects_forged_digest(setup_bridge, tmp_path)
         with sqlite3.connect(path) as db:
             with pytest.raises(RuntimeError, match='не соответствует просмотренному снимку'):
                 _validate(db)
+    finally:
+        copied.dispose()
+
+
+def test_review_shows_selected_registry_fiscal_metadata_without_raw_personal_values(setup_bridge, tmp_path):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    with SessionLocal() as db:
+        registry = db.get(Receipt, rid)
+        registry.ext_json = '{"buyer":"registry-private@example.com"}'
+        pool = db.get(PoolReceipt, pid)
+        pool.extra_json = '{"buyer":"donor-private@example.com"}'
+        item = db.query(ReceiptItem).filter_by(receipt_id=rid).first()
+        item.product_type, item.payment_type, item.unit = 4, 1, 'кг'
+        item.marking_present = True
+        item.extra_json = '{"marking":[{"serial":"secret-serial"}]}'
+        db.commit()
+    path = tmp_path / 'metadata-review.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            view = preview_item_disagreement(db, doc, c1, admin)
+            metadata = [i['fiscal_metadata'] for i in view['registry']['items'] if i['fiscal_metadata']['unit'] == 'кг']
+            assert metadata == [{'product_type': 4, 'payment_type': 1, 'unit': 'кг',
+                                 'marking_present': True, 'has_unreviewed_extra': True}]
+            assert view['registry']['has_unreviewed_header_extra']
+            assert view['pool']['has_unreviewed_header_extra']
+            assert 'registry-private@example.com' not in str(view)
+            assert 'donor-private@example.com' not in str(view)
+            assert 'secret-serial' not in str(view)
+            assert view['review_scope'] == 'common_fields_and_registry_metadata'
+            db.commit()
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'],
+                                              confirm=True, acknowledge_unreviewed=True)
+            db.commit()
+            saved = db.query(ReceiptItem).filter_by(receipt_id=rid, unit='кг').one()
+            assert 'secret-serial' in saved.extra_json
+            assert 'registry-private@example.com' in db.get(Receipt, rid).ext_json
+            assert 'donor-private@example.com' in db.get(PoolReceipt, pid).extra_json
     finally:
         copied.dispose()
