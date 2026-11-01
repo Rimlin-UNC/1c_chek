@@ -2678,3 +2678,324 @@ def test_fiscal_proposal_preserves_donor_consent_and_points(setup_bridge, tmp_pa
             db.query(PoolConsent).filter_by(user_id=donor_id).delete()
             db.delete(db.get(PoolUser, donor_id))
             db.commit()
+
+
+def test_ownership_conflict_review_never_creates_a_second_claim(setup_bridge, tmp_path, monkeypatch):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_ownership_review import (
+        preview_ownership_conflict,
+        propose_registry_owner_review,
+    )
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        pool.assigned_company_id = c2
+        pool.raw = '{"email":"private-donor@example.com"}'
+        db.commit()
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    path = tmp_path / 'ownership-conflict.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            accountant = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            with pytest.raises(HTTPException) as err:
+                preview_ownership_conflict(db, doc, c1, accountant)
+            assert err.value.status_code == 403
+            with pytest.raises(HTTPException) as err:
+                preview_ownership_conflict(db, doc, c2, admin)
+            assert err.value.status_code == 404
+            view = preview_ownership_conflict(db, doc, c1, admin)
+            assert view['ownership_conflict'] and view['other_assignment_exists']
+            assert not view['additional_fiscal_conflicts']
+            assert c2 not in str(view)
+            assert 'private-donor@example.com' not in str(view)
+            assert 'private accounting note' not in str(view)
+            revision = view['revision']
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                propose_registry_owner_review(db, doc, c1, admin, revision=revision,
+                                              confirm=True, acknowledge_no_transfer=False)
+            assert err.value.status_code == 422
+            assert propose_registry_owner_review(db, doc, c1, admin, revision=revision,
+                                                 confirm=True, acknowledge_no_transfer=True)
+            db.rollback()
+            assert db.execute(text('SELECT count(*) FROM unified_ownership_review_proposals WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert propose_registry_owner_review(db, doc, c1, admin, revision=revision,
+                                                 confirm=True, acknowledge_no_transfer=True)
+            db.commit()
+            assert not propose_registry_owner_review(db, doc, c1, admin, revision=revision,
+                                                     confirm=True, acknowledge_no_transfer=True)
+            db.commit()
+            event = db.execute(text('SELECT registry_company_id, registry_origin_id, pool_origin_id, '
+                                    'acknowledged_no_transfer FROM unified_ownership_review_proposals '
+                                    'WHERE document_id=:id'), {'id': doc}).one()
+            assert event == (c1, rid, pid, 1)
+            assert db.execute(text('SELECT review_mask FROM unified_fiscal_documents WHERE id=:id'),
+                              {'id': doc}).scalar_one() == 8
+            for table in ('unified_company_claims', 'unified_company_accounts'):
+                assert db.execute(text(f'SELECT count(*) FROM {table} WHERE document_id=:id'),
+                                  {'id': doc}).scalar_one() == 0
+            assert db.get(Receipt, rid).company_id == c1
+            assert db.get(Receipt, rid).comment == 'private accounting note'
+            assert db.get(PoolReceipt, pid).assigned_company_id == c2
+            assert db.get(PoolReceipt, pid).raw == '{"email":"private-donor@example.com"}'
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('change', ['pool_owner', 'registry_owner', 'pool_core', 'registry_extra',
+                                    'pool_item', 'actor', 'token'])
+def test_ownership_review_refuses_stale_snapshot_or_lost_rights(setup_bridge, tmp_path, change):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_ownership_review import (
+        preview_ownership_conflict,
+        propose_registry_owner_review,
+    )
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).assigned_company_id = c2
+        db.commit()
+    path = tmp_path / 'stale-ownership.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            revision = preview_ownership_conflict(db, doc, c1, admin)['revision']
+            db.commit()
+            if change == 'pool_owner':
+                db.get(PoolReceipt, pid).assigned_company_id = c1
+            elif change == 'registry_owner':
+                db.get(Receipt, rid).company_id = c2
+            elif change == 'pool_core':
+                db.get(PoolReceipt, pid).total_sum += 1
+            elif change == 'registry_extra':
+                db.get(Receipt, rid).ext_json = '{"new":"information"}'
+            elif change == 'pool_item':
+                db.query(PoolItem).filter_by(receipt_id=pid).first().price += 1
+            elif change == 'actor':
+                admin.is_active = False
+            else:
+                revision = '0' * 64
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                propose_registry_owner_review(db, doc, c1, admin, revision=revision,
+                                              confirm=True, acknowledge_no_transfer=True)
+            assert err.value.status_code == (403 if change == 'actor' else 404 if change == 'registry_owner' else 409)
+            db.rollback()
+            for table in ('unified_ownership_review_proposals', 'unified_company_claims', 'unified_company_accounts'):
+                assert db.execute(text(f'SELECT count(*) FROM {table} WHERE document_id=:id'),
+                                  {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_ownership_review_concurrent_repeat_is_idempotent(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_ownership_review import (
+        preview_ownership_conflict,
+        propose_registry_owner_review,
+    )
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).assigned_company_id = c2
+        db.commit()
+    path = tmp_path / 'ownership-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    try:
+        with sessions() as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            uid, revision = actor.id, preview_ownership_conflict(db, doc, c1, actor)['revision']
+        def propose():
+            with sessions() as db:
+                actor = db.get(User, uid)
+                barrier.wait(timeout=10)
+                result = propose_registry_owner_review(db, doc, c1, actor, revision=revision,
+                                                       confirm=True, acknowledge_no_transfer=True)
+                db.commit()
+                return result
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assert sorted(executor.map(lambda _: propose(), range(2))) == [False, True]
+        with sessions() as db:
+            assert db.execute(text('SELECT count(*) FROM unified_ownership_review_proposals WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('change', ['digest', 'pool_owner', 'registry_owner', 'core'])
+def test_ownership_review_validator_rejects_corruption(setup_bridge, tmp_path, change):
+    import sqlite3
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_ownership_review import (
+        preview_ownership_conflict,
+        propose_registry_owner_review,
+    )
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).assigned_company_id = c2
+        db.commit()
+    path = tmp_path / 'ownership-corrupt.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            revision = preview_ownership_conflict(db, doc, c1, actor)['revision']
+            db.commit()
+            assert propose_registry_owner_review(db, doc, c1, actor, revision=revision,
+                                                 confirm=True, acknowledge_no_transfer=True)
+            db.commit()
+            if change == 'pool_owner':
+                db.get(PoolReceipt, pid).assigned_company_id = c1
+            elif change == 'registry_owner':
+                db.get(Receipt, rid).company_id = c2
+            elif change == 'core':
+                db.get(PoolReceipt, pid).total_sum += 1
+            else:
+                db.execute(text('UPDATE unified_ownership_review_proposals SET review_digest=:digest '
+                                'WHERE document_id=:doc'), {'digest': '0' * 64, 'doc': doc})
+            db.commit()
+        with sqlite3.connect(path) as db:
+            with pytest.raises(RuntimeError):
+                _validate(db)
+    finally:
+        copied.dispose()
+
+
+def test_ownership_review_preserves_donor_and_additional_fiscal_conflict(setup_bridge, tmp_path):
+    import sqlite3
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolConsent, PoolPoint
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_ownership_review import (
+        preview_ownership_conflict,
+        propose_registry_owner_review,
+    )
+    from qa.unified_receipt_preview import donor_view
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='amount')
+    with SessionLocal() as db:
+        donor = PoolUser(vid='ownership_review_' + uuid4().hex, points=6)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded, pool.assigned_company_id = donor_id, 6, c2
+        db.add(PoolPoint(user_id=donor_id, delta=6, reason='receipt', ref_id=pid))
+        db.add(PoolConsent(vid=donor.vid, user_id=donor_id, offerta_version='1'))
+        db.commit()
+    path = tmp_path / 'ownership-donor.db'
+    copied = None
+    try:
+        migrate_copy(engine.url.database, path)
+        copied = create_engine('sqlite:///' + str(path))
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            view = preview_ownership_conflict(db, doc, c1, actor)
+            assert view['additional_fiscal_conflicts']
+            db.commit()
+            assert propose_registry_owner_review(db, doc, c1, actor, revision=view['revision'],
+                                                 confirm=True, acknowledge_no_transfer=True)
+            db.commit()
+            assert db.get(PoolUser, donor_id).points == 6
+            assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 6
+            assert db.query(PoolConsent).filter_by(user_id=donor_id).one().offerta_version == '1'
+            assert 'private accounting note' not in str(donor_view(db, doc, db.get(PoolUser, donor_id)))
+            assert db.execute(text('SELECT review_mask FROM unified_fiscal_documents WHERE id=:id'),
+                              {'id': doc}).scalar_one() == 10
+            assert db.execute(text('SELECT count(*) FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        if copied is not None:
+            copied.dispose()
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.query(PoolPoint).filter_by(user_id=donor_id).delete()
+            db.query(PoolConsent).filter_by(user_id=donor_id).delete()
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()
+
+
+def test_experimental_claim_trigger_refuses_conflicting_sources_even_if_mask_cleared(setup_bridge, tmp_path):
+    import sqlite3
+
+    from app.database import engine
+    from qa.migrate_receipt_copy import migrate_copy
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).assigned_company_id = c2
+        db.commit()
+    path = tmp_path / 'claim-trigger.db'
+    migrate_copy(engine.url.database, path)
+    with sqlite3.connect(path) as db:
+        doc = db.execute('SELECT id FROM unified_fiscal_documents WHERE fn=?', (fn,)).fetchone()[0]
+        for owner in (c1, c2):
+            with pytest.raises(sqlite3.IntegrityError, match='ownership conflict'):
+                db.execute('INSERT INTO unified_company_claims(document_id, company_id) VALUES (?, ?)', (doc, owner))
+        db.execute('UPDATE unified_fiscal_documents SET review_mask=review_mask & ~8 WHERE id=?', (doc,))
+        for owner in (c1, c2):
+            with pytest.raises(sqlite3.IntegrityError, match='ownership conflict'):
+                db.execute('INSERT INTO unified_company_claims(document_id, company_id) VALUES (?, ?)', (doc, owner))
+        assert db.execute('SELECT count(*) FROM unified_company_claims WHERE document_id=?', (doc,)).fetchone()[0] == 0

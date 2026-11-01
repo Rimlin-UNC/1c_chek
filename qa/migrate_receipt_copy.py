@@ -102,6 +102,45 @@ CREATE TABLE unified_company_claims (
     UNIQUE(document_id, company_id)
 );
 CREATE INDEX ix_unified_company_claims_company ON unified_company_claims(company_id);
+-- Не создавать право, если реестр/пул указывают на другую организацию.
+-- Триггеры защищают экспериментальную копию и не заменяют проверки production.
+CREATE TRIGGER unified_claim_guard_insert BEFORE INSERT ON unified_company_claims
+WHEN EXISTS (SELECT 1 FROM unified_fiscal_documents d
+             WHERE d.id=NEW.document_id AND (d.review_mask & 8) != 0)
+ OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN receipts r ON r.id=o.origin_id
+            WHERE o.document_id=NEW.document_id AND o.origin_kind='registry'
+              AND (r.company_id IS NULL OR trim(r.company_id)='' OR r.company_id != NEW.company_id))
+ OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN pool_receipts p ON p.id=o.origin_id
+            WHERE o.document_id=NEW.document_id AND o.origin_kind='pool'
+              AND p.assigned_company_id IS NOT NULL AND trim(p.assigned_company_id) != ''
+              AND p.assigned_company_id != NEW.company_id)
+BEGIN
+    SELECT RAISE(ABORT, 'ownership conflict');
+END;
+CREATE TRIGGER unified_claim_guard_update BEFORE UPDATE ON unified_company_claims
+WHEN EXISTS (SELECT 1 FROM unified_fiscal_documents d
+             WHERE d.id=NEW.document_id AND (d.review_mask & 8) != 0)
+ OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN receipts r ON r.id=o.origin_id
+            WHERE o.document_id=NEW.document_id AND o.origin_kind='registry'
+              AND (r.company_id IS NULL OR trim(r.company_id)='' OR r.company_id != NEW.company_id))
+ OR EXISTS (SELECT 1 FROM unified_receipt_origins o JOIN pool_receipts p ON p.id=o.origin_id
+            WHERE o.document_id=NEW.document_id AND o.origin_kind='pool'
+              AND p.assigned_company_id IS NOT NULL AND trim(p.assigned_company_id) != ''
+              AND p.assigned_company_id != NEW.company_id)
+BEGIN
+    SELECT RAISE(ABORT, 'ownership conflict');
+END;
+-- Предложение по историческому конфликту владельцев не создаёт право учёта.
+CREATE TABLE unified_ownership_review_proposals (
+    document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
+    registry_company_id TEXT NOT NULL CHECK(length(trim(registry_company_id)) > 0),
+    registry_origin_id TEXT NOT NULL REFERENCES receipts(id),
+    pool_origin_id TEXT NOT NULL REFERENCES pool_receipts(id),
+    actor_id TEXT NOT NULL,
+    review_digest TEXT NOT NULL CHECK(length(review_digest) = 64),
+    acknowledged_no_transfer INTEGER NOT NULL CHECK(acknowledged_no_transfer = 1),
+    created_at TEXT NOT NULL
+);
 -- Предложение не меняет фискальный документ и не снимает конфликт.
 CREATE TABLE unified_fiscal_resolution_proposals (
     document_id TEXT PRIMARY KEY,
@@ -390,7 +429,7 @@ def _validate(db: sqlite3.Connection) -> None:
     for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims',
                   'unified_company_accounts', 'unified_company_account_events',
                   'unified_fiscal_item_sets', 'unified_fiscal_item_refs', 'unified_item_resolution_events',
-                  'unified_fiscal_resolution_proposals'):
+                  'unified_fiscal_resolution_proposals', 'unified_ownership_review_proposals'):
         if db.execute(f'PRAGMA foreign_key_check({table})').fetchone():
             raise RuntimeError('Обнаружена повреждённая ссылка на единый чек')
     for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
@@ -532,6 +571,36 @@ def _validate(db: sqlite3.Connection) -> None:
                                'FROM unified_company_claims WHERE document_id=?', (doc_id,)).fetchone()
             if claim != _legacy_ownership(db, doc_id):
                 raise RuntimeError('Владелец единого чека не соответствует исходным назначениям')
+            ownership_proposal = db.execute('SELECT registry_company_id, registry_origin_id, pool_origin_id, '
+                                            'actor_id, review_digest FROM unified_ownership_review_proposals '
+                                            'WHERE document_id=?', (doc_id,)).fetchone()
+            if ownership_proposal:
+                from qa.unified_review_fingerprint import review_fingerprint
+                if (not (mask & 8) or claim or len(source_ids) != 2
+                        or set(source_ids) != {('registry', ownership_proposal[1]), ('pool', ownership_proposal[2])}):
+                    raise RuntimeError('Предложение по владению не соответствует конфликту')
+                registry_company = db.execute('SELECT company_id FROM receipts WHERE id=?',
+                                              (ownership_proposal[1],)).fetchone()
+                pool_state = db.execute('SELECT assigned_company_id, status, assigned_at FROM pool_receipts '
+                                        'WHERE id=?', (ownership_proposal[2],)).fetchone()
+                if (not registry_company or registry_company[0] != ownership_proposal[0] or not pool_state
+                        or not pool_state[0] or pool_state[0] == ownership_proposal[0]):
+                    raise RuntimeError('Назначения не соответствуют предложению по владению')
+                if db.execute('SELECT 1 FROM unified_company_accounts WHERE document_id=?', (doc_id,)).fetchone():
+                    raise RuntimeError('При конфликте владения не должна создаваться учётная привязка')
+                fiscal = db.execute('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
+                                    'FROM unified_fiscal_documents WHERE id=?', (doc_id,)).fetchone()
+                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash, extra_fiscal_hash, '
+                                           'core_fiscal_hash FROM unified_receipt_origins WHERE document_id=?',
+                                           (doc_id,)).fetchall()
+                item_hashes = db.execute('SELECT i.origin_kind, i.origin_id, i.item_id, i.content_hash '
+                                         'FROM unified_receipt_item_origins i JOIN unified_receipt_origins o '
+                                         'ON o.origin_kind=i.origin_kind AND o.origin_id=i.origin_id '
+                                         'WHERE o.document_id=?', (doc_id,)).fetchall()
+                digest = review_fingerprint(doc_id, ownership_proposal[3], ownership_proposal[0], fiscal,
+                                            origin_hashes, item_hashes, (*registry_company, *pool_state))
+                if ownership_proposal[4] != digest:
+                    raise RuntimeError('Предложение по владению не соответствует просмотренному снимку')
             proposal = db.execute('SELECT company_id, origin_kind, origin_id, actor_id, review_digest '
                                   'FROM unified_fiscal_resolution_proposals WHERE document_id=?', (doc_id,)).fetchone()
             if proposal:
@@ -611,6 +680,7 @@ def _summary(db: sqlite3.Connection) -> dict:
         'item_sets_resolved_registry': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='resolved_registry'"),
         'unified_item_refs': scalar('SELECT count(*) FROM unified_fiscal_item_refs'),
         'fiscal_resolution_proposals': scalar('SELECT count(*) FROM unified_fiscal_resolution_proposals'),
+        'ownership_review_proposals': scalar('SELECT count(*) FROM unified_ownership_review_proposals'),
         'registry_without_identity': scalar('SELECT count(*) FROM receipts') - scalar(
             "SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),
         'pool_without_identity': scalar('SELECT count(*) FROM pool_receipts') - scalar(
