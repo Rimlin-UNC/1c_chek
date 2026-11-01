@@ -57,10 +57,10 @@ CREATE INDEX ix_unified_item_origin ON unified_receipt_item_origins(origin_kind,
 -- При нескольких источниках решение намеренно не выбирается автоматически.
 CREATE TABLE unified_fiscal_item_sets (
     document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
-    state TEXT NOT NULL CHECK(state IN ('single_source', 'needs_review')),
+    state TEXT NOT NULL CHECK(state IN ('single_source', 'needs_review', 'resolved_registry')),
     origin_kind TEXT,
     origin_id TEXT,
-    CHECK((state = 'single_source' AND origin_kind IS NOT NULL AND origin_id IS NOT NULL)
+    CHECK((state IN ('single_source', 'resolved_registry') AND origin_kind IS NOT NULL AND origin_id IS NOT NULL)
        OR (state = 'needs_review' AND origin_kind IS NULL AND origin_id IS NULL)),
     UNIQUE(document_id, origin_kind, origin_id),
     FOREIGN KEY(document_id, origin_kind, origin_id)
@@ -76,6 +76,15 @@ CREATE TABLE unified_fiscal_item_refs (
         REFERENCES unified_fiscal_item_sets(document_id, origin_kind, origin_id),
     FOREIGN KEY(origin_kind, origin_id, item_id)
         REFERENCES unified_receipt_item_origins(origin_kind, origin_id, item_id)
+);
+-- Служебный журнал выбора без значений позиций и персональных данных донора.
+CREATE TABLE unified_item_resolution_events (
+    document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
+    registry_origin_id TEXT NOT NULL REFERENCES receipts(id),
+    pool_origin_id TEXT NOT NULL REFERENCES pool_receipts(id),
+    actor_id TEXT NOT NULL,
+    method TEXT NOT NULL CHECK(method = 'equal_common_fields'),
+    created_at TEXT NOT NULL
 );
 -- Единственное право компании на документ: одна строка на fiscal document.
 CREATE TABLE unified_company_claims (
@@ -341,7 +350,7 @@ def _validate(db: sqlite3.Connection) -> None:
         raise RuntimeError('Нарушена целостность копии')
     for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims',
                   'unified_company_accounts', 'unified_company_account_events',
-                  'unified_fiscal_item_sets', 'unified_fiscal_item_refs'):
+                  'unified_fiscal_item_sets', 'unified_fiscal_item_refs', 'unified_item_resolution_events'):
         if db.execute(f'PRAGMA foreign_key_check({table})').fetchone():
             raise RuntimeError('Обнаружена повреждённая ссылка на единый чек')
     for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
@@ -413,13 +422,37 @@ def _validate(db: sqlite3.Connection) -> None:
                                     'WHERE document_id=?', (doc_id,)).fetchall()
             item_set = db.execute('SELECT state, origin_kind, origin_id FROM unified_fiscal_item_sets '
                                   'WHERE document_id=?', (doc_id,)).fetchone()
-            expected_set = ('single_source', *source_ids[0]) if len(source_ids) == 1 else ('needs_review', None, None)
-            if item_set != expected_set:
+            resolution = db.execute('SELECT registry_origin_id, pool_origin_id, method '
+                                    'FROM unified_item_resolution_events WHERE document_id=?', (doc_id,)).fetchone()
+            selected = None
+            if len(source_ids) == 1:
+                expected_set = ('single_source', *source_ids[0])
+                selected = source_ids[0]
+            elif item_set and item_set[0] == 'resolved_registry':
+                from qa.unified_item_comparison import common_positions_match, sellers_match
+                if (not resolution or resolution[2] != 'equal_common_fields'
+                        or set(source_ids) != {('registry', resolution[0]), ('pool', resolution[1])}):
+                    raise RuntimeError('Решение по позициям не соответствует источникам')
+                reg_id, pool_id, _ = resolution
+                reg_seller = db.execute('SELECT merchant_name, merchant_inn, merchant_address FROM receipts WHERE id=?',
+                                        (reg_id,)).fetchone()
+                pool_seller = db.execute('SELECT merchant_name, merchant_inn, merchant_address FROM pool_receipts WHERE id=?',
+                                         (pool_id,)).fetchone()
+                fields = 'name, quantity, price, total, vat_rate, vat_sum'
+                reg_items = db.execute(f'SELECT {fields} FROM receipt_items WHERE receipt_id=?', (reg_id,)).fetchall()
+                pool_items = db.execute(f'SELECT {fields} FROM pool_items WHERE receipt_id=?', (pool_id,)).fetchall()
+                if not sellers_match(reg_seller, pool_seller) or not common_positions_match(reg_items, pool_items):
+                    raise RuntimeError('Сверенные данные позиций или продавца изменились')
+                expected_set = ('resolved_registry', 'registry', reg_id)
+                selected = ('registry', reg_id)
+            else:
+                expected_set = ('needs_review', None, None)
+            if item_set != expected_set or (bool(resolution) != (expected_set[0] == 'resolved_registry')):
                 raise RuntimeError('Единый состав не соответствует источникам')
             actual_refs = set(db.execute('SELECT origin_kind, origin_id, item_id FROM unified_fiscal_item_refs '
                                          'WHERE document_id=?', (doc_id,)).fetchall())
             expected_refs = set(db.execute('SELECT origin_kind, origin_id, item_id FROM unified_receipt_item_origins '
-                                           'WHERE origin_kind=? AND origin_id=?', source_ids[0]).fetchall()) if len(source_ids) == 1 else set()
+                                           'WHERE origin_kind=? AND origin_id=?', selected).fetchall()) if selected else set()
             if actual_refs != expected_refs:
                 raise RuntimeError('Единые позиции не соответствуют выбранному источнику')
             normalized = [_normalized(row[0], row[1], row[2]) for row in origins]
@@ -438,10 +471,14 @@ def _validate(db: sqlite3.Connection) -> None:
                 mask |= 8
             if (saved_date, saved_amount, saved_operation) != tuple(expected) or saved_mask != mask:
                 raise RuntimeError('Общие реквизиты или признаки конфликта не соответствуют источникам')
+            if item_set[0] == 'resolved_registry' and mask:
+                raise RuntimeError('Нельзя согласовать позиции при конфликте реквизитов или владельцев')
             claim = db.execute('SELECT company_id, pool_origin_id, registry_receipt_id, assigned_at '
                                'FROM unified_company_claims WHERE document_id=?', (doc_id,)).fetchone()
             if claim != _legacy_ownership(db, doc_id):
                 raise RuntimeError('Владелец единого чека не соответствует исходным назначениям')
+            if item_set[0] == 'resolved_registry' and (not claim or claim[2] != resolution[0]):
+                raise RuntimeError('Выбранный состав не соответствует владельцу чека')
             account = db.execute('SELECT company_id, legacy_receipt_id, pool_origin_id '
                                  'FROM unified_company_accounts WHERE document_id=?', (doc_id,)).fetchone()
             if claim and claim[2] and not account:
@@ -468,6 +505,7 @@ def _summary(db: sqlite3.Connection) -> dict:
         'needs_review': scalar('SELECT count(*) FROM unified_fiscal_documents WHERE review_mask != 0'),
         'item_sets_single_source': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='single_source'"),
         'item_sets_needing_review': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='needs_review'"),
+        'item_sets_resolved_registry': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='resolved_registry'"),
         'unified_item_refs': scalar('SELECT count(*) FROM unified_fiscal_item_refs'),
         'registry_without_identity': scalar('SELECT count(*) FROM receipts') - scalar(
             "SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),

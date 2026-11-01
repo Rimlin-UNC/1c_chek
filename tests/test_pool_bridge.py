@@ -1217,11 +1217,11 @@ def test_unified_atomic_pick_rolls_back_partial_failure_and_outer_transaction(se
     from sqlalchemy import create_engine, text
     from sqlalchemy.orm import Session
 
+    import qa.unified_pool_accounting as accounting
     from app.database import engine
     from app.models import Company, User
     from app.pool.router_company import month_used
     from qa.migrate_receipt_copy import migrate_copy
-    import qa.unified_pool_accounting as accounting
 
     _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
     path = tmp_path / 'atomic-accounting.db'
@@ -1509,6 +1509,7 @@ def test_unified_pool_rejects_damaged_canonical_item_refs(setup_bridge, tmp_path
 
 def test_unified_account_view_uses_one_sqlite_read_snapshot(setup_bridge, tmp_path):
     import sqlite3
+
     from fastapi import HTTPException
     from sqlalchemy import create_engine, event, text
     from sqlalchemy.orm import Session
@@ -1576,6 +1577,7 @@ def test_pool_transfer_requires_fns_confirmation_date(client, setup_bridge, monk
 
 def test_idempotent_transfer_rechecks_source_access(setup_bridge, client):
     from fastapi import HTTPException
+
     from app.models import User
     from app.pool.transfer import copy_to_registry
 
@@ -1642,3 +1644,296 @@ def test_scan_rejects_nonfinite_or_different_pool_amount_without_using_quota(cli
         assert db.get(PoolReceipt, pid).assigned_company_id is None
         assert db.query(Receipt).filter_by(fn=fn).count() == 0
         assert month_used(db, c1) == before
+
+
+def _create_legacy_registry_for_item_resolution(c1, pid, *, mismatch=''):
+    """Подготовить исторический дубликат только для экспериментальной копии."""
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        receipt = Receipt(qr_data=pool.qr_data, fn=pool.fn, fd=pool.fd, fp=pool.fp,
+                          company_id=c1, receipt_date=pool.receipt_date, total_sum=pool.total_sum,
+                          operation=pool.operation, merchant_name=pool.merchant_name,
+                          merchant_inn=pool.merchant_inn, merchant_address=pool.merchant_address,
+                          comment='private accounting note', raw_data='{"private": "company secret"}')
+        if mismatch == 'seller':
+            receipt.merchant_name = 'different seller'
+        if mismatch == 'amount':
+            receipt.total_sum += 0.01
+        db.add(receipt)
+        db.flush()
+        for item in db.query(PoolItem).filter_by(receipt_id=pid).all():
+            db.add(ReceiptItem(receipt_id=receipt.id, name=item.name, quantity=item.quantity,
+                               price=item.price, total=item.total, vat_rate=item.vat_rate,
+                               vat_sum=item.vat_sum, extra_json='{"marking": ["private-extra"]}'))
+        if mismatch == 'item':
+            pool_item = db.query(PoolItem).filter_by(receipt_id=pid).first()
+            pool_item.price += 0.01
+        if mismatch == 'missing_item':
+            db.query(PoolItem).filter_by(receipt_id=pid).delete()
+        if mismatch == 'owner':
+            pool.assigned_company_id = 'different-company'
+        db.commit()
+        return receipt.id
+
+
+def test_matching_legacy_sources_can_be_resolved_without_copying_or_losing_data(setup_bridge, tmp_path, monkeypatch):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_item_resolution import resolve_matching_items
+    from qa.unified_receipt_preview import company_view
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid)
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    path = tmp_path / 'resolved-items.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            accountant = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            with pytest.raises(HTTPException) as denied:
+                resolve_matching_items(db, doc, accountant)
+            assert denied.value.status_code == 403
+            assert resolve_matching_items(db, doc, admin) is True
+            db.rollback()
+            assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 'needs_review'
+            assert resolve_matching_items(db, doc, admin) is True
+            db.commit()
+            assert resolve_matching_items(db, doc, admin) is False
+            db.commit()
+            assert db.execute(text('SELECT state,origin_kind,origin_id FROM unified_fiscal_item_sets '
+                                   'WHERE document_id=:id'), {'id': doc}).one() == ('resolved_registry', 'registry', rid)
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_item_refs WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 2
+            event = db.execute(text('SELECT method,actor_id FROM unified_item_resolution_events '
+                                    'WHERE document_id=:id'), {'id': doc}).one()
+            assert event == ('equal_common_fields', admin.id)
+            assert 'private' not in str(event)
+            assert db.query(Receipt).filter_by(fn=fn).count() == 1
+            assert db.query(PoolReceipt).filter_by(fn=fn).count() == 1
+            assert db.query(PoolItem).filter_by(receipt_id=pid).count() == 2
+            assert db.query(ReceiptItem).filter_by(receipt_id=rid).count() == 2
+            assert db.query(ReceiptItem).filter_by(receipt_id=rid).first().extra_json == '{"marking": ["private-extra"]}'
+            assert company_view(db, doc, accountant, c1)['receipt']['comment'] == 'private accounting note'
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('mismatch', ['seller', 'item', 'missing_item', 'amount', 'owner'])
+def test_item_resolution_refuses_ambiguous_or_conflicting_sources(setup_bridge, tmp_path, mismatch):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_resolution import resolve_matching_items
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch=mismatch)
+    path = tmp_path / 'unresolved-items.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            with pytest.raises(HTTPException) as err:
+                resolve_matching_items(db, doc, admin)
+            assert err.value.status_code == 409
+            db.rollback()
+            assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 'needs_review'
+            assert db.execute(text('SELECT count(*) FROM unified_item_resolution_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.query(Receipt).filter_by(id=rid).one().comment == 'private accounting note'
+            assert db.get(PoolReceipt, pid) is not None
+    finally:
+        copied.dispose()
+
+
+def test_item_resolution_preserves_donor_consent_history_and_private_data(setup_bridge, tmp_path):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolConsent, PoolPoint
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_resolution import resolve_matching_items
+    from qa.unified_receipt_preview import company_view, donor_view
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid)
+    with SessionLocal() as db:
+        donor = PoolUser(vid='resolution_' + uuid4().hex, points=7)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded, pool.raw = donor_id, 7, '{"email":"private-donor@example.com"}'
+        db.add(PoolPoint(user_id=donor_id, delta=7, reason='receipt', ref_id=pid))
+        db.add(PoolConsent(vid=donor.vid, user_id=donor_id, offerta_version='1'))
+        db.commit()
+    path = tmp_path / 'resolution-privacy.db'
+    copied = None
+    try:
+        migrate_copy(engine.url.database, path)
+        copied = create_engine('sqlite:///' + str(path))
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            assert resolve_matching_items(db, doc, admin)
+            db.commit()
+            assert db.get(PoolUser, donor_id).points == 7
+            assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 7
+            assert db.query(PoolConsent).filter_by(user_id=donor_id).one().offerta_version == '1'
+            assert 'private-donor@example.com' not in str(company_view(db, doc, owner, c1))
+            assert 'private accounting note' not in str(donor_view(db, doc, db.get(PoolUser, donor_id)))
+            assert db.get(PoolReceipt, pid).raw == '{"email":"private-donor@example.com"}'
+    finally:
+        if copied is not None:
+            copied.dispose()
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.query(PoolPoint).filter_by(user_id=donor_id).delete()
+            db.query(PoolConsent).filter_by(user_id=donor_id).delete()
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()
+
+
+def test_item_resolution_concurrent_admins_is_idempotent(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_resolution import resolve_matching_items
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid)
+    path = tmp_path / 'resolution-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    try:
+        with sessions() as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            uid = db.query(User).filter_by(role='admin').first().id
+        def resolve():
+            with sessions() as db:
+                actor = db.get(User, uid)
+                barrier.wait(timeout=10)
+                result = resolve_matching_items(db, doc, actor)
+                db.commit()
+                return result
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assert sorted(executor.map(lambda _: resolve(), range(2))) == [False, True]
+        with sessions() as db:
+            assert db.execute(text('SELECT count(*) FROM unified_item_resolution_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('changed', ['registry_item', 'pool_item', 'seller', 'event', 'ref'])
+def test_item_resolution_rejects_later_corruption(setup_bridge, tmp_path, changed):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_item_resolution import resolve_matching_items
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid)
+    path = tmp_path / 'resolved-corrupt.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            assert resolve_matching_items(db, doc, admin)
+            db.commit()
+            if changed == 'registry_item':
+                db.query(ReceiptItem).filter_by(receipt_id=rid).first().price += 1
+            elif changed == 'pool_item':
+                db.query(PoolItem).filter_by(receipt_id=pid).first().price += 1
+            elif changed == 'seller':
+                db.get(Receipt, rid).merchant_name = 'different now'
+            elif changed == 'event':
+                db.execute(text('DELETE FROM unified_item_resolution_events WHERE document_id=:id'), {'id': doc})
+            else:
+                db.execute(text('DELETE FROM unified_fiscal_item_refs WHERE document_id=:id'), {'id': doc})
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                resolve_matching_items(db, doc, admin)
+            assert err.value.status_code == 409
+            db.rollback()
+        with sqlite3.connect(path) as db:
+            with pytest.raises(RuntimeError):
+                _validate(db)
+    finally:
+        copied.dispose()
+
+
+def test_item_resolution_failure_does_not_leave_partial_decision(setup_bridge, tmp_path):
+    from sqlalchemy import create_engine, event, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_resolution import resolve_matching_items
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid)
+    path = tmp_path / 'resolution-failure.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            def fail_event(_conn, _cursor, statement, _params, _context, _many):
+                if statement.startswith('INSERT INTO unified_item_resolution_events'):
+                    raise RuntimeError('simulated audit failure')
+            event.listen(copied, 'before_cursor_execute', fail_event)
+            try:
+                with pytest.raises(RuntimeError, match='simulated audit failure'):
+                    resolve_matching_items(db, doc, admin)
+            finally:
+                event.remove(copied, 'before_cursor_execute', fail_event)
+            db.commit()  # Даже если вызывающий поймал ошибку, половина решения не фиксируется.
+            assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 'needs_review'
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_item_refs WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.execute(text('SELECT count(*) FROM unified_item_resolution_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
