@@ -332,3 +332,54 @@ def test_incomplete_unicode_identity_is_counted_and_excluded(tmp_path, identity_
     with sqlite3.connect(output) as db:
         assert db.execute("SELECT count(*) FROM unified_receipt_origins WHERE origin_id='p1'").fetchone() == (0,)
         assert db.execute(f"SELECT {identity_field} FROM pool_receipts WHERE id='p1'").fetchone() == (blank,)
+
+
+@pytest.mark.parametrize('statement', [
+    "UPDATE receipts SET company_id='unexpected' WHERE id='r1';",
+    "DELETE FROM pool_receipts WHERE id='p1';",
+    "INSERT INTO receipt_items VALUES ('new','r1','extra');",
+    "UPDATE extra_points SET points=0;",
+    'DROP TABLE receipt_items;',
+    'ALTER TABLE receipts ADD COLUMN unexpected TEXT;',
+    'CREATE TABLE other_data(id TEXT);',
+    'PRAGMA writable_schema=ON;',
+    """CREATE TRIGGER wrong_write AFTER INSERT ON unified_fiscal_documents
+       BEGIN UPDATE extra_points SET points=0; END;""",
+])
+def test_copy_migration_blocks_unexpected_changes_to_original_tables(tmp_path, monkeypatch, statement):
+    import qa.migrate_receipt_copy as migration
+
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute('CREATE TABLE extra_points(id TEXT PRIMARY KEY, points INTEGER)')
+        db.execute("INSERT INTO extra_points VALUES ('donor', 12)")
+    before = source.read_bytes()
+    monkeypatch.setattr(migration, '_SCHEMA', migration._SCHEMA + '\n' + statement + '\n')
+    with pytest.raises(sqlite3.DatabaseError, match='not authorized'):
+        migration.migrate_copy(source, output)
+    assert not output.exists()
+    assert source.read_bytes() == before
+    with sqlite3.connect(source) as db:
+        assert db.execute('SELECT points FROM extra_points').fetchone() == (12,)
+        assert db.execute("SELECT count(*) FROM receipts WHERE id='r1'").fetchone() == (1,)
+
+
+def test_copy_migration_authorizer_is_removed_after_success_or_rollback(tmp_path, monkeypatch):
+    import qa.migrate_receipt_copy as migration
+
+    for fail in (False, True):
+        source = tmp_path / f'source-{fail}.db'
+        _source(source)
+        with sqlite3.connect(source) as db:
+            if fail:
+                original = migration._SCHEMA
+                monkeypatch.setattr(migration, '_SCHEMA', original + '\nUPDATE receipts SET company_id=\'no\';\n')
+                with pytest.raises(sqlite3.DatabaseError, match='not authorized'):
+                    migration._migrate(db)
+                monkeypatch.setattr(migration, '_SCHEMA', original)
+            else:
+                migration._migrate(db)
+            # После операции сам вызывающий может управлять соединением как прежде.
+            db.execute("UPDATE receipts SET company_id='manual' WHERE id='r1'")
+            assert db.execute("SELECT company_id FROM receipts WHERE id='r1'").fetchone() == ('manual',)

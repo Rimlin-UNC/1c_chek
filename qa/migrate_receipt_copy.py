@@ -18,7 +18,6 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
-
 # SQLite trim() без второго аргумента удаляет лишь пробел ASCII, тогда как
 # Python str.strip() также считает пустыми табуляции и пробелы Unicode.
 # Состав набора фиксирован, чтобы ограничения и проверка видели одно состояние.
@@ -289,11 +288,47 @@ def _legacy_ownership(db: sqlite3.Connection, doc_id: str):
     return (owner, pool_id if pool_company == owner else None, registry_id, assigned_at if pool_company == owner else None)
 
 
+_MIGRATION_TABLES = frozenset({
+    'unified_fiscal_documents', 'unified_receipt_origins', 'unified_receipt_item_origins',
+    'unified_fiscal_item_sets', 'unified_fiscal_item_refs', 'unified_item_resolution_events',
+    'unified_company_claims', 'unified_ownership_review_proposals',
+    'unified_fiscal_resolution_proposals', 'unified_company_accounts', 'unified_company_account_events',
+})
+
+
+def _migration_authorizer(action: int, name: str | None, target: str | None,
+                          database: str | None, _trigger: str | None) -> int:
+    """Запретить изменения всех существующих таблиц при построении копии.
+
+    SQLite проверяет также инструкции внутри триггеров. Авторизатор — защита
+    от ошибок миграционного SQL, не песочница для недоверенного кода Python.
+    """
+    if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_ALTER_TABLE,
+                  sqlite3.SQLITE_DROP_TABLE, sqlite3.SQLITE_DROP_INDEX, sqlite3.SQLITE_DROP_TRIGGER,
+                  sqlite3.SQLITE_DROP_VIEW, sqlite3.SQLITE_CREATE_VIEW, sqlite3.SQLITE_PRAGMA,
+                  sqlite3.SQLITE_CREATE_VTABLE, sqlite3.SQLITE_DROP_VTABLE,
+                  sqlite3.SQLITE_CREATE_TEMP_TABLE, sqlite3.SQLITE_CREATE_TEMP_INDEX,
+                  sqlite3.SQLITE_CREATE_TEMP_TRIGGER, sqlite3.SQLITE_CREATE_TEMP_VIEW,
+                  sqlite3.SQLITE_DROP_TEMP_TABLE, sqlite3.SQLITE_DROP_TEMP_INDEX,
+                  sqlite3.SQLITE_DROP_TEMP_TRIGGER, sqlite3.SQLITE_DROP_TEMP_VIEW):
+        return sqlite3.SQLITE_DENY
+    if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE):
+        if database != 'main' or (name not in _MIGRATION_TABLES and name != 'sqlite_master'):
+            return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_CREATE_TABLE and (database != 'main' or name not in _MIGRATION_TABLES):
+        return sqlite3.SQLITE_DENY
+    if action in (sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_CREATE_TRIGGER):
+        if database != 'main' or target not in _MIGRATION_TABLES:
+            return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
 def _migrate(db: sqlite3.Connection) -> None:
     """Все новые таблицы и ссылки записываются в одной транзакции."""
     db.execute('PRAGMA foreign_keys = ON')
-    db.execute('BEGIN IMMEDIATE')
+    db.set_authorizer(_migration_authorizer)
     try:
+        db.execute('BEGIN IMMEDIATE')
         # executescript фиксирует транзакцию. complete_statement учитывает
         # точки с запятой в комментариях и строках, в отличие от split(';').
         statement = ''
@@ -427,6 +462,8 @@ def _migrate(db: sqlite3.Connection) -> None:
     except BaseException:
         db.rollback()
         raise
+    finally:
+        db.set_authorizer(None)
 
 
 def _validate(db: sqlite3.Connection) -> None:
