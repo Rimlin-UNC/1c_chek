@@ -13,7 +13,7 @@ from app.models import Company, Receipt, User, utcnow
 from app.pool.models import PoolReceipt
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _item_digest, _normalized
-from qa.unified_integrity import pool_seller_matches_snapshot
+from qa.unified_integrity import pool_seller_matches_snapshot, registry_seller_matches_snapshot
 from qa.unified_item_comparison import common_positions_match, sellers_match
 
 
@@ -75,7 +75,8 @@ def resolve_matching_items(db: Session, document_id: str, actor: User) -> bool:
         if ((source.fn, source.fd, source.fp) != (doc.fn, doc.fd, doc.fp)
                 or _normalized(source.receipt_date, source.total_sum, source.operation) != expected):
             raise HTTPException(409, 'Реквизиты источников изменились, нужна сверка')
-    if (not pool_seller_matches_snapshot(db, document_id, pool.id)
+    if (not registry_seller_matches_snapshot(db, document_id, registry.id)
+            or not pool_seller_matches_snapshot(db, document_id, pool.id)
             or not _current_item_hashes(db, 'registry', registry.id)
             or not _current_item_hashes(db, 'pool', pool.id)):
         raise HTTPException(409, 'Источники изменились после снимка')

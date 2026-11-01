@@ -1937,3 +1937,314 @@ def test_item_resolution_failure_does_not_leave_partial_decision(setup_bridge, t
                               {'id': doc}).scalar_one() == 0
     finally:
         copied.dispose()
+
+
+def test_reviewed_item_disagreement_preserves_both_sources(setup_bridge, tmp_path, monkeypatch):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).raw = '{"buyerEmail":"private-donor@example.com"}'
+        db.commit()
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    path = tmp_path / 'manual-review.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            accountant = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            with pytest.raises(HTTPException) as denied:
+                preview_item_disagreement(db, doc, c1, accountant)
+            assert denied.value.status_code == 403
+            with pytest.raises(HTTPException) as denied:
+                preview_item_disagreement(db, doc, c2, admin)
+            assert denied.value.status_code == 404
+            view = preview_item_disagreement(db, doc, c1, admin)
+            assert view['seller_equal'] and not view['positions_equal']
+            assert len(view['registry']['items']) == len(view['pool']['items']) == 2
+            assert 'private accounting note' not in str(view)
+            assert 'private-donor@example.com' not in str(view)
+            assert 'private-extra' not in str(view)
+            revision = view['revision']
+            db.commit()
+            with pytest.raises(HTTPException) as denied:
+                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=False)
+            assert denied.value.status_code == 422
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            db.rollback()
+            assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 'needs_review'
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            db.commit()
+            assert not resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            db.commit()
+            event = db.execute(text('SELECT method, review_digest, actor_id FROM unified_item_resolution_events '
+                                    'WHERE document_id=:id'), {'id': doc}).one()
+            assert event == ('reviewed_registry', revision, admin.id)
+            assert 'private' not in str(event)
+            assert db.query(PoolItem).filter_by(receipt_id=pid).count() == 2
+            assert db.query(ReceiptItem).filter_by(receipt_id=rid).count() == 2
+            assert db.query(Receipt).filter_by(id=rid).one().comment == 'private accounting note'
+            assert db.get(PoolReceipt, pid).raw == '{"buyerEmail":"private-donor@example.com"}'
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_item_refs WHERE document_id=:id '
+                                   "AND origin_kind='registry'"), {'id': doc}).scalar_one() == 2
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('mismatch', ['seller', 'missing_item'])
+def test_explicit_review_handles_seller_or_missing_pool_positions(setup_bridge, tmp_path, mismatch):
+    import sqlite3
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch=mismatch)
+    path = tmp_path / 'different-source.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            view = preview_item_disagreement(db, doc, c1, admin)
+            assert (not view['seller_equal']) if mismatch == 'seller' else (not view['pool']['items'])
+            db.commit()
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'], confirm=True)
+            db.commit()
+        with sqlite3.connect(path) as db:
+            _validate(db)
+    finally:
+        copied.dispose()
+
+
+@pytest.mark.parametrize('change', ['registry_item', 'pool_item', 'registry_seller', 'pool_seller', 'ownership', 'token'])
+def test_review_rejects_stale_versions_and_does_not_create_decision(setup_bridge, tmp_path, change):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    rid = _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    path = tmp_path / 'stale-review.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            revision = preview_item_disagreement(db, doc, c1, admin)['revision']
+            db.commit()
+            if change == 'registry_item':
+                db.query(ReceiptItem).filter_by(receipt_id=rid).first().price += 1
+            elif change == 'pool_item':
+                db.query(PoolItem).filter_by(receipt_id=pid).first().price += 1
+            elif change == 'registry_seller':
+                db.get(Receipt, rid).merchant_name = 'changed'
+            elif change == 'pool_seller':
+                db.get(PoolReceipt, pid).merchant_name = 'changed'
+            elif change == 'ownership':
+                db.get(PoolReceipt, pid).assigned_company_id = c2
+            else:
+                revision = '0' * 64
+            db.commit()
+            with pytest.raises(HTTPException) as denied:
+                resolve_reviewed_registry(db, doc, c1, admin, revision=revision, confirm=True)
+            assert denied.value.status_code == 409
+            db.rollback()
+            assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 'needs_review'
+            assert db.execute(text('SELECT count(*) FROM unified_item_resolution_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_review_decision_concurrent_same_administrator(setup_bridge, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    path = tmp_path / 'review-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    barrier = Barrier(2)
+    try:
+        with sessions() as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            uid = admin.id
+            revision = preview_item_disagreement(db, doc, c1, admin)['revision']
+        def decide():
+            with sessions() as db:
+                actor = db.get(User, uid)
+                barrier.wait(timeout=10)
+                result = resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True)
+                db.commit()
+                return result
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assert sorted(executor.map(lambda _: decide(), range(2))) == [False, True]
+        with sessions() as db:
+            assert db.execute(text('SELECT count(*) FROM unified_item_resolution_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+    finally:
+        copied.dispose()
+
+
+def test_review_decision_audit_failure_rolls_back_savepoint(setup_bridge, tmp_path):
+    from sqlalchemy import create_engine, event, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    path = tmp_path / 'review-failure.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            revision = preview_item_disagreement(db, doc, c1, actor)['revision']
+            db.commit()
+            def fail_event(_conn, _cursor, statement, _params, _context, _many):
+                if statement.startswith('INSERT INTO unified_item_resolution_events'):
+                    raise RuntimeError('simulated audit failure')
+            event.listen(copied, 'before_cursor_execute', fail_event)
+            try:
+                with pytest.raises(RuntimeError, match='simulated audit failure'):
+                    resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True)
+            finally:
+                event.remove(copied, 'before_cursor_execute', fail_event)
+            db.commit()
+            assert db.execute(text('SELECT state FROM unified_fiscal_item_sets WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 'needs_review'
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_item_refs WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+            assert db.execute(text('SELECT count(*) FROM unified_item_resolution_events WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_manual_review_keeps_donor_consent_points_and_history(setup_bridge, tmp_path):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolConsent, PoolPoint
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+    from qa.unified_receipt_preview import donor_view
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    with SessionLocal() as db:
+        donor = PoolUser(vid='manual_review_' + uuid4().hex, points=11)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded = donor_id, 11
+        db.add(PoolPoint(user_id=donor_id, delta=11, reason='receipt', ref_id=pid))
+        db.add(PoolConsent(vid=donor.vid, user_id=donor_id, offerta_version='1'))
+        db.commit()
+    path = tmp_path / 'review-donor.db'
+    copied = None
+    try:
+        migrate_copy(engine.url.database, path)
+        copied = create_engine('sqlite:///' + str(path))
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            admin = db.query(User).filter_by(role='admin').first()
+            view = preview_item_disagreement(db, doc, c1, admin)
+            db.commit()
+            assert resolve_reviewed_registry(db, doc, c1, admin, revision=view['revision'], confirm=True)
+            db.commit()
+            assert db.get(PoolUser, donor_id).points == 11
+            assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 11
+            assert db.query(PoolConsent).filter_by(user_id=donor_id).one().offerta_version == '1'
+            assert 'private accounting note' not in str(donor_view(db, doc, db.get(PoolUser, donor_id)))
+    finally:
+        if copied is not None:
+            copied.dispose()
+        with SessionLocal() as db:
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.query(PoolPoint).filter_by(user_id=donor_id).delete()
+            db.query(PoolConsent).filter_by(user_id=donor_id).delete()
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()
+
+
+def test_review_snapshot_validator_detects_forged_digest(setup_bridge, tmp_path):
+    import sqlite3
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_item_review import preview_item_disagreement, resolve_reviewed_registry
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    _create_legacy_registry_for_item_resolution(c1, pid, mismatch='item')
+    path = tmp_path / 'review-tampered.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            actor = db.query(User).filter_by(role='admin').first()
+            revision = preview_item_disagreement(db, doc, c1, actor)['revision']
+            db.commit()
+            assert resolve_reviewed_registry(db, doc, c1, actor, revision=revision, confirm=True)
+            db.commit()
+            db.execute(text("UPDATE unified_item_resolution_events SET review_digest=:digest WHERE document_id=:doc"),
+                       {'digest': '0' * 64, 'doc': doc})
+            db.commit()
+        with sqlite3.connect(path) as db:
+            with pytest.raises(RuntimeError, match='не соответствует просмотренному снимку'):
+                _validate(db)
+    finally:
+        copied.dispose()

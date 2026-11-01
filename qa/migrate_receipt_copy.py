@@ -83,8 +83,11 @@ CREATE TABLE unified_item_resolution_events (
     registry_origin_id TEXT NOT NULL REFERENCES receipts(id),
     pool_origin_id TEXT NOT NULL REFERENCES pool_receipts(id),
     actor_id TEXT NOT NULL,
-    method TEXT NOT NULL CHECK(method = 'equal_common_fields'),
-    created_at TEXT NOT NULL
+    method TEXT NOT NULL CHECK(method IN ('equal_common_fields', 'reviewed_registry')),
+    review_digest TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    CHECK((method = 'equal_common_fields' AND review_digest = '')
+       OR (method = 'reviewed_registry' AND length(review_digest) = 64))
 );
 -- Единственное право компании на документ: одна строка на fiscal document.
 CREATE TABLE unified_company_claims (
@@ -272,15 +275,16 @@ def _migrate(db: sqlite3.Connection) -> None:
                                    'operation=?, review_mask=? WHERE id=?', (*values, mask, doc_id))
                     db.execute('INSERT INTO unified_receipt_origins (document_id, origin_kind, origin_id) '
                                'VALUES (?, ?, ?)', (doc_id, kind, origin_id))
-        # Хеш только открытых реквизитов продавца, которые отдаёт проекция
-        # компании. Сырой ответ ФНС и персональные данные в него не включаются.
-        cursor = db.execute("""SELECT p.id, p.merchant_name, p.merchant_inn, p.merchant_address
-            FROM pool_receipts p JOIN unified_receipt_origins o
-            ON o.origin_kind = 'pool' AND o.origin_id = p.id""")
-        while batch := cursor.fetchmany(500):
-            db.executemany("UPDATE unified_receipt_origins SET fiscal_source_hash=? "
-                           "WHERE origin_kind='pool' AND origin_id=?",
-                           [(_item_digest(row[1:]), row[0]) for row in batch])
+        # В хеш попадают только открытые реквизиты продавца обоих источников,
+        # без сырого ответа ФНС и личных полей владельца/донора.
+        for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
+            cursor = db.execute(f"""SELECT p.id, p.merchant_name, p.merchant_inn, p.merchant_address
+                FROM {table} p JOIN unified_receipt_origins o
+                ON o.origin_kind = ? AND o.origin_id = p.id""", (kind,))
+            while batch := cursor.fetchmany(500):
+                db.executemany("UPDATE unified_receipt_origins SET fiscal_source_hash=? "
+                               "WHERE origin_kind=? AND origin_id=?",
+                               [(_item_digest(row[1:]), kind, row[0]) for row in batch])
         # Позиции не склеиваются по порядку: разные источники могут содержать
         # различный состав, детали или недостоверные суммы. Сохраняем все связи.
         for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
@@ -370,12 +374,13 @@ def _validate(db: sqlite3.Connection) -> None:
         """, (kind,)).fetchone()[0]
         if bad or missing:
             raise RuntimeError('Связи единого чека не соответствуют исходным записям')
-    cursor = db.execute("""SELECT p.merchant_name, p.merchant_inn, p.merchant_address,
-            o.fiscal_source_hash FROM unified_receipt_origins o
-        JOIN pool_receipts p ON o.origin_id = p.id WHERE o.origin_kind = 'pool'""")
-    while batch := cursor.fetchmany(500):
-        if any(not row[3] or row[3] != _item_digest(row[:3]) for row in batch):
-            raise RuntimeError('Реквизиты продавца изменились после миграции')
+    for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
+        cursor = db.execute(f"""SELECT p.merchant_name, p.merchant_inn, p.merchant_address,
+                o.fiscal_source_hash FROM unified_receipt_origins o
+            JOIN {table} p ON o.origin_id = p.id WHERE o.origin_kind = ?""", (kind,))
+        while batch := cursor.fetchmany(500):
+            if any(not row[3] or row[3] != _item_digest(row[:3]) for row in batch):
+                raise RuntimeError('Реквизиты продавца изменились после миграции')
     for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
         bad = db.execute(f"""
             SELECT count(*) FROM unified_receipt_item_origins o
@@ -422,7 +427,7 @@ def _validate(db: sqlite3.Connection) -> None:
                                     'WHERE document_id=?', (doc_id,)).fetchall()
             item_set = db.execute('SELECT state, origin_kind, origin_id FROM unified_fiscal_item_sets '
                                   'WHERE document_id=?', (doc_id,)).fetchone()
-            resolution = db.execute('SELECT registry_origin_id, pool_origin_id, method '
+            resolution = db.execute('SELECT registry_origin_id, pool_origin_id, method, actor_id, review_digest '
                                     'FROM unified_item_resolution_events WHERE document_id=?', (doc_id,)).fetchone()
             selected = None
             if len(source_ids) == 1:
@@ -430,10 +435,10 @@ def _validate(db: sqlite3.Connection) -> None:
                 selected = source_ids[0]
             elif item_set and item_set[0] == 'resolved_registry':
                 from qa.unified_item_comparison import common_positions_match, sellers_match
-                if (not resolution or resolution[2] != 'equal_common_fields'
+                if (not resolution or resolution[2] not in ('equal_common_fields', 'reviewed_registry')
                         or set(source_ids) != {('registry', resolution[0]), ('pool', resolution[1])}):
                     raise RuntimeError('Решение по позициям не соответствует источникам')
-                reg_id, pool_id, _ = resolution
+                reg_id, pool_id = resolution[:2]
                 reg_seller = db.execute('SELECT merchant_name, merchant_inn, merchant_address FROM receipts WHERE id=?',
                                         (reg_id,)).fetchone()
                 pool_seller = db.execute('SELECT merchant_name, merchant_inn, merchant_address FROM pool_receipts WHERE id=?',
@@ -441,7 +446,8 @@ def _validate(db: sqlite3.Connection) -> None:
                 fields = 'name, quantity, price, total, vat_rate, vat_sum'
                 reg_items = db.execute(f'SELECT {fields} FROM receipt_items WHERE receipt_id=?', (reg_id,)).fetchall()
                 pool_items = db.execute(f'SELECT {fields} FROM pool_items WHERE receipt_id=?', (pool_id,)).fetchall()
-                if not sellers_match(reg_seller, pool_seller) or not common_positions_match(reg_items, pool_items):
+                if resolution[2] == 'equal_common_fields' and (
+                        not sellers_match(reg_seller, pool_seller) or not common_positions_match(reg_items, pool_items)):
                     raise RuntimeError('Сверенные данные позиций или продавца изменились')
                 expected_set = ('resolved_registry', 'registry', reg_id)
                 selected = ('registry', reg_id)
@@ -479,6 +485,22 @@ def _validate(db: sqlite3.Connection) -> None:
                 raise RuntimeError('Владелец единого чека не соответствует исходным назначениям')
             if item_set[0] == 'resolved_registry' and (not claim or claim[2] != resolution[0]):
                 raise RuntimeError('Выбранный состав не соответствует владельцу чека')
+            if item_set[0] == 'resolved_registry' and resolution[2] == 'reviewed_registry':
+                from qa.unified_review_fingerprint import review_fingerprint
+                fiscal = db.execute('SELECT fn, fd, fp, receipt_date, total_sum, operation, review_mask '
+                                    'FROM unified_fiscal_documents WHERE id=?', (doc_id,)).fetchone()
+                origin_hashes = db.execute('SELECT origin_kind, origin_id, fiscal_source_hash '
+                                           'FROM unified_receipt_origins WHERE document_id=?', (doc_id,)).fetchall()
+                item_hashes = db.execute('SELECT i.origin_kind, i.origin_id, i.item_id, i.content_hash '
+                                         'FROM unified_receipt_item_origins i JOIN unified_receipt_origins o '
+                                         'ON o.origin_kind=i.origin_kind AND o.origin_id=i.origin_id '
+                                         'WHERE o.document_id=?', (doc_id,)).fetchall()
+                pool_state = db.execute('SELECT status, assigned_company_id, assigned_at FROM pool_receipts '
+                                        'WHERE id=?', (resolution[1],)).fetchone()
+                digest = review_fingerprint(doc_id, resolution[3], claim[0], fiscal,
+                                            origin_hashes, item_hashes, pool_state)
+                if resolution[4] != digest:
+                    raise RuntimeError('Решение о расхождениях не соответствует просмотренному снимку')
             account = db.execute('SELECT company_id, legacy_receipt_id, pool_origin_id '
                                  'FROM unified_company_accounts WHERE document_id=?', (doc_id,)).fetchone()
             if claim and claim[2] and not account:

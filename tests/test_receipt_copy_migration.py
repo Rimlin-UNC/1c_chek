@@ -20,8 +20,9 @@ def _source(path):
         db.execute("INSERT INTO pool_receipts VALUES ('p1','123','4','5','2026-01-01 12:00:00.000000',100,1,NULL,NULL,NULL)")
         db.execute("INSERT INTO receipts VALUES ('r2','','7','8',NULL,NULL,NULL,NULL,NULL,NULL)")
         db.execute("INSERT INTO pool_receipts VALUES ('p2','222','3','4',NULL,50,2,NULL,NULL,NULL)")
-        for field in ('merchant_name', 'merchant_inn', 'merchant_address'):
-            db.execute(f'ALTER TABLE pool_receipts ADD COLUMN {field} TEXT')
+        for table in ('receipts', 'pool_receipts'):
+            for field in ('merchant_name', 'merchant_inn', 'merchant_address'):
+                db.execute(f'ALTER TABLE {table} ADD COLUMN {field} TEXT')
 
 
 def test_copy_migration_merges_only_complete_identities(tmp_path):

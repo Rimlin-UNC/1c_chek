@@ -46,3 +46,13 @@ def pool_seller_matches_snapshot(db: Session, document_id: str, pool_id: str) ->
                           "WHERE o.origin_kind='pool' AND o.origin_id=:pool AND o.document_id=:doc"),
                      {'pool': pool_id, 'doc': document_id}).first()
     return bool(row and row.fiscal_source_hash and row.fiscal_source_hash == _item_digest(row[:3]))
+
+
+def registry_seller_matches_snapshot(db: Session, document_id: str, receipt_id: str) -> bool:
+    """Проверить реквизиты продавца реестра, сохранённые при создании снимка."""
+    row = db.execute(text("SELECT r.merchant_name, r.merchant_inn, r.merchant_address, "
+                          "o.fiscal_source_hash FROM unified_receipt_origins o "
+                          "JOIN receipts r ON r.id=o.origin_id "
+                          "WHERE o.origin_kind='registry' AND o.origin_id=:receipt AND o.document_id=:doc"),
+                     {'receipt': receipt_id, 'doc': document_id}).first()
+    return bool(row and row.fiscal_source_hash and row.fiscal_source_hash == _item_digest(row[:3]))
