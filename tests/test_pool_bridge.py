@@ -3188,7 +3188,7 @@ def test_unified_donor_read_reloads_cached_block_status(setup_bridge, tmp_path):
             db.commit()
 
 
-@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer'])
+@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer', 'pick-and-transfer'])
 def test_batch_pool_actions_refuse_identity_changed_before_lock(client, setup_bridge, monkeypatch, operation):
     from app.pool.router_company import month_used
     from app.services import receipt_identity
@@ -3204,7 +3204,7 @@ def test_batch_pool_actions_refuse_identity_changed_before_lock(client, setup_br
         db.commit()
     ids = [pid, other_id]
     try:
-        if operation != 'assign':
+        if operation not in ('assign', 'pick-and-transfer'):
             response = client.post('/api/v1/pool-company/assign', headers=headers, json={'receipt_ids': ids})
             assert response.status_code == 200
         with SessionLocal() as db:
@@ -3225,8 +3225,8 @@ def test_batch_pool_actions_refuse_identity_changed_before_lock(client, setup_br
         assert response.status_code == 409
         with SessionLocal() as db:
             assert db.get(PoolReceipt, pid).fp == '987654321'
-            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation == 'assign' else c1)
-            assert db.get(PoolReceipt, other_id).assigned_company_id == (None if operation == 'assign' else c1)
+            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation in ('assign', 'pick-and-transfer') else c1)
+            assert db.get(PoolReceipt, other_id).assigned_company_id == (None if operation in ('assign', 'pick-and-transfer') else c1)
             assert db.query(Receipt).filter(Receipt.fn.in_([fn, other_fn])).count() == 0
             assert month_used(db, c1) == used_before
             db.get(PoolReceipt, pid).fp = fp
@@ -3257,12 +3257,12 @@ def test_pool_identity_batch_lock_order_is_independent_of_input():
     assert snapshot['a'] == snapshot['c'] == ('z', '2', '1')
 
 
-@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer'])
+@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer', 'pick-and-transfer'])
 def test_pool_batch_action_fails_cleanly_when_selected_record_deleted(client, setup_bridge, monkeypatch, operation):
     from app.services import receipt_identity
 
     _, headers, _, c1, _, pid, _, fn, _, _ = setup_bridge
-    if operation != 'assign':
+    if operation not in ('assign', 'pick-and-transfer'):
         assert client.post('/api/v1/pool-company/assign', headers=headers,
                            json={'receipt_ids': [pid]}).status_code == 200
     lock = receipt_identity.lock_identity
@@ -3280,7 +3280,7 @@ def test_pool_batch_action_fails_cleanly_when_selected_record_deleted(client, se
         assert db.query(Receipt).filter_by(fn=fn, company_id=c1).count() == 0
 
 
-@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer'])
+@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer', 'pick-and-transfer'])
 @pytest.mark.parametrize('change', ['disabled_user', 'demoted_user', 'moved_user', 'disabled_company'])
 def test_pool_batch_rechecks_access_after_identity_lock(client, setup_bridge, monkeypatch, operation, change):
     from app.models import Company, User
@@ -3288,7 +3288,7 @@ def test_pool_batch_rechecks_access_after_identity_lock(client, setup_bridge, mo
     from app.services import receipt_identity
 
     _, headers, _, c1, c2, pid, _, fn, _, _ = setup_bridge
-    if operation != 'assign':
+    if operation not in ('assign', 'pick-and-transfer'):
         assert client.post('/api/v1/pool-company/assign', headers=headers,
                            json={'receipt_ids': [pid]}).status_code == 200
     with SessionLocal() as db:
@@ -3317,7 +3317,7 @@ def test_pool_batch_rechecks_access_after_identity_lock(client, setup_bridge, mo
         assert changed == [True]
         assert response.status_code == 403
         with SessionLocal() as db:
-            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation == 'assign' else c1)
+            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation in ('assign', 'pick-and-transfer') else c1)
             assert db.query(Receipt).filter_by(fn=fn).count() == 0
             assert month_used(db, c1) == used
     finally:
@@ -3374,3 +3374,218 @@ def test_pool_assign_rechecks_settings_after_identity_lock(client, setup_bridge,
             with SessionLocal() as db:
                 db.query(PoolReceipt).filter_by(id=extra_id).delete()
                 db.commit()
+
+
+def test_pick_and_transfer_multiple_donors_preserves_privacy_and_is_idempotent(client, setup_bridge, monkeypatch):
+    from app.pool.models import PoolConsent, PoolPoint
+    from app.pool.router_company import month_used
+
+    _, a1, a2, c1, _, pid, _, fn, fd, fp = setup_bridge
+    second_fn = '6' + str(int(uuid4().hex, 16) % 10**15).zfill(15)
+    donor_ids, second_id = [], None
+    with SessionLocal() as db:
+        for n in (1, 2):
+            donor = PoolUser(vid='atomic_' + uuid4().hex, email=f'private{n}@example.test', points=7)
+            db.add(donor)
+            db.flush()
+            donor_ids.append(donor.id)
+            db.add(PoolConsent(vid=donor.vid, user_id=donor.id, offerta_version='1'))
+            db.add(PoolPoint(user_id=donor.id, delta=7, reason='receipt', ref_id=pid))
+        first = db.get(PoolReceipt, pid)
+        first.pool_user_id, first.points_awarded = donor_ids[0], 7
+        first.raw = '{"buyerPhoneOrAddress":"private1@example.test"}'
+        second = PoolReceipt(pool_user_id=donor_ids[1], fn=second_fn, fd=fd, fp=fp,
+                             receipt_date=datetime(2026, 9, 22), total_sum=300, operation=1,
+                             status='verified', points_awarded=7, raw='{"email":"private2@example.test"}')
+        db.add(second)
+        db.flush()
+        second_id = second.id
+        db.add(PoolItem(receipt_id=second_id, name='Бумага', quantity=1, price=300, total=300))
+        db.commit()
+        before = month_used(db, c1)
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    monkeypatch.setattr('app.routers.receipts.check_receipt', lambda *a, **k: pytest.fail('FNS request'))
+    try:
+        payload = {'receipt_ids': [pid, second_id]}
+        response = client.post('/api/v1/pool-company/pick-and-transfer', headers=a1, json=payload)
+        assert response.status_code == 200, response.text
+        assert (response.json()['assigned'], response.json()['created']) == (2, 2)
+        assert response.json()['unconfirmed'] == 2
+        assert 'example.test' not in response.text and all(uid not in response.text for uid in donor_ids)
+        response = client.post('/api/v1/pool-company/pick-and-transfer', headers=a1, json=payload)
+        assert response.status_code == 200, response.text
+        assert (response.json()['assigned'], response.json()['created'], response.json()['existing']) == (0, 0, 2)
+        assert client.post('/api/v1/pool-company/pick-and-transfer', headers=a2, json=payload).status_code == 409
+        with SessionLocal() as db:
+            assert month_used(db, c1) == before + 2
+            for uid in donor_ids:
+                assert db.get(PoolUser, uid).points == 7
+                assert db.query(PoolPoint).filter_by(user_id=uid).one().delta == 7
+                assert db.query(PoolConsent).filter_by(user_id=uid).one().offerta_version == '1'
+            for source_id in (pid, second_id):
+                pool = db.get(PoolReceipt, source_id)
+                assert pool.assigned_company_id == c1 and pool.points_awarded == 7
+                receipt = db.query(Receipt).filter_by(fn=pool.fn, fd=pool.fd, fp=pool.fp).one()
+                assert receipt.company_id == c1 and receipt.source == 'pool'
+                assert 'example.test' not in receipt.raw_data
+                assert 'example.test' not in receipt.ext_json
+    finally:
+        with SessionLocal() as db:
+            db.query(ReceiptItem).filter(ReceiptItem.receipt_id.in_(
+                db.query(Receipt.id).filter(Receipt.fn == second_fn))).delete(synchronize_session=False)
+            db.query(Receipt).filter_by(fn=second_fn).delete()
+            db.query(PoolItem).filter_by(receipt_id=second_id).delete()
+            db.query(PoolReceipt).filter_by(id=second_id).delete()
+            first = db.get(PoolReceipt, pid)
+            if first:
+                first.pool_user_id = None
+            db.flush()
+            db.query(PoolPoint).filter(PoolPoint.user_id.in_(donor_ids)).delete(synchronize_session=False)
+            db.query(PoolConsent).filter(PoolConsent.user_id.in_(donor_ids)).delete(synchronize_session=False)
+            db.query(PoolUser).filter(PoolUser.id.in_(donor_ids)).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_pick_and_transfer_rolls_back_entire_batch_on_second_transfer_error(client, setup_bridge, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.pool import transfer
+    from app.pool.router_company import month_used
+
+    _, headers, _, c1, _, pid, _, fn, fd, fp = setup_bridge
+    second_fn = '6' + str(int(uuid4().hex, 16) % 10**15).zfill(15)
+    with SessionLocal() as db:
+        second = PoolReceipt(fn=second_fn, fd=fd, fp=fp, receipt_date=datetime(2026, 9, 22),
+                             total_sum=500, operation=1, status='verified')
+        db.add(second)
+        db.flush()
+        second_id = second.id
+        db.commit()
+        before = month_used(db, c1)
+    original = transfer.copy_to_registry
+    calls = []
+    def fail_second(*args):
+        calls.append(True)
+        if len(calls) == 2:
+            raise HTTPException(409, 'Синтетическая ошибка')
+        return original(*args)
+    monkeypatch.setattr(transfer, 'copy_to_registry', fail_second)
+    try:
+        response = client.post('/api/v1/pool-company/pick-and-transfer', headers=headers,
+                               json={'receipt_ids': [pid, second_id]})
+        assert response.status_code == 409 and len(calls) == 2
+        with SessionLocal() as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.get(PoolReceipt, second_id).assigned_company_id is None
+            assert db.query(Receipt).filter(Receipt.fn.in_([fn, second_fn])).count() == 0
+            assert month_used(db, c1) == before
+    finally:
+        with SessionLocal() as db:
+            db.query(PoolReceipt).filter_by(id=second_id).delete()
+            db.commit()
+
+
+@pytest.mark.parametrize('same_company', [True, False])
+def test_pick_and_transfer_concurrent_company_requests(setup_bridge, monkeypatch, same_company):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from fastapi import HTTPException
+
+    from app.models import User
+    from app.pool.router_company import IdsBody, month_used, pick_and_transfer
+
+    _, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    with SessionLocal() as db:
+        ids = [db.query(User.id).filter_by(company_id=c1, role='accountant').one()[0],
+               db.query(User.id).filter_by(company_id=c1 if same_company else c2, role='accountant').one()[0]]
+        before = month_used(db, c1)
+    barrier = Barrier(2)
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    def run(uid):
+        with SessionLocal() as db:
+            actor = db.get(User, uid)
+            barrier.wait(timeout=10)
+            try:
+                result = pick_and_transfer(IdsBody(receipt_ids=[pid]), db, actor, '')
+                return result['created'], result['existing']
+            except HTTPException as exc:
+                db.rollback()
+                return exc.status_code, 0
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        a = executor.submit(run, ids[0])
+        b = executor.submit(run, ids[1])
+        results = [a.result(timeout=30), b.result(timeout=30)]
+    if same_company:
+        assert sorted(results) == [(0, 1), (1, 0)]
+    else:
+        assert sorted(results) == [(1, 0), (409, 0)]
+    with SessionLocal() as db:
+        receipt = db.query(Receipt).filter_by(fn=fn).one()
+        assert db.get(PoolReceipt, pid).assigned_company_id == receipt.company_id
+        if same_company:
+            assert month_used(db, c1) == before + 1
+
+
+def test_pick_and_transfer_rejects_unproven_existing_registry_receipt(client, setup_bridge):
+    _, headers, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    assert client.post('/api/v1/pool-company/assign', headers=headers, json={'receipt_ids': [pid]}).status_code == 200
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        db.add(Receipt(qr_data=pool.qr_data, fn=pool.fn, fd=pool.fd, fp=pool.fp, receipt_date=pool.receipt_date,
+                       total_sum=pool.total_sum, operation=pool.operation, company_id=c1,
+                       source='web', raw_data='{"private":"keep"}'))
+        db.commit()
+    response = client.post('/api/v1/pool-company/pick-and-transfer', headers=headers, json={'receipt_ids': [pid]})
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert db.query(Receipt).filter_by(fn=fn).one().raw_data == '{"private":"keep"}'
+        assert db.get(PoolReceipt, pid).assigned_company_id == c1
+
+
+def test_pick_and_transfer_mixed_retry_only_charges_new_receipt(client, setup_bridge):
+    from app.pool.router_company import month_used
+
+    _, headers, _, c1, _, pid, _, fn, fd, fp = setup_bridge
+    second_fn = '6' + str(int(uuid4().hex, 16) % 10**15).zfill(15)
+    with SessionLocal() as db:
+        second = PoolReceipt(fn=second_fn, fd=fd, fp=fp, receipt_date=datetime(2026, 9, 22),
+                             total_sum=200, operation=1, status='verified')
+        db.add(second)
+        db.flush()
+        second_id = second.id
+        db.commit()
+        before = month_used(db, c1)
+    try:
+        first = client.post('/api/v1/pool-company/pick-and-transfer', headers=headers, json={'receipt_ids': [pid]})
+        assert first.status_code == 200
+        second = client.post('/api/v1/pool-company/pick-and-transfer', headers=headers,
+                             json={'receipt_ids': [pid, second_id, second_id]})
+        assert second.status_code == 200, second.text
+        assert (second.json()['assigned'], second.json()['created'], second.json()['existing']) == (1, 1, 1)
+        with SessionLocal() as db:
+            assert month_used(db, c1) == before + 2
+            assert db.query(Receipt).filter(Receipt.fn.in_([fn, second_fn])).count() == 2
+    finally:
+        with SessionLocal() as db:
+            db.query(ReceiptItem).filter(ReceiptItem.receipt_id.in_(
+                db.query(Receipt.id).filter(Receipt.fn == second_fn))).delete(synchronize_session=False)
+            db.query(Receipt).filter_by(fn=second_fn).delete()
+            db.query(PoolReceipt).filter_by(id=second_id).delete()
+            db.commit()
+
+
+def test_pick_and_transfer_refuses_nontransferable_receipt_without_reserving(client, setup_bridge):
+    from app.pool.router_company import month_used
+
+    _, headers, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    with SessionLocal() as db:
+        db.get(PoolReceipt, pid).receipt_date = None
+        db.commit()
+        before = month_used(db, c1)
+    response = client.post('/api/v1/pool-company/pick-and-transfer', headers=headers, json={'receipt_ids': [pid]})
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert db.get(PoolReceipt, pid).assigned_company_id is None
+        assert db.query(Receipt).filter_by(fn=fn).count() == 0
+        assert month_used(db, c1) == before

@@ -2147,7 +2147,7 @@ function poolPkShell() {
   return `
   <div class="glass card">
     <div class="card-title">🧩 Подбор из Чек-Пула</div>
-    <p class="form-hint" style="margin-bottom:10px">Здесь только чеки, сданные в общий пул, а не все проверенные чеки реестра. Выберите, привяжите к компании и перенесите во вкладке «Мои чеки компании» без повторного запроса в ФНС. История участника и баллы сохраняются. Одобрение в пуле не всегда означает подтверждение ФНС.
+    <p class="form-hint" style="margin-bottom:10px">Здесь только чеки, сданные в общий пул, а не все проверенные чеки реестра. Выберите чеки и перенесите сразу одной операцией, либо сначала привяжите к компании и перенесите во вкладке «Мои чеки компании». Повторный запрос в ФНС не выполняется. История участника и баллы сохраняются. Одобрение в пуле не всегда означает подтверждение ФНС.
       <a href="#/public">Сдать чек в пул →</a></p>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
       <label class="field" id="poolpk-comp-wrap" style="max-width:340px"><span>Компания</span><select id="poolpk-comp"></select></label>
@@ -2239,13 +2239,15 @@ async function poolPkLoadSearch() {
         <button type="button" class="btn btn-sm" id="pk-prev" ${poolPk.page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.page} из ${pages}</span>
         <button type="button" class="btn btn-sm" id="pk-next" ${poolPk.page >= pages ? 'disabled' : ''}>Вперёд →</button>
-        <button type="button" class="btn btn-sm btn-primary" id="pk-assign">🔗 Привязать выбранное (${poolPk.picked.size})</button>
+        <button type="button" class="btn btn-sm" id="pk-assign">🔗 Привязать выбранное (${poolPk.picked.size})</button>
+        <button type="button" class="btn btn-sm btn-primary" id="pk-pick-transfer">📥 Привязать и перенести (${poolPk.picked.size})</button>
       </div>`;
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
       cb.onchange = () => {
         if (cb.checked) poolPk.picked.add(cb.dataset.id); else poolPk.picked.delete(cb.dataset.id);
         const cnt = $('#pk-cnt'); if (cnt) cnt.textContent = poolPk.picked.size;
         const btn = $('#pk-assign'); if (btn) btn.textContent = `🔗 Привязать выбранное (${poolPk.picked.size})`;
+        const transfer = $('#pk-pick-transfer'); if (transfer) transfer.textContent = `📥 Привязать и перенести (${poolPk.picked.size})`;
       };
     });
     const prev = $('#pk-prev'); if (prev) prev.onclick = () => { poolPk.page--; poolPkLoadSearch(); };
@@ -2262,14 +2264,29 @@ async function poolPkLoadSearch() {
       Object.keys(poolPk.f).forEach(key => { poolPk.f[key] = ''; });
       poolPk.picked.clear(); poolPk.page = 1; poolPkLoadSearch();
     };
-    $('#pk-assign').onclick = async () => {
+    let submitting = false;
+    const submitSelected = async (path) => {
+      if (submitting) return;
       if (!poolPk.picked.size) { toast('Отметьте чеки в таблице', 'warn', '🧩'); return; }
+      submitting = true;
+      const selected = [...poolPk.picked];
+      const company = poolPk.company;
+      const buttons = [$('#pk-assign'), $('#pk-pick-transfer')];
+      buttons.forEach(btn => { if (btn) btn.disabled = true; });
       try {
-        const r = await api.post('/api/v1/pool-company/assign' + poolPkCompId(),
-                                 { receipt_ids: [...poolPk.picked] });
-        toast(r.message, 'ok', '🧩'); poolPk.picked.clear(); void poolPkLoadQuota(); poolPkLoadSearch();
+        const r = await api.post('/api/v1/pool-company/' + path + poolPkCompId(),
+                                 { receipt_ids: selected });
+        toast(r.message, 'ok', '🧩');
+        if (poolPk.company === company) {
+          selected.forEach(id => poolPk.picked.delete(id));
+          void poolPkLoadQuota();
+          if (poolPk.tab === 'search') void poolPkLoadSearch();
+        }
       } catch (e) { toast(e.message, 'warn', '🧩'); }
+      finally { submitting = false; buttons.forEach(btn => { if (btn) btn.disabled = false; }); }
     };
+    $('#pk-assign').onclick = () => submitSelected('assign');
+    $('#pk-pick-transfer').onclick = () => submitSelected('pick-and-transfer');
   } catch (e) { box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`; }
 }
 
@@ -6183,6 +6200,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.81': [
+    'Выбранные чеки Чек-Пула можно привязать и перенести одной операцией, без повторного запроса в ФНС.',
+    'Существующие источники пула и реестра пока хранятся раздельно; объединение модели ещё не завершено.',
+  ],
   '1.70.80': [
     'Предупреждение о чеке, зарегистрированном за другой организацией, при добавлении любым способом.',
     'Для фото и PDF учитывается выбранная администратором организация.',

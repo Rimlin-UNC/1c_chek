@@ -14,6 +14,7 @@
 # ======================================================================
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Annotated
 
@@ -340,14 +341,12 @@ def _recheck_pool_company_access(db: Session, company_id: str, user_id: str) -> 
     return company, actor
 
 
-@router.post("/assign", summary="Чек-Пул: привязать чеки к компании")
-def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
-           user: User = Depends(require_accountant)):
-    from ..services.audit import log_action
+def _prepare_pool_assignment(db: Session, body: IdsBody, company_id: str, user: User, *,
+                             allow_assigned: bool = False):
+    """Проверить и назначить выбранные чеки; commit остаётся вызывающему."""
     comp = _company(db, user, company_id)
     _enabled(db)
-    limit = pick_limit(db)
-    if limit <= 0:
+    if pick_limit(db) <= 0:
         raise HTTPException(403, "Подбор из пула выключен настройкой")
     ids = list(dict.fromkeys(body.receipt_ids or []))
     if not ids or len(ids) > ASSIGN_BATCH:
@@ -355,39 +354,84 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
     actor_id, selected_company_id = user.id, comp.id
     candidates = db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids)).all()
     identities = _lock_pool_identities(db, candidates)
-    db.expire_all()  # после ожидания замка перечитать состояние кандидатов и настроек
+    db.expire_all()
     comp, user = _recheck_pool_company_access(db, selected_company_id, actor_id)
     _enabled(db)
     limit = pick_limit(db)
     if limit <= 0:
         raise HTTPException(403, "Подбор из пула выключен настройкой")
-    used = month_used(db, comp.id)
-    if used + len(ids) > limit:
-        raise HTTPException(409, f"Лимит тарифа: {limit} чеков/мес, "
-                                 f"в этом месяце уже подобрано {used}. "
-                                 + TARIFF_NOTE)
-    rows = (db.query(PoolReceipt)
-            .filter(PoolReceipt.id.in_(ids),
-                    PoolReceipt.status == "verified",
-                    PoolReceipt.assigned_company_id.is_(None)).all())
+    rows = (db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids), PoolReceipt.status == "verified").all())
     if len(rows) != len(ids):
         raise HTTPException(409, "Часть выбранных чеков уже занята — обновите список")
     _check_locked_pool_identities(rows, identities)
+    new_rows = []
     for row in rows:
-        if db.query(Receipt.id).filter_by(fn=row.fn, fd=row.fd, fp=row.fp).first():
-            raise HTTPException(409, "Один из чеков уже есть в реестре — обновите список")
+        if row.assigned_company_id not in (None, comp.id) or (row.assigned_company_id and not allow_assigned):
+            raise HTTPException(409, "Один из чеков уже закреплён — обновите список")
+        existing = db.query(Receipt).filter_by(fn=row.fn, fd=row.fd, fp=row.fp).first()
+        if existing:
+            # Повтор единого запроса допустим только для явно подтверждённого
+            # прежнего переноса этого источника в ту же компанию.
+            try:
+                raw = json.loads(existing.raw_data or "{}")
+                provenance = raw.get("pool_transfer", {}) if isinstance(raw, dict) else {}
+            except (ValueError, TypeError):
+                provenance = {}
+            if (not allow_assigned or row.assigned_company_id != comp.id or existing.company_id != comp.id
+                    or existing.source != "pool" or not isinstance(provenance, dict)
+                    or provenance.get("pool_receipt_id") != row.id):
+                raise HTTPException(409, "Один из чеков уже есть в реестре — обновите список")
+        if not row.assigned_company_id:
+            new_rows.append(row)
+    used = month_used(db, comp.id)
+    if new_rows and used + len(new_rows) > limit:
+        raise HTTPException(409, f"Лимит тарифа: {limit} чеков/мес, "
+                                 f"в этом месяце уже подобрано {used}. " + TARIFF_NOTE)
     now = _utcnow()
-    for r in rows:
-        r.assigned_company_id = comp.id
-        r.assigned_at = now
-        r.assigned_by = user.id
+    for row in new_rows:
+        row.assigned_company_id = comp.id
+        row.assigned_at = now
+        row.assigned_by = user.id
+    return comp, user, rows, len(new_rows), used, limit
+
+
+@router.post("/assign", summary="Чек-Пул: привязать чеки к компании")
+def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
+           user: User = Depends(require_accountant)):
+    from ..services.audit import log_action
+    comp, user, rows, assigned, used, limit = _prepare_pool_assignment(db, body, company_id, user)
     db.commit()
-    log_action(user, "pool_pick_assign",
-               details={"company": comp.name, "count": len(rows)})
-    return {"ok": True, "assigned": len(rows), "used": used + len(rows),
-            "left": max(0, limit - used - len(rows)),
-            "message": f"Привязано чеков: {len(rows)}. Выгрузка — во вкладке "
+    log_action(user, "pool_pick_assign", details={"company": comp.name, "count": assigned})
+    return {"ok": True, "assigned": assigned, "used": used + assigned,
+            "left": max(0, limit - used - assigned),
+            "message": f"Привязано чеков: {assigned}. Выгрузка — во вкладке "
                        "«Мои чеки компании»"}
+
+
+@router.post("/pick-and-transfer", summary="Чек-Пул: привязать и перенести чеки одной операцией")
+def pick_and_transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
+                      user: Annotated[User, Depends(require_accountant)], company_id: str = ""):
+    from ..services.audit import log_action
+    from .transfer import copy_to_registry
+
+    comp, user, rows, assigned, used, limit = _prepare_pool_assignment(
+        db, body, company_id, user, allow_assigned=True)
+    db.flush()  # назначение и перенос остаются в одной внешней транзакции
+    created, existing, unconfirmed = 0, 0, 0
+    for row in rows:
+        receipt, was_created = copy_to_registry(db, row, comp.id, user)
+        created += int(was_created)
+        existing += int(not was_created)
+        unconfirmed += int(was_created and receipt.fns_status != "valid")
+    db.commit()
+    log_action(user, "pool_pick_transfer", details={"company_id": comp.id, "assigned": assigned,
+                                                     "created": created, "existing": existing,
+                                                     "unconfirmed": unconfirmed})
+    return {"ok": True, "assigned": assigned, "created": created, "existing": existing,
+            "unconfirmed": unconfirmed, "used": used + assigned, "left": max(0, limit - used - assigned),
+            "message": (f"Привязано: {assigned}; перенесено в реестр: {created}; уже было: {existing}. "
+                        f"Без подтверждённого происхождения проверки ФНС: {unconfirmed}. "
+                        "Запросов в ФНС не выполнялось.")}
 
 
 @router.post("/unassign", summary="Чек-Пул: вернуть чеки в общий пул")
