@@ -20,6 +20,8 @@ def _source(path):
         db.execute("INSERT INTO pool_receipts VALUES ('p1','123','4','5','2026-01-01 12:00:00.000000',100,1,NULL,NULL,NULL)")
         db.execute("INSERT INTO receipts VALUES ('r2','','7','8',NULL,NULL,NULL,NULL,NULL,NULL)")
         db.execute("INSERT INTO pool_receipts VALUES ('p2','222','3','4',NULL,50,2,NULL,NULL,NULL)")
+        for field in ('merchant_name', 'merchant_inn', 'merchant_address'):
+            db.execute(f'ALTER TABLE pool_receipts ADD COLUMN {field} TEXT')
 
 
 def test_copy_migration_merges_only_complete_identities(tmp_path):
@@ -57,7 +59,7 @@ def test_failed_migration_does_not_leave_copy_and_never_overwrites(tmp_path):
     assert output.read_text() == 'do not overwrite'
 
 
-@pytest.mark.parametrize('corruption', ['deleted_origin', 'changed_fiscal_identity', 'missing_link', 'missing_document', 'missing_item', 'wrong_item_origin', 'altered_item', 'altered_item_hash', 'altered_amount', 'removed_review_flag'])
+@pytest.mark.parametrize('corruption', ['deleted_origin', 'changed_fiscal_identity', 'missing_link', 'missing_document', 'missing_item', 'wrong_item_origin', 'altered_item', 'altered_item_hash', 'altered_seller', 'altered_seller_hash', 'altered_amount', 'removed_review_flag'])
 def test_verification_rejects_corrupted_migration(tmp_path, corruption):
     from qa.migrate_receipt_copy import _validate
 
@@ -82,6 +84,10 @@ def test_verification_rejects_corrupted_migration(tmp_path, corruption):
             db.execute("UPDATE pool_items SET name='modified' WHERE id='pi1'")
         elif corruption == 'altered_item_hash':
             db.execute("UPDATE unified_receipt_item_origins SET content_hash='wrong' WHERE item_id='pi1'")
+        elif corruption == 'altered_seller':
+            db.execute("UPDATE pool_receipts SET merchant_name='modified' WHERE id='p1'")
+        elif corruption == 'altered_seller_hash':
+            db.execute("UPDATE unified_receipt_origins SET fiscal_source_hash=NULL WHERE origin_id='p1'")
         elif corruption == 'altered_amount':
             db.execute("UPDATE unified_fiscal_documents SET total_sum=123 WHERE fn='123'")
         else:
@@ -134,3 +140,16 @@ def test_schema_parser_handles_semicolon_in_comments(tmp_path, monkeypatch):
     _source(source)
     monkeypatch.setattr(migration, '_SCHEMA', '-- комментарий; не конец SQL\n' + migration._SCHEMA)
     assert migration.migrate_copy(source, output)['documents'] == 2
+
+
+def test_missing_seller_columns_fail_closed_without_modifying_source(tmp_path):
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute('ALTER TABLE pool_receipts DROP COLUMN merchant_address')
+    with pytest.raises(sqlite3.OperationalError):
+        migrate_copy(source, output)
+    assert not output.exists()
+    with sqlite3.connect(source) as db:
+        assert not db.execute("SELECT name FROM sqlite_master WHERE name='unified_fiscal_documents'").fetchall()
+        assert db.execute('SELECT count(*) FROM pool_receipts').fetchone() == (2,)

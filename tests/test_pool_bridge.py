@@ -1365,3 +1365,98 @@ def test_unified_atomic_pick_concurrent_companies(setup_bridge, tmp_path):
                               {'id': doc}).scalar_one() == 1
     finally:
         copied.dispose()
+
+
+@pytest.mark.parametrize('field', ['merchant_name', 'merchant_inn', 'merchant_address'])
+@pytest.mark.parametrize('change_after_claim', [False, True])
+def test_unified_pool_rejects_stale_seller_without_disclosure(setup_bridge, tmp_path, field, change_after_claim):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view, promote_pool_claim, update_account_private
+    from qa.unified_claims import claim_pool_document
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+    from qa.unified_receipt_preview import company_view
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'seller-changed.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            before = month_used(db, c1)
+            if change_after_claim:
+                assert claim_and_account_pool_document(db, doc, c1, owner) == (True, True)
+                db.commit()
+                assert account_view(db, doc, c1, owner)['origin'] == 'unified_pool'
+                assert company_view(db, doc, owner, c1)['origin'] == 'pool'
+            setattr(db.get(PoolReceipt, pid), field, 'changed sensitive seller value')
+            db.commit()
+            actions = [lambda: claim_pool_document(db, doc, c1, owner)]
+            if change_after_claim:
+                actions += [lambda: promote_pool_claim(db, doc, c1, owner),
+                            lambda: account_view(db, doc, c1, owner),
+                            lambda: company_view(db, doc, owner, c1),
+                            lambda: update_account_private(db, doc, c1, owner, comment='not saved')]
+            for action in actions:
+                with pytest.raises(HTTPException) as err:
+                    action()
+                assert err.value.status_code == 409
+                assert 'changed sensitive seller value' not in str(err.value.detail)
+                db.rollback()
+            assert month_used(db, c1) == before + int(change_after_claim)
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == int(change_after_claim)
+            if change_after_claim:
+                assert db.execute(text('SELECT comment FROM unified_company_accounts WHERE document_id=:id'),
+                                  {'id': doc}).scalar_one() == ''
+    finally:
+        copied.dispose()
+
+
+def test_unified_company_projection_refuses_new_conflicting_registry_receipt(setup_bridge, tmp_path):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+    from qa.unified_receipt_preview import company_view
+
+    _, _, _, c1, c2, pid, _, fn, fd, fp = setup_bridge
+    path = tmp_path / 'registry-conflict.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            assert claim_and_account_pool_document(db, doc, c1, owner) == (True, True)
+            db.commit()
+            pool = db.get(PoolReceipt, pid)
+            db.add(Receipt(fn=fn, fd=fd, fp=fp, qr_data=pool.qr_data, company_id=c2,
+                           receipt_date=pool.receipt_date, total_sum=pool.total_sum,
+                           operation=pool.operation, comment='other company private note'))
+            db.commit()
+            for action in (lambda: company_view(db, doc, owner, c1),
+                           lambda: account_view(db, doc, c1, owner)):
+                with pytest.raises(HTTPException) as err:
+                    action()
+                assert err.value.status_code == 409
+                assert 'other company' not in str(err.value.detail)
+            # Conflict detection does not erase the new registry record or the earlier claim.
+            assert db.query(Receipt).filter_by(fn=fn, company_id=c2).count() == 1
+            assert db.execute(text('SELECT company_id FROM unified_company_claims WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == c1
+    finally:
+        copied.dispose()

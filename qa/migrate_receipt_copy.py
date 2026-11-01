@@ -37,6 +37,7 @@ CREATE TABLE unified_receipt_origins (
     document_id TEXT NOT NULL REFERENCES unified_fiscal_documents(id),
     origin_kind TEXT NOT NULL CHECK(origin_kind IN ('registry', 'pool')),
     origin_id TEXT NOT NULL,
+    fiscal_source_hash TEXT,
     PRIMARY KEY(origin_kind, origin_id)
 );
 CREATE INDEX ix_unified_origins_document ON unified_receipt_origins(document_id);
@@ -236,6 +237,15 @@ def _migrate(db: sqlite3.Connection) -> None:
                                    'operation=?, review_mask=? WHERE id=?', (*values, mask, doc_id))
                     db.execute('INSERT INTO unified_receipt_origins (document_id, origin_kind, origin_id) '
                                'VALUES (?, ?, ?)', (doc_id, kind, origin_id))
+        # Хеш только открытых реквизитов продавца, которые отдаёт проекция
+        # компании. Сырой ответ ФНС и персональные данные в него не включаются.
+        cursor = db.execute("""SELECT p.id, p.merchant_name, p.merchant_inn, p.merchant_address
+            FROM pool_receipts p JOIN unified_receipt_origins o
+            ON o.origin_kind = 'pool' AND o.origin_id = p.id""")
+        while batch := cursor.fetchmany(500):
+            db.executemany("UPDATE unified_receipt_origins SET fiscal_source_hash=? "
+                           "WHERE origin_kind='pool' AND origin_id=?",
+                           [(_item_digest(row[1:]), row[0]) for row in batch])
         # Позиции не склеиваются по порядку: разные источники могут содержать
         # различный состав, детали или недостоверные суммы. Сохраняем все связи.
         for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
@@ -306,6 +316,12 @@ def _validate(db: sqlite3.Connection) -> None:
         """, (kind,)).fetchone()[0]
         if bad or missing:
             raise RuntimeError('Связи единого чека не соответствуют исходным записям')
+    cursor = db.execute("""SELECT p.merchant_name, p.merchant_inn, p.merchant_address,
+            o.fiscal_source_hash FROM unified_receipt_origins o
+        JOIN pool_receipts p ON o.origin_id = p.id WHERE o.origin_kind = 'pool'""")
+    while batch := cursor.fetchmany(500):
+        if any(not row[3] or row[3] != _item_digest(row[:3]) for row in batch):
+            raise RuntimeError('Реквизиты продавца изменились после миграции')
     for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
         bad = db.execute(f"""
             SELECT count(*) FROM unified_receipt_item_origins o

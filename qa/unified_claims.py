@@ -15,7 +15,7 @@ from app.pool.models import PoolReceipt
 from app.pool.router_company import month_used, pick_limit
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _normalized
-from qa.unified_integrity import pool_items_match_snapshot
+from qa.unified_integrity import pool_items_match_snapshot, pool_seller_matches_snapshot
 
 
 def claim_pool_document(db: Session, document_id: str, company_id: str, user: User) -> bool:
@@ -57,6 +57,8 @@ def claim_pool_document(db: Session, document_id: str, company_id: str, user: Us
     if review_mask or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (
             saved_date, saved_amount, saved_operation):
         raise HTTPException(409, 'В сохранённых данных есть расхождения, нужна проверка')
+    if not pool_seller_matches_snapshot(db, document_id, pool.id):
+        raise HTTPException(409, 'Реквизиты продавца изменились, нужна повторная сверка')
     if not pool_items_match_snapshot(db, pool.id):
         raise HTTPException(409, 'Позиции чека изменились, нужна повторная сверка')
     if pool.status != 'verified':

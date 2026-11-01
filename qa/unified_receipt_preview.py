@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.models import Receipt, User
 from app.pool.models import PoolReceipt, PoolUser
 from app.services.scoping import can_view_receipt
+from qa.migrate_receipt_copy import _normalized
+from qa.unified_integrity import pool_items_match_snapshot, pool_seller_matches_snapshot
 
 
 def _origin_ids(db: Session, document_id: str, kind: str) -> list[str]:
@@ -69,6 +71,14 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
     # сырых ответов ФНС, контактов, идентификатора участника и его баллов.
     from app.pool.router_company import _names_for, _row
     r = visible_pool[0]
+    doc = db.execute(text('SELECT receipt_date, total_sum, operation, review_mask '
+                          'FROM unified_fiscal_documents WHERE id=:id'), {'id': document_id}).first()
+    if (not doc or doc.review_mask
+            or _normalized(r.receipt_date, r.total_sum, r.operation) != tuple(doc[:3])
+            or not pool_seller_matches_snapshot(db, document_id, r.id)
+            or not pool_items_match_snapshot(db, r.id)
+            or db.query(Receipt.id).filter_by(fn=r.fn, fd=r.fd, fp=r.fp).first()):
+        raise HTTPException(409, 'Снимок чека устарел, нужна сверка')
     return {'document_id': document_id, 'origin': 'pool',
             'receipt': _row(r, _names_for(db, [r.id]).get(r.id, ''))}
 

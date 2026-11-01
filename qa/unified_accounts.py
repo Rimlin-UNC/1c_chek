@@ -16,7 +16,7 @@ from app.models import Company, Receipt, User, utcnow
 from app.pool.models import PoolItem, PoolReceipt
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _normalized
-from qa.unified_integrity import pool_items_match_snapshot
+from qa.unified_integrity import pool_items_match_snapshot, pool_seller_matches_snapshot
 
 
 def _document(db: Session, document_id: str):
@@ -76,6 +76,7 @@ def promote_pool_claim(db: Session, document_id: str, company_id: str, user: Use
     if (not pool or pool.assigned_company_id != company_id or pool.status != 'verified'
             or (pool.fn, pool.fd, pool.fp) != (fn, fd, fp)
             or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (receipt_date, total_sum, operation)
+            or not pool_seller_matches_snapshot(db, document_id, pool.id)
             or not pool_items_match_snapshot(db, claim.pool_origin_id)):
         raise HTTPException(409, 'Сохранённый чек или его позиции изменились, нужна сверка')
     if db.query(Receipt.id).filter_by(fn=fn, fd=fd, fp=fp).first():
@@ -139,6 +140,7 @@ def account_view(db: Session, document_id: str, company_id: str, user: User) -> 
     if (mask or not origin or pool.assigned_company_id != company_id or pool.status != 'verified'
             or (pool.fn, pool.fd, pool.fp) != (fn, fd, fp)
             or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (receipt_date, total_sum, operation)
+            or not pool_seller_matches_snapshot(db, document_id, pool.id)
             or not pool_items_match_snapshot(db, pool.id)):
         raise HTTPException(409, 'Снимок чека устарел, нужна сверка')
     if db.query(Receipt.id).filter_by(fn=fn, fd=fd, fp=fp).first():
