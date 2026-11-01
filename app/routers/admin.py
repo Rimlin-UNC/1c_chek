@@ -739,9 +739,18 @@ def transfer_receipts(user_id: str, body: TransferBody,
     dst = db.get(User, body.to_user_id)
     if not src or not dst:
         raise HTTPException(404, "Пользователь не найден")
+    receipt_ids = [r.id for r in db.query(Receipt.id).filter(Receipt.created_by == src.id).all()]
     n = (db.query(Receipt)
          .filter(Receipt.created_by == src.id)
          .update({Receipt.created_by: dst.id}, synchronize_session=False))
+    if receipt_ids:
+        from ..unified.models import UnifiedOrigin, UnifiedOwnership
+        doc_ids = (db.query(UnifiedOrigin.document_id)
+                   .filter(UnifiedOrigin.source_kind == "registry",
+                           UnifiedOrigin.source_id.in_(receipt_ids)).subquery())
+        (db.query(UnifiedOwnership)
+         .filter(UnifiedOwnership.document_id.in_(doc_ids.select()))
+         .update({UnifiedOwnership.created_by: dst.id}, synchronize_session=False))
     db.commit()
     log_action(user, "receipts_transferred", "user", dst.id,
                {"from": src.username, "count": n})

@@ -15,10 +15,68 @@
 # ======================================================================
 from __future__ import annotations
 
-from sqlalchemy.orm import Query, Session
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Query, Session, object_session
 
 from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_MANAGER, ROLE_USER
 from ..models import Company, Receipt, User
+from ..pool.models import PoolReceipt
+
+
+def _canonical_company_filter(company_id, user_id=None):
+    """Если чек связан с каноном, владельцем считает единая строка владения."""
+    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument, UnifiedOrigin, UnifiedOwnership
+    linked = (select(UnifiedOrigin.id)
+              .where(UnifiedOrigin.source_kind == "registry",
+                     UnifiedOrigin.source_id == Receipt.id)).exists()
+    own_ok = (select(UnifiedOwnership.document_id)
+              .join(UnifiedDocument, UnifiedDocument.id == UnifiedOwnership.document_id)
+              .join(UnifiedOrigin, UnifiedOrigin.document_id == UnifiedDocument.id)
+              .where(UnifiedOrigin.source_kind == "registry",
+                     UnifiedOrigin.source_id == Receipt.id,
+                     UnifiedDocument.deleted_at.is_(None),
+                     (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) == 0,
+                     UnifiedOwnership.company_id.is_(None) if company_id is None
+                     else UnifiedOwnership.company_id == company_id))
+    if user_id is not None:
+        own_ok = own_ok.where(UnifiedOwnership.created_by == user_id)
+    return or_(~linked, own_ok.exists())
+
+
+def _canonical_receipt_allowed(receipt: Receipt, user: User) -> bool:
+    db = object_session(receipt)
+    if db is None:
+        return True
+    from ..unified.models import UnifiedOrigin
+    origin = (db.query(UnifiedOrigin)
+              .filter(UnifiedOrigin.source_kind == "registry",
+                      UnifiedOrigin.source_id == receipt.id).first())
+    if origin is None:
+        return True
+    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument
+    doc = origin.document
+    if user.role == "admin":
+        return True
+    if doc.deleted_at is not None or (doc.review_flags & REVIEW_OWNERSHIP):
+        return False
+    own = doc.ownership
+    return own is not None and own.company_id == receipt.company_id
+
+
+def canonical_pool_company_filter(company_id: str):
+    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument, UnifiedOrigin, UnifiedOwnership
+    linked = (select(UnifiedOrigin.id)
+              .where(UnifiedOrigin.source_kind == "pool",
+                     UnifiedOrigin.source_id == PoolReceipt.id)).exists()
+    own_ok = (select(UnifiedOwnership.document_id)
+              .join(UnifiedDocument, UnifiedDocument.id == UnifiedOwnership.document_id)
+              .join(UnifiedOrigin, UnifiedOrigin.document_id == UnifiedDocument.id)
+              .where(UnifiedOrigin.source_kind == "pool",
+                     UnifiedOrigin.source_id == PoolReceipt.id,
+                     UnifiedDocument.deleted_at.is_(None),
+                     (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) == 0,
+                     UnifiedOwnership.company_id == company_id)).exists()
+    return or_(~linked, own_ok)
 
 
 def user_company_id(user: User) -> str | None:
@@ -44,6 +102,9 @@ def scope_receipts(query: Query, user: User,
         query = query.filter(Receipt.company_id.is_(None))
     if user.role == ROLE_USER:
         query = query.filter(Receipt.created_by == user.id)
+        query = query.filter(_canonical_company_filter(user.company_id, user.id))
+    else:
+        query = query.filter(_canonical_company_filter(user.company_id))
     return query
 
 
@@ -54,6 +115,8 @@ def can_view_receipt(user: User, receipt: Receipt) -> bool:
     чеки «нулевого» пространства (company_id IS NULL)."""
     if user.role == ROLE_ADMIN:
         return True
+    if not _canonical_receipt_allowed(receipt, user):
+        return False
     if user.company_id is None:
         return receipt.company_id is None
     if receipt.company_id != user.company_id:
@@ -70,6 +133,8 @@ def can_edit_receipt(user: User, receipt: Receipt) -> bool:
     if user.role == ROLE_ADMIN:
         return True
     if user.role != ROLE_ACCOUNTANT:
+        return False
+    if not _canonical_receipt_allowed(receipt, user):
         return False
     if user.company_id is None:
         return receipt.company_id is None

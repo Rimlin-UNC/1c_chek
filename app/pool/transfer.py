@@ -16,10 +16,14 @@ def copy_to_registry(db, pool, company_id: str, user) -> tuple[Receipt, bool]:
     # и получением замка назначение или статус могли измениться.
     if pool.status != "verified" or pool.assigned_company_id != company_id:
         raise HTTPException(409, "Чек недоступен для переноса")
+    from ..unified import service as unified
+    unified.register_source(db, unified.POOL, pool, user, strict=True, event_type="transfer_source")
     existing = db.query(Receipt).filter_by(fn=pool.fn, fd=pool.fd, fp=pool.fp).first()
     if existing:
         if existing.company_id != company_id:
             raise HTTPException(409, "Чек уже зарегистрирован в другой организации")
+        unified.register_source(db, unified.REGISTRY, existing, user,
+                                strict=True, event_type="transfer_link")
         return existing, False
     if pool.receipt_date is None:
         raise HTTPException(409, "В чеке пула отсутствует дата: перенос невозможен")
@@ -64,6 +68,8 @@ def copy_to_registry(db, pool, company_id: str, user) -> tuple[Receipt, bool]:
     receipt.product_group = (calc.get("group") or "")[:100]
     db.add(receipt)
     db.flush()
+    unified.register_source(db, unified.REGISTRY, receipt, user,
+                            strict=True, event_type="transfer")
     from ..services import merchant_rules, policy
     policy.refresh_receipt(db, receipt)
     merchant_rules.apply_rules(db, receipt)

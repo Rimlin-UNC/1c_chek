@@ -81,6 +81,7 @@ def init_db() -> None:
     """Создание таблиц при первом запуске + лёгкая миграция новых колонок."""
     from . import models  # noqa: F401 — регистрируем модели
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
+    from .unified import models as _unified_models  # noqa: F401 — единый фискальный документ
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
     try:  # v1.31.0: добавляющая миграция пула (vid у pool_users + pool_consents)
@@ -544,6 +545,12 @@ def migrate_companies_from_notes() -> dict:
                     if r.company_id != comp.id:
                         r.company_id = comp.id
                         out["receipts_moved"] += 1
+                        from .unified.models import UnifiedOrigin, UnifiedOwnership
+                        origin = (db.query(UnifiedOrigin)
+                                  .filter(UnifiedOrigin.source_kind == "registry",
+                                          UnifiedOrigin.source_id == r.id).first())
+                        if origin and origin.document.ownership:
+                            origin.document.ownership.company_id = comp.id
 
         row = db.query(AppSetting).filter(AppSetting.key == FLAG).first()
         if row:
@@ -601,6 +608,10 @@ def repair_company_names() -> dict:
                             (db.query(AuditLog), AuditLog.company_id)):
                 for row in q.filter(attr == comp.id).all():
                     setattr(row, attr.key, target.id)
+            from .unified.models import UnifiedOwnership
+            (db.query(UnifiedOwnership)
+             .filter(UnifiedOwnership.company_id == comp.id)
+             .update({UnifiedOwnership.company_id: target.id}, synchronize_session=False))
             db.delete(comp)
             out["merged"] += 1
 

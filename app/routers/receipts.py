@@ -153,9 +153,8 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
             limit = pick_limit(db)
             if not limit or month_used(db, company_id) >= limit:
                 raise HTTPException(409, "Квота подбора из пула исчерпана или выключена")
-            pool.assigned_company_id = company_id
-            pool.assigned_at = dt.datetime.utcnow()
-            pool.assigned_by = user.id
+            from ..unified import service as unified
+            unified.claim_pool(db, pool, company, user, event_type="scan_claim")
         receipt, created = copy_to_registry(db, pool, company_id, user)
         db.commit()
         db.refresh(receipt)
@@ -193,6 +192,9 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         _mr.apply_rules(db, receipt)
     except Exception:                              # noqa: BLE001
         pass                                       # правила не ломают приём
+    from ..unified import service as unified
+    unified.register_source(db, unified.REGISTRY, receipt, user,
+                            strict=True, event_type="create")
     db.commit()
     db.refresh(receipt)
     return receipt, True
@@ -1144,6 +1146,9 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
     except Exception:                              # noqa: BLE001
         pass
 
+    if is_staff and changed["fields"]:
+        from ..unified import service as unified
+        unified.sync_registry(db, receipt, user)
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,
                {"fields": changed["fields"], "role": user.role})
@@ -1194,16 +1199,16 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
     rows = db.query(Receipt).filter(Receipt.id.in_(body.receipt_ids)).all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
+    from ..unified import service as unified
     moved_ids, moved, same = [], 0, 0
-    for r in rows:
-        if r.company_id == comp.id:
+    for r in sorted(rows, key=lambda x: (x.fn, x.fd, x.fp, x.id)):
+        doc = unified.document_for_source(db, unified.REGISTRY, r.id)
+        if doc is None:
+            doc = unified.register_source(db, unified.REGISTRY, r, user, strict=True)
+        if doc.ownership and doc.ownership.company_id == comp.id:
             same += 1
             continue
-        r.company_id = comp.id
-        # выгрузка относилась к прежней компании — сбрасываем, чтобы выгрузку
-        # новой компании бухгалтер проконтролировал сам
-        r.exported = False
-        r.exported_at = None
+        unified.move_document(db, doc.id, comp.id, user)
         if body.assignee is not None:
             r.assignee = body.assignee.strip()[:200]
             r.assignee_lc = r.assignee.casefold()[:200]   # v1.25.1
@@ -1345,6 +1350,8 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     raw["external"] = {"source": res.source, "message": res.message,
                        "fetched_at": dt.datetime.utcnow().isoformat() + "Z"}
     receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+    from ..unified import service as unified
+    unified.sync_registry(db, receipt)
     db.commit()
 
 
@@ -1608,6 +1615,8 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Чек уже выгружен в 1С; удалять может только администратор")
     info = {"fn": receipt.fn, "fd": receipt.fd, "fp": receipt.fp}
+    from ..unified import service as unified
+    unified.detach_registry(db, receipt, user)
     db.delete(receipt)
     db.commit()
     log_action(user, "receipt_deleted", "receipt", receipt_id, info)
@@ -1711,6 +1720,8 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
             merged["ticket"] = _ticket
         raw["fns"] = merged
         receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+        from ..unified import service as unified
+        unified.sync_registry(db, receipt)
         db.commit()
 
         # v1.18.0: id задаём явно (max+1) — на таблицах старой схемы SQLite

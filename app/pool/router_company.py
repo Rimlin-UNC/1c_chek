@@ -269,7 +269,9 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
 
 def _mine_query(db: Session, company_id: str, date_from: str, date_to: str):
     """Область «Моих чеков компании»: назначение и период, без данных донора."""
-    q = db.query(PoolReceipt).filter(PoolReceipt.assigned_company_id == company_id)
+    from ..services.scoping import canonical_pool_company_filter
+    q = db.query(PoolReceipt).filter(PoolReceipt.assigned_company_id == company_id,
+                                     canonical_pool_company_filter(company_id))
     if date_from:
         try:
             q = q.filter(PoolReceipt.receipt_date >= datetime.strptime(date_from, "%Y-%m-%d"))
@@ -445,11 +447,9 @@ def _prepare_pool_assignment(db: Session, body: IdsBody, company_id: str, user: 
     if new_rows and used + len(new_rows) > limit:
         raise HTTPException(409, f"Лимит тарифа: {limit} чеков/мес, "
                                  f"в этом месяце уже подобрано {used}. " + TARIFF_NOTE)
-    now = _utcnow()
-    for row in new_rows:
-        row.assigned_company_id = comp.id
-        row.assigned_at = now
-        row.assigned_by = user.id
+    from ..unified import service as unified
+    for row in rows:
+        unified.claim_pool(db, row, comp, user, event_type="claim")
     return comp, user, rows, len(new_rows), used, limit
 
 
@@ -513,10 +513,9 @@ def unassign(body: IdsBody, company_id: str = "",
             raise HTTPException(409, "Чек больше не закреплён за компанией")
         if db.query(Receipt.id).filter_by(fn=r.fn, fd=r.fd, fp=r.fp).first():
             raise HTTPException(409, "Чек уже находится в реестре: сначала решите вопрос с его учётом")
+    from ..unified import service as unified
     for r in rows:
-        r.assigned_company_id = None
-        r.assigned_at = None
-        r.assigned_by = ""
+        unified.release_pool(db, r, user)
     db.commit()
     log_action(user, "pool_pick_unassign",
                details={"company": comp.name, "count": len(rows)})

@@ -154,7 +154,14 @@ def precheck_ingest(db: Session, qr_raw: str, user) -> tuple:
                    PoolReceipt.fp == parsed.fp).first())
     main_duplicate = (db.query(Receipt.id).filter(
         Receipt.fn == parsed.fn, Receipt.fd == parsed.fd, Receipt.fp == parsed.fp).first())
-    if dup is not None or main_duplicate is not None:
+    from ..unified import service as unified
+    from ..unified.models import UnifiedDocument
+    key = unified.identity_key(parsed.fn, parsed.fd, parsed.fp)
+    canonical_duplicate = (db.query(UnifiedDocument.id)
+                           .filter(UnifiedDocument.identity_key == key,
+                                   UnifiedDocument.deleted_at.is_(None)).first()
+                           if key else None)
+    if dup is not None or main_duplicate is not None or canonical_duplicate is not None:
         return None, {"result": "duplicate",
                       "message": "Этот чек уже в пуле — спасибо, что проверили!",
                       "points": 0, "user_points": user.points if user else 0}
@@ -194,10 +201,17 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
     # Синхронизация с одновременным сканированием в основном реестре:
     # запрос к источнику уже завершён, блокировка удерживается только на запись.
     from ..services.receipt_identity import lock_identity
+    from ..unified import service as unified
     lock_identity(db, parsed.fn, parsed.fd, parsed.fp)
     duplicate_main = db.query(Receipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
     duplicate_pool = db.query(PoolReceipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
-    if duplicate_main or duplicate_pool:
+    from ..unified.models import UnifiedDocument
+    key = unified.identity_key(parsed.fn, parsed.fd, parsed.fp)
+    canonical_duplicate = (db.query(UnifiedDocument.id)
+                           .filter(UnifiedDocument.identity_key == key,
+                                   UnifiedDocument.deleted_at.is_(None)).first()
+                           if key else None)
+    if duplicate_main or duplicate_pool or canonical_duplicate is not None:
         db.commit()
         return {"result": "duplicate", "message": "Этот чек уже зарегистрирован",
                 "points": 0, "user_points": user.points if user else 0}
@@ -314,6 +328,8 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         except Exception:                                 # noqa: BLE001
             pass
     receipt.points_awarded = points
+    from ..unified import service as unified
+    unified.register_source(db, unified.POOL, receipt, strict=True, event_type="ingest")
     if fast:  # v1.31.0: антифрод-минимум — слишком быстрая отправка формы
         receipt.status_message = (receipt.status_message +
                                   " · сигнал: быстрая отправка формы")[:500]

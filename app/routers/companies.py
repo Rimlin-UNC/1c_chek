@@ -382,6 +382,8 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
         if not target.is_active:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 "Компания назначения заархивирована")
+        from ..unified import service as unified
+        unified.retarget_company(db, comp.id, target.id, admin)
         if rc:
             (db.query(Receipt).filter(Receipt.company_id == comp.id)
              .update({Receipt.company_id: target.id, Receipt.exported: False,
@@ -404,6 +406,8 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
                 "target": {"id": target.id, "name": target.name},
                 "message": f"Компания «{name}» удалена; чеков перенесено: {rc}"}
     # mode == "wipe": безвозвратно удалить чеки компании
+    from ..unified import service as unified
+    unified.retarget_company(db, comp.id, None, admin, wipe=True)
     (db.query(Receipt).filter(Receipt.company_id == comp.id)
      .delete(synchronize_session=False))
     (db.query(Invite).filter(Invite.company_id == comp.id)

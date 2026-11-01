@@ -26,6 +26,7 @@ from .database import init_db
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
+from .unified import router as unified_router
 
 import datetime as _dt
 import os as _os
@@ -419,6 +420,7 @@ app.include_router(companies.router)   # v1.11.0: компании-клиент�
 app.include_router(receipts.router)
 app.include_router(dashboard.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
+app.include_router(unified_router.router)  # единый фискальный документ
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)
