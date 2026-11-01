@@ -82,11 +82,18 @@ def test_postgres_identity_lock_serializes_transactions(finish):
                     else:
                         pytest.fail('PostgreSQL did not report the expected blocking transaction')
                 assert not acquired.is_set()
+                # A different fiscal identity must remain independently writable.
+                with Session(engine) as independent:
+                    independent.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    independent.execute(text("SET LOCAL lock_timeout = '2s'"))
+                    lock_identity(independent, 'different-fn', 'fd-test', 'fp-test')
+                    independent.commit()
+                assert not acquired.is_set()
                 getattr(db, finish)()
                 future.result(timeout=10)
                 assert acquired.is_set()
         with engine.connect() as conn:
-            assert conn.execute(text(f'SELECT count(*) FROM "{schema}".receipt_identity_locks')).scalar_one() == 1
+            assert conn.execute(text(f'SELECT count(*) FROM "{schema}".receipt_identity_locks')).scalar_one() == 2
     finally:
         if created:
             with engine.begin() as conn:

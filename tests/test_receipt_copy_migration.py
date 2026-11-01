@@ -212,3 +212,67 @@ def test_unified_item_set_validation_rejects_corruption(tmp_path, corruption):
             db.execute("INSERT INTO unified_fiscal_item_refs VALUES (?, 'pool', 'p1', 'pi1')", (merged,))
         with pytest.raises(RuntimeError):
             _validate(db)
+
+
+def test_preflight_reports_aggregate_without_disclosing_rows_or_changing_source(tmp_path):
+    from qa.sqlite_migration_preflight import inspect_source
+
+    source = tmp_path / 'source #?.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute("INSERT INTO receipt_items VALUES ('private-item-id','missing-private-receipt','secret note')")
+        db.execute("INSERT INTO pool_items VALUES ('private-pool-id',NULL,'another secret')")
+        db.execute('CREATE TABLE sample_parent(id TEXT PRIMARY KEY)')
+        db.execute('CREATE TABLE sample_child(id TEXT PRIMARY KEY, parent_id TEXT REFERENCES sample_parent(id))')
+        db.execute("INSERT INTO sample_child VALUES ('secret-child-id','missing-private-parent')")
+    before = source.read_bytes()
+    result = inspect_source(source)
+    assert result == {
+        'source_counts': {'registry': 2, 'pool': 2},
+        'incomplete_identities': {'registry': 1, 'pool': 0},
+        'orphan_items': {'registry': 1, 'pool': 1},
+        'foreign_key_violations': [{'table': 'sample_child', 'parent_table': 'sample_parent', 'count': 1}],
+    }
+    assert 'secret' not in str(result) and 'private' not in str(result)
+    assert before == source.read_bytes()
+    assert not (tmp_path / 'source #?.db-journal').exists()
+
+
+def test_preflight_refuses_missing_source_and_incompatible_schema(tmp_path):
+    from qa.sqlite_migration_preflight import inspect_source
+
+    with pytest.raises(FileNotFoundError):
+        inspect_source(tmp_path / 'missing.db')
+    source = tmp_path / 'wrong.db'
+    with sqlite3.connect(source) as db:
+        db.execute('CREATE TABLE receipts (id TEXT)')
+    before = source.read_bytes()
+    with pytest.raises(RuntimeError, match='необходимые поля'):
+        inspect_source(source)
+    assert source.read_bytes() == before
+
+
+def test_preflight_reads_one_wal_snapshot(tmp_path, monkeypatch):
+    from qa import sqlite_migration_preflight as preflight
+
+    source = tmp_path / 'wal-source.db'
+    _source(source)
+    original_connect = sqlite3.connect
+    with original_connect(source) as setup:
+        assert setup.execute('PRAGMA journal_mode=WAL').fetchone() == ('wal',)
+    writes = []
+    def traced_connect(*args, **kwargs):
+        db = original_connect(*args, **kwargs)
+        def write_after_snapshot(statement):
+            if statement.startswith('SELECT count(*) FROM receipts') and not writes:
+                writes.append(True)
+                with original_connect(source) as writer:
+                    writer.execute("INSERT INTO pool_receipts(id, fn, fd, fp) VALUES ('late','late','1','2')")
+        db.set_trace_callback(write_after_snapshot)
+        return db
+    monkeypatch.setattr(preflight.sqlite3, 'connect', traced_connect)
+    result = preflight.inspect_source(source)
+    assert writes == [True]
+    assert result['source_counts']['pool'] == 2
+    with original_connect(source) as db:
+        assert db.execute('SELECT count(*) FROM pool_receipts').fetchone() == (3,)
