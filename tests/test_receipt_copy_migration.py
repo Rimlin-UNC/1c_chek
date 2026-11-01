@@ -26,7 +26,7 @@ def test_copy_migration_merges_only_complete_identities(tmp_path):
     source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
     _source(source)
     summary = migrate_copy(source, output)
-    assert summary == {'documents': 2, 'company_claims': 0, 'unresolved_ownership': 0, 'registry_links': 1, 'pool_links': 2, 'needs_review': 1,
+    assert summary == {'documents': 2, 'company_claims': 0, 'company_accounts': 0, 'unresolved_ownership': 0, 'registry_links': 1, 'pool_links': 2, 'needs_review': 1,
                        'registry_without_identity': 1, 'pool_without_identity': 0,
                        'registry_items_linked': 1, 'pool_items_linked': 1,
                        'registry_items_unlinked': 1, 'pool_items_unlinked': 0}
@@ -121,3 +121,12 @@ def test_copy_migration_preserves_ownership_without_inventing_it(
         # Источники, в том числе конфликтные, не меняются и не исчезают.
         assert db.execute("SELECT company_id FROM receipts WHERE id='r1'").fetchone() == (registry_owner,)
         assert db.execute("SELECT assigned_company_id FROM pool_receipts WHERE id='p1'").fetchone() == (pool_owner,)
+
+
+def test_schema_parser_handles_semicolon_in_comments(tmp_path, monkeypatch):
+    import qa.migrate_receipt_copy as migration
+
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    monkeypatch.setattr(migration, '_SCHEMA', '-- комментарий; не конец SQL\n' + migration._SCHEMA)
+    assert migration.migrate_copy(source, output)['documents'] == 2

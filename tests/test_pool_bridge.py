@@ -877,3 +877,288 @@ def test_unified_claim_race_respects_single_company_quota(setup_bridge, tmp_path
         with SessionLocal() as db:
             db.delete(db.get(PoolReceipt, other_id))
             db.commit()
+
+
+@pytest.mark.parametrize('confirmed,checked,expected', [
+    (False, None, 'unknown'),
+    (True, None, 'unknown'),
+    (True, datetime(2026, 9, 23, 8, 0), 'valid'),
+])
+def test_unified_account_uses_one_fiscal_record_and_private_company_data(
+        client, setup_bridge, tmp_path, monkeypatch, confirmed, checked, expected):
+    import sqlite3
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.models import PoolPoint
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import _validate, migrate_copy
+    from qa.unified_accounts import account_view, promote_pool_claim, update_account_private
+    from qa.unified_claims import claim_pool_document
+    from qa.unified_receipt_preview import donor_view
+
+    hdr, _, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    _mk_user(client, hdr, c1, 'account_user_' + uuid4().hex[:8], role='user')
+    monkeypatch.setattr('app.routers.receipts.check_receipt', lambda *a, **k: pytest.fail('FNS request'))
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS fetch'))
+    with SessionLocal() as db:
+        donor = PoolUser(vid='account_' + uuid4().hex, points=8)
+        db.add(donor)
+        db.flush()
+        donor_id = donor.id
+        pool = db.get(PoolReceipt, pid)
+        pool.pool_user_id, pool.points_awarded = donor_id, 8
+        pool.fns_confirmed, pool.fns_checked_at = confirmed, checked
+        pool.raw = '{"buyerPhoneOrAddress":"private@example.com"}'
+        db.add(PoolPoint(user_id=donor_id, delta=8, reason='receipt', ref_id=pid))
+        db.commit()
+    path = tmp_path / 'unified-account.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            other = db.query(User).filter_by(company_id=c2, role='accountant').first()
+            employee = db.query(User).filter_by(company_id=c1, role='user').first()
+            assert claim_pool_document(db, doc, c1, owner) is True
+            db.commit()
+            assert month_used(db, c1) == 1
+            assert promote_pool_claim(db, doc, c1, owner) is True
+            db.commit()
+            assert promote_pool_claim(db, doc, c1, owner) is False
+            db.commit()
+            assert month_used(db, c1) == 1
+            assert db.query(Receipt).filter_by(fn=fn).count() == 0
+            assert db.execute(text('SELECT count(*) FROM unified_fiscal_documents WHERE fn=:fn'),
+                              {'fn': fn}).scalar_one() == 1
+            assert update_account_private(db, doc, c1, owner, comment='private company note', personal_sum=100)
+            db.commit()
+            assert not update_account_private(db, doc, c1, owner, comment='private company note')
+            db.commit()
+            with pytest.raises(HTTPException) as denied:
+                update_account_private(db, doc, c1, other, comment='not allowed')
+            assert denied.value.status_code == 403
+            with pytest.raises(HTTPException) as bad_sum:
+                update_account_private(db, doc, c1, owner, personal_sum=999999)
+            assert bad_sum.value.status_code == 422
+            db.rollback()
+            events = db.execute(text('SELECT event_type, fields FROM unified_company_account_events '
+                                     'WHERE document_id=:id ORDER BY created_at'), {'id': doc}).all()
+            assert [event.event_type for event in events] == ['created', 'updated']
+            assert 'private company note' not in str(events)
+            assert update_account_private(db, doc, c1, owner, comment='temporary change')
+            db.rollback()
+            assert db.execute(text('SELECT count(*) FROM unified_company_account_events '
+                                   'WHERE document_id=:id'), {'id': doc}).scalar_one() == 2
+            view = account_view(db, doc, c1, owner)['receipt']
+            assert view['fns_status'] == expected and len(view['items']) == 2
+            assert view['status'] == ('verified' if expected == 'valid' else 'pending')
+            assert view['comment'] == 'private company note' and view['personal_sum'] == 100
+            assert 'private@example.com' not in str(view)
+            assert (view['fns_checked_at'] is not None) == (expected == 'valid')
+            for actor, company in ((other, c2), (other, c1), (employee, c1)):
+                with pytest.raises(HTTPException) as err:
+                    account_view(db, doc, company, actor)
+                assert err.value.status_code == 404
+            donor = donor_view(db, doc, db.get(PoolUser, donor_id))
+            assert 'private company note' not in str(donor)
+            assert db.get(PoolUser, donor_id).points == 8
+            assert db.query(PoolPoint).filter_by(user_id=donor_id, ref_id=pid).one().delta == 8
+        with sqlite3.connect(path) as conn:
+            _validate(conn)
+            conn.execute('PRAGMA foreign_keys=ON')
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute('UPDATE unified_company_accounts SET company_id=? WHERE document_id=?', (c2, doc))
+            conn.rollback()
+    finally:
+        copied.dispose()
+        with SessionLocal() as db:
+            db.query(PoolPoint).filter_by(ref_id=pid).delete()
+            db.get(PoolReceipt, pid).pool_user_id = None
+            db.delete(db.get(PoolUser, donor_id))
+            db.commit()
+
+
+def test_unified_migration_preserves_legacy_registry_projection(client, setup_bridge, tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view, promote_pool_claim
+
+    _, a1, _, c1, _, _, qr, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_verify', lambda *a: False)
+    monkeypatch.setattr('app.routers.receipts._maybe_auto_fetch', lambda *a: False)
+    created = client.post('/api/v1/receipts/scan', headers=a1, json={'qr_data': qr}).json()['receipt']
+    with SessionLocal() as db:
+        receipt = db.get(Receipt, created['id'])
+        receipt.comment = 'old accounting note'
+        receipt.category = 'old category'
+        receipt.exported = True
+        db.commit()
+    path = tmp_path / 'legacy-account.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            row = db.execute(text('SELECT legacy_receipt_id FROM unified_company_accounts WHERE document_id=:doc'),
+                             {'doc': doc}).scalar_one()
+            assert row == created['id']
+            view = account_view(db, doc, c1, owner)
+            assert view['origin'] == 'registry'
+            assert view['receipt']['comment'] == 'old accounting note'
+            assert view['receipt']['category'] == 'old category' and view['receipt']['exported']
+            assert promote_pool_claim(db, doc, c1, owner) is False
+            db.commit()
+            assert db.query(Receipt).filter_by(fn=fn).count() == 1
+    finally:
+        copied.dispose()
+
+
+def test_unified_account_promotion_is_atomic_and_idempotent(setup_bridge, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import promote_pool_claim
+    from qa.unified_claims import claim_pool_document
+
+    _, _, _, c1, _, _, _, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts.check_receipt', lambda *a, **k: pytest.fail('FNS request'))
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS fetch'))
+    path = tmp_path / 'promote-race.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path), connect_args={'check_same_thread': False, 'timeout': 20})
+    sessions = sessionmaker(bind=copied)
+    with sessions() as db:
+        doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+        uid = db.query(User).filter_by(company_id=c1, role='accountant').first().id
+        assert claim_pool_document(db, doc, c1, db.get(User, uid))
+        db.commit()
+    barrier = Barrier(2)
+    def promote():
+        with sessions() as db:
+            user = db.get(User, uid)
+            barrier.wait(timeout=10)
+            result = promote_pool_claim(db, doc, c1, user)
+            db.commit()
+            return result
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assert sorted(executor.map(lambda _: promote(), range(2))) == [False, True]
+        with sessions() as db:
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 1
+            assert db.execute(text("SELECT count(*) FROM unified_company_account_events "
+                                   "WHERE document_id=:id AND event_type='created'"), {'id': doc}).scalar_one() == 1
+            assert db.query(Receipt).filter_by(fn=fn).count() == 0
+    finally:
+        copied.dispose()
+
+
+def test_unified_account_refuses_changed_positions(setup_bridge, tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view, promote_pool_claim
+    from qa.unified_claims import claim_pool_document
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.routers.receipts.check_receipt', lambda *a, **k: pytest.fail('FNS request'))
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        pool.fns_confirmed, pool.fns_checked_at = True, datetime(2026, 9, 23)
+        db.commit()
+    path = tmp_path / 'changed-account.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            assert claim_pool_document(db, doc, c1, owner)
+            db.commit()
+            pool_item = db.query(PoolItem).filter_by(receipt_id=pid).first()
+            db.delete(pool_item)
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                promote_pool_claim(db, doc, c1, owner)
+            assert err.value.status_code == 409
+            db.rollback()
+            assert db.execute(text('SELECT count(*) FROM unified_company_accounts WHERE document_id=:id'),
+                              {'id': doc}).scalar_one() == 0
+    finally:
+        copied.dispose()
+
+
+def test_unified_account_refuses_modified_position_and_revoked_fns(setup_bridge, tmp_path):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view, promote_pool_claim
+    from qa.unified_claims import claim_pool_document
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        pool.fns_confirmed, pool.fns_checked_at = True, datetime(2026, 9, 23)
+        db.commit()
+    path = tmp_path / 'changed-content.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            assert claim_pool_document(db, doc, c1, owner)
+            db.commit()
+            item = db.query(PoolItem).filter_by(receipt_id=pid).first()
+            item.name = 'changed after snapshot'
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                promote_pool_claim(db, doc, c1, owner)
+            assert err.value.status_code == 409
+            db.rollback()
+        # Independent snapshot: no position change, but confirmation is revoked after promotion.
+        second = tmp_path / 'revoked-proof.db'
+        migrate_copy(engine.url.database, second)
+        other = create_engine('sqlite:///' + str(second))
+        try:
+            with Session(other) as db:
+                doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+                owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+                assert claim_pool_document(db, doc, c1, owner)
+                assert promote_pool_claim(db, doc, c1, owner)
+                db.commit()
+                assert account_view(db, doc, c1, owner)['receipt']['fns_status'] == 'valid'
+                db.get(PoolReceipt, pid).fns_confirmed = False
+                db.commit()
+                with pytest.raises(HTTPException) as err:
+                    account_view(db, doc, c1, owner)
+                assert err.value.status_code == 409
+        finally:
+            other.dispose()
+    finally:
+        copied.dispose()

@@ -7,6 +7,7 @@ python -m qa.migrate_receipt_copy --source /path/current.db --output /path/copy.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -44,6 +45,7 @@ CREATE TABLE unified_receipt_item_origins (
     origin_kind TEXT NOT NULL,
     origin_id TEXT NOT NULL,
     item_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
     PRIMARY KEY(origin_kind, item_id),
     FOREIGN KEY(origin_kind, origin_id) REFERENCES unified_receipt_origins(origin_kind, origin_id)
 );
@@ -54,10 +56,59 @@ CREATE TABLE unified_company_claims (
     company_id TEXT NOT NULL CHECK (length(trim(company_id)) > 0),
     pool_origin_id TEXT REFERENCES pool_receipts(id),
     registry_receipt_id TEXT REFERENCES receipts(id),
-    assigned_at TEXT
+    assigned_at TEXT,
+    UNIQUE(document_id, company_id)
 );
 CREATE INDEX ix_unified_company_claims_company ON unified_company_claims(company_id);
+-- Только личные учётные поля компании, фискальные данные не копируются.
+CREATE TABLE unified_company_accounts (
+    document_id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    legacy_receipt_id TEXT UNIQUE REFERENCES receipts(id),
+    pool_origin_id TEXT REFERENCES pool_receipts(id),
+    created_by TEXT,
+    created_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'verified')),
+    fns_status TEXT NOT NULL CHECK(fns_status IN ('unknown', 'valid')),
+    fns_checked_at TEXT,
+    assignee TEXT NOT NULL DEFAULT '',
+    comment TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    personal_sum REAL NOT NULL DEFAULT 0,
+    exported INTEGER NOT NULL DEFAULT 0 CHECK(exported IN (0,1)),
+    CHECK(legacy_receipt_id IS NOT NULL OR pool_origin_id IS NOT NULL),
+    CHECK(fns_status != 'valid' OR (status = 'verified' AND fns_checked_at IS NOT NULL)),
+    FOREIGN KEY(document_id, company_id) REFERENCES unified_company_claims(document_id, company_id)
+);
+CREATE INDEX ix_unified_company_accounts_company ON unified_company_accounts(company_id);
+CREATE TABLE unified_company_account_events (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES unified_company_accounts(document_id),
+    actor_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type IN ('created', 'updated')),
+    fields TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX ix_unified_account_events_document ON unified_company_account_events(document_id);
 """
+
+
+def _item_digest(row) -> str:
+    """Контрольная сумма всех сохранённых колонок позиции, без публикации данных."""
+    encoded = []
+    for value in row:
+        if value is None:
+            encoded.append(['null', None])
+        elif isinstance(value, bytes):
+            encoded.append(['blob', value.hex()])
+        elif isinstance(value, float):
+            encoded.append(['float', value.hex()])
+        elif isinstance(value, int):
+            encoded.append(['integer', str(value)])
+        else:
+            encoded.append(['text', str(value)])
+    raw = json.dumps(encoded, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _normalized(date, amount, operation):
@@ -143,10 +194,16 @@ def _migrate(db: sqlite3.Connection) -> None:
     db.execute('PRAGMA foreign_keys = ON')
     db.execute('BEGIN IMMEDIATE')
     try:
-        # executescript сам фиксирует транзакцию, поэтому выполняем команды отдельно.
-        for sql in _SCHEMA.split(';'):
-            if sql.strip():
-                db.execute(sql)
+        # executescript фиксирует транзакцию. complete_statement учитывает
+        # точки с запятой в комментариях и строках, в отличие от split(';').
+        statement = ''
+        for line in _SCHEMA.splitlines(keepends=True):
+            statement += line
+            if sqlite3.complete_statement(statement):
+                db.execute(statement)
+                statement = ''
+        if statement.strip():
+            raise RuntimeError('Незавершённая команда схемы миграции')
         for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
             cursor = db.execute(f'SELECT id, fn, fd, fp, receipt_date, total_sum, operation FROM {table}')
             while rows := cursor.fetchmany(500):
@@ -182,9 +239,14 @@ def _migrate(db: sqlite3.Connection) -> None:
         # Позиции не склеиваются по порядку: разные источники могут содержать
         # различный состав, детали или недостоверные суммы. Сохраняем все связи.
         for kind, table in (('registry', 'receipt_items'), ('pool', 'pool_items')):
-            db.execute(f"""INSERT INTO unified_receipt_item_origins (origin_kind, origin_id, item_id)
-                SELECT ?, i.receipt_id, i.id FROM {table} i JOIN unified_receipt_origins o
-                ON o.origin_kind = ? AND o.origin_id = i.receipt_id""", (kind, kind))
+            cursor = db.execute(f"""SELECT i.* FROM {table} i JOIN unified_receipt_origins o
+                ON o.origin_kind = ? AND o.origin_id = i.receipt_id""", (kind,))
+            names = [column[0] for column in cursor.description]
+            id_index, receipt_index = names.index('id'), names.index('receipt_id')
+            while batch := cursor.fetchmany(500):
+                db.executemany('INSERT INTO unified_receipt_item_origins '
+                               '(origin_kind, origin_id, item_id, content_hash) VALUES (?, ?, ?, ?)',
+                               [(kind, row[receipt_index], row[id_index], _item_digest(row)) for row in batch])
         # Фискальные данные могут совпадать, а назначение пула — нет.
         # Только помечаем конфликт, никогда не меняем владельцев автоматически.
         db.execute("""UPDATE unified_fiscal_documents SET review_mask = review_mask | 8
@@ -205,6 +267,14 @@ def _migrate(db: sqlite3.Connection) -> None:
                     db.execute('INSERT INTO unified_company_claims '
                                '(document_id, company_id, pool_origin_id, registry_receipt_id, assigned_at) '
                                'VALUES (?, ?, ?, ?, ?)', (doc_id, *ownership))
+                    company_id, pool_id, receipt_id, _ = ownership
+                    if receipt_id:
+                        # Приватные поля старого реестра остаются в исходной записи;
+                        # здесь только ссылка, без копирования и без выдуманной ФНС.
+                        db.execute('INSERT INTO unified_company_accounts '
+                                   '(document_id, company_id, legacy_receipt_id, pool_origin_id, status, fns_status) '
+                                   "VALUES (?, ?, ?, ?, 'pending', 'unknown')",
+                                   (doc_id, company_id, receipt_id, pool_id))
         db.commit()
     except BaseException:
         db.rollback()
@@ -215,7 +285,8 @@ def _validate(db: sqlite3.Connection) -> None:
     """Проверить связи и целостность до передачи новой копии оператору."""
     if db.execute('PRAGMA integrity_check').fetchone() != ('ok',):
         raise RuntimeError('Нарушена целостность копии')
-    for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims'):
+    for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims',
+                  'unified_company_accounts', 'unified_company_account_events'):
         if db.execute(f'PRAGMA foreign_key_check({table})').fetchone():
             raise RuntimeError('Обнаружена повреждённая ссылка на единый чек')
     for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
@@ -249,6 +320,16 @@ def _validate(db: sqlite3.Connection) -> None:
         """, (kind, kind)).fetchone()[0]
         if bad or missing:
             raise RuntimeError('Связи позиций не соответствуют исходным записям')
+        cursor = db.execute(f"""SELECT i.* FROM {table} i JOIN unified_receipt_item_origins o
+            ON o.origin_kind = ? AND o.item_id = i.id""", (kind,))
+        names = [column[0] for column in cursor.description]
+        id_index = names.index('id')
+        while batch := cursor.fetchmany(500):
+            for row in batch:
+                saved = db.execute('SELECT content_hash FROM unified_receipt_item_origins '
+                                   'WHERE origin_kind=? AND item_id=?', (kind, row[id_index])).fetchone()
+                if not saved or saved[0] != _item_digest(row):
+                    raise RuntimeError('Содержимое позиции изменилось после миграции')
 
     # Проведение сверки независимо от вычисления при построении таблиц:
     # ошибочная сумма или снятая пометка конфликта не проходят проверку.
@@ -287,6 +368,12 @@ def _validate(db: sqlite3.Connection) -> None:
                                'FROM unified_company_claims WHERE document_id=?', (doc_id,)).fetchone()
             if claim != _legacy_ownership(db, doc_id):
                 raise RuntimeError('Владелец единого чека не соответствует исходным назначениям')
+            account = db.execute('SELECT company_id, legacy_receipt_id, pool_origin_id '
+                                 'FROM unified_company_accounts WHERE document_id=?', (doc_id,)).fetchone()
+            if claim and claim[2] and not account:
+                raise RuntimeError('Не перенесена связь с учётной записью компании')
+            if account and (not claim or account != (claim[0], claim[2], claim[1])):
+                raise RuntimeError('Учётная запись не соответствует владельцу и источнику')
 
 
 def _summary(db: sqlite3.Connection) -> dict:
@@ -294,6 +381,7 @@ def _summary(db: sqlite3.Connection) -> dict:
     return {
         'documents': scalar('SELECT count(*) FROM unified_fiscal_documents'),
         'company_claims': scalar('SELECT count(*) FROM unified_company_claims'),
+        'company_accounts': scalar('SELECT count(*) FROM unified_company_accounts'),
         'unresolved_ownership': scalar("""SELECT count(DISTINCT d.id) FROM unified_fiscal_documents d
             JOIN unified_receipt_origins o ON o.document_id = d.id
             LEFT JOIN receipts r ON o.origin_kind = 'registry' AND r.id = o.origin_id
