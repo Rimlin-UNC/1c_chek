@@ -12,18 +12,21 @@ from .models import PoolItem
 
 def copy_to_registry(db, pool, company_id: str, user) -> tuple[Receipt, bool]:
     """Вызывается под замком тройки; оставляет историю участника пула."""
+    # Доступ к источнику проверяется до идемпотентного возврата: между выборкой
+    # и получением замка назначение или статус могли измениться.
+    if pool.status != "verified" or pool.assigned_company_id != company_id:
+        raise HTTPException(409, "Чек недоступен для переноса")
     existing = db.query(Receipt).filter_by(fn=pool.fn, fd=pool.fd, fp=pool.fp).first()
     if existing:
         if existing.company_id != company_id:
             raise HTTPException(409, "Чек уже зарегистрирован в другой организации")
         return existing, False
-    if pool.status != "verified" or pool.assigned_company_id != company_id:
-        raise HTTPException(409, "Чек недоступен для переноса")
     if pool.receipt_date is None:
         raise HTTPException(409, "В чеке пула отсутствует дата: перенос невозможен")
     items = (db.query(PoolItem).filter(PoolItem.receipt_id == pool.id)
              .order_by(PoolItem.id).all())
-    evidence = bool(pool.fns_confirmed)
+    # Сам по себе исторический флаг не доказывает, когда прошла проверка.
+    evidence = bool(pool.fns_confirmed and pool.fns_checked_at is not None)
     # В реестр другой компании нельзя копировать неограниченный сырой ответ:
     # в нём могут быть контакты покупателя и иные персональные данные.
     raw = {"pool_transfer": {"pool_receipt_id": pool.id, "fns_confirmed": evidence}}

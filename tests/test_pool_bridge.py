@@ -1554,3 +1554,91 @@ def test_unified_account_view_uses_one_sqlite_read_snapshot(setup_bridge, tmp_pa
             db.rollback()
     finally:
         copied.dispose()
+
+
+def test_pool_transfer_requires_fns_confirmation_date(client, setup_bridge, monkeypatch):
+    _, a1, _, _, _, pid, _, fn, _, _ = setup_bridge
+    monkeypatch.setattr('app.pool.ingest._fetch_details', lambda *a, **k: pytest.fail('FNS request'))
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        pool.fns_confirmed = True
+        pool.fns_checked_at = None
+        db.commit()
+    assert client.post('/api/v1/pool-company/assign', headers=a1,
+                       json={'receipt_ids': [pid]}).status_code == 200
+    response = client.post('/api/v1/pool-company/transfer', headers=a1, json={'receipt_ids': [pid]})
+    assert response.status_code == 200 and response.json()['unconfirmed'] == 1
+    with SessionLocal() as db:
+        receipt = db.query(Receipt).filter_by(fn=fn).one()
+        assert receipt.fns_status == 'unknown' and receipt.status == 'pending'
+        assert receipt.fns_checked_at is None
+
+
+def test_idempotent_transfer_rechecks_source_access(setup_bridge, client):
+    from fastapi import HTTPException
+    from app.models import User
+    from app.pool.transfer import copy_to_registry
+
+    _, a1, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    assert client.post('/api/v1/pool-company/assign', headers=a1,
+                       json={'receipt_ids': [pid]}).status_code == 200
+    assert client.post('/api/v1/pool-company/transfer', headers=a1,
+                       json={'receipt_ids': [pid]}).status_code == 200
+    with SessionLocal() as db:
+        pool = db.get(PoolReceipt, pid)
+        actor = db.query(User).filter_by(company_id=c1, role='accountant').first()
+        assert db.query(Receipt).filter_by(fn=fn, company_id=c1).count() == 1
+        # Simulate a state change after the caller's initial pool selection.
+        pool.assigned_company_id = c2
+        db.flush()
+        with pytest.raises(HTTPException) as denied:
+            copy_to_registry(db, pool, c1, actor)
+        assert denied.value.status_code == 409
+        db.rollback()
+        pool.status = 'rejected'
+        db.flush()
+        with pytest.raises(HTTPException) as denied:
+            copy_to_registry(db, pool, c1, actor)
+        assert denied.value.status_code == 409
+        db.rollback()
+
+
+def test_transfer_race_rechecks_assignment_before_returning_existing(client, setup_bridge, monkeypatch):
+    from app.services import receipt_identity
+
+    _, a1, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    assert client.post('/api/v1/pool-company/assign', headers=a1,
+                       json={'receipt_ids': [pid]}).status_code == 200
+    assert client.post('/api/v1/pool-company/transfer', headers=a1,
+                       json={'receipt_ids': [pid]}).status_code == 200
+    original_lock = receipt_identity.lock_identity
+    switched = []
+    def change_before_lock(db, key_fn, fd, fp):
+        if key_fn == fn and not switched:
+            switched.append(True)
+            with SessionLocal() as other:
+                other.get(PoolReceipt, pid).assigned_company_id = c2
+                other.commit()
+        return original_lock(db, key_fn, fd, fp)
+    monkeypatch.setattr(receipt_identity, 'lock_identity', change_before_lock)
+    response = client.post('/api/v1/pool-company/transfer', headers=a1, json={'receipt_ids': [pid]})
+    assert switched == [True]
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert db.query(Receipt).filter_by(fn=fn, company_id=c1).count() == 1
+        assert db.get(PoolReceipt, pid).assigned_company_id == c2
+
+
+@pytest.mark.parametrize('amount', ['NaN', 'Infinity', '5764.001'])
+def test_scan_rejects_nonfinite_or_different_pool_amount_without_using_quota(client, setup_bridge, amount):
+    _, a1, _, c1, _, pid, qr, fn, _, _ = setup_bridge
+    from app.pool.router_company import month_used
+    with SessionLocal() as db:
+        before = month_used(db, c1)
+    response = client.post('/api/v1/receipts/scan', headers=a1,
+                           json={'qr_data': qr.replace('s=5764.00', 's=' + amount)})
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert db.get(PoolReceipt, pid).assigned_company_id is None
+        assert db.query(Receipt).filter_by(fn=fn).count() == 0
+        assert month_used(db, c1) == before

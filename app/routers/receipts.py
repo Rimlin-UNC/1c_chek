@@ -21,6 +21,7 @@ import datetime as dt
 import io
 import json
 import logging
+import math
 import os
 import queue
 import threading
@@ -118,8 +119,9 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
             raise HTTPException(409, "Чек уже зарегистрирован за другой организацией")
         if not company_id or pool.status != "verified":
             raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
-        if (abs(float(pool.total_sum or 0) - parsed.total_sum) > 0.009 or
-                pool.operation != parsed.operation or not pool.receipt_date or not parsed.date_time or
+        if (pool.total_sum is None or not math.isfinite(pool.total_sum)
+                or not math.isfinite(parsed.total_sum) or pool.total_sum != parsed.total_sum
+                or pool.operation != parsed.operation or not pool.receipt_date or not parsed.date_time or
                 pool.receipt_date.replace(second=0, microsecond=0) !=
                 parsed.date_time.replace(second=0, microsecond=0)):
             raise HTTPException(409, "Данные QR не совпадают с сохранённым чеком; требуется проверка")
