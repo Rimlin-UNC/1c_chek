@@ -3589,3 +3589,53 @@ def test_pick_and_transfer_refuses_nontransferable_receipt_without_reserving(cli
         assert db.get(PoolReceipt, pid).assigned_company_id is None
         assert db.query(Receipt).filter_by(fn=fn).count() == 0
         assert month_used(db, c1) == before
+
+
+@pytest.mark.parametrize('change', ['disabled_user', 'demoted_user', 'moved_user', 'disabled_company'])
+@pytest.mark.parametrize('assigned', [False, True])
+def test_scan_pool_rechecks_access_after_identity_lock(client, setup_bridge, monkeypatch, change, assigned):
+    from app.models import Company, User
+    from app.pool.router_company import month_used
+    from app.services import receipt_identity
+
+    _, headers, _, c1, c2, pid, qr, fn, _, _ = setup_bridge
+    if assigned:
+        assert client.post('/api/v1/pool-company/assign', headers=headers,
+                           json={'receipt_ids': [pid]}).status_code == 200
+    with SessionLocal() as db:
+        actor_id = db.query(User.id).filter_by(company_id=c1, role='accountant').first()[0]
+        used = month_used(db, c1)
+    original_lock = receipt_identity.lock_identity
+    changed = []
+
+    def revoke_before_lock(db, *identity):
+        if not changed:
+            changed.append(True)
+            with SessionLocal() as writer:
+                actor = writer.get(User, actor_id)
+                if change == 'disabled_user':
+                    actor.is_active = False
+                elif change == 'demoted_user':
+                    actor.role = 'user'
+                elif change == 'moved_user':
+                    actor.company_id = c2
+                else:
+                    writer.get(Company, c1).is_active = False
+                writer.commit()
+        return original_lock(db, *identity)
+
+    monkeypatch.setattr(receipt_identity, 'lock_identity', revoke_before_lock)
+    try:
+        response = client.post('/api/v1/receipts/scan', headers=headers, json={'qr_data': qr})
+        assert changed == [True]
+        assert response.status_code == 403
+        with SessionLocal() as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id == (c1 if assigned else None)
+            assert db.query(Receipt).filter_by(fn=fn).count() == 0
+            assert month_used(db, c1) == used
+    finally:
+        with SessionLocal() as db:
+            actor = db.get(User, actor_id)
+            actor.is_active, actor.role, actor.company_id = True, 'accountant', c1
+            db.get(Company, c1).is_active = True
+            db.commit()

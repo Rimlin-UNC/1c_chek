@@ -115,6 +115,26 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         from ..pool import ingest as pool_ingest
         from ..pool.router_company import month_used, pick_limit
         from ..pool.transfer import copy_to_registry
+        # Авторизация могла измениться, пока запрос ожидал замок тройки.
+        # Порядок блокировок совпадает с пакетным подбором: чек, компания,
+        # пользователь. Повторно читаем и сам чек после получения замков.
+        actor_id = user.id if user is not None else None
+        actor_role = user.role if user is not None else None
+        if not company_id or not actor_id:
+            raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
+        company = (db.query(Company).populate_existing().filter(Company.id == company_id)
+                   .with_for_update().first())
+        actor = (db.query(User).populate_existing().filter(User.id == actor_id)
+                 .with_for_update().first())
+        if (not company or not company.is_active or not actor or not actor.is_active
+                or actor.role != actor_role
+                or (actor.role != ROLE_ADMIN and actor.company_id != company_id)):
+            raise HTTPException(403, "Права или состояние компании изменились — обновите страницу")
+        user = actor
+        pool = (db.query(PoolReceipt).populate_existing()
+                .filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first())
+        if not pool:
+            raise HTTPException(409, "Чек изменён или удалён — обновите страницу")
         if pool.assigned_company_id and pool.assigned_company_id != company_id:
             raise HTTPException(409, "Чек уже зарегистрирован за другой организацией")
         if not company_id or pool.status != "verified":
@@ -130,9 +150,6 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
                 raise HTTPException(403, "Чек найден в пуле: попросите бухгалтера подобрать его")
             if not pool_ingest.pool_enabled(db):
                 raise HTTPException(409, "Чек найден в пуле, но подбор выключен")
-            company = db.query(Company).filter(Company.id == company_id).with_for_update().first()
-            if not company or not company.is_active:
-                raise HTTPException(403, "Компания не найдена или отключена")
             limit = pick_limit(db)
             if not limit or month_used(db, company_id) >= limit:
                 raise HTTPException(409, "Квота подбора из пула исчерпана или выключена")

@@ -137,7 +137,9 @@ class TestPlaywrightGate:
                               cwd=ROOT, capture_output=True, text=True,
                               timeout=600, check=False)
         assert proc.returncode == 0, proc.stderr[-1500:]
-        assert "Total: 4 tests" in proc.stdout, proc.stdout[-800:]
+        for scenario in ("верные учётные данные", "неверный пароль",
+                         "сворачивание работает", "мониторинга облака"):
+            assert scenario in proc.stdout, proc.stdout[-1500:]
 
     def test_scenarios_pass_with_browsers(self):
         if not PLAYWRIGHT_BIN.exists():
