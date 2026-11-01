@@ -297,6 +297,34 @@ def mine(date_from: str = "", date_to: str = "",
     return {"total": total, "page": page, "per_page": per_page, "items": items}
 
 
+def _lock_pool_identities(db: Session, rows: list[PoolReceipt]) -> dict[str, tuple[str, str, str]]:
+    """Заблокировать сохранённые тройки в том же порядке, что правка реестра."""
+    from ..services.receipt_identity import lock_identity
+
+    identities = {row.id: (row.fn, row.fd, row.fp) for row in rows}
+    if any(not all(isinstance(part, str) and part.strip() for part in identity)
+           for identity in identities.values()):
+        raise HTTPException(409, "Некорректные фискальные реквизиты — нужна сверка")
+    # Python-порядок совпадает с правкой старой и новой тройки реестра;
+    # порядок SQL может зависеть от collation базы.
+    for identity in sorted(set(identities.values())):
+        lock_identity(db, *identity)
+    return identities
+
+
+def _check_locked_pool_identities(rows: list[PoolReceipt], identities: dict[str, tuple[str, str, str]]) -> None:
+    if any(identities.get(row.id) != (row.fn, row.fd, row.fp) for row in rows):
+        raise HTTPException(409, "Фискальные реквизиты чека изменились — обновите список")
+
+
+def _refresh_locked_pool_rows(db: Session, identities: dict[str, tuple[str, str, str]]) -> list[PoolReceipt]:
+    rows = db.query(PoolReceipt).populate_existing().filter(PoolReceipt.id.in_(identities)).all()
+    if len(rows) != len(identities):
+        raise HTTPException(409, "Чек изменён или удалён — обновите список")
+    _check_locked_pool_identities(rows, identities)
+    return rows
+
+
 @router.post("/assign", summary="Чек-Пул: привязать чеки к компании")
 def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
            user: User = Depends(require_accountant)):
@@ -309,11 +337,8 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
     ids = list(dict.fromkeys(body.receipt_ids or []))
     if not ids or len(ids) > ASSIGN_BATCH:
         raise HTTPException(422, f"Выберите от 1 до {ASSIGN_BATCH} чеков")
-    from ..services.receipt_identity import lock_identity
-    candidates = db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids)).order_by(
-        PoolReceipt.fn, PoolReceipt.fd, PoolReceipt.fp).all()
-    for row in candidates:
-        lock_identity(db, row.fn, row.fd, row.fp)
+    candidates = db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids)).all()
+    identities = _lock_pool_identities(db, candidates)
     db.query(Company).filter(Company.id == comp.id).with_for_update().first()
     db.expire_all()  # после ожидания замка перечитать состояние кандидатов
     used = month_used(db, comp.id)
@@ -327,6 +352,7 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
                     PoolReceipt.assigned_company_id.is_(None)).all())
     if len(rows) != len(ids):
         raise HTTPException(409, "Часть выбранных чеков уже занята — обновите список")
+    _check_locked_pool_identities(rows, identities)
     for row in rows:
         if db.query(Receipt.id).filter_by(fn=row.fn, fd=row.fd, fp=row.fp).first():
             raise HTTPException(409, "Один из чеков уже есть в реестре — обновите список")
@@ -356,10 +382,9 @@ def unassign(body: IdsBody, company_id: str = "",
     rows = (db.query(PoolReceipt)
             .filter(PoolReceipt.id.in_(ids),
                     PoolReceipt.assigned_company_id == comp.id).all())
-    from ..services.receipt_identity import lock_identity
-    for r in sorted(rows, key=lambda x: (x.fn, x.fd, x.fp)):
-        lock_identity(db, r.fn, r.fd, r.fp)
-        db.refresh(r)
+    identities = _lock_pool_identities(db, rows)
+    rows = _refresh_locked_pool_rows(db, identities)
+    for r in rows:
         if r.assigned_company_id != comp.id:
             raise HTTPException(409, "Чек больше не закреплён за компанией")
         if db.query(Receipt.id).filter_by(fn=r.fn, fd=r.fd, fp=r.fp).first():
@@ -380,7 +405,6 @@ def unassign(body: IdsBody, company_id: str = "",
 def transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
              user: Annotated[User, Depends(require_accountant)], company_id: str = ""):
     from ..services.audit import log_action
-    from ..services.receipt_identity import lock_identity
     from .transfer import copy_to_registry
 
     comp = _company(db, user, company_id)
@@ -388,15 +412,13 @@ def transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
     if not ids or len(ids) > ASSIGN_BATCH:
         raise HTTPException(422, f"Выберите от 1 до {ASSIGN_BATCH} чеков")
     rows = (db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids),
-            PoolReceipt.assigned_company_id == comp.id).order_by(
-                PoolReceipt.fn, PoolReceipt.fd, PoolReceipt.fp).all())
+            PoolReceipt.assigned_company_id == comp.id).all())
     if len(rows) != len(ids):
         raise HTTPException(404, "Некоторые чеки не найдены или недоступны")
-    for row in rows:
-        lock_identity(db, row.fn, row.fd, row.fp)
+    identities = _lock_pool_identities(db, rows)
+    rows = _refresh_locked_pool_rows(db, identities)
     created, existing, unconfirmed = 0, 0, 0
     for row in rows:
-        db.refresh(row)
         receipt, was_created = copy_to_registry(db, row, comp.id, user)
         created += int(was_created)
         existing += int(not was_created)

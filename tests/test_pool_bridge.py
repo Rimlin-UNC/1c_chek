@@ -3186,3 +3186,95 @@ def test_unified_donor_read_reloads_cached_block_status(setup_bridge, tmp_path):
             db.get(PoolReceipt, pid).pool_user_id = None
             db.delete(db.get(PoolUser, donor_id))
             db.commit()
+
+
+@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer'])
+def test_batch_pool_actions_refuse_identity_changed_before_lock(client, setup_bridge, monkeypatch, operation):
+    from app.pool.router_company import month_used
+    from app.services import receipt_identity
+
+    _, headers, _, c1, _, pid, _, fn, fd, fp = setup_bridge
+    other_fn = '6' + str(int(uuid4().hex, 16) % 10**15).zfill(15)
+    with SessionLocal() as db:
+        other = PoolReceipt(fn=other_fn, fd=fd, fp=fp, receipt_date=datetime(2026, 9, 22, 15, 56),
+                            total_sum=5764, operation=1, status='verified')
+        db.add(other)
+        db.flush()
+        other_id = other.id
+        db.commit()
+    ids = [pid, other_id]
+    try:
+        if operation != 'assign':
+            response = client.post('/api/v1/pool-company/assign', headers=headers, json={'receipt_ids': ids})
+            assert response.status_code == 200
+        with SessionLocal() as db:
+            used_before = month_used(db, c1)
+        original_lock = receipt_identity.lock_identity
+        changed = []
+        def change_after_selection(db, key_fn, key_fd, key_fp):
+            if not changed:
+                changed.append(True)
+                with SessionLocal() as writer:
+                    writer.get(PoolReceipt, pid).fp = '987654321'
+                    writer.commit()
+            return original_lock(db, key_fn, key_fd, key_fp)
+        monkeypatch.setattr(receipt_identity, 'lock_identity', change_after_selection)
+        monkeypatch.setattr('app.routers.receipts.check_receipt', lambda *a, **kw: pytest.fail('FNS called'))
+        response = client.post('/api/v1/pool-company/' + operation, headers=headers, json={'receipt_ids': ids})
+        assert changed == [True]
+        assert response.status_code == 409
+        with SessionLocal() as db:
+            assert db.get(PoolReceipt, pid).fp == '987654321'
+            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation == 'assign' else c1)
+            assert db.get(PoolReceipt, other_id).assigned_company_id == (None if operation == 'assign' else c1)
+            assert db.query(Receipt).filter(Receipt.fn.in_([fn, other_fn])).count() == 0
+            assert month_used(db, c1) == used_before
+            db.get(PoolReceipt, pid).fp = fp
+            db.commit()
+    finally:
+        with SessionLocal() as db:
+            db.query(ReceiptItem).filter(ReceiptItem.receipt_id.in_(
+                db.query(Receipt.id).filter(Receipt.fn == other_fn))).delete(synchronize_session=False)
+            db.query(Receipt).filter(Receipt.fn == other_fn).delete(synchronize_session=False)
+            db.query(PoolReceipt).filter(PoolReceipt.id == other_id).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_pool_identity_batch_lock_order_is_independent_of_input():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from app.pool.router_company import _lock_pool_identities
+    from app.services import receipt_identity
+
+    rows = [SimpleNamespace(id='a', fn='z', fd='2', fp='1'),
+            SimpleNamespace(id='b', fn='a', fd='2', fp='1'),
+            SimpleNamespace(id='c', fn='z', fd='2', fp='1')]
+    calls = []
+    with patch.object(receipt_identity, 'lock_identity', lambda db, *identity: calls.append(identity)):
+        snapshot = _lock_pool_identities(None, rows)
+    assert calls == [('a', '2', '1'), ('z', '2', '1')]
+    assert snapshot['a'] == snapshot['c'] == ('z', '2', '1')
+
+
+@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer'])
+def test_pool_batch_action_fails_cleanly_when_selected_record_deleted(client, setup_bridge, monkeypatch, operation):
+    from app.services import receipt_identity
+
+    _, headers, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    if operation != 'assign':
+        assert client.post('/api/v1/pool-company/assign', headers=headers,
+                           json={'receipt_ids': [pid]}).status_code == 200
+    lock = receipt_identity.lock_identity
+    def delete_before_lock(db, *identity):
+        with SessionLocal() as writer:
+            writer.query(PoolItem).filter_by(receipt_id=pid).delete()
+            writer.query(PoolReceipt).filter_by(id=pid).delete()
+            writer.commit()
+        return lock(db, *identity)
+    monkeypatch.setattr(receipt_identity, 'lock_identity', delete_before_lock)
+    response = client.post('/api/v1/pool-company/' + operation, headers=headers, json={'receipt_ids': [pid]})
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert db.get(PoolReceipt, pid) is None
+        assert db.query(Receipt).filter_by(fn=fn, company_id=c1).count() == 0
