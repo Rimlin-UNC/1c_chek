@@ -3278,3 +3278,99 @@ def test_pool_batch_action_fails_cleanly_when_selected_record_deleted(client, se
     with SessionLocal() as db:
         assert db.get(PoolReceipt, pid) is None
         assert db.query(Receipt).filter_by(fn=fn, company_id=c1).count() == 0
+
+
+@pytest.mark.parametrize('operation', ['assign', 'unassign', 'transfer'])
+@pytest.mark.parametrize('change', ['disabled_user', 'demoted_user', 'moved_user', 'disabled_company'])
+def test_pool_batch_rechecks_access_after_identity_lock(client, setup_bridge, monkeypatch, operation, change):
+    from app.models import Company, User
+    from app.pool.router_company import month_used
+    from app.services import receipt_identity
+
+    _, headers, _, c1, c2, pid, _, fn, _, _ = setup_bridge
+    if operation != 'assign':
+        assert client.post('/api/v1/pool-company/assign', headers=headers,
+                           json={'receipt_ids': [pid]}).status_code == 200
+    with SessionLocal() as db:
+        actor_id = db.query(User.id).filter_by(company_id=c1, role='accountant').first()[0]
+        used = month_used(db, c1)
+    original_lock = receipt_identity.lock_identity
+    changed = []
+    def revoke_before_lock(db, *identity):
+        if not changed:
+            changed.append(True)
+            with SessionLocal() as writer:
+                actor = writer.get(User, actor_id)
+                if change == 'disabled_user':
+                    actor.is_active = False
+                elif change == 'demoted_user':
+                    actor.role = 'user'
+                elif change == 'moved_user':
+                    actor.company_id = c2
+                else:
+                    writer.get(Company, c1).is_active = False
+                writer.commit()
+        return original_lock(db, *identity)
+    monkeypatch.setattr(receipt_identity, 'lock_identity', revoke_before_lock)
+    try:
+        response = client.post('/api/v1/pool-company/' + operation, headers=headers, json={'receipt_ids': [pid]})
+        assert changed == [True]
+        assert response.status_code == 403
+        with SessionLocal() as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id == (None if operation == 'assign' else c1)
+            assert db.query(Receipt).filter_by(fn=fn).count() == 0
+            assert month_used(db, c1) == used
+    finally:
+        with SessionLocal() as db:
+            actor = db.get(User, actor_id)
+            actor.is_active, actor.role, actor.company_id = True, 'accountant', c1
+            db.get(Company, c1).is_active = True
+            db.commit()
+
+
+@pytest.mark.parametrize('change', ['pool_disabled', 'limit_disabled', 'limit_lowered'])
+def test_pool_assign_rechecks_settings_after_identity_lock(client, setup_bridge, monkeypatch, change):
+    from app.pool.router_company import month_used
+    from app.services import receipt_identity
+
+    _, headers, _, c1, _, pid, _, fn, fd, fp = setup_bridge
+    extra_id = None
+    if change == 'limit_lowered':
+        with SessionLocal() as db:
+            extra = PoolReceipt(fn='8' + str(int(uuid4().hex, 16) % 10**15).zfill(15), fd=fd, fp=fp,
+                                receipt_date=datetime(2026, 9, 22), total_sum=100, operation=1,
+                                status='verified', assigned_company_id=c1, assigned_at=datetime.utcnow())
+            db.add(extra)
+            db.flush()
+            extra_id = extra.id
+            db.commit()
+    try:
+        with SessionLocal() as db:
+            used = month_used(db, c1)
+            if change == 'limit_lowered':
+                assert used >= 1
+        original_lock = receipt_identity.lock_identity
+        changed = []
+        def change_settings_before_lock(db, *identity):
+            if not changed:
+                changed.append(True)
+                with SessionLocal() as writer:
+                    if change == 'pool_disabled':
+                        appsettings.set_setting(writer, 'pool_enabled', '0')
+                    else:
+                        appsettings.set_setting(writer, 'pool_pick_monthly_limit',
+                                                '0' if change == 'limit_disabled' else str(used))
+            return original_lock(db, *identity)
+        monkeypatch.setattr(receipt_identity, 'lock_identity', change_settings_before_lock)
+        response = client.post('/api/v1/pool-company/assign', headers=headers, json={'receipt_ids': [pid]})
+        assert changed == [True]
+        assert response.status_code == (409 if change == 'limit_lowered' else 403)
+        with SessionLocal() as db:
+            assert db.get(PoolReceipt, pid).assigned_company_id is None
+            assert db.query(Receipt).filter_by(fn=fn).count() == 0
+            assert month_used(db, c1) == used
+    finally:
+        if extra_id:
+            with SessionLocal() as db:
+                db.query(PoolReceipt).filter_by(id=extra_id).delete()
+                db.commit()

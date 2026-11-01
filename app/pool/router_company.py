@@ -325,6 +325,21 @@ def _refresh_locked_pool_rows(db: Session, identities: dict[str, tuple[str, str,
     return rows
 
 
+def _recheck_pool_company_access(db: Session, company_id: str, user_id: str) -> tuple[Company, User]:
+    """После замка чека сверить и удержать действующие права до commit."""
+    # Единый порядок: фискальные тройки, компания, пользователь. На SQLite
+    # тройка удерживает write-lock; PostgreSQL дополнительно блокирует строки.
+    company = (db.query(Company).populate_existing().filter(Company.id == company_id)
+               .with_for_update().first())
+    actor = (db.query(User).populate_existing().filter(User.id == user_id)
+             .with_for_update().first())
+    if (not company or not company.is_active or not actor or not actor.is_active
+            or actor.role not in ("admin", "accountant")
+            or (actor.role != "admin" and actor.company_id != company_id)):
+        raise HTTPException(403, "Права или состояние компании изменились — обновите страницу")
+    return company, actor
+
+
 @router.post("/assign", summary="Чек-Пул: привязать чеки к компании")
 def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
            user: User = Depends(require_accountant)):
@@ -337,10 +352,15 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
     ids = list(dict.fromkeys(body.receipt_ids or []))
     if not ids or len(ids) > ASSIGN_BATCH:
         raise HTTPException(422, f"Выберите от 1 до {ASSIGN_BATCH} чеков")
+    actor_id, selected_company_id = user.id, comp.id
     candidates = db.query(PoolReceipt).filter(PoolReceipt.id.in_(ids)).all()
     identities = _lock_pool_identities(db, candidates)
-    db.query(Company).filter(Company.id == comp.id).with_for_update().first()
-    db.expire_all()  # после ожидания замка перечитать состояние кандидатов
+    db.expire_all()  # после ожидания замка перечитать состояние кандидатов и настроек
+    comp, user = _recheck_pool_company_access(db, selected_company_id, actor_id)
+    _enabled(db)
+    limit = pick_limit(db)
+    if limit <= 0:
+        raise HTTPException(403, "Подбор из пула выключен настройкой")
     used = month_used(db, comp.id)
     if used + len(ids) > limit:
         raise HTTPException(409, f"Лимит тарифа: {limit} чеков/мес, "
@@ -382,7 +402,9 @@ def unassign(body: IdsBody, company_id: str = "",
     rows = (db.query(PoolReceipt)
             .filter(PoolReceipt.id.in_(ids),
                     PoolReceipt.assigned_company_id == comp.id).all())
+    actor_id, selected_company_id = user.id, comp.id
     identities = _lock_pool_identities(db, rows)
+    comp, user = _recheck_pool_company_access(db, selected_company_id, actor_id)
     rows = _refresh_locked_pool_rows(db, identities)
     for r in rows:
         if r.assigned_company_id != comp.id:
@@ -415,7 +437,9 @@ def transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
             PoolReceipt.assigned_company_id == comp.id).all())
     if len(rows) != len(ids):
         raise HTTPException(404, "Некоторые чеки не найдены или недоступны")
+    actor_id, selected_company_id = user.id, comp.id
     identities = _lock_pool_identities(db, rows)
+    comp, user = _recheck_pool_company_access(db, selected_company_id, actor_id)
     rows = _refresh_locked_pool_rows(db, identities)
     created, existing, unconfirmed = 0, 0, 0
     for row in rows:
