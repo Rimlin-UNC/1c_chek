@@ -35,7 +35,7 @@ class TestVersion1582:
         assert tuple(int(x) for x in
                      reg["Адаптивный интерфейс"].split(".")) >= (1, 58, 2)
         assert tuple(int(x) for x in reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 58, 0)  # не задет
-        assert reg["Чек-Пул"] == "1.56.1"
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)
         assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 55, 1)
 
 

@@ -269,9 +269,9 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
 
 def _mine_query(db: Session, company_id: str, date_from: str, date_to: str):
     """Область «Моих чеков компании»: назначение и период, без данных донора."""
-    from ..services.scoping import canonical_pool_company_filter
+    from ..services.scoping import canonical_pool_visible_filter
     q = db.query(PoolReceipt).filter(PoolReceipt.assigned_company_id == company_id,
-                                     canonical_pool_company_filter(company_id))
+                                     canonical_pool_visible_filter())
     if date_from:
         try:
             q = q.filter(PoolReceipt.receipt_date >= datetime.strptime(date_from, "%Y-%m-%d"))

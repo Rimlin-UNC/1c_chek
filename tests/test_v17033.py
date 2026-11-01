@@ -63,7 +63,8 @@ def js_modules() -> list[pathlib.Path]:
 # Классы, которые не обязаны иметь правил в CSS: их переключает app.js,
 # а видимость даёт утилита .hidden.
 JS_HOOKS = {
-    "admin-only", "accountant-only", "boss-only", "pool-only",
+    # v1.70.82: supabase-only — пункт «Supabase демо» виден при включённом контуре
+    "admin-only", "accountant-only", "boss-only", "pool-only", "supabase-only",
     "hidden", "open", "selected", "active", "disabled", "expanded", "loading",
 }
 
@@ -693,7 +694,7 @@ class TestRelease:
     # требование «своя запись первая» проверяет test_v17041.
     # v1.70.45: VERSION здесь — ТЕКУЩАЯ версия (класс сверяет точки
     # синхронизации, CHANGELOG и журнал), поэтому поднимается каждый выпуск.
-    VERSION = "1.70.81"
+    VERSION = "1.70.82"
 
     def test_all_sync_points(self):
         points = [

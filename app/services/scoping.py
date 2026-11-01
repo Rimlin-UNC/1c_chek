@@ -23,60 +23,38 @@ from ..models import Company, Receipt, User
 from ..pool.models import PoolReceipt
 
 
-def _canonical_company_filter(company_id, user_id=None):
-    """Если чек связан с каноном, владельцем считает единая строка владения."""
-    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument, UnifiedOrigin, UnifiedOwnership
-    linked = (select(UnifiedOrigin.id)
-              .where(UnifiedOrigin.source_kind == "registry",
-                     UnifiedOrigin.source_id == Receipt.id)).exists()
-    own_ok = (select(UnifiedOwnership.document_id)
-              .join(UnifiedDocument, UnifiedDocument.id == UnifiedOwnership.document_id)
-              .join(UnifiedOrigin, UnifiedOrigin.document_id == UnifiedDocument.id)
-              .where(UnifiedOrigin.source_kind == "registry",
-                     UnifiedOrigin.source_id == Receipt.id,
-                     UnifiedDocument.deleted_at.is_(None),
-                     (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) == 0,
-                     UnifiedOwnership.company_id.is_(None) if company_id is None
-                     else UnifiedOwnership.company_id == company_id))
-    if user_id is not None:
-        own_ok = own_ok.where(UnifiedOwnership.created_by == user_id)
-    return or_(~linked, own_ok.exists())
+def _quarantined(kind: str, source_id):
+    """EXISTS: проекция связана с единой записью, снятой с учёта или на разборе.
+
+    Компанию и автора проверяют штатные фильтры реестра и пула. Единый слой
+    добавляет к ним одно: чек, чья принадлежность спорна (один фискальный
+    документ у двух организаций), не виден никому, кроме администратора, до
+    разбора. Расхождение владельца без флага разбора (например, после отката
+    на старую версию, которая меняет только реестр) чек не прячет: штатный
+    фильтр по-прежнему не покажет его чужой компании.
+    """
+    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument, UnifiedOrigin
+    return (select(UnifiedOrigin.id)
+            .join(UnifiedDocument, UnifiedDocument.id == UnifiedOrigin.document_id)
+            .where(UnifiedOrigin.source_kind == kind,
+                   UnifiedOrigin.source_id == source_id,
+                   or_(UnifiedDocument.deleted_at.isnot(None),
+                       (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) != 0))).exists()
 
 
 def _canonical_receipt_allowed(receipt: Receipt, user: User) -> bool:
+    if user.role == ROLE_ADMIN:
+        return True
     db = object_session(receipt)
     if db is None:
         return True
-    from ..unified.models import UnifiedOrigin
-    origin = (db.query(UnifiedOrigin)
-              .filter(UnifiedOrigin.source_kind == "registry",
-                      UnifiedOrigin.source_id == receipt.id).first())
-    if origin is None:
-        return True
-    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument
-    doc = origin.document
-    if user.role == "admin":
-        return True
-    if doc.deleted_at is not None or (doc.review_flags & REVIEW_OWNERSHIP):
-        return False
-    own = doc.ownership
-    return own is not None and own.company_id == receipt.company_id
+    hidden = db.query(_quarantined("registry", receipt.id)).scalar()
+    return not hidden
 
 
-def canonical_pool_company_filter(company_id: str):
-    from ..unified.models import REVIEW_OWNERSHIP, UnifiedDocument, UnifiedOrigin, UnifiedOwnership
-    linked = (select(UnifiedOrigin.id)
-              .where(UnifiedOrigin.source_kind == "pool",
-                     UnifiedOrigin.source_id == PoolReceipt.id)).exists()
-    own_ok = (select(UnifiedOwnership.document_id)
-              .join(UnifiedDocument, UnifiedDocument.id == UnifiedOwnership.document_id)
-              .join(UnifiedOrigin, UnifiedOrigin.document_id == UnifiedDocument.id)
-              .where(UnifiedOrigin.source_kind == "pool",
-                     UnifiedOrigin.source_id == PoolReceipt.id,
-                     UnifiedDocument.deleted_at.is_(None),
-                     (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) == 0,
-                     UnifiedOwnership.company_id == company_id)).exists()
-    return or_(~linked, own_ok)
+def canonical_pool_visible_filter():
+    """Фильтр пула: спорные по принадлежности чеки скрыты до разбора."""
+    return ~_quarantined("pool", PoolReceipt.id)
 
 
 def user_company_id(user: User) -> str | None:
@@ -102,10 +80,8 @@ def scope_receipts(query: Query, user: User,
         query = query.filter(Receipt.company_id.is_(None))
     if user.role == ROLE_USER:
         query = query.filter(Receipt.created_by == user.id)
-        query = query.filter(_canonical_company_filter(user.company_id, user.id))
-    else:
-        query = query.filter(_canonical_company_filter(user.company_id))
-    return query
+    # v1.70.82: спорные по принадлежности чеки (единый реестр) — до разбора
+    return query.filter(~_quarantined("registry", Receipt.id))
 
 
 def can_view_receipt(user: User, receipt: Receipt) -> bool:

@@ -166,5 +166,5 @@ class TestVersion1671:
         reg = updater.read_blocks("app/services/blocks.py")
         assert tuple(int(x) for x in
                      reg["Роли и доступ"].split(".")) >= (1, 67, 1)
-        assert reg["Сканирование чеков"] == "1.67.1"
-        assert reg["Чек-Пул"] == "1.56.1"          # блок не менялся
+        assert tuple(int(x) for x in reg["Сканирование чеков"].split(".")) >= (1, 67, 1)
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)          # блок не менялся

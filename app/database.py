@@ -120,6 +120,12 @@ def init_db() -> None:
         except Exception:  # noqa: BLE001
             import traceback
             traceback.print_exc()
+    # v1.70.82: единый реестр чеков — сверка канона с рабочими таблицами.
+    # Нужна после отката на версию без единого реестра и повторного
+    # обновления: старая версия меняла только реестр и пул. Только
+    # однозначные исправления, с журналом; сбой не останавливает сервис.
+    from .unified.reconcile import reconcile_on_startup
+    reconcile_on_startup()
 
 
 def _enable_pool_once() -> None:

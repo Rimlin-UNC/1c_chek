@@ -1350,8 +1350,9 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     raw["external"] = {"source": res.source, "message": res.message,
                        "fetched_at": dt.datetime.utcnow().isoformat() + "Z"}
     receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+    # v1.70.82: сбой единого реестра не отменяет полученные данные чека
     from ..unified import service as unified
-    unified.sync_registry(db, receipt)
+    unified.sync_registry_safely(db, receipt)
     db.commit()
 
 
@@ -1720,8 +1721,10 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
             merged["ticket"] = _ticket
         raw["fns"] = merged
         receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+        # v1.70.82: ответ ФНС оплачен квотой — сбой единого реестра его не
+        # отменяет (откатывается только точка сохранения синхронизации)
         from ..unified import service as unified
-        unified.sync_registry(db, receipt)
+        unified.sync_registry_safely(db, receipt)
         db.commit()
 
         # v1.18.0: id задаём явно (max+1) — на таблицах старой схемы SQLite

@@ -80,7 +80,8 @@ SURFACES = {
 GRAD_STOPS = ("#ff7a00", "#ff9a3d")
 
 # Классы-хуки: стиль им не нужен, по ним JS переключает `hidden`.
-JS_HOOK_CLASSES = {"admin-only", "accountant-only", "boss-only", "pool-only"}
+# v1.70.82: supabase-only — пункт «Supabase демо» виден при включённом контуре
+JS_HOOK_CLASSES = {"admin-only", "accountant-only", "boss-only", "pool-only", "supabase-only"}
 
 # Удалённые мёртвые классы — не должны вернуться.
 DELETED_DEAD = ("ao-preview", "catalog-grid", "cc-actions", "manual-hero",
@@ -790,7 +791,7 @@ class TestNoDeadCss:
 class TestRelease:
     # v1.70.41: точки синхронизации живут дальше; свою версию и
     # требование «своя запись первая» проверяет test_v17041.
-    VERSION = "1.70.81"
+    VERSION = "1.70.82"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

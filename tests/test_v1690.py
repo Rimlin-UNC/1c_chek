@@ -86,7 +86,7 @@ class TestVersion1690:
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
         assert reg["Мини-приложение MAX"] == "1.69.0"
-        assert reg["Чек-Пул"] == "1.56.1"            # движок не менялся
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)            # движок не менялся
 
 
 # ------------------------------------------------------------------ валидатор
@@ -380,7 +380,11 @@ class TestNoRegression:
         appjs = open("app/static/js/app.js", encoding="utf-8").read()
         assert "slice(0, 60)" not in appjs              # замок test_v1241
         blocks = open("app/services/blocks.py", encoding="utf-8").read()
-        for blk, ver in (("Сканирование чеков", "1.67.1"),
-                         ("Роли и доступ", "1.68.0"),
-                         ("Исходящие webhooks", "1.67.0")):
-            assert f'"{blk}": "{ver}"' in blocks
+        # v1.70.82: точные пины → структурные (блоки менялись в едином
+        # реестре чеков; версия блока растёт, но не ниже зафиксированной)
+        from app.services.updater import read_blocks
+        reg = read_blocks("app/services/blocks.py")
+        assert '"Исходящие webhooks": "1.67.0"' in blocks
+        for blk, ver in (("Сканирование чеков", (1, 67, 1)),
+                         ("Роли и доступ", (1, 68, 0))):
+            assert tuple(int(x) for x in reg[blk].split(".")) >= ver

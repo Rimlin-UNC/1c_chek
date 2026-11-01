@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session, aliased
 
 from ..models import Company, Receipt, ReceiptItem, User
 from ..pool.models import PoolItem, PoolReceipt
@@ -35,6 +37,8 @@ from .models import (
 
 REGISTRY = "registry"
 POOL = "pool"
+
+log = logging.getLogger("ymaster")
 
 
 def _now() -> datetime:
@@ -236,9 +240,11 @@ def register_source(db: Session, kind: str, row: Any, actor: User | None = None,
     items = _items(db, row, kind)
     created = doc is None
     if created:
-        doc = UnifiedDocument(identity_key=key, **data)
-        if key is None:
-            doc.review_flags |= REVIEW_INCOMPLETE_IDENTITY
+        # Значения по умолчанию колонок применяются только при INSERT: до flush
+        # review_flags/version у нового объекта — None. Задаём их явно (иначе
+        # чек из архива без ФП падал с TypeError при первой правке).
+        doc = UnifiedDocument(identity_key=key, version=1,
+                              review_flags=REVIEW_INCOMPLETE_IDENTITY if key is None else 0, **data)
         db.add(doc)
         db.flush()
         _ensure_ownership(db, doc)
@@ -322,12 +328,31 @@ def _project_pool(db: Session, doc: UnifiedDocument) -> None:
             ))
 
 
-def sync_registry(db: Session, receipt: Receipt, actor: User | None = None) -> UnifiedDocument:
+def _register_lazily(db: Session, receipt: Receipt, actor: User | None) -> UnifiedDocument | None:
+    """Чек из архива (до переноса) попадает в единый реестр при первой правке.
+
+    Конфликт с уже существующей единой записью не блокирует работу с чеком:
+    регистрация откатывается в своей точке сохранения, чек остаётся в прежнем
+    режиме, а расхождение покажет перенос архива (``app.unified.backfill``).
+    """
+    try:
+        with db.begin_nested():
+            return register_source(db, REGISTRY, receipt, actor, strict=True, event_type="sync")
+    except HTTPException as exc:
+        log.warning("Единый реестр: чек %s оставлен в прежнем режиме — %s", receipt.id, exc.detail)
+        return None
+    except Exception:  # noqa: BLE001 — регистрация необязательна, правка чека важнее
+        log.error("Единый реестр: чек %s оставлен в прежнем режиме — сбой регистрации",
+                  receipt.id, exc_info=True)
+        return None
+
+
+def sync_registry(db: Session, receipt: Receipt, actor: User | None = None) -> UnifiedDocument | None:
     """После правки/обогащения реестра обновить каноническую запись и пул."""
     db.flush()
     doc = document_for_source(db, REGISTRY, receipt.id)
     if doc is None:
-        return register_source(db, REGISTRY, receipt, actor, strict=True, event_type="sync")
+        return _register_lazily(db, receipt, actor)
     _lock_values(db, receipt.fn, receipt.fd, receipt.fp)
     doc = (db.query(UnifiedDocument).populate_existing()
            .filter(UnifiedDocument.id == doc.id).with_for_update(of=UnifiedDocument).first())
@@ -361,6 +386,24 @@ def sync_registry(db: Session, receipt: Receipt, actor: User | None = None) -> U
     _project_pool(db, doc)
     db.flush()
     return doc
+
+
+def sync_registry_safely(db: Session, receipt: Receipt, actor: User | None = None) -> bool:
+    """Синхронизация для фоновых путей обогащения (ФНС, внешние источники).
+
+    Ответ ФНС уже оплачен суточной квотой и важнее канонической копии: сбой
+    единого реестра откатывает только собственную точку сохранения, данные
+    чека сохраняются как раньше, причина уходит в журнал. Каноническая запись
+    догонит реестр при следующей правке или переносе архива.
+    """
+    try:
+        with db.begin_nested():
+            sync_registry(db, receipt, actor)
+        return True
+    except Exception as exc:  # noqa: BLE001 — защитный контур: проверка чека важнее
+        log.warning("Единый реестр: синхронизация чека %s пропущена — %s",
+                    receipt.id, getattr(exc, "detail", exc))
+        return False
 
 
 def _recheck_actor(db: Session, actor: User, roles: tuple[str, ...],
@@ -623,6 +666,27 @@ def retarget_company(db: Session, from_company_id: str, to_company_id: str | Non
     return {"moved": moved, "deleted": deleted}
 
 
+def _projections_agree(db: Session, doc: UnifiedDocument, user: User) -> bool:
+    """Живые проекции подтверждают владение (защита от устаревшей копии).
+
+    После отката на старую версию (она меняет только реестр и пул) владелец
+    в каноне может отстать. Тогда штатный аккаунт не должен видеть чужой уже
+    чек: каждая живая проекция обязана принадлежать его компании, а хотя бы
+    одна — подтверждать доступ (для сотрудника — его собственный чек).
+    """
+    cid = user.company_id
+    origins = db.query(UnifiedOrigin).filter(UnifiedOrigin.document_id == doc.id).all()
+    regs = [r for r in (db.get(Receipt, o.source_id) for o in origins if o.source_kind == REGISTRY) if r]
+    pools = [p for p in (db.get(PoolReceipt, o.source_id) for o in origins if o.source_kind == POOL) if p]
+    if any(r.company_id != cid for r in regs):
+        return False
+    if any(p.assigned_company_id not in (None, cid) for p in pools):
+        return False
+    if user.role == "user":
+        return any(r.created_by == user.id for r in regs)
+    return bool(regs) or any(p.assigned_company_id == cid for p in pools)
+
+
 def can_view_document(db: Session, user: User, doc: UnifiedDocument,
                       company_id: str | None = None) -> bool:
     """Повторная проверка прав по текущему состоянию БД, не по снимку токена."""
@@ -636,15 +700,36 @@ def can_view_document(db: Session, user: User, doc: UnifiedDocument,
         return company_id is None or (own is not None and own.company_id == company_id)
     if own is None or doc.review_flags & REVIEW_OWNERSHIP:
         return False
-    if own.company_id != fresh.company_id:
+    if not fresh.company_id or own.company_id != fresh.company_id:
         return False
-    if fresh.company_id:
-        comp = db.get(Company, fresh.company_id)
-        if comp is None or not comp.is_active:
-            return False
-    if fresh.role == "user":
-        return own.created_by == fresh.id
-    return fresh.role in ("accountant", "manager")
+    comp = db.get(Company, fresh.company_id)
+    if comp is None or not comp.is_active:
+        return False
+    if fresh.role == "user" and own.created_by != fresh.id:
+        return False
+    if fresh.role not in ("user", "accountant", "manager"):
+        return False
+    return _projections_agree(db, doc, fresh)
+
+
+def _projection_filters(user: User) -> list:
+    """SQL-зеркало _projections_agree для списков единого реестра."""
+    cid = user.company_id
+
+    def linked(model, kind, *conds):
+        origin = aliased(UnifiedOrigin)
+        return (select(origin.id).join(model, model.id == origin.source_id)
+                .where(origin.document_id == UnifiedDocument.id,
+                       origin.source_kind == kind, *conds)).exists()
+
+    foreign = [~linked(Receipt, REGISTRY, or_(Receipt.company_id.is_(None), Receipt.company_id != cid)),
+               ~linked(PoolReceipt, POOL, PoolReceipt.assigned_company_id.isnot(None),
+                       PoolReceipt.assigned_company_id != cid)]
+    if user.role == "user":
+        return [*foreign, linked(Receipt, REGISTRY, Receipt.company_id == cid,
+                                 Receipt.created_by == user.id)]
+    return [*foreign, or_(linked(Receipt, REGISTRY, Receipt.company_id == cid),
+                          linked(PoolReceipt, POOL, PoolReceipt.assigned_company_id == cid))]
 
 
 def scope_documents(query, db: Session, user: User, company_id: str | None = None):
@@ -656,13 +741,17 @@ def scope_documents(query, db: Session, user: User, company_id: str | None = Non
         if company_id:
             query = query.filter(UnifiedOwnership.company_id == company_id)
         return query
+    if not fresh.company_id or fresh.role not in ("user", "accountant", "manager"):
+        return query.filter(False)
+    comp = db.get(Company, fresh.company_id)
+    if comp is None or not comp.is_active:
+        return query.filter(False)
     query = query.filter(UnifiedDocument.deleted_at.is_(None),
                          UnifiedOwnership.company_id == fresh.company_id,
-                         (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) == 0)
+                         (UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP)) == 0,
+                         *_projection_filters(fresh))
     if fresh.role == "user":
         query = query.filter(UnifiedOwnership.created_by == fresh.id)
-    elif fresh.role not in ("accountant", "manager"):
-        query = query.filter(False)
     return query
 
 

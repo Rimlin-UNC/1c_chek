@@ -31,9 +31,13 @@ REVIEW_ITEMS = 16
 REVIEW_INCOMPLETE_IDENTITY = 32
 REVIEW_MERCHANT = 64
 REVIEW_VERIFICATION = 128
+# Блокируют перенос/закрепление только расхождения между склеенными копиями и
+# спор о владельце. Неполная тройка — пометка, а не конфликт: такой документ
+# никогда не склеивается, у него одна копия, и спорить ей не с чем (v1.70.82:
+# иначе чек архива без ФП нельзя было бы перенести, как в 1.70.80).
 REVIEW_BLOCKING = (
     REVIEW_DATE | REVIEW_AMOUNT | REVIEW_OPERATION | REVIEW_OWNERSHIP
-    | REVIEW_ITEMS | REVIEW_INCOMPLETE_IDENTITY | REVIEW_MERCHANT
+    | REVIEW_ITEMS | REVIEW_MERCHANT
 )
 
 
@@ -117,16 +121,21 @@ class UnifiedItem(Base):
 
 
 class UnifiedOwnership(Base):
-    """Единственная строка владения компанией; NULL — общий пул/платформа."""
+    """Единственная строка владения компанией; NULL — общий пул/платформа.
+
+    Ссылки на ``companies``/``users`` — без внешних ключей БД, намеренно:
+    после отката на версию без единого реестра (она об этих таблицах не знает)
+    удаление компании старым кодом не должно падать на ограничении. Целостность
+    держат операции сервиса (перенос при удалении компании) и сверка при старте
+    (``app.unified.reconcile``), которая сводит владельца к рабочим таблицам.
+    """
 
     __tablename__ = "unified_ownership"
 
     document_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("unified_documents.id", ondelete="CASCADE"), primary_key=True)
-    company_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("companies.id"), nullable=True, index=True)
-    created_by: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True, index=True)
+    company_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     assigned_by: Mapped[str] = mapped_column(String(36), default="")
 

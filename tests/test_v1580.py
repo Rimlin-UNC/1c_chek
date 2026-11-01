@@ -259,4 +259,4 @@ class TestVersion1580:
         reg = updater.read_blocks("app/services/blocks.py")
         assert tuple(int(x) for x in
                      reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 58, 0)
-        assert reg["Чек-Пул"] == "1.56.1"                 # не задет
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)                 # не задет

@@ -121,7 +121,7 @@ class TestBlocksRegistry:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Чек-Пул"] == "1.56.1"                # лендинг
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)                # лендинг
         assert tuple(int(x) for x in
                      reg["Адаптивный интерфейс"].split(".")) >= (1, 56, 1)  # структурный   # img/rem
         vt = lambda v: tuple(int(x) for x in v.split("."))
