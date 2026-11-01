@@ -59,7 +59,7 @@ def claim_pool_document(db: Session, document_id: str, company_id: str, user: Us
         raise HTTPException(409, 'В сохранённых данных есть расхождения, нужна проверка')
     if not pool_seller_matches_snapshot(db, document_id, pool.id):
         raise HTTPException(409, 'Реквизиты продавца изменились, нужна повторная сверка')
-    if not pool_items_match_snapshot(db, pool.id):
+    if not pool_items_match_snapshot(db, pool.id, document_id):
         raise HTTPException(409, 'Позиции чека изменились, нужна повторная сверка')
     if pool.status != 'verified':
         raise HTTPException(409, 'Чек пула не доступен для подбора')

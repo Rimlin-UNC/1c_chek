@@ -13,7 +13,7 @@ from app.models import Receipt, User
 from app.pool.models import PoolReceipt, PoolUser
 from app.services.scoping import can_view_receipt
 from qa.migrate_receipt_copy import _normalized
-from qa.unified_integrity import pool_items_match_snapshot, pool_seller_matches_snapshot
+from qa.unified_integrity import begin_read_snapshot, pool_items_match_snapshot, pool_seller_matches_snapshot
 
 
 def _origin_ids(db: Session, document_id: str, kind: str) -> list[str]:
@@ -38,6 +38,7 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
     """
     if not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
         raise HTTPException(404, 'Чек не найден')
+    begin_read_snapshot(db)
     claim = db.execute(text('SELECT company_id, registry_receipt_id, pool_origin_id '
                             'FROM unified_company_claims WHERE document_id=:doc'),
                        {'doc': document_id}).first()
@@ -76,7 +77,7 @@ def company_view(db: Session, document_id: str, user: User, company_id: str) -> 
     if (not doc or doc.review_mask
             or _normalized(r.receipt_date, r.total_sum, r.operation) != tuple(doc[:3])
             or not pool_seller_matches_snapshot(db, document_id, r.id)
-            or not pool_items_match_snapshot(db, r.id)
+            or not pool_items_match_snapshot(db, r.id, document_id)
             or db.query(Receipt.id).filter_by(fn=r.fn, fd=r.fd, fp=r.fp).first()):
         raise HTTPException(409, 'Снимок чека устарел, нужна сверка')
     return {'document_id': document_id, 'origin': 'pool',

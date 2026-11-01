@@ -38,7 +38,8 @@ CREATE TABLE unified_receipt_origins (
     origin_kind TEXT NOT NULL CHECK(origin_kind IN ('registry', 'pool')),
     origin_id TEXT NOT NULL,
     fiscal_source_hash TEXT,
-    PRIMARY KEY(origin_kind, origin_id)
+    PRIMARY KEY(origin_kind, origin_id),
+    UNIQUE(document_id, origin_kind, origin_id)
 );
 CREATE INDEX ix_unified_origins_document ON unified_receipt_origins(document_id);
 -- Позиции источников остаются раздельными, пока не доказано их соответствие.
@@ -48,9 +49,34 @@ CREATE TABLE unified_receipt_item_origins (
     item_id TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     PRIMARY KEY(origin_kind, item_id),
+    UNIQUE(origin_kind, origin_id, item_id),
     FOREIGN KEY(origin_kind, origin_id) REFERENCES unified_receipt_origins(origin_kind, origin_id)
 );
 CREATE INDEX ix_unified_item_origin ON unified_receipt_item_origins(origin_kind, origin_id);
+-- Единый состав ссылается на исходные позиции, не копируя их фискальные поля.
+-- При нескольких источниках решение намеренно не выбирается автоматически.
+CREATE TABLE unified_fiscal_item_sets (
+    document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
+    state TEXT NOT NULL CHECK(state IN ('single_source', 'needs_review')),
+    origin_kind TEXT,
+    origin_id TEXT,
+    CHECK((state = 'single_source' AND origin_kind IS NOT NULL AND origin_id IS NOT NULL)
+       OR (state = 'needs_review' AND origin_kind IS NULL AND origin_id IS NULL)),
+    UNIQUE(document_id, origin_kind, origin_id),
+    FOREIGN KEY(document_id, origin_kind, origin_id)
+        REFERENCES unified_receipt_origins(document_id, origin_kind, origin_id)
+);
+CREATE TABLE unified_fiscal_item_refs (
+    document_id TEXT NOT NULL,
+    origin_kind TEXT NOT NULL,
+    origin_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    PRIMARY KEY(document_id, item_id),
+    FOREIGN KEY(document_id, origin_kind, origin_id)
+        REFERENCES unified_fiscal_item_sets(document_id, origin_kind, origin_id),
+    FOREIGN KEY(origin_kind, origin_id, item_id)
+        REFERENCES unified_receipt_item_origins(origin_kind, origin_id, item_id)
+);
 -- Единственное право компании на документ: одна строка на fiscal document.
 CREATE TABLE unified_company_claims (
     document_id TEXT PRIMARY KEY REFERENCES unified_fiscal_documents(id),
@@ -257,6 +283,24 @@ def _migrate(db: sqlite3.Connection) -> None:
                 db.executemany('INSERT INTO unified_receipt_item_origins '
                                '(origin_kind, origin_id, item_id, content_hash) VALUES (?, ?, ?, ?)',
                                [(kind, row[receipt_index], row[id_index], _item_digest(row)) for row in batch])
+        # Единственный источник можно представить ссылками без копии позиций.
+        # Несколько источников сохраняются, но состав не выбирается догадкой.
+        documents = db.execute('SELECT id FROM unified_fiscal_documents')
+        while batch := documents.fetchmany(500):
+            for (doc_id,) in batch:
+                origins = db.execute('SELECT origin_kind, origin_id FROM unified_receipt_origins '
+                                     'WHERE document_id=?', (doc_id,)).fetchall()
+                if len(origins) == 1:
+                    kind, origin_id = origins[0]
+                    db.execute('INSERT INTO unified_fiscal_item_sets VALUES (?, ?, ?, ?)',
+                               (doc_id, 'single_source', kind, origin_id))
+                    db.execute('INSERT INTO unified_fiscal_item_refs '
+                               '(document_id, origin_kind, origin_id, item_id) '
+                               'SELECT ?, origin_kind, origin_id, item_id FROM unified_receipt_item_origins '
+                               'WHERE origin_kind=? AND origin_id=?', (doc_id, kind, origin_id))
+                else:
+                    db.execute("INSERT INTO unified_fiscal_item_sets VALUES (?, 'needs_review', NULL, NULL)",
+                               (doc_id,))
         # Фискальные данные могут совпадать, а назначение пула — нет.
         # Только помечаем конфликт, никогда не меняем владельцев автоматически.
         db.execute("""UPDATE unified_fiscal_documents SET review_mask = review_mask | 8
@@ -296,7 +340,8 @@ def _validate(db: sqlite3.Connection) -> None:
     if db.execute('PRAGMA integrity_check').fetchone() != ('ok',):
         raise RuntimeError('Нарушена целостность копии')
     for table in ('unified_receipt_origins', 'unified_receipt_item_origins', 'unified_company_claims',
-                  'unified_company_accounts', 'unified_company_account_events'):
+                  'unified_company_accounts', 'unified_company_account_events',
+                  'unified_fiscal_item_sets', 'unified_fiscal_item_refs'):
         if db.execute(f'PRAGMA foreign_key_check({table})').fetchone():
             raise RuntimeError('Обнаружена повреждённая ссылка на единый чек')
     for kind, table in (('registry', 'receipts'), ('pool', 'pool_receipts')):
@@ -364,6 +409,19 @@ def _validate(db: sqlite3.Connection) -> None:
             """, (doc_id, doc_id)).fetchall()
             if not origins:
                 raise RuntimeError('Единый чек не связан с исходной записью')
+            source_ids = db.execute('SELECT origin_kind, origin_id FROM unified_receipt_origins '
+                                    'WHERE document_id=?', (doc_id,)).fetchall()
+            item_set = db.execute('SELECT state, origin_kind, origin_id FROM unified_fiscal_item_sets '
+                                  'WHERE document_id=?', (doc_id,)).fetchone()
+            expected_set = ('single_source', *source_ids[0]) if len(source_ids) == 1 else ('needs_review', None, None)
+            if item_set != expected_set:
+                raise RuntimeError('Единый состав не соответствует источникам')
+            actual_refs = set(db.execute('SELECT origin_kind, origin_id, item_id FROM unified_fiscal_item_refs '
+                                         'WHERE document_id=?', (doc_id,)).fetchall())
+            expected_refs = set(db.execute('SELECT origin_kind, origin_id, item_id FROM unified_receipt_item_origins '
+                                           'WHERE origin_kind=? AND origin_id=?', source_ids[0]).fetchall()) if len(source_ids) == 1 else set()
+            if actual_refs != expected_refs:
+                raise RuntimeError('Единые позиции не соответствуют выбранному источнику')
             normalized = [_normalized(row[0], row[1], row[2]) for row in origins]
             mask = 0
             expected = []
@@ -408,6 +466,9 @@ def _summary(db: sqlite3.Connection) -> dict:
         'registry_links': scalar("SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),
         'pool_links': scalar("SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='pool'"),
         'needs_review': scalar('SELECT count(*) FROM unified_fiscal_documents WHERE review_mask != 0'),
+        'item_sets_single_source': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='single_source'"),
+        'item_sets_needing_review': scalar("SELECT count(*) FROM unified_fiscal_item_sets WHERE state='needs_review'"),
+        'unified_item_refs': scalar('SELECT count(*) FROM unified_fiscal_item_refs'),
         'registry_without_identity': scalar('SELECT count(*) FROM receipts') - scalar(
             "SELECT count(*) FROM unified_receipt_origins WHERE origin_kind='registry'"),
         'pool_without_identity': scalar('SELECT count(*) FROM pool_receipts') - scalar(

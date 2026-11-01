@@ -1460,3 +1460,97 @@ def test_unified_company_projection_refuses_new_conflicting_registry_receipt(set
                               {'id': doc}).scalar_one() == c1
     finally:
         copied.dispose()
+
+
+@pytest.mark.parametrize('change_after_claim', [False, True])
+def test_unified_pool_rejects_damaged_canonical_item_refs(setup_bridge, tmp_path, change_after_claim):
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from app.pool.router_company import month_used
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view, promote_pool_claim
+    from qa.unified_claims import claim_pool_document
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+    from qa.unified_receipt_preview import company_view
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'damaged-item-set.db'
+    migrate_copy(engine.url.database, path)
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            used = month_used(db, c1)
+            if change_after_claim:
+                assert claim_and_account_pool_document(db, doc, c1, owner) == (True, True)
+                db.commit()
+            db.execute(text('DELETE FROM unified_fiscal_item_refs WHERE document_id=:doc'), {'doc': doc})
+            db.commit()
+            actions = [lambda: claim_pool_document(db, doc, c1, owner)]
+            if change_after_claim:
+                actions += [lambda: promote_pool_claim(db, doc, c1, owner),
+                            lambda: account_view(db, doc, c1, owner),
+                            lambda: company_view(db, doc, owner, c1)]
+            for action in actions:
+                with pytest.raises(HTTPException) as err:
+                    action()
+                assert err.value.status_code == 409
+                db.rollback()
+            assert month_used(db, c1) == used + int(change_after_claim)
+            assert db.get(PoolReceipt, pid).assigned_company_id == (c1 if change_after_claim else None)
+    finally:
+        copied.dispose()
+
+
+def test_unified_account_view_uses_one_sqlite_read_snapshot(setup_bridge, tmp_path):
+    import sqlite3
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine, event, text
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+    from app.models import User
+    from qa.migrate_receipt_copy import migrate_copy
+    from qa.unified_accounts import account_view
+    from qa.unified_pool_accounting import claim_and_account_pool_document
+
+    _, _, _, c1, _, pid, _, fn, _, _ = setup_bridge
+    path = tmp_path / 'consistent-read.db'
+    migrate_copy(engine.url.database, path)
+    # WAL permits a writer to commit while the account reader holds a snapshot.
+    with sqlite3.connect(path) as conn:
+        assert conn.execute('PRAGMA journal_mode=WAL').fetchone()[0].lower() == 'wal'
+    copied = create_engine('sqlite:///' + str(path))
+    try:
+        with Session(copied) as db:
+            doc = db.execute(text('SELECT id FROM unified_fiscal_documents WHERE fn=:fn'), {'fn': fn}).scalar_one()
+            owner = db.query(User).filter_by(company_id=c1, role='accountant').first()
+            assert claim_and_account_pool_document(db, doc, c1, owner) == (True, True)
+            db.commit()
+            original_name = db.get(PoolReceipt, pid).merchant_name
+            db.commit()
+            changed = []
+            def write_between_queries(_conn, _cursor, statement, _parameters, _context, _executemany):
+                if 'FROM unified_company_accounts WHERE document_id' in statement and not changed:
+                    changed.append(True)
+                    with sqlite3.connect(path) as writer:
+                        writer.execute("UPDATE pool_receipts SET merchant_name='new name' WHERE id=?", (pid,))
+            event.listen(copied, 'after_cursor_execute', write_between_queries)
+            try:
+                view = account_view(db, doc, c1, owner)
+                assert changed == [True]
+                assert view['receipt']['merchant_name'] == original_name
+            finally:
+                event.remove(copied, 'after_cursor_execute', write_between_queries)
+            db.commit()
+            with pytest.raises(HTTPException) as err:
+                account_view(db, doc, c1, owner)
+            assert err.value.status_code == 409
+            db.rollback()
+    finally:
+        copied.dispose()

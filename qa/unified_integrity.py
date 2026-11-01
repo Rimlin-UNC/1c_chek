@@ -5,7 +5,21 @@ from sqlalchemy.orm import Session
 from qa.migrate_receipt_copy import _item_digest
 
 
-def pool_items_match_snapshot(db: Session, pool_id: str) -> bool:
+def begin_read_snapshot(db: Session) -> None:
+    """Начать физическую SQLite-транзакцию до первого чтения проекции.
+
+    В режиме sqlite3 legacy один SELECT сам по себе не открывает транзакцию,
+    и несколько проверок могли бы увидеть разные версии данных. Вызывающий
+    должен завершить её обычным commit/rollback; PostgreSQL здесь не проверен.
+    """
+    connection = db.connection()
+    if connection.dialect.name != 'sqlite':
+        raise RuntimeError('Эксперимент поддерживает только SQLite')
+    if not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql('BEGIN')
+
+
+def pool_items_match_snapshot(db: Session, pool_id: str, document_id: str) -> bool:
     """Проверить состав и содержимое позиций, не раскрывая их значения."""
     result = db.execute(text('SELECT * FROM pool_items WHERE receipt_id=:id'), {'id': pool_id})
     id_index = list(result.keys()).index('id')
@@ -13,7 +27,15 @@ def pool_items_match_snapshot(db: Session, pool_id: str) -> bool:
     linked = dict(db.execute(text(
         "SELECT item_id, content_hash FROM unified_receipt_item_origins "
         "WHERE origin_kind='pool' AND origin_id=:id"), {'id': pool_id}).all())
-    return current == linked
+    item_set = db.execute(text('SELECT state, origin_kind, origin_id FROM unified_fiscal_item_sets '
+                               'WHERE document_id=:id'), {'id': document_id}).first()
+    origins = db.execute(text('SELECT origin_kind, origin_id FROM unified_receipt_origins '
+                              'WHERE document_id=:id'), {'id': document_id}).all()
+    refs = db.execute(text('SELECT origin_kind, origin_id, item_id FROM unified_fiscal_item_refs '
+                           'WHERE document_id=:id'), {'id': document_id}).all()
+    return (current == linked and item_set == ('single_source', 'pool', pool_id)
+            and origins == [('pool', pool_id)]
+            and set(refs) == {('pool', pool_id, item_id) for item_id in linked})
 
 
 def pool_seller_matches_snapshot(db: Session, document_id: str, pool_id: str) -> bool:

@@ -16,7 +16,7 @@ from app.models import Company, Receipt, User, utcnow
 from app.pool.models import PoolItem, PoolReceipt
 from app.services.receipt_identity import lock_identity
 from qa.migrate_receipt_copy import _normalized
-from qa.unified_integrity import pool_items_match_snapshot, pool_seller_matches_snapshot
+from qa.unified_integrity import begin_read_snapshot, pool_items_match_snapshot, pool_seller_matches_snapshot
 
 
 def _document(db: Session, document_id: str):
@@ -77,7 +77,7 @@ def promote_pool_claim(db: Session, document_id: str, company_id: str, user: Use
             or (pool.fn, pool.fd, pool.fp) != (fn, fd, fp)
             or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (receipt_date, total_sum, operation)
             or not pool_seller_matches_snapshot(db, document_id, pool.id)
-            or not pool_items_match_snapshot(db, claim.pool_origin_id)):
+            or not pool_items_match_snapshot(db, claim.pool_origin_id, document_id)):
         raise HTTPException(409, 'Сохранённый чек или его позиции изменились, нужна сверка')
     if db.query(Receipt.id).filter_by(fn=fn, fd=fd, fp=fp).first():
         raise HTTPException(409, 'Чек уже зарегистрирован в реестре')
@@ -113,6 +113,7 @@ def account_view(db: Session, document_id: str, company_id: str, user: User) -> 
     """Вернуть только разрешённую учётную проекцию компании на снимке."""
     if not user.is_active or not company_id or (user.role != 'admin' and user.company_id != company_id):
         raise HTTPException(404, 'Чек не найден')
+    begin_read_snapshot(db)
     account = db.execute(text('SELECT company_id, legacy_receipt_id, pool_origin_id, created_by, '
                               'status, fns_status, fns_checked_at, assignee, comment, category, '
                               'personal_sum, exported FROM unified_company_accounts WHERE document_id=:id'),
@@ -141,14 +142,18 @@ def account_view(db: Session, document_id: str, company_id: str, user: User) -> 
             or (pool.fn, pool.fd, pool.fp) != (fn, fd, fp)
             or _normalized(pool.receipt_date, pool.total_sum, pool.operation) != (receipt_date, total_sum, operation)
             or not pool_seller_matches_snapshot(db, document_id, pool.id)
-            or not pool_items_match_snapshot(db, pool.id)):
+            or not pool_items_match_snapshot(db, pool.id, document_id)):
         raise HTTPException(409, 'Снимок чека устарел, нужна сверка')
     if db.query(Receipt.id).filter_by(fn=fn, fd=fd, fp=fp).first():
         raise HTTPException(409, 'Чек появился в старом реестре, нужна сверка')
     if account.fns_status == 'valid' and (not pool.fns_confirmed or pool.fns_checked_at is None
                                           or pool.fns_checked_at.isoformat(' ') != account.fns_checked_at):
         raise HTTPException(409, 'Подтверждение ФНС изменилось, нужна сверка')
-    items = db.query(PoolItem).filter_by(receipt_id=pool.id).order_by(PoolItem.id).all()
+    item_ids = db.execute(text('SELECT item_id FROM unified_fiscal_item_refs '
+                               "WHERE document_id=:doc AND origin_kind='pool' AND origin_id=:pool"),
+                          {'doc': document_id, 'pool': pool.id}).scalars()
+    items = (db.query(PoolItem).filter(PoolItem.id.in_(list(item_ids)), PoolItem.receipt_id == pool.id)
+             .order_by(PoolItem.id).all())
     return {'document_id': document_id, 'origin': 'unified_pool', 'receipt': {
         'fn': fn, 'fd': fd, 'fp': fp, 'receipt_date': receipt_date, 'total_sum': total_sum,
         'operation': operation, 'status': account.status, 'fns_status': account.fns_status,

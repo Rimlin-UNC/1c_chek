@@ -29,6 +29,7 @@ def test_copy_migration_merges_only_complete_identities(tmp_path):
     _source(source)
     summary = migrate_copy(source, output)
     assert summary == {'documents': 2, 'company_claims': 0, 'company_accounts': 0, 'unresolved_ownership': 0, 'registry_links': 1, 'pool_links': 2, 'needs_review': 1,
+                       'item_sets_single_source': 1, 'item_sets_needing_review': 1, 'unified_item_refs': 0,
                        'registry_without_identity': 1, 'pool_without_identity': 0,
                        'registry_items_linked': 1, 'pool_items_linked': 1,
                        'registry_items_unlinked': 1, 'pool_items_unlinked': 0}
@@ -153,3 +154,52 @@ def test_missing_seller_columns_fail_closed_without_modifying_source(tmp_path):
     with sqlite3.connect(source) as db:
         assert not db.execute("SELECT name FROM sqlite_master WHERE name='unified_fiscal_documents'").fetchall()
         assert db.execute('SELECT count(*) FROM pool_receipts').fetchone() == (2,)
+
+
+def test_single_source_uses_original_positions_and_multiple_sources_wait_for_review(tmp_path):
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute("UPDATE pool_receipts SET receipt_date='2026-01-01 12:00:00' WHERE id='p2'")
+        db.execute("INSERT INTO pool_items VALUES ('pi2', 'p2', 'single source item')")
+    migrate_copy(source, output)
+    with sqlite3.connect(output) as db:
+        merged = db.execute("SELECT id FROM unified_fiscal_documents WHERE fn='123'").fetchone()[0]
+        single = db.execute("SELECT id FROM unified_fiscal_documents WHERE fn='222'").fetchone()[0]
+        assert db.execute('SELECT state,origin_kind,origin_id FROM unified_fiscal_item_sets '
+                          'WHERE document_id=?', (merged,)).fetchone() == ('needs_review', None, None)
+        assert db.execute('SELECT count(*) FROM unified_fiscal_item_refs WHERE document_id=?',
+                          (merged,)).fetchone() == (0,)
+        assert db.execute('SELECT state,origin_kind,origin_id FROM unified_fiscal_item_sets '
+                          'WHERE document_id=?', (single,)).fetchone() == ('single_source', 'pool', 'p2')
+        assert db.execute('SELECT item_id FROM unified_fiscal_item_refs WHERE document_id=?',
+                          (single,)).fetchall() == [('pi2',)]
+        # Only references are recorded; original data for both sources remains intact.
+        assert db.execute("SELECT name FROM pool_items WHERE id='pi2'").fetchone() == ('single source item',)
+        assert db.execute("SELECT name FROM receipt_items WHERE id='ri1'").fetchone() == ('private item',)
+        db.execute('PRAGMA foreign_keys=ON')
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO unified_fiscal_item_refs VALUES (?, 'pool', 'p1', 'pi1')", (single,))
+
+
+@pytest.mark.parametrize('corruption', ['missing_set', 'missing_ref', 'unexpected_review_ref'])
+def test_unified_item_set_validation_rejects_corruption(tmp_path, corruption):
+    from qa.migrate_receipt_copy import _validate
+
+    source, output = tmp_path / 'source.db', tmp_path / 'copy.db'
+    _source(source)
+    with sqlite3.connect(source) as db:
+        db.execute("INSERT INTO pool_items VALUES ('pi2', 'p2', 'single')")
+    migrate_copy(source, output)
+    with sqlite3.connect(output) as db:
+        single = db.execute("SELECT id FROM unified_fiscal_documents WHERE fn='222'").fetchone()[0]
+        merged = db.execute("SELECT id FROM unified_fiscal_documents WHERE fn='123'").fetchone()[0]
+        if corruption == 'missing_set':
+            db.execute('DELETE FROM unified_fiscal_item_sets WHERE document_id=?', (single,))
+        elif corruption == 'missing_ref':
+            db.execute('DELETE FROM unified_fiscal_item_refs WHERE document_id=?', (single,))
+        else:
+            # Connection intentionally has foreign_keys disabled to simulate external corruption.
+            db.execute("INSERT INTO unified_fiscal_item_refs VALUES (?, 'pool', 'p1', 'pi1')", (merged,))
+        with pytest.raises(RuntimeError):
+            _validate(db)
