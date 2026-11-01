@@ -76,6 +76,45 @@ describe('подбор и перенос чеков', () => {
     expect(api.post).toHaveBeenCalledTimes(2);
   });
 
+  it('фильтрует моих чеков по обезличенному участнику и снимает скрытый выбор', async () => {
+    document.body.innerHTML = '<main id="main"></main>';
+    const calls = [];
+    const row = id => ({ id, date: '', merchant: '', inn: '', sum: 1, city: '', region: '', industry: '', items: '',
+      participant: 'a'.repeat(32), participant_label: 'Участник A' });
+    const api = {
+      get: vi.fn(async url => {
+        calls.push(url);
+        if (url.includes('/dicts')) return { regions: [], industries: [] };
+        if (url.includes('/quota')) return { company: { name: 'А' }, used: 0, limit: 100, mine_total: 0, tariff: '' };
+        const participant = new URL(url, 'http://test').searchParams.get('participant');
+        return { items: participant ? [row('p1')] : [row('p1'), { ...row('p2'), participant: 'unknown', participant_label: 'Без участника' }],
+          page: 1, per_page: 20, total: participant ? 1 : 2,
+          participants: [{ key: 'a'.repeat(32), label: 'Участник A', count: 1 }, { key: 'unknown', label: 'Без участника', count: 1 }] };
+      }),
+      post: vi.fn().mockResolvedValue({ message: 'Готово' }),
+    };
+    const $ = sel => document.querySelector(sel);
+    const { viewPoolPick, poolPk } = create(api, $, { companies: [] }, () => false,
+      x => x.name, String, String, String, vi.fn());
+    await viewPoolPick($('#main')); await tick();
+    $('#poolpk-tab-mine').click(); await tick();
+    expect($('#poolpk-body').textContent).toContain('Участник A');
+    expect($('#poolpk-body').textContent).not.toContain('private@example.test');
+    let checkbox = $('#poolpk-body input[type=checkbox]');
+    checkbox.checked = true; checkbox.dispatchEvent(new Event('change'));
+    expect(poolPk.minePicked.has('p1')).toBe(true);
+    $('#pk-m-participant').value = 'a'.repeat(32);
+    $('#pk-m-participant').dispatchEvent(new Event('change')); await tick();
+    const url = new URL(calls.at(-1), 'http://test');
+    expect(url.searchParams.get('participant')).toBe('a'.repeat(32));
+    expect(url.searchParams.get('page')).toBe('1');
+    expect(poolPk.minePicked.size).toBe(0);
+    expect($('#poolpk-body').textContent).toContain('по фильтрам: 1');
+    $('#pk-m-participant-reset').click(); await tick();
+    expect(new URL(calls.at(-1), 'http://test').searchParams.has('participant')).toBe(false);
+    expect($('#poolpk-body').textContent).toContain('по фильтрам: 2');
+  });
+
   it('сохраняет выбор на нескольких страницах и отправляет весь набор', async () => {
     document.body.innerHTML = '<main id="main"></main>';
     const row = id => ({ id, date: '', merchant: '', inn: '', sum: 1, city: '', region: '', industry: '', items: '' });

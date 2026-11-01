@@ -153,6 +153,7 @@ class Handler(BaseHTTPRequestHandler):
             "<ns2:ExpireTime>2026-10-31T18:40:00+03:00</ns2:ExpireTime>"
             "</ns2:Result></ns2:Message></ns2:GetMessageResponse>")
         self._send(200, payload.encode("utf-8"))
+        return None
 
     # --- отправка запроса на чек -------------------------------------
     def _send_message(self, body: str):
@@ -179,6 +180,7 @@ class Handler(BaseHTTPRequestHandler):
             f"<ns2:MessageId>{message_id}</ns2:MessageId>"
             "</ns2:SendMessageResponse>")
         self._send(200, payload.encode("utf-8"))
+        return None
 
     # --- результат ---------------------------------------------------
     def _get_message(self, body: str):
@@ -223,6 +225,7 @@ class Handler(BaseHTTPRequestHandler):
             f"<ns2:Result>{code}{extra}</ns2:Result>"
             "</ns2:Message></ns2:GetMessageResponse>")
         self._send(200, payload.encode("utf-8"))
+        return None
 
 
 def serve(port: int = 8099) -> ThreadingHTTPServer:

@@ -2138,7 +2138,7 @@ function poolLoadEngage(root) {
 //  «свои» сотрудники (сценарий C). Стиль ядра: таблицы, цифры, без капса.
 // --------------------------------------------------------------------------
 const poolPk = {
-  company: '', tab: 'search', page: 1, minePage: 1, dicts: null,
+  company: '', tab: 'search', page: 1, minePage: 1, mineParticipant: '', mineReq: 0, dicts: null,
   picked: new Set(), minePicked: new Set(), auto: null,
   f: { from: '', to: '', region: '', city: '', industry: '', inn: '', sumMin: '', sumMax: '', q: '', itemName: '', vatRate: '', itemMin: '', itemMax: '', priceMin: '', priceMax: '', qtyMin: '', qtyMax: '', operation: '' },
 };
@@ -2292,25 +2292,43 @@ async function poolPkLoadSearch() {
 
 async function poolPkLoadMine() {
   const box = $('#poolpk-body');
+  const req = ++poolPk.mineReq;
+  const company = poolPk.company;
+  const tab = poolPk.tab;
   const params = new URLSearchParams();
   if (poolPk.f.from) params.set('date_from', poolPk.f.from);
   if (poolPk.f.to) params.set('date_to', poolPk.f.to);
+  if (poolPk.mineParticipant) params.set('participant', poolPk.mineParticipant);
   params.set('page', poolPk.minePage); params.set('per_page', 20);
   try {
     const d = await api.get('/api/v1/pool-company/mine?' + params.toString() + (poolPkCompId() ? '&' + poolPkCompId().slice(1) : ''));
+    // Ответ старой компании, вкладки или старого фильтра не должен заменить новый.
+    if (req !== poolPk.mineReq || company !== poolPk.company || tab !== poolPk.tab || !box.isConnected) return;
+    const participants = d.participants || [];
+    const options = participants.map((p) => `<option value="${esc(p.key)}" ${poolPk.mineParticipant === p.key ? 'selected' : ''}>${esc(p.label)} (${fmtInt(p.count)})</option>`);
+    if (poolPk.mineParticipant && !participants.some((p) => p.key === poolPk.mineParticipant)) {
+      options.push(`<option value="${esc(poolPk.mineParticipant)}" selected>Выбранный участник (0)</option>`);
+    }
     const rows = d.items.map((r) => `
       <tr>
-        <td><input type="checkbox" data-id="${r.id}" ${poolPk.minePicked.has(r.id) ? 'checked' : ''} style="width:auto" aria-label="Выбрать чек"></td>
+        <td><input type="checkbox" data-id="${esc(r.id)}" ${poolPk.minePicked.has(r.id) ? 'checked' : ''} style="width:auto" aria-label="Выбрать чек"></td>
         <td class="num">${esc(r.date)}</td><td>${esc(r.merchant)}</td><td class="num">${esc(r.inn)}</td>
         <td class="num">${fmtSum(r.sum)}</td><td>${esc(r.city)}</td><td>${esc(r.industry)}</td>
-        <td class="form-hint">${esc(r.items)}</td><td class="num form-hint">${esc(r.assigned_at)}</td></tr>`).join('');
+        <td class="form-hint">${esc(r.items)}</td><td>${esc(r.participant_label || 'Без участника')}</td>
+        <td class="num form-hint">${esc(r.assigned_at)}</td></tr>`).join('');
     const pages = Math.max(1, Math.ceil(d.total / d.per_page));
     box.innerHTML = `
-      <div class="form-hint" style="margin-bottom:6px">Привязано к компании: <b>${fmtInt(d.total)}</b> чеков.
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
+        <label class="field" style="max-width:320px"><span>Участник</span>
+          <select id="pk-m-participant"><option value="">Все участники</option>${options.join('')}</select></label>
+        <button type="button" class="btn btn-sm" id="pk-m-participant-reset">Сбросить участника</button>
+      </div>
+      <div class="form-hint" style="margin-bottom:6px">Коды участников обезличены и действуют только в этой компании; имя, почта и исходный ID не раскрываются. Счётчики учитывают период из вкладки поиска, но не выбранный код. Смена кода снимает выбор чеков.</div>
+      <div class="form-hint" style="margin-bottom:6px">Привязано к компании по фильтрам: <b>${fmtInt(d.total)}</b> чеков.
         Выберите чеки для переноса в реестр без запроса в ФНС. После переноса вернуть их в общий пул нельзя, пока они есть в реестре.</div>
       <div class="table-wrap"><table style="width:100%">
-        <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th><th>Привязан</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="9">Пока пусто — подберите чеки во вкладке «Найти чеки»</td></tr>'}</tbody></table></div>
+        <thead><tr><th></th><th>Дата чека</th><th>Магазин</th><th>ИНН</th><th>Сумма, ₽</th><th>Город</th><th>Отрасль</th><th>Позиции</th><th>Участник</th><th>Привязан</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="10">Нет чеков по выбранным условиям. Подберите чеки во вкладке «Найти чеки» или сбросьте участника.</td></tr>'}</tbody></table></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
         <button type="button" class="btn btn-sm" id="pk-m-prev" ${poolPk.minePage <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">Страница ${poolPk.minePage} из ${pages}</span>
@@ -2322,14 +2340,22 @@ async function poolPkLoadMine() {
     box.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
       cb.onchange = () => {
         if (cb.checked) poolPk.minePicked.add(cb.dataset.id); else poolPk.minePicked.delete(cb.dataset.id);
+        const btn = $('#pk-unassign'); if (btn) btn.textContent = `↩️ Вернуть в пул (${poolPk.minePicked.size})`;
       };
     });
+    const changeParticipant = (value) => {
+      poolPk.mineParticipant = value; poolPk.minePage = 1; poolPk.minePicked.clear();
+      poolPkLoadMine();
+    };
+    $('#pk-m-participant').onchange = (event) => changeParticipant(event.target.value);
+    $('#pk-m-participant-reset').onclick = () => changeParticipant('');
     const p = $('#pk-m-prev'); if (p) p.onclick = () => { poolPk.minePage--; poolPkLoadMine(); };
     const n = $('#pk-m-next'); if (n) n.onclick = () => { poolPk.minePage++; poolPkLoadMine(); };
     $('#pk-csv').onclick = () => {
       const qs = new URLSearchParams();
       if (poolPk.f.from) qs.set('date_from', poolPk.f.from);
       if (poolPk.f.to) qs.set('date_to', poolPk.f.to);
+      if (poolPk.mineParticipant) qs.set('participant', poolPk.mineParticipant);
       if (poolPk.company) qs.set('company_id', poolPk.company);
       window.location = '/api/v1/pool-company/export.csv?' + qs.toString();
     };
@@ -2349,7 +2375,11 @@ async function poolPkLoadMine() {
         toast(r.message, 'ok', '🧩'); poolPk.minePicked.clear(); void poolPkLoadQuota(); poolPkLoadMine();
       } catch (e) { toast(e.message, 'warn', '🧩'); }
     };
-  } catch (e) { box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`; }
+  } catch (e) {
+    if (req === poolPk.mineReq && company === poolPk.company && tab === poolPk.tab && box.isConnected) {
+      box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
 }
 
 async function poolPkLoadAuto() {
@@ -2441,7 +2471,7 @@ async function viewPoolPick(container) {
     poolPk.company = sel.value;
     sel.onchange = () => {
       poolPk.company = sel.value; poolPk.picked.clear(); poolPk.minePicked.clear();
-      poolPk.page = 1; poolPk.minePage = 1;
+      poolPk.page = 1; poolPk.minePage = 1; poolPk.mineParticipant = ''; poolPk.mineReq++;
       void poolPkLoadQuota();
       ({ search: poolPkLoadSearch, mine: poolPkLoadMine, auto: poolPkLoadAuto, staff: poolPkLoadStaff })[poolPk.tab]();
     };
@@ -6201,8 +6231,16 @@ function updLogLine(l) {
 
 const WHATS_NEW = {
   '1.70.81': [
-    'Выбранные чеки Чек-Пула можно привязать и перенести одной операцией, без повторного запроса в ФНС.',
-    'Существующие источники пула и реестра пока хранятся раздельно; объединение модели ещё не завершено.',
+    { icon: '🧩', title: 'Подбор и перенос одной операцией',
+      text: 'Выбранные чеки Чек-Пула можно привязать и перенести в реестр одной операцией, '
+        + 'без повторного запроса в ФНС. История участника и баллы сохраняются.' },
+    { icon: '👥', title: 'Обезличенные участники в чеках компании',
+      text: 'Во вкладке «Мои чеки компании» появились фильтр и счётчики по участнику. '
+        + 'Код действует только в этой компании и не раскрывает имя, почту или исходный ID; '
+        + 'CSV выгружает тот же срез. Баллы и согласия не меняются.' },
+    { icon: '🚧', title: 'Единая модель ещё не завершена',
+      text: 'Источники пула и реестра пока хранятся раздельно. Это рабочий маршрут на прежней '
+        + 'структуре, а не миграция; PostgreSQL и реальные данные требуют отдельной проверки.' },
   ],
   '1.70.80': [
     'Предупреждение о чеке, зарегистрированном за другой организацией, при добавлении любым способом.',

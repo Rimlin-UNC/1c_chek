@@ -100,4 +100,15 @@ test('выбор и перенос чеков разных участников 
   await page.locator('#poolpk-tab-mine').click();
   await expect(page.locator('#poolpk-body')).toContainText('E2E магазин 1');
   await expect(page.locator('#poolpk-body')).toContainText('E2E магазин 2');
+  // После переноса доступна обезличенная группировка участников компании.
+  const participant = page.locator('#pk-m-participant');
+  await expect(participant.locator('option')).toHaveCount(3);
+  const mineRows = page.locator('#poolpk-body tbody tr');
+  await expect(mineRows).toHaveCount(2);
+  await participant.selectOption({ index: 1 });
+  await expect(mineRows).toHaveCount(1);
+  await expect(page.locator('#poolpk-body')).toContainText('по фильтрам: 1');
+  await page.locator('#pk-m-participant-reset').click();
+  await expect(mineRows).toHaveCount(2);
+  await expect(page.locator('#poolpk-body')).toContainText('по фильтрам: 2');
 });

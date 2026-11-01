@@ -20,7 +20,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, false, func, or_
 from sqlalchemy.orm import Session
 
 from ..auth import require_accountant
@@ -29,6 +29,7 @@ from ..database import get_db
 from ..models import Company, Receipt, User
 from . import ingest
 from .models import PoolItem, PoolReceipt, PoolUser
+from .participants import UNKNOWN_PARTICIPANT, participant_key, participant_label
 
 router = APIRouter(prefix="/api/v1/pool-company", tags=["pool-company"])
 
@@ -266,17 +267,12 @@ def search(date_from: str = "", date_to: str = "", region: str = "",
             "items": [_row(r, names.get(r.id, "")) for r in chunk]}
 
 
-@router.get("/mine", summary="Чек-Пул: чеки, привязанные к компании")
-def mine(date_from: str = "", date_to: str = "",
-         page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=50),
-         company_id: str = "", db: Session = Depends(get_db),
-         user: User = Depends(require_accountant)):
-    comp = _company(db, user, company_id)
-    q = db.query(PoolReceipt).filter(PoolReceipt.assigned_company_id == comp.id)
+def _mine_query(db: Session, company_id: str, date_from: str, date_to: str):
+    """Область «Моих чеков компании»: назначение и период, без данных донора."""
+    q = db.query(PoolReceipt).filter(PoolReceipt.assigned_company_id == company_id)
     if date_from:
         try:
-            q = q.filter(PoolReceipt.receipt_date >= datetime.strptime(
-                date_from, "%Y-%m-%d"))
+            q = q.filter(PoolReceipt.receipt_date >= datetime.strptime(date_from, "%Y-%m-%d"))
         except ValueError:
             pass
     if date_to:
@@ -285,8 +281,67 @@ def mine(date_from: str = "", date_to: str = "",
             q = q.filter(PoolReceipt.receipt_date < dt)
         except ValueError:
             pass
+    return q
+
+
+def _participant_context(query, company_id: str):
+    """Счётчики и внутреннее соответствие кодов исходным связям компании.
+
+    Исходные ID не покидают сервер. Отсутствующая, пробельная или битая
+    связь попадает в одну группу unknown, а не выдумывает участника.
+    """
+    rows = (query.with_entities(PoolReceipt.pool_user_id, PoolUser.id,
+                                func.count(PoolReceipt.id))
+            .outerjoin(PoolUser, PoolUser.id == PoolReceipt.pool_user_id)
+            .group_by(PoolReceipt.pool_user_id, PoolUser.id).all())
+    groups: dict[str, list[str | None]] = {}
+    counts: dict[str, int] = {}
+    known = {}
+    for raw_id, existing_id, count in rows:
+        key = (participant_key(company_id, raw_id)
+               if existing_id is not None else UNKNOWN_PARTICIPANT)
+        groups.setdefault(key, []).append(raw_id)
+        counts[key] = counts.get(key, 0) + int(count)
+        if key != UNKNOWN_PARTICIPANT:
+            known[raw_id] = key
+    facets = [{"key": key, "label": participant_label(key), "count": counts[key]}
+              for key in sorted(groups, key=lambda k: (k == UNKNOWN_PARTICIPANT,
+                                                       participant_label(k), k))]
+    return facets, groups, known
+
+
+def _apply_participant(query, participant: str, groups: dict[str, list[str | None]]):
+    if not participant:
+        return query
+    raw_ids = groups.get(participant)
+    if raw_ids is None:
+        return query.filter(false())
+    conditions = []
+    named = [value for value in raw_ids if value is not None]
+    if named:
+        conditions.append(PoolReceipt.pool_user_id.in_(named))
+    if None in raw_ids:
+        conditions.append(PoolReceipt.pool_user_id.is_(None))
+    return query.filter(or_(*conditions))
+
+
+_PARTICIPANT_QUERY = Query("", max_length=32, pattern=r"^(?:[0-9a-f]{32}|unknown)?$")
+
+
+@router.get("/mine", summary="Чек-Пул: чеки компании с обезличенной группировкой участников")
+def mine(date_from: str = "", date_to: str = "",
+         participant: str = _PARTICIPANT_QUERY,
+         page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=50),
+         company_id: str = "", db: Session = Depends(get_db),
+         user: User = Depends(require_accountant)):
+    comp = _company(db, user, company_id)
+    base = _mine_query(db, comp.id, date_from, date_to)
+    # Список участников не зависит от выбранного участника: иначе из него
+    # нельзя было бы переключиться обратно. Период и компания учитываются.
+    facets, groups, known = _participant_context(base, comp.id)
+    q = _apply_participant(base, participant, groups)
     total = q.count()
-    rows = (q.order_by(PoolReceipt.assigned_at.desc())
+    rows = (q.order_by(PoolReceipt.assigned_at.desc(), PoolReceipt.id)
             .offset((page - 1) * per_page).limit(per_page).all())
     names = _names_for(db, [r.id for r in rows])
     items = []
@@ -294,8 +349,11 @@ def mine(date_from: str = "", date_to: str = "",
         d = _row(r, names.get(r.id, ""))
         d["assigned_at"] = (r.assigned_at.strftime("%d.%m.%Y %H:%M")
                             if r.assigned_at else "")
+        key = known.get(r.pool_user_id, UNKNOWN_PARTICIPANT)
+        d["participant"], d["participant_label"] = key, participant_label(key)
         items.append(d)
-    return {"total": total, "page": page, "per_page": per_page, "items": items}
+    return {"total": total, "page": page, "per_page": per_page,
+            "participants": facets, "items": items}
 
 
 def _lock_pool_identities(db: Session, rows: list[PoolReceipt]) -> dict[str, tuple[str, str, str]]:
@@ -534,6 +592,7 @@ def autosuggest(body: AutoBody, company_id: str = "",
 
 @router.get("/export.csv", summary="Чек-Пул: выгрузка чеков компании (АО-1)")
 def export_csv(date_from: str = "", date_to: str = "",
+               participant: str = _PARTICIPANT_QUERY,
                company_id: str = "", db: Session = Depends(get_db),
                user: User = Depends(require_accountant)):
     import csv as _csv
@@ -543,31 +602,23 @@ def export_csv(date_from: str = "", date_to: str = "",
 
     from ..services.audit import log_action
     comp = _company(db, user, company_id)
-    q = db.query(PoolReceipt).filter(PoolReceipt.assigned_company_id == comp.id)
-    if date_from:
-        try:
-            q = q.filter(PoolReceipt.receipt_date >= datetime.strptime(
-                date_from, "%Y-%m-%d"))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
-            q = q.filter(PoolReceipt.receipt_date < dt)
-        except ValueError:
-            pass
-    rows = q.order_by(PoolReceipt.receipt_date.desc()).limit(10000).all()
+    base = _mine_query(db, comp.id, date_from, date_to)
+    _, groups, known = _participant_context(base, comp.id)
+    q = _apply_participant(base, participant, groups)
+    rows = q.order_by(PoolReceipt.receipt_date.desc(), PoolReceipt.id).limit(10000).all()
     names = _names_for(db, [r.id for r in rows])
+    from .geo import industry_name
     buf = io.StringIO()
     w = _csv.writer(buf, delimiter=";", lineterminator="\n")
     w.writerow(["Дата чека", "Магазин", "ИНН", "Сумма, ₽", "Город",
-                "Отрасль", "Позиции"])
+                "Отрасль", "Позиции", "Участник (обезличенный код)"])
     for r in rows:
         w.writerow([
             r.receipt_date.strftime("%d.%m.%Y %H:%M") if r.receipt_date else "",
             r.merchant_name or "", r.merchant_inn or "",
             f"{r.total_sum:.2f}".replace(".", ","),
-            r.city or "", names.get(r.id, "")])
+            r.city or "", industry_name(r.industry) if r.industry else "",
+            names.get(r.id, ""), known.get(r.pool_user_id, UNKNOWN_PARTICIPANT)])
     db.commit()                    # чтение не пишет; фиксируем на всякий случай
     log_action(user, "pool_pick_export_csv",
                details={"company": comp.name, "count": len(rows)})
