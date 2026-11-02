@@ -73,9 +73,14 @@ class TestUpdater:
         from app.services import updater
         monkeypatch.setattr(updater, "_remote_version", lambda repo, branch: {
             "version": settings.APP_VERSION, "checked_at": "2026-10-01T00:00:00Z"})
+        # Право на перезапуск — свойство сервера, а не этого теста. Без подмены
+        # результат зависел от systemd машины: для несуществующего юнита
+        # `systemctl is-active` даёт 3 в systemd 252 и 4 в systemd 255
+        # (Ubuntu 24.04, CI) — тогда apply честно отвечает 409.
+        monkeypatch.setattr(updater, "_restart_mode", lambda: (True, "sudoers"))
         hdr = login(client, "admin", "admin123")
         r = client.post("/api/v1/admin/update/apply", headers=hdr)
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         # версия та же — job не запускается
         d = r.json()
         assert d["updated"] is False
