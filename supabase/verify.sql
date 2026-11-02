@@ -1,4 +1,5 @@
 -- Проверка после применения миграций. Выполнять в SQL-редакторе Supabase.
+-- Тот же файл проверяет CI на чистом PostgreSQL 17: tests/test_supabase_migrations.py.
 select (select count(*) from chek_demo.companies) as companies,
        (select count(*) from chek_demo.participants) as participants,
        (select count(*) from chek_demo.receipts) as receipts,

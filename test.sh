@@ -5,6 +5,8 @@
 #   ./test.sh ui         → UI-харнесс + парсинг бандла
 #   ./test.sh full       → ВСЕ тесты параллельно
 #   ./test.sh full -j2   → своим числом воркеров
+#   YM_JUNIT_DIR=<каталог> ./test.sh full → ещё и отчёты JUnit XML по каждому
+#     прогону pytest (так работает CI: .github/workflows/ci.yml)
 # Воркеров не больше 4: параллелизм ускоряет, но перегружать машину
 # разработки нельзя. Если pytest-xdist не установлен — последовательный
 # прогон (медленнее, результат тот же).
@@ -28,10 +30,19 @@ else
   XD=()
 fi
 
+# Отчёты JUnit XML (необязательно): по файлу на каждый вызов pytest
+JU_MAIN=()
+JU_V1310=()
+if [ -n "${YM_JUNIT_DIR:-}" ]; then
+  mkdir -p "$YM_JUNIT_DIR"
+  JU_MAIN=(--junitxml "$YM_JUNIT_DIR/$PROFILE.xml")
+  JU_V1310=(--junitxml "$YM_JUNIT_DIR/$PROFILE-test_v1310.xml")
+fi
+
 case "$PROFILE" in
   quick)
     echo "▶ Критичный набор (воркеров: $JOBS)"
-    python3 -m pytest -q "${XD[@]}" \
+    python3 -m pytest -q "${XD[@]}" "${JU_MAIN[@]}" \
       tests/test_version.py tests/test_blocks_smoke.py tests/test_dependencies.py \
       tests/test_external.py tests/test_roles.py tests/test_qr.py \
       tests/test_secrets_hygiene.py tests/test_a11y_structure.py \
@@ -40,14 +51,14 @@ case "$PROFILE" in
       tests/test_v2520.py ;;
   ui)
     echo "▶ UI-харнесс (воркеров: $JOBS)"
-    python3 -m pytest -q "${XD[@]}" \
+    python3 -m pytest -q "${XD[@]}" "${JU_MAIN[@]}" \
       tests/test_v1121.py tests/test_v1130.py tests/test_v1140.py tests/test_v1583.py ;;
   full)
     echo "▶ Полный прогон (воркеров: $JOBS)"
     # test_v1310 (Чек-Пул) держит состояние базы между тестами —
     # гонится отдельным процессом после основной партии
-    python3 -m pytest tests/ -q "${XD[@]}" --ignore tests/test_v1310.py &&
-    python3 -m pytest tests/test_v1310.py -q ;;
+    python3 -m pytest tests/ -q "${XD[@]}" "${JU_MAIN[@]}" --ignore tests/test_v1310.py &&
+    python3 -m pytest tests/test_v1310.py -q "${JU_V1310[@]}" ;;
   *)
     echo "использование: ./test.sh [quick|ui|full] [-jN]"; exit 1 ;;
 esac
