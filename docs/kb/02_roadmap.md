@@ -34,8 +34,10 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#5](https://github.com/Rimlin-UNC/1c_chek/issues/5) T-02 — что делать с PR #2.
 - [#6](https://github.com/Rimlin-UNC/1c_chek/issues/6) T-03 — сливать ли PR #3 в `main`.
 - [#13](https://github.com/Rimlin-UNC/1c_chek/issues/13) T-10 — роль Vercel.
+- [#24](https://github.com/Rimlin-UNC/1c_chek/issues/24) T-32 — единая база, фаза 0: обезличить журнал карточки единого чека для штатных ролей ([проект](../single_base_design.md), ADR-20).
 
 **Ждут владельца (P2):**
+- [#24](https://github.com/Rimlin-UNC/1c_chek/issues/24) T-33…T-35 — единая база: пакетный перенос (фаза 0), заявки других компаний с числом и списком организаций у администратора (фазы 1–2), показ числа компаниям по разрешению (фаза 3); решения Q-18…Q-23.
 - [#18](https://github.com/Rimlin-UNC/1c_chek/issues/18) T-22 — решения по итогам обзора безопасности Supabase: представления `chek_demo_*`, `rls_auto_enable`, exposed schemas.
 
 **Заблокированы:**
