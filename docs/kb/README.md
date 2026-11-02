@@ -12,10 +12,10 @@
 
 | Что | Состояние | Источник |
 |---|---|---|
-| Последний выпуск | **v1.70.82** — стабильный единый реестр чеков, готов к установке из программы | [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3), [CHANGELOG](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/CHANGELOG.md) |
-| Рабочий сервер | по последнему отчёту владельца (01.11.2026): v1.70.80, сборка `b3db4fe`. Установлена ли 1.70.82 — **требует уточнения** | [issue #4](https://github.com/Rimlin-UNC/1c_chek/issues/4) |
+| Последний выпуск | **v1.70.83** — экран «Разбор конфликтов» для администратора; включает стабильный единый реестр 1.70.82; готов к установке из программы | [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3), [CHANGELOG](https://github.com/Rimlin-UNC/1c_chek/blob/d8ea71dcb889c88f709aa445027f04936a819301/CHANGELOG.md) |
+| Рабочий сервер | по последнему отчёту владельца (01.11.2026): v1.70.80, сборка `b3db4fe`. Установлена ли 1.70.82 или 1.70.83 — **требует уточнения** | [issue #4](https://github.com/Rimlin-UNC/1c_chek/issues/4) |
 | `main` | v1.70.15 (`01c72d7`, слияние PR #1) | [GitHub](https://github.com/Rimlin-UNC/1c_chek/tree/main) |
-| Открытые PR | #2 — WIP, целиком вошёл в #3; #3 — v1.70.82 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2), [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3) |
+| Открытые PR | #2 — WIP, целиком вошёл в #3; #3 — v1.70.82–v1.70.83 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2), [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3) |
 | Задачи | issues #4–#21 = база «Задачи и roadmap»; статус — в CSV, канбан — в Google Sheets (доска GitHub Projects токену недоступна, метки не прикрепляются — 403) | [открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q=is%3Aissue+is%3Aopen) |
 | CI | GitHub Actions на каждый push: Python 3.11 и 3.12, PostgreSQL 17, вся цепочка; ворота — 0 упавших и 0 пропущенных. Прогон на `c0f5578`: 4562 passed, 0 skipped на обеих версиях, отпечаток набора `e9772826c527d81e` совпал с локальным | [run 41415352807](https://github.com/Rimlin-UNC/1c_chek/actions/runs/41415352807), [ci.yml](https://github.com/Rimlin-UNC/1c_chek/blob/820bf7c9df7008aeacca88b1955a5ba8dca8fea2/.github/workflows/ci.yml) |
 | Supabase `chek.base` | только синтетический демо-контур `chek_demo`; файлы миграций = применённая история (#8); аудит RLS и внешних ключей — 0 ошибок; решения владельца — #18 и #21 (интеграция переключена на ветку PR #3, после слияния — на `main`); осталась схема `qa_lock_…` (удаление — только по «да», #7) | [DATABASE.md](../DATABASE.md) |
