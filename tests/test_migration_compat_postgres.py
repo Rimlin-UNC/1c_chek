@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_supabase_migrations import EXPECTED, MIGRATIONS, _apply, _verify
+from tests.test_supabase_migrations import EXPECTED, MIGRATIONS, _apply, _ensure_roles, _verify
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_SQL = ROOT / "supabase" / "checks" / "rls_fk_audit.sql"
@@ -127,10 +127,7 @@ def test_app_schema_fits_next_to_supabase_contour():
     admin = create_engine(url, isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as conn:
-            for role in ("anon", "authenticated", "service_role", "qa_compat_reader"):
-                conn.exec_driver_sql(
-                    "do $$ begin if not exists (select 1 from pg_roles where rolname = "
-                    f"'{role}') then create role {role} nologin; end if; end $$")
+            _ensure_roles(conn, ("anon", "authenticated", "service_role", "qa_compat_reader"))
             conn.exec_driver_sql(f'create database "{dbname}"')
         engine = create_engine(url.set(database=dbname))
         try:

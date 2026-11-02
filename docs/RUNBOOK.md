@@ -25,7 +25,9 @@ python3 run.py --port 8000          # http://localhost:8000, Swagger: /api/docs
 
 ```bash
 qa/setup_dev.sh --with-postgres            # .venv, requirements-dev.txt, psycopg 3, node_modules
-qa/setup_dev.sh --check --with-postgres    # проверка без установки
+qa/setup_dev.sh --full                     # + pgserver и валидаторы stylelint, html-validate — всё как в CI
+qa/setup_dev.sh --check --full             # проверка без установки
+python3 qa/session_check.py                # старт сессии: git против GitHub, окружение, вход, последний CI
 ```
 
 > **Сессии Arena:** `.venv` и `node_modules` не сохраняются между сессиями —
@@ -49,6 +51,7 @@ qa/setup_dev.sh --check --with-postgres    # проверка без устан�
 | Playwright (свой сервер на 127.0.0.1:8123, отдельная БД) | `npm run test:e2e`; браузер — `npx playwright install chromium` или `YM_PLAYWRIGHT_CHROMIUM` | `playwright.config.js` |
 | Postman/Newman | `npm run test:api` (ожидает сервер на 127.0.0.1:8002) | `package.json` |
 | PostgreSQL (opt-in) | `UNIFIED_POSTGRES_TEST_URL=postgresql+psycopg://… .venv/bin/pytest tests/test_postgres_identity_optin.py tests/test_unified_postgres.py tests/test_supabase_migrations.py tests/test_migration_compat_postgres.py -q` | docstrings тестов, development_environment.md |
+| Локальный PostgreSQL и прогон как в CI | `python qa/pg_local.py` — тесты PostgreSQL на временном сервере; `python qa/pg_local.py full` — весь набор с отчётами JUnit и воротами | `qa/pg_local.py` |
 | Ворота отчётов JUnit (как в CI) | `YM_JUNIT_DIR=/tmp/junit ./test.sh full -j2` → `python3 qa/junit_gate.py /tmp/junit/*.xml` | `qa/junit_gate.py`, `test.sh` |
 | CI | push в `main` и `arena/**`; вручную — Actions → CI → Run workflow | `.github/workflows/ci.yml` |
 | Матрица тестирования (QA-панель) | `python qa/test_matrix.py --junit /tmp/junit/*.xml --commit <sha> --ci-run <id> --ci-fingerprint <отпечаток> --out /tmp/test_matrix.csv` | `qa/test_matrix.py` |
@@ -59,8 +62,8 @@ qa/setup_dev.sh --check --with-postgres    # проверка без устан�
 - Прогон pytest **не прерывать**: обрыв оставляет мусор в БД тестов.
 - Выпуск — только при **0 failed** ([update_playbook](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/update_playbook.md)).
 - Тесты PostgreSQL — **только на одноразовой базе**. Коннектор Supabase не даёт
-  песочнице прямого сетевого доступа к PostgreSQL. В сессии 01.11 использовался
-  локальный временный сервер (pip-пакет `pgserver`, вне зависимостей проекта).
+  песочнице прямого сетевого доступа к PostgreSQL. Локально — временный сервер
+  `qa/pg_local.py` (pip-пакет `pgserver`, вне зависимостей проекта).
 - **В CI пропусков 0** — ворота `qa/junit_gate.py` считают пропуск провалом.
   Локально пропуски зависят от окружения: в песочнице Arena — 1 (браузер
   Playwright не скачать: CDN закрыт), без npm и PostgreSQL — 14. На коммите
@@ -116,8 +119,8 @@ gh api "repos/Rimlin-UNC/1c_chek/check-runs/<id>/annotations" --jq '.[] | .title
 
 Обновление листа «Тесты»:
 
-1. Полный прогон с отчётами: `YM_JUNIT_DIR=/tmp/junit ./test.sh full -j2`
-   (с `UNIFIED_POSTGRES_TEST_URL` на одноразовой базе).
+1. Полный прогон с отчётами: `python qa/pg_local.py full` — печатает каталог
+   отчётов JUnit и отпечаток набора тестов.
 2. Отпечаток набора из прогона CI того же коммита — аннотация `notice` (раздел «CI»).
 3. `python qa/test_matrix.py --junit /tmp/junit/*.xml --commit <sha> --ci-run <id> --ci-fingerprint <отпечаток> --out /tmp/test_matrix.csv`.
    Статус «прошёл в CI» ставится только при совпадении отпечатков.
@@ -125,9 +128,12 @@ gh api "repos/Rimlin-UNC/1c_chek/check-runs/<id>/annotations" --jq '.[] | .title
    `target_mime_type = application/vnd.google-apps.spreadsheet`), скопировать
    лист в панель (`copy_sheet`), временный файл — в корзину.
 
-Канбан берёт статусы прямо из CSV в GitHub: сменили статус в
-`docs/kb/02_roadmap.csv` и запушили — доска обновится (кэш `IMPORTDATA` —
-до часа). Доску GitHub Projects токен интеграции создать не может (403).
+Канбан берёт статусы из CSV в GitHub. Лист «Задачи (GitHub)» — живой
+`IMPORTDATA`: он заработает после того, как владелец один раз нажмёт
+«Разрешить доступ» в браузере (через API этого не сделать). До тех пор канбан
+показывает лист «Задачи (снимок)» — копию CSV на последнем коммите, и сам пишет,
+какой источник использует. Снимок обновляет агент в конце сессии. Доску GitHub
+Projects токен интеграции создать не может (403).
 
 ## Превью Vercel
 
@@ -135,7 +141,10 @@ gh api "repos/Rimlin-UNC/1c_chek/check-runs/<id>/annotations" --jq '.[] | .title
   ветки в статусе `READY` и журнал сборки без ошибок (`list_deployments`,
   `get_deployment_events`).
 - Ручной тестовый деплой — коннектором `create_deployment` с источником Git
-  (ветка, без `target`): это превью, не production.
+  (ветка, без `target`): это превью, не production. 02.11.2026:
+  `dpl_7LYmkypQ3StrJ2v98L1rkBeue4V3` (коммит `c0f5578`) — READY, сборка 13 с,
+  ошибок нет; Python 3.12 по умолчанию; пакет 339 МБ больше стандартного,
+  Vercel оптимизирует зависимости — риск холодного старта для #13.
 - Работоспособность приложения на Vercel проверить нельзя: деплои закрыты
   Vercel Authentication, а песочница не открывает `vercel.app`. Роль проекта —
   требует уточнения ([#13](https://github.com/Rimlin-UNC/1c_chek/issues/13)).

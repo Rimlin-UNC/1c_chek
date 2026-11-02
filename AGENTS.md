@@ -26,6 +26,10 @@ Google Sheets, Docs и Slides — **только представления** д
 
 ### 0. Старт: окружение и сверка с фактом
 
+**Одной командой:** `python3 qa/session_check.py` — git против GitHub, окружение,
+вход в GitHub, последний CI ветки; печатает, что и как исправить. Подробности
+каждого пункта — ниже.
+
 1. **Проверить git.** Восстановленное рабочее пространство может показывать
    ветку на старом коммите, а все файлы — изменёнными (02.11.2026 так и было):
    ```bash
@@ -39,8 +43,10 @@ Google Sheets, Docs и Slides — **только представления** д
    ```
    Разница не пустая — **не коммитить**: разобраться и сообщить владельцу.
    История: `git fetch --deepen=300 origin <ветка>`.
-2. **Окружение:** `qa/setup_dev.sh --with-postgres`. `.venv`, `node_modules` и
-   `/tmp` между сессиями не сохраняются.
+2. **Окружение:** `qa/setup_dev.sh --full` — всё для прогона как в CI
+   (зависимости, psycopg, pgserver, stylelint и html-validate в `/tmp`).
+   `.venv`, `node_modules` и `/tmp` между сессиями не сохраняются; проверка без
+   установки — `qa/setup_dev.sh --check --full`.
 3. **Сверка с фактом** (только чтение): последний прогон CI ветки
    ([RUNBOOK → CI](docs/RUNBOOK.md#ci)); Supabase — `list_migrations` и
    `supabase/checks/rls_fk_audit.sql`; Vercel — последние деплои `1c-chek`.
@@ -79,8 +85,8 @@ Google Sheets, Docs и Slides — **только представления** д
 
 1. `./test.sh full -j2` — **0 failed**; прогон не прерывать.
 2. `.venv/bin/ruff check app tests qa` — «All checks passed»; `npm run lint` — 0 ошибок.
-3. SQL и БД — тесты PostgreSQL на одноразовой базе (`UNIFIED_POSTGRES_TEST_URL`),
-   включая `tests/test_migration_compat_postgres.py`.
+3. SQL и БД — тесты PostgreSQL на одноразовой базе: `python qa/pg_local.py`
+   (временный сервер; полный прогон как в CI — `python qa/pg_local.py full`).
 4. Схема или пути данных — `python -m qa.upgrade_rehearsal --from-ref <коммит на сервере>`.
 5. После push — **зелёный CI** на Python 3.11 и 3.12: 0 упавших и 0 пропущенных.
    Падения читать через API аннотаций ([RUNBOOK → CI](docs/RUNBOOK.md#ci)).
@@ -161,7 +167,13 @@ Google Sheets, Docs и Slides — **только представления** д
 - **Google Slides API:** нумерованный список — `NUMBERED_DIGIT_ALPHA_ROMAN`;
   индексы текста — в UTF-16; миниатюры слайдов из песочницы не скачать.
 - **Google Drive `upload_file`** с `target_mime_type` превращает CSV в таблицу —
-  так в Sheets попадает полная матрица тестов без ручной вставки.
+  так в Sheets попадает полная матрица тестов без ручной вставки; файл для
+  загрузки класть в рабочую папку (`/home/user/…`), а не в `/tmp`.
+- **Google Sheets в локали ru_RU:** аргументы формул разделяются `;` (с `,` —
+  `#ERROR!`). `IMPORTDATA` из GitHub работает только после «Разрешить доступ»,
+  нажатого владельцем в браузере (через API — `#REF!`). В
+  `update_sheet_properties` с `grid_properties` передавать и `row_count`,
+  `column_count`, иначе API отвечает «Невозможно удалить все строки на листе».
 
 ## Чек-лист конца сессии
 

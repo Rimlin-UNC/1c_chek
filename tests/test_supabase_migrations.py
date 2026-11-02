@@ -57,6 +57,21 @@ def test_verify_expectation_matches_documented_line():
     assert documented == rendered
 
 
+def _ensure_roles(conn, roles):
+    """Создать роли, если их нет, — без гонки между параллельными тестами.
+
+    Роли общие на весь кластер PostgreSQL, а pytest-xdist гоняет файлы
+    параллельно. Схема «проверить, потом создать» проигрывает гонку: оба
+    процесса видят, что роли нет, и второй падает (воспроизведено: 87 ошибок
+    из 160 одновременных попыток). Перехват duplicate_object и unique_violation
+    делает создание атомарным для любого числа процессов.
+    """
+    for role in roles:
+        conn.exec_driver_sql(
+            f"do $$ begin create role {role} nologin; "
+            "exception when duplicate_object or unique_violation then null; end $$")
+
+
 def _verify(engine):
     with engine.connect() as conn:
         return tuple(conn.exec_driver_sql(VERIFY_SQL.read_text(encoding="utf-8")).one())
@@ -81,10 +96,7 @@ def test_migrations_apply_on_clean_postgres_and_reruns_are_harmless():
     admin = create_engine(url, isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as conn:
-            for role in ("anon", "authenticated", "service_role"):
-                conn.exec_driver_sql(
-                    "do $$ begin if not exists (select 1 from pg_roles where rolname = "
-                    f"'{role}') then create role {role} nologin; end if; end $$")
+            _ensure_roles(conn, ("anon", "authenticated", "service_role"))
             conn.exec_driver_sql(f'create database "{dbname}"')
         engine = create_engine(url.set(database=dbname))
         try:
