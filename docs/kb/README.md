@@ -16,7 +16,7 @@
 | Рабочий сервер | по последнему отчёту владельца (01.11.2026): v1.70.80, сборка `b3db4fe`. Установлена ли 1.70.82 — **требует уточнения** | [issue #4](https://github.com/Rimlin-UNC/1c_chek/issues/4) |
 | `main` | v1.70.15 (`01c72d7`, слияние PR #1) | [GitHub](https://github.com/Rimlin-UNC/1c_chek/tree/main) |
 | Открытые PR | #2 — WIP, целиком вошёл в #3; #3 — v1.70.82 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2), [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3) |
-| Задачи | issues #4–#17 = база «Задачи и roadmap» | [label: roadmap](https://github.com/Rimlin-UNC/1c_chek/issues?q=label%3Aroadmap) |
+| Задачи | issues #4–#17 = база «Задачи и roadmap» (метки созданы, но не прикреплены — 403) | [открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q=is%3Aissue+is%3Aopen) |
 | CI | нет (`.github/workflows` отсутствует) | [issue #12](https://github.com/Rimlin-UNC/1c_chek/issues/12) |
 | Supabase `chek.base` | только синтетический демо-контур `chek_demo`; осталась схема `qa_lock_…` (удаление заблокировано) | [05_db_and_migrations.md](05_db_and_migrations.md) |
 | Vercel `1c-chek` | превью на каждый push; production из `main` (v1.70.15); роль — требует уточнения | [issue #13](https://github.com/Rimlin-UNC/1c_chek/issues/13) |

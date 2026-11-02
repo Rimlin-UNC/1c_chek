@@ -32,7 +32,8 @@
    между сессиями не сохраняются.
 4. **Сверить базу знаний с фактом** (только чтение):
    - `gh pr list --state all`;
-   - `gh issue list --label roadmap --state all`;
+   - issues через REST, а не `gh issue list`: метки не прикреплены, а GraphQL
+     падает: `gh api "repos/Rimlin-UNC/1c_chek/issues?state=all&per_page=100" --jq '.[] | [.number, .state, .title]'`;
    - Supabase: `list_migrations` и запросы из раздела БД;
    - Vercel: последние деплои проекта `1c-chek`.
    
@@ -129,7 +130,9 @@
   пустого временного файла — восстановлено через минуту, проверено побайтно.
 - **`gh pr edit` не работает:** падает на устаревшем поле Projects (classic)
   в GraphQL. Использовать `gh api -X PATCH repos/Rimlin-UNC/1c_chek/pulls/<N> --input <json>`.
-- **Issues:** создание работает; комментарии и правка — HTTP 403.
+- **Issues:** создание работает; комментарии и правка — HTTP 403; метки при
+  создании молча не прикрепляются. После любой записи — прочитать результат
+  обратно.
 - **Коннекторы** (Notion, Supabase, Vercel) загружаются заново в каждом ответе —
   после паузы на вопрос вызвать `list_connector_tools` снова.
 - **Supabase `execute_query`** возвращает только результат последнего оператора.
