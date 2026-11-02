@@ -1,8 +1,8 @@
 # 2. Задачи и roadmap
 
 [← База знаний](README.md) · База: [`02_roadmap.csv`](02_roadmap.csv) ·
-Связанные разделы: [Открытые вопросы](06_open_questions.md) · [ADR](03_adr.md) ·
-[Алгоритм](07_agent_algorithm.md)
+Связанные разделы: [Открытые вопросы](06_open_questions.md) · [ADR](../ARCHITECTURE.md) ·
+[Алгоритм](../../AGENTS.md)
 
 Канонический список — **`02_roadmap.csv`**. Каждая открытая задача — issue в
 GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q=is%3Aissue+is%3Aopen)).
@@ -16,7 +16,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 | Статус | `todo` · `in-progress` · `blocked` · `done` · `cancelled` (отменено решением владельца; строка остаётся для истории) |
 | Приоритет | `P0` срочно · `P1` высокий · `P2` средний · `P3` низкий |
 | Область | Релиз · Единый реестр · Миграция/БД · Supabase · Vercel · CI · Документация |
-| Нужно подтверждение владельца | «да» — агент не выполняет без явного «да» (см. стоп-лист в [алгоритме](07_agent_algorithm.md)) |
+| Нужно подтверждение владельца | «да» — агент не выполняет без явного «да» (см. стоп-лист в [AGENTS.md](../../AGENTS.md)) |
 | Блокер | что мешает (для `blocked`) |
 | Issue/PR, Источник | обратные ссылки |
 | Связанные ADR / вопросы | `ADR-NN`, `Q-NN` |
@@ -36,6 +36,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#13](https://github.com/Rimlin-UNC/1c_chek/issues/13) T-10 — роль Vercel.
 
 **Ждут владельца (P2):**
+- [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub привязана к ветке PR #2: переключить на `main` или отключить.
 - [#18](https://github.com/Rimlin-UNC/1c_chek/issues/18) T-22 — решения по итогам обзора безопасности Supabase: представления `chek_demo_*`, `rls_auto_enable`, exposed schemas.
 
 **Заблокированы:**
@@ -44,6 +45,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
 - [#9](https://github.com/Rimlin-UNC/1c_chek/issues/9) T-06 — экран разбора конфликтов (P1).
+- [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20) T-24 — сквозной интеграционный тест миграции БД (P1), спецификация в issue.
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
 
 **Требует уточнения:** [#11](https://github.com/Rimlin-UNC/1c_chek/issues/11)
@@ -54,6 +56,12 @@ T-08 — переход рабочей БД на PostgreSQL/Supabase.
 #15 закроются при слиянии PR #3 (`Closes` в описании).
 
 **Отменено:** T-14 — перенос базы знаний в Notion (ADR-16), issue #17.
+
+**Готово 02.11.2026 (вторая сессия):** T-23 — разбор 12 пропусков ([#19](https://github.com/Rimlin-UNC/1c_chek/issues/19));
+T-26 — QA-панель и канбан в Google Sheets; T-27 — отчёт в Google Docs;
+T-28 — канонические документы `docs/*.md` и `AGENTS.md`; T-29 — проверки RLS/FK
+Supabase и тест совместимости схемы. Канбан с колонками Todo / In Progress /
+Blocked / Done — [в Google Sheets](https://docs.google.com/spreadsheets/d/1CERkw3bydU-avV7saZkNT0ibEkExFMx-hnKdKJn6VvI/edit), данные — этот CSV.
 
 **Готово раньше:** T-15…T-20 — выпуски v1.70.9…v1.70.82, исторические дорожные
 карты и эта база знаний. Подробности — в CSV и [журнале сессий](08_session_journal.md).

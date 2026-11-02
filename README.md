@@ -306,7 +306,7 @@ npm run lint                      # ESLint
 одноразовая база). **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
 гоняет полный набор на каждом push в `main` и `arena/**`: Python 3.11 и 3.12,
 PostgreSQL 17, вся цепочка инструментов; прогон зелёный только при 0 упавших
-и 0 пропущенных тестов. Подробнее — [docs/kb/04_runbook.md](docs/kb/04_runbook.md).
+и 0 пропущенных тестов. Подробнее — [docs/RUNBOOK.md](docs/RUNBOOK.md); алгоритм работы — [AGENTS.md](AGENTS.md).
 
 ## 🛠 Технологии
 

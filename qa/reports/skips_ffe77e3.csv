@@ -1,0 +1,13 @@
+Тест,Причина пропуска,Пропуск без npm и PostgreSQL (вариант A),Пропуск с npm ci (вариант B),Критичен для миграции БД,Статус в CI сейчас,Issue
+tests/test_v17035.py::TestCssIsValid::test_zero_findings[app.css],stylelint не установлен,да,да,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17035.py::TestCssIsValid::test_zero_findings[maxapp],stylelint не установлен,да,да,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17035.py::TestCssIsValid::test_zero_findings[brandbook],stylelint не установлен,да,да,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17033.py::TestExternalValidator::test_zero_errors,html-validate не установлен: npm i html-validate (не обязателен в CI),да,да,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17059.py::TestEslintGate::test_zero_errors_on_our_modules,ESLint не установлен: npm i --no-save eslint @eslint/js globals (не обязателен в CI),да,нет,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17059.py::TestUxCompat::test_pages_still_pass_html_validate,html-validate не установлен,да,да,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17060.py::TestVitestGate::test_units_pass,Vitest не установлен: npm install (не обязателен в CI),да,нет,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17060.py::TestPlaywrightGate::test_specs_are_listed,Playwright не установлен: npm install,да,нет,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17060.py::TestPlaywrightGate::test_scenarios_pass_with_browsers,Playwright не установлен: npm install,да,да,нет,выполняется и проходит (0 пропусков),#19
+tests/test_v17060.py::TestNewmanGate::test_collection_passes,Newman не установлен: npm install,да,нет,нет,выполняется и проходит (0 пропусков),#19
+tests/test_postgres_identity_optin.py::test_postgres_identity_lock_serializes_transactions[commit],dedicated PostgreSQL test URL not configured,да,да,да,выполняется и проходит (0 пропусков),#19
+tests/test_postgres_identity_optin.py::test_postgres_identity_lock_serializes_transactions[rollback],dedicated PostgreSQL test URL not configured,да,да,да,выполняется и проходит (0 пропусков),#19

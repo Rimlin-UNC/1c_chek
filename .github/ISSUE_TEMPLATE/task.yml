@@ -54,7 +54,7 @@ body:
     id: owner_confirmation
     attributes:
       label: Нужно подтверждение владельца?
-      description: «Да» — для действий из стоп-листа (docs/kb/07_agent_algorithm.md) — main, рабочий сервер, Supabase, production Vercel.
+      description: «Да» — для действий из стоп-листа (AGENTS.md) — main, рабочий сервер, Supabase, production Vercel.
       options:
         - Нет
         - Да

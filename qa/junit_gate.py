@@ -11,7 +11,11 @@
 В GitHub Actions (``GITHUB_ACTIONS=true``) каждый упавший/пропущенный тест
 выводится аннотацией (``::error``/``::warning``) с причиной и хвостом трассировки:
 её видно в сводке прогона и в PR, не открывая сырой лог. Итог прогона —
-аннотация ``::notice`` (числа доступны и через API аннотаций).
+аннотация ``::notice`` (числа доступны и через API аннотаций). В итог входит
+отпечаток набора тестов — sha256 отсортированного списка идентификаторов: если
+он совпадает с отпечатком локального прогона того же коммита, наборы тестов
+идентичны, и при 0 упавших и 0 пропущенных прошёл каждый тест списка
+(так матрица тестирования подтверждает статус в CI без доступа к логам).
 
 Почему пропуск — ошибка: тесты цепочки (PostgreSQL, ESLint, Vitest,
 Playwright, Newman, stylelint, html-validate) пропускаются, когда инструмент не
@@ -21,6 +25,7 @@ Playwright, Newman, stylelint, html-validate) пропускаются, когд
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 from dataclasses import dataclass, field
@@ -30,6 +35,7 @@ from defusedxml import ElementTree
 
 
 TAIL_LINES = 25          # строк трассировки в аннотации
+FINGERPRINT_LEN = 16     # знаков отпечатка в итоге (64 бита — коллизии исключены)
 MAX_EACH = 9             # GitHub показывает ~10 аннотаций-ошибок на шаг
 
 
@@ -42,6 +48,8 @@ class Report:
     skipped: list[str] = field(default_factory=list)
     # (уровень, тест, причина, хвост трассировки) — для аннотаций GitHub
     details: list[tuple[str, str, str, str]] = field(default_factory=list)
+    # идентификаторы всех тестов отчёта — для отпечатка набора
+    ids: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> int:
@@ -65,6 +73,7 @@ def parse(path: Path) -> Report:
     for case in root.iter("testcase"):
         report.tests += 1
         cid = _case_id(case)
+        report.ids.append(cid)
         for tag, bucket in (("failure", report.failed), ("error", report.errors),
                             ("skipped", report.skipped)):
             node = case.find(tag)
@@ -121,6 +130,13 @@ def _summary_markdown(title: str, reports: list[Report]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def fingerprint(reports: list[Report]) -> str:
+    """Отпечаток набора тестов: sha256 отсортированных идентификаторов из всех
+    отчётов. Не зависит ни от порядка тестов, ни от разбиения на отчёты."""
+    ids = sorted(cid for r in reports for cid in r.ids)
+    return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--title", default="Тесты")
@@ -139,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     skipped = sum(len(r.skipped) for r in reports)
     totals = (f"отчётов {len(reports)}, тестов {total}: "
               f"прошло {total - failed - errors - skipped}, упало {failed}, "
-              f"ошибок {errors}, пропущено {skipped}")
+              f"ошибок {errors}, пропущено {skipped}; отпечаток набора {fingerprint(reports)}")
     print(f"junit-gate: {totals}")
     for r in reports:
         for kind, items in (("FAILED", r.failed), ("ERROR", r.errors), ("SKIPPED", r.skipped)):

@@ -43,7 +43,7 @@ def test_all_passed_is_ok(tmp_path, capsys):
                           _write(tmp_path, "full-test_v1310.xml", PASS)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "тестов 4: прошло 4, упало 0, ошибок 0, пропущено 0" in out
+    assert "тестов 4: прошло 4, упало 0, ошибок 0, пропущено 0; отпечаток набора " in out
 
 
 def test_skip_fails_the_gate_and_names_the_reason(tmp_path, capsys):
@@ -96,7 +96,7 @@ def test_github_annotations_only_inside_actions(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     junit_gate.main([report])
     out = capsys.readouterr().out
-    assert "::notice title=Тесты::отчётов 1, тестов 3: прошло 1, упало 1, ошибок 0, пропущено 1" in out
+    assert "::notice title=Тесты::отчётов 1, тестов 3: прошло 1, упало 1, ошибок 0, пропущено 1; отпечаток набора " in out
     assert "::error title=FAILED tests.test_c%3A%3Atest_bad::assert 1 == 2%0A%0Atrace" in out
     assert "::warning title=SKIPPED tests.test_b%3A%3Atest_pg::dedicated PostgreSQL" in out
 
@@ -113,3 +113,17 @@ def test_annotations_escape_and_respect_the_per_step_limit(tmp_path):
     assert "bad 100%25, line 0%0A%0Aa%0Ab" in errors[0]     # % и переводы строк экранированы
     assert errors[-1].startswith("::error title=FAILED%3A ещё 3::")
     assert "tests.t::test_11" in errors[-1]
+
+
+def test_fingerprint_depends_only_on_the_set_of_tests(tmp_path):
+    """Отпечаток не зависит от порядка и разбиения на отчёты, но меняется,
+    если тест добавлен или переименован."""
+    a = tmp_path / "a.xml"; a.write_text(_xml(PASS + SKIP), encoding="utf-8")
+    b = tmp_path / "b.xml"; b.write_text(_xml(FAIL), encoding="utf-8")
+    joined = tmp_path / "joined.xml"; joined.write_text(_xml(FAIL + SKIP + PASS), encoding="utf-8")
+    split = junit_gate.fingerprint([junit_gate.parse(a), junit_gate.parse(b)])
+    whole = junit_gate.fingerprint([junit_gate.parse(joined)])
+    assert split == whole and len(split) == junit_gate.FINGERPRINT_LEN
+    renamed = tmp_path / "renamed.xml"
+    renamed.write_text(_xml(PASS.replace("test_ok", "test_ok2") + SKIP + FAIL), encoding="utf-8")
+    assert junit_gate.fingerprint([junit_gate.parse(renamed)]) != whole
