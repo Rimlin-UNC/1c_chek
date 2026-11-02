@@ -22,8 +22,11 @@
 #
 # Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
+import logging
 import re
 import textwrap
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -50,6 +53,15 @@ def _read(path) -> str:
     if not p.is_absolute():
         p = ROOT / p
     return p.read_text(encoding="utf-8")
+
+
+def _wait_ingest_threads(timeout: float = 25) -> None:
+    """Дождаться фонового приёма чеков пула (поток pool-web-ingest): он
+    пишет в ту же SQLite, что и тест, — в том числе потоки соседних тестов
+    этого процесса (сессионный клиент, --dist loadfile)."""
+    end = time.time() + timeout
+    while time.time() < end and any(t.name == "pool-web-ingest" for t in threading.enumerate()):
+        time.sleep(0.05)
 
 
 def _triple():
@@ -291,7 +303,7 @@ class TestAtomicPointsLocks:
 # 5. Сквозной путь донора: сдал без регистрации → зарегистрировался → сдаёт
 # ======================================================================
 class TestDonorJourney:
-    def test_guest_scans_then_registers_then_submits(self, client, monkeypatch):
+    def test_guest_scans_then_registers_then_submits(self, client, monkeypatch, caplog):
         """Полный путь, на котором раньше падало: гость с сигналом антифрода
         регистрируется и тут же сдаёт чек из кабинета."""
         from app.pool.models import PoolSignal
@@ -329,6 +341,12 @@ class TestDonorJourney:
             cookie = {"pool_vid": f"{gvid}.{public._sign(gvid)}"}
             public._IP_HITS.clear()
             _reset_auth_hits()
+            # слияние гостя — запись в SAVEPOINT: сбой (например, блокировка
+            # SQLite фоновым приёмом соседнего теста) откатывает его в «0
+            # перенесено», а причина уходит только в журнал. Ждём фон и
+            # показываем журнал слияния в сообщении теста.
+            _wait_ingest_threads()
+            caplog.set_level(logging.WARNING, logger="ymaster.pool.accounts")
 
             _SEQ["n"] += 1
             email = f"journey-{_SEQ['n']}@test.ru"
@@ -336,7 +354,9 @@ class TestDonorJourney:
                               json={"email": email, "password": "parol-1234"},
                               cookies=cookie)
             assert reg.status_code == 200, reg.text[:300]
-            assert reg.json()["merged_receipts"] == 1, "история гостя не перенесена"
+            merge_log = [r.getMessage() for r in caplog.records if r.name == "ymaster.pool.accounts"]
+            assert reg.json()["merged_receipts"] == 1, \
+                f"история гостя не перенесена; журнал слияния: {merge_log or 'пусто'}"
             tok = {"Authorization": f"Bearer {reg.json()['token']}"}
 
             fn, fd, fp = _triple()
@@ -350,12 +370,7 @@ class TestDonorJourney:
             assert r.status_code == 200, r.text[:300]
             assert r.json().get("accepted"), r.text[:200]
 
-            import threading
-            import time
-            end = time.time() + 25
-            while time.time() < end and [t for t in threading.enumerate()
-                                         if t.name == "pool-web-ingest"]:
-                time.sleep(0.05)
+            _wait_ingest_threads()
 
             db.expire_all()
             acc = db.query(PoolUser).filter(PoolUser.email == email).one()
