@@ -40,7 +40,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 
 **Заблокированы:**
 - [#7](https://github.com/Rimlin-UNC/1c_chek/issues/7) T-04 — схема `qa_lock_…` в Supabase: удаление заблокировано фильтром провайдера, нужно явное подтверждение.
-- [#10](https://github.com/Rimlin-UNC/1c_chek/issues/10) T-07 — перенос архива: ждёт экрана разбора конфликтов.
+- [#10](https://github.com/Rimlin-UNC/1c_chek/issues/10) T-07 — перенос архива: экран разбора конфликтов готов (v1.70.83); ждёт «да» владельца, перед запуском — сквозной тест #20, резервная копия и `--dry-run`.
 - [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
