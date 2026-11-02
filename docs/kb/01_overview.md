@@ -60,4 +60,5 @@ Python 3.11+.
 | Рабочий сервер | VPS: `/opt/ymaster-check`, systemd-сервис `ymaster-check`, установка `deploy.sh`, обновление из программы. Домен, IP и ветку-источник агент проверить не может — **требует уточнения** | [docs/DEPLOYMENT.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/DEPLOYMENT.md) |
 | Supabase | проект `chek.base` (`putddctwdskfdzichigx`, eu-west-1, PostgreSQL 17), только демо-контур | [Dashboard](https://supabase.com/dashboard/project/putddctwdskfdzichigx) |
 | Vercel | проект `1c-chek` (команда chek5, тариф Hobby): превью на каждый push, production из `main`, домен `1c-chek.vercel.app` (за Vercel Authentication) | [Dashboard](https://vercel.com/chek5/1c-chek) |
-| Notion | пока не используется — нет подключённой страницы | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |
+| GitHub Actions | CI на каждый push в `main` и `arena/**`: Python 3.11 и 3.12, PostgreSQL 17 (ADR-17) | [Actions](https://github.com/Rimlin-UNC/1c_chek/actions/workflows/ci.yml) |
+| Notion | не используется (ADR-16): база знаний — в `docs/kb`, для владельца — [презентация](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |

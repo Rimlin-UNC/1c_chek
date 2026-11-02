@@ -96,6 +96,7 @@ def test_github_annotations_only_inside_actions(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     junit_gate.main([report])
     out = capsys.readouterr().out
+    assert "::notice title=Тесты::отчётов 1, тестов 3: прошло 1, упало 1, ошибок 0, пропущено 1" in out
     assert "::error title=FAILED tests.test_c%3A%3Atest_bad::assert 1 == 2%0A%0Atrace" in out
     assert "::warning title=SKIPPED tests.test_b%3A%3Atest_pg::dedicated PostgreSQL" in out
 

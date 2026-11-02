@@ -47,7 +47,9 @@ qa/setup_dev.sh --check --with-postgres    # проверка без устан�
 | Vitest | `npm run test:js` | `package.json` |
 | Playwright (свой сервер на 127.0.0.1:8123, отдельная БД) | `npm run test:e2e`; браузер — `npx playwright install chromium` или `YM_PLAYWRIGHT_CHROMIUM` | `playwright.config.js` |
 | Postman/Newman | `npm run test:api` (ожидает сервер на 127.0.0.1:8002) | `package.json` |
-| PostgreSQL (opt-in) | `UNIFIED_POSTGRES_TEST_URL=postgresql+psycopg://… .venv/bin/pytest tests/test_postgres_identity_optin.py tests/test_unified_postgres.py -q` | docstrings тестов, development_environment.md |
+| PostgreSQL (opt-in) | `UNIFIED_POSTGRES_TEST_URL=postgresql+psycopg://… .venv/bin/pytest tests/test_postgres_identity_optin.py tests/test_unified_postgres.py tests/test_supabase_migrations.py -q` | docstrings тестов, development_environment.md |
+| Ворота отчётов JUnit (как в CI) | `YM_JUNIT_DIR=/tmp/junit ./test.sh full -j2` → `python3 qa/junit_gate.py /tmp/junit/*.xml` | `qa/junit_gate.py`, `test.sh` |
+| CI | push в `main` и `arena/**`; вручную — Actions → CI → Run workflow | `.github/workflows/ci.yml` |
 | Репетиция обновления | `.venv/bin/python -m qa.upgrade_rehearsal --from-ref <коммит на сервере>` | `qa/upgrade_rehearsal.py` |
 
 Правила:
@@ -56,8 +58,43 @@ qa/setup_dev.sh --check --with-postgres    # проверка без устан�
 - Тесты PostgreSQL — **только на одноразовой базе**. Коннектор Supabase не даёт
   песочнице прямого сетевого доступа к PostgreSQL. В сессии 01.11 использовался
   локальный временный сервер (pip-пакет `pgserver`, вне зависимостей проекта).
-- Пропуски зависят от окружения: без npm — 14, с npm — 10. Из них 4 теста
-  PostgreSQL — критичные для миграции.
+- **В CI пропусков 0** — ворота `qa/junit_gate.py` считают пропуск провалом.
+  Локально пропуски зависят от окружения: в песочнице Arena — 1 (браузер
+  Playwright не скачать: CDN закрыт), без npm и PostgreSQL — 14.
+
+## CI
+
+[`.github/workflows/ci.yml`](https://github.com/Rimlin-UNC/1c_chek/blob/820bf7c9df7008aeacca88b1955a5ba8dca8fea2/.github/workflows/ci.yml) (ADR-17):
+
+- **Когда:** push в `main` и `arena/**`, PR из форков в `main`, вручную. Для
+  веток этого репозитория прогон по `pull_request` пропускается — их уже
+  проверил push.
+- **Что:** матрица Python 3.11 и 3.12 (3.12 — как на Ubuntu 24.04 рабочего
+  сервера). Сервис `postgres:17` без пароля, доступный только заданию, включает
+  тесты PostgreSQL через `UNIFIED_POSTGRES_TEST_URL`. Окружение — как
+  `qa/setup_dev.sh --with-postgres`, плюс Node 22, stylelint, html-validate и
+  Chromium для Playwright. Шаги: ruff `app tests qa`, ESLint,
+  `./test.sh full -j4` с отчётами JUnit, ворота.
+- **Ворота** `qa/junit_gate.py`: зелёный только при 0 упавших и 0 пропущенных.
+  Каждое падение и пропуск — аннотация с причиной и хвостом трассировки, итог —
+  аннотация `notice`. Отчёты JUnit — артефакт `junit-python-*` (14 дней).
+- **Время** — около 5 минут. Секретов нет.
+
+Песочница Arena не открывает хосты логов и артефактов GitHub — результат
+читается через API (аннотации отдаёт `api.github.com`):
+
+```bash
+gh api "repos/Rimlin-UNC/1c_chek/actions/runs?branch=<ветка>&event=push&per_page=1" \
+  --jq '.workflow_runs[] | [.id, .status, .conclusion, .head_sha[0:7]] | @tsv'
+gh api "repos/Rimlin-UNC/1c_chek/commits/<sha>/check-runs" \
+  --jq '.check_runs[] | [.id, .name, .conclusion] | @tsv'
+gh api "repos/Rimlin-UNC/1c_chek/check-runs/<id>/annotations" --jq '.[] | .title + "\n" + .message'
+```
+
+Падение в CI, которого нет локально, — признак зависимости теста от машины.
+Так первый прогон нашёл два теста апдейтера, зависевших от версии systemd
+(252 в песочнице, 255 на Ubuntu 24.04). Чинить тест — изолировать окружение, —
+а не ослаблять CI.
 
 ## Стандарт выпуска
 
@@ -120,6 +157,7 @@ qa/setup_dev.sh --check --with-postgres    # проверка без устан�
 |---|---|---|
 | Рабочий VPS | рабочие данные (SQLite) | docs/DEPLOYMENT.md; параметры — требует уточнения |
 | Локально / песочница | разработка, тесты, предпросмотр | README, development_environment.md |
+| GitHub Actions | CI на каждый push: полный набор тестов, PostgreSQL 17 | `.github/workflows/ci.yml`, прогоны с 02.11.2026 |
 | Supabase `chek.base` | read-only демо с синтетикой | supabase/README.md, проверка 2026-11-02 |
 | Vercel `1c-chek` | превью-сборки на push; production из `main`; переменных нет; работоспособность не проверена | дашборд Vercel 2026-11-02; роль — требует уточнения (T-10) |
 

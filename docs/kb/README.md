@@ -1,12 +1,12 @@
 # 🧾 1c_chek — база знаний проекта
 
 > **Основной контекст агента на каждую новую сессию.** Начинайте с
-> [«Алгоритма работы агента»](07_agent_algorithm.md).
-> Структура совпадает с планом рабочего пространства в Notion: страницы —
-> Markdown, базы — CSV. Их можно импортировать в Notion как есть (см. ниже).
+> [«Алгоритма работы агента»](07_agent_algorithm.md); вход для новых сессий —
+> [`AGENTS.md`](../../AGENTS.md). База знаний живёт в репозитории (ADR-16):
+> страницы — Markdown, базы — CSV. Notion не используется.
 >
-> Обновлено: 2026-11-02 · ветка `arena/c7f9d34a-1c-chek` · основа — коммит
-> [`cd76923`](https://github.com/Rimlin-UNC/1c_chek/commit/cd769234ebfc4d5c533a1df25fce31e8a9605212).
+> Обновлено: 2026-11-02 · ветка `arena/c7f9d34a-1c-chek` · код проверен CI на
+> коммите [`820bf7c`](https://github.com/Rimlin-UNC/1c_chek/commit/820bf7c9df7008aeacca88b1955a5ba8dca8fea2).
 
 ## Состояние на 2026-11-02
 
@@ -16,12 +16,13 @@
 | Рабочий сервер | по последнему отчёту владельца (01.11.2026): v1.70.80, сборка `b3db4fe`. Установлена ли 1.70.82 — **требует уточнения** | [issue #4](https://github.com/Rimlin-UNC/1c_chek/issues/4) |
 | `main` | v1.70.15 (`01c72d7`, слияние PR #1) | [GitHub](https://github.com/Rimlin-UNC/1c_chek/tree/main) |
 | Открытые PR | #2 — WIP, целиком вошёл в #3; #3 — v1.70.82 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2), [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3) |
-| Задачи | issues #4–#17 = база «Задачи и roadmap» (метки созданы, но не прикреплены — 403) | [открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q=is%3Aissue+is%3Aopen) |
-| CI | нет (`.github/workflows` отсутствует) | [issue #12](https://github.com/Rimlin-UNC/1c_chek/issues/12) |
-| Supabase `chek.base` | только синтетический демо-контур `chek_demo`; осталась схема `qa_lock_…` (удаление заблокировано) | [05_db_and_migrations.md](05_db_and_migrations.md) |
+| Задачи | issues #4–#18 = база «Задачи и roadmap»; статус — в CSV (метки созданы, но не прикреплены — 403) | [открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q=is%3Aissue+is%3Aopen) |
+| CI | GitHub Actions на каждый push: Python 3.11 и 3.12, PostgreSQL 17, вся цепочка; ворота — 0 упавших и 0 пропущенных. Первый зелёный прогон (`820bf7c`): 4555 passed, 0 skipped на обеих версиях | [run 41402055601](https://github.com/Rimlin-UNC/1c_chek/actions/runs/41402055601), [ci.yml](https://github.com/Rimlin-UNC/1c_chek/blob/820bf7c9df7008aeacca88b1955a5ba8dca8fea2/.github/workflows/ci.yml) |
+| Supabase `chek.base` | только синтетический демо-контур `chek_demo`; файлы миграций = применённая история (#8); обзор безопасности — критичных проблем нет, решения владельца — #18; осталась схема `qa_lock_…` (удаление — только по «да») | [05_db_and_migrations.md](05_db_and_migrations.md) |
 | Vercel `1c-chek` | превью на каждый push; production из `main` (v1.70.15); роль — требует уточнения | [issue #13](https://github.com/Rimlin-UNC/1c_chek/issues/13) |
 | Миграция | единый слой — в 1.70.82 в режиме совместимости, установка проверена; перенос архива и переход рабочей БД на PostgreSQL/Supabase **не готовы для рабочего сервера** | [05_db_and_migrations.md](05_db_and_migrations.md) |
-| Notion | заблокирован: нет родительской страницы, подключённой к интеграции | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |
+| Notion | не используется — решение владельца 02.11.2026 (ADR-16); T-14 отменена | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |
+| Презентация для владельца | «Ямастер Чек — состояние и план (02.11.2026)», 8 слайдов | [Google Slides](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) |
 
 ## Разделы
 
@@ -52,17 +53,18 @@
 - Канонические технические детали остаются в `docs/` репозитория. Здесь —
   статус, решения, процесс и ссылки.
 
-## Перенос в Notion
+## Презентация для владельца
 
-Коннектор Notion создаёт страницы только внутри существующей страницы,
-подключённой к интеграции «Merge Agent Handler». Сейчас такой страницы нет —
-[issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17). Варианты:
+[«Ямастер Чек — состояние и план»](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) в Google Slides — короткий срез
+этой базы знаний для владельца: где мы сейчас, как поставить обновление,
+качество и CI, база данных и Supabase, решения владельца, что дальше, где всё
+лежит.
 
-1. **Через агента.** Создать в Notion пустую страницу и подключить к ней
-   интеграцию: ••• → Connections → «Merge Agent Handler». Агент воспроизведёт
-   структуру: 4 базы со свойствами и связями плюс 4 страницы.
-2. **Импортом.** Notion → Import → «Markdown & CSV» → выбрать файлы этой папки.
-   CSV станут базами, `.md` — страницами.
+Обновляет агент в конце сессии через коннектор Google Slides, только по фактам
+этой базы знаний:
 
-После переноса источником истины станет Notion. Эту папку нужно будет либо
-синхронизировать, либо пометить как архив — решение записать в ADR.
+- `slide02`, `slide04`–`slide07` — срез, CI, БД, решения, roadmap;
+- `slide03` — если меняется порядок обновления; `slide08` — ссылки;
+- дата среза — в названии презентации и на титульном слайде.
+
+Секретов, строк данных и персональных данных в презентации нет — как и здесь.

@@ -10,7 +10,8 @@
 отчётов нет, тестов ноль, есть упавшие/ошибочные или пропущенные тесты.
 В GitHub Actions (``GITHUB_ACTIONS=true``) каждый упавший/пропущенный тест
 выводится аннотацией (``::error``/``::warning``) с причиной и хвостом трассировки:
-её видно в сводке прогона и в PR, не открывая сырой лог.
+её видно в сводке прогона и в PR, не открывая сырой лог. Итог прогона —
+аннотация ``::notice`` (числа доступны и через API аннотаций).
 
 Почему пропуск — ошибка: тесты цепочки (PostgreSQL, ESLint, Vitest,
 Playwright, Newman, stylelint, html-validate) пропускаются, когда инструмент не
@@ -136,15 +137,17 @@ def main(argv: list[str] | None = None) -> int:
     failed = sum(len(r.failed) for r in reports)
     errors = sum(len(r.errors) for r in reports)
     skipped = sum(len(r.skipped) for r in reports)
-    print(f"junit-gate: отчётов {len(reports)}, тестов {total}: "
-          f"прошло {total - failed - errors - skipped}, упало {failed}, "
-          f"ошибок {errors}, пропущено {skipped}")
+    totals = (f"отчётов {len(reports)}, тестов {total}: "
+              f"прошло {total - failed - errors - skipped}, упало {failed}, "
+              f"ошибок {errors}, пропущено {skipped}")
+    print(f"junit-gate: {totals}")
     for r in reports:
         for kind, items in (("FAILED", r.failed), ("ERROR", r.errors), ("SKIPPED", r.skipped)):
             for item in items:
                 print(f"  {kind} [{r.name}] {item}")
 
     if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title={_cmd_prop(args.title)}::{_cmd_data(totals)}")
         for line in github_annotations(reports):
             print(line)
 

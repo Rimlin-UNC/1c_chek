@@ -67,15 +67,22 @@
 `DATABASE_URL` на Supabase не указывает (ADR-10).
 
 **Применённые миграции и файлы репозитория**
-([supabase/migrations](https://github.com/Rimlin-UNC/1c_chek/tree/cd769234ebfc4d5c533a1df25fce31e8a9605212/supabase/migrations)):
+([supabase/migrations](https://github.com/Rimlin-UNC/1c_chek/tree/820bf7c9df7008aeacca88b1955a5ba8dca8fea2/supabase/migrations)):
 
 | Применено в проекте | Файл в репозитории | Совпадение |
 |---|---|---|
-| `20261101154331_chek_demo_readonly_contour` | `2026110101_chek_demo_readonly_contour.sql` | имя да, версия нет |
-| `20261101155225_chek_demo_fix_item_seed` | `2026110102_chek_demo_seed.sql` | нет (имя и версия) |
-| `20261101164303_chek_demo_revoke_view_write_default_grants` | `2026110103_chek_demo_revoke_view_write_default_grants.sql` | имя да, версия нет |
+| `20261101154331_chek_demo_readonly_contour` | то же имя + `.sql` | побайтно, md5 `3d6ffc1d5869edbe7ee4b031d31d4c56` |
+| `20261101155225_chek_demo_fix_item_seed` | то же имя + `.sql` | побайтно, md5 `a92c63f2458786972a636675edd060f8` |
+| `20261101164303_chek_demo_revoke_view_write_default_grants` | то же имя + `.sql` | побайтно, md5 `12006191ae3c852faf49b8c60cebc4f4` |
 
-Расхождение — T-05, [issue #8](https://github.com/Rimlin-UNC/1c_chek/issues/8).
+Выровнено 02.11.2026 (T-05, [issue #8](https://github.com/Rimlin-UNC/1c_chek/issues/8),
+ADR-18): файлы переименованы под применённые версии, содержимое — текст из
+`supabase_migrations.schema_migrations` (md5 и длина сверены на стороне
+PostgreSQL). История в Supabase не менялась. В CI
+`tests/test_supabase_migrations.py` применяет файлы к чистому PostgreSQL 17 и
+сверяет `supabase/verify.sql`, затем запускает каждый файл повторно: повтор
+`20261101154331` после `20261101155225` откатывается целиком (конфликт
+`unique (receipt_id, position)`), контур не меняется.
 
 **Схемы проекта**
 
@@ -97,6 +104,28 @@
   Auth не использует.
 - **Расширения:** pg_stat_statements, pgcrypto, plpgsql, supabase_vault, uuid-ossp.
 - **Edge functions:** нет.
+
+## Обзор безопасности Supabase (02.11.2026, только чтение)
+
+T-11, [issue #14](https://github.com/Rimlin-UNC/1c_chek/issues/14). Критичных проблем нет. Решения владельца —
+T-22, [issue #18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
+
+| Проверка | Результат |
+|---|---|
+| Таблицы в `public` без RLS | нет |
+| Права `anon`/`authenticated` на запись (INSERT, UPDATE, DELETE, TRUNCATE) | нет ни в одной схеме |
+| RLS без политик | 4 таблицы `chek_demo` — намеренно: доступ только у владельца и `service_role` |
+| Схемы с USAGE у `anon` | стандартные Supabase: `auth`, `extensions`, `graphql`, `graphql_public`, `public`, `realtime`, `storage`. У `chek_demo` и `qa_lock_…` — нет |
+| Представления `public.chek_demo_*` | `security_barrier`, без `security_invoker`: выполняются с правами владельца и обходят RLS базовых таблиц. Для синтетики только на чтение — намеренно; линтер Supabase считает это ошибкой → Q-15 |
+| Функции SECURITY DEFINER | `chek_demo_snapshot()`: `search_path=chek_demo, public`, EXECUTE у PUBLIC отозван. `rls_auto_enable()`: `search_path=pg_catalog`, EXECUTE у PUBLIC; функция событийного триггера `ensure_rls`, напрямую не вызывается — риск низкий, происхождение — требует уточнения (Q-10) |
+| Расширения в `public` | нет |
+| Событийные триггеры | служебные Supabase (`pgrst_ddl_watch`, `pgrst_drop_watch`, `issue_pg_cron_access`, `issue_pg_net_access`, `issue_pg_graphql_access`, `issue_graphql_placeholder`) и `ensure_rls` |
+| Роль `authenticator` | `statement_timeout=8s`, `lock_timeout=8s`; `pgrst.db_schemas` не переопределён — exposed schemas требуют уточнения (Q-11) |
+| Auth | регистрация выключена, анонимные пользователи выключены, ротация refresh-токенов включена, `jwt_exp=3600` |
+
+Если подключать Supabase Auth (сейчас у приложения своя авторизация):
+минимальная длина пароля 6 → 8+, проверка утёкших паролей (сейчас выключена),
+`site_url` (сейчас `http://localhost:3000`).
 
 ## Временная схема `qa_lock_965266689e1c4867b98ef79644d72d2c`
 
