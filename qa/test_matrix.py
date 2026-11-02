@@ -45,7 +45,7 @@ FILES_BY_AREA = {
     AREA_UNIFIED: {"tests/test_unified_receipts.py", "tests/test_v17082.py",
                    "tests/test_receipt_copy_migration.py", "tests/test_pool_bridge.py",
                    "tests/test_unified_review.py", "tests/test_migration_e2e.py",
-                   "tests/test_unified_phase0.py"},
+                   "tests/test_unified_phase0.py", "tests/test_unified_claims.py"},
     AREA_UI: {"tests/test_v17033.py", "tests/test_v17035.py", "tests/test_v17059.py",
               "tests/test_v17060.py"},
 }
