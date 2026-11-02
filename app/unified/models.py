@@ -182,3 +182,53 @@ class UnifiedEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     document: Mapped[UnifiedDocument] = relationship(back_populates="events")
+
+
+# «Единая база», фазы 1–2 (ADR-20, #24, T-34): компании, которые пытались
+# учесть чужой чек или владели им раньше. Владелец по-прежнему один —
+# в unified_ownership; здесь только остальные компании.
+LINK_CLAIM = "claim"                  # пыталась учесть чек — заявка администратору
+LINK_FORMER_OWNER = "former_owner"    # владела чеком до перемещения
+LINK_OPEN = "open"                    # ждёт решения администратора
+LINK_DECLINED = "declined"            # отклонена, но компания в числе учтена
+LINK_TRANSFERRED = "transferred"      # чек передан этой компании
+LINK_VOID = "void"                    # «не учитывать»: ошибочный скан, тест
+LINK_STATUSES = (LINK_OPEN, LINK_DECLINED, LINK_TRANSFERRED, LINK_VOID)
+LINK_SOURCES = ("scan_qr", "scan_image", "scan_pdf", "manual", "pool_transfer",
+                "archive_twin", "move")
+# В число организаций входят владелец и претенденты в этих статусах (Q-18, Q-19);
+# прежние владельцы, «не учитывать» и переданные заявки — нет.
+LINK_COUNTED = (LINK_OPEN, LINK_DECLINED)
+
+
+class UnifiedCompanyLink(Base):
+    """Связь «компания — чек» помимо владельца: претендент или прежний владелец.
+
+    Одна строка на пару (документ, компания); повторные попытки увеличивают
+    ``attempts``. Ссылки на компанию и пользователей — без внешних ключей,
+    как у ``UnifiedOwnership``: старая версия после отката удаляет компании,
+    не зная об этой таблице. Связи удалённых компаний закрывает сверка при
+    старте. Фискальных значений и ПДн в таблице нет (ADR-12).
+    """
+
+    __tablename__ = "unified_company_links"
+    __table_args__ = (
+        UniqueConstraint("document_id", "company_id", name="uq_unified_company_link"),
+        Index("ix_unified_company_links_company", "company_id"),
+        Index("ix_unified_company_links_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("unified_documents.id", ondelete="CASCADE"), nullable=False)
+    company_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default=LINK_CLAIM)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=LINK_OPEN)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    first_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    last_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

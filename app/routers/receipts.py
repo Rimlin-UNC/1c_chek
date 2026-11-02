@@ -136,7 +136,9 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         if not pool:
             raise HTTPException(409, "Чек изменён или удалён — обновите страницу")
         if pool.assigned_company_id and pool.assigned_company_id != company_id:
-            raise HTTPException(409, "Чек уже зарегистрирован за другой организацией")
+            from ..unified.links import ForeignOwnerConflict
+            raise ForeignOwnerConflict("Чек уже зарегистрирован за другой организацией",
+                                       parsed.fn, parsed.fd, parsed.fp, company_id)
         if not company_id or pool.status != "verified":
             raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
         if (pool.total_sum is None or not math.isfinite(pool.total_sum)
@@ -206,6 +208,37 @@ def _foreign_duplicate(user: User, receipt: Receipt, company_id: str | None) -> 
             or not can_view_receipt(user, receipt))
 
 
+def _upsert_or_claim(db: Session, parsed: ParsedQR, source: str, user: User | None,
+                     company_id: str | None, claim_source: str) -> tuple[Receipt, bool]:
+    """_upsert_receipt; отказ «чек у другой организации» — заявка администратору.
+
+    v1.70.85 («Единая база», T-34): приём откатывается как раньше, заявка
+    пишется отдельной транзакцией, к отказу добавляется «Заявка передана
+    администратору.» (Q-22). Число организаций сотрудник не видит.
+    """
+    from ..unified import links
+    try:
+        return _upsert_receipt(db, parsed, source, user, company_id)
+    except links.ForeignOwnerConflict as exc:
+        db.rollback()
+        raise links.claim_rejected(db, exc, company_id=company_id, user=user,
+                                   source=claim_source) from None
+
+
+def _claim_foreign(db: Session, user: User | None, receipt: Receipt,
+                   company_id: str | None, claim_source: str) -> bool:
+    """Чек учтён в другой организации — заявка администратору (Q-22).
+
+    Коллега из своей компании заявку не создаёт. True — заявка записана;
+    сбой записи не меняет ответ сотруднику.
+    """
+    if not company_id or receipt.company_id == company_id:
+        return False
+    from ..unified import links
+    return links.note_attempt(db, receipt.fn, receipt.fd, receipt.fp, company_id=company_id,
+                              user=user, source=claim_source)
+
+
 def _company_names(db: Session, ids) -> dict:
     """v1.12.3: {id: название} компаний одним запросом (для чеков)."""
     ids = {i for i in ids if i}
@@ -259,7 +292,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
 
     # v1.11.0: чек попадает в пространство компании (админ может выбрать)
     company_id = target_company_id(db, user, body.company_id)
-    receipt, created = _upsert_receipt(db, parsed, body.source, user, company_id)
+    receipt, created = _upsert_or_claim(db, parsed, body.source, user, company_id, "scan_qr")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "sum": receipt.total_sum})
@@ -273,10 +306,16 @@ def scan(body: ScanRequest, background: BackgroundTasks,
         auto = False
         # v1.11.0: дубликат из ЧУЖОЙ компании — данные не раскрываем
         if _foreign_duplicate(user, receipt, company_id):
+            # v1.70.85: заявка администратору вместо совета «попросите переместить»
+            if _claim_foreign(db, user, receipt, company_id, "scan_qr"):
+                from ..unified.links import with_note
+                message = with_note("Этот чек уже учтён в другой организации.")
+            else:
+                message = ("Этот чек уже учтён в другой организации. "
+                           "Если он должен относиться к вашей — попросите "
+                           "администратора переместить его.")
             return {"receipt": None, "duplicate": True, "auto_verify": False,
-                    "message": "Этот чек уже учтён в другой организации. "
-                               "Если он должен относиться к вашей — попросите "
-                               "администратора переместить его."}
+                    "message": message}
         broadcast("receipt_duplicate", receipt.to_dict())
 
     return {
@@ -313,7 +352,7 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
     company_id = target_company_id(db, user, company_id)
-    receipt, created = _upsert_receipt(db, result.parsed, "image", user, company_id)
+    receipt, created = _upsert_or_claim(db, result.parsed, "image", user, company_id, "scan_image")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "source": "image"})
@@ -324,8 +363,12 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
     else:
         auto = False
         if _foreign_duplicate(user, receipt, company_id):
+            message = "Чек уже зарегистрирован в другой организации"
+            if _claim_foreign(db, user, receipt, company_id, "scan_image"):
+                from ..unified.links import with_note
+                message = with_note(message)
             return {"receipt": None, "duplicate": True, "auto_verify": False,
-                    "message": "Чек уже зарегистрирован в другой организации", "codes_found": result.total_codes}
+                    "message": message, "codes_found": result.total_codes}
     return {
         "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
         "duplicate": not created,
@@ -358,7 +401,7 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    created, duplicate, foreign_duplicate = False, False, False
+    created, duplicate, foreign_duplicate, claimed = False, False, False, False
     company_id = target_company_id(db, user, company_id)
     last = None
     for qr_text in qr_texts:                 # нескольких чеков в файле — по одному
@@ -366,9 +409,10 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
             parsed = parse_qr(qr_text)
         except QRParseError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
-        receipt, created_i = _upsert_receipt(db, parsed, "pdf", user, company_id)
+        receipt, created_i = _upsert_or_claim(db, parsed, "pdf", user, company_id, "scan_pdf")
         if not created_i and _foreign_duplicate(user, receipt, company_id):
             duplicate = foreign_duplicate = True
+            claimed = _claim_foreign(db, user, receipt, company_id, "scan_pdf") or claimed
             continue
         duplicate = duplicate or not created_i
         created = created or created_i
@@ -380,18 +424,22 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
             _maybe_auto_verify(background, db, receipt)
             _maybe_auto_fetch(background, db, receipt)
         last = receipt
+    message = ("Некоторые чеки из PDF приняты; другие уже зарегистрированы за другой организацией"
+               if foreign_duplicate and created else
+               "Чек уже зарегистрирован за другой организацией"
+               if foreign_duplicate else
+               "Чек из PDF принят"
+               if created else
+               "Чек из PDF уже был в системе"
+               if duplicate else "Чек принят")
+    if claimed:                                  # v1.70.85: заявка администратору
+        from ..unified.links import with_note
+        message = with_note(message)
     return {
         "receipt": _attach_company(db, last.to_dict(with_items=True)) if last else None,
         "duplicate": duplicate,
         "created": created,
-        "message": ("Некоторые чеки из PDF приняты; другие уже зарегистрированы за другой организацией"
-                    if foreign_duplicate and created else
-                    "Чек уже зарегистрирован за другой организацией"
-                    if foreign_duplicate else
-                    "Чек из PDF принят"
-                    if created else
-                    "Чек из PDF уже был в системе"
-                    if duplicate else "Чек принят"),
+        "message": message,
         "codes_found": len(qr_texts),
     }
 
@@ -422,7 +470,7 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
     company_id = target_company_id(db, user, getattr(body, "company_id", None))
-    receipt, created = _upsert_receipt(db, parsed, "manual", user, company_id)
+    receipt, created = _upsert_or_claim(db, parsed, "manual", user, company_id, "manual")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
         _notify_receipt_created(user, receipt)
@@ -430,7 +478,11 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
         _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     if not created and _foreign_duplicate(user, receipt, company_id):
-        return {"receipt": None, "duplicate": True, "message": "Чек уже зарегистрирован в другой организации"}
+        message = "Чек уже зарегистрирован в другой организации"
+        if _claim_foreign(db, user, receipt, company_id, "manual"):   # v1.70.85
+            from ..unified.links import with_note
+            message = with_note(message)
+        return {"receipt": None, "duplicate": True, "message": message}
     return {"receipt": _attach_company(db, receipt.to_dict(with_items=True)),
             "duplicate": not created,
             "message": "Чек принят" if created else "Чек уже есть в системе"}

@@ -17,6 +17,10 @@
    чеки, удаляет компанию) и **повторное обновление**: сверка пишет исправления
    в журнал, повторная сверка ничего не меняет, данные целы; повторный перенос
    архива подхватывает чек, отсканированный во время отката.
+6. **Заявки компаний** (с 1.70.85, T-34): отказы /scan, записанные 1.70.80 в
+   журнал аудита, становятся заявкой задним числом; проигравшая сторона спора
+   получает заявку «отклонена»; сотрудникам список заявок недоступен; заявки
+   переживают откат и повторное обновление.
 
 Бэкенды: SQLite (файл во временном каталоге) и PostgreSQL (отдельная временная
 база на сервере из `UNIFIED_POSTGRES_TEST_URL`, удаляется после прогона).
@@ -52,8 +56,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # 1.70.80 — версия рабочего сервера (последний отчёт владельца, 01.11.2026)
 OLD_COMMIT = "b3db4fef67942d59fad9567f579823b70c6bf16d"
 OLD_LABEL = "1.70.80"
-UNIFIED_TABLES = ["unified_documents", "unified_events", "unified_items", "unified_origins",
-                  "unified_ownership"]
+UNIFIED_TABLES = ["unified_company_links", "unified_documents", "unified_events", "unified_items",
+                  "unified_origins", "unified_ownership"]
 
 
 class OldCodeUnavailable(RuntimeError):
@@ -269,6 +273,20 @@ def doc_id_of(db, kind, source_id):
     doc = unified_service.document_for_source(db, kind, source_id)
     return doc.id if doc else None
 
+def claims_facts(c, H, ids):
+    """v1.70.85: заявки компаний — число и претенденты (администратор), доступ сотрудников."""
+    def companies(rid):
+        with SessionLocal() as db:
+            doc_id = doc_id_of(db, "registry", rid)
+        data = c.get(f"/api/v1/unified/documents/{doc_id}/companies", headers=H["admin"]).json()
+        return {"count": data.get("count"), "claimants": [
+            [x["company_id"] == ids["beta"], x["status"], x["source"], x["attempts"]]
+            for x in data.get("companies", []) if x["role"] == "claimant"]}
+    return {"open": c.get("/api/v1/unified/stats", headers=H["admin"]).json().get("claims_open"),
+            "history": companies(ids["regs_a"][4]), "twin": companies(ids["regs_a"][0]),
+            "staff": sorted({c.get("/api/v1/unified/claims", headers=H[u]).status_code
+                             for u in ("acc_a", "acc_b", "user_a")})}
+
 def inspect_all(c, H, ids):
     """Полный срез: старые таблицы, канон, карантин, видимость, счётчики."""
     res = {"fingerprint": fingerprint()}
@@ -298,6 +316,7 @@ ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
 with TestClient(app) as c:
     H = {u: login(c, u, pw) for u in USERS}
     res = inspect_all(c, H, ids)
+    res["claims"] = claims_facts(c, H, ids)
     twin = ids["regs_a"][0]
     res["twin"] = {"alpha": c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code,
                    "admin": c.get(f"/api/v1/receipts/{twin}", headers=H["admin"]).status_code}
@@ -317,6 +336,7 @@ with TestClient(app) as c:
     res["resolve"] = resolve
     after = inspect_all(c, H, ids)
     after["twin_alpha"] = c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code
+    after["claims"] = claims_facts(c, H, ids)
     res["after"] = after
 emit(res)
 '''
@@ -388,7 +408,9 @@ from fastapi.testclient import TestClient
 ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
 with TestClient(app) as c:
     H = {u: login(c, u, pw) for u in USERS}
-    emit(inspect_all(c, H, ids))
+    res = inspect_all(c, H, ids)
+    res["claims"] = claims_facts(c, H, ids)
+    emit(res)
 '''
 
 FRESH_INSTALL = r'''
@@ -591,7 +613,8 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
     # 2. обновление
     up = phase("обновление: init_db и сверка при старте", UPGRADE, new_dir)
     rep.check(up["unified_tables"] == UNIFIED_TABLES and up["documents"] == 0,
-              "обновление: init_db() создал 5 таблиц unified_*, перенос архива при старте не запускается",
+              "обновление: init_db() создал 6 таблиц unified_* (с 1.70.85 — заявки компаний), "
+              "перенос архива при старте не запускается",
               f"таблицы {up['unified_tables']}, документов {up['documents']}")
     rep.check(up["fingerprint"] == seed["fingerprint"], "обновление не изменило старые таблицы (побайтно)",
               f"изменились: {_changed_tables(seed['fingerprint'], up['fingerprint'])}")
@@ -611,6 +634,13 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
     rep.check(run.get("registered") == 28 and again.get("registered") == 0,
               "перенос архива: зарегистрировано 28 источников, повторный запуск ничего не меняет",
               f"первый {run}, повторный {again}")
+    dry_c, run_c, again_c = (x.get("claims", {}) for x in (dry, run, again))
+    rep.check((dry_c.get("audit_rows_pending"), dry_c.get("audit_claims"), dry_c.get("audit_skipped")) == (3, 1, 1)
+              and (run_c.get("audit_claims"), run_c.get("audit_skipped"), run_c.get("twin_claims")) == (1, 1, 0)
+              and again_c.get("audit_rows_pending") == 0,
+              f"заявки задним числом: три отказа /scan из журнала аудита {OLD_LABEL} — одна заявка Беты "
+              "(отказ своей компании пропущен), спорный двойник ждёт решения; повтор ничего не добавляет",
+              f"пробный {dry_c}, настоящий {run_c}, повторный {again_c}")
 
     # 4. инварианты, карантин и решение администратора
     chk = phase("сверка инвариантов и разбор спора", CHECK, new_dir)
@@ -644,6 +674,11 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               f"скрыто {hidden}, статистика {chk['stats']}")
     rep.check(chk["reconcile_events"] == 0, "сверка без отката ничего не исправляет: событий reconcile нет",
               f"событий {chk['reconcile_events']}")
+    claims = chk["claims"]
+    rep.check(claims["open"] == 1 and claims["history"] == {"count": 2, "claimants": [[True, "open", "scan_qr", 2]]}
+              and claims["staff"] == [403],
+              "заявка Беты из истории: у чека Альфы 2 организации, 2 попытки; сотрудникам список заявок "
+              "недоступен (403)", claims)
     after, resolve = chk["after"], chk["resolve"]
     rep.check(resolve.get("status") == 200 and resolve.get("candidates") == 2 and not after["flagged"]
               and after["twin_alpha"] == 200 and after["visible"] == base["visible"]
@@ -656,6 +691,10 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               f"реестр {_sets_differ(after['visible'], base['visible'])}, пул {after['pool']}, "
               f"изменились {_changed_tables(seed['fingerprint'], after['fingerprint'])}, "
               f"нарушения {_visibility_problems(after)} {_canon_problems(after['canon'])}")
+    rep.check(after["claims"]["twin"] == {"count": 2, "claimants": [[True, "declined", "archive_twin", 1]]}
+              and after["claims"]["open"] == 1,
+              "проигравшая сторона спора (Бета) — заявка «отклонена»: у чека 2 организации, "
+              "ждущих решения заявок по-прежнему 1", after["claims"])
 
     # 5. откат на 1.70.80 и повторное обновление
     back = phase(f"откат на {OLD_LABEL}", ROLLBACK, old_dir)
@@ -705,6 +744,9 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               f"канон {_canon_problems(final['canon'])}, видимость {_visibility_problems(final)}, "
               f"на разборе {final['flagged']}, изменились "
               f"{_changed_tables(back['fingerprint'], final['fingerprint'])}")
+    rep.check(final["claims"] == after["claims"],
+              f"заявки пережили откат на {OLD_LABEL} и повторное обновление: число организаций и статусы те же",
+              f"после разбора {after['claims']}, итог {final['claims']}")
     raw["users"], raw["seconds"] = users, round(time.monotonic() - started, 1)
     return rep.checks, raw
 

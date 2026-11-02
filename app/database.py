@@ -124,8 +124,10 @@ def init_db() -> None:
     # Нужна после отката на версию без единого реестра и повторного
     # обновления: старая версия меняла только реестр и пул. Только
     # однозначные исправления, с журналом; сбой не останавливает сервис.
-    from .unified.reconcile import reconcile_on_startup
+    from .unified.reconcile import links_on_startup, reconcile_on_startup
     reconcile_on_startup()
+    # v1.70.85: заявки компаний на чужие чеки — граница истории и сверка связей.
+    links_on_startup()
 
 
 def _enable_pool_once() -> None:

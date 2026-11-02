@@ -17,11 +17,16 @@ def copy_to_registry(db, pool, company_id: str, user) -> tuple[Receipt, bool]:
     if pool.status != "verified" or pool.assigned_company_id != company_id:
         raise HTTPException(409, "Чек недоступен для переноса")
     from ..unified import service as unified
-    unified.register_source(db, unified.POOL, pool, user, strict=True, event_type="transfer_source")
     existing = db.query(Receipt).filter_by(fn=pool.fn, fd=pool.fd, fp=pool.fp).first()
+    if existing and existing.company_id != company_id:
+        # v1.70.85: проверка до регистрации пуловой копии — иначе строгая
+        # регистрация отвечала бы «принадлежит другой организации» без тройки,
+        # и заявка администратору не записалась бы (T-34).
+        from ..unified.links import ForeignOwnerConflict
+        raise ForeignOwnerConflict("Чек уже зарегистрирован в другой организации",
+                                   pool.fn, pool.fd, pool.fp, company_id)
+    unified.register_source(db, unified.POOL, pool, user, strict=True, event_type="transfer_source")
     if existing:
-        if existing.company_id != company_id:
-            raise HTTPException(409, "Чек уже зарегистрирован в другой организации")
         unified.register_source(db, unified.REGISTRY, existing, user,
                                 strict=True, event_type="transfer_link")
         return existing, False

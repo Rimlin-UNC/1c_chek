@@ -201,8 +201,11 @@ def recent(limit: int = Query(15, ge=1, le=100),
     # администратор — всё
     q = db.query(AuditLog).order_by(AuditLog.id.desc())
     if user.role != "admin":
+        # v1.70.85: решения по заявкам компаний — только администратору (T-34)
+        from ..unified.links import ADMIN_ONLY_AUDIT
         q = q.filter((AuditLog.company_id == user.company_id)
-                     | (AuditLog.company_id.is_(None)))
+                     | (AuditLog.company_id.is_(None)),
+                     AuditLog.action.notin_(ADMIN_ONLY_AUDIT))
     rows = q.limit(limit).all()
     # v1.19.0: человекочитаемый формат + комментарий (клиент выводит в «»)
     from ..services.audit_human import humanize_audit

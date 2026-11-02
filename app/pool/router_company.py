@@ -437,7 +437,12 @@ def _prepare_pool_assignment(db: Session, body: IdsBody, company_id: str, user: 
                 provenance = raw.get("pool_transfer", {}) if isinstance(raw, dict) else {}
             except (ValueError, TypeError):
                 provenance = {}
-            if (not allow_assigned or row.assigned_company_id != comp.id or existing.company_id != comp.id
+            if existing.company_id != comp.id:
+                # v1.70.85: чек учтён другой организацией — заявка администратору (T-34)
+                from ..unified.links import ForeignOwnerConflict
+                raise ForeignOwnerConflict("Один из чеков уже есть в реестре — обновите список",
+                                           row.fn, row.fd, row.fp, comp.id)
+            if (not allow_assigned or row.assigned_company_id != comp.id
                     or existing.source != "pool" or not isinstance(provenance, dict)
                     or provenance.get("pool_receipt_id") != row.id):
                 raise HTTPException(409, "Один из чеков уже есть в реестре — обновите список")
@@ -453,11 +458,26 @@ def _prepare_pool_assignment(db: Session, body: IdsBody, company_id: str, user: 
     return comp, user, rows, len(new_rows), used, limit
 
 
+def _claim_pool_conflict(db: Session, exc, user: User) -> HTTPException:
+    """v1.70.85: подбор или перенос отклонён — чек у другой организации.
+
+    Транзакция подбора откатывается целиком, как раньше; заявка компании
+    пишется отдельно, к отказу добавляется «Заявка передана администратору.»
+    """
+    from ..unified import links
+    db.rollback()
+    return links.claim_rejected(db, exc, company_id=None, user=user, source="pool_transfer")
+
+
 @router.post("/assign", summary="Чек-Пул: привязать чеки к компании")
 def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
            user: User = Depends(require_accountant)):
     from ..services.audit import log_action
-    comp, user, rows, assigned, used, limit = _prepare_pool_assignment(db, body, company_id, user)
+    from ..unified.links import ForeignOwnerConflict
+    try:
+        comp, user, rows, assigned, used, limit = _prepare_pool_assignment(db, body, company_id, user)
+    except ForeignOwnerConflict as exc:
+        raise _claim_pool_conflict(db, exc, user) from None
     db.commit()
     log_action(user, "pool_pick_assign", details={"company": comp.name, "count": assigned})
     return {"ok": True, "assigned": assigned, "used": used + assigned,
@@ -470,17 +490,21 @@ def assign(body: IdsBody, company_id: str = "", db: Session = Depends(get_db),
 def pick_and_transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
                       user: Annotated[User, Depends(require_accountant)], company_id: str = ""):
     from ..services.audit import log_action
+    from ..unified.links import ForeignOwnerConflict
     from .transfer import copy_to_registry
 
-    comp, user, rows, assigned, used, limit = _prepare_pool_assignment(
-        db, body, company_id, user, allow_assigned=True)
-    db.flush()  # назначение и перенос остаются в одной внешней транзакции
-    created, existing, unconfirmed = 0, 0, 0
-    for row in rows:
-        receipt, was_created = copy_to_registry(db, row, comp.id, user)
-        created += int(was_created)
-        existing += int(not was_created)
-        unconfirmed += int(was_created and receipt.fns_status != "valid")
+    try:
+        comp, user, rows, assigned, used, limit = _prepare_pool_assignment(
+            db, body, company_id, user, allow_assigned=True)
+        db.flush()  # назначение и перенос остаются в одной внешней транзакции
+        created, existing, unconfirmed = 0, 0, 0
+        for row in rows:
+            receipt, was_created = copy_to_registry(db, row, comp.id, user)
+            created += int(was_created)
+            existing += int(not was_created)
+            unconfirmed += int(was_created and receipt.fns_status != "valid")
+    except ForeignOwnerConflict as exc:
+        raise _claim_pool_conflict(db, exc, user) from None
     db.commit()
     log_action(user, "pool_pick_transfer", details={"company_id": comp.id, "assigned": assigned,
                                                      "created": created, "existing": existing,
@@ -528,6 +552,7 @@ def unassign(body: IdsBody, company_id: str = "",
 def transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
              user: Annotated[User, Depends(require_accountant)], company_id: str = ""):
     from ..services.audit import log_action
+    from ..unified.links import ForeignOwnerConflict
     from .transfer import copy_to_registry
 
     comp = _company(db, user, company_id)
@@ -543,11 +568,14 @@ def transfer(body: IdsBody, db: Annotated[Session, Depends(get_db)],
     comp, user = _recheck_pool_company_access(db, selected_company_id, actor_id)
     rows = _refresh_locked_pool_rows(db, identities)
     created, existing, unconfirmed = 0, 0, 0
-    for row in rows:
-        receipt, was_created = copy_to_registry(db, row, comp.id, user)
-        created += int(was_created)
-        existing += int(not was_created)
-        unconfirmed += int(was_created and receipt.fns_status != "valid")
+    try:
+        for row in rows:
+            receipt, was_created = copy_to_registry(db, row, comp.id, user)
+            created += int(was_created)
+            existing += int(not was_created)
+            unconfirmed += int(was_created and receipt.fns_status != "valid")
+    except ForeignOwnerConflict as exc:
+        raise _claim_pool_conflict(db, exc, user) from None
     db.commit()
     log_action(user, "pool_transfer", details={"company_id": comp.id, "created": created,
                                                  "existing": existing, "unconfirmed": unconfirmed})

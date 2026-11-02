@@ -39,6 +39,7 @@ from app.services import merchant_rules, policy
 from app.services.receipt_identity import lock_identities
 from app.unified import service
 from app.unified.models import (
+    UnifiedCompanyLink,
     REVIEW_AMOUNT,
     REVIEW_INCOMPLETE_IDENTITY,
     REVIEW_OWNERSHIP,
@@ -205,6 +206,10 @@ def _snapshot(db, scen: dict) -> dict:
                 "журнал": [(e.event_type, user(e.actor_id), comp(e.from_company_id),
                             comp(e.to_company_id), json.loads(e.details or "{}"))
                            for e in events],
+                # v1.70.85: прежний владелец и заявки — одинаково в пакете и цикле
+                "связи": sorted((comp(link.company_id), link.kind, link.status, link.source,
+                                 link.attempts)
+                                for link in db.query(UnifiedCompanyLink).filter_by(document_id=doc.id)),
             }
         out[label] = entry
     for pid, label in sorted(scen["pools"].items(), key=lambda kv: kv[1]):
@@ -237,6 +242,8 @@ def test_bulk_move_matches_reference_loop(client):
         assert got["fresh"]["выгружен"] is False and got["fresh"]["дата выгрузки"] is None
         assert got["fresh"]["запись"]["ФНС"] == ("valid", CHECKED)
         assert [e[0] for e in got["fresh"]["запись"]["журнал"]] == ["register", "move"]
+        assert got["fresh"]["запись"]["связи"] == [("А", "former_owner", "open", "move", 0)]
+        assert got["same"]["запись"]["связи"] == []
         assert got["dangling"]["категория"] == "Своя категория"
         assert got["dangling"]["запись"]["источники"] == [("registry", "dangling")]
         assert got["incomplete"]["запись"]["пометки"] & REVIEW_INCOMPLETE_IDENTITY
@@ -507,7 +514,8 @@ def test_postgres_bulk_move_concurrent_batches():
     tables = [Company.__table__, User.__table__, Receipt.__table__, ReceiptItem.__table__,
               PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
               ReceiptIdentityLock.__table__, UnifiedDocument.__table__, UnifiedItem.__table__,
-              UnifiedOwnership.__table__, UnifiedOrigin.__table__, UnifiedEvent.__table__]
+              UnifiedOwnership.__table__, UnifiedOrigin.__table__, UnifiedEvent.__table__,
+              UnifiedCompanyLink.__table__]   # v1.70.85: перемещение пишет связи компаний
 
     def session() -> Session:
         db = Session(pg)

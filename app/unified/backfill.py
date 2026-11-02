@@ -4,6 +4,12 @@
 разбора и не назначают владельца автоматически.  Запуск:
     python -m app.unified.backfill --dry-run
     python -m app.unified.backfill --batch-size 500
+    python -m app.unified.backfill --claims-only [--dry-run]
+
+v1.70.85 («Единая база», T-34): после регистрации архива — заявки компаний
+задним числом (links.backfill_claims): отказы /scan из журнала аудита и
+исторические пары «реестр ↔ пул другой компании». --claims-only — только
+заявки (чеки архива с отказами регистрируются мягко, по одному).
 """
 from __future__ import annotations
 
@@ -14,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Receipt
 from ..pool.models import PoolReceipt
-from . import service
+from . import links, service
 from .models import UnifiedOrigin
 
 
@@ -30,7 +36,8 @@ def backfill(db: Session, *, batch_size: int = 500, dry_run: bool = False) -> di
     pool_total = _unlinked(db, PoolReceipt, service.POOL).count()
     if dry_run:
         return {"dry_run": True, "registry_pending": registry_total,
-                "pool_pending": pool_total, "registered": 0, "conflicts": 0}
+                "pool_pending": pool_total, "registered": 0, "conflicts": 0,
+                "claims": links.backfill_claims(db, dry_run=True)}
     registered = conflicts = 0
     # Реестр первым: его уточнённые данные и позиции предпочтительнее пуловых.
     for model, kind in ((Receipt, service.REGISTRY), (PoolReceipt, service.POOL)):
@@ -48,18 +55,24 @@ def backfill(db: Session, *, batch_size: int = 500, dry_run: bool = False) -> di
                     conflicts += 1
             db.commit()
     return {"dry_run": False, "registry_pending": 0, "pool_pending": 0,
-            "registered": registered, "conflicts": conflicts}
+            "registered": registered, "conflicts": conflicts,
+            "claims": links.backfill_claims(db)}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Единый фискальный документ: backfill")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--claims-only", action="store_true",
+                        help="только заявки компаний задним числом (v1.70.85)")
     args = parser.parse_args()
     from ..database import SessionLocal, init_db
     init_db()
     with SessionLocal() as db:
-        result = backfill(db, batch_size=max(1, args.batch_size), dry_run=args.dry_run)
+        if args.claims_only:
+            result = links.backfill_claims(db, dry_run=args.dry_run)
+        else:
+            result = backfill(db, batch_size=max(1, args.batch_size), dry_run=args.dry_run)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

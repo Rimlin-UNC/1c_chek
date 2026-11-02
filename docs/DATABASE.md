@@ -24,7 +24,7 @@
 | Переход рабочей БД на PostgreSQL/Supabase | **не готов, не начат**, решения нет (ADR-14, T-08). Сквозной тест (#20) нашёл и исправил: чистая установка на PostgreSQL падала на компании по умолчанию; 1.70.80 на чистый PostgreSQL не ставится. Перенос базы с поштучной сверкой — [#23](https://github.com/Rimlin-UNC/1c_chek/issues/23) после решения #11 | [unified_receipts_wip.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/unified_receipts_wip.md) |
 | Прототип миграции копии `qa/migrate_receipt_copy.py` | экспериментальный, не для рабочих данных | unified_receipts_wip.md |
 | PR #2 | WIP, «не готов к эксплуатации»; целиком вошёл в PR #3 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2) |
-| Совместимость схемы приложения с проектом Supabase | **проверена в CI**: все 49 таблиц приложения создаются на PostgreSQL 17 рядом с демо-контуром, аудит RLS/FK без ошибок | `tests/test_migration_compat_postgres.py`, раздел «Совместимость схемы приложения с Supabase» |
+| Совместимость схемы приложения с проектом Supabase | **проверена в CI**: все 50 таблиц приложения (с 1.70.85 — и `unified_company_links`) создаются на PostgreSQL 17 рядом с демо-контуром, аудит RLS/FK без ошибок | `tests/test_migration_compat_postgres.py`, раздел «Совместимость схемы приложения с Supabase» |
 | Сквозной тест миграции (1.70.80 → текущая → перенос архива → сверка → откат и повтор) | **реализован**: `tests/test_migration_e2e.py`, CI на Python 3.11 и 3.12, SQLite и PostgreSQL 17 — 21 проверка на каждом; шаг 6 (перенос SQLite → PostgreSQL) — [#23](https://github.com/Rimlin-UNC/1c_chek/issues/23) | [issue #20](https://github.com/Rimlin-UNC/1c_chek/issues/20), раздел «Сквозной тест миграции (#20)» |
 
 ## Рабочая БД (SQLite, SQLAlchemy)
@@ -42,14 +42,14 @@
   5. с v1.70.82 — сверка единого реестра `app/unified/reconcile.py`.
 
   Версии схемы отслеживаются по CHANGELOG.
-- **Таблицы.** 49 объявлений `__tablename__` в коде:
+- **Таблицы.** 50 объявлений `__tablename__` в коде (с 1.70.85 — `unified_company_links`):
 
 | Домен | Таблицы |
 |---|---|
 | Учёт чеков | `receipts`, `receipt_items`, `receipt_identity_locks`, `fns_log`, `fns_usage`, `merchant_rules`, `mapping_settings`, `advance_report_counters`, `advance_report_reservations` |
 | Компании и доступ | `companies`, `users`, `invites`, `audit_log`, `app_settings`, `webauthn_credentials`, `webauthn_challenges`, `max_login_codes`, `telegram_login_codes` |
 | Чек-Пул | `pool_users`, `pool_receipts`, `pool_items`, `pool_points`, `pool_consents`, `pool_tokens`, `pool_fingerprints`, `pool_ip_log`, `pool_signals`, `pool_withdrawals`, `pool_achievements`, `pool_referrals`, `pool_leads`, `pool_api_keys`, `pool_api_calls` |
-| Единый реестр (v1.70.81–82) | `unified_documents`, `unified_items`, `unified_ownership`, `unified_origins`, `unified_events` |
+| Единый реестр (v1.70.81–85) | `unified_documents`, `unified_items`, `unified_ownership`, `unified_origins`, `unified_events`, `unified_company_links` (v1.70.85) |
 | B2B | `b2b_applications`, `b2b_companies`, `b2b_tokens`, `b2b_checks`, `b2b_events` |
 | Почта и события | `mail_rules`, `mail_log`, `webhook_logs` |
 | Мониторинг OpenStack | `openstack_settings`, `openstack_metrics`, `openstack_sync_log` |
@@ -60,6 +60,10 @@
   - `unified_origins` UNIQUE(`source_kind`, `source_id`) связывает документ с проекциями `receipts` и `pool_receipts`;
   - `unified_ownership` — без внешних ключей на `companies`/`users` (ADR-09);
   - `unified_events` — журнал без фискальных значений и ПДн;
+  - `unified_company_links` (v1.70.85, «Единая база», T-34) — заявки компаний на чужие чеки и
+    прежние владельцы: UNIQUE(`document_id`, `company_id`), каскад от `unified_documents`,
+    `company_id` без внешнего ключа (как в `unified_ownership`); число организаций по чеку —
+    владелец + заявки `open`/`declined` ([single_base_design.md, раздел 10](single_base_design.md#10-фазы-12-сделано-t-34));
   - флаги разбора `review_flags`; блокирующие — дата, сумма, операция, владелец, позиции, продавец.
 
   После обновления таблицы пустые и заполняются при правке или проверке чека.
@@ -170,12 +174,13 @@ T-22, [issue #18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
 `tests/test_migration_compat_postgres.py` (CI, PostgreSQL 17) собирает на
 одноразовой базе то, что есть в проекте: роли, историю миграций, копию
 `ensure_rls`, три миграции демо-контура — и создаёт рядом все таблицы
-приложения, как при переносе рабочей БД. Результат 2026-11-02:
+приложения, как при переносе рабочей БД. Результат 2026-11-02 (v1.70.85, с таблицей
+`unified_company_links`):
 
-- 49 таблиц приложения создаются без ошибок DDL, коллизий имён нет;
+- 50 таблиц приложения создаются без ошибок DDL, коллизий имён нет;
   `supabase/verify.sql` даёт прежнее ожидание — демо-контур цел;
-- аудит RLS/FK — 119 строк, 0 ошибок; 25 внешних ключей приложения провалидированы;
-- `ensure_rls` включил RLS на всех 53 таблицах (49 приложения и 4 демо-контура).
+- аудит RLS/FK — 122 строки, 0 ошибок; 26 внешних ключей приложения провалидированы;
+- `ensure_rls` включил RLS на всех 54 таблицах (50 приложения и 4 демо-контура).
 
 **Вывод:** перенос схемы приложения не сломает текущую структуру Supabase. Одно
 условие: триггер `ensure_rls` включает RLS на каждой новой таблице в `public`,

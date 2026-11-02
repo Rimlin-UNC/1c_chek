@@ -171,3 +171,28 @@ def reconcile_on_startup() -> dict | None:
         return None
     finally:
         db.close()
+
+
+def links_on_startup() -> dict | None:
+    """«Единая база» (T-34): граница живых заявок и сверка связей компаний.
+
+    Отдельная транзакция после основной сверки: сбой здесь не откатывает
+    исправления владельцев и не останавливает сервис.
+    """
+    from ..database import SessionLocal
+    from . import links
+
+    db = SessionLocal()
+    try:
+        links.mark_live_start(db)
+        result = links.reconcile_links(db)
+        db.commit()
+        if any(result.values()):
+            log.info("Единый реестр: сверка заявок компаний — %s", result)
+        return result
+    except Exception:  # noqa: BLE001 — сверка не должна останавливать сервис
+        db.rollback()
+        log.warning("Единый реестр: сверка заявок компаний при старте пропущена", exc_info=True)
+        return None
+    finally:
+        db.close()

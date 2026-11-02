@@ -17,7 +17,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
-import { setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов
+import { badgeCount, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -3860,7 +3860,7 @@ async function refreshBadges() {
     qb.classList.toggle('accent', q > 0);
     // v1.70.83: администратору — число конфликтов единого реестра в меню
     if (isAdmin()) {
-      api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(u.conflicts)).catch(() => {});
+      api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(badgeCount(u))).catch(() => {});
     }
   } catch { /* тихо */ }
 }
@@ -6250,6 +6250,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.85': [
+    { icon: '📨', title: 'Заявки компаний на чужие чеки',
+      text: 'Если компания пытается учесть чек, который уже принадлежит другой (скан, фото, PDF, ручной ввод, '
+        + 'Чек-Пул), сотрудник видит «Заявка передана администратору», а администратор — заявку во вкладке '
+        + '«Заявки» раздела «Разбор конфликтов»: передать чек, отклонить или не учитывать, с причиной.' },
+    { icon: '🏢', title: 'Сколько организаций учитывают чек',
+      text: 'В карточке спора и заявки — блок «Организации»: число компаний и их список, включая прежних '
+        + 'владельцев после перемещения. Сотрудники компаний этого не видят. Добавлена одна таблица базы; '
+        + 'откат — в «Последних рабочих версиях».' },
+  ],
   '1.70.84': [
     { icon: '⚡', title: 'Перемещение чеков между компаниями — пакетом',
       text: '«Переместить в компанию» обрабатывает отмеченные чеки одной пачкой: 1000 чеков — меньше '

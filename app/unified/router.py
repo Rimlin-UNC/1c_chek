@@ -1,6 +1,7 @@
 """API единого фискального документа (канонический слой)."""
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +16,7 @@ from . import service
 from .models import UnifiedDocument, UnifiedOwnership
 
 router = APIRouter(prefix="/api/v1/unified", tags=["Единый реестр чеков"])
+log = logging.getLogger("ymaster")
 
 
 class MoveBody(BaseModel):
@@ -113,3 +115,68 @@ def resolve(document_id: str, body: ResolveBody,
                                     reason=body.reason)
     db.commit()
     return service.document_payload(db, doc)
+
+
+# --------------------------------------------------------------------------
+#  v1.70.85 «Единая база», фазы 1–2 (T-34): заявки компаний на чужие чеки.
+#  Всё — только администратор: штатные роли не видят ни списка, ни числа.
+# --------------------------------------------------------------------------
+class ClaimDecisionBody(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.get("/claims", summary="Единый реестр: заявки компаний на чужие чеки (администратор)")
+def claims(*, status: str = Query("open", max_length=16,
+                                  description="open | declined | transferred | void | all"),
+           page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=100),
+           db: Annotated[Session, Depends(get_db)],
+           _admin: Annotated[User, Depends(require_admin)]):
+    from . import links
+    return links.claims_page(db, status=status, page=page, per_page=per_page)
+
+
+@router.get("/documents/{document_id}/companies",
+            summary="Единый реестр: сколько организаций учитывают чек и какие (администратор)")
+def document_companies(document_id: str,
+                       db: Annotated[Session, Depends(get_db)],
+                       _admin: Annotated[User, Depends(require_admin)]):
+    from . import links
+    doc = db.get(UnifiedDocument, document_id)
+    if doc is None:
+        raise HTTPException(404, "Чек не найден")
+    return links.companies_payload(db, doc)
+
+
+@router.post("/links/{link_id}/{action}",
+             summary="Единый реестр: решение по заявке — transfer, decline или void")
+def decide_claim(link_id: str, action: str, body: ClaimDecisionBody,
+                 db: Annotated[Session, Depends(get_db)],
+                 user: Annotated[User, Depends(require_admin)]):
+    from ..services.audit import log_action
+    from . import links
+    link, doc, moved = links.decide(db, link_id, action, user,
+                                    expected_version=body.expected_version, reason=body.reason)
+    if moved:
+        # Компания сменилась — пересчёт политики и правил назначения, как при
+        # обычном перемещении чеков (POST /api/v1/receipts/move). Сбой пересчёта
+        # решение не отменяет: причина — в журнал приложения.
+        try:
+            from ..services import policy
+            policy.refresh_receipts(db, moved)
+        except Exception:                              # noqa: BLE001
+            log.warning("Единый реестр: пересчёт политики после передачи чека пропущен", exc_info=True)
+        try:
+            from ..services import merchant_rules
+            merchant_rules.apply_rules_many(db, moved)
+        except Exception:                              # noqa: BLE001
+            log.warning("Единый реестр: правила назначения после передачи чека пропущены", exc_info=True)
+    db.commit()
+    result = {"ok": True, "action": action, "status": link.status, "link_id": link.id,
+              "document_id": doc.id, "version": doc.version, "company_id": link.company_id}
+    log_action(user, f"unified_claim_{action}", "unified_document", doc.id,
+               {"link_id": link.id, "company_id": link.company_id})
+    if moved:
+        from ..services.events import broadcast
+        broadcast("receipts_moved", {"ids": [r.id for r in moved], "company_id": link.company_id})
+    return result

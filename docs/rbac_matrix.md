@@ -91,6 +91,14 @@
 | `GET /unified/stats` | ✓ | — | — | — | — |
 | `POST /unified/documents/{id}/move` | ✓ | — | — | — | — |
 | `POST /unified/documents/{id}/resolve-ownership` | ✓ | — | — | — | — |
+| `GET /unified/claims`, `GET /unified/documents/{id}/companies` (v1.70.85) | ✓ | — | — | — | — |
+| `POST /unified/links/{id}/transfer\|decline\|void` (v1.70.85) | ✓ | — | — | — | — |
+
+С 1.70.85 (ADR-20, T-34) отказ «чек у другой организации» создаёт заявку
+компании; штатная роль видит только «Заявка передана администратору.» — ни
+списка заявок, ни числа организаций. События решений `claim_*` в журнале
+карточки и записи `unified_claim_*` в ленте событий на главной штатным ролям
+не показываются.
 
 Конфликт принадлежности (`review_flags & REVIEW_OWNERSHIP`) скрывает документ
 от компаний до разрешения администратором. Журнал `unified_events` не содержит

@@ -15,7 +15,9 @@
 итоги по ролям те же. После обновления дополнительно: шаг pip пропущен,
 резервная копия создана, файлы — ровно коммит ветки на GitHub, экран и API
 «Разбор конфликтов» отвечают; с 1.70.84 — пакетное перемещение всех чеков
-Альфы в Бету и обратно и журнал карточки у бухгалтера Беты без Альфы.
+Альфы в Бету и обратно и журнал карточки у бухгалтера Беты без Альфы; с
+1.70.85 — заявка компании на чужой чек: ответ сотруднику, список и число у
+администратора, решение «не учитывать».
 
 Запуск:  .venv/bin/python -m qa.live_update --from-ref b3db4fe [--keep]
 Нужен доступ к github.com. Сервер слушает только 127.0.0.1.
@@ -257,6 +259,28 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
                       and e.get("actor_hidden") is True for e in moves),
               f"бухгалтер Беты: {len(hidden)} перенесённых чеков без автора из Альфы, в журнале "
               "Альфа и администратор скрыты")
+        # v1.70.85 (T-34): заявка компании на чужой чек. Бухгалтер Беты сканирует
+        # чек Альфы из старой базы — ответ «Заявка передана администратору»;
+        # администратор видит заявку и 2 организации, бухгалтеру Беты список
+        # недоступен; «не учитывать» снимает заявку. Старые таблицы не меняются.
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+            code = con.execute("SELECT qr_data FROM receipts WHERE id = ?", (ids["regs_a"][5],)).fetchone()[0]
+        reply = srv.http.post("/api/v1/receipts/scan", headers=heads["acc_b"],
+                              json={"qr_data": code, "source": "web"}).json()
+        claims = srv.http.get("/api/v1/unified/claims", headers=adm).json()
+        item = next((i for i in claims.get("items", []) if i.get("company_id") == ids["beta"]), {})
+        count = srv.http.get(f"/api/v1/unified/documents/{item.get('document_id')}/companies",
+                             headers=adm).json().get("count")
+        staff_claims = srv.http.get("/api/v1/unified/claims", headers=heads["acc_b"]).status_code
+        voided = srv.http.post(f"/api/v1/unified/links/{item.get('link_id')}/void", headers=adm,
+                               json={"expected_version": item.get("version"),
+                                     "reason": "Этап Б: проверка заявки"}).status_code
+        left = srv.http.get("/api/v1/unified/stats", headers=adm).json().get("claims_open")
+        check(checks, reply.get("duplicate") is True and "Заявка передана администратору" in str(reply.get("message"))
+              and claims.get("total") == 1 and count == 2 and staff_claims == 403 and voided == 200
+              and left == 0 and fingerprint(db) == base_fp and totals(srv.http, heads) == base_totals,
+              "заявка компании: чужой дубликат — «Заявка передана администратору», у администратора "
+              "заявка и 2 организации, бухгалтеру Беты — 403; «не учитывать» снимает заявку")
 
         # 4. откат из «Последних рабочих версий»
         releases = srv.http.get("/api/v1/admin/update/releases", headers=adm).json().get("items", [])

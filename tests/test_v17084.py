@@ -19,66 +19,68 @@ def read(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.84 — исторические проверки.
+
+    v1.70.85: точные пины перенесены в tests/test_v17085.py. Здесь остаётся то,
+    что верно и после следующих выпусков: версия только растёт, запись о
+    выпуске на месте и видна целиком, точки синхронизации совпадают с текущей
+    версией.
+    """
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
                     "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+            assert current in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw
-        assert sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw
+        assert sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-02"
-        entry = md.split("\n## [1.70.83]", 1)[0]
+        assert "WIP" not in md.split("\n", 1)[0]
+        head = f"## [{VERSION}] - 2026-11-02"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
         # окно обновления показывает первые 4000 символов — запись видна целиком
-        assert len(entry) <= 4000, len(entry)
-        for needle in (
-            # как пройдёт обновление
-            "резервная копия", "Откат", "1.70.80", "1.70.82", "1.70.83",
-            "Схема базы не менялась", "pip пропускается", "37 из 37",
-            # T-33: пакетное перемещение и цифры замера
-            "Переместить в компанию", "1000 чеков", "4,9 с", "9,6 с", "13 000",
-            # T-32: сведения единого реестра без чужих организаций
-            "бухгалтера и руководителя", "Администратор видит всё как раньше",
-            # исправления: подотчётное лицо в месячной сумме, чистая установка на PostgreSQL
-            "месячного лимита", "PostgreSQL",
-        ):
+        assert len(head + entry) <= 4000, len(head + entry)
+        for needle in ("резервная копия", "Откат", "1.70.80", "Схема базы не менялась",
+                       "Переместить в компанию", "1000 чеков", "4,9 с", "9,6 с", "13 000",
+                       "бухгалтера и руководителя", "месячного лимита", "PostgreSQL"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 2
-        for needle in ("Переместить в компанию", "1000 чеков", "месячного лимита",
-                       "без чужих организаций", "Последних рабочих версиях"):
+        for needle in ("Переместить в компанию", "1000 чеков", "без чужих организаций"):
             assert needle in block, needle
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — ")
-        entry = journal.split("\n## v1.70.83", 1)[0]
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
         assert "Экраны не менялись" in entry and "Чек требует разбора перед перемещением" in entry
 
-    def test_only_unified_block_changed(self):
+    def test_unified_block_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(name for name, v in reg.items() if v == VERSION) == ["Единый реестр чеков"]
+        assert self._ver(reg["Единый реестр чеков"]) >= self._ver(VERSION)
         # версия блока не может опережать версию программы
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 84) for v in reg.values())
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (02.11.2026)" in readme
-        assert "Последний выпуск — v1.70.83" not in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestRehearsal:
@@ -90,7 +92,8 @@ class TestRehearsal:
         assert "REH_BULK" in reh.OLD_AFTER_BULK
         src = read("qa/upgrade_rehearsal.py")
         assert 'run_phase("пакетный перенос", BULK' in src
-        assert 'run_phase("откат после пакетного переноса", OLD_AFTER_BULK' in src
+        # v1.70.85: та же фаза после заявок — «откат после пакетного переноса и заявок»
+        assert 'run_phase("откат после пакетного переноса' in src and "OLD_AFTER_BULK, old_dir" in src
 
     def test_live_update_moves_a_batch(self):
         """Этап Б после push: пакетное перемещение на настоящем обновлённом сервере."""

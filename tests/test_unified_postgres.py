@@ -17,6 +17,7 @@ from app.models import Company, Receipt, ReceiptIdentityLock, ReceiptItem, User
 from app.pool.models import PoolItem, PoolReceipt, PoolUser
 from app.unified import service
 from app.unified.models import (
+    UnifiedCompanyLink,
     UnifiedDocument,
     UnifiedEvent,
     UnifiedItem,
@@ -37,7 +38,8 @@ def test_postgres_canonical_move_and_unique_identity():
     tables = [Company.__table__, User.__table__, Receipt.__table__, ReceiptItem.__table__,
               PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
               ReceiptIdentityLock.__table__, UnifiedDocument.__table__, UnifiedItem.__table__,
-              UnifiedOwnership.__table__, UnifiedOrigin.__table__, UnifiedEvent.__table__]
+              UnifiedOwnership.__table__, UnifiedOrigin.__table__, UnifiedEvent.__table__,
+              UnifiedCompanyLink.__table__]   # v1.70.85: перемещение пишет связи компаний
     try:
         with engine.begin() as conn:
             conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
@@ -108,7 +110,8 @@ def test_postgres_reconcile_and_visibility_sql():
     tables = [Company.__table__, User.__table__, Receipt.__table__, ReceiptItem.__table__,
               PoolUser.__table__, PoolReceipt.__table__, PoolItem.__table__,
               ReceiptIdentityLock.__table__, UnifiedDocument.__table__, UnifiedItem.__table__,
-              UnifiedOwnership.__table__, UnifiedOrigin.__table__, UnifiedEvent.__table__]
+              UnifiedOwnership.__table__, UnifiedOrigin.__table__, UnifiedEvent.__table__,
+              UnifiedCompanyLink.__table__]   # v1.70.85: перемещение пишет связи компаний
 
     def receipt(db, company, n, total=10.0):
         row = Receipt(fn="8" + uuid4().hex[:15], fd=str(n), fp=str(1000 + n), qr_data="qr",

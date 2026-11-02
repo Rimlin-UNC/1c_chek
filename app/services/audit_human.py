@@ -98,6 +98,12 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "receipts_moved":
         return "чеки перемещены в другую компанию", \
             f"чеков: {d.get('count', 0)} → „{d.get('to_company', '—')}“"
+    if action == "unified_claim_transfer":             # v1.70.85, только администратор
+        return "чек передан компании по заявке", ""
+    if action == "unified_claim_decline":
+        return "заявка компании на чек отклонена", ""
+    if action == "unified_claim_void":
+        return "заявка компании на чек не учитывается", ""
     if action == "receipts_transferred":
         return "чеки переданы другому сотруднику", \
             f"чеков: {d.get('count', 0)} (были у „{d.get('from', '—')}“)"

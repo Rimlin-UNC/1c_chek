@@ -223,7 +223,10 @@ class TestScreenIsWired:
         assert re.search(r'<a href="#/conflicts" data-view="conflicts" class="nav-item admin-only hidden">', html)
         assert 'id="nav-conflicts-badge"' in html
         app = APP_JS.read_text(encoding="utf-8")
-        assert "import { setConflictsBadge, viewUnifiedReview } from './unified_review.js';" in app
+        # v1.70.85: в том же импорте — badgeCount (значок считает споры и заявки)
+        imported = re.search(r"import \{([^}]*)\} from './unified_review\.js';", app)
+        assert imported and {"setConflictsBadge", "viewUnifiedReview"} <= {
+            name.strip() for name in imported.group(1).split(",")}
         assert "conflicts: viewUnifiedReview," in app
         assert "conflicts" in rbac.space_views("admin")
         for role in ("accountant", "manager", "user", "donor"):

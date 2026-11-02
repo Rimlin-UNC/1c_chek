@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, aliased, lazyload
 from ..models import Company, Receipt, ReceiptItem, User, uid
 from ..pool.models import PoolItem, PoolReceipt
 from ..services.receipt_identity import lock_identities, lock_identity
+from . import links
 from .models import (
     REVIEW_AMOUNT,
     REVIEW_BLOCKING,
@@ -553,6 +554,9 @@ def move_document(db: Session, document_id: str, target_company_id: str, actor: 
     _add_event(db, doc, "move", actor, from_company=old, to_company=target.id,
                idempotency_key=idempotency_key,
                details={"resolved_ownership": bool(resolve_ownership)})
+    # «Единая база» (T-34): прежний владелец — в список компаний чека,
+    # заявка компании-получателя исполнена.
+    links.after_move(db, [(doc.id, old)], target.id, actor.id, _now())
     db.flush()
     return doc
 
@@ -762,12 +766,14 @@ def move_documents(db: Session, document_ids: list[str], target_company_id: str,
                      .filter(PoolReceipt.id.in_(chunk)))
     now = _now()
     moved: list[str] = []
+    previous: dict[str, str | None] = {}
     events: list[dict] = []
     for i in pending:
         doc, own = docs[i], owners[i]
         old = own.company_id
         if old == target.id:
             continue
+        previous[i] = old
         for origin in origins.get(i, []):
             if origin.source_kind == REGISTRY:
                 receipt = registries.get(origin.source_id)
@@ -794,6 +800,7 @@ def move_documents(db: Session, document_ids: list[str], target_company_id: str,
         moved.append(i)
     db.flush()
     _insert_rows(db, UnifiedEvent, events)
+    links.after_move(db, [(i, previous[i]) for i in moved], target.id, actor.id, now)
     return moved
 
 
@@ -861,6 +868,9 @@ def resolve_ownership(db: Session, document_id: str, company_id: str | None, act
     own.assigned_at = _now() if company_id else None
     own.assigned_by = actor.id if company_id else ""
     registries, pools = _legacy_projections(db, doc)
+    # Компании с копией чека до решения: проигравшие получат заявку «отклонена».
+    contenders = ({r.company_id for r in registries if r.company_id}
+                  | {p.assigned_company_id for p in pools if p.assigned_company_id})
     for receipt in registries:
         receipt.company_id = company_id
         receipt.exported = False
@@ -873,6 +883,7 @@ def resolve_ownership(db: Session, document_id: str, company_id: str | None, act
     doc.version += 1
     _add_event(db, doc, "resolve_ownership", actor, from_company=old, to_company=company_id,
                details={"reason": reason[:500]})
+    links.after_resolve(db, doc.id, contenders, company_id, actor.id, _now())
     db.flush()
     return doc
 
@@ -889,6 +900,7 @@ def retarget_company(db: Session, from_company_id: str, to_company_id: str | Non
             .order_by(UnifiedDocument.fn, UnifiedDocument.fd,
                       UnifiedDocument.fp, UnifiedDocument.id).all())
     moved = deleted = 0
+    moved_ids: list[str] = []
     for doc in docs:
         _lock_values(db, doc.fn, doc.fd, doc.fp)
         doc = (db.query(UnifiedDocument).populate_existing()
@@ -927,7 +939,13 @@ def retarget_company(db: Session, from_company_id: str, to_company_id: str | Non
             _add_event(db, doc, "move", actor, from_company=from_company_id,
                        to_company=to_company_id)
             moved += 1
+            moved_ids.append(doc.id)
         db.flush()
+    # «Единая база» (T-34): компания удаляется — её заявки больше не учитываются;
+    # чеки переехали к получателю — его заявки на них исполнены.
+    links.close_company(db, from_company_id, _now())
+    links.satisfy_claims(db, moved_ids, to_company_id, actor.id, _now())
+    db.flush()
     return {"moved": moved, "deleted": deleted}
 
 
@@ -1031,7 +1049,8 @@ def stats(db: Session) -> dict:
                                    UnifiedDocument.review_flags.op("&")(REVIEW_OWNERSHIP) != 0).scalar() or 0)
     origins = db.query(func.count(UnifiedOrigin.id)).scalar() or 0
     return {"documents": total, "conflicts": conflicts,
-            "ownership_conflicts": ownership_conflicts, "origins": origins}
+            "ownership_conflicts": ownership_conflicts, "origins": origins,
+            "claims_open": links.open_claims_count(db)}
 
 
 def visible_users(db: Session, viewer: User, user_ids) -> set[str]:
@@ -1143,6 +1162,10 @@ def _viewer_events(events: list[UnifiedEvent], viewer: User, colleagues: set[str
 
     result = []
     for e in events:
+        if e.event_type in links.ADMIN_ONLY_EVENTS:
+            # решение по чужой заявке раскрыло бы, что чек пыталась учесть
+            # другая организация (T-34, Q-22)
+            continue
         details = json.loads(e.details or "{}")
         safe = {k: v for k, v in details.items() if k in VIEWER_DETAIL_KEYS}
         if e.event_type == "reconcile" and details.get("reason") in VIEWER_REASON_CODES:

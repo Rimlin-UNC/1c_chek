@@ -26,6 +26,11 @@
    Альфу; 1000 старых чеков туда и обратно — с замером времени.
 6. Перенос архива и разбор спора — на копии базы; старая версия открывает
    копию после разбора и основную базу после пакетного переноса (откат).
+7. Заявки компаний (с 1.70.85, T-34): чужой дубликат — «Заявка передана
+   администратору», администратор видит число организаций и список, решает
+   «отклонить» и «передать»; сотрудникам — ни списка, ни числа. Отказы /scan
+   старой версии из журнала аудита попадают в заявки задним числом (на копии).
+   Старая версия открывает базу с заявками, повторное обновление их сохраняет.
 
 Ни одна фаза не трогает рабочую базу: всё живёт во временном каталоге.
 Код возврата 0 — только если все проверки прошли; отчёт — JSON в stdout.
@@ -167,6 +172,12 @@ pools_free = [pool(i, None, 70.0 + i) for i in range(4, 6)]
 r0 = regs_a[0]
 overlap = pool(6, beta, r0.total_sum + 5, triple=(r0.fn, r0.fd, r0.fp))
 db.commit()
+# Отказ по чужому дубликату так, как его пишет /scan старой версии: два раза
+# от бухгалтера Беты и раз от сотрудника Альфы (своя компания — не заявка).
+from app.services.audit import log_action
+r4 = regs_a[4]
+for who in (acc_b, acc_b, user_a):
+    log_action(who, "receipt_duplicate", "receipt", r4.id, {"fn": r4.fn, "fd": r4.fd})
 emit({"version": app_version(), "fingerprint": fingerprint(),
       "ids": {"regs_a": [r.id for r in regs_a], "regs_b": [r.id for r in regs_b], "blank": blank.id,
               "reg_g": reg_g.id, "pools_a": [p.id for p in pools_a],
@@ -218,6 +229,11 @@ with TestClient(app) as c:
     second = c.post("/api/v1/receipts/scan", headers=H["acc_b"], json={"qr_data": code, "source": "web"})
     res["scan"] = {"new": first.status_code, "new_id": (first.json().get("receipt") or {}).get("id"),
                    "foreign": second.status_code, "foreign_body": short(second)}
+    claims = c.get("/api/v1/unified/claims", headers=H["admin"]).json()
+    res["claims"] = {"total": claims.get("total"),
+                     "companies": sorted(i["company_id"] for i in claims.get("items", [])),
+                     "sources": sorted({i["source"] for i in claims.get("items", [])}),
+                     "staff": c.get("/api/v1/unified/claims", headers=H["acc_b"]).status_code}
     res["unified_stats"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
     res["about"] = c.get("/api/v1/about").json().get("version")
 from app.unified import backfill
@@ -317,6 +333,14 @@ with TestClient(app) as c:
     twin = ids["regs_a"][0]
     res["twin"] = {"alpha": c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code,
                    "admin": c.get(f"/api/v1/receipts/{twin}", headers=H["admin"]).status_code}
+    # v1.70.85: отказы /scan старой версии из журнала аудита — заявка Беты
+    from app.unified import service
+    with SessionLocal() as db:
+        r4_doc = service.document_for_source(db, service.REGISTRY, ids["regs_a"][4]).id
+    r4 = c.get(f"/api/v1/unified/documents/{r4_doc}/companies", headers=H["admin"]).json()
+    res["history_claim"] = {"count": r4.get("count"), "claimants": [
+        (x["company_id"] == ids["beta"], x["status"], x["source"], x["attempts"])
+        for x in r4.get("companies", []) if x["role"] == "claimant"]}
     # v1.70.83: спор о владельце разбирается на экране «Разбор конфликтов» (#9):
     # список с фильтром, карточка с кандидатами, решение в пользу компании реестра.
     listed = c.get("/api/v1/unified/documents", headers=H["admin"],
@@ -333,6 +357,10 @@ with TestClient(app) as c:
         review["resolve"] = resolved.status_code
         review["alpha_after"] = c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code
         review["stats_after"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
+        loser = c.get(f"/api/v1/unified/documents/{doc_id}/companies", headers=H["admin"]).json()
+        review["companies_after"] = {"count": loser.get("count"), "claimants": [
+            (x["company_id"] == ids["beta"], x["status"], x["source"])
+            for x in loser.get("companies", []) if x["role"] == "claimant"]}
     res["review"] = review
 emit(res)
 '''
@@ -447,6 +475,109 @@ with TestClient(app) as c:
 emit(res)
 '''
 
+# v1.70.85: заявки компаний на чужие чеки (T-34) на основной базе — после
+# пакетных переносов; затем откат на старую версию и повторное обновление.
+CLAIMS = COMMON + r'''
+from app.main import app
+from app.database import SessionLocal, init_db
+init_db()
+from fastapi.testclient import TestClient
+from app.models import Receipt
+from app.unified import service
+
+ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
+alpha_ids, upgrade_scan = json.loads(os.environ["REH_BULK"]), os.environ["REH_SCAN"]
+res = {"version": app_version()}
+
+def doc_id(rid):
+    with SessionLocal() as db:
+        return service.document_for_source(db, service.REGISTRY, rid).id
+
+def code_of(rid):
+    with SessionLocal() as db:
+        r = db.get(Receipt, rid)
+        return f"t={r.receipt_date:%Y%m%dT%H%M}&s={r.total_sum:.2f}&fn={r.fn}&i={r.fd}&fp={r.fp}&n=1"
+
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("admin", "acc_a", "acc_b")}
+    companies = lambda rid: c.get(f"/api/v1/unified/documents/{doc_id(rid)}/companies",
+                                  headers=H["admin"]).json()
+    res["totals_before"] = {u: total(c, h) for u, h in H.items()}
+    res["open_before"] = c.get("/api/v1/unified/claims", headers=H["admin"]).json().get("total")
+    first = companies(upgrade_scan)
+    res["upgrade_scan"] = {"count": first.get("count"),
+                           "roles": sorted(x["role"] for x in first.get("companies", []))}
+    # Не из первых трёх чеков Альфы — их потом переносит старая версия.
+    give, keep = alpha_ids[-1], alpha_ids[-2]
+    res["replies"] = [short(c.post("/api/v1/receipts/scan", headers=H["acc_b"],
+                                   json={"qr_data": code_of(rid), "source": "web"})) for rid in (give, keep)]
+    listed = c.get("/api/v1/unified/claims", headers=H["admin"], params={"per_page": 100}).json()
+    mine = {i["document_id"]: i for i in listed.get("items", [])}
+    res["listed"] = listed.get("total")
+    res["staff"] = sorted({c.get("/api/v1/unified/claims", headers=H[u]).status_code for u in ("acc_a", "acc_b")}
+                          | {c.get(f"/api/v1/unified/documents/{doc_id(give)}/companies",
+                                   headers=H["acc_a"]).status_code})
+    res["count_open"] = companies(give).get("count")
+
+    def decide(rid, action, reason):
+        item = mine.get(doc_id(rid)) or {}
+        return c.post(f"/api/v1/unified/links/{item.get('link_id')}/{action}", headers=H["admin"],
+                      json={"expected_version": item.get("version"), "reason": reason}).status_code
+
+    res["decline"] = decide(keep, "decline", "Репетиция: чек оплачен Альфой")
+    res["transfer"] = decide(give, "transfer", "Репетиция: чек оплачен Бетой")
+    res["count_declined"] = companies(keep).get("count")
+    after = companies(give)
+    res["after_transfer"] = {"count": after.get("count"), "roles": sorted(
+        (x["role"], x["company_id"] == ids["alpha"]) for x in after.get("companies", []))}
+    with SessionLocal() as db:
+        res["give_in_beta"] = db.get(Receipt, give).company_id == ids["beta"]
+    staff_cards = [c.get(f"/api/v1/unified/documents/{doc_id(give)}", headers=H["acc_b"]).json(),
+                   c.get(f"/api/v1/unified/documents/{doc_id(keep)}", headers=H["acc_a"]).json()]
+    res["staff_events"] = sorted({e["type"] for card in staff_cards for e in card.get("events", [])})
+    feed = c.get("/api/v1/dashboard/recent", headers=H["acc_a"], params={"limit": 100}).json()
+    res["feed_claims"] = sum(1 for i in feed if str(i.get("action", "")).startswith("unified_claim_"))
+    res["stats"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
+    res["totals_final"] = {u: total(c, h) for u, h in H.items()}
+res["give"], res["keep"] = give, keep
+emit(res)
+'''
+
+# Повторное обновление после отката: заявки и число организаций на месте,
+# новая заявка пишется как обычно.
+CLAIMS_AGAIN = COMMON + r'''
+from app.main import app
+from app.database import SessionLocal, init_db
+init_db()
+from fastapi.testclient import TestClient
+from app.models import Receipt
+from app.unified import service
+
+ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
+cl = json.loads(os.environ["REH_CLAIMS"])
+res = {"version": app_version()}
+
+def doc_id(rid):
+    with SessionLocal() as db:
+        return service.document_for_source(db, service.REGISTRY, rid).id
+
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("admin", "acc_a", "acc_b")}
+    res["totals"] = {u: total(c, h) for u, h in H.items()}
+    res["declined"] = c.get("/api/v1/unified/claims", headers=H["admin"],
+                            params={"status": "declined"}).json().get("total")
+    res["counts"] = [c.get(f"/api/v1/unified/documents/{doc_id(rid)}/companies",
+                           headers=H["admin"]).json().get("count") for rid in (cl["give"], cl["keep"])]
+    with SessionLocal() as db:
+        r = db.get(Receipt, cl["give"])
+        code = f"t={r.receipt_date:%Y%m%dT%H%M}&s={r.total_sum:.2f}&fn={r.fn}&i={r.fd}&fp={r.fp}&n=1"
+    res["again_reply"] = short(c.post("/api/v1/receipts/scan", headers=H["acc_a"],
+                                      json={"qr_data": code, "source": "web"}))
+    res["open_after"] = c.get("/api/v1/unified/claims", headers=H["admin"]).json().get("total")
+    res["stats"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
+emit(res)
+'''
+
 # Откат после пакетного переноса: старая версия открывает основную базу,
 # видит перенесённые чеки и сама переносит их своим прежним циклом.
 OLD_AFTER_BULK = COMMON + r'''
@@ -463,6 +594,9 @@ with TestClient(app) as c:
            "cards": sorted({c.get(f"/api/v1/receipts/{rid}", headers=H["acc_a"]).status_code for rid in moved})}
     res["move"] = c.post("/api/v1/receipts/move", headers=H["admin"],
                          json={"receipt_ids": moved[:3], "company_id": ids["beta"]}).status_code
+    given = os.environ.get("REH_GIVEN")         # v1.70.85: чек, переданный Бете по заявке
+    if given:
+        res["given_beta"] = c.get(f"/api/v1/receipts/{given}", headers=H["acc_b"]).status_code
     res["totals_after"] = {u: total(c, h) for u, h in H.items()}
 emit(res)
 '''
@@ -516,7 +650,8 @@ def main() -> int:
         out["seed"] = seed
         up = run_phase("обновление", UPGRADE, new_dir, env)
         out["upgrade"] = up
-        check(checks, len(up["unified_tables"]) == 5, "созданы 5 таблиц unified_*")
+        check(checks, len(up["unified_tables"]) == 6,
+              "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},
@@ -529,6 +664,12 @@ def main() -> int:
         check(checks, (up["scan"]["foreign_body"] or {}).get("duplicate") is True
               and "другой организации" in str(up["scan"]["foreign_body"]), "чужой дубликат отклонён без раскрытия данных")
         check(checks, up["unified_stats"].get("conflicts") == 0, "единый реестр: ложных конфликтов нет")
+        check(checks, "Заявка передана администратору" in str(up["scan"]["foreign_body"])
+              and up["claims"] == {"total": 1, "companies": [seed["ids"]["beta"]], "sources": ["scan_qr"],
+                                   "staff": 403}
+              and up["unified_stats"].get("claims_open") == 1,
+              "чужой дубликат: «Заявка передана администратору», заявка Беты у администратора, "
+              "бухгалтеру Беты список заявок недоступен")
         check(checks, up["about"] == up["version"], "версия в /api/v1/about")
         back = run_phase("откат на старую версию", ROLLBACK, old_dir, env)
         out["rollback"] = back
@@ -594,6 +735,12 @@ def main() -> int:
         pending = bf["dry_run"]["registry_pending"] + bf["dry_run"]["pool_pending"]
         check(checks, bf["run"]["registered"] == pending and bf["again"]["registered"] == 0,
               f"перенос архива на копии: {pending} источников, повторный запуск ничего не меняет")
+        dry_c, run_c, again_c = (bf[k].get("claims", {}) for k in ("dry_run", "run", "again"))
+        check(checks, (dry_c.get("audit_rows_pending"), dry_c.get("audit_claims"), dry_c.get("audit_skipped"))
+              == (3, 1, 1) and run_c.get("audit_claims") == 1 and again_c.get("audit_rows_pending") == 0
+              and bf["history_claim"] == {"count": 2, "claimants": [[True, "open", "scan_qr", 2]]},
+              "заявки задним числом: два отказа /scan старой версии — одна заявка Беты (2 попытки), "
+              "отказ своей компании пропущен, повторный запуск ничего не добавляет")
         check(checks, bf["fingerprint_after"] == bf["fingerprint_before"], "перенос архива не меняет старые таблицы")
         check(checks, bf["stats"]["ownership_conflicts"] == 1 and bf["twin"] == {"alpha": 404, "admin": 200},
               "исторический двойник (реестр Альфы + пул Беты) уходит на разбор администратору")
@@ -603,19 +750,53 @@ def main() -> int:
         check(checks, rv.get("resolve") == 200 and rv.get("alpha_after") == 200
               and rv.get("stats_after", {}).get("ownership_conflicts") == 0,
               "решение спора в пользу Альфы: чек снова виден Альфе, споров о владельце нет")
+        check(checks, rv.get("companies_after") == {"count": 2, "claimants": [[True, "declined", "archive_twin"]]},
+              "проигравшая сторона спора (Бета) — заявка «отклонена», в числе организаций 2")
         old = run_phase("откат после разбора", OLD_AFTER_REVIEW, old_dir,
                         {**env, "DATABASE_URL": f"sqlite:///{work / 'backfill-copy.db'}"})
         out["rollback_after_review"] = old
         check(checks, old["twin_alpha"] == 200 and all(isinstance(v, int) for v in old["totals"].values()),
               f"откат на v{old['version']} после разбора: вход и списки работают, чек у Альфы")
+        # v1.70.85: заявки компаний на основной базе (T-34)
+        cl = run_phase("заявки компаний", CLAIMS, new_dir,
+                       {**env, "REH_BULK": json.dumps(bulk["alpha"]), "REH_SCAN": up["scan"]["new_id"]})
+        out["claims"] = cl
+        check(checks, cl["open_before"] == 0 and cl["upgrade_scan"] == {"count": 1, "roles": ["former_owner", "owner"]},
+              "заявка из обновления исполнена пакетным переносом в Бету; после возврата Бета — "
+              "прежний владелец, в числе организаций 1")
+        check(checks, all(r.get("duplicate") is True and "Заявка передана администратору" in str(r)
+                          for r in cl["replies"]) and cl["listed"] == 2 and cl["staff"] == [403]
+              and cl["count_open"] == 2,
+              "две заявки Беты: администратор видит список и число 2, бухгалтерам Альфы и Беты — 403")
+        check(checks, cl["decline"] == 200 and cl["count_declined"] == 2 and cl["transfer"] == 200
+              and cl["give_in_beta"] and cl["after_transfer"] == {
+                  "count": 1, "roles": [["former_owner", True], ["owner", False]]},
+              "«отклонить» оставляет число 2; «передать» переносит чек в Бету, Альфа — прежний владелец")
+        check(checks, not any(t.startswith("claim_") for t in cl["staff_events"]) and cl["feed_claims"] == 0
+              and cl["stats"].get("claims_open") == 0 and cl["stats"].get("conflicts") == 0
+              and cl["totals_final"]["acc_a"] == cl["totals_before"]["acc_a"] - 1
+              and cl["totals_final"]["acc_b"] == cl["totals_before"]["acc_b"] + 1,
+              "решения по заявкам не видны сотрудникам (журнал карточки, лента дашборда); "
+              "заявок и конфликтов не осталось")
         # v1.70.84: откат после пакетного переноса — основная база, старая версия
-        oldb = run_phase("откат после пакетного переноса", OLD_AFTER_BULK, old_dir,
-                         {**env, "REH_BULK": json.dumps(bulk["alpha"])})
+        # (с v1.70.85 — и после заявок: таблица связей старой версии не мешает)
+        oldb = run_phase("откат после пакетного переноса и заявок", OLD_AFTER_BULK, old_dir,
+                         {**env, "REH_BULK": json.dumps([r for r in bulk["alpha"] if r != cl["give"]]),
+                          "REH_GIVEN": cl["give"]})
         out["rollback_after_bulk"] = oldb
-        check(checks, oldb["totals"] == bulk["totals_final"] and oldb["cards"] == [200]
+        check(checks, oldb["totals"] == cl["totals_final"] and oldb["cards"] == [200]
+              and oldb.get("given_beta") == 200
               and oldb["move"] == 200 and oldb["totals_after"]["acc_b"] == oldb["totals"]["acc_b"] + 3,
-              f"откат на v{oldb['version']} после пакетного переноса: списки и карточки те же, "
-              "старая версия сама переносит чеки")
+              f"откат на v{oldb['version']} после пакетного переноса и заявок: списки и карточки те же, "
+              "переданный по заявке чек виден Бете, старая версия сама переносит чеки")
+        ca = run_phase("повторное обновление после заявок", CLAIMS_AGAIN, new_dir,
+                       {**env, "REH_CLAIMS": json.dumps({"give": cl["give"], "keep": cl["keep"]})})
+        out["claims_again"] = ca
+        check(checks, ca["totals"] == oldb["totals_after"] and ca["declined"] == 1 and ca["counts"] == [1, 2]
+              and "Заявка передана администратору" in str(ca["again_reply"]) and ca["open_after"] == 1
+              and ca["stats"].get("conflicts") == 0,
+              "повторное обновление после отката: заявки и число организаций на месте, "
+              "новая заявка (Альфа хочет вернуть переданный чек) пишется как обычно")
     except Exception as exc:  # noqa: BLE001 — отчёт важнее трассировки
         check(checks, False, f"сбой: {exc}")
     finally:
