@@ -99,6 +99,66 @@ def refresh_receipt(db: Session, receipt: Receipt) -> list[str]:
     return flags
 
 
+def refresh_receipts(db: Session, receipts) -> int:
+    """Пакетный refresh_receipt (перенос чеков, T-33): те же флаги, что при
+    вызове refresh_receipt для каждого чека, но сумма месяца считается одним
+    запросом на компанию, а не отдельным запросом на каждый чек.
+
+    Сумма месяца — как во flags_for: чек плюс другие чеки той же компании и
+    того же сотрудника (assignee_lc) за календарный месяц, приход, не «failed».
+    «Другие» = итог группы минус сам чек; порядок сложения на результат не
+    влияет: _flags сравнивает с лимитом после округления до копеек.
+    Возвращает число чеков, у которых пометка изменилась. Commit — за вызывающим.
+    """
+    receipts = list(receipts)
+    eligible: dict[str, list[Receipt]] = defaultdict(list)
+    for r in receipts:
+        comp = db.get(Company, r.company_id) if r.company_id else None
+        if (comp is not None and comp.limit_per_month and (r.assignee or "").strip()
+                and r.operation == 1 and r.status != "failed" and r.receipt_date is not None
+                and _month_window(r.receipt_date)):
+            eligible[comp.id].append(r)
+    # {(компания, assignee_lc, (год, месяц)): {id чека: сумма к учёту}} — по базе
+    groups: dict[tuple, dict[str, float]] = defaultdict(dict)
+    for company_id, rows in eligible.items():
+        windows = [_month_window(r.receipt_date) for r in rows]
+        start = min(w[0] for w in windows)
+        end = max(w[1] for w in windows)
+        names = sorted({r.assignee_lc or "" for r in rows})
+        for i in range(0, len(names), 500):
+            found = (db.query(Receipt.id, Receipt.assignee_lc, Receipt.receipt_date,
+                              Receipt.total_sum, Receipt.personal_sum)
+                     .filter(Receipt.company_id == company_id,
+                             Receipt.assignee_lc.in_(names[i:i + 500]),
+                             Receipt.receipt_date >= start,
+                             Receipt.receipt_date < end,
+                             Receipt.operation == 1,
+                             Receipt.status != "failed"))
+            for rid, name, date, total, personal in found:
+                key = (company_id, name, (date.year, date.month))
+                groups[key][rid] = accountable_of(total, personal)
+    totals = {key: sum(values.values()) for key, values in groups.items()}
+    eligible_ids = {r.id for rows in eligible.values() for r in rows}
+    changed = 0
+    for r in receipts:
+        comp = db.get(Company, r.company_id) if r.company_id else None
+        if comp is None:
+            flags: list[str] = []
+        else:
+            month_sum = None
+            if r.id in eligible_ids:
+                window = _month_window(r.receipt_date)
+                key = (comp.id, r.assignee_lc or "", (window[0].year, window[0].month))
+                others = totals.get(key, 0.0) - groups.get(key, {}).get(r.id, 0.0)
+                month_sum = accountable_of(r.total_sum, r.personal_sum) + others
+            flags = _flags(comp, r, month_sum)
+        new = ",".join(flags)
+        if (r.policy_flags or "") != new:
+            r.policy_flags = new
+            changed += 1
+    return changed
+
+
 def refresh_company(db: Session, company_id: str) -> int:
     """Массовый пересчёт политики по всей компании (после смены правил).
 

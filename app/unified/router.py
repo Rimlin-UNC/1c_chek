@@ -59,8 +59,14 @@ def documents(*, company_id: str = Query("", max_length=36),
     total = query.count()
     rows = (query.order_by(UnifiedDocument.receipt_date.desc(), UnifiedDocument.id)
             .offset((page - 1) * per_page).limit(per_page).all())
+    colleagues = None
+    if user.role != "admin":
+        # Авторы страницы: свои видны, из чужих компаний — скрыты (ADR-20).
+        colleagues = service.visible_users(
+            db, user, [doc.ownership.created_by for doc in rows if doc.ownership])
     return {"total": total, "page": page, "per_page": per_page,
-            "items": [service.document_payload(db, doc) for doc in rows]}
+            "items": [service.document_payload(db, doc, viewer=user, colleagues=colleagues)
+                      for doc in rows]}
 
 
 @router.get("/documents/{document_id}", summary="Единый реестр: карточка и журнал")
@@ -70,7 +76,7 @@ def document(document_id: str,
     doc = db.get(UnifiedDocument, document_id)
     if doc is None or not service.can_view_document(db, user, doc):
         raise HTTPException(404, "Чек не найден")
-    return service.document_payload(db, doc, with_events=True)
+    return service.document_payload(db, doc, with_events=True, viewer=user)
 
 
 @router.get("/documents/{document_id}/review",

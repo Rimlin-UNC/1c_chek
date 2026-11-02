@@ -41,7 +41,7 @@ from fastapi import (
 from fastapi.responses import Response
 from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, lazyload
 
 from ..auth import (
     ROLE_ACCOUNTANT,
@@ -1196,35 +1196,36 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
     if not comp.is_active:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Компания заархивирована — перемещение недоступно")
-    rows = db.query(Receipt).filter(Receipt.id.in_(body.receipt_ids)).all()
+    # Позиции чеков переносу не нужны: без заранее загруженных позиций
+    # (lazy="selectin") выборка 1000 чеков не тянет тысячи строк позиций.
+    rows = (db.query(Receipt).options(lazyload(Receipt.items))
+            .filter(Receipt.id.in_(body.receipt_ids)).all())
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
     from ..unified import service as unified
-    moved_ids, moved, same = [], 0, 0
-    for r in sorted(rows, key=lambda x: (x.fn, x.fd, x.fp, x.id)):
-        doc = unified.document_for_source(db, unified.REGISTRY, r.id)
-        if doc is None:
-            doc = unified.register_source(db, unified.REGISTRY, r, user, strict=True)
-        if doc.ownership and doc.ownership.company_id == comp.id:
-            same += 1
-            continue
-        unified.move_document(db, doc.id, comp.id, user)
-        if body.assignee is not None:
-            r.assignee = body.assignee.strip()[:200]
-            r.assignee_lc = r.assignee.casefold()[:200]   # v1.25.1
-        moved_ids.append(r.id)
-        moved += 1
+    # Пакетный перенос (T-33): тот же результат, что прежний цикл по чекам,
+    # но тройки блокируются одной вставкой, а записи выбираются и
+    # обновляются пачками — 1000 чеков за доли секунды вместо ~5 с.
+    moved_rows, same = unified.move_registry_receipts(db, rows, comp.id, user)
+    moved_ids = [r.id for r in moved_rows]
+    moved = len(moved_ids)
+    if body.assignee is not None:
+        assignee = body.assignee.strip()[:200]
+        for r in moved_rows:
+            r.assignee = assignee
+            r.assignee_lc = assignee.casefold()[:200]   # v1.25.1
+    # Сессия без autoflush: новое подотчётное лицо должно попасть в базу до
+    # подсчёта месячных сумм (раньше его не видел расчёт для последнего чека).
+    db.flush()
     # v1.62.0: компания/сотрудник изменились — пересчёт политики
     try:
         from ..services import policy as _pol
-        for r in rows:
-            _pol.refresh_receipt(db, r)
+        _pol.refresh_receipts(db, rows)
     except Exception:                              # noqa: BLE001
         pass
     try:                                           # v1.63.0: правила компании
         from ..services import merchant_rules as _mr  # назначения
-        for r in rows:
-            _mr.apply_rules(db, r)
+        _mr.apply_rules_many(db, rows)
     except Exception:                              # noqa: BLE001
         pass
     db.commit()

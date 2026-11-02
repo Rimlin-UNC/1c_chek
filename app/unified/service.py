@@ -8,16 +8,18 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import insert, or_, select
+from sqlalchemy.orm import Session, aliased, lazyload
 
-from ..models import Company, Receipt, ReceiptItem, User
+from ..models import Company, Receipt, ReceiptItem, User, uid
 from ..pool.models import PoolItem, PoolReceipt
-from ..services.receipt_identity import lock_identity
+from ..services.receipt_identity import lock_identities, lock_identity
 from .models import (
     REVIEW_AMOUNT,
     REVIEW_BLOCKING,
@@ -97,25 +99,29 @@ def _item_core(item: Any) -> tuple:
     )
 
 
+def _registry_item(pos: int, it: ReceiptItem) -> dict:
+    return {
+        "position": pos,
+        "name": it.name or "",
+        "quantity": float(it.quantity or 0.0),
+        "price": float(it.price or 0.0),
+        "total": float(it.total or 0.0),
+        "vat_rate": it.vat_rate or "none",
+        "vat_sum": float(it.vat_sum or 0.0),
+        "product_type": it.product_type,
+        "payment_type": it.payment_type,
+        "unit": it.unit or "",
+        "product_group": it.product_group or "",
+        "industry": it.industry or "",
+        "extra_json": it.extra_json or "",
+    }
+
+
 def _items(db: Session, row: Any, kind: str) -> list[dict]:
     if kind == REGISTRY:
         rows = (db.query(ReceiptItem).filter(ReceiptItem.receipt_id == row.id)
                 .order_by(ReceiptItem.position, ReceiptItem.id).all())
-        return [{
-            "position": pos,
-            "name": it.name or "",
-            "quantity": float(it.quantity or 0.0),
-            "price": float(it.price or 0.0),
-            "total": float(it.total or 0.0),
-            "vat_rate": it.vat_rate or "none",
-            "vat_sum": float(it.vat_sum or 0.0),
-            "product_type": it.product_type,
-            "payment_type": it.payment_type,
-            "unit": it.unit or "",
-            "product_group": it.product_group or "",
-            "industry": it.industry or "",
-            "extra_json": it.extra_json or "",
-        } for pos, it in enumerate(rows)]
+        return [_registry_item(pos, it) for pos, it in enumerate(rows)]
     rows = (db.query(PoolItem).filter(PoolItem.receipt_id == row.id)
             .order_by(PoolItem.id).all())
     return [{
@@ -551,6 +557,265 @@ def move_document(db: Session, document_id: str, target_company_id: str, actor: 
     return doc
 
 
+# --------------------------------------------------------------------------
+#  Пакетный перенос (T-33, ADR-20). Результат — как у прежнего цикла по чекам
+#  document_for_source → register_source(strict=True) → move_document, но
+#  тройки блокируются одной вставкой, записи выбираются и обновляются пачками,
+#  а права и компания назначения проверяются один раз.
+# --------------------------------------------------------------------------
+CHUNK = 500
+
+
+def _chunks(values: list, size: int = CHUNK):
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
+
+
+def _lock_many(db: Session, triples) -> int:
+    """Пакетный аналог _lock_values: неполные тройки не блокируются.
+
+    Полнота — то же правило, что у identity_key (ни одно значение не пустое
+    после strip), но без лишнего хеширования: ключ считает lock_identities.
+    """
+    complete = []
+    for fn, fd, fp in triples:
+        values = (fn or "", fd or "", fp or "")
+        if all(v.strip() for v in values):
+            complete.append(values)
+    return lock_identities(db, complete)
+
+
+def _bulk_documents(db: Session):
+    """Выборка единых записей для пакетных операций: позиции и источники не
+    подгружаются заранее (у связей lazy="selectin"), а читаются по требованию."""
+    return db.query(UnifiedDocument).options(lazyload(UnifiedDocument.items),
+                                             lazyload(UnifiedDocument.origins))
+
+
+def _insert_rows(db: Session, model, rows: list[dict]) -> None:
+    """Вставка новых строк пачками без отслеживания объектов в сессии."""
+    for chunk in _chunks(rows):
+        db.execute(insert(model), chunk)
+
+
+def _event_row(document_id: str, event_type: str, actor: User | None, when: datetime, *,
+               from_company: str | None = None, to_company: str | None = None,
+               details: dict | None = None) -> dict:
+    """Строка unified_events с теми же полями, что пишет _add_event."""
+    return {"id": uid(), "document_id": document_id, "event_type": event_type,
+            "actor_id": actor.id if actor else None,
+            "from_company_id": from_company, "to_company_id": to_company,
+            "idempotency_key": None,
+            "details": json.dumps(details or {}, ensure_ascii=False),
+            "created_at": when}
+
+
+def _registry_documents(db: Session, receipt_ids: list[str]) -> dict[str, str]:
+    """{id чека реестра: id единой записи} одним запросом на пачку."""
+    found: dict[str, str] = {}
+    for chunk in _chunks(receipt_ids):
+        found.update(db.query(UnifiedOrigin.source_id, UnifiedOrigin.document_id)
+                     .filter(UnifiedOrigin.source_kind == REGISTRY,
+                             UnifiedOrigin.source_id.in_(chunk)).all())
+    return found
+
+
+def _registry_items_many(db: Session, receipt_ids: list[str]) -> dict[str, list[dict]]:
+    """Позиции нескольких чеков реестра — те же словари и порядок, что у _items."""
+    grouped: dict[str, list[ReceiptItem]] = defaultdict(list)
+    for chunk in _chunks(receipt_ids):
+        for it in (db.query(ReceiptItem).filter(ReceiptItem.receipt_id.in_(chunk))
+                   .order_by(ReceiptItem.receipt_id, ReceiptItem.position, ReceiptItem.id)):
+            grouped[it.receipt_id].append(it)
+    return {rid: [_registry_item(pos, it) for pos, it in enumerate(rows)]
+            for rid, rows in grouped.items()}
+
+
+def _register_registry_many(db: Session, receipts: list[Receipt],
+                            actor: User | None) -> dict[str, str]:
+    """Регистрация чеков реестра в едином слое пачкой (strict).
+
+    Быстрый путь — только полная тройка, у которой единой записи ещё нет: для
+    неё результат совпадает с register_source(strict=True) для нового
+    документа. Неполная тройка и уже существующая запись (из пула, удалённая)
+    идут прежним register_source по одному чеку — со всеми его проверками.
+    Тройки должен заранее заблокировать вызывающий (_lock_many).
+    Возвращает {id чека: id единой записи}.
+    """
+    keys = {r.id: identity_key(r.fn, r.fd, r.fp) for r in receipts}
+    existing: set[str] = set()
+    complete = [k for k in keys.values() if k]
+    for chunk in _chunks(complete):
+        existing.update(k for (k,) in db.query(UnifiedDocument.identity_key)
+                        .filter(UnifiedDocument.identity_key.in_(chunk)))
+    fresh = [r for r in receipts if keys[r.id] and keys[r.id] not in existing]
+    result: dict[str, str] = {}
+    if fresh:
+        items = _registry_items_many(db, [r.id for r in fresh])
+        now = _now()
+        docs, owners, item_rows, origins, events = [], [], [], [], []
+        for r in fresh:
+            doc_id = uid()
+            # Как register_source для нового документа: version 1 при создании
+            # и +1 за регистрацию; review_flags 0 — тройка полная; статус ФНС —
+            # тем же _merge_fns от «unknown».
+            fns = SimpleNamespace(fns_status="unknown", fns_checked_at=None, review_flags=0)
+            _merge_fns(fns, *_fns_evidence(r, REGISTRY))
+            docs.append({"id": doc_id, "identity_key": keys[r.id], **_core(r, REGISTRY),
+                         "fns_status": fns.fns_status, "fns_checked_at": fns.fns_checked_at,
+                         "review_flags": fns.review_flags, "version": 2, "deleted_at": None,
+                         "created_at": now, "updated_at": now})
+            owner = r.company_id or None
+            owners.append({"document_id": doc_id, "company_id": owner,
+                           "created_by": r.created_by or None,
+                           "assigned_at": now if owner else None,
+                           "assigned_by": (actor.id if actor else "") if owner else ""})
+            item_rows.extend({"id": uid(), "document_id": doc_id, **data} for data in items.get(r.id, []))
+            origins.append({"id": uid(), "document_id": doc_id, "source_kind": REGISTRY,
+                            "source_id": r.id, "created_at": now})
+            events.append(_event_row(doc_id, "register", actor, now, to_company=owner,
+                                     details={"source_kind": REGISTRY, "created": True}))
+            result[r.id] = doc_id
+        _insert_rows(db, UnifiedDocument, docs)
+        _insert_rows(db, UnifiedOwnership, owners)
+        _insert_rows(db, UnifiedItem, item_rows)
+        _insert_rows(db, UnifiedOrigin, origins)
+        _insert_rows(db, UnifiedEvent, events)
+    fresh_ids = {r.id for r in fresh}
+    for r in receipts:
+        if r.id not in fresh_ids:
+            result[r.id] = register_source(db, REGISTRY, r, actor, strict=True).id
+    return result
+
+
+def move_documents(db: Session, document_ids: list[str], target_company_id: str,
+                   actor: User, *, locked: bool = False) -> list[str]:
+    """Пакетная смена владельца: для каждого документа — то же, что
+    move_document без expected_version и ключа идемпотентности.
+
+    Документы, которые уже у компании назначения, пропускаются до блокировок и
+    проверки пометок — как в прежнем цикле переноса. Если хоть один документ не
+    найден, удалён или требует разбора, исключение прерывает всю пачку
+    (вызывающий откатывает транзакцию). ``locked=True`` — тройки уже
+    заблокированы вызывающим в этой транзакции. Возвращает id перенесённых.
+    """
+    ids = list(dict.fromkeys(document_ids))
+    owners: dict[str, UnifiedOwnership] = {}
+    docs: dict[str, UnifiedDocument] = {}
+
+    def load_owners(keys: list[str], fresh: bool) -> None:
+        query = db.query(UnifiedOwnership)
+        if fresh:
+            query = query.populate_existing()
+        for chunk in _chunks(keys):
+            owners.update((o.document_id, o) for o in
+                          query.filter(UnifiedOwnership.document_id.in_(chunk)))
+
+    def load_docs(keys: list[str], for_update: bool) -> None:
+        for chunk in _chunks(sorted(keys)):
+            query = _bulk_documents(db).filter(UnifiedDocument.id.in_(chunk))
+            if for_update:
+                query = (query.populate_existing().order_by(UnifiedDocument.id)
+                         .with_for_update(of=UnifiedDocument))
+            docs.update((d.id, d) for d in query)
+
+    # Тройки уже заблокированы вызывающим — достаточно одного чтения под
+    # блокировкой строк; иначе сначала блокируем, потом перечитываем.
+    load_owners(ids, fresh=locked)
+    pending = [i for i in ids if not (i in owners and owners[i].company_id == target_company_id)]
+    if not pending:
+        return []
+    load_docs(pending, for_update=locked)
+    if any(docs.get(i) is None or docs[i].deleted_at is not None for i in pending):
+        raise HTTPException(404, "Чек не найден")
+    if not locked:
+        _lock_many(db, [(docs[i].fn, docs[i].fd, docs[i].fp) for i in pending])
+        load_docs(pending, for_update=True)
+    actor = _recheck_actor(db, actor, ("admin",))
+    target = _recheck_company(db, target_company_id)
+    if any(docs[i].review_flags & REVIEW_BLOCKING for i in pending):
+        raise HTTPException(409, "Чек требует разбора перед перемещением")
+    if not locked:
+        load_owners(pending, fresh=True)
+    created = [UnifiedOwnership(document_id=i, company_id=None, created_by=None,
+                                assigned_at=None, assigned_by="") for i in pending if i not in owners]
+    if created:
+        db.add_all(created)
+        db.flush()
+        owners.update((o.document_id, o) for o in created)
+    origins: dict[str, list[UnifiedOrigin]] = defaultdict(list)
+    for chunk in _chunks(pending):
+        for origin in db.query(UnifiedOrigin).filter(UnifiedOrigin.document_id.in_(chunk)):
+            origins[origin.document_id].append(origin)
+    source_ids = {REGISTRY: [], POOL: []}
+    for group in origins.values():
+        for origin in group:
+            source_ids[REGISTRY if origin.source_kind == REGISTRY else POOL].append(origin.source_id)
+    registries: dict[str, Receipt] = {}
+    pools: dict[str, PoolReceipt] = {}
+    for chunk in _chunks(source_ids[REGISTRY]):
+        # Позиции чека переносу не нужны — не загружаем их заранее (selectin).
+        registries.update((r.id, r) for r in db.query(Receipt).options(lazyload("*"))
+                          .filter(Receipt.id.in_(chunk)))
+    for chunk in _chunks(source_ids[POOL]):
+        pools.update((p.id, p) for p in db.query(PoolReceipt).options(lazyload("*"))
+                     .filter(PoolReceipt.id.in_(chunk)))
+    now = _now()
+    moved: list[str] = []
+    events: list[dict] = []
+    for i in pending:
+        doc, own = docs[i], owners[i]
+        old = own.company_id
+        if old == target.id:
+            continue
+        for origin in origins.get(i, []):
+            if origin.source_kind == REGISTRY:
+                receipt = registries.get(origin.source_id)
+                if receipt is None:
+                    db.delete(origin)
+                    continue
+                receipt.company_id = target.id
+                receipt.exported = False
+                receipt.exported_at = None
+            else:
+                pool = pools.get(origin.source_id)
+                if pool is None:
+                    db.delete(origin)
+                    continue
+                pool.assigned_company_id = target.id
+                pool.assigned_at = now
+                pool.assigned_by = actor.id
+        own.company_id = target.id
+        own.assigned_at = now
+        own.assigned_by = actor.id
+        doc.version += 1
+        events.append(_event_row(i, "move", actor, now, from_company=old, to_company=target.id,
+                                 details={"resolved_ownership": False}))
+        moved.append(i)
+    db.flush()
+    _insert_rows(db, UnifiedEvent, events)
+    return moved
+
+
+def move_registry_receipts(db: Session, receipts: list[Receipt], target_company_id: str,
+                           actor: User) -> tuple[list[Receipt], int]:
+    """Пакетный перенос чеков реестра в другую компанию (T-33).
+
+    Возвращает перенесённые чеки (в порядке ФН, ФД, ФП, id — как прежний цикл)
+    и число чеков, которые уже были у компании назначения.
+    """
+    ordered = sorted(receipts, key=lambda r: (r.fn, r.fd, r.fp, r.id))
+    _lock_many(db, [(r.fn, r.fd, r.fp) for r in ordered])
+    doc_of = _registry_documents(db, [r.id for r in ordered])
+    missing = [r for r in ordered if r.id not in doc_of]
+    if missing:
+        doc_of.update(_register_registry_many(db, missing, actor))
+    moved_docs = set(move_documents(db, [doc_of[r.id] for r in ordered], target_company_id,
+                                    actor, locked=True))
+    moved = [r for r in ordered if doc_of[r.id] in moved_docs]
+    return moved, len(ordered) - len(moved)
+
+
 def detach_registry(db: Session, receipt: Receipt, actor: User | None = None) -> None:
     """Удаление учётной проекции не стирает пуловую историю и канонический чек."""
     doc = document_for_source(db, REGISTRY, receipt.id)
@@ -769,8 +1034,27 @@ def stats(db: Session) -> dict:
             "ownership_conflicts": ownership_conflicts, "origins": origins}
 
 
-def document_payload(db: Session, doc: UnifiedDocument, *, with_events: bool = False) -> dict:
+def visible_users(db: Session, viewer: User, user_ids) -> set[str]:
+    """Кого штатная роль видит по id: себя и сотрудников своей компании (ADR-20)."""
+    visible = {viewer.id}
+    wanted = sorted({u for u in user_ids if u and u != viewer.id})
+    if viewer.company_id and wanted:
+        for chunk in _chunks(wanted):
+            visible.update(user_id for (user_id,) in db.query(User.id).filter(
+                User.id.in_(chunk), User.company_id == viewer.company_id))
+    return visible
+
+
+def document_payload(db: Session, doc: UnifiedDocument, *, with_events: bool = False,
+                     viewer: User | None = None, colleagues: set[str] | None = None) -> dict:
+    """Карточка единой записи.
+
+    ``viewer`` не администратор — сведения о других организациях скрыты:
+    автор из чужой компании (после переноса) и журнал (см. _viewer_events).
+    ``colleagues`` — заранее найденные visible_users для страницы списка.
+    """
     own = doc.ownership
+    staff = viewer is not None and viewer.role != "admin"
     company_name = None
     if own and own.company_id:
         comp = db.get(Company, own.company_id)
@@ -806,18 +1090,76 @@ def document_payload(db: Session, doc: UnifiedDocument, *, with_events: bool = F
             "industry": it.industry,
         } for it in doc.items],
     }
+    events = []
     if with_events:
         events = (db.query(UnifiedEvent).filter(UnifiedEvent.document_id == doc.id)
                   .order_by(UnifiedEvent.created_at, UnifiedEvent.id).all())
-        payload["events"] = [{
-            "id": e.id, "type": e.event_type,
-            "actor_id": e.actor_id,
-            "from_company_id": e.from_company_id,
-            "to_company_id": e.to_company_id,
-            "details": json.loads(e.details or "{}"),
-            "created_at": e.created_at.isoformat() + "Z",
-        } for e in events]
+    if staff:
+        if colleagues is None:
+            colleagues = visible_users(db, viewer, [payload["created_by"],
+                                                    *(e.actor_id for e in events)])
+        author = payload["created_by"]
+        payload["created_by_hidden"] = bool(author) and author not in colleagues
+        if payload["created_by_hidden"]:
+            payload["created_by"] = None
+    if with_events:
+        if staff:
+            payload["events"] = _viewer_events(events, viewer, colleagues)
+        else:
+            payload["events"] = [{
+                "id": e.id, "type": e.event_type,
+                "actor_id": e.actor_id,
+                "from_company_id": e.from_company_id,
+                "to_company_id": e.to_company_id,
+                "details": json.loads(e.details or "{}"),
+                "created_at": e.created_at.isoformat() + "Z",
+            } for e in events]
     return payload
+
+
+# Журнал карточки для штатных ролей (T-32, ADR-20): компания видит только себя.
+# Ключи details без сведений о других организациях; свободный текст причины
+# решения спора (resolve_ownership) сюда не входит, у сверки причина — код.
+VIEWER_DETAIL_KEYS = frozenset({"source_kind", "created", "resolved_ownership",
+                                "remaining_origins", "company", "author"})
+VIEWER_REASON_CODES = frozenset({"source_deleted", "projection_changed"})
+
+
+def _viewer_events(events: list[UnifiedEvent], viewer: User, colleagues: set[str]) -> list[dict]:
+    """События без чужих компаний, чужих исполнителей и причины решения спора.
+
+    Своя компания и сотрудники своей компании видны как есть; чужие заменены
+    на null с признаком *_hidden («другая организация»). Администратор
+    платформы для компании — тоже другая организация.
+    """
+    own_company = viewer.company_id
+
+    def company(value: str | None) -> tuple[str | None, bool]:
+        if value is None:
+            return None, False
+        if own_company and value == own_company:
+            return value, False
+        return None, True
+
+    result = []
+    for e in events:
+        details = json.loads(e.details or "{}")
+        safe = {k: v for k, v in details.items() if k in VIEWER_DETAIL_KEYS}
+        if e.event_type == "reconcile" and details.get("reason") in VIEWER_REASON_CODES:
+            safe["reason"] = details["reason"]
+        from_id, from_hidden = company(e.from_company_id)
+        to_id, to_hidden = company(e.to_company_id)
+        actor_visible = e.actor_id is None or e.actor_id in colleagues
+        result.append({
+            "id": e.id, "type": e.event_type,
+            "actor_id": e.actor_id if actor_visible else None,
+            "actor_hidden": not actor_visible,
+            "from_company_id": from_id, "from_company_hidden": from_hidden,
+            "to_company_id": to_id, "to_company_hidden": to_hidden,
+            "details": safe,
+            "created_at": e.created_at.isoformat() + "Z",
+        })
+    return result
 
 
 def _live_copies(db: Session, doc: UnifiedDocument) -> list[tuple[str, Any]]:
@@ -839,7 +1181,8 @@ def review_payload(db: Session, doc: UnifiedDocument) -> dict:
 
     К обычной карточке добавляются копии чека с компаниями, кандидаты во
     владельцы и журнал с именами сотрудников и компаний.  Штатным ролям это
-    не отдаётся: /documents/{id} остаётся прежним.
+    не отдаётся: их /documents/{id} — без сведений о других организациях
+    (document_payload с viewer, ADR-20).
     """
     payload = document_payload(db, doc, with_events=True)
     copies = []
