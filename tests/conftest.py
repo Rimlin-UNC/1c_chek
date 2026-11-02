@@ -97,6 +97,20 @@ def _isolate_app_settings():
     max_bot._username_cache = ""
 
 
+def drop_jar_cookie(client, name: str) -> None:
+    """Убрать из банка сессионного клиента все cookie с этим именем.
+
+    Явную cookie запроса (`cookies=`) httpx склеивает с банком клиента. Если
+    там уже лежит одноимённая cookie другого домена (её выдал сервер в
+    соседнем тесте), в заголовок уходят обе, а сервер берёт последнюю —
+    порядок зависит от того, какие тесты шли раньше в этом процессе.
+    Перед запросом с явной cookie зовите этот помощник.
+    """
+    for cookie in list(client.cookies.jar):
+        if cookie.name == name:
+            client.cookies.jar.clear(cookie.domain, cookie.path, cookie.name)
+
+
 def login(client, username, password):
     r = client.post("/api/v1/auth/login",
                     json={"username": username, "password": password})

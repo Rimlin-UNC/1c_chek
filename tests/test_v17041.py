@@ -36,6 +36,7 @@ from app.database import SessionLocal, engine
 from app.pool import accounts, ingest
 from app.pool import router_public as public
 from app.pool.models import PoolReceipt, PoolUser, ensure_pool_schema
+from tests.conftest import drop_jar_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "app/static/js/app.js"
@@ -346,6 +347,10 @@ class TestDonorJourney:
             # перенесено», а причина уходит только в журнал. Ждём фон и
             # показываем журнал слияния в сообщении теста.
             _wait_ingest_threads()
+            # 0 перенесённых при пустом журнале давала чужая cookie pool_vid в
+            # банке сессионного клиента: сервер сливал не этого гостя
+            # (CI 41501017761). Явная cookie запроса должна быть единственной.
+            drop_jar_cookie(client, "pool_vid")
             caplog.set_level(logging.WARNING, logger="ymaster.pool.accounts")
 
             _SEQ["n"] += 1
@@ -402,6 +407,40 @@ class TestDonorJourney:
         assert public.HONEYPOT_MS == 800
         assert not hasattr(settings, "MERGE_STRICT"), \
             "новая настройка не заявлялась"
+
+    def test_explicit_guest_cookie_beats_stale_jar_cookie(self, client):
+        """Замок нестабильности CI 41501017761 (0 перенесённых, журнал пуст).
+
+        Банк сессионного клиента: сначала cookie без домена (так её клал
+        прежний test_v17051), затем pool_vid, выданная сервером (домен
+        testserver.local). Явная cookie гостя в запросе без
+        drop_jar_cookie шла в заголовке раньше старой, и сервер видел чужого
+        гостя. С помощником сервер видит ровно этого гостя.
+        """
+        saved = list(client.cookies.jar)
+        db = SessionLocal()
+        try:
+            _enable_pool(db)
+            client.cookies.clear()
+            client.cookies.set("ymaster_token", "x")             # без домена — первой
+            assert client.get("/api/v1/public/pool/my").status_code == 200
+            assert any(c.name == "pool_vid" and c.domain for c in client.cookies.jar), \
+                "сервер не выдал pool_vid — сценарий не воспроизведён"
+            _SEQ["n"] += 1
+            guest = PoolUser(vid=f"v17041-jar-{_SEQ['n']}", points=7)
+            db.add(guest)
+            db.commit()
+            gvid = guest.vid
+            drop_jar_cookie(client, "pool_vid")
+            r = client.get("/api/v1/public/pool/my",
+                           cookies={"pool_vid": f"{gvid}.{public._sign(gvid)}"})
+            assert r.status_code == 200 and r.json()["points"] == 7, r.text[:200]
+        finally:
+            client.cookies.clear()
+            for cookie in saved:
+                client.cookies.jar.set_cookie(cookie)
+            db.rollback()
+            db.close()
 
 
 # ======================================================================

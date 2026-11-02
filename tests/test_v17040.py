@@ -42,6 +42,7 @@ from app.database import SessionLocal, engine
 from app.pool import accounts, antifraud, batch, ingest
 from app.pool import router_public as public
 from app.pool.models import PoolReceipt, PoolUser, ensure_pool_schema
+from tests.conftest import drop_jar_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "app/static/js/app.js"
@@ -636,6 +637,7 @@ class TestGuestMergeIntegrity:
             cookie = {"pool_vid": f"{guest.vid}.{public._sign(guest.vid)}"}
             public._IP_HITS.clear()
             _reset_auth_hits()
+            drop_jar_cookie(client, "pool_vid")   # явная cookie гостя — единственная
             _SEQ["n"] += 1
             r = client.post("/api/v1/pool-auth/register",
                             json={"email": f"m22-{_SEQ['n']}@test.ru",
@@ -661,6 +663,7 @@ class TestGuestMergeIntegrity:
             db.commit()
             cookie = {"pool_vid": f"{guest.vid}.{public._sign(guest.vid)}"}
             _reset_auth_hits()
+            drop_jar_cookie(client, "pool_vid")   # явная cookie гостя — единственная
             r = client.post("/api/v1/pool-auth/login",
                             json={"email": email, "password": "parol-1234"},
                             cookies=cookie)

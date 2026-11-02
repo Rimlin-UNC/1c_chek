@@ -707,8 +707,15 @@ class TestApi:
         поэтому сессионный клиент после настоящего входа уже НЕ анонимен и
         ответил бы 200. Cookie сбрасывается на время проверки и возвращается,
         чтобы не задеть чужие тесты.
+
+        Возвращаются те же объекты cookie (с доменом и путём): прежнее
+        восстановление по имени — client.cookies.set(name, value) — клало их
+        без домена и первыми в банк. Следующая cookie, выданная сервером
+        (домен testserver.local), с тем же именем шла в заголовке уже после
+        явной cookie запроса, и сервер брал её — так test_v17041 изредка
+        сливал «чужого» гостя (0 перенесённых чеков).
         """
-        saved = dict(client.cookies)
+        saved = list(client.cookies.jar)
         client.cookies.clear()
         try:
             for path in ("/settings", "/status", "/logs", "/metrics/current",
@@ -717,8 +724,8 @@ class TestApi:
             assert client.post(f"{PREFIX}/test", json={}).status_code == 401
             assert client.post(f"{PREFIX}/disable").status_code == 401
         finally:
-            for name, value in saved.items():
-                client.cookies.set(name, value)
+            for cookie in saved:
+                client.cookies.jar.set_cookie(cookie)
 
     def test_cookie_path_is_protected_too(self, client):
         """Запасной путь аутентификации не ослабляет доступ к контуру:
