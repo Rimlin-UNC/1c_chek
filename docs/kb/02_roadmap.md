@@ -36,12 +36,12 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#13](https://github.com/Rimlin-UNC/1c_chek/issues/13) T-10 — роль Vercel.
 
 **Ждут владельца (P2):**
-- [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub привязана к ветке PR #2: переключить на `main` или отключить.
 - [#18](https://github.com/Rimlin-UNC/1c_chek/issues/18) T-22 — решения по итогам обзора безопасности Supabase: представления `chek_demo_*`, `rls_auto_enable`, exposed schemas.
 
 **Заблокированы:**
 - [#7](https://github.com/Rimlin-UNC/1c_chek/issues/7) T-04 — схема `qa_lock_…` в Supabase: удаление заблокировано фильтром провайдера, нужно явное подтверждение.
 - [#10](https://github.com/Rimlin-UNC/1c_chek/issues/10) T-07 — перенос архива: ждёт экрана разбора конфликтов.
+- [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
 - [#9](https://github.com/Rimlin-UNC/1c_chek/issues/9) T-06 — экран разбора конфликтов (P1).
