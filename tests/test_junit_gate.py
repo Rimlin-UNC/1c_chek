@@ -86,3 +86,29 @@ def test_runs_as_a_script(tmp_path):
                           capture_output=True, text=True, timeout=60, check=False)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+def test_github_annotations_only_inside_actions(tmp_path, capsys, monkeypatch):
+    report = _write(tmp_path, "full.xml", PASS + FAIL + SKIP)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    junit_gate.main([report])
+    assert "::error" not in capsys.readouterr().out
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    junit_gate.main([report])
+    out = capsys.readouterr().out
+    assert "::error title=FAILED tests.test_c%3A%3Atest_bad::assert 1 == 2%0A%0Atrace" in out
+    assert "::warning title=SKIPPED tests.test_b%3A%3Atest_pg::dedicated PostgreSQL" in out
+
+
+def test_annotations_escape_and_respect_the_per_step_limit(tmp_path):
+    many = "".join(
+        f'<testcase classname="tests.t" name="test_{i}" time="0">'
+        f'<failure message="bad 100%, line {i}">a\nb</failure></testcase>' for i in range(12))
+    path = tmp_path / "many.xml"
+    path.write_text(_xml(many), encoding="utf-8")
+    lines = junit_gate.github_annotations([junit_gate.parse(path)])
+    errors = [ln for ln in lines if ln.startswith("::error")]
+    assert len(errors) == junit_gate.MAX_EACH + 1          # 9 по одной + сводная
+    assert "bad 100%25, line 0%0A%0Aa%0Ab" in errors[0]     # % и переводы строк экранированы
+    assert errors[-1].startswith("::error title=FAILED%3A ещё 3::")
+    assert "tests.t::test_11" in errors[-1]

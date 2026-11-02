@@ -8,6 +8,9 @@
 Печатает итог и каждый пропущенный/упавший тест с причиной. Если задан
 ``$GITHUB_STEP_SUMMARY``, дописывает туда таблицу итогов. Код выхода 1, если
 отчётов нет, тестов ноль, есть упавшие/ошибочные или пропущенные тесты.
+В GitHub Actions (``GITHUB_ACTIONS=true``) каждый упавший/пропущенный тест
+выводится аннотацией (``::error``/``::warning``) с причиной и хвостом трассировки:
+её видно в сводке прогона и в PR, не открывая сырой лог.
 
 Почему пропуск — ошибка: тесты цепочки (PostgreSQL, ESLint, Vitest,
 Playwright, Newman, stylelint, html-validate) пропускаются, когда инструмент не
@@ -25,6 +28,10 @@ from pathlib import Path
 from defusedxml import ElementTree
 
 
+TAIL_LINES = 25          # строк трассировки в аннотации
+MAX_EACH = 9             # GitHub показывает ~10 аннотаций-ошибок на шаг
+
+
 @dataclass
 class Report:
     name: str
@@ -32,6 +39,8 @@ class Report:
     failed: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # (уровень, тест, причина, хвост трассировки) — для аннотаций GitHub
+    details: list[tuple[str, str, str, str]] = field(default_factory=list)
 
     @property
     def passed(self) -> int:
@@ -59,9 +68,38 @@ def parse(path: Path) -> Report:
                             ("skipped", report.skipped)):
             node = case.find(tag)
             if node is not None:
-                bucket.append(f"{cid} — {_reason(node)}")
+                reason = _reason(node)
+                bucket.append(f"{cid} — {reason}")
+                tail = "\n".join((node.text or "").strip().splitlines()[-TAIL_LINES:])
+                report.details.append((tag, cid, reason, tail))
                 break
     return report
+
+
+def _cmd_data(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _cmd_prop(text: str) -> str:
+    return _cmd_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def github_annotations(reports: list[Report]) -> list[str]:
+    """Команды workflow для аннотаций: по одной на первые MAX_EACH упавших
+    (вместе с ошибками) и пропущенных, остальные — одной сводной."""
+    lines = []
+    for kinds, level, label in ((("failure", "error"), "error", "FAILED"),
+                                (("skipped",), "warning", "SKIPPED")):
+        items = [d for r in reports for d in r.details if d[0] in kinds]
+        for _tag, cid, reason, tail in items[:MAX_EACH]:
+            body = reason if not tail or tail == reason else f"{reason}\n\n{tail}"
+            lines.append(f"::{level} title={_cmd_prop(f'{label} {cid}')}::{_cmd_data(body[:4000])}")
+        rest = items[MAX_EACH:]
+        if rest:
+            listing = "\n".join(cid for _t, cid, _r, _tl in rest[:200])
+            lines.append(f"::{level} title={_cmd_prop(f'{label}: ещё {len(rest)}')}::"
+                         f"{_cmd_data(listing)}")
+    return lines
 
 
 def _summary_markdown(title: str, reports: list[Report]) -> str:
@@ -105,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
         for kind, items in (("FAILED", r.failed), ("ERROR", r.errors), ("SKIPPED", r.skipped)):
             for item in items:
                 print(f"  {kind} [{r.name}] {item}")
+
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for line in github_annotations(reports):
+            print(line)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
