@@ -13,8 +13,9 @@
 Проверки после каждого шага: версия, тот же процесс (PID не меняется —
 это самоперезапуск, а не новый сервер), старые таблицы не изменились,
 итоги по ролям те же. После обновления дополнительно: шаг pip пропущен,
-резервная копия создана, файлы — ровно коммит ветки на GitHub, новые
-экран и API отвечают.
+резервная копия создана, файлы — ровно коммит ветки на GitHub, экран и API
+«Разбор конфликтов» отвечают; с 1.70.84 — пакетное перемещение всех чеков
+Альфы в Бету и обратно и журнал карточки у бухгалтера Беты без Альфы.
 
 Запуск:  .venv/bin/python -m qa.live_update --from-ref b3db4fe [--keep]
 Нужен доступ к github.com. Сервер слушает только 127.0.0.1.
@@ -224,7 +225,38 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
         screen = srv.http.get("/js/unified_review.js").status_code
         api = srv.http.get("/api/v1/unified/documents", headers=adm,
                            params={"conflicts": "true", "flag": 8}).status_code
-        check(checks, screen == 200 and api == 200, "новый экран и API «Разбор конфликтов» отвечают")
+        check(checks, screen == 200 and api == 200, "экран и API «Разбор конфликтов» отвечают")
+        # v1.70.84 (T-33, T-32): пакетное перемещение на обновлённом сервере — все
+        # чеки Альфы (ещё без единой записи) в Бету и обратно; бухгалтер Беты не
+        # видит в журнале карточки ни Альфу, ни администратора.
+        ids = seed["ids"]
+        alpha = [r["id"] for r in srv.http.get("/api/v1/receipts", headers=heads["acc_a"],
+                                               params={"page_size": 200}).json()["items"]]
+        t0 = time.monotonic()
+        there = srv.http.post("/api/v1/receipts/move", headers=adm,
+                              json={"receipt_ids": alpha, "company_id": ids["beta"]})
+        t_there, mid = time.monotonic() - t0, totals(srv.http, heads)
+        staff = srv.http.get("/api/v1/unified/documents", headers=heads["acc_b"],
+                             params={"per_page": 100}).json().get("items", [])
+        hidden = [d for d in staff if d.get("created_by") is None and d.get("created_by_hidden") is True]
+        card = (srv.http.get(f"/api/v1/unified/documents/{hidden[0]['id']}", headers=heads["acc_b"]).json()
+                if hidden else {})
+        moves = [e for e in card.get("events", []) if e.get("type") == "move"]
+        t0 = time.monotonic()
+        back = srv.http.post("/api/v1/receipts/move", headers=adm,
+                             json={"receipt_ids": alpha, "company_id": ids["alpha"]})
+        t_back = time.monotonic() - t0
+        check(checks, there.status_code == 200 and there.json().get("moved") == len(alpha)
+              and mid["acc_a"] == 0 and mid["acc_b"] == base_totals["acc_b"] + len(alpha)
+              and back.status_code == 200 and back.json().get("moved") == len(alpha)
+              and fingerprint(db) == base_fp and totals(srv.http, heads) == base_totals,
+              f"пакетное перемещение: {len(alpha)} чеков Альфы в Бету и обратно ({t_there:.2f} и "
+              f"{t_back:.2f} с), старые таблицы и итоги по ролям те же")
+        check(checks, len(hidden) == len(alpha) and bool(moves)
+              and all(e.get("from_company_id") is None and e.get("from_company_hidden") is True
+                      and e.get("actor_hidden") is True for e in moves),
+              f"бухгалтер Беты: {len(hidden)} перенесённых чеков без автора из Альфы, в журнале "
+              "Альфа и администратор скрыты")
 
         # 4. откат из «Последних рабочих версий»
         releases = srv.http.get("/api/v1/admin/update/releases", headers=adm).json().get("items", [])

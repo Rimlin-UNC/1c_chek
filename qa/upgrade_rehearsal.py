@@ -20,6 +20,12 @@
    удаление чеков, правка, удаление компании с переносом её чеков.
 4. Текущий код снова (повторное обновление): сверка при старте, чеки видны
    своим компаниям, перенос обратно работает.
+5. Пакетный перенос (с 1.70.84, T-32/T-33): чеки Альфы — с единой записью и
+   без неё, чек без ФП, чеки, уже лежащие у Беты, — уходят в Бету и обратно
+   одной операцией; журнал карточки и список у бухгалтера Беты не раскрывают
+   Альфу; 1000 старых чеков туда и обратно — с замером времени.
+6. Перенос архива и разбор спора — на копии базы; старая версия открывает
+   копию после разбора и основную базу после пакетного переноса (откат).
 
 Ни одна фаза не трогает рабочую базу: всё живёт во временном каталоге.
 Код возврата 0 — только если все проверки прошли; отчёт — JSON в stdout.
@@ -345,6 +351,122 @@ with TestClient(app) as c:
           "twin_alpha": c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code})
 '''
 
+# v1.70.84: пакетный перенос (T-33) и журнал карточки без чужих организаций
+# (T-32) на обновлённой базе — после отката и повторного обновления.
+BULK = COMMON + r'''
+import time
+from datetime import datetime, timedelta
+from app.main import app
+from app.database import SessionLocal, init_db
+init_db()
+from fastapi.testclient import TestClient
+from app.models import Company, Receipt, ReceiptItem, User
+from app.unified import service
+
+ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
+res = {"version": app_version()}
+
+def doc_of(db, rid):
+    return service.document_for_source(db, service.REGISTRY, rid)
+
+def move(c, headers, receipt_ids, company_id, **extra):
+    started = time.perf_counter()
+    resp = c.post("/api/v1/receipts/move", headers=headers,
+                  json={"receipt_ids": receipt_ids, "company_id": company_id, **extra})
+    body = resp.json() if resp.status_code == 200 else {"detail": short(resp)}
+    return {"status": resp.status_code, "seconds": round(time.perf_counter() - started, 3),
+            "moved": body.get("moved"), "already_there": body.get("already_there"),
+            "detail": body.get("detail")}
+
+def brief(event):
+    return {k: event.get(k) for k in ("type", "from_company_id", "from_company_hidden", "to_company_id",
+                                      "to_company_hidden", "actor_id", "actor_hidden")}
+
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("admin", "acc_a", "acc_b")}
+    res["totals_before"] = {u: total(c, h) for u, h in H.items()}
+    res["conflicts_before"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json().get("conflicts")
+    alpha = [r["id"] for r in c.get("/api/v1/receipts", headers=H["acc_a"],
+                                    params={"page_size": 200}).json()["items"]]
+    with SessionLocal() as db:
+        fresh = [rid for rid in alpha if doc_of(db, rid) is None]
+    res.update({"alpha": alpha, "unregistered": len(fresh)})
+    # Смешанная пачка: чеки Альфы с единой записью и без неё плюс два чека,
+    # которые уже у Беты (чек без ФП и чек Беты), — они пропускаются.
+    res["there"] = move(c, H["admin"], alpha + [ids["blank"], ids["regs_b"][0]], ids["beta"],
+                        assignee="Репетиция")
+    res["totals_there"] = {u: total(c, h) for u, h in H.items()}
+    with SessionLocal() as db:
+        rows = db.query(Receipt).filter(Receipt.id.in_(alpha)).all()
+        res["assignee_all"] = len(rows) == len(alpha) and all(
+            r.company_id == ids["beta"] and r.assignee == "Репетиция" for r in rows)
+        alpha_docs = {doc_of(db, rid).id for rid in alpha if doc_of(db, rid) is not None}
+        res["registered_after"] = len(alpha_docs)
+        card_id = doc_of(db, fresh[0]).id if fresh else None
+    if card_id:
+        staff = c.get(f"/api/v1/unified/documents/{card_id}", headers=H["acc_b"]).json()
+        admin = c.get(f"/api/v1/unified/documents/{card_id}", headers=H["admin"]).json()
+        res["card_staff"] = {"created_by": staff.get("created_by"),
+                             "created_by_hidden": staff.get("created_by_hidden"),
+                             "events": [brief(e) for e in staff.get("events", [])]}
+        res["card_admin"] = [brief(e) for e in admin.get("events", [])]
+    listed = [d for d in c.get("/api/v1/unified/documents", headers=H["acc_b"],
+                               params={"per_page": 100}).json().get("items", []) if d["id"] in alpha_docs]
+    res["staff_list"] = {"listed": len(listed), "authors_hidden": bool(listed) and all(
+        d.get("created_by") is None and d.get("created_by_hidden") is True for d in listed)}
+    # Обратно одной операцией — вместе с чеком без ФП (он изначально у Альфы).
+    res["back"] = move(c, H["admin"], alpha + [ids["blank"]], ids["alpha"])
+    res["totals_back"] = {u: total(c, h) for u, h in H.items()}
+    # Объём: 1000 чеков (наибольшая пачка API), записанных как старой версией —
+    # без единой записи. Первый перенос регистрирует их, обратный — повторный.
+    with SessionLocal() as db:
+        author = db.query(User).filter_by(username="admin").one()
+        delta = Company(name="ООО «Дельта»")
+        db.add(delta)
+        db.flush()
+        base, rows = datetime(2026, 9, 1, 9, 0), []
+        for i in range(1000):
+            fn, fd, fp = f"94890000{i:08d}", str(20000 + i), str(5000000000 + i)
+            when, amount = base + timedelta(minutes=17 * i), 150.0 + i % 50
+            rows.append(Receipt(fn=fn, fd=fd, fp=fp, receipt_date=when, total_sum=amount, operation=1,
+                                qr_data=f"t={when:%Y%m%dT%H%M}&s={amount:.2f}&fn={fn}&i={fd}&fp={fp}&n=1",
+                                company_id=delta.id, created_by=author.id, merchant_name=f"Склад {i % 7}",
+                                merchant_inn="7701234567", status="new"))
+        db.add_all(rows)
+        db.flush()
+        db.add_all([ReceiptItem(receipt_id=r.id, name="Позиция", quantity=1, price=r.total_sum,
+                                total=r.total_sum, position=0) for r in rows])
+        db.commit()
+        volume, delta_id = [r.id for r in rows], delta.id
+    res["volume_first"] = move(c, H["admin"], volume, ids["beta"])
+    res["volume_again"] = move(c, H["admin"], volume, delta_id)
+    with SessionLocal() as db:
+        res["volume_home"] = db.query(Receipt).filter(Receipt.company_id == delta_id).count()
+    res["conflicts_after"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json().get("conflicts")
+    res["totals_final"] = {u: total(c, h) for u, h in H.items()}
+emit(res)
+'''
+
+# Откат после пакетного переноса: старая версия открывает основную базу,
+# видит перенесённые чеки и сама переносит их своим прежним циклом.
+OLD_AFTER_BULK = COMMON + r'''
+from app.main import app
+from app.database import init_db
+init_db()
+from fastapi.testclient import TestClient
+
+ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
+moved = json.loads(os.environ["REH_BULK"])
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("admin", "acc_a", "acc_b")}
+    res = {"version": app_version(), "totals": {u: total(c, h) for u, h in H.items()},
+           "cards": sorted({c.get(f"/api/v1/receipts/{rid}", headers=H["acc_a"]).status_code for rid in moved})}
+    res["move"] = c.post("/api/v1/receipts/move", headers=H["admin"],
+                         json={"receipt_ids": moved[:3], "company_id": ids["beta"]}).status_code
+    res["totals_after"] = {u: total(c, h) for u, h in H.items()}
+emit(res)
+'''
+
 
 def sqlite_copy(src: Path, dst: Path) -> None:
     """Согласованная копия SQLite (WAL учитывается) — как резервная копия программы."""
@@ -427,6 +549,43 @@ def main() -> int:
               "правка после повторного обновления синхронизирует единую запись")
         check(checks, again["move_back"] == {"status": 200, "alpha_card": 200}, "перенос обратно работает")
         check(checks, again["move_no_fp"] == 200, "чек без ФП переносится между компаниями, как в 1.70.80")
+        # v1.70.84: пакетный перенос (T-33) и журнал карточки без чужих организаций (T-32)
+        bulk = run_phase("пакетный перенос", BULK, new_dir, env)
+        out["bulk"] = bulk
+        ids, n = seed["ids"], len(bulk["alpha"])
+        before, there, ret = bulk["totals_before"], bulk["there"], bulk["back"]
+        check(checks, there["status"] == 200 and there["moved"] == n and there["already_there"] == 2
+              and bulk["unregistered"] >= 1 and bulk["registered_after"] == n,
+              f"пакетный перенос: {n} чеков Альфы в Бету одной операцией ({bulk['unregistered']} ещё без "
+              "единой записи), 2 чека, уже лежащие у Беты, пропущены")
+        check(checks, bulk["assignee_all"] and bulk["totals_there"]["acc_a"] == 0
+              and bulk["totals_there"]["acc_b"] == before["acc_b"] + n,
+              f"после переноса все {n} чеков видит Бета, Альфа — ни одного; подотчётное лицо назначено у всех")
+        staff = bulk.get("card_staff") or {}
+        ev_s = {e["type"]: e for e in staff.get("events", [])}
+        ev_a = {e["type"]: e for e in bulk.get("card_admin", [])}
+        mv_s, rg_s, mv_a = ev_s.get("move", {}), ev_s.get("register", {}), ev_a.get("move", {})
+        check(checks, staff.get("created_by") is None and staff.get("created_by_hidden") is True
+              and mv_s.get("from_company_id") is None and mv_s.get("from_company_hidden") is True
+              and mv_s.get("to_company_id") == ids["beta"] and mv_s.get("actor_hidden") is True
+              and rg_s.get("to_company_id") is None and rg_s.get("to_company_hidden") is True
+              and mv_a.get("from_company_id") == ids["alpha"] and mv_a.get("to_company_id") == ids["beta"]
+              and bool(mv_a.get("actor_id")),
+              "журнал карточки у бухгалтера Беты: Альфа, автор из Альфы и администратор скрыты; "
+              "администратор видит перенос полностью")
+        check(checks, bulk["staff_list"]["listed"] == n and bulk["staff_list"]["authors_hidden"],
+              f"список единого реестра у бухгалтера Беты: {n} перенесённых чеков, авторы из Альфы скрыты")
+        check(checks, ret["status"] == 200 and ret["moved"] == n + 1
+              and bulk["totals_back"]["acc_a"] == n + 1 and bulk["totals_back"]["acc_b"] == before["acc_b"] - 1,
+              f"обратно одной операцией: {n + 1} чеков снова у Альфы, включая чек без ФП")
+        vf, va = bulk["volume_first"], bulk["volume_again"]
+        check(checks, vf["status"] == 200 and vf["moved"] == 1000 and va["status"] == 200
+              and va["moved"] == 1000 and bulk["volume_home"] == 1000
+              and vf["seconds"] < 3.0 and va["seconds"] < 2.0,
+              f"1000 старых чеков одной операцией: первый перенос {vf['seconds']} с, обратный "
+              f"{va['seconds']} с (потолки 3 с и 2 с; прежний цикл — 9,6 с и 4,9 с)")
+        check(checks, bulk["conflicts_before"] == 0 and bulk["conflicts_after"] == 0,
+              "единый реестр после пакетных переносов: ложных конфликтов нет")
         # необязательный перенос архива — только на копии базы, для отчёта
         sqlite_copy(work / "rehearsal.db", work / "backfill-copy.db")
         bf = run_phase("перенос архива на копии", BACKFILL, new_dir,
@@ -449,6 +608,14 @@ def main() -> int:
         out["rollback_after_review"] = old
         check(checks, old["twin_alpha"] == 200 and all(isinstance(v, int) for v in old["totals"].values()),
               f"откат на v{old['version']} после разбора: вход и списки работают, чек у Альфы")
+        # v1.70.84: откат после пакетного переноса — основная база, старая версия
+        oldb = run_phase("откат после пакетного переноса", OLD_AFTER_BULK, old_dir,
+                         {**env, "REH_BULK": json.dumps(bulk["alpha"])})
+        out["rollback_after_bulk"] = oldb
+        check(checks, oldb["totals"] == bulk["totals_final"] and oldb["cards"] == [200]
+              and oldb["move"] == 200 and oldb["totals_after"]["acc_b"] == oldb["totals"]["acc_b"] + 3,
+              f"откат на v{oldb['version']} после пакетного переноса: списки и карточки те же, "
+              "старая версия сама переносит чеки")
     except Exception as exc:  # noqa: BLE001 — отчёт важнее трассировки
         check(checks, False, f"сбой: {exc}")
     finally:
