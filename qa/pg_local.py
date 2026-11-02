@@ -59,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import pgserver
     except ImportError:
+        # Запуск системным python (как в документации: «python qa/pg_local.py»):
+        # pgserver стоит в .venv — перезапускаемся его интерпретатором. Проверка
+        # по sys.prefix, а не по пути python: .venv/bin/python — ссылка на системный.
+        venv = ROOT / ".venv"
+        if argv is None and (venv / "bin" / "python").exists() and Path(sys.prefix).resolve() != venv.resolve():
+            os.execv(str(venv / "bin" / "python"), [str(venv / "bin" / "python"), __file__, *args])
         print("pg-local: нет пакета pgserver — установите: .venv/bin/pip install pgserver",
               file=sys.stderr)
         return 2

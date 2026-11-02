@@ -47,7 +47,7 @@ _ROLE_VIEWS: dict[str, frozenset[str]] = {
     ROLE_ADMIN: frozenset({
         "dashboard", "scan", "receipts", "export", "mapping", "poolpick", "supabase",
         "boss", "users", "audit", "companies", "pooladmin", "poolpeople",
-        "fraud", "b2badmin", "settings",
+        "fraud", "b2badmin", "conflicts", "settings",
     }),
     ROLE_ACCOUNTANT: frozenset({
         "dashboard", "scan", "receipts", "export", "mapping", "poolpick", "supabase",

@@ -17,6 +17,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
+import { setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -61,6 +62,7 @@ const VIEW_TITLES = {
   fraud: 'Чек-Пул: антифрод',          // v1.34.0: сигналы и карантин
   poolpick: 'Чек-Пул: подбор для компании', // v1.37.0: бухгалтер
   supabase: 'Supabase демо',
+  conflicts: 'Разбор конфликтов',      // v1.70.83: единый реестр, администратор
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -104,7 +106,7 @@ const isAdmin = () => state.me && state.me.role === 'admin';
 const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
-                        'pooladmin', 'poolpeople', 'fraud', 'b2badmin',
+                        'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts',
                         'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
@@ -3856,6 +3858,10 @@ async function refreshBadges() {
     qb.textContent = q;
     qb.classList.toggle('hidden', q === 0);
     qb.classList.toggle('accent', q > 0);
+    // v1.70.83: администратору — число конфликтов единого реестра в меню
+    if (isAdmin()) {
+      api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(u.conflicts)).catch(() => {});
+    }
   } catch { /* тихо */ }
 }
 
@@ -3921,6 +3927,7 @@ function route(silent = false) {
     fraud: viewFraud,                     // v1.34.0: сигналы, карантин
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
     supabase: viewSupabaseDemo,           // отдельный read-only демо-контур
+    conflicts: viewUnifiedReview,         // v1.70.83: разбор конфликтов единого реестра
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };

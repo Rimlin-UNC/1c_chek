@@ -196,6 +196,11 @@ Google Sheets, Docs и Slides — **только представления** д
   `tests/test_supabase_migrations.py`).
 - **Модуль `csv` в Python** по умолчанию пишет концы строк CRLF, а базы
   `docs/kb` — с LF: писать с `lineterminator="\n"`.
+- **Новый импорт в `app.js`:** `tests/js/telegram_login.test.js` и
+  `tests/js/splash.test.js` выполняют `app.js` без строк `import` и подставляют
+  заглушки — добавить заглушку нового имени в оба файла. Итог Vitest проверять
+  по коду выхода и строке `Errors`: при необработанной ошибке все тесты зелёные,
+  а прогон падает (02.11.2026 так поймали `viewUnifiedReview is not defined`).
 
 ## Чек-лист конца сессии
 

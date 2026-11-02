@@ -818,3 +818,60 @@ def document_payload(db: Session, doc: UnifiedDocument, *, with_events: bool = F
             "created_at": e.created_at.isoformat() + "Z",
         } for e in events]
     return payload
+
+
+def _live_copies(db: Session, doc: UnifiedDocument) -> list[tuple[str, Any]]:
+    """Живые копии документа (реестр и пул) — только чтение.
+
+    В отличие от _legacy_projections ничего не удаляет: экран разбора читает
+    карточку GET-запросом, и висячая ссылка остаётся на сверку при старте.
+    """
+    copies = []
+    for origin in doc.origins:
+        row = _source(db, origin.source_kind, origin.source_id)
+        if row is not None:
+            copies.append((origin.source_kind, row))
+    return copies
+
+
+def review_payload(db: Session, doc: UnifiedDocument) -> dict:
+    """Карточка для экрана разбора конфликтов (только администратор).
+
+    К обычной карточке добавляются копии чека с компаниями, кандидаты во
+    владельцы и журнал с именами сотрудников и компаний.  Штатным ролям это
+    не отдаётся: /documents/{id} остаётся прежним.
+    """
+    payload = document_payload(db, doc, with_events=True)
+    copies = []
+    for kind, row in _live_copies(db, doc):
+        copies.append({"kind": kind, "id": row.id, "company_id": _company_id(row, kind)})
+    company_ids = {c["company_id"] for c in copies if c["company_id"]}
+    if payload["company_id"]:
+        company_ids.add(payload["company_id"])
+    for event in payload["events"]:
+        company_ids.update(c for c in (event["from_company_id"], event["to_company_id"]) if c)
+    names = ({c.id: c.name for c in db.query(Company).filter(Company.id.in_(company_ids))}
+             if company_ids else {})
+    actor_ids = {e["actor_id"] for e in payload["events"] if e["actor_id"]}
+    actors = ({u.id: (u.full_name or u.username) for u in db.query(User).filter(User.id.in_(actor_ids))}
+              if actor_ids else {})
+    for copy in copies:
+        copy["company_name"] = names.get(copy["company_id"]) if copy["company_id"] else None
+    for event in payload["events"]:
+        event["actor_name"] = actors.get(event["actor_id"]) if event["actor_id"] else None
+        event["from_company_name"] = names.get(event["from_company_id"]) if event["from_company_id"] else None
+        event["to_company_name"] = names.get(event["to_company_id"]) if event["to_company_id"] else None
+    # Кандидаты во владельцы — компании, у которых есть копия чека (порядок копий).
+    candidates: dict[str, dict] = {}
+    for copy in copies:
+        if not copy["company_id"]:
+            continue
+        cand = candidates.setdefault(copy["company_id"], {
+            "company_id": copy["company_id"], "company_name": copy["company_name"], "sources": []})
+        if copy["kind"] not in cand["sources"]:
+            cand["sources"].append(copy["kind"])
+    payload["copies"] = copies
+    payload["candidates"] = list(candidates.values())
+    payload["deleted"] = doc.deleted_at is not None
+    payload["can_resolve"] = bool(doc.review_flags & REVIEW_OWNERSHIP) and doc.deleted_at is None
+    return payload

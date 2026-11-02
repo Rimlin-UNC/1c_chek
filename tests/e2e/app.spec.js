@@ -82,8 +82,11 @@ test('выбор и перенос чеков разных участников 
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();
   await page.locator('a[href="#/poolpick"]').click();
   const company = page.locator('#poolpk-comp');
-  await expect(company.locator('option')).toHaveCount(2);
-  await company.selectOption({ index: 1 });
+  // v1.70.83: в сиде есть и компании спора о владельце (E2E Альфа и Бета) —
+  // компанию подбора выбираем по имени, а не по числу пунктов списка.
+  const yamaster = company.locator('option', { hasText: 'Ямастер' });
+  await expect(yamaster).toHaveCount(1);
+  await company.selectOption(await yamaster.getAttribute('value'));
   const rows = page.locator('#poolpk-body tbody tr');
   await expect(rows.filter({ hasText: 'E2E магазин 1' })).toBeVisible();
   await expect(rows.filter({ hasText: 'E2E магазин 2' })).toBeVisible();
@@ -143,4 +146,26 @@ test('Supabase демо: read-only снимок и фильтры', async ({ pag
   await expect(page.locator('#sb-demo-out')).toContainText('Демо-маркет');
   await page.locator('#sb-demo-reset').click();
   await expect(page.locator('#sb-demo-out tbody tr')).toHaveCount(2);
+});
+
+// v1.70.83: разбор конфликтов единого реестра (#9). Сид кладёт спор о владельце:
+// одна фискальная тройка в реестре «E2E Альфа» и в Чек-Пуле у «E2E Бета».
+test('разбор конфликтов: администратор закрепляет спорный чек за компанией', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await expect(page.locator('#nav-conflicts-badge')).toHaveText('1');
+  await page.locator('a[href="#/conflicts"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Разбор конфликтов');
+  const row = page.locator('#ur-out tbody tr', { hasText: 'E2E спорный магазин' });
+  await expect(row).toBeVisible();
+  await expect(row.locator('.chip')).toHaveText('Владелец');
+  await row.getByRole('button', { name: 'Открыть' }).click();
+  const card = page.locator('.modal-slot');
+  await expect(card.locator('#ur-copies')).toContainText('E2E Альфа');
+  await expect(card.locator('#ur-copies')).toContainText('E2E Бета');
+  await card.locator('#ur-company').selectOption({ label: 'E2E Альфа' });
+  await card.locator('#ur-reason').fill('Чек оплачен картой компании Альфа');
+  await card.locator('#ur-resolve').click();
+  await expect(page.locator('#ur-out')).toContainText('Конфликтов нет');
+  await expect(page.locator('#nav-conflicts-badge')).toBeHidden();
 });

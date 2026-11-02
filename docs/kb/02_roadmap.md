@@ -44,7 +44,8 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
-- [#9](https://github.com/Rimlin-UNC/1c_chek/issues/9) T-06 — экран разбора конфликтов (P1).
+- [#9](https://github.com/Rimlin-UNC/1c_chek/issues/9) T-06 — экран разбора конфликтов (P1) — **в работе**: экран и тесты в ветке, дальше выпуск 1.70.83.
+- [#22](https://github.com/Rimlin-UNC/1c_chek/issues/22) T-30 — разбор расхождений данных между копиями (P2): сначала решение владельца, какая копия — эталон.
 - [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20) T-24 — сквозной интеграционный тест миграции БД (P1), спецификация в issue.
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
 

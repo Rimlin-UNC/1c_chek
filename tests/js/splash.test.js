@@ -38,6 +38,7 @@ Object.assign(globalThis, {
   SCALE: 1, RCPT_W: 0,
   osmCardHtml: stub(), osmWire: stub(), osmStop: stub(),
   viewSupabaseDemo: stub(),
+  viewUnifiedReview: stub(), setConflictsBadge: stub(),   // v1.70.83
 });
 
 const bodyHtml = indexHtml
