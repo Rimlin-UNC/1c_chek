@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """qa/test_matrix.py — генератор матрицы тестирования миграции.
 
 Матрица — представление данных репозитория в Google Sheets, поэтому сам
@@ -103,7 +102,8 @@ def test_real_skip_audit_matches_current_tests():
     assert len(skips) == 12
     files = sorted({tid.split("::")[0] for tid in skips})
     proc = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
-                           *files], cwd=test_matrix.ROOT, capture_output=True, text=True, timeout=300)
+                           *files], cwd=test_matrix.ROOT, capture_output=True, text=True, timeout=300,
+                          check=False)
     collected = set(proc.stdout.split())
     missing = [tid for tid in skips if tid not in collected]
     assert not missing, f"тесты из аудита пропусков не найдены: {missing}"
