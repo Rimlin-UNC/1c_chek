@@ -311,7 +311,38 @@ with TestClient(app) as c:
     twin = ids["regs_a"][0]
     res["twin"] = {"alpha": c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code,
                    "admin": c.get(f"/api/v1/receipts/{twin}", headers=H["admin"]).status_code}
+    # v1.70.83: спор о владельце разбирается на экране «Разбор конфликтов» (#9):
+    # список с фильтром, карточка с кандидатами, решение в пользу компании реестра.
+    listed = c.get("/api/v1/unified/documents", headers=H["admin"],
+                   params={"conflicts": "true", "flag": 8, "per_page": 100}).json()
+    review = {"listed": listed.get("total")}
+    if listed.get("items"):
+        doc_id = listed["items"][0]["id"]
+        card = c.get(f"/api/v1/unified/documents/{doc_id}/review", headers=H["admin"]).json()
+        target = next((x["company_id"] for x in card.get("candidates", []) if "registry" in x["sources"]), None)
+        review.update({"candidates": len(card.get("candidates", [])), "can_resolve": card.get("can_resolve")})
+        resolved = c.post(f"/api/v1/unified/documents/{doc_id}/resolve-ownership", headers=H["admin"],
+                          json={"company_id": target, "expected_version": card.get("version"),
+                                "reason": "Репетиция: чек реестра Альфы"})
+        review["resolve"] = resolved.status_code
+        review["alpha_after"] = c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code
+        review["stats_after"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
+    res["review"] = review
 emit(res)
+'''
+
+OLD_AFTER_REVIEW = COMMON + r'''
+from app.main import app
+from app.database import init_db
+init_db()
+from fastapi.testclient import TestClient
+
+ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("admin", "acc_a", "acc_b")}
+    twin = ids["regs_a"][0]
+    emit({"version": app_version(), "totals": {u: total(c, h) for u, h in H.items()},
+          "twin_alpha": c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code})
 '''
 
 
@@ -407,6 +438,17 @@ def main() -> int:
         check(checks, bf["fingerprint_after"] == bf["fingerprint_before"], "перенос архива не меняет старые таблицы")
         check(checks, bf["stats"]["ownership_conflicts"] == 1 and bf["twin"] == {"alpha": 404, "admin": 200},
               "исторический двойник (реестр Альфы + пул Беты) уходит на разбор администратору")
+        rv = bf["review"]
+        check(checks, rv.get("listed") == 1 and rv.get("candidates") == 2 and rv.get("can_resolve") is True,
+              "разбор конфликтов: спор виден в списке, в карточке две компании-кандидата")
+        check(checks, rv.get("resolve") == 200 and rv.get("alpha_after") == 200
+              and rv.get("stats_after", {}).get("ownership_conflicts") == 0,
+              "решение спора в пользу Альфы: чек снова виден Альфе, споров о владельце нет")
+        old = run_phase("откат после разбора", OLD_AFTER_REVIEW, old_dir,
+                        {**env, "DATABASE_URL": f"sqlite:///{work / 'backfill-copy.db'}"})
+        out["rollback_after_review"] = old
+        check(checks, old["twin_alpha"] == 200 and all(isinstance(v, int) for v in old["totals"].values()),
+              f"откат на v{old['version']} после разбора: вход и списки работают, чек у Альфы")
     except Exception as exc:  # noqa: BLE001 — отчёт важнее трассировки
         check(checks, False, f"сбой: {exc}")
     finally:

@@ -43,7 +43,7 @@
 | export / mapping / poolpick / supabase | ✓ | ✓ | — | — | — |
 | boss (отчёт руководителя) | ✓ | — | ✓ | — | — |
 | users / audit / companies | ✓ | — | — | — | — |
-| pooladmin / poolpeople / fraud / b2badmin | ✓ | — | — | — | — |
+| pooladmin / poolpeople / fraud / b2badmin / conflicts | ✓ | — | — | — | — |
 | settings | ✓ | ✓ | ✓ | ✓ | — |
 | public / my / partners (пул) | — | — | — | — | ✓ |
 

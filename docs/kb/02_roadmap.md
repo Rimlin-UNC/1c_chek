@@ -30,7 +30,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 ## Срез на 2026-11-02
 
 **Ждут владельца (P0–P1):**
-- [#4](https://github.com/Rimlin-UNC/1c_chek/issues/4) T-01 — установить v1.70.82 на рабочий сервер (P0).
+- [#4](https://github.com/Rimlin-UNC/1c_chek/issues/4) T-01 — установить на рабочий сервер v1.70.83 (включает 1.70.82; P0).
 - [#5](https://github.com/Rimlin-UNC/1c_chek/issues/5) T-02 — что делать с PR #2.
 - [#6](https://github.com/Rimlin-UNC/1c_chek/issues/6) T-03 — сливать ли PR #3 в `main`.
 - [#13](https://github.com/Rimlin-UNC/1c_chek/issues/13) T-10 — роль Vercel.
@@ -44,7 +44,6 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
-- [#9](https://github.com/Rimlin-UNC/1c_chek/issues/9) T-06 — экран разбора конфликтов (P1) — **в работе**: экран и тесты в ветке, дальше выпуск 1.70.83.
 - [#22](https://github.com/Rimlin-UNC/1c_chek/issues/22) T-30 — разбор расхождений данных между копиями (P2): сначала решение владельца, какая копия — эталон.
 - [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20) T-24 — сквозной интеграционный тест миграции БД (P1), спецификация в issue.
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
@@ -57,6 +56,8 @@ T-08 — переход рабочей БД на PostgreSQL/Supabase.
 #15 закроются при слиянии PR #3 (`Closes` в описании).
 
 **Отменено:** T-14 — перенос базы знаний в Notion (ADR-16), issue #17.
+
+**Готово 02.11.2026 (выпуск v1.70.83):** T-06 — экран «Разбор конфликтов» единого реестра ([#9](https://github.com/Rimlin-UNC/1c_chek/issues/9)); найдено и заведено T-30 ([#22](https://github.com/Rimlin-UNC/1c_chek/issues/22)).
 
 **Готово 02.11.2026 (вторая сессия):** T-23 — разбор 12 пропусков ([#19](https://github.com/Rimlin-UNC/1c_chek/issues/19));
 T-26 — QA-панель и канбан в Google Sheets; T-27 — отчёт в Google Docs;

@@ -407,38 +407,47 @@ class TestSupabaseMenu:
 # 4. Выпуск
 # ==========================================================================
 class TestRelease:
+    """Выпуск 1.70.82 — исторические проверки.
+
+    v1.70.83: точные пины перенесены в tests/test_v17083.py. Здесь остаётся то,
+    что верно и после следующих выпусков: версия только растёт, запись о
+    выпуске на месте, точки синхронизации совпадают с текущей версией.
+    """
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
+        from app.config import settings
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
                     "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+            assert current in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw
-        assert sw.count(f"?v={VERSION}") == 2
+        assert f"ymaster-check-v{current}" in sw
+        assert sw.count(f"?v={current}") == 2
 
-    def test_changelog_first_entry_is_stable(self):
+    def test_changelog_entry_is_stable(self):
         md = read("CHANGELOG.md")
-        first = md.split("\n", 1)[0]
-        assert first.startswith(f"## [{VERSION}]")
-        assert "WIP" not in first
+        assert "WIP" not in md.split("\n", 1)[0]
         entry = md.split(f"## [{VERSION}]", 1)[1].split("\n## [", 1)[0]
-        # окно обновления показывает первые 4000 символов — запись видна целиком
-        assert len(md.split("\n## [1.70.81]", 1)[0]) <= 4000
         for needle in ("резервн", "откат", "1.70.80"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
-        js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
+    def test_whats_new_has_entry(self):
+        assert f"'{VERSION}': [" in read("app/static/js/app.js")
 
     def test_journal_entry(self):
         assert f"## v{VERSION} —" in read("docs/ui_journal.md")
 
     def test_changed_blocks_are_reported(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
         for name in ("Единый реестр чеков", "Чек-Пул", "Роли и доступ", "Сканирование чеков"):
-            assert reg.get(name) == VERSION, name
+            assert self._ver(reg[name]) >= self._ver(VERSION), name
         # версия блока не может опережать версию программы
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 82) for v in reg.values())
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
