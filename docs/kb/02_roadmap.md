@@ -40,12 +40,12 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 
 **Заблокированы:**
 - [#7](https://github.com/Rimlin-UNC/1c_chek/issues/7) T-04 — схема `qa_lock_…` в Supabase: удаление заблокировано фильтром провайдера, нужно явное подтверждение.
-- [#10](https://github.com/Rimlin-UNC/1c_chek/issues/10) T-07 — перенос архива: экран разбора конфликтов готов (v1.70.83); ждёт «да» владельца, перед запуском — сквозной тест #20, резервная копия и `--dry-run`.
+- [#10](https://github.com/Rimlin-UNC/1c_chek/issues/10) T-07 — перенос архива: экран разбора конфликтов готов (v1.70.83), путь проверен сквозным тестом (#20); ждёт «да» владельца, перед запуском — резервная копия и `--dry-run`.
+- [#23](https://github.com/Rimlin-UNC/1c_chek/issues/23) T-31 — перенос рабочей базы SQLite → PostgreSQL с поштучной сверкой (шаг 6 сквозного теста): ждёт решения по #11.
 - [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
 - [#22](https://github.com/Rimlin-UNC/1c_chek/issues/22) T-30 — разбор расхождений данных между копиями (P2): сначала решение владельца, какая копия — эталон.
-- [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20) T-24 — сквозной интеграционный тест миграции БД (P1), спецификация в issue.
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
 
 **Требует уточнения:** [#11](https://github.com/Rimlin-UNC/1c_chek/issues/11)
@@ -58,6 +58,8 @@ T-08 — переход рабочей БД на PostgreSQL/Supabase.
 **Отменено:** T-14 — перенос базы знаний в Notion (ADR-16), issue #17.
 
 **Готово 02.11.2026 (выпуск v1.70.83):** T-06 — экран «Разбор конфликтов» единого реестра ([#9](https://github.com/Rimlin-UNC/1c_chek/issues/9)); найдено и заведено T-30 ([#22](https://github.com/Rimlin-UNC/1c_chek/issues/22)).
+
+**Готово 02.11.2026 (сквозной тест миграции):** T-24 — [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20): `tests/test_migration_e2e.py` проходит путь 1.70.80 → текущая версия → перенос архива → сверка инвариантов → откат и повторное обновление на SQLite и PostgreSQL 17 (21 проверка на каждом, CI на Python 3.11 и 3.12). Найдено и исправлено: чистая установка на PostgreSQL падала на компании по умолчанию (`app/database.py`) — **внести в CHANGELOG следующего выпуска**. Шаг 6 (перенос SQLite → PostgreSQL) — T-31, [#23](https://github.com/Rimlin-UNC/1c_chek/issues/23).
 
 **Готово 02.11.2026 (вторая сессия):** T-23 — разбор 12 пропусков ([#19](https://github.com/Rimlin-UNC/1c_chek/issues/19));
 T-26 — QA-панель и канбан в Google Sheets; T-27 — отчёт в Google Docs;

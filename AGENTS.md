@@ -89,7 +89,9 @@ Google Sheets, Docs и Slides — **только представления** д
 2. `.venv/bin/ruff check app tests qa` — «All checks passed»; `npm run lint` — 0 ошибок.
 3. SQL и БД — тесты PostgreSQL на одноразовой базе: `python qa/pg_local.py`
    (временный сервер; полный прогон как в CI — `python qa/pg_local.py full`).
-4. Схема или пути данных — `python -m qa.upgrade_rehearsal --from-ref <коммит на сервере>`.
+4. Схема или пути данных — `python -m qa.upgrade_rehearsal --from-ref <коммит на сервере>`;
+   путь миграции целиком (1.70.80 → перенос архива → откат) — сквозной тест
+   `tests/test_migration_e2e.py` (#20), на PostgreSQL — через `qa/pg_local.py`.
 5. После push — **зелёный CI** на Python 3.11 и 3.12: 0 упавших и 0 пропущенных.
    Падения читать через API аннотаций ([RUNBOOK → CI](docs/RUNBOOK.md#ci)).
    Падение в CI, которого нет локально, — тест зависит от машины: чинить тест.

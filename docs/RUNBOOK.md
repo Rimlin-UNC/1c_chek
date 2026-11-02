@@ -58,6 +58,7 @@ python3 qa/session_check.py                # старт сессии: git про
 | Аудит RLS и внешних ключей Supabase (только чтение) | `supabase/checks/rls_fk_audit.sql` — в SQL-редакторе или коннектором | [DATABASE.md](DATABASE.md#проверки-rls-и-внешних-ключей) |
 | Репетиция обновления | `.venv/bin/python -m qa.upgrade_rehearsal --from-ref <коммит на сервере>` | `qa/upgrade_rehearsal.py` |
 | Этап Б: обновление из программы с GitHub, откат и повтор (после push) | `.venv/bin/python -m qa.live_update --from-ref <коммит на сервере>` | `qa/live_update.py` |
+| Сквозной тест миграции (#20): 1.70.80 → текущая → перенос архива → сверка → откат и повтор | `python3 qa/pg_local.py pytest tests/test_migration_e2e.py` (SQLite и PostgreSQL); отчёт по фазам — `.venv/bin/python -m qa.migration_e2e [--postgres]` | `tests/test_migration_e2e.py`, `qa/migration_e2e.py`, [DATABASE.md](DATABASE.md#сквозной-тест-миграции-20) |
 
 Правила:
 - Прогон pytest **не прерывать**: обрыв оставляет мусор в БД тестов.
@@ -178,6 +179,9 @@ Projects токен интеграции создать не может (403).
   `chek.ymaster.ru` и инфраструктуру деплоя.
 - Если менялась схема БД или пути данных — прогнать `qa/upgrade_rehearsal.py`
   от коммита, установленного на сервере.
+- Менялись единый реестр, перенос архива, сверка или `init_db` — сквозной тест
+  миграции на обоих бэкендах: `python3 qa/pg_local.py pytest tests/test_migration_e2e.py`
+  (в общем прогоне и в CI он идёт всегда).
 - После push выпуска — этап Б: `qa/live_update.py` от коммита на сервере.
   Настоящее обновление из программы с GitHub (неглубокий клон, как
   `deploy.sh`; запуск командой systemd-юнита), откат из «Последних рабочих

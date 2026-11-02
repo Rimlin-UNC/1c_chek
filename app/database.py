@@ -440,10 +440,13 @@ def _backfill_companies(conn, existing_tables: set) -> None:
         "SELECT organization FROM users WHERE role = 'admin' "
         "ORDER BY created_at LIMIT 1")).first()
     name = (row[0] if row and row[0] else "ООО «Ямастер»").strip()[:200]
+    # #20: is_active — параметром True, а не литералом 1: PostgreSQL не принимает
+    # целое число в булев столбец (SQLite принимает) — из-за этого чистая
+    # установка на PostgreSQL падала уже на первом init_db().
     conn.execute(text(
         "INSERT INTO companies (id, name, short_name, inn, note, is_active, created_at) "   # v1.22.0: short_name
-        "VALUES (:i, :n, '', '', 'Создана автоматически при обновлении до 1.11.0', 1, :t)"),
-        {"i": uid(), "n": name, "t": _utcnow()})
+        "VALUES (:i, :n, '', '', 'Создана автоматически при обновлении до 1.11.0', :a, :t)"),
+        {"i": uid(), "n": name, "a": True, "t": _utcnow()})
     cid = conn.execute(text("SELECT id FROM companies ORDER BY created_at LIMIT 1")).scalar()
     conn.execute(text("UPDATE users SET company_id = :c WHERE company_id IS NULL "
                       "AND role != 'admin'"), {"c": cid})
