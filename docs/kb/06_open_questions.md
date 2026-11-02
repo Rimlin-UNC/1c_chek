@@ -35,9 +35,11 @@
   требует уточнения → T-22, [#18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
 - **Q-11.** Какие схемы открыты PostgREST (exposed schemas)? Проверить в
   Dashboard → API → T-22, [#18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
-- **Q-16.** Интеграция Supabase ↔ GitHub привязана к ветке PR #2
-  (`arena/071f4163-1c-chek`) со старыми файлами миграций: включено ли
-  автоприменение и переключать ли на `main`? → T-25, [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21).
+- **Q-16.** Интеграция Supabase ↔ GitHub: включено ли автоприменение и куда её
+  привязать? → **Ответ получен (02.11.2026):** автоприменение есть — push в
+  production-ветку разворачивает `supabase/` в рабочий проект. Владелец
+  переключил интеграцию с ветки PR #2 на ветку PR #3; после слияния PR #3 —
+  переключить на `main` → T-25, [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21).
 - **Q-15.** Представления `public.chek_demo_*` выполняются с правами владельца
   (без `security_invoker`) и обходят RLS базовых таблиц. Оставить как осознанное
   исключение для синтетики или перевести на `security_invoker` + политики RLS?

@@ -194,9 +194,12 @@ T-22, [issue #18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
   `FUNCTIONS_DEPLOYED`). История миграций и аудит RLS/FK не изменились: файлы
   ветки совпадают с применённой историей, аудит — 22 строки (15 OK,
   7 ВНИМАНИЕ, 0 ОШИБКА).
-- **Следствие для работы:** push в `arena/c7f9d34a-1c-chek` может применить новые
-  файлы `supabase/migrations` и `supabase/functions` к рабочему проекту. Такие
-  файлы — только после «да» владельца (стоп-лист в [AGENTS.md](../AGENTS.md)).
+- **Push разворачивает ветку в рабочий проект** (проверено 02.11.2026): после
+  push `03c8fb8` ветка Supabase прошла `RUNNING_MIGRATIONS` → `FUNCTIONS_DEPLOYED`,
+  проверка «Supabase Preview» в PR — success, история миграций не изменилась.
+- **Следствие для работы:** новые файлы `supabase/migrations` и `supabase/functions`
+  применятся к рабочему проекту при первом же push. Такие файлы — только после
+  «да» владельца (стоп-лист в [AGENTS.md](../AGENTS.md)).
 - После слияния PR #3 production-ветку переключить на `main` —
   [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21), T-25. Агент настройки
   интеграции не меняет.
