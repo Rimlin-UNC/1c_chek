@@ -30,7 +30,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 ## Срез на 2026-11-03
 
 **Ждут владельца (P0–P1):**
-- [#4](https://github.com/Rimlin-UNC/1c_chek/issues/4) T-01 — установить на рабочий сервер v1.70.88 (включает 1.70.82–1.70.87; P0).
+- [#4](https://github.com/Rimlin-UNC/1c_chek/issues/4) T-01 — установить на рабочий сервер v1.70.89 (включает 1.70.82–1.70.88; P0). Не ставить 1.70.82–1.70.88 по отдельности: в них исправленная потеря данных Чек-Пула.
 - [#5](https://github.com/Rimlin-UNC/1c_chek/issues/5) T-02 — что делать с PR #2.
 - [#6](https://github.com/Rimlin-UNC/1c_chek/issues/6) T-03 — сливать ли PR #3 в `main`.
 - [#13](https://github.com/Rimlin-UNC/1c_chek/issues/13) T-10 — роль Vercel.
