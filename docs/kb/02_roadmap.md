@@ -39,7 +39,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - T-38 (фаза 4б) выпущен в v1.70.89, исправление — в v1.70.90: сохранение формы правки у чека по QR больше не стирает данные Чек-Пула (явная очистка — «было значение, стало пусто»). Следующий шаг — T-39 (4в, чтение из единой записи): владелец ответил на Q-28 — (в), в карточке данные единой записи с пометкой, в 1С — только своё. T-40 (сжатие) отложено (Q-27).
 
 **Ждут владельца (P2):**
-- Q-29 — какие нововведения из [исследования](10_research.md) брать после шага 4в: T-43 ([#28](https://github.com/Rimlin-UNC/1c_chek/issues/28)), T-45 ([#30](https://github.com/Rimlin-UNC/1c_chek/issues/30)), T-46 ([#31](https://github.com/Rimlin-UNC/1c_chek/issues/31)), T-47 ([#32](https://github.com/Rimlin-UNC/1c_chek/issues/32)), T-48 ([#33](https://github.com/Rimlin-UNC/1c_chek/issues/33)); рекомендация — T-46 и T-45.
+- Решено 03.11.2026 ([стратегия](11_strategy.md), ADR-21…24): две поставки из одного кода, 1С — EnterpriseData, затем расширение; первичка — УПД из ЭДО, затем готовый распознаватель; согласование — простая подпись, 72 часа — согласовано; Q-29 — T-43, T-45, T-46, T-47 делать, T-48 позже.
 - [#18](https://github.com/Rimlin-UNC/1c_chek/issues/18) T-22 — решения по итогам обзора безопасности Supabase: представления `chek_demo_*`, `rls_auto_enable`, exposed schemas.
 
 **Заблокированы:**
@@ -49,7 +49,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
-- T-39 — шаг 4в «Единой базы» по ответу на Q-28 (P1, следующий).
+- Горизонт 1 ([стратегия](11_strategy.md)), по порядку: T-39 — шаг 4в «Единой базы» и «Подставить»; [#28](https://github.com/Rimlin-UNC/1c_chek/issues/28) T-43 — запрещённые позиции (алкоголь и подобное, продукты); [#31](https://github.com/Rimlin-UNC/1c_chek/issues/31) T-46 — согласование авансового отчёта; [#30](https://github.com/Rimlin-UNC/1c_chek/issues/30) T-45 — банковская выписка.
 - [#26](https://github.com/Rimlin-UNC/1c_chek/issues/26) T-41 — контрактные тесты «интерфейс ↔ API» (P1); [#27](https://github.com/Rimlin-UNC/1c_chek/issues/27) T-42 — офлайн-очередь в мини-приложении MAX; [#29](https://github.com/Rimlin-UNC/1c_chek/issues/29) T-44 — подсказка статьи расходов; [#34](https://github.com/Rimlin-UNC/1c_chek/issues/34) T-49 — проверка зависимостей ([исследование](10_research.md)).
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
 

@@ -167,13 +167,15 @@ class TestAgentDocs:
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         for n in range(41, 50):
             row = tasks[f"T-{n}"]
-            assert row["Статус"] == "todo" and row["Источник"].endswith("docs/kb/10_research.md")
+            # T-48 отложен владельцем 03.11.2026 (#33) — blocked, остальные — todo
+            assert row["Статус"] in ("todo", "blocked") and row["Источник"].endswith("docs/kb/10_research.md")
             assert f"| T-{n} " in research
             # у каждого кандидата — issue на GitHub, та же ссылка в таблице исследования
             assert row["Issue/PR"].startswith("https://github.com/Rimlin-UNC/1c_chek/issues/")
             assert f"]({row['Issue/PR']})" in research
         questions = {r["ID"]: r for r in csv.DictReader(read("docs/kb/06_open_questions.csv").splitlines())}
-        assert questions["Q-29"]["Статус"] == "open" and questions["Q-29"]["Кто решает"] == "владелец"
+        # открыт 03.11.2026, в тот же день — ответ владельца в issues #28, #30–#33
+        assert questions["Q-29"]["Статус"] in ("open", "answered") and questions["Q-29"]["Кто решает"] == "владелец"
 
     def test_relative_links_resolve(self):
         """Относительные ссылки AGENTS.md и docs/kb ведут на существующие файлы."""
