@@ -490,9 +490,18 @@ def prepare_code(work: Path, sha: str = OLD_COMMIT) -> tuple[Path, Path]:
     old_dir.mkdir(parents=True)
     archive = subprocess.run(["git", "archive", sha], cwd=ROOT, capture_output=True, check=True)
     subprocess.run(["tar", "-x", "-C", str(old_dir)], input=archive.stdout, check=True)
-    shutil.copytree(ROOT, new_dir, ignore=shutil.ignore_patterns(
-        ".git", ".venv", "venv", "node_modules", "data", "*.db", "__pycache__", "test-results",
-        ".pytest_cache", ".ruff_cache", "htmlcov", "coverage"))
+    common = shutil.ignore_patterns(".git", ".venv", "venv", "node_modules", "*.db", "__pycache__",
+                                    "test-results", ".pytest_cache", ".ruff_cache", "htmlcov", "coverage")
+
+    def ignore(path: str, names: list[str]) -> set[str]:
+        # v1.70.89: только корневой data/ (база и файлы программы); справочники
+        # app/pool/geo/data — часть кода, без них сканирование падает
+        skip = set(common(path, names))
+        if Path(path) == ROOT and "data" in names:
+            skip.add("data")
+        return skip
+
+    shutil.copytree(ROOT, new_dir, ignore=ignore)
     return old_dir, new_dir
 
 
@@ -524,6 +533,72 @@ def phase_env(url: str) -> dict:
     env.update({"DATABASE_URL": url, "YM_NO_REEXEC": "1", "YM_FETCHQ_OFF": "1", "YM_OSMON_OFF": "1",
                 "SECRET_KEY": secrets.token_hex(32), "REH_PASSWORD": "E2e-" + secrets.token_hex(6)})
     return env
+
+
+# v1.70.89 (фаза 4б, T-38): правило слияния. Бухгалтер Альфы сканирует QR — копия
+# реестра знает только дату, сумму и тройку; затем тот же чек приходит в Чек-Пул с
+# данными ФНС (адрес продавца, кассир). До 1.70.89 единая запись их не принимала, а
+# правка бухгалтера и сверка на старте стирали их в Чек-Пуле. Стадия последняя:
+# свои чеки не меняют прежние проверки.
+MERGE_RULE = PHASE_COMMON + r"""
+from datetime import datetime
+from app.main import app
+from app.database import SessionLocal, init_db
+init_db()
+from fastapi.testclient import TestClient
+from app.models import Receipt
+from app.pool.models import PoolItem, PoolReceipt, PoolUser
+from app.unified import service
+from app.unified.copies import candidates, reconcile_copies
+ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
+ADDRESS, CASHIER = "г. Пул, ул. Полная, 1", "Кассир Пулов"
+fn, fd, fp, when = "9489000000000077", "7707", "4400000077", datetime(2026, 10, 20, 12, 0)
+
+def facts(db, pid, rid=None):
+    db.expire_all()
+    pool = db.get(PoolReceipt, pid)
+    doc = service.document_for_source(db, service.POOL, pid)
+    reg = db.get(Receipt, rid) if rid else None
+    return {"canon": [doc.merchant_address, doc.cashier] if doc else None,
+            "pool": [pool.merchant_address, pool.cashier],
+            "registry": [reg.merchant_address or "", reg.cashier or ""] if reg else None,
+            "linked": sorted(o.source_kind for o in doc.origins) if doc else []}
+
+res = {}
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("acc_a",)}
+    scan = c.post("/api/v1/receipts/scan", headers=H["acc_a"], json={
+        "qr_data": f"t={when:%Y%m%dT%H%M}&s=77.00&fn={fn}&i={fd}&fp={fp}&n=1", "source": "web", "verify": False})
+    res["scan"] = scan.status_code
+    rid = (scan.json().get("receipt") or {}).get("id") if scan.status_code == 200 else None
+with SessionLocal() as db:
+    donor = db.query(PoolUser).first()
+    pool = PoolReceipt(pool_user_id=donor.id if donor else None, fn=fn, fd=fd, fp=fp,
+                       qr_data=f"t={when:%Y%m%dT%H%M}&s=77.00&fn={fn}&i={fd}&fp={fp}&n=1",
+                       receipt_date=when, total_sum=77.0, operation=1, merchant_name="Магазин 4б",
+                       merchant_inn="7801234567", merchant_address=ADDRESS, cashier=CASHIER,
+                       status="verified", full_data=True, points_awarded=0)
+    db.add(pool)
+    db.flush()
+    db.add(PoolItem(receipt_id=pool.id, name="Позиция 4б", quantity=1, price=77.0, total=77.0))
+    db.flush()                        # как приём в пул: позиции записаны до регистрации
+    service.register_source(db, service.POOL, pool, None, strict=True, event_type="ingest")
+    db.commit()
+    pid = pool.id
+    res["after_pool"] = facts(db, pid, rid)
+with TestClient(app) as c:
+    H = {u: login(c, u, pw) for u in ("acc_a",)}
+    res["patch"] = c.patch(f"/api/v1/receipts/{rid}", headers=H["acc_a"],
+                           json={"comment": "правка бухгалтера"}).status_code if rid else None
+    with SessionLocal() as db:
+        res["after_patch"] = facts(db, pid, rid)
+with SessionLocal() as db:            # как сверка при следующем запуске
+    res["reconcile"] = reconcile_copies(db)
+    db.commit()
+    res["after_restart"] = facts(db, pid, rid)
+    res["drift"] = {kind: len(v) for kind, v in candidates(db).items()}
+emit(res)
+"""
 
 
 def run_phase(name: str, code: str, code_dir: Path, env: dict) -> dict:
@@ -816,6 +891,18 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               and final3["acc_a"] == 2 and final3["acc_b"] == "нет" and final3["late_company"] == [False],
               f"фаза 3: показ числа пережил откат на {OLD_LABEL} и повторное обновление; компания, созданная "
               f"старой версией («{AFTER_ROLLBACK_COMPANY}»), без отметки", final3)
+    merge = phase("фаза 4б: правило слияния", MERGE_RULE, new_dir)
+    kept = ["г. Пул, ул. Полная, 1", "Кассир Пулов"]
+    rep.check(merge["scan"] == 200 and merge["patch"] == 200
+              and all(merge[k]["canon"] == kept and merge[k]["pool"] == kept
+                      for k in ("after_pool", "after_patch", "after_restart"))
+              and merge["after_restart"]["registry"] == ["", ""]
+              and merge["after_pool"]["linked"] == ["pool", "registry"]
+              and merge["drift"] == {"registry": 0, "pool": 0} and merge["reconcile"]["candidates"] == 0,
+              "фаза 4б: копия реестра, отсканированная по QR раньше, чем чек пришёл в Чек-Пул, не стирает "
+              "адрес продавца и кассира из ФНС — ни при правке бухгалтера, ни при сверке на старте; "
+              "единая запись их принимает",
+              merge)
     raw["users"], raw["seconds"] = users, round(time.monotonic() - started, 1)
     return rep.checks, raw
 

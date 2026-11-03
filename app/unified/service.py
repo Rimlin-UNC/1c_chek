@@ -214,6 +214,57 @@ def _apply_core(doc: UnifiedDocument, data: dict) -> None:
         setattr(doc, field, value)
 
 
+# v1.70.89 (фаза 4б, T-38): правило слияния единой записи. Единая запись хранит
+# всё, что известно о чеке. Пустое значение копии значит «неизвестно», а не
+# «стереть»: копия реестра, отсканированная по QR, не знает продавца и кассира,
+# которых Чек-Пул получил из ФНС, — и не должна стирать их ни при правке
+# бухгалтера, ни при сверке на старте. Стирает только явная очистка поля в
+# карточке (``cleared``). Метки классификации у каждой копии свои: проекция в
+# Чек-Пул только заполняет пустые метки (разметка администратора пула остаётся).
+MERGE_TEXT = ("merchant_name", "merchant_inn", "merchant_address", "cashier")
+LABELS = ("region_code", "region_city", "industry")
+_MAY_BE_UNKNOWN = MERGE_TEXT + LABELS + ("receipt_date",)
+
+
+def _unknown(value: Any) -> bool:
+    return value is None or value == ""
+
+
+def _merge_core(doc: UnifiedDocument, data: dict, cleared: frozenset = frozenset()) -> bool:
+    """Принять ядро копии в единую запись по правилу слияния.
+
+    Возвращает True, если копия чего-то не знала и единая запись сохранила своё.
+    """
+    kept = False
+    for field, value in data.items():
+        if (field in _MAY_BE_UNKNOWN and field not in cleared and _unknown(value)
+                and not _unknown(getattr(doc, field))):
+            kept = True
+            continue
+        setattr(doc, field, value)
+    return kept
+
+
+def _fill_unknown(doc: UnifiedDocument, data: dict) -> bool:
+    """Дополнить пустые поля единой записи известными значениями копии."""
+    filled = False
+    for field in _MAY_BE_UNKNOWN:
+        if _unknown(getattr(doc, field)) and not _unknown(data.get(field)):
+            setattr(doc, field, data[field])
+            filled = True
+    return filled
+
+
+def _fill_items(db: Session, doc: UnifiedDocument, kind: str, row: Any) -> bool:
+    """Позиций у единой записи нет, а у копии есть — единая запись их принимает."""
+    if doc.items:
+        return False
+    items = _items(db, row, kind)
+    if items:
+        _set_items(db, doc, items)
+    return bool(items)
+
+
 def _ensure_ownership(db: Session, doc: UnifiedDocument) -> UnifiedOwnership:
     if doc.ownership is None:
         doc.ownership = UnifiedOwnership(document_id=doc.id)
@@ -267,6 +318,7 @@ def register_source(db: Session, kind: str, row: Any, actor: User | None = None,
         if flags and strict:
             raise HTTPException(409, "Данные чека расходятся с единой записью; требуется разбор")
         doc.review_flags |= flags
+        _fill_unknown(doc, data)          # v1.70.89: копия знает больше — единая запись дополняется
         if key is None:
             doc.review_flags |= REVIEW_INCOMPLETE_IDENTITY
     own = _ensure_ownership(db, doc)
@@ -307,11 +359,17 @@ def document_for_source(db: Session, kind: str, source_id: str) -> UnifiedDocume
     return origin.document if origin else None
 
 
-def _project_pool(db: Session, doc: UnifiedDocument, skip: tuple[str, ...] = ()) -> None:
+def _project_pool(db: Session, doc: UnifiedDocument, skip: tuple[str, ...] = (),
+                  clear: frozenset = frozenset()) -> None:
     """Обновить общую часть пуловой проекции; raw/баллы/согласия не трогаем.
 
     ``skip`` — копии, из которых изменение только что принято (фаза 4а): их
     данные уже совпадают с единой записью, переписывать позиции незачем.
+
+    v1.70.89 (фаза 4б): чего единая запись не знает, то в копии не стирается —
+    кроме полей, явно очищенных в карточке (``clear``). Метки (регион, город,
+    отрасль) у копии свои: заполняются только пустые. Позиции не стираются,
+    если у единой записи их нет.
     """
     origins = db.query(UnifiedOrigin).filter(UnifiedOrigin.document_id == doc.id).all()
     items = (db.query(UnifiedItem).filter(UnifiedItem.document_id == doc.id)
@@ -322,12 +380,22 @@ def _project_pool(db: Session, doc: UnifiedDocument, skip: tuple[str, ...] = ())
         pool = db.get(PoolReceipt, origin.source_id)
         if pool is None:
             continue
-        for field in ("fn", "fd", "fp", "receipt_date", "total_sum", "operation",
-                      "merchant_name", "merchant_inn", "merchant_address", "cashier",
-                      "region_code", "industry"):
+        for field in ("fn", "fd", "fp", "total_sum", "operation"):
             setattr(pool, field, getattr(doc, field))
-        pool.city = doc.region_city
+        for field in MERGE_TEXT + ("receipt_date",):
+            value = getattr(doc, field)
+            if _unknown(value) and field not in clear and not _unknown(getattr(pool, field)):
+                continue
+            setattr(pool, field, value)
+        if not pool.region_code:
+            pool.region_code = doc.region_code or ""
+        if not pool.industry:
+            pool.industry = doc.industry or ""
+        if not pool.city:
+            pool.city = doc.region_city or ""
         old_items = db.query(PoolItem).filter(PoolItem.receipt_id == pool.id).all()
+        if old_items and not items:
+            continue                      # позиций у единой записи нет — копия свои сохраняет
         for old in old_items:
             db.delete(old)
         db.flush()
@@ -380,11 +448,14 @@ def _apply_identity(db: Session, doc: UnifiedDocument, key: str | None) -> None:
 
 
 def sync_registry(db: Session, receipt: Receipt, actor: User | None = None, *,
-                  event_type: str = "sync", details: dict | None = None) -> UnifiedDocument | None:
+                  event_type: str = "sync", details: dict | None = None,
+                  cleared: frozenset = frozenset()) -> UnifiedDocument | None:
     """После правки/обогащения реестра обновить каноническую запись и пул.
 
     ``event_type``/``details`` — для сверки копий при старте (фаза 4а): она
     принимает правку старой версии тем же путём, но пишет событие ``reconcile``.
+    ``cleared`` — поля, которые пользователь явно очистил в карточке (фаза 4б):
+    только они стирают известное значение единой записи и копии Чек-Пула.
     """
     db.flush()
     doc = document_for_source(db, REGISTRY, receipt.id)
@@ -396,7 +467,7 @@ def sync_registry(db: Session, receipt: Receipt, actor: User | None = None, *,
     _apply_identity(db, doc, identity_key(receipt.fn, receipt.fd, receipt.fp))
     data = _core(receipt, REGISTRY)
     doc.review_flags &= ~_compare_core(doc, data)
-    _apply_core(doc, data)
+    _merge_core(doc, data, cleared)
     items = _items(db, receipt, REGISTRY)
     if items or not doc.items:
         _set_items(db, doc, items)
@@ -408,13 +479,14 @@ def sync_registry(db: Session, receipt: Receipt, actor: User | None = None, *,
         own.created_by = receipt.created_by
     doc.version += 1
     _add_event(db, doc, event_type, actor, details={"source_kind": REGISTRY, **(details or {})})
-    _project_pool(db, doc)
+    _project_pool(db, doc, clear=frozenset(f for f in cleared if f in MERGE_TEXT))
     db.flush()
     return doc
 
 
 def sync_pool(db: Session, pool: PoolReceipt, actor: User | None = None, *,
-              event_type: str = "sync", details: dict | None = None) -> UnifiedDocument | None:
+              event_type: str = "sync", details: dict | None = None,
+              cleared: frozenset = frozenset()) -> UnifiedDocument | None:
     """Принять изменение копии Чек-Пула в единую запись (фаза 4а, T-37).
 
     Только для документа без копии в реестре: там пул — единственный источник
@@ -429,15 +501,17 @@ def sync_pool(db: Session, pool: PoolReceipt, actor: User | None = None, *,
     doc = (db.query(UnifiedDocument).populate_existing()
            .filter(UnifiedDocument.id == doc.id).with_for_update(of=UnifiedDocument).first())
     _apply_identity(db, doc, identity_key(pool.fn, pool.fd, pool.fp))
-    _apply_core(doc, _core(pool, POOL))
+    kept = _merge_core(doc, _core(pool, POOL), cleared)
     items = _items(db, pool, POOL)
+    kept = kept or (not items and bool(doc.items))
     if items or not doc.items:
         _set_items(db, doc, items)
     status, checked = _fns_evidence(pool, POOL)
     _merge_fns(doc, status, checked)
     doc.version += 1
     _add_event(db, doc, event_type, actor, details={"source_kind": POOL, **(details or {})})
-    _project_pool(db, doc, skip=(pool.id,))
+    # копия знала меньше единой записи — дополняется сама (иначе расхождение навсегда)
+    _project_pool(db, doc, skip=() if kept else (pool.id,))
     db.flush()
     return doc
 

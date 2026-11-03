@@ -1224,7 +1224,11 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
 
     if is_staff and changed["fields"]:
         from ..unified import service as unified
-        unified.sync_registry(db, receipt, user)
+        # v1.70.89 (фаза 4б): пустое поле единой записи стирает только явная
+        # очистка в карточке; поле, которого копия просто не знает, не стирает
+        cleared = frozenset(f for f in (*unified.MERGE_TEXT, "industry", "region_code")
+                            if getattr(body, f) is not None and not getattr(body, f).strip())
+        unified.sync_registry(db, receipt, user, cleared=cleared)
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,
                {"fields": changed["fields"], "role": user.role})

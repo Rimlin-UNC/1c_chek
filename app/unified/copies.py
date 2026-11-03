@@ -33,6 +33,12 @@
 синхронизации. Если бы сверка их возвращала, ручная разметка пропадала бы после
 каждого перезапуска.
 
+v1.70.89 (фаза 4б): пустое поле копии значит «неизвестно». Копия реестра, которая
+знает меньше единой записи (например, отсканирована по QR, а данные ФНС пришли в
+Чек-Пул), расхождением не считается и ничего не стирает. Копия Чек-Пула, которая
+знает больше единой записи, сначала дополняет её, а уже потом выравнивается.
+До 1.70.89 такие поля стирались — см. ``service._merge_core``.
+
 Кандидатов выбирает один запрос на вид копии. В нём сравниваются фискальные
 факты, признак ФНС, а у копии с позициями — число, суммы и длины названий позиций.
 Когда расхождений нет, сверка стоит два запроса. Каждое исправление пишется
@@ -65,7 +71,8 @@ log = logging.getLogger("ymaster")
 # Документы с такими пометками сверка не трогает: расхождение уже ждёт разбора.
 # Неполная тройка — не спор (у такого документа одна копия), её сверяем.
 SKIP_FLAGS = REVIEW_BLOCKING | REVIEW_VERIFICATION
-_TEXT = ("fn", "fd", "fp", "merchant_name", "merchant_inn", "merchant_address", "cashier")
+_IDENTITY = ("fn", "fd", "fp")
+_TEXT = _IDENTITY + service.MERGE_TEXT
 # Метки классификации: в сравнении копий не участвуют (см. описание модуля).
 _LABELS = ("region_code", "region_city", "industry")
 _FNS_FINAL = ("valid", "invalid", "not_found")
@@ -104,9 +111,17 @@ def candidate_query(kind: str):
     model, item_model = _sources(kind)
     copy_items = _item_totals(item_model, item_model.receipt_id)
     doc_items = _item_totals(UnifiedItem, UnifiedItem.document_id)
+    if kind == service.REGISTRY:
+        # реестр главный, но пустое поле реестра — «неизвестно», а не правка
+        text = [_txt(getattr(model, f)) != _txt(getattr(doc, f)) for f in _IDENTITY]
+        text += [and_(_txt(getattr(model, f)) != "", _txt(getattr(model, f)) != _txt(getattr(doc, f)))
+                 for f in service.MERGE_TEXT]
+        date = and_(model.receipt_date.isnot(None), model.receipt_date.is_distinct_from(doc.receipt_date))
+    else:
+        text = [_txt(getattr(model, f)) != _txt(getattr(doc, f)) for f in _TEXT]
+        date = model.receipt_date.is_distinct_from(doc.receipt_date)
     core = or_(
-        *[_txt(getattr(model, f)) != _txt(getattr(doc, f)) for f in _TEXT],
-        model.receipt_date.is_distinct_from(doc.receipt_date),
+        *text, date,
         _differs(model.total_sum, doc.total_sum, _MONEY_EPS),
         func.coalesce(model.operation, 1) != func.coalesce(doc.operation, 1),
     )
@@ -165,14 +180,23 @@ def _items_key(items) -> tuple:
     return tuple(service._item_core(i) for i in items)
 
 
+def _known(core: dict, doc_core: dict, kind: str) -> dict:
+    """Ядро копии реестра, где неизвестные поля (пустые) взяты из единой записи."""
+    if kind != service.REGISTRY:
+        return core
+    return {k: (doc_core[k] if k in (*service.MERGE_TEXT, "receipt_date") and service._unknown(v)
+                else v) for k, v in core.items()}
+
+
 class _Copy:
     """Снимок копии: поля ядра, позиции и вывод «совпадает ли с единой записью»."""
 
-    def __init__(self, db: Session, kind: str, row: Any, doc_core: tuple, doc_items: tuple):
+    def __init__(self, db: Session, kind: str, row: Any, doc_core: dict, doc_items: tuple):
         self.kind, self.row = kind, row
         self.core = service._core(row, kind)
         self.items = _items_key(service._items(db, row, kind))
-        self.same = _norm(self.core) == doc_core and (not self.items or self.items == doc_items)
+        self.same = (_norm(_known(self.core, doc_core, kind)) == _norm(doc_core)
+                     and (not self.items or self.items == doc_items))
 
     def variant(self) -> tuple:
         return _norm(self.core), self.items
@@ -212,7 +236,7 @@ def _reconcile_document(db: Session, doc_id: str, out: dict) -> None:
     if doc is None or doc.deleted_at is not None or doc.review_flags & SKIP_FLAGS:
         return
     origins = db.query(UnifiedOrigin).filter(UnifiedOrigin.document_id == doc.id).all()
-    doc_core = _norm(_doc_core(doc))
+    doc_core = _doc_core(doc)
     doc_items = _items_key(sorted(doc.items, key=lambda i: (i.position or 0, i.id)))
     copies: list[_Copy] = []
     for origin in sorted(origins, key=lambda o: (o.source_kind != service.REGISTRY, o.source_id)):
@@ -235,10 +259,16 @@ def _reconcile_document(db: Session, doc_id: str, out: dict) -> None:
             return
         service.sync_registry(db, source.row, None, event_type="reconcile",
                               details={"reason": "legacy_edit"})
+        for pool in pools:                # Чек-Пул знал больше — единая запись дополняется
+            service._fill_unknown(doc, pool.core)
+            service._fill_items(db, doc, service.POOL, pool.row)
         out["accepted"] += 1
         _merge_evidence(db, doc, pools)
         return
     if pool_diff and regs:
+        for pool in pool_diff:            # сначала дополнить единую запись, потом выравнивать
+            service._fill_unknown(doc, pool.core)
+            service._fill_items(db, doc, service.POOL, pool.row)
         service._project_pool(db, doc)
         service._add_event(db, doc, "reconcile", None,
                            details={"reason": "copy_restored", "source_kind": service.POOL,
