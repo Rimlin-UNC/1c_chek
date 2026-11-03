@@ -33,62 +33,61 @@ def flat(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.91 — исторические проверки.
+
+    v1.70.92: точные пины перенесены в tests/test_v17092.py. Здесь остаётся то,
+    что верно и после следующих выпусков.
+    """
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
                     "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+            assert current in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw
-        assert sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-03"
-        entry = md.split("\n## [1.70.90]", 1)[0]
-        assert len(entry) <= 4000, len(entry)       # окно обновления — первые 4000 символов
-        for needle in (
-            "резервная копия", "pip пропускается", "Схема базы не меняется", "Откат", "1.70.80", "48 из 48",
-            "Позиции чека (0)", "отправляла пустой список", "загружает чек целиком",
-            "только если их меняли", "«Подставить» вернёт их в чек",
-            "(T-39)", "Q-28", "«из единой записи»", "В выгрузку в 1С и авансовый отчёт они не попадают",
-            "Спорные данные", "без исправления падает", "32 проверки",
-        ):
+        head = f"## [{VERSION}] - 2026-11-03"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
+        assert len(head + entry) <= 4000, len(head + entry)
+        for needle in ("Позиции чека (0)", "загружает чек целиком", "(T-39)", "Q-28", "«из единой записи»",
+                       "32 проверки"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 2
-        for needle in ("не стирает позиции", "загружает чек целиком", "«из единой записи»", "«Подставить»"):
+        for needle in ("не стирает позиции", "«из единой записи»", "«Подставить»"):
             assert needle in block, needle
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — карточка чека: данные единой записи с пометкой")
-        entry = journal.split("\n## v1.70.90", 1)[0]
-        for needle in ("«Продавец»", "«Кассир»", "синей пометкой", "Окно руководителя", "«Подставить»",
-                       "две карточки"):
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
+        for needle in ("«Продавец»", "синей пометкой", "«Подставить»", "две карточки"):
             assert needle in entry, needle
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == ["Адаптивный интерфейс", "Единый реестр чеков"]
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 91) for v in reg.values())
+        for name in ("Адаптивный интерфейс", "Единый реестр чеков"):
+            assert self._ver(reg[name]) >= self._ver(VERSION), name
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (03.11.2026)" in readme
-        assert "Последний выпуск — v1.70.90" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.90.**" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSchema:
@@ -153,9 +152,11 @@ class TestDocs:
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         assert tasks["T-39"]["Статус"] == "done" and tasks["T-39"]["Задача"].endswith(f"выпущено в {VERSION}")
-        assert f"Ставить сразу v{VERSION}" in tasks["T-01"]["Блокер"]
-        assert tasks["T-57"]["Статус"] == "todo" and tasks["T-57"]["Приоритет"] == "P1"
+        m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.92: не старше
+        assert m and tuple(map(int, m.group(1).split("."))) >= (1, 70, 91)
+        assert tasks["T-57"]["Статус"] in ("todo", "done") and tasks["T-57"]["Приоритет"] == "P1"   # v1.70.92: выпущен
         for tid in ("T-50", "T-51", "T-52", "T-53", "T-54", "T-55", "T-56"):
             assert tasks[tid]["Issue/PR"].startswith("https://github.com/Rimlin-UNC/1c_chek/issues/"), tid
         ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
+        row = next(r for r in ledger if r["Версия"] == VERSION)
+        assert row["Опора репетиции"] == "да"

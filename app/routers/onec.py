@@ -14,7 +14,6 @@ Push-режим интеграции с 1С: чеки забирает серв�
 from __future__ import annotations
 
 import datetime as dt
-import hmac
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
@@ -30,12 +29,17 @@ from ..services.audit import log_action
 router = APIRouter(prefix="/onec/v1", tags=["Интеграция 1С"])
 
 
-def _require_token(x_api_token: str | None, db: Session) -> None:
-    from ..models import AppSetting
-    row = db.get(AppSetting, "onec_api_token")
-    expected = row.value if row and row.value else settings.ONEC_API_TOKEN
-    if not x_api_token or not hmac.compare_digest(x_api_token, expected):
-        raise HTTPException(status_code=401, detail="Неверный X-API-Token")
+def _require_token(x_api_token: str | None, db: Session) -> str | None:
+    """Проверить X-API-Token и вернуть область: id компании или None — все компании.
+
+    v1.70.92 (T-57): токен компании ограничивает выгрузку и подтверждение её чеками;
+    общий токен, как и раньше, видит все компании.
+    """
+    from ..services import onec_tokens
+    try:
+        return onec_tokens.resolve(db, x_api_token)
+    except onec_tokens.TokenError:
+        raise HTTPException(status_code=401, detail="Неверный X-API-Token") from None
 
 
 def _get_mapping(db: Session) -> list[MappingSetting]:
@@ -45,10 +49,14 @@ def _get_mapping(db: Session) -> list[MappingSetting]:
 @router.get("/ping", summary="Проверка связи 1С ↔ сервер")
 def ping(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
          db: Session = Depends(get_db)):
-    _require_token(x_api_token, db)
-    pending = db.query(Receipt).filter(Receipt.exported == False).count()  # noqa: E712
+    scope = _require_token(x_api_token, db)
+    query = db.query(Receipt).filter(Receipt.exported == False)  # noqa: E712
+    if scope:                                          # v1.70.92: только своя компания
+        query = query.filter(Receipt.company_id == scope)
+    pending = query.count()
     return {
         "service": "Ямастер Чек",
+        "scope": "company" if scope else "all",
         "vendor": "ООО «Ямастер» (ymaster.ru)",
         "pending_receipts": pending,
         "server_time": dt.datetime.utcnow().isoformat() + "Z",
@@ -63,7 +71,10 @@ def pull(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
                                         description="v1.11.0: только чеки компании"),
          limit: int = Query(default=100, ge=1, le=settings.ONEC_BATCH_SIZE),
          db: Session = Depends(get_db)):
-    _require_token(x_api_token, db)
+    scope = _require_token(x_api_token, db)
+    if scope and company_id and company_id != scope:   # v1.70.92 (T-57)
+        raise HTTPException(403, "Токен компании не даёт доступа к чекам другой компании")
+    company_id = scope or company_id
 
     query = db.query(Receipt).filter(Receipt.exported == False)  # noqa: E712
     if company_id:                                   # v1.11.0: пространство
@@ -83,14 +94,14 @@ def pull(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
     payload = exporter.build_push_payload(receipts, mapping, "ПоступлениеТоваровУслуг")
     payload["count"] = len(receipts)
     payload["has_more"] = len(receipts) == limit
-    log_action(None, "onec_pull", details={"count": len(receipts)})
+    log_action(None, "onec_pull", details={"count": len(receipts), "scope": scope or "all"})
     return payload
 
 
 @router.post("/receipts/ack", summary="1С подтверждает загрузку чеков")
 def ack(body: dict, x_api_token: str | None = Header(default=None, alias="X-API-Token"),
         db: Session = Depends(get_db)):
-    _require_token(x_api_token, db)
+    scope = _require_token(x_api_token, db)
     ids: list[str] = [str(i) for i in (body.get("ids") or [])][:1000]
     if not ids:
         raise HTTPException(422, "Ожидается массив ids")
@@ -98,12 +109,14 @@ def ack(body: dict, x_api_token: str | None = Header(default=None, alias="X-API-
     updated = 0
     for rid in ids:
         r = db.get(Receipt, rid)
+        if r and scope and r.company_id != scope:      # v1.70.92: чужие чеки не отмечаются
+            continue
         if r and not r.exported:
             r.exported = True
             r.exported_at = now
             updated += 1
     db.commit()
-    log_action(None, "onec_ack", details={"count": updated})
+    log_action(None, "onec_ack", details={"count": updated, "scope": scope or "all"})
     return {"acknowledged": updated}
 
 
@@ -112,11 +125,11 @@ def enterprise_data(format: str = Query("json", pattern="^(json|xml)$"),
                     target_object: str = Query("ПоступлениеТоваровУслуг"),
                     x_api_token: str | None = Header(default=None, alias="X-API-Token"),
                     db: Session = Depends(get_db)):
-    _require_token(x_api_token, db)
-    receipts = (db.query(Receipt)
-                .filter(Receipt.status == "verified")
-                .order_by(Receipt.receipt_date)
-                .limit(settings.ONEC_BATCH_SIZE).all())
+    scope = _require_token(x_api_token, db)
+    query = db.query(Receipt).filter(Receipt.status == "verified")
+    if scope:                                          # v1.70.92: только своя компания
+        query = query.filter(Receipt.company_id == scope)
+    receipts = query.order_by(Receipt.receipt_date).limit(settings.ONEC_BATCH_SIZE).all()
     mapping = _get_mapping(db)
     if format == "xml":
         content = exporter.build_enterprise_data_xml(receipts, mapping, target_object)

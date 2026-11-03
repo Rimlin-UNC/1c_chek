@@ -6316,6 +6316,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.92': [
+    { icon: '🔐', title: 'Свой токен 1С для каждой компании',
+      text: 'В «Выгрузке в 1С» появились «Токены компаний»: база 1С компании с таким токеном получает и отмечает '
+        + 'только свои чеки. Токен показывается один раз. Заодно исправлено: токен, заданный в «Настройках», '
+        + 'теперь принимается. Общий токен работает как раньше.' },
+  ],
   '1.70.91': [
     { icon: '🛡', title: 'Правка чека больше не стирает позиции',
       text: 'Форма правки открывалась по строке списка без позиций и при сохранении стирала их. Теперь форма '
@@ -9815,6 +9821,7 @@ async function viewExport(container, alive = routeGuard()) {
             Готовый код для 1С — в документации: <code class="inline">docs/INTEGRATION_1C.md</code></div></div>
         </div>
         <div id="token-zone" style="margin-top:12px"></div>
+        ${onecSettings ? '<div id="onec-company-tokens" style="margin-top:12px"></div>' : ''}
         <div class="info-callout" style="margin-top:14px;margin-bottom:0">
           Статистика: выгружено <b>${stats.exported}</b> · ожидают <b>${stats.pending_export}</b> чеков.
         </div>
@@ -9837,6 +9844,46 @@ async function viewExport(container, alive = routeGuard()) {
       toast(`${filename} — чеки помечены как выгруженные`, 'ok', 'Экспорт в 1С');
       route(true);
     } catch (e) { toast(e.message, 'err'); }
+  }
+  // v1.70.92 (T-57): токены 1С по компаниям — база 1С компании получает и отмечает
+  // только её чеки; общий токен, как и раньше, видит все компании
+  const ctBox = $('#onec-company-tokens');
+  const loadCompanyTokens = async () => {
+    let d;
+    try { d = await api.get('/api/v1/settings/onec/companies'); } catch { ctBox.innerHTML = ''; return; }
+    if (!alive()) return;
+    const list = d.companies || [];
+    const rows = list.map((c) => `<tr><td>${esc(c.name)}</td>
+      <td>${c.has_token ? `выпущен ${fmtDate(c.created_at)} · …${esc(c.hint || '')}` : '<span class="form-hint">нет</span>'}</td>
+      <td style="white-space:nowrap"><button type="button" class="btn btn-sm" data-ct="issue" data-id="${esc(c.company_id)}">${c.has_token ? 'Перевыпустить' : 'Выпустить'}</button>
+      ${c.has_token ? `<button type="button" class="btn btn-sm btn-bad" data-ct="revoke" data-id="${esc(c.company_id)}">Отозвать</button>` : ''}</td></tr>`).join('');
+    ctBox.innerHTML = `<div class="card-title" style="margin-top:6px">Токены компаний</div>
+      ${d.global_token && list.length > 1 ? `<div class="info-callout" style="margin-bottom:10px">⚠️ Общий токен видит чеки <b>всех компаний</b>.
+        Выдайте базе 1С каждой компании свой токен — она будет получать и отмечать только свои чеки.</div>` : ''}
+      ${rows ? `<div class="table-wrap"><table class="data"><thead><tr><th>Компания</th><th>Токен</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : '<p class="form-hint">Компаний нет</p>'}
+      <div id="ct-new"></div>`;
+  };
+  if (ctBox) {
+    ctBox.onclick = async (ev) => {
+      const b = ev.target && ev.target.closest ? ev.target.closest('[data-ct]') : null;
+      if (!b) return;
+      const url = `/api/v1/settings/onec/companies/${encodeURIComponent(b.dataset.id)}/token`;
+      try {
+        if (b.dataset.ct === 'revoke') {
+          if (!confirm('Отозвать токен? База 1С этой компании перестанет получать чеки.')) return;
+          await api.del(url);
+          toast('Токен отозван', 'ok', 'Интеграция 1С');
+          await loadCompanyTokens();
+          return;
+        }
+        const r = await api.post(url);
+        await loadCompanyTokens();
+        $('#ct-new').innerHTML = `<div class="token-line"><input readonly value="${esc(r.token)}">
+          <span class="form-hint">${esc(r.message)}</span></div>`;
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    loadCompanyTokens();
   }
   const reveal = $('#btn-reveal');
   if (reveal) reveal.onclick = async () => {

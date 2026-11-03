@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
@@ -168,6 +169,48 @@ def put_onec(body: OnecSettingsPatch, db: Session = Depends(get_db),
 @router.get("/onec/reveal", summary="Показать токен 1С полностью (админ)")
 def reveal_onec(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     return {"api_token": _get_setting(db, "onec_api_token", cfg.ONEC_API_TOKEN)}
+
+
+# v1.70.92 (T-57): токены 1С по компаниям — база 1С компании получает и отмечает
+# только её чеки. Общий токен работает как раньше и видит все компании.
+@router.get("/onec/companies", summary="Токены 1С по компаниям (админ)",
+            dependencies=[Depends(require_admin)])
+def onec_company_tokens(db: Annotated[Session, Depends(get_db)]):
+    from ..services import onec_tokens
+    companies = db.query(Company).order_by(Company.name).all()
+    return {"global_token": bool(onec_tokens.global_token(db)),
+            "companies": [{"company_id": c.id, "name": c.name, **onec_tokens.status(db, c.id)}
+                          for c in companies]}
+
+
+def _company_or_404(db: Session, company_id: str):
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(404, "Компания не найдена")
+    return company
+
+
+@router.post("/onec/companies/{company_id}/token", summary="Выпустить токен 1С компании (админ)")
+def issue_onec_company_token(company_id: str, db: Annotated[Session, Depends(get_db)],
+                             user: Annotated[User, Depends(require_admin)]):
+    from ..services import onec_tokens
+    _company_or_404(db, company_id)
+    token = onec_tokens.issue(db, company_id)
+    db.commit()
+    log_action(user, "onec_company_token_issued", "company", company_id)
+    return {"token": token, **onec_tokens.status(db, company_id),
+            "message": "Токен показан один раз — сохраните его в настройках обмена базы 1С этой компании"}
+
+
+@router.delete("/onec/companies/{company_id}/token", summary="Отозвать токен 1С компании (админ)")
+def revoke_onec_company_token(company_id: str, db: Annotated[Session, Depends(get_db)],
+                               user: Annotated[User, Depends(require_admin)]):
+    from ..services import onec_tokens
+    _company_or_404(db, company_id)
+    revoked = onec_tokens.revoke(db, company_id)
+    db.commit()
+    log_action(user, "onec_company_token_revoked", "company", company_id)
+    return {"ok": True, "revoked": revoked}
 
 
 # --------------------------------------------------------------------------

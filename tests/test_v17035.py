@@ -791,7 +791,7 @@ class TestNoDeadCss:
 class TestRelease:
     # v1.70.41: точки синхронизации живут дальше; свою версию и
     # требование «своя запись первая» проверяет test_v17041.
-    VERSION = "1.70.91"
+    VERSION = "1.70.92"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

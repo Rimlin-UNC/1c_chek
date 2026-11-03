@@ -133,7 +133,8 @@ def wait_ci(sha: str, timeout: int, poll: int = 30) -> int:
         if runs and not pending:
             break
         if time.monotonic() > deadline:
-            print(f"❌ CI на {sha[:7]}: за {timeout} с не завершился (идут: {len(pending)})", flush=True)
+            state = f"идут: {len(pending)}" if runs else "прогонов на коммите нет — проверьте, что он отправлен"
+            print(f"❌ CI на {sha[:7]}: за {timeout} с не завершился ({state})", flush=True)
             return 1
         time.sleep(poll)
     for r in runs:
@@ -174,8 +175,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{version}  {sha[:7]}  {'есть локально' if have_commit(sha) else 'нет локально'}")
         return 0
     if args.cmd == "ci":
-        sha = args.sha or subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
-                                         text=True, check=True).stdout.strip()
+        # API GitHub ищет прогоны только по полному хешу — короткий разворачиваем
+        sha = subprocess.run(["git", "rev-parse", args.sha or "HEAD"], cwd=ROOT, capture_output=True,
+                             text=True, check=True).stdout.strip()
         return wait_ci(sha, args.timeout)
     refs = select(load_refs(below=current), args.only)
     if not refs:
