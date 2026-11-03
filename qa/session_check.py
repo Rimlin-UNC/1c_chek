@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -30,6 +31,10 @@ NODE_TOOLS = ("eslint", "vitest", "playwright", "newman")
 # только проверка наличия, временные файлы не создаются (B108 — ложная тревога).
 VALIDATORS = {"stylelint": Path("/tmp/csslint/node_modules/.bin/stylelint"),  # nosec B108
               "html-validate": Path("/tmp/htmlval/node_modules/.bin/html-validate")}  # nosec B108
+
+# Локальный Chromium из qa/local_chromium.sh (ставит qa/setup_dev.sh --full) — только проверка наличия.
+LOCAL_CHROMIUM = Path("/tmp/ym-chromium/chrome.sh")  # nosec B108
+KB = ROOT / "docs" / "kb"
 
 results: list[tuple[str, str, str]] = []      # (уровень, что, подробности)
 
@@ -67,21 +72,66 @@ def check_git() -> str | None:
         report(level, f"git: {branch} = GitHub ({head[:7]})",
                "изменённых файлов нет" if changed == 0 else f"незакоммиченных изменений: {changed}")
         return branch
-    # Указатель расходится с GitHub — сверить дерево файлов через временный индекс
+    # Указатель расходится с GitHub: восстановленная песочница (указатель на старом
+    # коммите) или параллельная сессия, отправившая коммиты в ту же ветку. Сверяем
+    # дерево рабочих файлов с историей ветки на GitHub — так видно, есть ли
+    # незакоммиченная работа и какой шаг безопасен.
     if run("git", "cat-file", "-e", f"{remote_sha}^{{commit}}")[0] != 0:
         run("git", "fetch", "-q", "origin", branch, timeout=120)
+    level, what, fix = diagnose_divergence(head, remote_sha)
+    report(level, what, fix)
+    return branch
+
+
+def worktree_tree(base: str) -> str:
+    """Хеш дерева рабочих файлов (с неотслеживаемыми, без игнорируемых) через временный индекс."""
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "check.idx"))
-        run("git", "read-tree", remote_sha, env=env)
+        run("git", "read-tree", base, env=env)
         run("git", "add", "-A", env=env)
-        _, diff = run("git", "diff", "--cached", "--stat", remote_sha, env=env)
-    if not diff:
-        report("ОШИБКА", f"git: указатель {head[:7]} отстал от GitHub {remote_sha[:7]}, файлы совпадают",
-               f"безопасно выполнить: git reset --mixed {remote_sha[:7]}")
-    else:
-        report("ОШИБКА", f"git: HEAD {head[:7]} ≠ GitHub {remote_sha[:7]} и файлы различаются",
-               "не коммитить: разобраться (git diff) и сообщить владельцу")
-    return branch
+        _, tree = run("git", "write-tree", env=env)
+    return tree.strip()
+
+
+def find_tree_in_history(tree: str, tip: str, depth: int = 300) -> tuple[str, int] | None:
+    """Коммит из истории ``tip`` с тем же деревом: (коммит, на сколько коммитов позади)."""
+    _, log = run("git", "log", "--format=%H %T", f"-n{depth}", tip)
+    for behind, line in enumerate(log.splitlines()):
+        sha, _, commit_tree = line.partition(" ")
+        if commit_tree == tree:
+            return sha, behind
+    return None
+
+
+def nearest_commit(tree: str, candidates: list[str]) -> tuple[str, int]:
+    """Коммит-кандидат с наименьшим числом отличающихся от дерева файлов."""
+    best = (candidates[0], 10**9)
+    for sha in candidates:
+        _, names = run("git", "diff-tree", "-r", "--name-only", sha, tree)
+        count = len([n for n in names.splitlines() if n.strip()])
+        if count < best[1]:
+            best = (sha, count)
+    return best
+
+
+def diagnose_divergence(head: str, remote_sha: str) -> tuple[str, str, str]:
+    """(уровень, что, как исправить), когда HEAD не совпадает с веткой на GitHub."""
+    tree = worktree_tree(head)
+    found = find_tree_in_history(tree, remote_sha)
+    if found and found[1] == 0:
+        return ("ОШИБКА", f"git: указатель {head[:7]} отстал от GitHub {remote_sha[:7]}, файлы совпадают",
+                f"безопасно выполнить: git reset --mixed {remote_sha[:7]}")
+    if found:
+        sha, behind = found
+        return ("ОШИБКА", f"git: файлы = коммиту {sha[:7]} из истории GitHub ({behind} коммит(ов) позади "
+                          f"{remote_sha[:7]}); незакоммиченной работы нет",
+                f"безопасно выполнить: git reset --mixed {sha[:7]} && git merge --ff-only {remote_sha[:7]}")
+    _, recent = run("git", "log", "--format=%H", "-n30", remote_sha)
+    base, files = nearest_commit(tree, [head, *recent.split()])
+    return ("ОШИБКА", f"git: файлы не совпадают ни с одним коммитом GitHub — незакоммиченная работа "
+                      f"поверх {base[:7]} ({files} файл(ов))",
+            f"не терять: git reset --mixed {base[:7]}, проверить git status и git diff, закоммитить, "
+            f"затем git rebase {remote_sha[:7]}; без reset --hard и push --force")
 
 
 # ---------------------------------------------------------------- окружение
@@ -109,12 +159,55 @@ def check_environment() -> None:
     for name, path in VALIDATORS.items():
         report("OK" if path.exists() else "ОШИБКА", f"валидатор {name} (как в CI)",
                "" if path.exists() else "qa/setup_dev.sh --full")
+    chromium = Path(os.environ.get("YM_PLAYWRIGHT_CHROMIUM") or LOCAL_CHROMIUM)
     browsers = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", Path.home() / ".cache" / "ms-playwright"))
-    if browsers.is_dir() and any(browsers.iterdir()):
+    if chromium.exists():
+        report("OK", "Chromium для Playwright", f"YM_PLAYWRIGHT_CHROMIUM={chromium} — ворота запускать отдельно")
+    elif browsers.is_dir() and any(browsers.iterdir()):
         report("OK", "браузеры Playwright")
     else:
-        report("ВНИМАНИЕ", "браузеров Playwright нет",
-               "в песочнице CDN закрыт — браузерный тест выполняется в CI (локально 1 пропуск)")
+        report("ВНИМАНИЕ", "Chromium для Playwright нет",
+               "qa/setup_dev.sh --full ставит его (qa/local_chromium.sh); без него локально 1 пропуск")
+
+
+# ---------------------------------------------------------------- опоры и база знаний
+def check_release_refs() -> None:
+    """Коммиты опор репетиции (docs/kb/09_releases.csv) есть локально."""
+    sys.path.insert(0, str(ROOT))
+    try:
+        from qa.release_gate import current_version, have_commit, load_refs
+        refs = load_refs(below=current_version())
+    except (OSError, KeyError, RuntimeError, ValueError) as exc:
+        report("ВНИМАНИЕ", "опоры репетиции: реестр выпусков не прочитан", str(exc)[:120])
+        return
+    missing = [version for version, sha in refs if not have_commit(sha)]
+    report("OK" if not missing else "ВНИМАНИЕ", f"опоры репетиции: {len(refs)}",
+           ("нет локально: " + ", ".join(missing) + " — qa.release_gate догрузит их сам") if missing
+           else ", ".join(version for version, _ in refs))
+
+
+def print_kb_summary() -> None:
+    """Что дальше по базе знаний: задачи в работе, ждущие владельца вопросы, последний выпуск."""
+    try:
+        tasks = list(csv.DictReader((KB / "02_roadmap.csv").read_text(encoding="utf-8").splitlines()))
+        questions = list(csv.DictReader((KB / "06_open_questions.csv").read_text(encoding="utf-8").splitlines()))
+        releases = list(csv.DictReader((KB / "09_releases.csv").read_text(encoding="utf-8").splitlines()))
+    except (OSError, csv.Error) as exc:
+        print(f"\nБаза знаний не прочитана: {exc}", flush=True)
+        return
+    def ids(rows: list[dict], limit: int = 8) -> str:
+        names = [r["ID"] for r in rows]
+        return ", ".join(names[:limit]) + (f" и ещё {len(names) - limit}" if len(names) > limit else "") or "—"
+    in_work = [t for t in tasks if t["Статус"] == "in-progress"]
+    ready = [t for t in tasks if t["Статус"] == "todo" and t["Приоритет"] in ("P0", "P1")]
+    owner = [q for q in questions if q["Статус"] == "open" and q["Кто решает"] == "владелец"]
+    last = releases[-1] if releases else {}
+    print("\nДальше по базе знаний (docs/kb):", flush=True)
+    print(f"  последний выпуск: {last.get('Версия', '—')} ({str(last.get('Коммит', ''))[:7]}) — "
+          f"{str(last.get('Суть', ''))[:90]}", flush=True)
+    print(f"  в работе: {ids(in_work)}; todo P0–P1: {ids(ready)}; "
+          f"заблокировано: {sum(t['Статус'] == 'blocked' for t in tasks)}", flush=True)
+    print(f"  ждут владельца: {ids(owner)}", flush=True)
 
 
 # ---------------------------------------------------------------- GitHub и CI
@@ -161,7 +254,9 @@ def main() -> int:
     print("Проверка на старте сессии — шаг 0 AGENTS.md (только чтение)\n", flush=True)
     branch = check_git()
     check_environment()
+    check_release_refs()
     check_github(branch)
+    print_kb_summary()
     errors = [r for r in results if r[0] == "ОШИБКА"]
     warnings = [r for r in results if r[0] == "ВНИМАНИЕ"]
     print(f"\nИтог: проверок {len(results)}, ошибок {len(errors)}, предупреждений {len(warnings)} — "

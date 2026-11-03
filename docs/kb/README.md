@@ -30,7 +30,8 @@
 
 Основные документы (ADR-19):
 
-- [AGENTS.md](../../AGENTS.md) — алгоритм работы агента и новых сессий;
+- [AGENTS.md](../../AGENTS.md) — задание агента, алгоритм сессии, чек-лист задачи,
+  политика коннекторов, история и откат;
 - [OVERVIEW.md](../OVERVIEW.md) — обзор проекта;
 - [ARCHITECTURE.md](../ARCHITECTURE.md) — архитектурные решения ADR-01…19;
 - [RUNBOOK.md](../RUNBOOK.md) — запуск, тесты, CI, выпуск, деплой, QA-панель;
@@ -40,7 +41,11 @@
 
 - [Задачи и roadmap](02_roadmap.md) — база [`02_roadmap.csv`](02_roadmap.csv);
 - [Открытые вопросы и блокеры](06_open_questions.md) — база [`06_open_questions.csv`](06_open_questions.csv);
-- [Журнал сессий](08_session_journal.md) — база [`08_session_journal.csv`](08_session_journal.csv).
+- [Журнал сессий](08_session_journal.md) — база [`08_session_journal.csv`](08_session_journal.csv);
+- [Реестр выпусков: история и откат](09_releases.md) — база [`09_releases.csv`](09_releases.csv);
+  опоры репетиции для `qa/release_gate.py`;
+- [Исследования и нововведения](10_research.md) — конкуренты, опыт сообщества и
+  кандидаты в задачи `T-41`…`T-49` с источниками.
 
 Страницы `01`, `03`, `04`, `05`, `07` перенесены в документы выше и оставлены
 ссылками.
