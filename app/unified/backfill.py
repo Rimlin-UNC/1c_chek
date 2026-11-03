@@ -31,7 +31,6 @@ import sqlite3
 import tempfile
 
 from fastapi import HTTPException
-
 from sqlalchemy.orm import Session
 
 from ..models import Receipt

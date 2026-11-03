@@ -20,7 +20,9 @@
 администратора, решение «не учитывать»; с 1.70.86 — число организаций
 компаниям только с разрешения администратора (до и после разрешения,
 сотрудник, фильтр «две и больше», сохранность после отката) и перемещение с
-«переместить остальные» (skip_blocked).
+«переместить остальные» (skip_blocked); с 1.70.88 — отчёт «Готовность единой
+записи»: только администратору, числа совпадают с базой, расходящихся копий
+нет ни после обновления, ни после отката и повторного обновления.
 
 Запуск:  .venv/bin/python -m qa.live_update --from-ref b3db4fe [--keep]
 Нужен доступ к github.com. Сервер слушает только 127.0.0.1.
@@ -331,6 +333,21 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
               and fingerprint(db) == base_fp and totals(srv.http, heads) == base_totals,
               "перемещение с «переместить остальные» (skip_blocked): чеков на разборе нет — чек "
               "перенесён в Гамму и обратно, пропущенных нет; старые таблицы и итоги те же")
+        # v1.70.88 (фаза 4а, T-37): готовность единой записи — только числа и только
+        # администратору; сверка копий при старте ничего не нашла.
+        def readiness() -> tuple[int, dict]:
+            reply = srv.http.get("/api/v1/unified/readiness", headers=adm)
+            return reply.status_code, (reply.json() if reply.status_code == 200 else {})
+
+        ready_code, ready = readiness()
+        staff_ready = srv.http.get("/api/v1/unified/readiness", headers=heads["acc_a"]).status_code
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+            registry_rows = con.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
+        check(checks, ready_code == 200 and staff_ready == 403
+              and (ready.get("registry") or {}).get("total") == registry_rows
+              and ready.get("drift") == {"registry": 0, "pool": 0} and fingerprint(db) == base_fp,
+              f"готовность единой записи: администратору — числа ({ready.get('ready_percent')} % чеков в "
+              "единой записи, расходящихся копий нет), бухгалтеру — 403; старые таблицы те же")
 
         # 4. откат из «Последних рабочих версий»
         releases = srv.http.get("/api/v1/admin/update/releases", headers=adm).json().get("items", [])
@@ -357,6 +374,9 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
               and org_count("acc_a") == 2 and org_count("user_a") == "нет",
               "после отката и повторного обновления показ числа на месте: бухгалтер Альфы видит 2, "
               "сотрудник — нет")
+        ready_code, ready = readiness()
+        check(checks, ready_code == 200 and ready.get("drift") == {"registry": 0, "pool": 0},
+              "после отката и повторного обновления расходящихся копий нет (сверка при старте)")
         return {"from": old_version, "to": target, "remote_head": remote_head,
                 "totals": base_totals, "last_job": status.get("job")}
     finally:

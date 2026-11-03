@@ -94,6 +94,7 @@
 | `GET /unified/claims`, `GET /unified/documents/{id}/companies` (v1.70.85) | ✓ | — | — | — | — |
 | `POST /unified/links/{id}/transfer\|decline\|void` (v1.70.85) | ✓ | — | — | — | — |
 | `GET`/`PUT /unified/visibility` — показ числа организаций компаниям (v1.70.86) | ✓ | — | — | — | — |
+| `GET /unified/readiness` — готовность единой записи, только числа (v1.70.88) | ✓ | — | — | — | — |
 | Поле `companies_count` в `GET /receipts` и `GET /receipts/{id}` (v1.70.86) | всегда | с разрешения | с разрешения | — | — |
 | Фильтр `multi_company` в `GET /receipts` (v1.70.86) | ✓ | — | — | — | — |
 

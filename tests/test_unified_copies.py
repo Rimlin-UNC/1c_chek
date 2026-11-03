@@ -7,10 +7,16 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timedelta
+from uuid import uuid4
 
-from app.database import SessionLocal
+import pytest
+from sqlalchemy import create_engine, text, update
+from sqlalchemy.orm import Session
+
+from app.database import Base, SessionLocal
 from app.models import Company, Receipt, ReceiptItem
 from app.pool.models import PoolItem, PoolReceipt
 from app.unified import backfill, copies, readiness, service
@@ -21,7 +27,11 @@ from app.unified.models import (
     UnifiedEvent,
     UnifiedOrigin,
 )
-from tests.test_unified_receipts import _identity, _pool, _registry, companies  # noqa: F401 — фикстура
+from tests import test_unified_receipts as _base
+from tests.test_unified_receipts import _identity, _pool, _registry
+
+# фикстура компаний и пользователей — общая с tests/test_unified_receipts.py
+companies = _base.companies
 
 
 def _register(db, *rows):
@@ -131,7 +141,8 @@ def test_pool_copy_changed_beside_registry_is_restored(companies):
         _cleanup(db, db.get(Receipt, rid), db.get(PoolReceipt, pid))
 
 
-def test_pool_only_document_accepts_pool_change(companies):
+@pytest.mark.usefixtures("companies")
+def test_pool_only_document_accepts_pool_change():
     fn, fd, fp = _identity()
     with SessionLocal() as db:
         pool = _pool(db, fn, fd, fp)
@@ -310,7 +321,7 @@ def test_soft_backfill_registers_only_clean_receipts(companies):
 
 
 def test_every_write_path_keeps_copies_equal(companies, client):
-    """Тест-инвариант: после скана, правки, переноса из пула и перемещения копии совпадают."""
+    """Тест-инвариант: после скана QR, правки карточки, переноса из пула и перемещения копии совпадают."""
     hdr, c1, c2, a1, _ = companies
     fn, fd, fp = _identity()
     qr = f"t=20260922T1556&s=321.00&fn={fn}&i={fd}&fp={fp}&n=1"
@@ -338,6 +349,42 @@ def test_every_write_path_keeps_copies_equal(companies, client):
                        .filter(UnifiedOrigin.document_id.in_(docs),
                                UnifiedOrigin.source_kind == service.REGISTRY).count())
         assert transferred == 2
+
+
+def test_manual_entry_enrich_and_delete_keep_copies_equal(companies, client):
+    """Тест-инвариант: ручной ввод, «Разобрать данные чеков» и удаление.
+
+    Разбор сохранённого ответа ФНС дописывает адрес и кассира в реестр; до 1.70.88
+    единая запись об этом не узнавала (расхождение до следующей правки).
+    """
+    hdr, c1, _, a1, _ = companies
+    fn, fd, fp = _identity()
+    res = client.post("/api/v1/receipts/manual", headers=a1, json={
+        "date_time": "22.09.2026 15:56", "total_sum": 321.0, "fn": fn, "fd": fd, "fp": fp})
+    assert res.status_code == 200, res.text
+    rid = res.json()["receipt"]["id"]
+    with SessionLocal() as db:
+        doc_id = service.document_for_source(db, service.REGISTRY, rid).id
+        assert doc_id not in _drifting(db)
+        receipt = db.get(Receipt, rid)
+        assert not receipt.cashier and not receipt.merchant_address
+        receipt.raw_data = json.dumps({"fns": {"ticket": {"receipt": {
+            "totalSum": 32100, "operator": "Кассир Сверкин",
+            "retailPlaceAddress": "г. Тестовый, ул. Сверки, 1"}}}}, ensure_ascii=False)
+        db.commit()
+    res = client.post("/api/v1/receipts/enrich", headers=hdr, json={"only_empty": False, "company_id": c1})
+    assert res.status_code == 200, res.text
+    with SessionLocal() as db:
+        assert db.get(Receipt, rid).cashier == "Кассир Сверкин"
+        doc = db.get(UnifiedDocument, doc_id)
+        assert (doc.cashier, doc.merchant_address) == ("Кассир Сверкин", "г. Тестовый, ул. Сверки, 1")
+        assert doc_id not in _drifting(db)
+    res = client.delete(f"/api/v1/receipts/{rid}", headers=hdr)
+    assert res.status_code == 200, res.text
+    with SessionLocal() as db:
+        assert db.get(UnifiedDocument, doc_id).deleted_at is not None
+        assert doc_id not in _drifting(db)
+        assert copies.reconcile_copies(db)["errors"] == 0
 
 
 def test_reconcile_without_drift_is_cheap(companies):
@@ -379,3 +426,78 @@ def test_pool_labels_marked_by_admin_survive_reconcile(companies):
         db.commit()
         assert (db.get(PoolReceipt, pid).industry, db.get(PoolReceipt, pid).city) == ("Продукты", "Санкт-Петербург")
         _cleanup(db, db.get(Receipt, rid), db.get(PoolReceipt, pid))
+
+
+@pytest.mark.skipif(not os.getenv("UNIFIED_POSTGRES_TEST_URL"),
+                    reason="не задан UNIFIED_POSTGRES_TEST_URL")
+def test_postgres_reconcile_readiness_and_soft_registration():
+    """Сверка копий, отчёт готовности и мягкая регистрация — так же на PostgreSQL.
+
+    Одноразовая схема и синтетические данные (ADR-14); транзакция откатывается.
+    A — чек в реестре и пуле, старая версия правит сумму реестра; B — чек только
+    в пуле, у него меняется лишь отрасль (метка, не сравнивается); C — чек только
+    в пуле, правка адреса; D — архивный чек реестра без единой записи.
+    """
+    pg = create_engine(os.environ["UNIFIED_POSTGRES_TEST_URL"], pool_size=2, max_overflow=0)
+    if pg.dialect.name != "postgresql":
+        pg.dispose()
+        pytest.fail("UNIFIED_POSTGRES_TEST_URL должен указывать на PostgreSQL")
+    schema = "qa_copies_" + uuid4().hex
+    try:
+        with pg.begin() as conn:
+            conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+            conn.exec_driver_sql(f'SET search_path TO "{schema}"')
+            Base.metadata.create_all(bind=conn)
+        with Session(pg) as db:
+            db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            company = Company(name="PG Альфа")
+            db.add(company)
+            db.flush()
+            fn, fd, fp = _identity()
+            reg_a, pool_a = _registry(db, fn, fd, fp, company=company), _pool(db, fn, fd, fp, company=company)
+            pool_b = _pool(db, *_identity()[:1], "4001", "4001")
+            pool_c = _pool(db, *_identity()[:1], "4002", "4002")
+            db.flush()
+            for kind, row in ((service.REGISTRY, reg_a), (service.POOL, pool_a),
+                              (service.POOL, pool_b), (service.POOL, pool_c)):
+                service.register_source(db, kind, row, None, strict=True)
+            archive = _registry(db, *_identity()[:1], "5001", "5001", company=company)
+            db.flush()
+            doc_a = service.document_for_source(db, service.REGISTRY, reg_a.id).id
+            doc_c = service.document_for_source(db, service.POOL, pool_c.id).id
+            # правки мимо единой записи — так пишет версия без единого слоя
+            db.execute(update(Receipt).where(Receipt.id == reg_a.id).values(total_sum=333.0))
+            db.execute(update(PoolReceipt).where(PoolReceipt.id == pool_b.id)
+                       .values(industry="Разметка администратора"))
+            db.execute(update(PoolReceipt).where(PoolReceipt.id == pool_c.id)
+                       .values(merchant_address="Новый адрес"))
+            db.expire_all()
+
+            found = copies.candidates(db)
+            assert (set(found[service.REGISTRY]), set(found[service.POOL])) == ({doc_a}, {doc_c})
+            stats = copies.reconcile_copies(db)
+            assert (stats["candidates"], stats["accepted"], stats["conflicts"], stats["errors"]) == (2, 2, 0, 0)
+            db.expire_all()
+            assert float(service.document_for_source(db, service.REGISTRY, reg_a.id).total_sum) == 333.0
+            assert float(db.get(PoolReceipt, pool_a.id).total_sum) == 333.0
+            assert service.document_for_source(db, service.POOL, pool_c.id).merchant_address == "Новый адрес"
+            assert db.get(PoolReceipt, pool_b.id).industry == "Разметка администратора"
+            assert {r.get("reason") for r in _reasons(db, doc_a)} == {"legacy_edit"}
+            again = copies.reconcile_copies(db)
+            assert all(v == 0 for v in again.values()), again
+
+            report = readiness.readiness(db)
+            assert report["registry"] == {"total": 2, "linked": 1, "pending": 1}
+            assert report["pool"] == {"total": 3, "linked": 3, "pending": 0}
+            assert report["documents"] == 3 and report["drift"] == {"registry": 0, "pool": 0}
+            assert report["ready_percent"] == 80.0
+
+            soft = backfill.soft_backfill(db, commit=False)
+            assert soft["registry_registered"] == 1 and soft["pool_registered"] == 0
+            assert service.document_for_source(db, service.REGISTRY, archive.id) is not None
+            assert readiness.readiness(db)["ready_percent"] == 100.0
+            db.rollback()
+    finally:
+        with pg.begin() as conn:
+            conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        pg.dispose()
