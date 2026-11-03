@@ -611,6 +611,12 @@ with TestClient(app) as c:
                    if form else None)
     with SessionLocal() as db:
         res["after_form"] = facts(db, pid, rid)
+    # v1.70.91 (шаг 4в, Q-28 — вариант «в»): карточка чека по QR показывает данные
+    # единой записи отдельным блоком; поля копии компании не меняются
+    card = c.get(f"/api/v1/receipts/{rid}", headers=H["acc_a"]).json() if rid else {}
+    fill = card.get("unified_fill") or {}
+    res["fill"] = {"fields": fill.get("fields"), "items": len(fill.get("items") or []),
+                   "own": [card.get("merchant_address"), card.get("cashier"), len(card.get("items") or [])]}
 with SessionLocal() as db:            # как сверка при следующем запуске
     res["reconcile"] = reconcile_copies(db)
     db.commit()
@@ -927,6 +933,12 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               and merge["after_form"]["items"] == [1, 1] and merge["after_restart"]["items"] == [1, 1],
               "v1.70.90: сохранение формы правки у чека по QR (все поля, пустые — пустой строкой) не "
               "стирает адрес продавца, кассира и позиции ни в единой записи, ни в Чек-Пуле",
+              merge)
+    rep.check(merge["fill"]["fields"] == {"merchant_name": "Магазин 4б", "merchant_inn": "7801234567",
+                                          "merchant_address": kept[0], "cashier": kept[1]}
+              and merge["fill"]["items"] == 1 and merge["fill"]["own"] == ["", "", 0],
+              "v1.70.91, фаза 4в: карточка чека по QR показывает адрес, кассира и позицию из единой "
+              "записи отдельным блоком с пометкой, а копия компании и выгрузка в 1С остаются своими",
               merge)
     raw["users"], raw["seconds"] = users, round(time.monotonic() - started, 1)
     return rep.checks, raw

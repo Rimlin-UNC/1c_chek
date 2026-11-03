@@ -39,6 +39,8 @@ Object.assign(globalThis, {
   osmCardHtml: stub(), osmWire: stub(), osmStop: stub(),
   viewSupabaseDemo: stub(),
   viewUnifiedReview: stub(), setConflictsBadge: stub(),   // v1.70.83
+  applyFill: () => [], fillCallout: () => '', fillFields: () => ({}),   // v1.70.91
+  fillItemsTable: () => '', fillMark: () => '', sellerRows: () => '',
 });
 
 const bodyHtml = indexHtml

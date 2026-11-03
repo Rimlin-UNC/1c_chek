@@ -18,6 +18,7 @@ import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTM
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
+import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -5015,7 +5016,7 @@ async function openBossReceipt(id) {
         <dt>Дата чека</dt><dd>${fmtDate(r.receipt_date)}</dd>
         <dt>Сотрудник</dt><dd>${esc(r.assignee || '—')}</dd>
         <dt>Статья</dt><dd>${esc(r.category || '—')}</dd>
-        <dt>Поставщик</dt><dd>${esc(r.merchant_name || '—')}</dd>
+        <dt>Поставщик</dt><dd>${esc(r.merchant_name || fillFields(r).merchant_name || '—')}${!r.merchant_name && fillFields(r).merchant_name ? ' ' + fillMark() : ''}</dd>
         <dt>Статус</dt><dd>${chip(r.status)} ${chip(r.fns_status)}</dd>
         <dt>ФН / ФД / ФП</dt><dd class="mono" style="font-size:12px">${esc(r.fn)} / ${esc(r.fd)} / ${esc(r.fp)}</dd>
         ${r.comment ? `<dt>Комментарий</dt><dd>${esc(r.comment)}</dd>` : ''}
@@ -5024,7 +5025,7 @@ async function openBossReceipt(id) {
         <th>Позиция</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>
         ${r.items.map((it) => `<tr><td>${esc(it.name)}</td><td class="num">${it.quantity}</td>
           <td class="num">${fmtSum(it.price)}</td><td class="num">${fmtSum(it.total)}</td></tr>`).join('')}
-        </tbody></table></div>` : ''}
+        </tbody></table></div>` : fillItemsTable(r)}
       <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`);
     slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
   } catch (e) { toast(e.message, 'err', 'Чек'); }
@@ -5662,13 +5663,20 @@ function extBlockHTML(ext) {
   </details>`;
 }
 
-function openEditReceipt(r, onSaved) {
+async function openEditReceipt(r, onSaved) {
+  // v1.70.91: форма открывается по полному чеку с сервера. В строке списка позиций
+  // нет (только items_count), и сохранение формы отправляло items: [] — сервер
+  // стирал позиции чека. Заодно приходят данные единой записи для «Подставить».
+  if (!Array.isArray(r.items)) {
+    try { r = await api.get('/api/v1/receipts/' + encodeURIComponent(r.id)); } catch (e) { toast(e.message, 'err', 'Чек'); return; }
+  }
   const isAdminUser = isAdmin();
   const exportedWarn = r.exported && !isAdminUser
     ? '<div class="info-callout" style="margin-bottom:12px">⚠️ Чек уже выгружен в 1С: реквизиты и позиции менять нельзя (только администратор).</div>' : '';
   const { slot, close } = openModal(`
     <div class="modal-title">✏️ Чек ${esc(r.fn)} / ${esc(r.fd)} / ${esc(r.fp)}</div>
     ${exportedWarn}
+    ${r.exported && !isAdminUser ? '' : fillCallout(r)}
     <div class="form-grid">
       <label class="field"><span>Дата и время</span>
         <input id="er-date" type="datetime-local" value="${_dtLocal(r.receipt_date)}"
@@ -5800,6 +5808,7 @@ function openEditReceipt(r, onSaved) {
   // v1.3.0 (баг-фикс): позиции — единый источник DOM; всё введённое читается
   // при сохранении, удаление/добавление работают без потери набранного.
   const itemsBox = slot.querySelector('#er-items');
+  let itemsDirty = false;   // v1.70.91: позиции уходят на сервер, только если их меняли
   const itemRow = (it = { name: '', quantity: 1, price: 0, total: 0 }) => {
     const row = document.createElement('div');
     row.className = 'item-row';
@@ -5809,7 +5818,8 @@ function openEditReceipt(r, onSaved) {
       <input class="it-price" type="number" step="0.01" min="0" value="${it.price}" title="Цена">
       <input class="it-total" type="number" step="0.01" min="0" value="${it.total}" title="Сумма">
       <button class="btn btn-sm btn-bad it-del" type="button" title="Удалить позицию">✕</button>`;
-    row.querySelector('.it-del').onclick = () => row.remove();
+    row.querySelector('.it-del').onclick = () => { row.remove(); itemsDirty = true; };
+    row.addEventListener('input', () => { itemsDirty = true; });
     return row;
   };
   // v1.28.0: статья расходов — выбор из частых или «Своя…» (≤100, счётчик)
@@ -5854,9 +5864,25 @@ function openEditReceipt(r, onSaved) {
   }
   const addBtn = slot.querySelector('#er-add-item');
   if (addBtn) addBtn.onclick = () => {
+    itemsDirty = true;
     itemsBox.querySelector('#er-no-items')?.remove();
     itemsBox.appendChild(itemRow());
     itemsBox.querySelector('.item-row:last-child .it-name').focus();
+  };
+  // v1.70.91 (шаг 4в): «Подставить» — данные единой записи в пустые поля и позиции
+  const ufBtn = slot.querySelector('#er-uf-apply');
+  if (ufBtn) ufBtn.onclick = () => {
+    const done = applyFill(r, {
+      merchant_name: slot.querySelector('#er-shop'), merchant_inn: slot.querySelector('#er-inn'),
+      merchant_address: slot.querySelector('#er-addr'), cashier: slot.querySelector('#er-cashier'),
+    }, r.exported && !isAdminUser ? null : (it) => {
+      itemsBox.querySelector('#er-no-items')?.remove();
+      itemsBox.appendChild(itemRow(it));
+      itemsDirty = true;
+    });
+    ufBtn.disabled = true;
+    toast(done.length ? 'Подставлено: ' + done.join(', ') + '. Проверьте и сохраните.' : 'Подставлять нечего',
+      'info', 'Единая запись');
   };
   const collectItems = () => [...itemsBox.querySelectorAll('.item-row')]
     .map(row => ({
@@ -5892,7 +5918,7 @@ function openEditReceipt(r, onSaved) {
       body.total_sum = parseFloat(sumEl.value) || 0;
       body.operation = parseInt(opEl.value);
       body.fn = fnEl.value.trim(); body.fd = fdEl.value.trim(); body.fp = fpEl.value.trim();
-      body.items = collectItems();
+      if (itemsDirty) body.items = collectItems();   // v1.70.91: только если позиции меняли
     }
     try {
       await api.patch('/api/v1/receipts/' + r.id, body);
@@ -6290,6 +6316,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.91': [
+    { icon: '🛡', title: 'Правка чека больше не стирает позиции',
+      text: 'Форма правки открывалась по строке списка без позиций и при сохранении стирала их. Теперь форма '
+        + 'загружает чек целиком, а позиции сохраняются, только если их меняли. Стёртые раньше позиции, если '
+        + 'они есть в единой записи, видны в карточке и возвращаются кнопкой «Подставить».' },
+    { icon: '🔗', title: 'Данные из единой записи — в карточке чека',
+      text: 'Если в вашем чеке нет продавца, кассира или позиций, а единая запись их знает (например, из '
+        + 'Чек-Пула), карточка покажет их с пометкой «из единой записи». В 1С они попадут, только если нажать '
+        + '«Подставить» в форме правки и сохранить чек.' },
+  ],
   '1.70.90': [
     { icon: '🛡', title: 'Сохранение карточки чека больше ничего не стирает',
       text: 'У чека, отсканированного по QR, форма правки сохраняла пустыми поля продавца, адреса и кассира, '
@@ -9650,6 +9686,7 @@ async function receiptDrawer(id) {
         <dt>ФД</dt><dd class="cell-mono">${r.fd}</dd>
         <dt>ФП</dt><dd class="cell-mono">${r.fp}</dd>
         <dt>Признак расчёта</dt><dd>${r.operation === 2 ? 'Возврат прихода' : 'Приход'}</dd>
+        ${sellerRows(r)}
         <dt>Источник</dt><dd>${esc(r.source)}</dd>
         <dt>Кто добавил</dt><dd>${esc(r.created_by_name || r.created_by || '—')}${r.created_by_name && r.created_by ? ` <span class="form-hint">(${esc(r.created_by)})</span>` : ''}</dd>
         ${r.company_name ? `<dt>Компания</dt><dd>${esc(r.company_name)}${companyChip(r.company_id)}</dd>` : ''}
@@ -9666,12 +9703,12 @@ async function receiptDrawer(id) {
         <label class="field"><span>Комментарий</span>
           <input id="d-comment" value="${esc(r.comment || '')}" placeholder="например: канцтовары для офиса"></label>
       </div>` : ''}
-      <div class="card-title">Позиции чека (${r.items.length})</div>
+      ${r.items.length || !fillItemsTable(r) ? `<div class="card-title">Позиции чека (${r.items.length})</div>` : ''}
       ${r.items.length ? `<table class="data" style="min-width:0"><thead><tr><th>Наименование</th><th>Кол.</th><th>Цена</th><th>Сумма</th></tr></thead>
         <tbody>${r.items.map(it => `<tr style="cursor:default">
           <td>${esc(it.name)}</td><td>${it.quantity}</td>
           <td class="cell-sum">${fmtSum(it.price)}</td><td class="cell-sum">${fmtSum(it.total)}</td></tr>`).join('')}</tbody></table>`
-        : emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)')}
+        : (fillItemsTable(r) || emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)'))}
       <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
         <button type="button" class="btn btn-sm" id="d-fullcard">📄 Полная информация по чеку</button>
         ${acc ? '<button type="button" class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}

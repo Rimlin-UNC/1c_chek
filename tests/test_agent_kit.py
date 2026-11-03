@@ -45,11 +45,15 @@ class TestReleaseLedger:
         assert releases()[-1]["Версия"] == settings.APP_VERSION
 
     def test_every_row_has_source_and_known_commit(self):
-        for row in releases():
+        rows = releases()
+        for i, row in enumerate(rows):
             assert row["Источник"].startswith("https://github.com/Rimlin-UNC/1c_chek/"), row["Версия"]
             commit = row["Коммит"]
-            assert re.fullmatch(r"[0-9a-f]{40}", commit) or commit.startswith("требует уточнения"), commit
-            if row["Опора репетиции"] == "да":
+            # строка текущего выпуска добавляется в его коммите — хеш ещё неизвестен
+            # («после публикации») и уточняется коммитом базы знаний после CI
+            current = i == len(rows) - 1 and commit == "после публикации"
+            assert current or re.fullmatch(r"[0-9a-f]{40}", commit) or commit.startswith("требует уточнения"), commit
+            if row["Опора репетиции"] == "да" and not current:
                 assert re.fullmatch(r"[0-9a-f]{40}", commit), row["Версия"]
             assert row["Опора репетиции"] in ("да", "нет")
 

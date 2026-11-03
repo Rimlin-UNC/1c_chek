@@ -602,6 +602,12 @@ table.data tbody tr.row-open { background: rgba(255,122,0,.12);
   margin-bottom: 16px;
 }
 .info-callout b { color: var(--text); }
+/* v1.70.91 («Единая база», шаг 4в): данные единой записи — с пометкой */
+.uf-mark {
+  display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  color: var(--info-text); border: 1px solid color-mix(in srgb, var(--info) 35%, transparent);
+  background: color-mix(in srgb, var(--info) 8%, transparent); white-space: nowrap; vertical-align: middle;
+}
 
 /* ==========================================================================
    v1.70.40: сдача чеков пачкой — счётчики сессии, статусы, анимация «в пул».

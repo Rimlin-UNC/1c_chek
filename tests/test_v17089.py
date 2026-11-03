@@ -168,7 +168,8 @@ class TestDocs:
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         assert tasks["T-38"]["Статус"] == "done" and tasks["T-38"]["Задача"].endswith(f"выпущено в {VERSION}")
-        assert "Q-28" in tasks["T-39"]["Блокер"] and tasks["T-39"]["Статус"] == "todo"
+        # v1.70.91: T-39 выпущен — до выпуска его блокером был ответ на Q-28
+        assert tasks["T-39"]["Статус"] == "done" or "Q-28" in tasks["T-39"]["Блокер"]
         questions = {r["ID"]: r for r in csv.DictReader(read("docs/kb/06_open_questions.csv").splitlines())}
         # v1.70.90: открыт в 1.70.89, затем ответ владельца
         assert questions["Q-28"]["Статус"] in ("open", "answered")

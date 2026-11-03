@@ -708,12 +708,18 @@ def list_receipts(
     # всегда, компании — только с его разрешения; один запрос на страницу
     counts = (unified_links.companies_counts(db, [r.id for r in rows])
               if rows and unified_visibility.can_see_count(db, user) else None)
+    # v1.70.91 (шаг 4в): данные единой записи, которых нет в копии, — одним
+    # пакетом на страницу; позиции — только при выборке с позициями
+    from ..unified import read as unified_read
+    fills = unified_read.fills_for_receipts(db, rows, with_items=with_items) if rows else {}
     items = []
     for r in rows:
         d = r.to_dict(with_items=with_items)
         d["company_name"] = cname.get(r.company_id)
         if counts is not None:
             d["companies_count"] = counts.get(r.id, 1)
+        if r.id in fills:
+            d["unified_fill"] = fills[r.id]
         items.append(d)
     return {
         "total": total,
@@ -1053,6 +1059,13 @@ def get_receipt(receipt_id: str,
     from ..unified import visibility as unified_visibility
     if unified_visibility.can_see_count(db, user):   # v1.70.86: только число, без названий
         d["companies_count"] = unified_links.companies_counts(db, [receipt.id]).get(receipt.id, 1)
+    # v1.70.91 («Единая база», шаг 4в, Q-28 — вариант «в»): чего нет в копии
+    # компании, а единая запись знает, — отдельным блоком с пометкой; поля копии
+    # и выгрузки в 1С не меняются
+    from ..unified import read as unified_read
+    fill = unified_read.fills_for_receipts(db, [receipt]).get(receipt.id)
+    if fill:
+        d["unified_fill"] = fill
     return d
 
 

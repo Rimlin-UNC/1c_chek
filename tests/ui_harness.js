@@ -227,6 +227,14 @@ sandbox.fetch = async (url, opts) => {
   }
   if (!specialPayload) payload = {};
   if (String(url).includes('/card')) { specialPayload = true; payload = cardPayload; }
+  // v1.70.91: полный чек для формы правки — в строке списка позиций нет (только items_count)
+  if (String(url).endsWith('/api/v1/receipts/r-edit') && !(opts && opts.method && opts.method !== 'GET')) {
+    payload = { id: 'r-edit', fn: '7281440701327430', fd: '11', fp: '22', total_sum: 100, operation: 1,
+                receipt_date: '2026-11-01T10:00:00', exported: false, merchant_name: 'Строймаркет', cashier: '',
+                items: [{ name: 'Цемент', quantity: 1, price: 60, total: 60 },
+                        { name: 'Песок', quantity: 1, price: 40, total: 40 }],
+                unified_fill: { fields: { cashier: 'Кассир Пулов' } } };
+  }
   if (String(url).includes('/stats'))
     payload = { total: 0, by_fns: {}, by_day: [], by_company: {}, by_source: {},
                 by_user: {}, by_status: {}, valid: 0, invalid: 0 };
@@ -887,6 +895,30 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     sandbox.route();
     await tick(80);
     ok(vc.innerHTML.includes('btn-focus'), 'v1.70.87: дашборд без гонки рисуется как прежде');
+  }
+
+  // v1.70.91: форма правки из строки списка (без позиций) грузит полный чек и не
+  // стирает позиции при сохранении; «Подставить» переносит данные единой записи
+  // в пустые поля (Q-28 — вариант «в»).
+  {
+    const listRow = { id: 'r-edit', fn: '7281440701327430', fd: '11', fp: '22', items_count: 2,
+                      total_sum: 100, operation: 1, exported: false };
+    const from = apiLog.length;
+    await sandbox.openEditReceipt(listRow, () => {});
+    const calls = apiLog.slice(from);
+    ok(calls.some((c) => c.method === 'GET' && c.url.endsWith('/api/v1/receipts/r-edit')),
+       'v1.70.91: форма правки загрузила полный чек с сервера');
+    const editSlot = root._cls['.modal-slot'];
+    ok(editSlot.innerHTML.includes('Позиции чека (2)'), 'v1.70.91: в форме правки — позиции чека');
+    ok(editSlot.innerHTML.includes('id="er-uf-apply"') && editSlot.innerHTML.includes('кассир'),
+       'v1.70.91: подсказка «Подставить» перечисляет данные единой записи');
+    editSlot.querySelector('#er-uf-apply').onclick();
+    ok(editSlot.querySelector('#er-cashier').value === 'Кассир Пулов',
+       'v1.70.91: «Подставить» заполнило пустое поле кассира');
+    await editSlot.querySelector('#er-save').onclick();
+    const patch = apiLog.slice(from).find((c) => c.method === 'PATCH' && c.url.endsWith('/api/v1/receipts/r-edit'));
+    ok(patch && !('items' in patch.body), 'v1.70.91: сохранение без правки позиций не отправляет items — позиции целы');
+    ok(patch && patch.body.cashier === 'Кассир Пулов', 'v1.70.91: подставленное значение ушло в чек компании');
   }
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')

@@ -51,7 +51,9 @@ FILES_BY_AREA = {
                    "tests/test_unified_phase3.py", "tests/test_unified_item_comparison.py",
                    "tests/test_unified_copies.py",
                    # v1.70.89: фаза 4б — правило слияния и страж единой точки записи
-                   "tests/test_unified_merge.py", "tests/test_unified_write_point.py"},
+                   "tests/test_unified_merge.py", "tests/test_unified_write_point.py",
+                   # v1.70.91: шаг 4в — данные единой записи в карточке
+                   "tests/test_unified_read.py"},
     AREA_UI: {"tests/test_v17033.py", "tests/test_v17035.py", "tests/test_v17059.py",
               "tests/test_v17060.py"},
 }

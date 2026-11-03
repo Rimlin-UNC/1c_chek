@@ -31,66 +31,68 @@ def flat(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.90 — исторические проверки.
+
+    v1.70.91: точные пины перенесены в tests/test_v17091.py. Здесь остаётся то,
+    что верно и после следующих выпусков: версия только растёт, запись о
+    выпуске на месте и видна целиком, точки синхронизации совпадают с текущей
+    версией.
+    """
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
                     "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+            assert current in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw
-        assert sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw
+        assert sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
+        assert f'"version": "{current}"' in read("app/static/manifest.webmanifest")
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-03"
-        entry = md.split("\n## [1.70.89]", 1)[0]
+        head = f"## [{VERSION}] - 2026-11-03"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
         # окно обновления показывает первые 4000 символов — запись видна целиком
-        assert len(entry) <= 4000, len(entry)
-        for needle in (
-            # как пройдёт обновление
-            f"Ставьте {VERSION} вместо 1.70.89", "резервная копия", "pip пропускается",
-            "Схема базы не меняется", "Откат", "1.70.80", "1.70.82–1.70.89", "48 из 48",
-            # что исправлено и почему
-            "формы правки", "по QR", "явной очисткой", "даже ради комментария или сотрудника",
-            "было значение и его стёрли", "уже стёртое программа сама не восстанавливает",
-            "требует уточнения, #4",
-            # проверки
-            "то же тело, что и форма правки", "31 проверка",
-        ):
+        assert len(head + entry) <= 4000, len(head + entry)
+        for needle in ("Ставьте 1.70.90 вместо 1.70.89", "резервная копия", "формы правки", "по QR",
+                       "было значение и его стёрли", "требует уточнения, #4", "31 проверка"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 1
         for needle in ("по QR", "очисткой", "значение было и вы его стёрли", "ничего не меняется"):
             assert needle in block, needle
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — вид экранов не менялся")
-        entry = journal.split("\n## v1.70.89", 1)[0]
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
         for needle in ("(«✏️»)", "по QR", "не менялись", "одна карточка"):
             assert needle in entry, needle
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(name for name, v in reg.items() if v == VERSION) == ["Единый реестр чеков"]
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 90) for v in reg.values())
+        assert self._ver(reg["Единый реестр чеков"]) >= self._ver(VERSION)
+        # версия блока не может опережать версию программы
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (03.11.2026)" in readme
-        assert "Последний выпуск — v1.70.89" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.89.**" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSchema:
@@ -137,13 +139,18 @@ class TestDocs:
         assert "С 1.70.90 очистка — «было значение, стало пусто» (`before` в `PATCH`)" in flat(
             "docs/unified_receipts.md")
         db = flat("docs/DATABASE.md")
-        assert "31 проверка на каждом" in db and "с 1.70.90 — сохранение формы правки у чека по QR" in db
+        # v1.70.91: число проверок растёт — «32 проверки на каждом»
+        m = re.search(r"(\d+) проверк\w* на каждом", db)
+        assert m and int(m.group(1)) >= 31 and "с 1.70.90 — сохранение формы правки у чека по QR" in db
         assert "С 1.70.90 то же при сохранении формы правки («✏️»)" in flat("docs/USER_GUIDE.md")
 
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
-        assert f"Ставить сразу v{VERSION}" in tasks["T-01"]["Блокер"]
-        assert "(в)" in tasks["T-39"]["Блокер"] and tasks["T-39"]["Статус"] == "todo"
+        # v1.70.91: T-01 указывает на последний выпуск — не старше этого
+        m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])
+        assert m and tuple(map(int, m.group(1).split("."))) >= (1, 70, 90)
+        # v1.70.91: T-39 выпущен — блокера с ответом на Q-28 больше нет
+        assert tasks["T-39"]["Статус"] == "done" or "(в)" in tasks["T-39"]["Блокер"]
         assert "#10" in tasks["T-30"]["Блокер"] and "отложено" in tasks["T-30"]["Блокер"].lower()
         assert tasks["T-30"]["Статус"] == "blocked"
         questions = {r["ID"]: r for r in csv.DictReader(read("docs/kb/06_open_questions.csv").splitlines())}
