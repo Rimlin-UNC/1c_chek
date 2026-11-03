@@ -168,7 +168,10 @@ class TestAgentDocs:
         for n in range(41, 50):
             row = tasks[f"T-{n}"]
             assert row["Статус"] == "todo" and row["Источник"].endswith("docs/kb/10_research.md")
-            assert f"| T-{n} |" in research
+            assert f"| T-{n} " in research
+            # у каждого кандидата — issue на GitHub, та же ссылка в таблице исследования
+            assert row["Issue/PR"].startswith("https://github.com/Rimlin-UNC/1c_chek/issues/")
+            assert f"]({row['Issue/PR']})" in research
         questions = {r["ID"]: r for r in csv.DictReader(read("docs/kb/06_open_questions.csv").splitlines())}
         assert questions["Q-29"]["Статус"] == "open" and questions["Q-29"]["Кто решает"] == "владелец"
 
