@@ -179,9 +179,32 @@ const creatorsPayload = [
   { id: 'u3', name: 'Петров П.', count: 1 },
 ];
 
+// v1.70.87 (#25): «шлюзы» ответов API. Ответ на адрес, содержащий ключ шлюза,
+// приходит только после вызова функции, которую вернул gate(): раздел ждёт
+// ответа, а пользователь тем временем уходит в другой раздел — гонка отрисовки
+// воспроизводится детерминированно. fail — ответ «500», как при сбое сервера.
+const gates = new Map();
+function gate(key, fail = false) {
+  let release;
+  const opened = new Promise((resolve) => { release = resolve; });
+  gates.set(key, { opened, fail });
+  return () => release();
+}
+
 sandbox.fetch = async (url, opts) => {
   apiLog.push({ url: String(url), method: (opts && opts.method) || 'GET',
                 body: opts && opts.body ? JSON.parse(opts.body) : null });
+  const held = [...gates.keys()].find((key) => String(url).includes(key));
+  if (held) {
+    const { opened, fail } = gates.get(held);
+    gates.delete(held);
+    await opened;
+    if (fail) {
+      const j = JSON.stringify({ detail: 'сбой сервера (стенд)' });
+      return { ok: false, status: 500, json: async () => JSON.parse(j), text: async () => j,
+               headers: { get: () => 'application/json' } };
+    }
+  }
   // v1.25.1: бухгалтер на «Чеках»
   let specialPayload = false;
   if (String(url).includes('/auth/me')) {
@@ -820,6 +843,51 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.35: зелёный как текст — через --ok-text (4.25:1 у --ok не проходит)');
   ok(bundle.includes('1.18:1') && bundle.includes('1.67:1') && bundle.includes('stylelint'),
      'v1.70.35: в описании выпуска названы измеренные значения и валидатор');
+
+  // v1.70.87 (#25): поздний ответ раздела не подменяет открытый раздел.
+  // Дашборд ждёт /dashboard/stats, пользователь уходит в «Чеки», ответ приходит
+  // позже — в #view-container остаётся реестр. Проверяется настоящий route()
+  // и настоящие разделы бандла, а не их копии.
+  {
+    // route() останавливает автообновление мониторинга OpenStack и знает раздел
+    // Supabase-демо — модули osm.js и supabase_demo.js в бандл стенда не входят,
+    // вместо них заглушки
+    if (typeof sandbox.osmStop !== 'function') sandbox.osmStop = () => {};
+    if (typeof sandbox.viewSupabaseDemo !== 'function') sandbox.viewSupabaseDemo = async () => {};
+    const vc = document.querySelector('#view-container');
+    const tick = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+    const releaseStats = gate('/dashboard/stats?days=14');
+    sandbox.location.hash = '#/dashboard';
+    sandbox.route();
+    await tick();
+    ok(!vc.innerHTML.includes('btn-focus'), 'v1.70.87: дашборд ждёт ответа API');
+    sandbox.location.hash = '#/receipts';
+    sandbox.route();
+    await tick();
+    const receiptsHtml = vc.innerHTML;
+    ok(receiptsHtml.includes('rc-view-list'), 'v1.70.87: открыт реестр чеков');
+    releaseStats();
+    await tick(80);
+    ok(vc.innerHTML === receiptsHtml && !vc.innerHTML.includes('btn-focus'),
+       'v1.70.87: поздний ответ дашборда не подменил реестр (#25)');
+    // сбой устаревшей отрисовки не уводит из открытого раздела на дашборд
+    const releaseExport = gate('/dashboard/stats?days=90', true);
+    sandbox.location.hash = '#/export';
+    sandbox.route();
+    await tick();
+    sandbox.location.hash = '#/receipts';
+    sandbox.route();
+    await tick();
+    releaseExport();
+    await tick(80);
+    ok(sandbox.location.hash === '#/receipts',
+       'v1.70.87: сбой устаревшего раздела «Выгрузка» не увёл на дашборд');
+    // без гонки разделы рисуются как прежде
+    sandbox.location.hash = '#/dashboard';
+    sandbox.route();
+    await tick(80);
+    ok(vc.innerHTML.includes('btn-focus'), 'v1.70.87: дашборд без гонки рисуется как прежде');
+  }
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')
               : `HARNESS_OK checks`);

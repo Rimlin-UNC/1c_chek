@@ -33,14 +33,18 @@ async function loadSnapshot(config, fetchImpl = fetch) {
   return data;
 }
 
-export async function viewSupabaseDemo(container) {
+// v1.70.87 (#25): alive() — проверка от route(): пока раздел на экране, true;
+// после ухода пользователя поздние ответы не перерисовывают открытый раздел.
+export async function viewSupabaseDemo(container, alive = () => true) {
   container.innerHTML = '<div class="glass card"><div class="skeleton" style="height:120px"></div></div>';
   let config;
   try { config = await api.get('/api/v1/supabase-demo/config'); }
   catch (e) {
+    if (!alive()) return;
     container.innerHTML = `<div class="glass card"><div class="form-error">${esc(e.message)}</div></div>`;
     return;
   }
+  if (!alive()) return;
   if (!config.enabled) {
     container.innerHTML = `<div class="glass card"><div class="card-title">Supabase демо</div>
       <p class="form-hint">${esc(config.error || 'Контур выключен. Задайте SUPABASE_DEMO_ENABLED, SUPABASE_URL и SUPABASE_PUBLISHABLE_KEY в .env.')}</p></div>`;
@@ -56,11 +60,11 @@ export async function viewSupabaseDemo(container) {
     if (out) out.innerHTML = '<div class="skeleton" style="height:120px"></div>';
     try {
       const data = await loadSnapshot(config);
-      if (current !== req || !container.isConnected) return;
+      if (current !== req || !container.isConnected || !alive()) return;
       snapshot = data;
       render();
     } catch (e) {
-      if (current !== req || !container.isConnected) return;
+      if (current !== req || !container.isConnected || !alive()) return;
       if (out) out.innerHTML = `<div class="form-error">${esc(e.message)}. Рабочая база приложения не затронута.</div>`;
     }
   }

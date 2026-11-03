@@ -22,13 +22,6 @@ test.beforeAll(async ({ request }) => {
   expect(response.ok()).toBeTruthy();
 });
 
-// v1.70.86: дашборд дорисовывается после ответа API. Если перейти в другой
-// раздел раньше, поздняя отрисовка дашборда заменит открытый раздел (гонка
-// в viewDashboard, на медленном браузере воспроизводится) — ждём панель.
-async function dashboardReady(page) {
-  await expect(page.locator('#btn-focus')).toBeVisible({ timeout: 30000 });
-}
-
 async function login(page) {
   await page.goto('/');
   await page.fill('#login-username', 'admin');
@@ -183,7 +176,6 @@ test('число организаций: администратор разреш
   test.setTimeout(90_000);   // два входа и два экрана — дольше обычного сценария
   await login(page);
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();
-  await dashboardReady(page);
   await page.locator('a[href="#/receipts"]').click();
   await page.locator('#rc-view-list').click();
   const claimed = page.locator('#receipts-table tbody tr', { hasText: '9999999999990088' });
@@ -213,7 +205,7 @@ test('число организаций: администратор разреш
   await page.fill('#login-password', 'e2e-accountant-password');
   await page.click('#login-submit');
   await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
-  await dashboardReady(page);
+  await expect(page.locator('a[href="#/receipts"]')).toBeVisible();
   await page.locator('a[href="#/receipts"]').click();
   await page.locator('#rc-view-list').click();
   const own = page.locator('#receipts-table tbody tr', { hasText: '9999999999990088' });
@@ -223,4 +215,30 @@ test('число организаций: администратор разреш
   const drawer = page.locator('.drawer');
   await expect(drawer.locator('#rd-org-count')).toContainText('2');
   await expect(drawer).not.toContainText('E2E Бета');
+});
+
+// v1.70.87 (#25): дашборд, догрузившийся после перехода в другой раздел, не
+// подменяет открытый раздел. Ответ статистики дашборда задерживаем, пока
+// пользователь не откроет «Чеки», — гонка воспроизводится при любой скорости
+// браузера, а не только на медленном.
+test('дашборд: поздний ответ не подменяет открытый раздел', async ({ page }) => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await page.route('**/api/v1/dashboard/stats**', async (route) => {
+    await held;
+    await route.continue();
+  });
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/receipts"]').click();
+  await expect(page.locator('#rc-view-list')).toBeVisible();
+  const late = page.waitForResponse((response) => response.url().includes('/api/v1/dashboard/stats'));
+  release();
+  await late;
+  // ответ пришёл: даём дашборду время дорисоваться — до исправления он
+  // подменял реестр через доли секунды после ответа
+  await page.waitForTimeout(800);
+  await expect(page.locator('#page-title')).toHaveText('База чеков');
+  await expect(page.locator('#rc-view-list')).toBeVisible();
+  await expect(page.locator('#btn-focus')).toHaveCount(0);
 });

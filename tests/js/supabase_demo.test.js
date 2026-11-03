@@ -53,4 +53,37 @@ describe('Supabase демо', () => {
     expect(document.body.textContent).toContain('Supabase ответил 503');
     vi.unstubAllGlobals();
   });
+
+  // v1.70.87 (#25): пользователь ушёл в другой раздел, пока ждал ответа, —
+  // поздний ответ не перерисовывает открытый раздел (alive() от route()).
+  it('поздний ответ настроек не подменяет открытый раздел', async () => {
+    let answer;
+    api.get.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    document.body.innerHTML = '<main id="view"></main>';
+    const view = document.querySelector('#view');
+    let gone = false;
+    const pending = viewSupabaseDemo(view, () => !gone);
+    view.innerHTML = '<p>Другой раздел</p>';   // route() открыл другой раздел
+    gone = true;
+    answer({ enabled: false, error: 'Контур выключен' });
+    await pending;
+    expect(view.innerHTML).toBe('<p>Другой раздел</p>');
+  });
+
+  it('поздний снимок Supabase не подменяет открытый раздел', async () => {
+    api.get.mockResolvedValue({ enabled: true, url: 'https://example.supabase.co', publishable_key: 'sb_publishable_test', rpc: 'chek_demo_snapshot' });
+    let answer;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { answer = resolve; })));
+    document.body.innerHTML = '<main id="view"></main>';
+    const view = document.querySelector('#view');
+    let gone = false;
+    const pending = viewSupabaseDemo(view, () => !gone);
+    await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+    view.innerHTML = '<p>Другой раздел</p>';
+    gone = true;
+    answer({ ok: true, json: async () => snapshot });
+    await pending;
+    expect(view.innerHTML).toBe('<p>Другой раздел</p>');
+    vi.unstubAllGlobals();
+  });
 });

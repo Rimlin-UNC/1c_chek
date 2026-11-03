@@ -3879,7 +3879,21 @@ document.addEventListener('click', (e) => {
   route();
 });
 
+// v1.70.87 (#25): номер перехода между разделами. Раздел рисуется асинхронно:
+// сначала запросы к API, затем разметка в #view-container. Если пользователь
+// успел уйти в другой раздел, поздняя отрисовка не должна подменить открытый
+// раздел. route() увеличивает номер и передаёт разделу проверку alive();
+// раздел сверяется с ней после каждого await перед записью в контейнер.
+let _routeSeq = 0;
+
+/** Проверка «отрисовка ещё актуальна»: снимок номера перехода на момент вызова. */
+function routeGuard() {
+  const seq = _routeSeq;
+  return () => seq === _routeSeq;
+}
+
 function route(silent = false) {
+  _routeSeq += 1;   // v1.70.87 (#25): незаконченные отрисовки прежнего перехода устаревают
   if (state.camera) { state.camera.stop(); state.camera = null; }
   osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
   const hash = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
@@ -3933,15 +3947,17 @@ function route(silent = false) {
   };
   // v1.55.0: сбой отрисовки не оставляет белый экран — возвращаем
   // пользователя на рабочий экран (гость → сдача чека, свой → дашборд)
+  const alive = routeGuard();
   const _fallback = (err) => {
     try { console.error("render:", err); } catch (e) {}
+    if (!alive()) return;   // v1.70.87 (#25): сбой устаревшей отрисовки не уводит из открытого раздела
     try {
       if (!getToken()) showPublicScreen();
       else location.hash = "#/dashboard";
     } catch (e2) {}
   };
   try {
-    Promise.resolve((renderers[view] || viewDashboard)(container)).catch(_fallback);
+    Promise.resolve((renderers[view] || viewDashboard)(container, alive)).catch(_fallback);
   } catch (err) { _fallback(err); }
   if (!silent) { void container.offsetWidth; container.classList.add('view-enter'); }
 }
@@ -4118,12 +4134,14 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
   }
 
 // --- Экран «Компании» ------------------------------------------------------
-async function viewCompanies(container) {
+async function viewCompanies(container, alive = routeGuard()) {
   let comps = [];
   try { comps = await api.get('/api/v1/companies'); } catch (e) {
+    if (!alive()) return;   // v1.70.87 (#25)
     container.innerHTML = `<div class="glass card"><p class="form-error">${esc(e.message)}</p></div>`;
     return;
   }
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
   state.companies = comps;
   const sel = $('#company-filter');
   if (sel) initCompanyFilter();
@@ -4607,7 +4625,7 @@ function bindShell() {
 // ==========================================================================
 //  ЭКРАН: Дашборд
 // ==========================================================================
-async function viewDashboard(container) {
+async function viewDashboard(container, alive = routeGuard()) {
   // v1.8.0: сначала данные — если ничего не изменилось, DOM не трогаем
   // (устраняет «мерцание сайта» при WS-обновлениях и возврате на вкладку)
   const cq = companyIdParam() ? '&company_id=' + companyIdParam() : '';   // v1.11.0
@@ -4615,6 +4633,7 @@ async function viewDashboard(container) {
     api.get('/api/v1/dashboard/stats?days=14' + cq),
     api.get('/api/v1/dashboard/recent?limit=12').catch(() => []),
   ]);
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
   const dashSig = JSON.stringify([dashStats, dashFeed]);
   if (viewDashboard._sig === dashSig && container.children.length) return;
   viewDashboard._sig = dashSig;
@@ -4884,7 +4903,7 @@ function renderAppearanceState() {
 // Руководитель видит свою компанию (изоляция на сервере), админ — всё
 // или выбранную компанию.
 // ==========================================================================
-async function viewBoss(container) {
+async function viewBoss(container, alive = routeGuard()) {
   if (!(isManager() || isAdmin())) { location.hash = '#/dashboard'; return; }
   viewBoss._days = viewBoss._days || 30;
   viewBoss._company = viewBoss._company || '';
@@ -4919,6 +4938,7 @@ async function viewBoss(container) {
     let stats = null, bd = null;
     try { stats = await api.get('/api/v1/dashboard/stats' + (cq ? '?days=30' + cq : '')); } catch (e) {}
     try { bd = await api.get(`/api/v1/dashboard/breakdown?days=${viewBoss._days}${cq}`); } catch (e) {}
+    if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
     if (!bd) {
       container.innerHTML = '<div class="glass card"><div class="form-hint">Не удалось загрузить отчёт. Попробуйте ещё раз.</div></div>';
       return;
@@ -9687,10 +9707,11 @@ async function receiptDrawer(id) {
 // ==========================================================================
 //  ЭКРАН: Выгрузка в 1С
 // ==========================================================================
-async function viewExport(container) {
+async function viewExport(container, alive = routeGuard()) {
   let onecSettings = null;
   try { onecSettings = await api.get('/api/v1/settings/onec'); } catch { /* не админ */ }
   const stats = await api.get('/api/v1/dashboard/stats?days=90');
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
 
   container.innerHTML = `
     <div class="grid cards-2-even">
@@ -9774,11 +9795,12 @@ async function viewExport(container) {
 // ==========================================================================
 //  ЭКРАН: Маппинг
 // ==========================================================================
-async function viewMapping(container) {
+async function viewMapping(container, alive = routeGuard()) {
   const [mapping, catalog] = await Promise.all([
     api.get('/api/v1/settings/mapping'),
     api.get('/api/v1/settings/mapping/catalog'),
   ]);
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
   const admin = isAdmin();
 
   container.innerHTML = `
@@ -9862,7 +9884,7 @@ async function viewMapping(container) {
 // ==========================================================================
 //  ЭКРАН: Пользователи и приглашения (только администратор)
 // ==========================================================================
-async function viewUsers(container) {
+async function viewUsers(container, alive = routeGuard()) {
   const [users, invites] = await Promise.all([
     api.get('/api/v1/users'),
     api.get('/api/v1/invites'),
@@ -9870,6 +9892,7 @@ async function viewUsers(container) {
   if (isAdmin() && !state.companies.length) {
     try { state.companies = await api.get('/api/v1/companies'); } catch (e) {}
   }
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
   // v1.12.0: фильтр «группа-компания» (сохраняется между перерисовками)
   if (viewUsers._companyFilter == null) viewUsers._companyFilter = 'all';
   const cf = viewUsers._companyFilter;
@@ -10239,9 +10262,10 @@ function auditDayLabel(ts) {
   });
 }
 
-async function viewAudit(container) {
+async function viewAudit(container, alive = routeGuard()) {
   let rows = [];
   try { rows = await api.get('/api/v1/dashboard/recent?limit=60'); } catch {}
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
   const fmtTime = (ts) =>
     new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   // Группировка по дням: «Сегодня» / «Вчера» / «12 октября»
@@ -10280,7 +10304,7 @@ async function viewAudit(container) {
 // ==========================================================================
 //  ЭКРАН: Настройки
 // ==========================================================================
-async function viewSettings(container) {
+async function viewSettings(container, alive = routeGuard()) {
   let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null, whSet = null, consentSet = null;   // v1.66.0: + MAX, v1.67.0: + webhooks, v1.70.37: + реквизиты оператора в согласии
   let pol = null, companies = null, mrules = null;   // v1.62.0/v1.63.0
   try { me = await api.get('/api/v1/auth/me'); } catch {}
@@ -10302,6 +10326,7 @@ async function viewSettings(container) {
   if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
   // v1.63.0: правила поставщиков — бухгалтер и админ
   if (isAccountant()) { try { mrules = await api.get('/api/v1/receipts/merchant-rules'); } catch {} }
+  if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
 
   // v1.70.9: страница настроек — меню с разделами и подменю;
   // прямой заход по #/settings/<раздел>/<карточка> открывает группу и карточку
