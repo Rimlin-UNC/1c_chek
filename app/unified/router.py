@@ -40,6 +40,15 @@ def stats(db: Annotated[Session, Depends(get_db)],
     return service.stats(db)
 
 
+@router.get("/readiness", summary="Единый реестр: готовность единой записи (только числа)")
+def readiness(db: Annotated[Session, Depends(get_db)],
+              _admin: Annotated[User, Depends(require_admin)]):
+    """Фаза 4а (T-37): сколько чеков в единой записи, сколько ждёт мягкой
+    регистрации, сколько на разборе и есть ли расходящиеся копии."""
+    from .readiness import readiness as _readiness
+    return _readiness(db)
+
+
 @router.get("/documents", summary="Единый реестр: канонические чеки")
 def documents(*, company_id: str = Query("", max_length=36),
               page: int = Query(1, ge=1, le=settings.PAGE_MAX), per_page: int = Query(20, ge=1, le=100),

@@ -307,13 +307,17 @@ def document_for_source(db: Session, kind: str, source_id: str) -> UnifiedDocume
     return origin.document if origin else None
 
 
-def _project_pool(db: Session, doc: UnifiedDocument) -> None:
-    """Обновить общую часть пуловой проекции; raw/баллы/согласия не трогаем."""
+def _project_pool(db: Session, doc: UnifiedDocument, skip: tuple[str, ...] = ()) -> None:
+    """Обновить общую часть пуловой проекции; raw/баллы/согласия не трогаем.
+
+    ``skip`` — копии, из которых изменение только что принято (фаза 4а): их
+    данные уже совпадают с единой записью, переписывать позиции незачем.
+    """
     origins = db.query(UnifiedOrigin).filter(UnifiedOrigin.document_id == doc.id).all()
     items = (db.query(UnifiedItem).filter(UnifiedItem.document_id == doc.id)
              .order_by(UnifiedItem.position, UnifiedItem.id).all())
     for origin in origins:
-        if origin.source_kind != POOL:
+        if origin.source_kind != POOL or origin.source_id in skip:
             continue
         pool = db.get(PoolReceipt, origin.source_id)
         if pool is None:
@@ -354,8 +358,34 @@ def _register_lazily(db: Session, receipt: Receipt, actor: User | None) -> Unifi
         return None
 
 
-def sync_registry(db: Session, receipt: Receipt, actor: User | None = None) -> UnifiedDocument | None:
-    """После правки/обогащения реестра обновить каноническую запись и пул."""
+def _apply_identity(db: Session, doc: UnifiedDocument, key: str | None) -> None:
+    """Перенести в единую запись новую фискальную тройку копии.
+
+    Тройка, которая уже принадлежит другому документу, — 409: два смысла
+    одного чека не склеиваются молча.
+    """
+    if key == doc.identity_key:
+        return
+    if key is not None:
+        clash = (db.query(UnifiedDocument.id)
+                 .filter(UnifiedDocument.identity_key == key,
+                         UnifiedDocument.id != doc.id).first())
+        if clash:
+            raise HTTPException(409, "Чек с такими ФН/ФД/ФП уже существует")
+    doc.identity_key = key
+    if key is None:
+        doc.review_flags |= REVIEW_INCOMPLETE_IDENTITY
+    else:
+        doc.review_flags &= ~REVIEW_INCOMPLETE_IDENTITY
+
+
+def sync_registry(db: Session, receipt: Receipt, actor: User | None = None, *,
+                  event_type: str = "sync", details: dict | None = None) -> UnifiedDocument | None:
+    """После правки/обогащения реестра обновить каноническую запись и пул.
+
+    ``event_type``/``details`` — для сверки копий при старте (фаза 4а): она
+    принимает правку старой версии тем же путём, но пишет событие ``reconcile``.
+    """
     db.flush()
     doc = document_for_source(db, REGISTRY, receipt.id)
     if doc is None:
@@ -363,19 +393,7 @@ def sync_registry(db: Session, receipt: Receipt, actor: User | None = None) -> U
     _lock_values(db, receipt.fn, receipt.fd, receipt.fp)
     doc = (db.query(UnifiedDocument).populate_existing()
            .filter(UnifiedDocument.id == doc.id).with_for_update(of=UnifiedDocument).first())
-    key = identity_key(receipt.fn, receipt.fd, receipt.fp)
-    if key != doc.identity_key:
-        if key is not None:
-            clash = (db.query(UnifiedDocument.id)
-                     .filter(UnifiedDocument.identity_key == key,
-                             UnifiedDocument.id != doc.id).first())
-            if clash:
-                raise HTTPException(409, "Чек с такими ФН/ФД/ФП уже существует")
-        doc.identity_key = key
-        if key is None:
-            doc.review_flags |= REVIEW_INCOMPLETE_IDENTITY
-        else:
-            doc.review_flags &= ~REVIEW_INCOMPLETE_IDENTITY
+    _apply_identity(db, doc, identity_key(receipt.fn, receipt.fd, receipt.fp))
     data = _core(receipt, REGISTRY)
     doc.review_flags &= ~_compare_core(doc, data)
     _apply_core(doc, data)
@@ -389,8 +407,37 @@ def sync_registry(db: Session, receipt: Receipt, actor: User | None = None) -> U
     if receipt.created_by and not own.created_by:
         own.created_by = receipt.created_by
     doc.version += 1
-    _add_event(db, doc, "sync", actor, details={"source_kind": REGISTRY})
+    _add_event(db, doc, event_type, actor, details={"source_kind": REGISTRY, **(details or {})})
     _project_pool(db, doc)
+    db.flush()
+    return doc
+
+
+def sync_pool(db: Session, pool: PoolReceipt, actor: User | None = None, *,
+              event_type: str = "sync", details: dict | None = None) -> UnifiedDocument | None:
+    """Принять изменение копии Чек-Пула в единую запись (фаза 4а, T-37).
+
+    Только для документа без копии в реестре: там пул — единственный источник
+    данных. Если копия в реестре есть, главный — реестр (``sync_registry``),
+    а пул перезаписывается из единой записи (``_project_pool``).
+    """
+    db.flush()
+    doc = document_for_source(db, POOL, pool.id)
+    if doc is None:
+        return None
+    _lock_values(db, pool.fn, pool.fd, pool.fp)
+    doc = (db.query(UnifiedDocument).populate_existing()
+           .filter(UnifiedDocument.id == doc.id).with_for_update(of=UnifiedDocument).first())
+    _apply_identity(db, doc, identity_key(pool.fn, pool.fd, pool.fp))
+    _apply_core(doc, _core(pool, POOL))
+    items = _items(db, pool, POOL)
+    if items or not doc.items:
+        _set_items(db, doc, items)
+    status, checked = _fns_evidence(pool, POOL)
+    _merge_fns(doc, status, checked)
+    doc.version += 1
+    _add_event(db, doc, event_type, actor, details={"source_kind": POOL, **(details or {})})
+    _project_pool(db, doc, skip=(pool.id,))
     db.flush()
     return doc
 

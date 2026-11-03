@@ -126,6 +126,11 @@ def init_db() -> None:
     # однозначные исправления, с журналом; сбой не останавливает сервис.
     from .unified.reconcile import links_on_startup, reconcile_on_startup
     reconcile_on_startup()
+    # v1.70.88 (фаза 4а, T-37): фискальные данные копий реестра и пула — к
+    # единой записи (правки старой версии после отката, пропущенная фоновая
+    # синхронизация). Отдельная транзакция; сбой не останавливает сервис.
+    from .unified.copies import copies_on_startup
+    copies_on_startup()
     # v1.70.85: заявки компаний на чужие чеки — граница истории и сверка связей.
     links_on_startup()
 

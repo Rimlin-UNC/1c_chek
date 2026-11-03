@@ -831,6 +831,11 @@ def enrich_receipts(body: EnrichRequest,
         stats["items"] += int(res.get("items") or 0)
         if res.get("ticket"):
             stats["with_ticket"] += 1
+            # v1.70.88 (фаза 4а, T-37): сохранённый ответ ФНС мог уточнить
+            # продавца, кассира и позиции — единая запись и копия Чек-Пула
+            # следуют за реестром, как после загрузки данных чека.
+            from ..unified import service as unified
+            unified.sync_registry_safely(db, r)
         if (r.region_code or "") and not before_region:
             stats["regions"] += 1
         if (r.industry or "") and not before_ind:

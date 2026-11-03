@@ -423,8 +423,15 @@ with SessionLocal() as db:
                        "closed": bool(doc and doc.deleted_at)}
     res["owners"] = owner
     res["blank_total"] = float(db.get(Receipt, ids["blank"]).total_sum)
+    # v1.70.88 (фаза 4а): правка старой версии после отката — в единой записи
+    blank_doc = db.get(UnifiedDocument, docs["blank"]) if docs.get("blank") else None
+    res["blank_canon"] = float(blank_doc.total_sum) if blank_doc else None
     second = reconcile(db)       # повторная сверка: исправлять больше нечего
+    from app.unified.copies import candidates, reconcile_copies
+    res["second_copies"] = reconcile_copies(db)
     db.commit()
+    found = candidates(db)
+    res["drift"] = {kind: len(v) for kind, v in found.items()}
     res["second_reconcile"] = second
     res["journal_after_second"] = db.query(UnifiedEvent).filter_by(event_type="reconcile").count()
 with TestClient(app) as c:
@@ -759,13 +766,20 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
     reasons = Counter(e["reason"] for e in again_up["journal"])
     beta = seed["ids"]["beta"]
     owners = again_up["owners"]
-    rep.check(reasons == Counter({"projection_changed": 2, "source_deleted": 1})
+    rep.check(reasons == Counter({"projection_changed": 2, "source_deleted": 1, "legacy_edit": 1})
               and owners["moved"]["company"] == beta and owners["gamma"]["company"] == beta
               and owners["deleted"]["closed"]
-              and {e["document"] for e in again_up["journal"]} == {docs["moved"], docs["gamma"], docs["deleted"]},
-              "повторное обновление: сверка записала в журнал 3 исправления — перенос чека, удаление компании "
-              "с переносом чеков, удалённый чек",
+              and {e["document"] for e in again_up["journal"]}
+              == {docs["moved"], docs["gamma"], docs["deleted"], docs["blank"]},
+              "повторное обновление: сверка записала в журнал 4 исправления — перенос чека, удаление компании "
+              "с переносом чеков, удалённый чек и правка суммы старой версией",
               f"журнал {again_up['journal']}, владельцы {owners}")
+    copies2 = again_up["second_copies"]
+    rep.check(again_up["blank_canon"] == 333.0 and again_up["drift"] == {"registry": 0, "pool": 0}
+              and not any(v for v in copies2.values()),
+              f"фаза 4а: правка суммы на {OLD_LABEL} после отката принята в единую запись (333 ₽), копии "
+              "реестра и пула не расходятся с единой записью, повторная сверка копий ничего не меняет",
+              f"единая запись {again_up['blank_canon']}, расходятся {again_up['drift']}, повторно {copies2}")
     second = again_up["second_reconcile"]
     rep.check(not any(second.values()) and again_up["journal_after_second"] == len(again_up["journal"]),
               "повторная сверка ничего не меняет", f"результат {second}, событий {again_up['journal_after_second']}")
