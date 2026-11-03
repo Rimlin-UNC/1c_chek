@@ -15,7 +15,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 |---|---|
 | Статус | `todo` · `in-progress` · `blocked` · `done` · `cancelled` (отменено решением владельца; строка остаётся для истории) |
 | Приоритет | `P0` срочно · `P1` высокий · `P2` средний · `P3` низкий |
-| Область | Релиз · Единый реестр · Миграция/БД · Supabase · Vercel · CI · Документация |
+| Область | Релиз · Единый реестр · Миграция/БД · Supabase · Vercel · CI · Документация · Интерфейс |
 | Нужно подтверждение владельца | «да» — агент не выполняет без явного «да» (см. стоп-лист в [AGENTS.md](../../AGENTS.md)) |
 | Блокер | что мешает (для `blocked`) |
 | Issue/PR, Источник | обратные ссылки |
@@ -27,10 +27,10 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 отвечает 403. Владелец может проставить их вручную; до тех пор приоритет и
 область — только в CSV.
 
-## Срез на 2026-11-02
+## Срез на 2026-11-03
 
 **Ждут владельца (P0–P1):**
-- [#4](https://github.com/Rimlin-UNC/1c_chek/issues/4) T-01 — установить на рабочий сервер v1.70.85 (включает 1.70.82–1.70.84; P0).
+- [#4](https://github.com/Rimlin-UNC/1c_chek/issues/4) T-01 — установить на рабочий сервер v1.70.86 (включает 1.70.82–1.70.85; P0).
 - [#5](https://github.com/Rimlin-UNC/1c_chek/issues/5) T-02 — что делать с PR #2.
 - [#6](https://github.com/Rimlin-UNC/1c_chek/issues/6) T-03 — сливать ли PR #3 в `main`.
 - [#13](https://github.com/Rimlin-UNC/1c_chek/issues/13) T-10 — роль Vercel.
@@ -47,6 +47,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
 - [#22](https://github.com/Rimlin-UNC/1c_chek/issues/22) T-30 — разбор расхождений данных между копиями (P2): сначала решение владельца, какая копия — эталон.
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
+- [#25](https://github.com/Rimlin-UNC/1c_chek/issues/25) T-36 — дашборд, догрузившийся после перехода в другой раздел, подменяет его содержимое (P3; давняя гонка, найдена при проверке 1.70.86).
 
 **Требует уточнения:** [#11](https://github.com/Rimlin-UNC/1c_chek/issues/11)
 T-08 — переход рабочей БД на PostgreSQL/Supabase.
