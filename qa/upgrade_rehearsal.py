@@ -288,9 +288,19 @@ with SessionLocal() as db:
                         "gamma_owner_is_beta": gamma_doc.ownership.company_id == ids["beta"],
                         "closed_documents": deleted}
     moved_doc_id = moved_doc.id
+    # v1.70.88 (фаза 4а): правка старой версии — в единой записи уже при старте
+    from app.unified.copies import candidates
+    blank_doc = service.document_for_source(db, service.REGISTRY, ids["blank"])
+    reasons = [json.loads(e.details or "{}").get("reason") for e in db.query(UnifiedEvent)
+               .filter_by(document_id=blank_doc.id, event_type="reconcile")] if blank_doc else []
+    res["phase4a"] = {"blank_canon_at_start": float(blank_doc.total_sum) if blank_doc else None,
+                      "legacy_edit": "legacy_edit" in reasons,
+                      "drift": {k: len(v) for k, v in candidates(db).items()}}
 with TestClient(app) as c:
     H = {u: login(c, u, pw) for u in ("admin", "acc_a", "acc_b", "user_a")}
     res["totals"] = {u: total(c, h) for u, h in H.items()}
+    res["phase4a"]["readiness_admin"] = c.get("/api/v1/unified/readiness", headers=H["admin"]).status_code
+    res["phase4a"]["readiness_acc"] = c.get("/api/v1/unified/readiness", headers=H["acc_a"]).status_code
     moved = ids["regs_a"][1]
     res["moved"] = {"beta_card": c.get(f"/api/v1/receipts/{moved}", headers=H["acc_b"]).status_code,
                     "alpha_card": c.get(f"/api/v1/receipts/{moved}", headers=H["acc_a"]).status_code,
@@ -716,6 +726,14 @@ def main() -> int:
         check(checks, again["gamma_receipt_beta_card"] == 200, "чеки удалённой компании видны компании-получателю")
         check(checks, again["patch_after_rollback"] == 200 and again["blank_total_synced"],
               "правка после повторного обновления синхронизирует единую запись")
+        legacy = not (Path(old_dir) / "app" / "unified").is_dir()
+        p4 = again["phase4a"]
+        check(checks, p4["blank_canon_at_start"] == 333.0 and p4["legacy_edit"] == legacy
+              and p4["drift"] == {"registry": 0, "pool": 0}
+              and p4["readiness_admin"] == 200 and p4["readiness_acc"] == 403,
+              "фаза 4а: правка суммы старой версией (333 ₽) — в единой записи уже при старте "
+              + ("(сверка копий, событие legacy_edit)" if legacy else "(синхронизировала сама старая версия)")
+              + "; копии не расходятся; отчёт готовности — только администратору")
         check(checks, again["move_back"] == {"status": 200, "alpha_card": 200}, "перенос обратно работает")
         check(checks, again["move_no_fp"] == 200, "чек без ФП переносится между компаниями, как в 1.70.80")
         # v1.70.84: пакетный перенос (T-33) и журнал карточки без чужих организаций (T-32)

@@ -38,6 +38,7 @@ const SOURCE_TITLES = { registry: 'реестр', pool: 'Чек-Пул' };
 const EVENT_TITLES = {
   register: 'Регистрация копии',
   backfill: 'Перенос архива',
+  backfill_soft: 'Мягкая регистрация архива',
   sync: 'Синхронизация правки',
   claim: 'Закрепление за компанией',
   release: 'Возврат в Чек-Пул',
@@ -145,6 +146,44 @@ export function claimActions(item) {
 }
 
 /** Тело POST …/links/{id}/{действие}: версия чека из строки списка и причина. */
+// v1.70.88 (фаза 4а, T-37): «Готовность единой записи» — только числа
+// (GET /api/v1/unified/readiness). Пустой или неполный ответ — нули, не ошибка.
+function num(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function readinessCards(data) {
+  const d = data || {};
+  const drift = num((d.drift || {}).registry) + num((d.drift || {}).pool);
+  return [
+    { value: `${num(d.ready_percent).toLocaleString('ru-RU')} %`, sub: 'чеков в единой записи' },
+    { value: fmtCount(num((d.registry || {}).pending)), sub: 'чеков реестра ждут регистрации' },
+    { value: fmtCount(num((d.pool || {}).pending)), sub: 'чеков Чек-Пула ждут регистрации' },
+    { value: fmtCount(drift), sub: drift ? 'копий расходятся — сверка сведёт при запуске' : 'копий расходятся' },
+  ];
+}
+
+export function readinessRows(data) {
+  const d = data || {};
+  const reg = d.registry || {};
+  const pool = d.pool || {};
+  const review = d.review || {};
+  return [
+    ['Реестр компаний: всего / в единой записи / ждут', `${fmtCount(num(reg.total))} / ${fmtCount(num(reg.linked))} / ${fmtCount(num(reg.pending))}`],
+    ['Чек-Пул: всего / в единой записи / ждут', `${fmtCount(num(pool.total))} / ${fmtCount(num(pool.linked))} / ${fmtCount(num(pool.pending))}`],
+    ['Документов в единой записи', fmtCount(num(d.documents))],
+    ['На разборе: расхождения данных и споры', fmtCount(num(review.blocking))],
+    ['из них спор о владельце', fmtCount(num(review.ownership))],
+    ['Противоречивый признак проверки ФНС', fmtCount(num(review.verification))],
+    ['Без полной тройки ФН/ФД/ФП (не спор)', fmtCount(num(review.incomplete_identity))],
+  ];
+}
+
+function fmtCount(n) {
+  return Math.round(n).toLocaleString('ru-RU');
+}
+
 export function buildClaimDecisionBody(item, reason) {
   return { expected_version: item.version, reason: String(reason || '').trim() };
 }
@@ -334,6 +373,7 @@ export async function viewUnifiedReview(container) {
         <button type="button" class="btn btn-sm" id="ur-tab-claims" role="tab" aria-selected="false">Заявки
           <span class="nav-badge hidden" id="ur-claims-badge">0</span></button>
         <button type="button" class="btn btn-sm" id="ur-tab-visibility" role="tab" aria-selected="false">Показ компаниям</button>
+        <button type="button" class="btn btn-sm" id="ur-tab-readiness" role="tab" aria-selected="false">Готовность</button>
       </div>
       <div id="ur-pane-conflicts">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0">
@@ -363,10 +403,22 @@ export async function viewUnifiedReview(container) {
           названий других организаций. Сотрудник, участник Чек-Пула и платный API числа не получают никогда.</p>
         <div id="ur-vis-out"></div>
       </div>
+      <div id="ur-pane-readiness" class="hidden">
+        <p class="form-hint">Единая запись — один фискальный чек вместо копий в реестре и Чек-Пуле. Здесь только числа:
+          сколько чеков уже в единой записи, сколько ждёт регистрации и есть ли копии, которые с ней расходятся.
+          Расхождения после отката на старую версию сверка сводит сама при запуске программы.</p>
+        <div id="ur-ready-out"></div>
+        <p class="form-hint">Регистрацию архива запускает только владелец, на сервере: сначала пробный прогон
+          <code>python -m app.unified.backfill --soft --dry-run</code> (база не меняется), затем
+          <code>python -m app.unified.backfill --soft</code>. В единую запись попадают только чеки без расхождений;
+          спорные остаются как сейчас и видны как раньше.</p>
+      </div>
     </div>`;
   const out = container.querySelector('#ur-out');
   const claimsOut = container.querySelector('#ur-claims-out');
   const visOut = container.querySelector('#ur-vis-out');
+  const readyOut = container.querySelector('#ur-ready-out');
+  let readyReq = 0;
 
   async function loadStats() {
     const box = container.querySelector('#ur-kpi');
@@ -625,7 +677,26 @@ export async function viewUnifiedReview(container) {
     };
   }
 
-  const PANES = ['conflicts', 'claims', 'visibility'];
+  // v1.70.88 (фаза 4а): готовность единой записи — только чтение
+  async function loadReadiness() {
+    const current = ++readyReq;
+    readyOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get('/api/v1/unified/readiness');
+      if (current !== readyReq || !container.isConnected) return;
+      readyOut.innerHTML = `
+        <div class="grid kpi-grid">${readinessCards(data).map((c) => `<div class="glass kpi">
+          <div class="kpi-value">${esc(c.value)}</div><div class="kpi-sub">${esc(c.sub)}</div></div>`).join('')}</div>
+        <div class="table-wrap" style="margin-top:10px"><table class="data"><tbody>
+          ${readinessRows(data).map(([label, value]) => `<tr><td>${esc(label)}</td><td style="text-align:right">${esc(value)}</td></tr>`).join('')}
+        </tbody></table></div>`;
+    } catch (e) {
+      if (current !== readyReq || !container.isConnected) return;
+      readyOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  const PANES = ['conflicts', 'claims', 'visibility', 'readiness'];
   function showTab(tab) {
     state.tab = tab;
     PANES.forEach((key) => {
@@ -636,6 +707,7 @@ export async function viewUnifiedReview(container) {
     });
     if (tab === 'claims') loadClaims();
     if (tab === 'visibility') loadVisibility();
+    if (tab === 'readiness') loadReadiness();
   }
 
   PANES.forEach((key) => { container.querySelector(`#ur-tab-${key}`).onclick = () => showTab(key); });
@@ -648,6 +720,7 @@ export async function viewUnifiedReview(container) {
     loadStats();
     if (state.tab === 'claims') loadClaims();
     else if (state.tab === 'visibility') loadVisibility();
+    else if (state.tab === 'readiness') loadReadiness();
     else loadList();
   };
   container.querySelector('#ur-flag').onchange = (e) => {

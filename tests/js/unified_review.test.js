@@ -1,13 +1,14 @@
 /* v1.70.83: экран разбора конфликтов единого реестра (#9).
    v1.70.85: вкладка «Заявки» и блок «Организации» («Единая база», T-34).
-   v1.70.86: вкладка «Показ компаниям», значок «🏢 N», отказ перемещения (T-35, Q-24). */
+   v1.70.86: вкладка «Показ компаниям», значок «🏢 N», отказ перемещения (T-35, Q-24).
+   v1.70.88: вкладка «Готовность» единой записи — только числа (фаза 4а, T-37). */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../app/static/js/api.js';
 import {
   COUNT_MODES, COUNT_ROLES, REVIEW_FLAGS, badgeCount, blockedMoveSummary, buildClaimDecisionBody,
   buildResolveBody, buildVisibilityBody, canResolve, claimActions, claimSourceTitle, claimStatusTitle,
   companiesHtml, companyRoleTitle, decodeFlags, eventTitle, orgCountChip, orgCountRow, orgWord,
-  setConflictsBadge, validateReason, viewUnifiedReview, visibilityWarning,
+  readinessCards, readinessRows, setConflictsBadge, validateReason, viewUnifiedReview, visibilityWarning,
 } from '../../app/static/js/unified_review.js';
 
 vi.mock('../../app/static/js/api.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
@@ -514,5 +515,64 @@ describe('число организаций: вкладка «Показ ком�
     const paths = api.get.mock.calls.map((c) => c[0]);
     expect(paths).toContain('/api/v1/unified/visibility');
     expect(paths.some((p) => p.startsWith('/api/v1/unified/documents?'))).toBe(false);
+  });
+});
+
+const READINESS = {
+  registry: { total: 1200, linked: 900, pending: 300 },
+  pool: { total: 40, linked: 40, pending: 0 },
+  documents: 910,
+  review: { blocking: 3, ownership: 1, verification: 0, incomplete_identity: 7 },
+  drift: { registry: 0, pool: 0 },
+  ready_percent: 75.8,
+};
+
+describe('готовность единой записи (v1.70.88)', () => {
+  it('карточки и строки — только числа; пустой ответ даёт нули, а не ошибку', () => {
+    const cards = readinessCards(READINESS);
+    expect(cards.map((c) => c.sub)).toEqual(['чеков в единой записи', 'чеков реестра ждут регистрации',
+      'чеков Чек-Пула ждут регистрации', 'копий расходятся']);
+    expect(cards[0].value).toBe('75,8 %');
+    expect(cards[1].value.replace(/\s/g, '')).toBe('300');
+    const rows = readinessRows(READINESS);
+    expect(rows[0][1].replace(/\s/g, '')).toBe('1200/900/300');
+    expect(rows.find(([label]) => label.startsWith('из них спор'))[1]).toBe('1');
+    expect(readinessCards(undefined).map((c) => c.value)).toEqual(['0 %', '0', '0', '0']);
+    expect(readinessRows({})).toHaveLength(7);
+    expect(readinessCards({ drift: { registry: 2, pool: 1 } })[3].sub).toContain('сверка сведёт');
+  });
+
+  it('вкладка загружает отчёт, «Обновить» перечитывает его, а не список споров', async () => {
+    routeClaims();
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation(async (path) => (path === '/api/v1/unified/readiness' ? READINESS : base(path)));
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-readiness').click();
+    await flush();
+    expect(view.querySelector('#ur-pane-readiness').classList.contains('hidden')).toBe(false);
+    expect(view.querySelector('#ur-tab-readiness').getAttribute('aria-selected')).toBe('true');
+    expect(view.querySelector('#ur-ready-out').textContent).toContain('75,8 %');
+    expect(view.querySelector('#ur-pane-readiness').textContent).toContain('--soft --dry-run');
+    api.get.mockClear();
+    view.querySelector('#ur-refresh').click();
+    await flush();
+    const paths = api.get.mock.calls.map((c) => c[0]);
+    expect(paths).toContain('/api/v1/unified/readiness');
+    expect(paths.some((p) => p.startsWith('/api/v1/unified/documents?'))).toBe(false);
+  });
+
+  it('ошибка отчёта остаётся в панели', async () => {
+    routeClaims();
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation(async (path) => {
+      if (path === '/api/v1/unified/readiness') throw new Error('Только администратор');
+      return base(path);
+    });
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-readiness').click();
+    await flush();
+    expect(view.querySelector('#ur-ready-out').textContent).toContain('Только администратор');
   });
 });
