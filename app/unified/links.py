@@ -30,8 +30,8 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import case, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from ..models import AuditLog, Company, Receipt, User, uid, utcnow
 from ..pool.models import PoolReceipt
@@ -50,6 +50,7 @@ from .models import (
     REVIEW_OWNERSHIP,
     UnifiedCompanyLink,
     UnifiedDocument,
+    UnifiedOrigin,
     UnifiedOwnership,
 )
 
@@ -63,7 +64,9 @@ DECISIONS = {"transfer": LINK_TRANSFERRED, "decline": LINK_DECLINED, "void": LIN
 ADMIN_ONLY_EVENTS = frozenset(f"claim_{action}" for action in DECISIONS)
 # То же в журнале аудита: лента дашборда бухгалтера показывает и записи без
 # компании (администратор платформы) — решения по заявкам туда не попадают.
-ADMIN_ONLY_AUDIT = frozenset(f"unified_claim_{action}" for action in DECISIONS)
+ADMIN_ONLY_AUDIT = (frozenset(f"unified_claim_{action}" for action in DECISIONS)
+                    # v1.70.86 (фаза 3): настройки показа числа компаниям
+                    | {"unified_visibility_updated"})
 REASON_MIN = 3
 REASON_MAX = 500
 # Наполнение по журналу аудита: граница «живых» заявок и уже обработанное.
@@ -374,6 +377,56 @@ def companies_payload(db: Session, doc: UnifiedDocument) -> dict:
     items += [_link_payload(link, companies, users) for link in links if link.company_id != owner_id]
     return {"document_id": doc.id, "version": doc.version,
             "count": sum(1 for item in items if item["counted"]), "companies": items}
+
+
+# --------------------------------------------------------------------------
+#  Число организаций в реестре (фаза 3, T-35): одним запросом на страницу
+# --------------------------------------------------------------------------
+def _registry_counts():
+    """(источник, число) для чеков реестра: правило то же, что у companies_payload —
+    владелец (если компания есть) + заявки «ждёт решения» и «отклонена» других
+    существующих компаний. Прежние владельцы, «не учитывать» и переданные — нет."""
+    owner_company = aliased(Company)
+    claimant = aliased(Company)
+    claims = (select(func.count(UnifiedCompanyLink.id))
+              .join(claimant, claimant.id == UnifiedCompanyLink.company_id)
+              .where(UnifiedCompanyLink.document_id == UnifiedOrigin.document_id,
+                     UnifiedCompanyLink.kind == LINK_CLAIM,
+                     UnifiedCompanyLink.status.in_(LINK_COUNTED),
+                     or_(UnifiedOwnership.company_id.is_(None),
+                         UnifiedCompanyLink.company_id != UnifiedOwnership.company_id))
+              .correlate(UnifiedOrigin, UnifiedOwnership)
+              .scalar_subquery())
+    count = case((owner_company.id.is_not(None), 1), else_=0) + claims
+    query = (select(UnifiedOrigin.source_id, count)
+             .outerjoin(UnifiedOwnership, UnifiedOwnership.document_id == UnifiedOrigin.document_id)
+             .outerjoin(owner_company, owner_company.id == UnifiedOwnership.company_id)
+             .where(UnifiedOrigin.source_kind == "registry"))
+    return query, count
+
+
+def companies_counts(db: Session, receipt_ids: list[str]) -> dict[str, int]:
+    """Число организаций у чеков реестра — один запрос на страницу, без N+1.
+
+    Чек, которого нет в едином слое (архив до регистрации), учитывает только
+    своя компания — 1. Вызывающий сам решает, кому число показывать
+    (visibility.can_see_count).
+    """
+    ids = list(dict.fromkeys(i for i in receipt_ids if i))
+    if not ids:
+        return {}
+    query, _count = _registry_counts()
+    result = dict.fromkeys(ids, 1)
+    result.update((source_id, int(number))
+                  for source_id, number in db.execute(query.where(UnifiedOrigin.source_id.in_(ids))))
+    return result
+
+
+def multi_company_receipts():
+    """Подзапрос id чеков реестра, которые учитывают две и больше организации
+    (фильтр администратора «Организаций: две и больше»)."""
+    query, count = _registry_counts()
+    return query.with_only_columns(UnifiedOrigin.source_id).where(count >= 2)
 
 
 def _claims_query(db: Session):

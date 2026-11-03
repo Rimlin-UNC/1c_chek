@@ -58,6 +58,9 @@ OLD_COMMIT = "b3db4fef67942d59fad9567f579823b70c6bf16d"
 OLD_LABEL = "1.70.80"
 UNIFIED_TABLES = ["unified_company_links", "unified_documents", "unified_events", "unified_items",
                   "unified_origins", "unified_ownership"]
+# v1.70.86 (фаза 3): компания, которую создаёт старая версия во время отката, —
+# без колонки показа числа; флаг «нет» ей ставит значение по умолчанию в базе.
+AFTER_ROLLBACK_COMPANY = "Компания после отката"
 
 
 class OldCodeUnavailable(RuntimeError):
@@ -287,6 +290,27 @@ def claims_facts(c, H, ids):
             "staff": sorted({c.get("/api/v1/unified/claims", headers=H[u]).status_code
                              for u in ("acc_a", "acc_b", "user_a")})}
 
+def phase3_facts(c, H, ids):
+    """v1.70.86 (фаза 3): поле companies_count у ролей и фильтр администратора.
+
+    Чек regs_a[4] — с заявкой Беты из журнала аудита (2 организации), regs_a[3] —
+    обычный чек Альфы, regs_a[5] — чек сотрудника Альфы."""
+    def field(user, rid):
+        r = c.get(f"/api/v1/receipts/{rid}", headers=H[user])
+        return r.json().get("companies_count", "нет") if r.status_code == 200 else r.status_code
+    multi = c.get("/api/v1/receipts", headers=H["admin"],
+                  params={"multi_company": "true", "page_size": 200}).json()
+    found = {x["id"] for x in multi.get("items", [])}
+    settings = c.get("/api/v1/unified/visibility", headers=H["admin"]).json()
+    companies = settings.get("companies", [])
+    return {"admin": field("admin", ids["regs_a"][4]), "acc_a": field("acc_a", ids["regs_a"][4]),
+            "user_a": field("user_a", ids["regs_a"][5]), "acc_b": field("acc_b", ids["regs_b"][0]),
+            "acc_g": field("acc_g", ids["reg_g"]),
+            "multi": {"history": ids["regs_a"][4] in found, "single": ids["regs_a"][3] in found},
+            "mode": settings.get("mode"), "roles": settings.get("roles"),
+            "enabled": sorted(x["id"] for x in companies if x.get("enabled")),
+            "late_company": [x.get("enabled") for x in companies if x.get("name") == "Компания после отката"]}
+
 def inspect_all(c, H, ids):
     """Полный срез: старые таблицы, канон, карантин, видимость, счётчики."""
     res = {"fingerprint": fingerprint()}
@@ -317,6 +341,13 @@ with TestClient(app) as c:
     H = {u: login(c, u, pw) for u in USERS}
     res = inspect_all(c, H, ids)
     res["claims"] = claims_facts(c, H, ids)
+    # v1.70.86 (фаза 3): до разрешения число видит только администратор; затем
+    # показ «выбранным компаниям» — Альфе, только бухгалтеру
+    res["phase3_before"] = phase3_facts(c, H, ids)
+    put = c.put("/api/v1/unified/visibility", headers=H["admin"],
+                json={"mode": "selected", "roles": ["accountant"], "company_ids": [ids["alpha"]]})
+    res["phase3_put"] = put.status_code
+    res["phase3_after"] = phase3_facts(c, H, ids)
     twin = ids["regs_a"][0]
     res["twin"] = {"alpha": c.get(f"/api/v1/receipts/{twin}", headers=H["acc_a"]).status_code,
                    "admin": c.get(f"/api/v1/receipts/{twin}", headers=H["admin"]).status_code}
@@ -362,6 +393,9 @@ with TestClient(app) as c:
     gone = c.post(f"/api/v1/companies/{ids['gamma']}/delete", headers=H["admin"],
                   json={"mode": "move", "target_company_id": ids["beta"], "move_users": True})
     res["delete_company"] = {"status": gone.status_code, "body": short(gone)}
+    # v1.70.86: старая версия не знает колонки показа числа — компания всё равно создаётся
+    res["company_created"] = c.post("/api/v1/companies", headers=H["admin"],
+                                    json={"name": "Компания после отката"}).status_code
     H = {u: login(c, u, pw) for u in USERS}   # сотрудник Гаммы теперь в Бете
     res["visible_after"] = {u: visible(c, h) for u, h in H.items()}
     res["pool_after"] = {u: pool_mine(c, H[u]) for u in ("acc_a", "acc_b")}
@@ -410,6 +444,7 @@ with TestClient(app) as c:
     H = {u: login(c, u, pw) for u in USERS}
     res = inspect_all(c, H, ids)
     res["claims"] = claims_facts(c, H, ids)
+    res["phase3"] = phase3_facts(c, H, ids)
     emit(res)
 '''
 
@@ -679,6 +714,19 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               and claims["staff"] == [403],
               "заявка Беты из истории: у чека Альфы 2 организации, 2 попытки; сотрудникам список заявок "
               "недоступен (403)", claims)
+    before3, after3 = chk["phase3_before"], chk["phase3_after"]
+    rep.check(before3["mode"] == "off" and before3["admin"] == 2
+              and all(before3[u] == "нет" for u in ("acc_a", "user_a", "acc_b", "acc_g"))
+              and before3["multi"] == {"history": True, "single": False},
+              "фаза 3: до разрешения число организаций видит только администратор (2 у чека с заявкой Беты); "
+              "фильтр «две и больше» находит этот чек и не находит обычный", before3)
+    rep.check(chk["phase3_put"] == 200 and after3["acc_a"] == 2
+              and all(after3[u] == "нет" for u in ("user_a", "acc_b", "acc_g"))
+              and (after3["mode"], after3["roles"], after3["enabled"]) == ("selected", ["accountant"],
+                                                                           [seed["ids"]["alpha"]]),
+              "фаза 3: показ «выбранным компаниям» (Альфа, бухгалтер) — бухгалтер Альфы видит 2, сотрудник "
+              "Альфы, Бета и Гамма числа не получают",
+              {"put": chk["phase3_put"], **after3})
     after, resolve = chk["after"], chk["resolve"]
     rep.check(resolve.get("status") == 200 and resolve.get("candidates") == 2 and not after["flagged"]
               and after["twin_alpha"] == 200 and after["visible"] == base["visible"]
@@ -702,9 +750,10 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               f"откат: {OLD_LABEL} стартует на обновлённой базе, каждая роль видит то же, что до отката",
               f"версия {back['version']}, реестр {_sets_differ(back['visible_before'], after['visible'])}")
     rep.check(back["scan"]["status"] == 200 and back["scan"]["id"] and back["move"] == 200
-              and back["delete"] == 200 and back["patch"] == 200 and back["delete_company"]["status"] == 200,
-              f"откат: {OLD_LABEL} сканирует, переносит, удаляет и правит чеки, удаляет компанию",
-              {k: back[k] for k in ("scan", "move", "delete", "patch", "delete_company")})
+              and back["delete"] == 200 and back["patch"] == 200 and back["delete_company"]["status"] == 200
+              and back["company_created"] in (200, 201),
+              f"откат: {OLD_LABEL} сканирует, переносит, удаляет и правит чеки, удаляет и создаёт компанию",
+              {k: back[k] for k in ("scan", "move", "delete", "patch", "delete_company", "company_created")})
     docs = after["docs"]
     again_up = phase("повторное обновление: сверка", REUPGRADE, new_dir, {"REH_DOCS": json.dumps(docs)})
     reasons = Counter(e["reason"] for e in again_up["journal"])
@@ -747,6 +796,12 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
     rep.check(final["claims"] == after["claims"],
               f"заявки пережили откат на {OLD_LABEL} и повторное обновление: число организаций и статусы те же",
               f"после разбора {after['claims']}, итог {final['claims']}")
+    final3 = final["phase3"]
+    rep.check((final3["mode"], final3["roles"], final3["enabled"]) == (after3["mode"], after3["roles"],
+                                                                      after3["enabled"])
+              and final3["acc_a"] == 2 and final3["acc_b"] == "нет" and final3["late_company"] == [False],
+              f"фаза 3: показ числа пережил откат на {OLD_LABEL} и повторное обновление; компания, созданная "
+              f"старой версией («{AFTER_ROLLBACK_COMPANY}»), без отметки", final3)
     raw["users"], raw["seconds"] = users, round(time.monotonic() - started, 1)
     return rep.checks, raw
 

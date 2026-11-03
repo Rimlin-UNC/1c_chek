@@ -169,3 +169,50 @@ test('разбор конфликтов: администратор закреп
   await expect(page.locator('#ur-out')).toContainText('Конфликтов нет');
   await expect(page.locator('#nav-conflicts-badge')).toBeHidden();
 });
+
+// v1.70.86 («Единая база», фаза 3): число организаций у чека. Сид кладёт чек
+// «E2E Альфы» с отклонённой заявкой «E2E Беты» и бухгалтера Альфы.
+test('число организаций: администратор разрешает показ, бухгалтер видит только число', async ({ page }) => {
+  test.setTimeout(90_000);   // два входа и два экрана — дольше обычного сценария
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/receipts"]').click();
+  await page.locator('#rc-view-list').click();
+  const claimed = page.locator('#receipts-table tbody tr', { hasText: '9999999999990088' });
+  await expect(claimed.locator('.org-count')).toHaveText('🏢 2');
+  // фильтр администратора «две организации и больше»: в выборке только такие чеки
+  await page.locator('#f-multi').selectOption('true');
+  await page.locator('#btn-filter').click();
+  await expect(claimed).toBeVisible();
+  const rows = page.locator('#receipts-table tbody tr');
+  await expect(rows).toHaveCount(await rows.locator('.org-count').count());
+  await page.locator('#btn-filter-reset').click();
+  // разрешение показа «выбранным компаниям» — только Альфе
+  await page.locator('a[href="#/conflicts"]').click();
+  await page.locator('#ur-tab-visibility').click();
+  await page.locator('#ur-vis-mode-selected').check();
+  await page.locator('#ur-vis-companies label', { hasText: 'E2E Альфа' }).locator('input').check();
+  await expect(page.locator('#ur-vis-warning')).toHaveText('');
+  await page.locator('#ur-vis-save').click();
+  await expect(page.locator('#toast-container')).toContainText('Настройки показа сохранены');
+  // бухгалтер Альфы видит число у своего чека — без названий других организаций
+  await page.locator('#btn-logout').click();
+  // выход перезагружает страницу: форму входа заполняем только после загрузки
+  const reloaded = page.waitForEvent('load');
+  await page.locator('#lo-exit').click();
+  await reloaded;
+  await page.fill('#login-username', 'e2e_acc_alpha');
+  await page.fill('#login-password', 'e2e-accountant-password');
+  await page.click('#login-submit');
+  await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+  await expect(page.locator('a[href="#/receipts"]')).toBeVisible();
+  await page.locator('a[href="#/receipts"]').click();
+  await page.locator('#rc-view-list').click();
+  const own = page.locator('#receipts-table tbody tr', { hasText: '9999999999990088' });
+  await expect(own.locator('.org-count')).toHaveText('🏢 2');
+  await expect(page.locator('#f-multi')).toHaveCount(0);
+  await own.locator('td.cell-sum').click();
+  const drawer = page.locator('.drawer');
+  await expect(drawer.locator('#rd-org-count')).toContainText('2');
+  await expect(drawer).not.toContainText('E2E Бета');
+});

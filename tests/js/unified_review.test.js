@@ -1,14 +1,16 @@
 /* v1.70.83: экран разбора конфликтов единого реестра (#9).
-   v1.70.85: вкладка «Заявки» и блок «Организации» («Единая база», T-34). */
+   v1.70.85: вкладка «Заявки» и блок «Организации» («Единая база», T-34).
+   v1.70.86: вкладка «Показ компаниям», значок «🏢 N», отказ перемещения (T-35, Q-24). */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../app/static/js/api.js';
 import {
-  REVIEW_FLAGS, badgeCount, buildClaimDecisionBody, buildResolveBody, canResolve, claimActions,
-  claimSourceTitle, claimStatusTitle, companiesHtml, companyRoleTitle, decodeFlags, eventTitle,
-  setConflictsBadge, validateReason, viewUnifiedReview,
+  COUNT_MODES, COUNT_ROLES, REVIEW_FLAGS, badgeCount, blockedMoveSummary, buildClaimDecisionBody,
+  buildResolveBody, buildVisibilityBody, canResolve, claimActions, claimSourceTitle, claimStatusTitle,
+  companiesHtml, companyRoleTitle, decodeFlags, eventTitle, orgCountChip, orgCountRow, orgWord,
+  setConflictsBadge, validateReason, viewUnifiedReview, visibilityWarning,
 } from '../../app/static/js/unified_review.js';
 
-vi.mock('../../app/static/js/api.js', () => ({ api: { get: vi.fn(), post: vi.fn() } }));
+vi.mock('../../app/static/js/api.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
 
 const DOC = {
   id: 'd1', receipt_date: '2026-09-24T12:30:00', total_sum: 777, merchant_name: 'Спорный магазин',
@@ -369,5 +371,148 @@ describe('заявки компаний: экран', () => {
     slot = document.querySelector('.modal-slot');
     expect(slot.querySelector('#ur-companies')).toBeNull();
     expect(slot.querySelector('#ur-copies')).not.toBeNull();
+  });
+});
+
+
+// --------------------------------------------------------------------------
+//  v1.70.86: число организаций для компаний и отказ перемещения (Q-24)
+// --------------------------------------------------------------------------
+const VISIBILITY = {
+  mode: 'off', roles: ['accountant', 'manager'], allowed_roles: ['accountant', 'manager'],
+  companies: [
+    { id: 'c1', name: 'Альфа', is_active: true, enabled: false },
+    { id: 'c2', name: 'Бета', is_active: true, enabled: true },
+    { id: 'c3', name: 'Закрытая', is_active: false, enabled: false },
+  ],
+};
+
+function routeVisibility(payload = VISIBILITY) {
+  routeClaims();
+  const base = api.get.getMockImplementation();
+  api.get.mockImplementation(async (path) => (path === '/api/v1/unified/visibility' ? payload : base(path)));
+}
+
+describe('число организаций: чистые функции', () => {
+  it('склонение и значок — только от двух организаций', () => {
+    expect([1, 2, 5, 11, 21, 22, 25, 111, 112].map(orgWord)).toEqual([
+      'организация', 'организации', 'организаций', 'организаций', 'организация', 'организации',
+      'организаций', 'организаций', 'организаций']);
+    expect(orgCountChip(undefined, false)).toBe('');
+    expect(orgCountChip(1, true)).toBe('');
+    const chip = orgCountChip(2, false);
+    expect(chip).toContain('🏢 2');
+    expect(chip).toContain('org-count');
+    expect(chip).toContain('включая вашу');
+    expect(orgCountChip(3, true)).toContain('Разборе конфликтов');
+  });
+
+  it('строка карточки — при любом числе, без поля — ничего', () => {
+    expect(orgCountRow(1, false)).toContain('id="rd-org-count">1');
+    expect(orgCountRow(0, true)).toContain('id="rd-org-count">0');
+    expect(orgCountRow(undefined, true)).toBe('');
+    expect(orgCountRow(null, false)).toBe('');
+  });
+
+  it('отказ перемещения: чеки на разборе, причины и сколько можно перенести', () => {
+    const summary = blockedMoveSummary({
+      message: 'Чек требует разбора перед перемещением: 2 из 5 отмеченных…',
+      blocked: [{ receipt_id: 'r1', reasons: ['ownership', 'amount'] }, { receipt_id: 'r2', reasons: ['amount'] }],
+      movable: 3,
+    });
+    expect(summary).toEqual({
+      blocked: 2, movable: 3, reasons: ['владелец — 1', 'сумма — 2'],
+      message: 'Чек требует разбора перед перемещением: 2 из 5 отмеченных…',
+    });
+    expect(blockedMoveSummary('Компания назначения не найдена')).toBeNull();
+    expect(blockedMoveSummary(null)).toBeNull();
+    expect(blockedMoveSummary({ blocked: [], movable: -1 }).movable).toBe(0);
+  });
+
+  it('тело настроек: режим, только разрешённые роли, список компаний всегда', () => {
+    expect(COUNT_MODES.map((m) => m.code)).toEqual(['off', 'all', 'selected']);
+    expect(COUNT_ROLES.map((r) => r.code)).toEqual(['accountant', 'manager']);
+    expect(buildVisibilityBody('selected', ['accountant', 'user', 'accountant'], ['c1', 'c1']))
+      .toEqual({ mode: 'selected', roles: ['accountant'], company_ids: ['c1'] });
+    expect(buildVisibilityBody('everyone', null, null)).toEqual({ mode: 'off', roles: [], company_ids: [] });
+  });
+
+  it('предупреждение: включённый показ, который никто не увидит', () => {
+    expect(visibilityWarning('off', [], [])).toBe('');
+    expect(visibilityWarning('all', [], [])).toContain('ни одна роль');
+    expect(visibilityWarning('selected', ['manager'], [])).toContain('ни одна компания');
+    expect(visibilityWarning('selected', ['manager'], ['c1'])).toBe('');
+    expect(visibilityWarning('all', ['accountant'], [])).toBe('');
+  });
+});
+
+describe('число организаций: вкладка «Показ компаниям»', () => {
+  beforeEach(() => {
+    api.get.mockReset();
+    api.post.mockReset();
+    api.put.mockReset();
+  });
+
+  it('грузится по клику, предупреждает и сохраняет режим, роли и компании', async () => {
+    routeVisibility();
+    api.put.mockImplementation(async (_path, body) => ({
+      ...VISIBILITY, mode: body.mode, roles: body.roles,
+      companies: VISIBILITY.companies.map((c) => ({ ...c, enabled: body.company_ids.includes(c.id) })),
+    }));
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-visibility').click();
+    await flush();
+    expect(view.querySelector('#ur-tab-visibility').getAttribute('aria-selected')).toBe('true');
+    expect(view.querySelector('#ur-pane-claims').classList.contains('hidden')).toBe(true);
+    expect(view.querySelector('#ur-pane-conflicts').classList.contains('hidden')).toBe(true);
+    expect(view.querySelector('#ur-vis-mode-off').checked).toBe(true);
+    expect(view.querySelector('#ur-vis-companies').textContent).toContain('(в архиве)');
+    const warning = view.querySelector('#ur-vis-warning');
+    expect(warning.textContent).toBe('');
+    view.querySelector('#ur-vis-mode-selected').checked = true;
+    view.querySelector('#ur-vis-mode-selected').dispatchEvent(new Event('change'));
+    view.querySelector('.ur-vis-company[value="c2"]').checked = false;
+    view.querySelector('.ur-vis-company[value="c2"]').dispatchEvent(new Event('change'));
+    expect(warning.textContent).toContain('ни одна компания');
+    view.querySelector('.ur-vis-company[value="c1"]').checked = true;
+    view.querySelector('.ur-vis-company[value="c1"]').dispatchEvent(new Event('change'));
+    view.querySelector('#ur-vis-role-manager').checked = false;
+    view.querySelector('#ur-vis-role-manager').dispatchEvent(new Event('change'));
+    expect(warning.textContent).toBe('');
+    view.querySelector('#ur-vis-save').click();
+    await flush();
+    expect(api.put).toHaveBeenCalledWith('/api/v1/unified/visibility',
+      { mode: 'selected', roles: ['accountant'], company_ids: ['c1'] });
+    expect(document.querySelector('#toast-container').textContent).toContain('Настройки показа сохранены');
+    expect(view.querySelector('#ur-vis-mode-selected').checked).toBe(true);
+    expect(view.querySelector('.ur-vis-company[value="c1"]').checked).toBe(true);
+  });
+
+  it('ошибка сохранения остаётся на вкладке, кнопка снова доступна', async () => {
+    routeVisibility();
+    api.put.mockRejectedValue(Object.assign(new Error('Недостаточно прав'), { status: 403 }));
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-visibility').click();
+    await flush();
+    view.querySelector('#ur-vis-save').click();
+    await flush();
+    expect(view.querySelector('#ur-vis-warning').textContent).toContain('Недостаточно прав');
+    expect(view.querySelector('#ur-vis-save').disabled).toBe(false);
+  });
+
+  it('«Обновить» на вкладке перечитывает настройки, а не список споров', async () => {
+    routeVisibility();
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-visibility').click();
+    await flush();
+    api.get.mockClear();
+    view.querySelector('#ur-refresh').click();
+    await flush();
+    const paths = api.get.mock.calls.map((c) => c[0]);
+    expect(paths).toContain('/api/v1/unified/visibility');
+    expect(paths.some((p) => p.startsWith('/api/v1/unified/documents?'))).toBe(false);
   });
 });

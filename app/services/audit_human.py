@@ -104,6 +104,13 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "заявка компании на чек отклонена", ""
     if action == "unified_claim_void":
         return "заявка компании на чек не учитывается", ""
+    if action == "unified_visibility_updated":         # v1.70.86, только администратор
+        modes = {"off": "выключено", "all": "всем компаниям", "selected": "выбранным компаниям"}
+        roles = {"accountant": "бухгалтер", "manager": "руководитель"}
+        who = ", ".join(roles.get(r, r) for r in d.get("roles") or []) or "никому"
+        return "изменён показ числа организаций компаниям", \
+            (f"режим: {modes.get(d.get('mode'), d.get('mode') or '—')}; роли: {who}; "
+             f"компаний с разрешением: {d.get('companies', 0)}")
     if action == "receipts_transferred":
         return "чеки переданы другому сотруднику", \
             f"чеков: {d.get('count', 0)} (были у „{d.get('from', '—')}“)"

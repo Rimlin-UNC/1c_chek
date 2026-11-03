@@ -22,7 +22,8 @@ for arg in "$@"; do
       echo '--with-postgres  драйвер psycopg 3 для тестов PostgreSQL.'
       echo '--full           всё для прогона «как в CI»: --with-postgres, pgserver'
       echo '                 (локальный PostgreSQL, qa/pg_local.py) и валидаторы'
-      echo '                 stylelint и html-validate в /tmp, как в CI.'
+      echo '                 stylelint и html-validate в /tmp, как в CI; если браузеров'
+      echo '                 Playwright нет — Chromium из npm (qa/local_chromium.sh).'
       echo '--check          только проверить установленное, ничего не ставить.'
       exit 0 ;;
     *) echo "Неизвестный параметр: $arg" >&2; exit 2 ;;
@@ -48,6 +49,12 @@ if [[ "$mode" == setup ]]; then
     .venv/bin/python -m pip install pgserver
     npm install --prefix /tmp/csslint --no-audit --no-fund "stylelint@${STYLELINT_VERSION}"
     npm install --prefix /tmp/htmlval --no-audit --no-fund "html-validate@${HTMLVALIDATE_VERSION}"
+    # v1.70.86: браузер для Playwright. В CI его ставит `npx playwright install`; без
+    # доступа к CDN браузеров — сборка из npm. Шаг необязательный: без браузера
+    # браузерные сценарии в полном прогоне пропускаются, как раньше.
+    if ! compgen -G "$HOME/.cache/ms-playwright/*" >/dev/null; then
+      bash qa/local_chromium.sh || echo 'Chromium для Playwright не подготовлен — браузерные сценарии будут пропущены' >&2
+    fi
   fi
 fi
 [[ -x .venv/bin/python ]] || { echo 'Нет .venv: сначала запустите qa/setup_dev.sh' >&2; exit 1; }
@@ -66,5 +73,8 @@ if [[ "$full" == 1 ]]; then
   [[ -x /tmp/htmlval/node_modules/.bin/html-validate ]] || { echo 'Нет html-validate: запустите qa/setup_dev.sh --full' >&2; exit 1; }
   echo "stylelint: $(/tmp/csslint/node_modules/.bin/stylelint --version)"
   echo "html-validate: $(/tmp/htmlval/node_modules/.bin/html-validate --version)"
+  if [[ -x /tmp/ym-chromium/chrome.sh ]]; then
+    echo 'Playwright: YM_PLAYWRIGHT_CHROMIUM=/tmp/ym-chromium/chrome.sh (qa/local_chromium.sh)'
+  fi
 fi
 printf '%s\n' 'Готово. База приложения, проект Supabase и секреты не изменялись.'

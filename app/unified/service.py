@@ -692,16 +692,34 @@ def _register_registry_many(db: Session, receipts: list[Receipt],
     return result
 
 
+class BlockedDocuments(HTTPException):
+    """409: часть документов пачки ждёт разбора (Q-24, решение 03.11.2026).
+
+    Пачка по умолчанию атомарна — не переносится ни один документ. Исключение
+    несёт id документов на разборе и число тех, что можно перенести, чтобы
+    вызывающий показал список и предложил «переместить остальные».
+    """
+
+    def __init__(self, document_ids: list[str], movable: int) -> None:
+        super().__init__(409, "Чек требует разбора перед перемещением")
+        self.document_ids = document_ids
+        self.movable = movable
+
+
 def move_documents(db: Session, document_ids: list[str], target_company_id: str,
-                   actor: User, *, locked: bool = False) -> list[str]:
+                   actor: User, *, locked: bool = False,
+                   skip_blocked: bool = False) -> tuple[list[str], list[str]]:
     """Пакетная смена владельца: для каждого документа — то же, что
     move_document без expected_version и ключа идемпотентности.
 
     Документы, которые уже у компании назначения, пропускаются до блокировок и
     проверки пометок — как в прежнем цикле переноса. Если хоть один документ не
-    найден, удалён или требует разбора, исключение прерывает всю пачку
-    (вызывающий откатывает транзакцию). ``locked=True`` — тройки уже
-    заблокированы вызывающим в этой транзакции. Возвращает id перенесённых.
+    найден или удалён, исключение прерывает всю пачку (вызывающий откатывает
+    транзакцию). Документ, требующий разбора, тоже прерывает пачку
+    (BlockedDocuments) — если не задан ``skip_blocked``: тогда такие документы
+    остаются у прежнего владельца, остальные переносятся (Q-24).
+    ``locked=True`` — тройки уже заблокированы вызывающим в этой транзакции.
+    Возвращает (id перенесённых, id пропущенных на разборе).
     """
     ids = list(dict.fromkeys(document_ids))
     owners: dict[str, UnifiedOwnership] = {}
@@ -728,7 +746,7 @@ def move_documents(db: Session, document_ids: list[str], target_company_id: str,
     load_owners(ids, fresh=locked)
     pending = [i for i in ids if not (i in owners and owners[i].company_id == target_company_id)]
     if not pending:
-        return []
+        return [], []
     load_docs(pending, for_update=locked)
     if any(docs.get(i) is None or docs[i].deleted_at is not None for i in pending):
         raise HTTPException(404, "Чек не найден")
@@ -737,8 +755,14 @@ def move_documents(db: Session, document_ids: list[str], target_company_id: str,
         load_docs(pending, for_update=True)
     actor = _recheck_actor(db, actor, ("admin",))
     target = _recheck_company(db, target_company_id)
-    if any(docs[i].review_flags & REVIEW_BLOCKING for i in pending):
-        raise HTTPException(409, "Чек требует разбора перед перемещением")
+    blocked = [i for i in pending if docs[i].review_flags & REVIEW_BLOCKING]
+    if blocked and not skip_blocked:
+        raise BlockedDocuments(blocked, len(pending) - len(blocked))
+    if blocked:
+        skip = set(blocked)
+        pending = [i for i in pending if i not in skip]
+        if not pending:
+            return [], blocked
     if not locked:
         load_owners(pending, fresh=True)
     created = [UnifiedOwnership(document_id=i, company_id=None, created_by=None,
@@ -801,15 +825,30 @@ def move_documents(db: Session, document_ids: list[str], target_company_id: str,
     db.flush()
     _insert_rows(db, UnifiedEvent, events)
     links.after_move(db, [(i, previous[i]) for i in moved], target.id, actor.id, now)
-    return moved
+    return moved, blocked
+
+
+# Коды причин разбора в ответе перемещения — те же, что у экрана «Разбор конфликтов».
+BLOCKING_REASONS = ((REVIEW_OWNERSHIP, "ownership"), (REVIEW_DATE, "date"),
+                    (REVIEW_AMOUNT, "amount"), (REVIEW_OPERATION, "operation"),
+                    (REVIEW_ITEMS, "items"), (REVIEW_MERCHANT, "merchant"))
+
+
+def blocking_reasons(flags: int) -> list[str]:
+    """Коды причин разбора — те же, что у экрана «Разбор конфликтов»."""
+    return [code for bit, code in BLOCKING_REASONS if flags & bit]
 
 
 def move_registry_receipts(db: Session, receipts: list[Receipt], target_company_id: str,
-                           actor: User) -> tuple[list[Receipt], int]:
-    """Пакетный перенос чеков реестра в другую компанию (T-33).
+                           actor: User, *, skip_blocked: bool = False,
+                           ) -> tuple[list[Receipt], int, list[dict]]:
+    """Пакетный перенос чеков реестра в другую компанию (T-33, Q-24).
 
-    Возвращает перенесённые чеки (в порядке ФН, ФД, ФП, id — как прежний цикл)
-    и число чеков, которые уже были у компании назначения.
+    Возвращает перенесённые чеки (в порядке ФН, ФД, ФП, id — как прежний цикл),
+    число чеков, которые уже были у компании назначения, и пропущенные чеки на
+    разборе ({receipt_id, reasons}) — только при ``skip_blocked``. Без него чек
+    на разборе отменяет всю пачку: 409 со списком таких чеков и числом тех,
+    что можно перенести («Переместить остальные»).
     """
     ordered = sorted(receipts, key=lambda r: (r.fn, r.fd, r.fp, r.id))
     _lock_many(db, [(r.fn, r.fd, r.fp) for r in ordered])
@@ -817,10 +856,32 @@ def move_registry_receipts(db: Session, receipts: list[Receipt], target_company_
     missing = [r for r in ordered if r.id not in doc_of]
     if missing:
         doc_of.update(_register_registry_many(db, missing, actor))
-    moved_docs = set(move_documents(db, [doc_of[r.id] for r in ordered], target_company_id,
-                                    actor, locked=True))
+
+    def blocked_items(document_ids) -> list[dict]:
+        wanted = set(document_ids)
+        flags: dict[str, int] = {}
+        for chunk in _chunks(sorted(wanted)):
+            flags.update(db.query(UnifiedDocument.id, UnifiedDocument.review_flags)
+                         .filter(UnifiedDocument.id.in_(chunk)).all())
+        return [{"receipt_id": r.id, "reasons": blocking_reasons(flags.get(doc_of[r.id], 0))}
+                for r in ordered if doc_of[r.id] in wanted]
+
+    try:
+        moved_ids, blocked_ids = move_documents(db, [doc_of[r.id] for r in ordered],
+                                                target_company_id, actor, locked=True,
+                                                skip_blocked=skip_blocked)
+    except BlockedDocuments as exc:
+        items = blocked_items(exc.document_ids)
+        raise HTTPException(409, detail={
+            "message": (f"Чек требует разбора перед перемещением: {len(items)} из {len(ordered)} "
+                        "отмеченных ждут решения в «Разборе конфликтов». Не перемещён ни один чек."),
+            "blocked": items,
+            "movable": exc.movable,
+        }) from None
+    moved_docs = set(moved_ids)
     moved = [r for r in ordered if doc_of[r.id] in moved_docs]
-    return moved, len(ordered) - len(moved)
+    skipped = blocked_items(blocked_ids) if blocked_ids else []
+    return moved, len(ordered) - len(moved) - len(skipped), skipped
 
 
 def detach_registry(db: Session, receipt: Receipt, actor: User | None = None) -> None:

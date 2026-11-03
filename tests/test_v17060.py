@@ -70,6 +70,11 @@ def _read(path: pathlib.Path) -> str:
 
 
 def _browsers_installed() -> bool:
+    # v1.70.86: свой Chromium (qa/local_chromium.sh — где CDN браузеров недоступен);
+    # тот же путь читает playwright.config.js
+    custom = os.environ.get("YM_PLAYWRIGHT_CHROMIUM")
+    if custom:
+        return os.access(custom, os.X_OK)
     base = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     cand = pathlib.Path(base) if base else pathlib.Path.home() / ".cache" / \
         "ms-playwright"

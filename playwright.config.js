@@ -1,7 +1,8 @@
 /* v1.70.60: Playwright — браузерные сценарии пользователя.
    Запуск: npm run test:e2e (нужны браузеры: npx playwright install chromium;
-   в песочнице без доступа к CDN браузеров конфиг и сценарии проверяются
-   перечислением: npx playwright test --list).
+   в песочнице без доступа к CDN браузеров — Chromium из npm: bash
+   qa/local_chromium.sh, затем YM_PLAYWRIGHT_CHROMIUM=/tmp/ym-chromium/chrome.sh;
+   перечисление сценариев без браузера: npx playwright test --list).
    Сервер поднимается сам на порту 8123 с отдельной базой. */
 import { defineConfig } from '@playwright/test';
 import { mkdtempSync } from 'node:fs';
@@ -10,17 +11,22 @@ import { join } from 'node:path';
 
 // Каждый запуск работает с новой БД, никогда не с БД приложения.
 const dbDir = mkdtempSync(join(tmpdir(), 'ymaster-playwright-'));
+// v1.70.86: локальный Chromium 153 из npm (qa/local_chromium.sh) старше того, что
+// ждёт Playwright, и после закрытого контекста с приложением создаёт новый ≈ 18 с.
+// Под нагрузкой полного прогона сценарий упирался в 30 с, поэтому для своего
+// браузера лимит — 60 с. В CI (штатный браузер Playwright) — прежние 30 с.
+const localChromium = process.env.YM_PLAYWRIGHT_CHROMIUM;
 
 
 export default defineConfig({
   testDir: 'tests/e2e',
-  timeout: 30_000,
+  timeout: localChromium ? 60_000 : 30_000,
   retries: 0,
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:8123',
     headless: true,
-    ...(process.env.YM_PLAYWRIGHT_CHROMIUM ? { launchOptions: { executablePath: process.env.YM_PLAYWRIGHT_CHROMIUM } } : {}),
+    ...(localChromium ? { launchOptions: { executablePath: localChromium } } : {}),
     // следы только при падении — прогон остаётся быстрым
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

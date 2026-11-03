@@ -539,6 +539,23 @@ with TestClient(app) as c:
     res["feed_claims"] = sum(1 for i in feed if str(i.get("action", "")).startswith("unified_claim_"))
     res["stats"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
     res["totals_final"] = {u: total(c, h) for u, h in H.items()}
+
+    # v1.70.86 (фаза 3): число организаций компаниям — до разрешения поля нет;
+    # «всем компаниям» (бухгалтер и руководитель) — только число и по своим чекам
+    def field(user, rid):
+        r = c.get(f"/api/v1/receipts/{rid}", headers=H[user])
+        return r.json().get("companies_count", "нет") if r.status_code == 200 else r.status_code
+
+    res["vis_before"] = {"admin_keep": field("admin", keep), "acc_a_keep": field("acc_a", keep),
+                         "acc_b_give": field("acc_b", give)}
+    res["vis_put"] = c.put("/api/v1/unified/visibility", headers=H["admin"],
+                           json={"mode": "all", "roles": ["accountant", "manager"]}).status_code
+    res["vis_field"] = {"acc_a_keep": field("acc_a", keep), "acc_b_give": field("acc_b", give),
+                        "acc_b_keep": field("acc_b", keep)}
+    multi = c.get("/api/v1/receipts", headers=H["admin"],
+                  params={"multi_company": "true", "page_size": 200}).json()
+    found = {x["id"] for x in multi.get("items", [])}
+    res["vis_multi"] = {"keep": keep in found, "give": give in found}
 res["give"], res["keep"] = give, keep
 emit(res)
 '''
@@ -575,6 +592,14 @@ with TestClient(app) as c:
                                       json={"qr_data": code, "source": "web"}))
     res["open_after"] = c.get("/api/v1/unified/claims", headers=H["admin"]).json().get("total")
     res["stats"] = c.get("/api/v1/unified/stats", headers=H["admin"]).json()
+    # v1.70.86 (фаза 3): показ числа пережил откат; компания старой версии — без флага
+    settings = c.get("/api/v1/unified/visibility", headers=H["admin"]).json()
+    keep = c.get(f"/api/v1/receipts/{cl['keep']}", headers=H["acc_a"])
+    res["vis"] = {"mode": settings.get("mode"), "roles": settings.get("roles"),
+                  "keep_acc_a": keep.json().get("companies_count", "нет") if keep.status_code == 200
+                  else keep.status_code,
+                  "late_flag": [x.get("enabled") for x in settings.get("companies", [])
+                                if x.get("name") == "Компания после отката"]}
 emit(res)
 '''
 
@@ -597,6 +622,9 @@ with TestClient(app) as c:
     given = os.environ.get("REH_GIVEN")         # v1.70.85: чек, переданный Бете по заявке
     if given:
         res["given_beta"] = c.get(f"/api/v1/receipts/{given}", headers=H["acc_b"]).status_code
+    # v1.70.86: старая версия не знает колонки показа числа — компания всё равно создаётся
+    res["company_created"] = c.post("/api/v1/companies", headers=H["admin"],
+                                    json={"name": "Компания после отката"}).status_code
     res["totals_after"] = {u: total(c, h) for u, h in H.items()}
 emit(res)
 '''
@@ -736,11 +764,21 @@ def main() -> int:
         check(checks, bf["run"]["registered"] == pending and bf["again"]["registered"] == 0,
               f"перенос архива на копии: {pending} источников, повторный запуск ничего не меняет")
         dry_c, run_c, again_c = (bf[k].get("claims", {}) for k in ("dry_run", "run", "again"))
-        check(checks, (dry_c.get("audit_rows_pending"), dry_c.get("audit_claims"), dry_c.get("audit_skipped"))
-              == (3, 1, 1) and run_c.get("audit_claims") == 1 and again_c.get("audit_rows_pending") == 0
-              and bf["history_claim"] == {"count": 2, "claimants": [[True, "open", "scan_qr", 2]]},
-              "заявки задним числом: два отказа /scan старой версии — одна заявка Беты (2 попытки), "
-              "отказ своей компании пропущен, повторный запуск ничего не добавляет")
+        audit = (dry_c.get("audit_rows_pending"), dry_c.get("audit_claims"), dry_c.get("audit_skipped"))
+        if tuple(int(x) for x in seed["version"].split(".")[:3]) >= (1, 70, 85):
+            # С 1.70.85 заявки пишет сам приём: старая версия при первом старте ставит
+            # границу журнала, а отказы сида записаны после неё — наполнение их не трогает.
+            check(checks, audit == (0, 0, 0) and run_c.get("audit_claims") == 0
+                  and again_c.get("audit_rows_pending") == 0
+                  and bf["history_claim"] == {"count": 1, "claimants": []},
+                  f"заявки задним числом: база v{seed['version']} уже пишет заявки сама — записи журнала "
+                  "после её границы наполнение не трогает, повторный запуск ничего не добавляет")
+        else:
+            check(checks, audit == (3, 1, 1) and run_c.get("audit_claims") == 1
+                  and again_c.get("audit_rows_pending") == 0
+                  and bf["history_claim"] == {"count": 2, "claimants": [[True, "open", "scan_qr", 2]]},
+                  "заявки задним числом: два отказа /scan старой версии — одна заявка Беты (2 попытки), "
+                  "отказ своей компании пропущен, повторный запуск ничего не добавляет")
         check(checks, bf["fingerprint_after"] == bf["fingerprint_before"], "перенос архива не меняет старые таблицы")
         check(checks, bf["stats"]["ownership_conflicts"] == 1 and bf["twin"] == {"alpha": 404, "admin": 200},
               "исторический двойник (реестр Альфы + пул Беты) уходит на разбор администратору")
@@ -778,6 +816,14 @@ def main() -> int:
               and cl["totals_final"]["acc_b"] == cl["totals_before"]["acc_b"] + 1,
               "решения по заявкам не видны сотрудникам (журнал карточки, лента дашборда); "
               "заявок и конфликтов не осталось")
+        # v1.70.86 (фаза 3): число организаций компаниям
+        check(checks, cl["vis_before"] == {"admin_keep": 2, "acc_a_keep": "нет", "acc_b_give": "нет"}
+              and cl["vis_put"] == 200
+              and cl["vis_field"] == {"acc_a_keep": 2, "acc_b_give": 1, "acc_b_keep": 404}
+              and cl["vis_multi"] == {"keep": True, "give": False},
+              "показ числа компаниям: до разрешения поля нет; «всем компаниям» — бухгалтер Альфы видит 2 "
+              "(Бета отклонена), Беты — 1 у переданного чека (прежний владелец не в числе), чужой чек — 404; "
+              "фильтр администратора находит чек двух организаций")
         # v1.70.84: откат после пакетного переноса — основная база, старая версия
         # (с v1.70.85 — и после заявок: таблица связей старой версии не мешает)
         oldb = run_phase("откат после пакетного переноса и заявок", OLD_AFTER_BULK, old_dir,
@@ -785,10 +831,10 @@ def main() -> int:
                           "REH_GIVEN": cl["give"]})
         out["rollback_after_bulk"] = oldb
         check(checks, oldb["totals"] == cl["totals_final"] and oldb["cards"] == [200]
-              and oldb.get("given_beta") == 200
+              and oldb.get("given_beta") == 200 and oldb.get("company_created") in (200, 201)
               and oldb["move"] == 200 and oldb["totals_after"]["acc_b"] == oldb["totals"]["acc_b"] + 3,
               f"откат на v{oldb['version']} после пакетного переноса и заявок: списки и карточки те же, "
-              "переданный по заявке чек виден Бете, старая версия сама переносит чеки")
+              "переданный по заявке чек виден Бете, старая версия сама переносит чеки и создаёт компанию")
         ca = run_phase("повторное обновление после заявок", CLAIMS_AGAIN, new_dir,
                        {**env, "REH_CLAIMS": json.dumps({"give": cl["give"], "keep": cl["keep"]})})
         out["claims_again"] = ca
@@ -797,6 +843,10 @@ def main() -> int:
               and ca["stats"].get("conflicts") == 0,
               "повторное обновление после отката: заявки и число организаций на месте, "
               "новая заявка (Альфа хочет вернуть переданный чек) пишется как обычно")
+        check(checks, ca["vis"] == {"mode": "all", "roles": ["accountant", "manager"], "keep_acc_a": 2,
+                                    "late_flag": [False]},
+              "показ числа компаниям пережил откат и повторное обновление; компания, созданная старой "
+              "версией, — без отметки")
     except Exception as exc:  # noqa: BLE001 — отчёт важнее трассировки
         check(checks, False, f"сбой: {exc}")
     finally:

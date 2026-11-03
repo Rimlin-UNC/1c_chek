@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -180,3 +180,35 @@ def decide_claim(link_id: str, action: str, body: ClaimDecisionBody,
         from ..services.events import broadcast
         broadcast("receipts_moved", {"ids": [r.id for r in moved], "company_id": link.company_id})
     return result
+
+
+# --------------------------------------------------------------------------
+#  v1.70.86 «Единая база», фаза 3 (T-35): показ числа организаций компаниям.
+#  Настройки — только администратор; по умолчанию показ выключен (Q-20).
+# --------------------------------------------------------------------------
+class VisibilityBody(BaseModel):
+    mode: Literal["off", "all", "selected"]
+    roles: list[Literal["accountant", "manager"]] = Field(default_factory=list, max_length=2)
+    company_ids: list[str] | None = Field(default=None, max_length=10000)
+
+
+@router.get("/visibility", summary="Единый реестр: показ числа организаций компаниям (администратор)")
+def visibility_settings(db: Annotated[Session, Depends(get_db)],
+                        _admin: Annotated[User, Depends(require_admin)]):
+    from . import visibility
+    return visibility.settings_payload(db)
+
+
+@router.put("/visibility", summary="Единый реестр: изменить показ числа организаций компаниям")
+def update_visibility(body: VisibilityBody,
+                      db: Annotated[Session, Depends(get_db)],
+                      user: Annotated[User, Depends(require_admin)]):
+    from ..services.audit import log_action
+    from . import visibility
+    payload = visibility.update_settings(db, new_mode=body.mode, new_roles=list(body.roles),
+                                         company_ids=body.company_ids)
+    db.commit()
+    log_action(user, "unified_visibility_updated", details={
+        "mode": payload["mode"], "roles": payload["roles"],
+        "companies": sum(1 for c in payload["companies"] if c["enabled"])})
+    return payload

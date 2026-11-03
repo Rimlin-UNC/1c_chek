@@ -16,8 +16,10 @@ import pytest
 from tests.conftest import login
 
 JS_DIR = "app/static/js"
+# v1.70.86: unified_review.js — его функции (значок «🏢 N» числа организаций)
+# реестр чеков вызывает при отрисовке строки, поэтому модуль нужен стенду DOM.
 MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js",
-           "printpack.js", "api.js", "app.js"]
+           "printpack.js", "api.js", "unified_review.js", "app.js"]
 
 
 import os

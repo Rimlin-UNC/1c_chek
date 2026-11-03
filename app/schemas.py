@@ -267,6 +267,10 @@ class ReceiptMoveBody(BaseModel):
     company_id: str = Field(max_length=36)
     assignee: Optional[str] = Field(default=None, max_length=200,
                                     description="Переназначить подотчётное лицо")
+    # v1.70.86 (Q-24): чеки на разборе по умолчанию отменяют всю пачку (409 со
+    # списком); True — переместить остальные, а такие чеки оставить на месте.
+    skip_blocked: bool = Field(default=False,
+                               description="Пропустить чеки, которые ждут разбора, и переместить остальные")
 
 
 class CompanyDeleteBody(BaseModel):

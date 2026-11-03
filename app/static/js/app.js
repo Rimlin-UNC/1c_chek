@@ -17,7 +17,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
-import { badgeCount, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки
+import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -4477,25 +4477,45 @@ function openMoveDialog() {
       <label class="field full"><span>Назначить подотчётное лицо (необязательно)</span>
         <input id="mv-assignee" placeholder="Иванов И.И. — оставить как есть, если пусто"></label>
     </div>
+    <div class="form-error" id="mv-error" role="alert"></div>
     <div class="modal-actions">
       <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn hidden" id="mv-rest">Переместить остальные</button>
       <button type="button" class="btn btn-primary" id="mv-save">Переместить</button>
     </div>`);
+  const errBox = slot.querySelector('#mv-error');
+  const rest = slot.querySelector('#mv-rest');
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
-  slot.querySelector('#mv-save').onclick = async () => {
+  // v1.70.86 (Q-24): чек на разборе по умолчанию отменяет всю пачку — сервер
+  // отвечает 409 со списком таких чеков; «Переместить остальные» — повторный
+  // запрос с skip_blocked, только явным шагом администратора.
+  const send = async (skipBlocked) => {
+    errBox.innerHTML = '';
+    const assignee = slot.querySelector('#mv-assignee').value.trim();
     try {
       const r = await api.post('/api/v1/receipts/move', {
         receipt_ids: ids,
         company_id: slot.querySelector('#mv-company').value,
-        ...(slot.querySelector('#mv-assignee').value.trim()
-            ? { assignee: slot.querySelector('#mv-assignee').value.trim() } : {}),
+        ...(assignee ? { assignee } : {}),
+        ...(skipBlocked ? { skip_blocked: true } : {}),
       });
       $('#modal-root').classList.add('hidden');
       state.receiptsSelected.clear();
-      toast(r.message, 'ok', '🏢');
+      toast(r.message, r.skipped && r.skipped.length ? 'info' : 'ok', '🏢');
       route(true);
-    } catch (e) { toast(e.message, 'err'); }
+    } catch (e) {
+      const blocked = e.status === 409 ? blockedMoveSummary(e.data && e.data.detail) : null;
+      if (!blocked) { toast(e.message, 'err'); return; }
+      errBox.innerHTML = `${esc(blocked.message)}
+        ${blocked.reasons.length ? `<div class="form-hint">Причины: ${esc(blocked.reasons.join('; '))}</div>` : ''}
+        <div class="form-hint">Решение — на экране <a href="#/conflicts">«Разбор конфликтов»</a>.</div>`;
+      errBox.querySelector('a').onclick = () => $('#modal-root').classList.add('hidden');
+      rest.textContent = `Переместить остальные (${blocked.movable})`;
+      rest.classList.toggle('hidden', blocked.movable < 1);
+    }
   };
+  slot.querySelector('#mv-save').onclick = () => send(false);
+  rest.onclick = () => send(true);
 }
 
 function bindShell() {
@@ -8142,7 +8162,9 @@ async function viewReceipts(container) {
           <select id="f-category"><option value="">все статьи</option></select></label>
         <label class="field"><span>Уведомления 🔔</span>
           <select id="f-notified"><option value="">все</option>
-            <option value="true">только уведомления</option></select></label>` : ''}
+            <option value="true">только уведомления</option></select></label>
+        ${isAdmin() ? `<label class="field"><span>Организаций 🏢</span><select id="f-multi">
+          <option value="">любое число</option><option value="true">две и больше</option></select></label>` : ''}` : ''}
         <label class="field"><span>С даты</span><input type="date" id="f-from"></label>
         <label class="field"><span>По дату</span><input type="date" id="f-to"></label>
         <button type="button" class="btn" id="btn-filter">Найти</button>
@@ -8240,6 +8262,7 @@ async function viewReceipts(container) {
     // v1.70.72: фильтры пула — регион, отрасль, группа, продавец, оплата, суммы
     region: '', region_name: '', city: '', industry: '', product_group: '', item_name: '', operation: '', has_items: '', merchant: '',
     pay_type: '', sum_min: '', sum_max: '', vat_rate: '', marking: '', missing: '',
+    multi_company: '',   // v1.70.86: администратор — «две организации и больше»
     item_price_min: '', item_price_max: '', item_total_min: '', item_total_max: '', retail_place: '', item_quantity_min: '', item_quantity_max: '', payment_component: '',
   }, viewReceipts._filters || {});
   filters.assignee = '';   // v1.28.0: фильтр «Сотрудник» убран (есть «Кто добавил»)
@@ -8288,7 +8311,7 @@ async function viewReceipts(container) {
    ['#f-item-total-min', 'item_total_min'], ['#f-item-total-max', 'item_total_max'], ['#f-retail-place', 'retail_place'],
    ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
    ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
-   ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max']]
+   ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'], ['#f-sum-max', 'sum_max'], ['#f-multi', 'multi_company']]
     .forEach(([sel, key]) => {
       const el = $(sel);
       if (el && filters[key]) el.value = filters[key];
@@ -8463,7 +8486,7 @@ async function viewReceipts(container) {
       <td class="cell-mono" data-label="ФН">${r.fn}</td><td class="cell-mono" data-label="ФД">${r.fd}</td><td class="cell-mono" data-label="ФП">${r.fp}</td>
       ${acc ? `<td data-label="Сотрудник">${r.assignee ? esc(r.assignee) : '<span class="form-hint">—</span>'}${r.notified ? ' <span title="Уведомление сотрудника">🔔</span>' : ''}${companyChip(r.company_id)}
         <div class="rcpt-added" title="Кто добавил чек">＋ ${esc(r.created_by_name || r.created_by || '—')}</div></td>` : ''}
-      <td data-label="Статус">${chip(r.status)}${policyChip(r.policy_flags)}</td>
+      <td data-label="Статус">${chip(r.status)}${policyChip(r.policy_flags)}${orgCountChip(r.companies_count, isAdmin())}</td>
       <td data-label="ФНС">${chip(r.fns_status)} ${detailsMark}</td>
       <td data-label="1С">${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
       ${actions}
@@ -8488,7 +8511,7 @@ async function viewReceipts(container) {
       <div class="rc-head"><span class="rc-date">${fmtDate(r.receipt_date)}${r.notified ? ' 🔔' : ''}</span>
         <span class="rc-sum">${fmtSum(r.total_sum)}</span></div>
       <div class="rc-ids">ФН ${r.fn} · ФД ${r.fd} · ФП ${r.fp}</div>
-      <div class="rc-chips">${chip(r.status)} ${chip(r.fns_status)} ${detailsMark} ${policyChip(r.policy_flags)}
+      <div class="rc-chips">${chip(r.status)} ${chip(r.fns_status)} ${detailsMark} ${policyChip(r.policy_flags)}${orgCountChip(r.companies_count, isAdmin())}
         ${r.exported ? '<span class="chip exported"><span class="dot"></span>1С</span>' : ''}</div>
       ${acc ? `<div class="rc-meta">👤 ${r.assignee ? esc(r.assignee) : '—'} · ＋ ${esc(r.created_by_name || r.created_by || '—')}${r.company_id ? ' ' + companyChip(r.company_id) : ''}</div>` : ''}
       <div class="rc-actions">${act}</div>
@@ -8563,7 +8586,7 @@ async function viewReceipts(container) {
    ['#f-item-price-min', 'item_price_min'], ['#f-item-price-max', 'item_price_max'],
    ['#f-item-qty-min', 'item_quantity_min'], ['#f-item-qty-max', 'item_quantity_max'], ['#f-payment-component', 'payment_component'], ['#f-merchant', 'merchant'],
      ['#f-pay', 'pay_type'], ['#f-sum-min', 'sum_min'],
-     ['#f-sum-max', 'sum_max']].forEach(([sel, key]) => {
+     ['#f-sum-max', 'sum_max'], ['#f-multi', 'multi_company']].forEach(([sel, key]) => {
       const el = $(sel);
       filters[key] = el ? el.value : '';
     });
@@ -9576,6 +9599,7 @@ async function receiptDrawer(id) {
         <dt>Источник</dt><dd>${esc(r.source)}</dd>
         <dt>Кто добавил</dt><dd>${esc(r.created_by_name || r.created_by || '—')}${r.created_by_name && r.created_by ? ` <span class="form-hint">(${esc(r.created_by)})</span>` : ''}</dd>
         ${r.company_name ? `<dt>Компания</dt><dd>${esc(r.company_name)}${companyChip(r.company_id)}</dd>` : ''}
+        ${orgCountRow(r.companies_count, isAdmin())}
         <dt>Принят в систему</dt><dd>${fmtDate(r.created_at)}</dd>
         <dt>Выгружен в 1С</dt><dd>${r.exported ? 'да · ' + fmtDate(r.exported_at) : 'нет'}</dd>
         <dt>Ответ ФНС</dt><dd>${esc(r.fns_message || '—')}</dd>

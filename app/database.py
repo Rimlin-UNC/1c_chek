@@ -187,6 +187,11 @@ def _ensure_schema() -> None:
              "ALTER TABLE companies ADD COLUMN limit_per_month FLOAT NULL"),
             ("forbidden_categories",
              "ALTER TABLE companies ADD COLUMN forbidden_categories VARCHAR(1000) DEFAULT ''"),
+            # v1.70.86 («Единая база», фаза 3): показ числа организаций компании.
+            # NOT NULL DEFAULT FALSE — одинаково в SQLite и PostgreSQL (DEFAULT 0
+            # PostgreSQL для BOOLEAN не принимает).
+            ("show_companies_count",
+             "ALTER TABLE companies ADD COLUMN show_companies_count BOOLEAN NOT NULL DEFAULT FALSE"),
         ],
         "pool_users": [
             # v1.70.37: канал регистрации и метка «пришёл через MAX»

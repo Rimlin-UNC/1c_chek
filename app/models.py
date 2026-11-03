@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Float, ForeignKey, Index,
-    Integer, String, Text, UniqueConstraint, event,
+    Integer, String, Text, UniqueConstraint, event, false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -74,6 +74,11 @@ class Company(Base):
     forbidden_categories: Mapped[str] = mapped_column(String(1000), default="",
                                                       server_default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # v1.70.86 («Единая база», фаза 3): показывать компании число организаций
+    # у её чеков в режиме «выбранным компаниям». Значение по умолчанию в самой
+    # базе: старая версия после отката создаёт компании без этой колонки.
+    show_companies_count: Mapped[bool] = mapped_column(Boolean, default=False,
+                                                       server_default=false())
     # v1.13.0: карточка компании — данные ЕГРЮЛ/ЕГРИП (JSON из Checko)
     card_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     card_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -4,7 +4,10 @@
    проверкой версии (два администратора не перепишут решение друг друга).
    v1.70.85 («Единая база», фазы 1–2): вкладка «Заявки» — компании, которые
    пытались учесть чужой чек; число организаций и их список в карточке.
-   Решения: передать чек, отклонить, не учитывать — тоже с причиной и версией. */
+   Решения: передать чек, отклонить, не учитывать — тоже с причиной и версией.
+   v1.70.86 (фаза 3): вкладка «Показ компаниям» — разрешение видеть число
+   организаций (выключено / всем / выбранным, роли); значок «🏢 N» в реестре;
+   разбор отказа пакетного перемещения (Q-24). */
 import { api } from './api.js';
 import { esc, fmtDate, fmtInt, fmtSum, openModal, toast } from './ui.js';
 
@@ -65,6 +68,17 @@ export const CLAIM_ACTIONS = {
   decline: { title: 'Отклонить', done: 'Заявка отклонена', status: 'declined' },
   void: { title: 'Не учитывать', done: 'Заявка больше не учитывается', status: 'void' },
 };
+// v1.70.86 (фаза 3): кому показывать число организаций — app/unified/visibility.py.
+export const COUNT_MODES = [
+  { code: 'off', title: 'Выключено', hint: 'компании число не видят — так по умолчанию' },
+  { code: 'all', title: 'Всем компаниям', hint: 'число видят все компании (роли — ниже)' },
+  { code: 'selected', title: 'Выбранным компаниям', hint: 'только компании, отмеченные в списке' },
+];
+export const COUNT_ROLES = [
+  { code: 'accountant', title: 'Бухгалтер' },
+  { code: 'manager', title: 'Руководитель' },
+];
+const REASON_TITLES = Object.fromEntries(REVIEW_FLAGS.map((f) => [f.code, f.title.toLowerCase()]));
 
 /** Пометки документа по битовой маске review_flags. */
 export function decodeFlags(mask) {
@@ -162,6 +176,76 @@ export function setConflictsBadge(count, root = document) {
   badge.classList.toggle('accent', n > 0);
 }
 
+/** «организация / организации / организаций» для числа. */
+export function orgWord(count) {
+  const n = Math.abs(Number(count) || 0);
+  const tail = n % 100;
+  if (tail >= 11 && tail <= 14) return 'организаций';
+  if (n % 10 === 1) return 'организация';
+  if (n % 10 >= 2 && n % 10 <= 4) return 'организации';
+  return 'организаций';
+}
+
+function countValue(count) {
+  const n = Number(count);
+  return count !== null && count !== undefined && count !== '' && Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/** Значок в строке и карточке реестра — только когда организаций две и больше
+ *  (одна — своя, показывать нечего). Поле приходит, только если показ разрешён. */
+export function orgCountChip(count, admin) {
+  const n = countValue(count);
+  if (n === null || n < 2) return '';
+  const title = admin
+    ? `Чек учитывают ${n} ${orgWord(n)} — список и решения в «Разборе конфликтов»`
+    : `Чек учитывают ${n} ${orgWord(n)}, включая вашу. Названия других не показываются.`;
+  return ` <span class="chip unknown org-count" title="${esc(title)}">🏢 ${n}</span>`;
+}
+
+/** Строка «Организаций» в карточке чека — при любом числе, если поле пришло. */
+export function orgCountRow(count, admin) {
+  const n = countValue(count);
+  if (n === null) return '';
+  const hint = admin ? 'список — в «Разборе конфликтов»' : 'включая вашу; названия других не показываются';
+  return `<dt>Организаций</dt><dd id="rd-org-count">${n} <span class="form-hint">${esc(hint)}</span></dd>`;
+}
+
+/** Q-24: ответ 409 пакетного перемещения — какие чеки ждут разбора и сколько
+ *  можно перенести без них. null — ответ другого вида (обычная ошибка). */
+export function blockedMoveSummary(detail) {
+  if (!detail || typeof detail !== 'object' || !Array.isArray(detail.blocked)) return null;
+  const counts = {};
+  detail.blocked.forEach((item) => (Array.isArray(item.reasons) ? item.reasons : []).forEach((code) => {
+    counts[code] = (counts[code] || 0) + 1;
+  }));
+  return {
+    blocked: detail.blocked.length,
+    movable: Math.max(0, Number(detail.movable) || 0),
+    reasons: Object.entries(counts).map(([code, n]) => `${REASON_TITLES[code] || code} — ${fmtInt(n)}`),
+    message: String(detail.message || 'Чек требует разбора перед перемещением'),
+  };
+}
+
+/** Тело PUT /api/v1/unified/visibility: список компаний уходит всегда. */
+export function buildVisibilityBody(mode, roles, companyIds) {
+  const allowed = new Set(COUNT_ROLES.map((r) => r.code));
+  return {
+    mode: COUNT_MODES.some((m) => m.code === mode) ? mode : 'off',
+    roles: [...new Set(roles || [])].filter((r) => allowed.has(r)),
+    company_ids: [...new Set(companyIds || [])],
+  };
+}
+
+/** Предупреждение, если включённый показ на деле никому не виден. */
+export function visibilityWarning(mode, roles, companyIds) {
+  if (mode === 'off') return '';
+  if (!roles || !roles.length) return 'Не отмечена ни одна роль — число не увидит никто.';
+  if (mode === 'selected' && !(companyIds && companyIds.length)) {
+    return 'Не отмечена ни одна компания — число не увидит никто.';
+  }
+  return '';
+}
+
 function flagChips(mask) {
   return decodeFlags(mask).map((f) => `<span class="chip ${f.blocking ? 'failed' : 'pending'}"
     title="${esc(f.hint)}">${esc(f.title)}</span>`).join(' ');
@@ -235,6 +319,7 @@ export async function viewUnifiedReview(container) {
   const state = { page: 1, perPage: 20, flag: 0, tab: 'conflicts', claimStatus: 'open', claimPage: 1 };
   let req = 0;
   let claimReq = 0;
+  let visReq = 0;
   container.innerHTML = `
     <div class="glass card">
       <div class="card-title">⚖️ Разбор конфликтов единого реестра <span class="spacer"></span>
@@ -248,6 +333,7 @@ export async function viewUnifiedReview(container) {
           aria-selected="true">Споры</button>
         <button type="button" class="btn btn-sm" id="ur-tab-claims" role="tab" aria-selected="false">Заявки
           <span class="nav-badge hidden" id="ur-claims-badge">0</span></button>
+        <button type="button" class="btn btn-sm" id="ur-tab-visibility" role="tab" aria-selected="false">Показ компаниям</button>
       </div>
       <div id="ur-pane-conflicts">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0">
@@ -271,9 +357,16 @@ export async function viewUnifiedReview(container) {
         </div>
         <div id="ur-claims-out"></div>
       </div>
+      <div id="ur-pane-visibility" class="hidden">
+        <p class="form-hint">Число организаций у чека администратор видит всегда. Компаниям — только с вашего
+          разрешения: бухгалтер и руководитель увидят «🏢 N» у своих чеков и строку «Организаций» в карточке, без
+          названий других организаций. Сотрудник, участник Чек-Пула и платный API числа не получают никогда.</p>
+        <div id="ur-vis-out"></div>
+      </div>
     </div>`;
   const out = container.querySelector('#ur-out');
   const claimsOut = container.querySelector('#ur-claims-out');
+  const visOut = container.querySelector('#ur-vis-out');
 
   async function loadStats() {
     const box = container.querySelector('#ur-kpi');
@@ -470,21 +563,82 @@ export async function viewUnifiedReview(container) {
     });
   }
 
+  // v1.70.86: показ числа организаций компаниям (только администратор)
+  async function loadVisibility() {
+    const current = ++visReq;
+    visOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get('/api/v1/unified/visibility');
+      if (current !== visReq || !container.isConnected) return;
+      renderVisibility(data);
+    } catch (e) {
+      if (current !== visReq || !container.isConnected) return;
+      visOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderVisibility(data) {
+    const companies = Array.isArray(data.companies) ? data.companies : [];
+    const roles = new Set(Array.isArray(data.roles) ? data.roles : []);
+    visOut.innerHTML = `
+      <div class="field" role="radiogroup" aria-label="Кому показывать число организаций" style="margin-bottom:10px">
+        ${COUNT_MODES.map((m) => `<label style="display:block;margin:4px 0"><input type="radio" name="ur-vis-mode"
+          id="ur-vis-mode-${m.code}" value="${m.code}" ${data.mode === m.code ? 'checked' : ''} style="width:auto">
+          ${esc(m.title)} <span class="form-hint">— ${esc(m.hint)}</span></label>`).join('')}
+      </div>
+      <div class="field" style="margin-bottom:10px"><span>Роли в компании</span>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">${COUNT_ROLES.map((r) => `<label><input type="checkbox"
+          id="ur-vis-role-${r.code}" value="${r.code}" ${roles.has(r.code) ? 'checked' : ''} style="width:auto">
+          ${esc(r.title)}</label>`).join('')}</div></div>
+      <div class="form-hint" style="margin-bottom:4px">Компании для режима «Выбранным компаниям»:</div>
+      <div id="ur-vis-companies" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 12px;max-height:260px;overflow:auto">
+        ${companies.map((c) => `<label><input type="checkbox" class="ur-vis-company" value="${esc(c.id)}"
+          ${c.enabled ? 'checked' : ''} style="width:auto"> ${esc(c.name)}${c.is_active ? ''
+          : ' <span class="form-hint">(в архиве)</span>'}</label>`).join('') || '<span class="form-hint">Компаний нет.</span>'}
+      </div>
+      <div class="form-error" id="ur-vis-warning" role="status" style="margin:8px 0"></div>
+      <button type="button" class="btn btn-primary" id="ur-vis-save">Сохранить</button>`;
+    const read = () => ({
+      mode: (visOut.querySelector('input[name="ur-vis-mode"]:checked') || {}).value || 'off',
+      roles: COUNT_ROLES.map((r) => r.code).filter((code) => visOut.querySelector(`#ur-vis-role-${code}`).checked),
+      companyIds: [...visOut.querySelectorAll('.ur-vis-company:checked')].map((el) => el.value),
+    });
+    const warning = visOut.querySelector('#ur-vis-warning');
+    const warn = () => {
+      const v = read();
+      warning.textContent = visibilityWarning(v.mode, v.roles, v.companyIds);
+    };
+    visOut.querySelectorAll('input').forEach((el) => { el.onchange = warn; });
+    warn();
+    const save = visOut.querySelector('#ur-vis-save');
+    save.onclick = async () => {
+      const v = read();
+      save.disabled = true;
+      try {
+        const saved = await api.put('/api/v1/unified/visibility', buildVisibilityBody(v.mode, v.roles, v.companyIds));
+        toast('Настройки показа сохранены', 'ok', '🏢 ');
+        if (container.isConnected) renderVisibility(saved);
+      } catch (e) {
+        save.disabled = false;
+        warning.textContent = e.message;
+      }
+    };
+  }
+
+  const PANES = ['conflicts', 'claims', 'visibility'];
   function showTab(tab) {
     state.tab = tab;
-    const claims = tab === 'claims';
-    container.querySelector('#ur-pane-conflicts').classList.toggle('hidden', claims);
-    container.querySelector('#ur-pane-claims').classList.toggle('hidden', !claims);
-    const tabs = { conflicts: container.querySelector('#ur-tab-conflicts'), claims: container.querySelector('#ur-tab-claims') };
-    Object.entries(tabs).forEach(([key, el]) => {
+    PANES.forEach((key) => {
+      container.querySelector(`#ur-pane-${key}`).classList.toggle('hidden', key !== tab);
+      const el = container.querySelector(`#ur-tab-${key}`);
       el.classList.toggle('btn-primary', key === tab);
       el.setAttribute('aria-selected', String(key === tab));
     });
-    if (claims) loadClaims();
+    if (tab === 'claims') loadClaims();
+    if (tab === 'visibility') loadVisibility();
   }
 
-  container.querySelector('#ur-tab-conflicts').onclick = () => showTab('conflicts');
-  container.querySelector('#ur-tab-claims').onclick = () => showTab('claims');
+  PANES.forEach((key) => { container.querySelector(`#ur-tab-${key}`).onclick = () => showTab(key); });
   container.querySelector('#ur-claim-status').onchange = (e) => {
     state.claimStatus = e.target.value || 'open';
     state.claimPage = 1;
@@ -492,7 +646,9 @@ export async function viewUnifiedReview(container) {
   };
   container.querySelector('#ur-refresh').onclick = () => {
     loadStats();
-    if (state.tab === 'claims') loadClaims(); else loadList();
+    if (state.tab === 'claims') loadClaims();
+    else if (state.tab === 'visibility') loadVisibility();
+    else loadList();
   };
   container.querySelector('#ur-flag').onchange = (e) => {
     state.flag = Number(e.target.value) || 0;

@@ -48,7 +48,7 @@ python3 qa/session_check.py                # старт сессии: git про
 | Храповик долга линтера | входит в pytest: `tests/test_v17038.py::TestLintDebtRatchet` | `tests/test_v17038.py` |
 | ESLint | `npm run lint` | `package.json` |
 | Vitest | `npm run test:js` | `package.json` |
-| Playwright (свой сервер на 127.0.0.1:8123, отдельная БД) | `npm run test:e2e`; браузер — `npx playwright install chromium` или `YM_PLAYWRIGHT_CHROMIUM` | `playwright.config.js` |
+| Playwright (свой сервер на 127.0.0.1:8123, отдельная БД) | `npm run test:e2e`; браузер — `npx playwright install chromium` или `YM_PLAYWRIGHT_CHROMIUM` (без CDN браузеров — `bash qa/local_chromium.sh`, затем `YM_PLAYWRIGHT_CHROMIUM=/tmp/ym-chromium/chrome.sh`) | `playwright.config.js`, `qa/local_chromium.sh` |
 | Postman/Newman | `npm run test:api` (ожидает сервер на 127.0.0.1:8002) | `package.json` |
 | PostgreSQL (opt-in) | `UNIFIED_POSTGRES_TEST_URL=postgresql+psycopg://… .venv/bin/pytest tests/test_postgres_identity_optin.py tests/test_unified_postgres.py tests/test_supabase_migrations.py tests/test_migration_compat_postgres.py -q` | docstrings тестов, development_environment.md |
 | Локальный PostgreSQL и прогон как в CI | `python qa/pg_local.py` — тесты PostgreSQL на временном сервере; `python qa/pg_local.py full` — весь набор с отчётами JUnit и воротами | `qa/pg_local.py` |
@@ -68,7 +68,9 @@ python3 qa/session_check.py                # старт сессии: git про
   `qa/pg_local.py` (pip-пакет `pgserver`, вне зависимостей проекта).
 - **В CI пропусков 0** — ворота `qa/junit_gate.py` считают пропуск провалом.
   Локально пропуски зависят от окружения: в песочнице Arena — 1 (браузер
-  Playwright не скачать: CDN закрыт), без npm и PostgreSQL — 14. На коммите
+  Playwright не скачать: CDN закрыт; с 1.70.86 — 0, если браузер поставлен
+  `qa/local_chromium.sh` и передан в `YM_PLAYWRIGHT_CHROMIUM`), без npm и
+  PostgreSQL — 14. На коммите
   `ffe77e3` без npm и PostgreSQL их было 12, из них критичны для миграции 2 —
   разбор в [#19](https://github.com/Rimlin-UNC/1c_chek/issues/19), данные — `qa/reports/skips_ffe77e3.csv`.
 

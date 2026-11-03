@@ -14,13 +14,19 @@ if (not path.is_absolute() or path.name != 'test.db' or path.exists()
         or not path.parent.name.startswith('ymaster-playwright-')):
     raise SystemExit('Отказ: путь не является новой временной базой Playwright')
 
+from app.auth import hash_password  # noqa: E402
 from app.database import SessionLocal, init_db  # noqa: E402
 from app.pool.models import PoolItem, PoolReceipt, PoolUser  # noqa: E402
-from app.models import Company, Receipt, ReceiptItem  # noqa: E402
+from app.models import Company, Receipt, ReceiptItem, User  # noqa: E402
+from app.seed import seed_if_needed  # noqa: E402
 from app.services import appsettings  # noqa: E402
+from app.unified import links  # noqa: E402
 from app.unified import service as unified  # noqa: E402
 
 init_db()
+# Администратор по умолчанию создаётся только в пустой базе: сид добавляет
+# бухгалтера, поэтому сначала — первый запуск, как у приложения.
+seed_if_needed()
 with SessionLocal() as db:
     appsettings.set_setting(db, 'pool_enabled', '1')
     appsettings.set_setting(db, 'pool_pick_monthly_limit', '100')
@@ -66,4 +72,19 @@ with SessionLocal() as db:
     doc = unified.register_source(db, unified.POOL, disputed)
     if not doc.review_flags & 8:
         raise SystemExit('Сид: спор о владельце не возник — экран разбора нечего показать')
+    # v1.70.86 («Единая база», фаза 3): чек «E2E Альфы», на который претендовала
+    # «E2E Бета». Заявка «отклонена» — она в числе организаций (2), но не в
+    # значке меню, поэтому сценарий разбора конфликтов по-прежнему видит «1».
+    fn, fd, fp = '9999999999990088', '88', '9990088'
+    claimed = Receipt(qr_data=f't=20260925T1015&s=555.00&fn={fn}&i={fd}&fp={fp}&n=1', fn=fn, fd=fd, fp=fp,
+                      receipt_date=datetime(2026, 9, 25, 10, 15), total_sum=555, operation=1,
+                      company_id=alpha.id, merchant_name='E2E магазин заявки', merchant_inn='4703148343')
+    db.add(claimed)
+    db.flush()
+    claimed_doc = unified.register_source(db, unified.REGISTRY, claimed)
+    when = datetime(2026, 9, 26, 9, 0)
+    links._upsert(db, [links._row(claimed_doc.id, beta.id, links.LINK_CLAIM, 'declined', 'scan_qr',
+                                  attempts=1, first_at=when, last_at=when)], None)
+    db.add(User(username='e2e_acc_alpha', full_name='E2E Бухгалтер Альфы', role='accountant',
+                company_id=alpha.id, password_hash=hash_password('e2e-accountant-password')))
     db.commit()

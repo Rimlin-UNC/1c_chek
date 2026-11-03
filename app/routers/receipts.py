@@ -543,6 +543,9 @@ def list_receipts(
                                  description="наличные|безналичные|смешанная"),
     sum_min: float | None = Query(None, ge=0, description="Сумма чека от"),
     sum_max: float | None = Query(None, ge=0, description="Сумма чека до"),
+    # v1.70.86 («Единая база», фаза 3): только для администратора
+    multi_company: bool | None = Query(
+        None, description="Только чеки, которые учитывают две и больше организации (администратор)"),
     has_items: bool | None = Query(None,
                                    description="Есть ли позиции (полный документ)"),
     page: int = Query(1, ge=1, le=settings.PAGE_MAX), page_size: int = Query(50, ge=1, le=200),
@@ -689,16 +692,28 @@ def list_receipts(
         except ValueError:
             pass
 
+    from ..unified import links as unified_links
+    from ..unified import visibility as unified_visibility
+    if multi_company and user.role == ROLE_ADMIN:
+        # v1.70.86: чеки двух и более организаций — фильтр администратора
+        query = query.filter(Receipt.id.in_(unified_links.multi_company_receipts()))
+
     total = query.count()
     total_sum = query.with_entities(func.coalesce(func.sum(Receipt.total_sum), 0)).scalar()
     rows = (query.order_by(Receipt.receipt_date.desc())
             .offset((page - 1) * page_size).limit(page_size).all())
     # v1.12.3: название компании для каждой строки (карта одним запросом)
     cname = _company_names(db, (r.company_id for r in rows))
+    # v1.70.86 («Единая база», фаза 3): число организаций — администратору
+    # всегда, компании — только с его разрешения; один запрос на страницу
+    counts = (unified_links.companies_counts(db, [r.id for r in rows])
+              if rows and unified_visibility.can_see_count(db, user) else None)
     items = []
     for r in rows:
         d = r.to_dict(with_items=with_items)
         d["company_name"] = cname.get(r.company_id)
+        if counts is not None:
+            d["companies_count"] = counts.get(r.id, 1)
         items.append(d)
     return {
         "total": total,
@@ -1024,6 +1039,10 @@ def get_receipt(receipt_id: str,
     d = receipt.to_dict(with_items=True)
     d["raw_data"] = receipt.raw_data
     _attach_company(db, d)                     # v1.12.3: название компании
+    from ..unified import links as unified_links
+    from ..unified import visibility as unified_visibility
+    if unified_visibility.can_see_count(db, user):   # v1.70.86: только число, без названий
+        d["companies_count"] = unified_links.companies_counts(db, [receipt.id]).get(receipt.id, 1)
     return d
 
 
@@ -1258,7 +1277,10 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
     # Пакетный перенос (T-33): тот же результат, что прежний цикл по чекам,
     # но тройки блокируются одной вставкой, а записи выбираются и
     # обновляются пачками — 1000 чеков за доли секунды вместо ~5 с.
-    moved_rows, same = unified.move_registry_receipts(db, rows, comp.id, user)
+    # v1.70.86 (Q-24): чек на разборе по умолчанию отменяет всю пачку — 409 со
+    # списком таких чеков; skip_blocked — переместить остальные, явным шагом.
+    moved_rows, same, skipped = unified.move_registry_receipts(
+        db, rows, comp.id, user, skip_blocked=body.skip_blocked)
     moved_ids = [r.id for r in moved_rows]
     moved = len(moved_ids)
     if body.assignee is not None:
@@ -1287,10 +1309,14 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
         broadcast("receipts_moved", {"ids": moved_ids, "company_id": comp.id,
                                      "company_name": comp.name})
     msg = (f"Перемещено чеков: {moved} → {comp.name}" if moved
+           else "Ни один чек не перемещён: отмеченные ждут разбора" if skipped and not same
            else "Все выбранные чеки уже в этой компании")
     if moved:
         msg += "; флаг выгрузки в 1С сброшен"
-    return {"ok": True, "moved": moved, "already_there": same,
+    if skipped:
+        msg += (f"; пропущено (ждут разбора): {len(skipped)} — они остались у прежней компании, "
+                "решение — в «Разборе конфликтов»")
+    return {"ok": True, "moved": moved, "already_there": same, "skipped": skipped,
             "company": {"id": comp.id, "name": comp.name}, "message": msg}
 
 

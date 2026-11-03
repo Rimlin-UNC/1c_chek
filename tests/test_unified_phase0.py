@@ -303,12 +303,96 @@ def test_bulk_move_blocking_flag_rejects_whole_batch(client):
     resp = client.post("/api/v1/receipts/move", headers=hdr,
                        json={"receipt_ids": ids, "company_id": target})
     assert resp.status_code == 409
-    assert "разбора" in resp.json()["detail"]
+    # v1.70.86 (Q-24): ответ называет чеки на разборе и сколько можно перенести
+    detail = resp.json()["detail"]
+    assert "разбора" in detail["message"] and "Не перемещён ни один чек" in detail["message"]
+    assert detail["blocked"] == [{"receipt_id": ids[1], "reasons": ["amount"]}]
+    assert detail["movable"] == 1
     with SessionLocal() as db:
         assert {db.get(Receipt, i).company_id for i in ids} == {source}
         assert service.document_for_source(db, service.REGISTRY, fresh.id) is None
         assert db.get(UnifiedOwnership, doc_id).company_id == source
         assert db.query(UnifiedEvent).filter_by(document_id=doc_id, event_type="move").count() == 0
+
+
+def _blocked_pair(prefix: str, flags: int = REVIEW_AMOUNT):
+    """Компании А и Б; у А — обычный чек и чек на разборе."""
+    with SessionLocal() as db:
+        a = Company(name=f"{prefix} А " + uuid4().hex[:8])
+        b = Company(name=f"{prefix} Б " + uuid4().hex[:8])
+        db.add_all([a, b])
+        db.flush()
+        fresh, bad = _registry(db, a), _registry(db, a)
+        doc = service.register_source(db, service.REGISTRY, bad, _admin(db), strict=True)
+        doc.review_flags |= flags
+        db.commit()
+        return fresh.id, bad.id, a.id, b.id, doc.id
+
+
+def test_bulk_move_skip_blocked_moves_the_rest(client):
+    """Q-24: «Переместить остальные» — чек на разборе остаётся у прежней компании."""
+    hdr = login(client, "admin", "admin123")
+    fresh, bad, source, target, doc_id = _blocked_pair("Q-24 остальные")
+    resp = client.post("/api/v1/receipts/move", headers=hdr,
+                       json={"receipt_ids": [fresh, bad], "company_id": target, "skip_blocked": True})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert (body["moved"], body["already_there"]) == (1, 0)
+    assert body["skipped"] == [{"receipt_id": bad, "reasons": ["amount"]}]
+    assert "пропущено (ждут разбора): 1" in body["message"]
+    with SessionLocal() as db:
+        assert db.get(Receipt, fresh).company_id == target
+        assert db.get(Receipt, bad).company_id == source
+        assert db.get(UnifiedOwnership, doc_id).company_id == source
+        assert db.query(UnifiedEvent).filter_by(document_id=doc_id, event_type="move").count() == 0
+
+
+def test_bulk_move_skip_blocked_when_all_wait_for_review(client):
+    """Q-24: всё отмеченное ждёт разбора — ничего не перемещено, причина названа."""
+    hdr = login(client, "admin", "admin123")
+    _fresh, bad, source, target, _doc = _blocked_pair("Q-24 все", REVIEW_OWNERSHIP | REVIEW_AMOUNT)
+    resp = client.post("/api/v1/receipts/move", headers=hdr,
+                       json={"receipt_ids": [bad], "company_id": target, "skip_blocked": True})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["moved"] == 0 and body["already_there"] == 0
+    assert body["skipped"] == [{"receipt_id": bad, "reasons": ["ownership", "amount"]}]
+    assert body["message"].startswith("Ни один чек не перемещён: отмеченные ждут разбора")
+    with SessionLocal() as db:
+        assert db.get(Receipt, bad).company_id == source
+
+
+def test_bulk_move_blocked_receipt_already_at_target(client):
+    """Чек на разборе, который уже у компании назначения, пачку не отменяет."""
+    hdr = login(client, "admin", "admin123")
+    fresh, bad, source, _target, _doc = _blocked_pair("Q-24 уже там")
+    with SessionLocal() as db:
+        other = Company(name="Q-24 уже там В " + uuid4().hex[:8])
+        db.add(other)
+        db.flush()
+        moved = _registry(db, other)
+        db.commit()
+        moved_id = moved.id
+    resp = client.post("/api/v1/receipts/move", headers=hdr,
+                       json={"receipt_ids": [bad, moved_id], "company_id": source})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert (body["moved"], body["already_there"], body["skipped"]) == (1, 1, [])
+    with SessionLocal() as db:
+        assert db.get(Receipt, moved_id).company_id == source
+        assert db.get(Receipt, fresh).company_id == source
+
+
+def test_blocking_reason_codes_match_review_screen():
+    """Коды причин в ответе перемещения — те же, что у экрана разбора."""
+    from app.unified.models import REVIEW_BLOCKING, REVIEW_DATE, REVIEW_MERCHANT
+    assert service.blocking_reasons(REVIEW_OWNERSHIP | REVIEW_DATE) == ["ownership", "date"]
+    assert service.blocking_reasons(REVIEW_MERCHANT) == ["merchant"]
+    assert service.blocking_reasons(REVIEW_INCOMPLETE_IDENTITY) == []
+    covered = 0
+    for bit, _code in service.BLOCKING_REASONS:
+        covered |= bit
+    assert covered == REVIEW_BLOCKING
 
 
 def _seed_batch(n: int, *, with_rule: bool = True) -> tuple[list[str], str, str]:
@@ -548,7 +632,7 @@ def test_postgres_bulk_move_concurrent_batches():
                 receipts = db.query(Receipt).filter(Receipt.id.in_(order)).all()
                 barrier.wait(timeout=10)
                 try:
-                    moved, _same = service.move_registry_receipts(db, receipts, target, actor)
+                    moved, _same, _skipped = service.move_registry_receipts(db, receipts, target, actor)
                     db.commit()
                     return len(moved)
                 except Exception as exc:        # noqa: BLE001 — результат сравнивается ниже
