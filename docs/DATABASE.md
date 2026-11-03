@@ -68,7 +68,7 @@
     колонка `companies.show_companies_count` (логическая, NOT NULL, по умолчанию «нет»;
     добавляется `_ensure_schema`) и ключи `app_settings` `companies_count_mode`
     (`off` по умолчанию / `all` / `selected`) и `companies_count_roles` (`accountant`, `manager`;
-    «ни одной роли» хранится как `none`) ([single_base_design.md, раздел 11](single_base_design.md#11-фаза-3-сделано-в-ветке-t-35-и-решение-q-24));
+    «ни одной роли» хранится как `none`) ([single_base_design.md, раздел 11](single_base_design.md#11-фаза-3-сделано-t-35-и-решение-q-24));
   - флаги разбора `review_flags`; блокирующие — дата, сумма, операция, владелец, позиции, продавец.
 
   После обновления таблицы пустые и заполняются при правке или проверке чека.

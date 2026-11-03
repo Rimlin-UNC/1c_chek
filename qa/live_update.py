@@ -17,7 +17,10 @@
 «Разбор конфликтов» отвечают; с 1.70.84 — пакетное перемещение всех чеков
 Альфы в Бету и обратно и журнал карточки у бухгалтера Беты без Альфы; с
 1.70.85 — заявка компании на чужой чек: ответ сотруднику, список и число у
-администратора, решение «не учитывать».
+администратора, решение «не учитывать»; с 1.70.86 — число организаций
+компаниям только с разрешения администратора (до и после разрешения,
+сотрудник, фильтр «две и больше», сохранность после отката) и перемещение с
+«переместить остальные» (skip_blocked).
 
 Запуск:  .venv/bin/python -m qa.live_update --from-ref b3db4fe [--keep]
 Нужен доступ к github.com. Сервер слушает только 127.0.0.1.
@@ -281,6 +284,53 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
               and left == 0 and fingerprint(db) == base_fp and totals(srv.http, heads) == base_totals,
               "заявка компании: чужой дубликат — «Заявка передана администратору», у администратора "
               "заявка и 2 организации, бухгалтеру Беты — 403; «не учитывать» снимает заявку")
+        # v1.70.86 (T-35, Q-24): число организаций компаниям — только с разрешения
+        # администратора. Бухгалтер Беты сканирует чек сотрудника Альфы — заявка;
+        # до разрешения поля нет ни у кого, кроме администратора; «всем компаниям»
+        # для бухгалтера — бухгалтер Альфы видит 2, сотрудник по своему чеку —
+        # нет; фильтр «две и больше» находит ровно этот чек, а бухгалтеру не
+        # применяется. Перемещение с skip_blocked: на рабочем сервере без переноса
+        # архива чеков на разборе нет — переносится всё, пропущенных нет (отказ
+        # 409 со списком проверяют тесты на SQLite и PostgreSQL).
+        counted = ids["regs_a"][8]              # автор — сотрудник Альфы (user_a)
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+            code = con.execute("SELECT qr_data FROM receipts WHERE id = ?", (counted,)).fetchone()[0]
+        reply = srv.http.post("/api/v1/receipts/scan", headers=heads["acc_b"],
+                              json={"qr_data": code, "source": "web"}).json()
+
+        def org_count(user: str):
+            r = srv.http.get(f"/api/v1/receipts/{counted}", headers=heads[user])
+            return r.json().get("companies_count", "нет") if r.status_code == 200 else r.status_code
+
+        before = {u: org_count(u) for u in ("admin", "acc_a", "user_a")}
+        put = srv.http.put("/api/v1/unified/visibility", headers=adm,
+                           json={"mode": "all", "roles": ["accountant"]})
+        after = {u: org_count(u) for u in ("admin", "acc_a", "user_a")}
+        listed = srv.http.get("/api/v1/receipts", headers=heads["acc_a"], params={"page_size": 200}).json()
+        row = next((x for x in listed.get("items", []) if x.get("id") == counted), {})
+        multi = srv.http.get("/api/v1/receipts", headers=adm,
+                             params={"multi_company": "true", "page_size": 200}).json()
+        staff_multi = srv.http.get("/api/v1/receipts", headers=heads["acc_a"],
+                                   params={"multi_company": "true", "page_size": 1}).json().get("total")
+        check(checks, reply.get("duplicate") is True and before == {"admin": 2, "acc_a": "нет", "user_a": "нет"}
+              and put.status_code == 200 and after == {"admin": 2, "acc_a": 2, "user_a": "нет"}
+              and row.get("companies_count") == 2 and "companies" not in row
+              and [x.get("id") for x in multi.get("items", [])] == [counted]
+              and staff_multi == base_totals["acc_a"],
+              "число организаций: до разрешения — только у администратора; «всем компаниям» для "
+              "бухгалтера — бухгалтер Альфы видит 2 без названий, сотрудник — нет; фильтр «две и "
+              "больше» у администратора находит этот чек, бухгалтеру не применяется")
+        spare = ids["regs_a"][9]
+        there = srv.http.post("/api/v1/receipts/move", headers=adm, json={
+            "receipt_ids": [spare], "company_id": ids["gamma"], "skip_blocked": True})
+        back = srv.http.post("/api/v1/receipts/move", headers=adm, json={
+            "receipt_ids": [spare], "company_id": ids["alpha"]})
+        check(checks, there.status_code == 200 and there.json().get("moved") == 1
+              and there.json().get("skipped") == [] and back.status_code == 200
+              and back.json().get("moved") == 1 and back.json().get("skipped") == []
+              and fingerprint(db) == base_fp and totals(srv.http, heads) == base_totals,
+              "перемещение с «переместить остальные» (skip_blocked): чеков на разборе нет — чек "
+              "перенесён в Гамму и обратно, пропущенных нет; старые таблицы и итоги те же")
 
         # 4. откат из «Последних рабочих версий»
         releases = srv.http.get("/api/v1/admin/update/releases", headers=adm).json().get("items", [])
@@ -301,6 +351,12 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
               and srv.proc.pid == pid and fingerprint(db) == base_fp
               and totals(srv.http, heads) == base_totals,
               f"повторное обновление до v{srv.version()} за {spent:.0f} с: данные и итоги те же")
+        # v1.70.86: настройка показа и заявка пережили откат на старую версию
+        kept = srv.http.get("/api/v1/unified/visibility", headers=adm).json()
+        check(checks, kept.get("mode") == "all" and kept.get("roles") == ["accountant"]
+              and org_count("acc_a") == 2 and org_count("user_a") == "нет",
+              "после отката и повторного обновления показ числа на месте: бухгалтер Альфы видит 2, "
+              "сотрудник — нет")
         return {"from": old_version, "to": target, "remote_head": remote_head,
                 "totals": base_totals, "last_job": status.get("job")}
     finally:
