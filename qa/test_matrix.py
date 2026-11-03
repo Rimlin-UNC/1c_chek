@@ -45,7 +45,11 @@ FILES_BY_AREA = {
     AREA_UNIFIED: {"tests/test_unified_receipts.py", "tests/test_v17082.py",
                    "tests/test_receipt_copy_migration.py", "tests/test_pool_bridge.py",
                    "tests/test_unified_review.py", "tests/test_migration_e2e.py",
-                   "tests/test_unified_phase0.py", "tests/test_unified_claims.py"},
+                   "tests/test_unified_phase0.py", "tests/test_unified_claims.py",
+                   # v1.70.88: фаза 3 (число организаций), сравнение позиций копий и
+                   # фаза 4а (сверка копий) — тоже единый реестр
+                   "tests/test_unified_phase3.py", "tests/test_unified_item_comparison.py",
+                   "tests/test_unified_copies.py"},
     AREA_UI: {"tests/test_v17033.py", "tests/test_v17035.py", "tests/test_v17059.py",
               "tests/test_v17060.py"},
 }

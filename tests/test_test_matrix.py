@@ -107,3 +107,17 @@ def test_real_skip_audit_matches_current_tests():
     collected = set(proc.stdout.split())
     missing = [tid for tid in skips if tid not in collected]
     assert not missing, f"тесты из аудита пропусков не найдены: {missing}"
+
+
+def test_every_unified_test_file_is_migration_critical():
+    """v1.70.88: каждый tests/test_unified_*.py попадает в область единого реестра или PostgreSQL.
+
+    Списки областей явные; без этой проверки новый файл единого реестра (так было
+    с фазой 3 и сверкой копий) молча уходил в «Функционал приложения» и терял
+    отметку «критичен для миграции».
+    """
+    critical = set().union(*(test_matrix.FILES_BY_AREA[a] for a in test_matrix.CRITICAL_AREAS))
+    files = {f"tests/{p.name}" for p in (test_matrix.ROOT / "tests").glob("test_unified_*.py")}
+    assert files and not files - critical, sorted(files - critical)
+    for area_files in test_matrix.FILES_BY_AREA.values():
+        assert all((test_matrix.ROOT / f).is_file() for f in area_files), area_files
