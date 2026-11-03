@@ -23,26 +23,40 @@ def read(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.88 — исторические проверки.
+
+    v1.70.89: точные пины перенесены в tests/test_v17089.py. Здесь остаётся то,
+    что верно и после следующих выпусков: версия только растёт, запись о
+    выпуске на месте и видна целиком, точки синхронизации совпадают с текущей
+    версией.
+    """
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
                     "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+            assert current in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw
-        assert sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw
+        assert sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
+        assert f'"version": "{current}"' in read("app/static/manifest.webmanifest")
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-03"
-        entry = md.split("\n## [1.70.87]", 1)[0]
+        head = f"## [{VERSION}] - 2026-11-03"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
         # окно обновления показывает первые 4000 символов — запись видна целиком
-        assert len(entry) <= 4000, len(entry)
+        assert len(head + entry) <= 4000, len(head + entry)
         for needle in (
             # как пройдёт обновление: схема не меняется, откат, репетиция
             "резервная копия", "pip пропускается", "Схема базы не меняется", "Откат",
@@ -54,35 +68,31 @@ class TestRelease:
         ):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 1
         for needle in ("«Готовность»", "только числа", "после отката", "ничего не меняется"):
             assert needle in block, needle
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — ")
-        entry = journal.split("\n## v1.70.87", 1)[0]
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
         for needle in ("«Готовность»", "четвёртая вкладка", "четыре карточки KPI", "семи строк",
                        "Только числа", "«Мягкая регистрация архива»", "одна карточка"):
             assert needle in entry, needle
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(name for name, v in reg.items() if v == VERSION) == ["Единый реестр чеков"]
+        assert self._ver(reg["Единый реестр чеков"]) >= self._ver(VERSION)
         # версия блока не может опережать версию программы
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 88) for v in reg.values())
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (03.11.2026)" in readme
-        assert "Последний выпуск — v1.70.87" not in readme
-        assert "фаза 4а (T-37)" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSchema:
@@ -167,7 +177,8 @@ class TestOwnerDecisions:
         assert rows["T-37"]["Статус"] == "done"
         assert "колонк" not in rows["T-37"]["Задача"]
         assert rows["T-37"]["Задача"].endswith(f"выпущено в {VERSION}")
-        assert rows["T-38"]["Статус"] == "todo"
+        # v1.70.89: следующий шаг T-38 (4б) выпущен — статус уже не «todo»
+        assert rows["T-38"]["Статус"] in ("todo", "in-progress", "done")
 
 
 class TestDocs:
@@ -179,5 +190,6 @@ class TestDocs:
         assert "python -m app.unified.backfill --soft --dry-run" in runbook
         assert "Всего 21 проверка" in runbook
         db = read("docs/DATABASE.md")
-        assert "сверка копий `app/unified/copies.py`" in db and "29 проверок на каждом" in db
+        # v1.70.89: сквозной тест вырос до 30 проверок — здесь только факт сверки копий
+        assert "сверка копий `app/unified/copies.py`" in db and "проверок на каждом" in db
         assert "Шаг 4а выпущен в 1.70.88" in read("docs/ARCHITECTURE.md")
