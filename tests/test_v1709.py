@@ -77,7 +77,8 @@ class TestSettingsMenuStructure:
     def test_all_cards_have_id_and_sec(self):
         js = self.js()
         # область шаблона настроек
-        i0 = js.index("async function viewSettings(container)")
+        # v1.70.87: у раздела второй параметр alive (#25) — ищем начало подписи
+        i0 = js.index("async function viewSettings(container")
         i1 = js.index("settings-layout")
         # v1.70.51: карточка «Мониторинг OpenStack» живёт в osm.js, поэтому
         # к шаблону настроек добавлен весь модуль — иначе 31-я карточка
