@@ -6,23 +6,23 @@
 > и Slides — представления. Notion не используется.
 >
 > Обновлено: 2026-11-03 · ветка `arena/c7f9d34a-1c-chek` · код проверен CI на
-> коммите [`920be8c`](https://github.com/Rimlin-UNC/1c_chek/commit/920be8cee1f533ddb599f6c544f7e2431e5fcc9a) (v1.70.86).
+> коммите [`b96d9dd`](https://github.com/Rimlin-UNC/1c_chek/commit/b96d9dd9fa0b027054ffda7bd2f6e02996eb6fec) (v1.70.87).
 
 ## Состояние на 2026-11-03
 
 | Что | Состояние | Источник |
 |---|---|---|
-| Последний выпуск | **v1.70.86** — «Единая база», фаза 3: число организаций у чека компаниям только с разрешения администратора (вкладка «Показ компаниям»: по умолчанию выключено, всем или выбранным компаниям, роли бухгалтер и руководитель; компания видит только число «🏢 N», без названий других; сотрудник — никогда), фильтр «Организаций 🏢» у администратора, решение Q-24 («Переместить остальные (N)»); одна колонка `companies.show_companies_count`; включает 1.70.82–1.70.85; готов к установке из программы — этап Б 19 из 19 от 1.70.80–1.70.85 | [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3), [CHANGELOG](https://github.com/Rimlin-UNC/1c_chek/blob/920be8cee1f533ddb599f6c544f7e2431e5fcc9a/CHANGELOG.md) |
-| Рабочий сервер | по последнему отчёту владельца (01.11.2026): v1.70.80, сборка `b3db4fe`. Установлена ли одна из 1.70.82–1.70.86 — **требует уточнения** | [issue #4](https://github.com/Rimlin-UNC/1c_chek/issues/4) |
+| Последний выпуск | **v1.70.87** — исправлена давняя гонка отрисовки (#25): раздел, открытый, пока дашборд ещё загружался, больше не подменяется дашбордом; то же для «Настроек», «Пользователей», «Компаний» и других разделов; сбой опоздавшего раздела не уводит на дашборд. Схема и данные не менялись; включает 1.70.82–1.70.86 (единая база, фазы 0–3); готов к установке из программы — этап Б 19 из 19 от 1.70.80–1.70.86 | [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3), [CHANGELOG](https://github.com/Rimlin-UNC/1c_chek/blob/b96d9dd9fa0b027054ffda7bd2f6e02996eb6fec/CHANGELOG.md) |
+| Рабочий сервер | по последнему отчёту владельца (01.11.2026): v1.70.80, сборка `b3db4fe`. Установлена ли одна из 1.70.82–1.70.87 — **требует уточнения** | [issue #4](https://github.com/Rimlin-UNC/1c_chek/issues/4) |
 | `main` | v1.70.15 (`01c72d7`, слияние PR #1) | [GitHub](https://github.com/Rimlin-UNC/1c_chek/tree/main) |
-| Открытые PR | #2 — WIP, целиком вошёл в #3; #3 — v1.70.82–v1.70.86 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2), [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3) |
+| Открытые PR | #2 — WIP, целиком вошёл в #3; #3 — v1.70.82–v1.70.87 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2), [PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3) |
 | Задачи | issues #4–#25 = база «Задачи и roadmap»; статус — в CSV, канбан — в Google Sheets (доска GitHub Projects токену недоступна, метки не прикрепляются — 403) | [открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q=is%3Aissue+is%3Aopen) |
-| CI | GitHub Actions на каждый push: Python 3.11 и 3.12, PostgreSQL 17, вся цепочка; ворота — 0 упавших и 0 пропущенных. Прогон на `920be8c` (v1.70.86): 4678 passed, 0 skipped на обеих версиях, отпечаток набора `062505c82cdcb309` совпал с локальным | [run 41609963437](https://github.com/Rimlin-UNC/1c_chek/actions/runs/41609963437), [ci.yml](https://github.com/Rimlin-UNC/1c_chek/blob/820bf7c9df7008aeacca88b1955a5ba8dca8fea2/.github/workflows/ci.yml) |
+| CI | GitHub Actions на каждый push: Python 3.11 и 3.12, PostgreSQL 17, вся цепочка; ворота — 0 упавших и 0 пропущенных. Прогон на `b96d9dd` (v1.70.87): 4694 passed, 0 skipped на обеих версиях, отпечаток набора `6bf23342a2f20038` совпал с локальным | [run 41621066232](https://github.com/Rimlin-UNC/1c_chek/actions/runs/41621066232), [ci.yml](https://github.com/Rimlin-UNC/1c_chek/blob/820bf7c9df7008aeacca88b1955a5ba8dca8fea2/.github/workflows/ci.yml) |
 | Supabase `chek.base` | только синтетический демо-контур `chek_demo`; файлы миграций = применённая история (#8); аудит RLS и внешних ключей — 0 ошибок; решения владельца — #18 и #21 (интеграция переключена на ветку PR #3, после слияния — на `main`); осталась схема `qa_lock_…` (удаление — только по «да», #7) | [DATABASE.md](../DATABASE.md) |
 | Vercel `1c-chek` | превью на каждый push; production из `main` (v1.70.15); роль — требует уточнения | [issue #13](https://github.com/Rimlin-UNC/1c_chek/issues/13) |
 | Миграция | единый слой — в 1.70.82 в режиме совместимости, установка проверена; перенос архива **не готов для рабочего сервера** (запуск — по «да» владельца, #10); **рабочая база остаётся на рабочем сервере** — переход на PostgreSQL/Supabase не выполняется, здесь — только синтетические тесты (решение владельца 03.11.2026, ADR-14; #23 отменён); совместимость кода с PostgreSQL 17 и Supabase проверяет CI на синтетических данных; сквозной тест (#20) — 28 проверок на SQLite и PostgreSQL 17 (с 1.70.85 — заявки компаний, с 1.70.86 — показ числа компаниям) | [DATABASE.md](../DATABASE.md) |
 | Notion | не используется — решение владельца 02.11.2026 (ADR-16); T-14 отменена | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |
-| Презентация для владельца | «Ямастер Чек — состояние и план (03.11.2026)», 8 слайдов, срез выпуска v1.70.86 | [Google Slides](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) |
+| Презентация для владельца | «Ямастер Чек — состояние и план (03.11.2026)», 8 слайдов, срез выпуска v1.70.87 | [Google Slides](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) |
 | QA-панель и канбан | «Матрица тестирования миграции — 1c_chek»: все тесты, 12 пропусков (#19), проверки Supabase, канбан задач | [Google Sheets](https://docs.google.com/spreadsheets/d/1CERkw3bydU-avV7saZkNT0ibEkExFMx-hnKdKJn6VvI/edit) |
 | Отчёт | состояние проекта и готовность миграции | [Google Docs](https://docs.google.com/document/d/1l-7ndekun1QeBWv4UF4dEcrK0lvcIsBY4mcbcS1X4Xk/edit) |
 
