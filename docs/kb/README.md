@@ -22,7 +22,7 @@
 | Vercel `1c-chek` | превью на каждый push; production из `main` (v1.70.15); роль — требует уточнения | [issue #13](https://github.com/Rimlin-UNC/1c_chek/issues/13) |
 | Миграция | единый слой — в 1.70.82 в режиме совместимости, установка проверена; перенос архива и переход рабочей БД на PostgreSQL/Supabase **не готовы для рабочего сервера**; совместимость схемы приложения с Supabase проверена в CI; сквозной тест (#20) — в CI на SQLite и PostgreSQL 17, 28 проверок (с 1.70.85 — заявки компаний, с 1.70.86 — показ числа компаниям); перенос базы SQLite → PostgreSQL — #23 после решения #11 | [DATABASE.md](../DATABASE.md) |
 | Notion | не используется — решение владельца 02.11.2026 (ADR-16); T-14 отменена | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |
-| Презентация для владельца | «Ямастер Чек — состояние и план (02.11.2026)», 8 слайдов | [Google Slides](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) |
+| Презентация для владельца | «Ямастер Чек — состояние и план (03.11.2026)», 8 слайдов, срез выпуска v1.70.86 | [Google Slides](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) |
 | QA-панель и канбан | «Матрица тестирования миграции — 1c_chek»: все тесты, 12 пропусков (#19), проверки Supabase, канбан задач | [Google Sheets](https://docs.google.com/spreadsheets/d/1CERkw3bydU-avV7saZkNT0ibEkExFMx-hnKdKJn6VvI/edit) |
 | Отчёт | состояние проекта и готовность миграции | [Google Docs](https://docs.google.com/document/d/1l-7ndekun1QeBWv4UF4dEcrK0lvcIsBY4mcbcS1X4Xk/edit) |
 
