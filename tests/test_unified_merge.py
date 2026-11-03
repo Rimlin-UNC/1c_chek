@@ -90,15 +90,73 @@ def test_staff_edit_of_a_poorer_registry_copy_keeps_canon_and_pool(companies, cl
 
 
 def test_explicit_clear_in_the_card_reaches_canon_and_pool(companies, client):
+    """Явная очистка — «было значение, стало пусто» (v1.70.90)."""
     hdr, c1, _, _, _ = companies
     with SessionLocal() as db:
         rid, pid = _pool_first(db, c1)
+    res = client.patch(f"/api/v1/receipts/{rid}", headers=hdr, json={"cashier": "Кассир Компании"})
+    assert res.status_code == 200, res.text
+    with SessionLocal() as db:
+        assert _canon(db, rid).cashier == db.get(PoolReceipt, pid).cashier == "Кассир Компании"
     res = client.patch(f"/api/v1/receipts/{rid}", headers=hdr, json={"cashier": "  "})
     assert res.status_code == 200, res.text
     with SessionLocal() as db:
         doc, pool = _canon(db, rid), db.get(PoolReceipt, pid)
         assert doc.cashier == "" and pool.cashier == ""
         assert doc.merchant_address == pool.merchant_address == ADDRESS     # не очищали — осталось
+
+
+def _form_body(receipt: Receipt, **changes) -> dict:
+    """Тело, которое шлёт форма правки (openEditReceipt): все поля, пустые — пустой строкой."""
+    body = {
+        "merchant_name": receipt.merchant_name or "", "category": receipt.category or "",
+        "merchant_inn": receipt.merchant_inn or "",
+        "merchant_address": receipt.merchant_address or "", "cashier": receipt.cashier or "",
+        "assignee": receipt.assignee or "", "personal_sum": receipt.personal_sum or 0,
+        "comment": receipt.comment or "", "notified": bool(receipt.notified),
+        "receipt_date": receipt.receipt_date.isoformat(), "total_sum": receipt.total_sum,
+        "operation": receipt.operation, "fn": receipt.fn, "fd": receipt.fd, "fp": receipt.fp,
+        "items": [{"name": it.name, "quantity": it.quantity, "price": it.price,
+                   "total": it.total} for it in receipt.items],
+    }
+    body.update(changes)
+    return body
+
+
+def test_card_form_save_keeps_what_the_copy_does_not_know(companies, client):
+    """v1.70.90: сохранение формы правки у чека по QR не стирает данные Чек-Пула.
+
+    Форма шлёт все поля продавца; у копии, которая их не знает, они пустые. В 1.70.89
+    такое сохранение (даже правка одного комментария) считалось явной очисткой и
+    стирало адрес и кассира в единой записи и в Чек-Пуле. Позиции у копии тоже нет.
+    """
+    hdr, c1, _, _, _ = companies
+    with SessionLocal() as db:
+        rid, pid = _pool_first(db, c1)
+        db.query(ReceiptItem).filter(ReceiptItem.receipt_id == rid).delete()
+        db.commit()
+        receipt = db.get(Receipt, rid)
+        assert receipt.merchant_address == "" and receipt.cashier == "" and not receipt.items
+        body = _form_body(receipt, comment="правка через форму")
+        canon_items = db.query(UnifiedItem).filter(
+            UnifiedItem.document_id == _canon(db, rid).id).count()
+    res = client.patch(f"/api/v1/receipts/{rid}", headers=hdr, json=body)
+    assert res.status_code == 200, res.text
+    with SessionLocal() as db:
+        doc, pool = _canon(db, rid), db.get(PoolReceipt, pid)
+        assert (doc.merchant_address, doc.cashier) == (ADDRESS, CASHIER)
+        assert (pool.merchant_address, pool.cashier) == (ADDRESS, CASHIER)
+        assert db.get(Receipt, rid).comment == "правка через форму"
+        assert canon_items and db.query(UnifiedItem).filter(
+            UnifiedItem.document_id == doc.id).count() == canon_items
+        assert db.query(PoolItem).filter(PoolItem.receipt_id == pid).count() == 1
+        assert doc.id not in _drifting(db)
+
+
+def test_clearable_fields_cover_the_merge_text():
+    """Поля очистки PATCH включают весь текст продавца из правила слияния."""
+    from app.routers import receipts
+    assert set(service.MERGE_TEXT) <= set(receipts._CLEARABLE_FIELDS)
 
 
 def test_registry_first_then_richer_pool_fills_canon(companies):

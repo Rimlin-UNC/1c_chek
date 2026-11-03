@@ -191,5 +191,6 @@ class TestDocs:
         assert "Всего 21 проверка" in runbook
         db = read("docs/DATABASE.md")
         # v1.70.89: сквозной тест вырос до 30 проверок — здесь только факт сверки копий
-        assert "сверка копий `app/unified/copies.py`" in db and "проверок на каждом" in db
+        # v1.70.90: число проверок растёт — «31 проверка на каждом», «30 проверок на каждом»
+        assert "сверка копий `app/unified/copies.py`" in db and re.search(r"\d+ проверк\w* на каждом", db)
         assert "Шаг 4а выпущен в 1.70.88" in read("docs/ARCHITECTURE.md")

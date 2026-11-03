@@ -922,6 +922,11 @@ def list_categories(company_id: str | None = Query(None, max_length=36),
 # --------------------------------------------------------------------------
 _MERCHANT_FIELDS = ("category", "assignee", "comment")
 
+# Поля, которые явная очистка в карточке передаёт в единую запись (фаза 4б):
+# текст продавца (``unified.service.MERGE_TEXT``) и метки, которые правит PATCH.
+_CLEARABLE_FIELDS = ("merchant_name", "merchant_inn", "merchant_address", "cashier",
+                     "industry", "region_code")
+
 
 @router.get("/merchant-rules", summary="Правила поставщиков (бухгалтер+)")
 def list_merchant_rules(user: User = Depends(get_current_user),
@@ -1089,6 +1094,10 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
                             "Сотрудник работает только со своими чеками")
 
     changed = {"fields": []}
+    # v1.70.90: значения копии до правки. Явная очистка (фаза 4б) — только там,
+    # где значение было и пользователь его стёр. Форма правки шлёт все поля
+    # продавца, и пустое поле, которого копия не знала, ничего не очищает.
+    before = {f: (getattr(receipt, f) or "").strip() for f in _CLEARABLE_FIELDS}
 
     if not is_staff:
         # Сотрудник: только галочка «Уведомляю бухгалтерию» и комментарий
@@ -1225,9 +1234,13 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
     if is_staff and changed["fields"]:
         from ..unified import service as unified
         # v1.70.89 (фаза 4б): пустое поле единой записи стирает только явная
-        # очистка в карточке; поле, которого копия просто не знает, не стирает
-        cleared = frozenset(f for f in (*unified.MERGE_TEXT, "industry", "region_code")
-                            if getattr(body, f) is not None and not getattr(body, f).strip())
+        # очистка в карточке; поле, которого копия просто не знает, не стирает.
+        # v1.70.90: очистка — это «было значение, стало пусто». До 1.70.90 очисткой
+        # считалось любое пустое поле тела, и сохранение формы правки у чека по QR
+        # стирало продавца, адрес и кассира в единой записи и в Чек-Пуле.
+        cleared = frozenset(f for f in _CLEARABLE_FIELDS
+                            if before[f] and getattr(body, f) is not None
+                            and not getattr(body, f).strip())
         unified.sync_registry(db, receipt, user, cleared=cleared)
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,

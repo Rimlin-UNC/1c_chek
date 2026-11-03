@@ -538,8 +538,9 @@ def phase_env(url: str) -> dict:
 # v1.70.89 (фаза 4б, T-38): правило слияния. Бухгалтер Альфы сканирует QR — копия
 # реестра знает только дату, сумму и тройку; затем тот же чек приходит в Чек-Пул с
 # данными ФНС (адрес продавца, кассир). До 1.70.89 единая запись их не принимала, а
-# правка бухгалтера и сверка на старте стирали их в Чек-Пуле. Стадия последняя:
-# свои чеки не меняют прежние проверки.
+# правка бухгалтера и сверка на старте стирали их в Чек-Пуле. v1.70.90: то же при
+# сохранении формы правки — она шлёт все поля, и пустые считались явной очисткой.
+# Стадия последняя: свои чеки не меняют прежние проверки.
 MERGE_RULE = PHASE_COMMON + r"""
 from datetime import datetime
 from app.main import app
@@ -562,7 +563,9 @@ def facts(db, pid, rid=None):
     return {"canon": [doc.merchant_address, doc.cashier] if doc else None,
             "pool": [pool.merchant_address, pool.cashier],
             "registry": [reg.merchant_address or "", reg.cashier or ""] if reg else None,
-            "linked": sorted(o.source_kind for o in doc.origins) if doc else []}
+            "linked": sorted(o.source_kind for o in doc.origins) if doc else [],
+            "items": [len(doc.items) if doc else None,
+                      db.query(PoolItem).filter(PoolItem.receipt_id == pid).count()]}
 
 res = {}
 with TestClient(app) as c:
@@ -592,6 +595,22 @@ with TestClient(app) as c:
                            json={"comment": "правка бухгалтера"}).status_code if rid else None
     with SessionLocal() as db:
         res["after_patch"] = facts(db, pid, rid)
+    # v1.70.90: сохранение формы правки — все поля, пустые пустой строкой (как openEditReceipt)
+    with SessionLocal() as db:
+        reg = db.get(Receipt, rid) if rid else None
+        form = {"merchant_name": reg.merchant_name or "", "merchant_inn": reg.merchant_inn or "",
+                "merchant_address": reg.merchant_address or "", "cashier": reg.cashier or "",
+                "category": reg.category or "", "assignee": reg.assignee or "",
+                "personal_sum": reg.personal_sum or 0, "comment": "сохранение формы",
+                "notified": bool(reg.notified), "receipt_date": reg.receipt_date.isoformat(),
+                "total_sum": reg.total_sum, "operation": reg.operation,
+                "fn": reg.fn, "fd": reg.fd, "fp": reg.fp,
+                "items": [{"name": it.name, "quantity": it.quantity, "price": it.price,
+                           "total": it.total} for it in reg.items]} if reg else None
+    res["form"] = (c.patch(f"/api/v1/receipts/{rid}", headers=H["acc_a"], json=form).status_code
+                   if form else None)
+    with SessionLocal() as db:
+        res["after_form"] = facts(db, pid, rid)
 with SessionLocal() as db:            # как сверка при следующем запуске
     res["reconcile"] = reconcile_copies(db)
     db.commit()
@@ -902,6 +921,12 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
               "фаза 4б: копия реестра, отсканированная по QR раньше, чем чек пришёл в Чек-Пул, не стирает "
               "адрес продавца и кассира из ФНС — ни при правке бухгалтера, ни при сверке на старте; "
               "единая запись их принимает",
+              merge)
+    rep.check(merge["form"] == 200 and merge["after_form"]["canon"] == kept
+              and merge["after_form"]["pool"] == kept and merge["after_form"]["registry"] == ["", ""]
+              and merge["after_form"]["items"] == [1, 1] and merge["after_restart"]["items"] == [1, 1],
+              "v1.70.90: сохранение формы правки у чека по QR (все поля, пустые — пустой строкой) не "
+              "стирает адрес продавца, кассира и позиции ни в единой записи, ни в Чек-Пуле",
               merge)
     raw["users"], raw["seconds"] = users, round(time.monotonic() - started, 1)
     return rep.checks, raw
