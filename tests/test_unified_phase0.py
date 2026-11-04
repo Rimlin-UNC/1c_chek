@@ -455,7 +455,10 @@ def test_bulk_move_thousand_receipts_is_fast():
     """1000 чеков: замер на SQLite в потоке теста (без HTTP).
 
     Локально (ноябрь 2026): первый перенос с регистрацией ≈ 0,5 с, повторный
-    ≈ 0,35 с; прежний цикл — 9,6 с и 4,9 с. Потолки с запасом на CI (-j4).
+    ≈ 0,35 с; прежний цикл — 9,6 с и 4,9 с. Потолки с запасом на CI (-j4):
+    v1.70.97 — на общем сервере CI повторный перенос дважды выходил за 2 с (2,49 и 2,74 с
+    при соседних тестах в четыре потока), поэтому 5 и 4 с: возврат построчного цикла
+    (локально 9,6 и 4,9 с, на CI в разы дольше) тест по-прежнему ловит.
     """
     ids, source, target = _seed_batch(1000)
     started = time.perf_counter()
@@ -466,8 +469,8 @@ def test_bulk_move_thousand_receipts_is_fast():
     again = time.perf_counter() - started
     print(f"перенос 1000 чеков: первый {first:.2f} с, повторный {again:.2f} с")
     assert result["moved"] == 1000 and again_result["moved"] == 1000
-    assert first < 3.0, first
-    assert again < 2.0, again
+    assert first < 5.0, first
+    assert again < 4.0, again
 
 
 # --------------------------------------------------------------------------
