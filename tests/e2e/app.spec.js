@@ -298,9 +298,13 @@ test('первичка: PDF печатной формы распознан, св
   const stamp = Date.now();
   // комментарий в конце PDF меняет хеш файла: повтор попытки не упрётся в дубль прошлой
   const pdf = Buffer.concat([readFileSync('tests/fixtures/primary/upd_print_text.pdf'), Buffer.from(`\n% e2e ${stamp}\n`)]);
+  const answer = page.waitForResponse((r) => r.url().includes('/api/v1/primary/recognize'), { timeout: 20_000 });
   await page.setInputFiles('#prim-file', { name: 'upd_print.pdf', mimeType: 'application/pdf', buffer: pdf });
+  const response = await answer;
+  // при сбое в отчёте сразу видно причину от сервера (так нашёлся лимит частоты запросов в CI)
+  expect(response.status(), await response.text()).toBe(200);
   const modal = page.locator('.modal-slot');
-  await expect(modal).toContainText('Сверьте реквизиты: upd_print.pdf');
+  await expect(modal).toContainText('Сверьте реквизиты: upd_print.pdf', { timeout: 10_000 });
   await expect(modal).toContainText('Все основные поля найдены');
   await expect(page.locator('#prim-f-number')).toHaveValue('УТ-215');
   await expect(page.locator('#prim-f-seller-inn')).toHaveValue('5001007329');

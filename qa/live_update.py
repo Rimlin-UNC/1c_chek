@@ -12,7 +12,8 @@
 
 Проверки после каждого шага: версия, тот же процесс (PID не меняется —
 это самоперезапуск, а не новый сервер), старые таблицы не изменились,
-итоги по ролям те же. После обновления дополнительно: шаг pip пропущен,
+итоги по ролям те же. После обновления дополнительно: шаг pip пропущен, если
+requirements.txt не менялся, или выполнен без ошибок, если менялся (с 1.70.95),
 резервная копия создана, файлы — ровно коммит ветки на GitHub, экран и API
 «Разбор конфликтов» отвечают; с 1.70.84 — пакетное перемещение всех чеков
 Альфы в Бету и обратно и журнал карточки у бухгалтера Беты без Альфы; с
@@ -224,8 +225,15 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
         check(checks, fingerprint(db) == base_fp, "старые таблицы после обновления не изменились")
         check(checks, totals(srv.http, heads) == base_totals,
               f"итоги по ролям после обновления те же: {base_totals}")
-        check(checks, "Зависимости не менялись" in job_log(status) and bool(job.get("backup_file")),
-              f"шаг pip пропущен; резервная копия перед обновлением: {job.get('backup_file')}")
+        # v1.70.95: зависимости между выпусками могут меняться — тогда обновление само ставит их pip'ом
+        # (как на рабочем сервере), а при неизменном requirements.txt шаг pip пропускается
+        deps_changed = (git(ROOT, "show", f"{old_commit}:requirements.txt")
+                        != git(ROOT, "show", f"{remote_head}:requirements.txt"))
+        deps_ok = ("Зависимости изменились" in job_log(status) if deps_changed
+                   else "Зависимости не менялись" in job_log(status))
+        check(checks, deps_ok and bool(job.get("backup_file")),
+              ("зависимости изменились — pip поставил их из requirements.txt" if deps_changed else "шаг pip пропущен")
+              + f"; резервная копия перед обновлением: {job.get('backup_file')}")
         check(checks, git(app_dir, "rev-parse", "HEAD") == remote_head
               and git(app_dir, "status", "--porcelain", "--untracked-files=no") == "",
               f"файлы программы — ровно коммит ветки на GitHub ({remote_head[:7]})")
