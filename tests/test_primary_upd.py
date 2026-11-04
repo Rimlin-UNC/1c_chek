@@ -194,9 +194,12 @@ def firms(client):
     hdr = login(client, "admin", "admin123")
     out = []
     for letter in "AB":
-        inn = inn10()
-        res = client.post("/api/v1/companies", headers=hdr, json={"name": f"Первичка {letter} {uuid4().hex}",
-                                                                  "inn": inn})
+        for _ in range(5):          # v1.70.96: случайный ИНН совпал с уже созданным — берём другой
+            inn = inn10()
+            res = client.post("/api/v1/companies", headers=hdr, json={"name": f"Первичка {letter} {uuid4().hex}",
+                                                                      "inn": inn})
+            if res.status_code != 409 or "таким ИНН" not in res.text:
+                break
         assert res.status_code in (200, 201), res.text
         company_id = res.json()["id"]
         acc = _mk_user(client, hdr, company_id, f"prim_{letter.lower()}_{uuid4().hex[:10]}", role="accountant")

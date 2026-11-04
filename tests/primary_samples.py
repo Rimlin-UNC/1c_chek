@@ -9,6 +9,9 @@ import random
 from decimal import Decimal
 from xml.sax.saxutils import escape
 
+# v1.70.96: цифры — из энтропии ОС, а не из общего генератора random: состояние random в тестах
+# может совпасть, и тогда совпадали ИНН компаний (409 «Компания с таким ИНН уже есть» в CI)
+_RNG = random.SystemRandom()
 _W10 = (2, 4, 10, 3, 5, 9, 4, 6, 8)
 _W11 = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
 _W12 = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
@@ -19,12 +22,12 @@ def _control(digits: str, weights: tuple) -> str:
 
 
 def inn10(base9: str | None = None) -> str:
-    base9 = base9 or "77" + "".join(random.choice("0123456789") for _ in range(7))
+    base9 = base9 or "77" + "".join(_RNG.choice("0123456789") for _ in range(7))
     return base9 + _control(base9, _W10)
 
 
 def inn12(base10: str | None = None) -> str:
-    base10 = base10 or "50" + "".join(random.choice("0123456789") for _ in range(8))
+    base10 = base10 or "50" + "".join(_RNG.choice("0123456789") for _ in range(8))
     first = base10 + _control(base10, _W11)
     return first + _control(first, _W12)
 
@@ -93,7 +96,7 @@ def upd_xml(*, version: str = "5.03", function: str = "СЧФДОП", number: st
     lines = [dict(CEMENT), dict(DELIVERY)] if lines is None else lines
     if buyer is not None and buyer[0] not in ("ИП", "ИН") and buyer[1] is None:
         buyer = (buyer[0], inn10(), buyer[2])
-    file_id = file_id or f"ON_NSCHFDOPPR_2BM-{SELLER_INN}_2BM-buyer_20260310_{random.randrange(10**9)}"
+    file_id = file_id or f"ON_NSCHFDOPPR_2BM-{SELLER_INN}_2BM-buyer_20260310_{_RNG.randrange(10**9)}"
     if version == "5.03":
         info_attrs = f'НомерДок="{_attr(number)}" ДатаДок="{day}"'
         corr = (f'<ИспрДок НомИспр="{correction[0]}" ДатаИспр="{correction[1]}"/>' if correction else "")
