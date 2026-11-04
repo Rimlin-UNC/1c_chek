@@ -102,7 +102,10 @@ class Server:
         self.log = open(log_path, "ab")  # noqa: SIM115 — закрывается в stop()
         self.proc = subprocess.Popen(cmd, cwd=app_dir, env=env, stdout=self.log,
                                      stderr=subprocess.STDOUT, start_new_session=True)
-        self.http = httpx.Client(base_url=f"http://127.0.0.1:{self.port}", timeout=60)
+        # v1.70.95: «Проверить» и предпроверка старых версий ходят в GitHub по трём каналам
+        # (API 10 с, raw 10 с, git fetch до 60 с и git show до 30 с) — при сбое сети ответ
+        # бывает дольше минуты; 60 с давали ложный «сбой прогона» (1.70.85, 04.11.2026)
+        self.http = httpx.Client(base_url=f"http://127.0.0.1:{self.port}", timeout=150)
 
     def version(self) -> str | None:
         try:
