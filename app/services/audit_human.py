@@ -235,6 +235,25 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "docreq_reminded":
         return "клиенту отправлено напоминание о документах", \
             f"компания: „{d.get('company', '—')}“, отправлено: {d.get('sent', 0)}, не доставлено: {d.get('failed', 0)}"
+    # v1.70.98 (T-45): банковская выписка
+    if action == "bank_statement_uploaded":
+        return "загружена банковская выписка", \
+            f"компания: „{d.get('company', '—')}“, период: {d.get('period', '—')}, операций: {d.get('operations', 0)}, " \
+            f"нужны документы: {d.get('saved', 0)}, найдено документов: {d.get('matched', 0)}"
+    if action == "bank_statement_deleted":
+        return "удалена банковская выписка", \
+            f"компания: „{d.get('company', '—')}“, удалено операций: {d.get('operations', 0)}"
+    if action == "bank_operation_ignored":
+        return "платёж отмечен: документы не нужны", \
+            f"сумма: {d.get('amount', 0)}, дата: {d.get('date', '—')}, причина: {d.get('note', '—')}"
+    if action == "bank_reimbursement_decided":
+        state = "возмещено" if d.get("status") == "paid" else "не возмещать"
+        return "решение по чеку сотрудника", f"компания: „{d.get('company', '—')}“, {state}" + \
+            (f", причина: {d['note']}" if d.get("note") else "")
+    if action == "bank_settings_updated":
+        return "изменены настройки банковской выписки", \
+            f"компания: „{d.get('company', '—')}“, срок хранения: {d.get('retention_days', '—')} дн., " \
+            f"карт сотрудников: {d.get('cards', 0)}"
     if action == "mapping_updated":
         return "обновлены правила сопоставления статей", ""
     if action == "app_settings_updated":

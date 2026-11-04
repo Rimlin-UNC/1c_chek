@@ -23,6 +23,7 @@ from .config import settings
 from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
+from .bank import router as bank_router
 from .docreq import router as docreq_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
@@ -130,12 +131,20 @@ async def lifespan(app: FastAPI):
 
     # v1.70.97 (T-58): напоминания «что нужно от клиента» — тик раз в минуту, отдельно от ботов:
     # приходят по любому подключённому каналу (Telegram, MAX, почта) у компаний, где их включил бухгалтер
+    _bank_purged = {"day": ""}
+
     def _doc_requests_once() -> None:
+        from .bank import service as bank
         from .database import SessionLocal
         from .docreq import service as docreq
         db = SessionLocal()
         try:
             docreq.tick(db)
+            # v1.70.98 (T-45): срок хранения банковских операций — раз в сутки, даже если выписки больше не грузят
+            today = docreq.now_msk().date().isoformat()
+            if _bank_purged["day"] != today:
+                _bank_purged["day"] = today
+                bank.purge(db)
         finally:
             db.close()
 
@@ -447,6 +456,7 @@ app.include_router(supabase_demo.router)  # отдельный read-only Supabas
 app.include_router(unified_router.router)  # единый фискальный документ
 app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
 app.include_router(docreq_router.router)  # v1.70.97: что нужно от клиента (T-58)
+app.include_router(bank_router.router)  # v1.70.98: банковская выписка (T-45)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

@@ -46,12 +46,12 @@ class DocRequest(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     company_id: Mapped[str] = mapped_column(String(36), index=True)
     period: Mapped[str] = mapped_column(String(7))
-    kind: Mapped[str] = mapped_column(String(16), default="manual")      # expected | receipt | upd_fix | manual
+    kind: Mapped[str] = mapped_column(String(16), default="manual")      # expected | receipt | upd_fix | payment | manual
     title: Mapped[str] = mapped_column(String(500), default="")
     counterparty_name: Mapped[str] = mapped_column(String(500), default="")
     counterparty_inn: Mapped[str] = mapped_column(String(12), default="")
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ref_type: Mapped[str] = mapped_column(String(16), default="")        # seller | receipt | primary | ""
+    ref_type: Mapped[str] = mapped_column(String(16), default="")        # seller | receipt | primary | bank_op | ""
     ref_id: Mapped[str] = mapped_column(String(64), default="")
     assignee_id: Mapped[str | None] = mapped_column(String(36), nullable=True)   # кому напоминать лично
     status: Mapped[str] = mapped_column(String(12), default="open")      # open | received | cancelled

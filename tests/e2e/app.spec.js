@@ -28,6 +28,9 @@ async function login(page) {
   await page.fill('#login-username', 'admin');
   await page.fill('#login-password', password);
   await page.click('#login-submit');
+  // v1.70.98: «Дашборд» — статичный текст заголовка в index.html, он есть и до входа; ждём,
+  // пока экран входа скроется (вход завершён, токен сохранён)
+  await expect(page.locator('#login-screen')).toBeHidden({ timeout: 15000 });
   await expect(page.locator('#page-title')).toHaveText('Дашборд',
     { timeout: 15000 });
 }
@@ -371,4 +374,60 @@ test('что нужно от клиента: запрос документа, о
   const journal = page.locator('#dreq-journal');
   await expect(journal).toContainText('Запрос создан');
   await expect(journal).toContainText('Получено');
+});
+
+// v1.70.98: заставка загрузки — версия с сервера, финал «Готово к запуску», уход; вход доступен после неё
+test('заставка загрузки: версия с сервера, «Готово к запуску» и уход', async ({ page, request }) => {
+  const about = await (await request.get('/api/v1/about')).json();
+  await page.goto('/');
+  const splash = page.locator('#ym-splash');
+  await expect(splash).toHaveClass(/is-ready/, { timeout: 15000 });
+  await expect(page.locator('#ym-splash-version')).toHaveText(about.version);
+  await expect(page.locator('#ym-splash-pct')).toHaveText('100 %');
+  await expect(page.locator('#ym-splash-status')).toHaveText('Готово к запуску');
+  await expect(page.locator('.ym-splash__meta')).toContainText('Выпуск 2026');
+  await expect(page.locator('.ym-splash__meta')).toContainText('ООО «Ямастер»');
+  await expect(splash).toHaveClass(/is-gone/, { timeout: 15000 });
+  await expect(splash).toBeHidden();
+  await expect(page.locator('#boot-splash')).toHaveCount(0);          // прежней заставки больше нет
+  await page.click('#login-username');                                 // клики доходят до формы входа
+  await expect(page.locator('#login-username')).toBeFocused();
+});
+
+// v1.70.98 (T-45): выписка в формате 1С — платёж без документов попадает в «Что нужно от клиента»
+test('банк: платёж без документов из выписки уходит в «Что нужно от клиента»', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/bank"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Банк: выписка');
+  await page.locator('#bank-company').selectOption({ label: 'E2E Альфа' });
+  const stamp = String(Date.now() % 1000000);
+  const statementText = ['1CClientBankExchange', 'ВерсияФормата=1.03', 'Кодировка=Windows', 'ДатаНачала=01.10.2026',
+    'ДатаКонца=31.10.2026', 'РасчСчет=40702810900000012345', 'СекцияДокумент=Платежное поручение', `Номер=${stamp}`,
+    'Дата=12.10.2026', 'Сумма=15000.00', 'ПлательщикСчет=40702810900000012345', 'Плательщик1=E2E Альфа',
+    'ПолучательСчет=40702810100000054321', 'ПолучательИНН=7702345678', 'Получатель1=ООО «Песок E2E»',
+    'ДатаСписано=12.10.2026', `НазначениеПлатежа=Оплата по счёту № ${stamp} за песок, в т.ч. НДС 22%`,
+    'КонецДокумента', 'КонецФайла'].join('\r\n');
+  await page.setInputFiles('#bank-file', { name: 'kl_to_1c.txt', mimeType: 'text/plain',
+    buffer: Buffer.from(statementText, 'utf8') });
+  await expect(page.locator('#bank-result')).toContainText('без документов: 1', { timeout: 15000 });
+  const row = page.locator('#bank-out tbody tr', { hasText: 'ООО «Песок E2E»' });
+  await expect(row).toContainText('15 000,00');
+  await expect(row.locator('.chip')).toHaveText('Нет документов');
+  await page.locator('a[href="#/docreq"]').click();
+  await page.locator('#dreq-company').selectOption({ label: 'E2E Альфа' });
+  await page.locator('#dreq-period').fill('2026-10');
+  const req = page.locator('#dreq-out tbody tr', { hasText: 'ООО «Песок E2E»' });
+  await expect(req).toContainText('🏦 платёж без документов', { timeout: 15000 });
+  await expect(req).toContainText('Закрывающие документы');
+});
+
+// v1.70.98: прямая ссылка после перезагрузки — список компаний администратора подтягивается сам
+test('прямая ссылка: у администратора список компаний не пустой', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.evaluate(() => { window.location.hash = '#/docreq'; });
+  await page.reload();
+  await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента', { timeout: 15000 });
+  await expect(page.locator('#dreq-company option', { hasText: 'E2E Альфа' })).toHaveCount(1);
 });

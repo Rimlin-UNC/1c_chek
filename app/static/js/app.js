@@ -21,6 +21,7 @@ import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflicts
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
 import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
+import { viewBank } from './bank.js';          // v1.70.98: банковская выписка (T-45)
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -68,6 +69,7 @@ const VIEW_TITLES = {
   conflicts: 'Разбор конфликтов',      // v1.70.83: единый реестр, администратор
   primary: 'Первичка',                 // v1.70.94: электронные УПД и счета-фактуры (T-53)
   docreq: 'Что нужно от клиента',      // v1.70.97: недостающие документы и напоминания (T-58)
+  bank: 'Банк: выписка',               // v1.70.98: платежи без документов и чеки к возмещению (T-45)
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -112,10 +114,10 @@ const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
                         'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts',
-                        'primary', 'docreq', 'settings'],
+                        'primary', 'docreq', 'bank', 'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'supabase', 'primary', 'docreq', 'settings'],
+                        'poolpick', 'supabase', 'primary', 'docreq', 'bank', 'settings'],
                 secs: ['checks', 'personal'] },
   manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
                 secs: ['personal'] },
@@ -141,6 +143,7 @@ async function loadAppVersion() {
     window.MXBOT = about.max_bot_username || window.MXBOT || '';  // v1.70.1
     const els = [$('#brand-version'), $('#footer-version')];
     els.forEach(el => { if (el) el.textContent = 'v' + about.version; });
+    if (window.ymSplash) window.ymSplash.setVersion(about.version);   // v1.70.98: версия с сервера
   } catch { /* версия не критична */ }
 }
 
@@ -215,17 +218,16 @@ function poolRefSave(code) {
   toast('Код приглашения применён', 'ok', '🎁');
 }
 
-// Экран «Подключение…» — исключает мигание карточки входа при проверке токена
+// Заставка загрузки — исключает мигание карточки входа при проверке токена.
+// v1.70.98: вместо прежнего «Подключение…» — заставка «chek.ymaster.ru» (разметка в index.html,
+// css/splash.css, js/splash.js): видна с первого кадра, поэтому show ничего не делает; hide —
+// приложение готово: заставка доигрывает до 100 % и уходит сама. splash.js не загрузился —
+// просто скрываем разметку, вход не остаётся под заставкой (урок v1.70.66).
 function showSplash(show) {
-  let el = document.getElementById('boot-splash');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'boot-splash';
-    el.style.cssText = 'position:fixed;inset:0;z-index:300;background:#f5f5f5;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;color:#5c5c5c;font-size:14px';   // v1.25.0: светлый
-    el.innerHTML = '<img src="/img/logo.svg" width="52" height="52" alt=""><b>Ямастер Чек</b><span class="spinner"></span>';
-    document.body.appendChild(el);
-  }
-  el.style.display = show ? 'flex' : 'none';
+  if (show) return;
+  if (window.ymSplash) { window.ymSplash.ready(); return; }
+  const splash = document.getElementById('ym-splash');
+  if (splash) splash.style.display = 'none';
 }
 
 // v1.54.0: главная страница — статистика пула и заявка на разбор чека.
@@ -3947,10 +3949,19 @@ function route(silent = false) {
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
     supabase: viewSupabaseDemo,           // отдельный read-only демо-контур
     conflicts: viewUnifiedReview,         // v1.70.83: разбор конфликтов единого реестра
-    primary: (c, alive) => viewPrimary(c, { alive, isAdmin: isAdmin(),   // v1.70.94: первичка (T-53)
-      companies: state.companies, companyFilter: state.companyFilter }),
-    docreq: (c, alive) => viewDocRequests(c, { alive, isAdmin: isAdmin(),   // v1.70.97: что нужно от клиента
-      companies: state.companies, companyFilter: state.companyFilter }),
+    // v1.70.98: открыли по прямой ссылке до загрузки компаний — список подтягивается сам (как в v1.59.4)
+    primary: async (c, alive) => {                                       // v1.70.94: первичка (T-53)
+      const companies = await adminCompanies();
+      if (alive()) return viewPrimary(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter });
+    },
+    docreq: async (c, alive) => {                                        // v1.70.97: что нужно от клиента
+      const companies = await adminCompanies();
+      if (alive()) return viewDocRequests(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter });
+    },
+    bank: async (c, alive) => {                                          // v1.70.98: банковская выписка (T-45)
+      const companies = await adminCompanies();
+      if (alive()) return viewBank(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter });
+    },
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
@@ -3975,6 +3986,18 @@ function route(silent = false) {
 // ==========================================================================
 //  v1.11.0: МУЛЬТИКОМПАНИЙНОСТЬ — компании, фильтр пространства, перемещение
 // ==========================================================================
+// v1.70.98: список компаний для экранов администратора; пустой — загружаем из базы,
+// иначе выбор компании в «Первичке» и «Что нужно от клиента» оставался пустым
+async function adminCompanies() {
+  if (isAdmin() && !(Array.isArray(state.companies) && state.companies.length)) {
+    try {
+      const list = await api.get('/api/v1/companies');
+      if (Array.isArray(list)) state.companies = list;
+    } catch (e) { /* без списка экран работает по всем компаниям */ }
+  }
+  return Array.isArray(state.companies) ? state.companies : [];
+}
+
 async function initCompanyFilter() {
   const sel = $('#company-filter');
   if (!sel) return;
@@ -6330,6 +6353,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.98': [
+    { icon: '🏦', title: 'Банковская выписка: платежи без документов',
+      text: 'Новый раздел «Банк: выписка»: загрузите выписку «в 1С» из интернет-банка — программа сама найдёт '
+        + 'чеки и УПД к списаниям, а платежи без документов добавит в «Что нужно от клиента». Покупка по карте '
+        + 'сотрудника напоминается ему лично. Чеки, которых нет в выписке, — «к возмещению» сотруднику.' },
+    { icon: '✨', title: 'Новая заставка загрузки',
+      text: 'При запуске — заставка chek.ymaster.ru: этапы загрузки, прогресс и версия программы с сервера. '
+        + 'Около трёх секунд, на любом экране; в тёмной теме устройства — тёмная. И исправлено: при открытии '
+        + '«Первички» и «Что нужно от клиента» по прямой ссылке список компаний больше не бывает пустым.' },
+  ],
   '1.70.97': [
     { icon: '📋', title: 'Что нужно от клиента — программа найдёт сама',
       text: 'Новый раздел для бухгалтера: программа сама находит, чего не хватает за месяц, — документы от '
@@ -10410,6 +10443,9 @@ const AUDIT_KIND = {
   onec_pull: ['ok', '🔗'], onec_ack: ['ok', '🔗'],
   primary_exported: ['ok', '📤'], onec_primary_pull: ['ok', '🔗'], onec_primary_ack: ['ok', '🔗'],   // v1.70.96 (T-60)
   docreq_settings_updated: ['info', '⚙️'], docreq_reminded: ['ok', '📣'],   // v1.70.97 (T-58)
+  bank_statement_uploaded: ['ok', '🏦'], bank_statement_deleted: ['warn', '🏦'],   // v1.70.98 (T-45)
+  bank_operation_ignored: ['info', '🏦'], bank_reimbursement_decided: ['ok', '💸'],
+  bank_settings_updated: ['info', '⚙️'],
   mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],
   external_settings_updated: ['info', '⚙️'],
   telegram_settings_saved: ['info', '✈️'], demo_data_loaded: ['info', '🧪'],

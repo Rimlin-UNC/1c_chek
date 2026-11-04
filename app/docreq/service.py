@@ -34,7 +34,9 @@ MSK = timezone(timedelta(hours=3))            # Москва без перехо
 REMIND_AT = time(10, 0)                       # плановые напоминания — в 10:00 по Москве
 WINDOW = timedelta(hours=20)                  # не отправлено в срок (сервер стоял) — ещё 20 часов
 KINDS = {"expected": "ожидается по истории", "receipt": "чек не подтверждён ФНС",
-         "upd_fix": "нужен исправленный документ", "manual": "запрос бухгалтера"}
+         "upd_fix": "нужен исправленный документ", "payment": "платёж без документов",   # v1.70.98: T-45
+         "manual": "запрос бухгалтера"}
+PERSONAL = ("receipt", "payment")             # личные запросы: чек сотрудника, покупка по его карте
 STATUSES = ("open", "received", "cancelled")
 CHANNELS = ("telegram", "max", "email")
 ROLES = ("manager", "user")
@@ -300,6 +302,13 @@ def detect(db: Session, company_id: str, period: str, actor_id: str = "") -> dic
         add("upd_fix", f"Исправленный документ вместо {_doc_label(doc)} от {doc.seller_name or 'продавца'}"
             + (f": {error}" if error else ""), "primary", doc.id, counterparty_name=doc.seller_name,
             counterparty_inn=doc.seller_inn, amount=doc.total_with_vat)
+    # 4. v1.70.98 (T-45): платежи из банковской выписки без документов — оплата поставщику ждёт УПД, накладную
+    #    или акт, покупка по карте — чек; карта сотрудника указана в настройках — запрос ему лично
+    from ..bank import service as bank
+    for op in bank.open_operations(db, company_id, start, end):
+        add("payment", bank.request_title(op), "bank_op", op.id, counterparty_name=op.counterparty_name,
+            counterparty_inn=op.counterparty_inn, amount=op.amount,
+            assignee_id=bank.card_owner_id(db, company_id, op.card_tail) or None)
     db.commit()
     return {"created": created, "closed": refresh(db, company_id, period)}
 
@@ -362,6 +371,9 @@ def _satisfied(db: Session, req: DocRequest) -> str:
             when = f" от {fixed.correction_date:%d.%m.%Y}" if fixed.correction_date else ""
             return f"получено исправление № {fixed.correction_number}{when}"
         return "ошибок в документе больше нет" if doc.status != "errors" else ""
+    if req.kind == "payment" and req.ref_type == "bank_op":      # v1.70.98: пришёл чек или документ
+        from ..bank import service as bank
+        return bank.satisfied(db, req.ref_id)
     return ""
 
 
@@ -467,8 +479,8 @@ def plan(db: Session, company_id: str, period: str, s: DocRequestSettings | None
     personal: dict[str, list[DocRequest]] = {}
     common: list[DocRequest] = []
     for req in items:
-        # чек сотрудника — ему лично; сотрудника в компании больше нет — запрос уходит руководителю
-        if req.kind == "receipt" and req.assignee_id in active:
+        # чек сотрудника и покупка по его карте — ему лично; сотрудника в компании больше нет — руководителю
+        if req.kind in PERSONAL and req.assignee_id in active:
             personal.setdefault(req.assignee_id, []).append(req)
         else:
             common.append(req)

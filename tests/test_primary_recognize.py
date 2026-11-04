@@ -634,7 +634,11 @@ def test_confirm_refuses_forged_or_foreign_tokens(client, firms):  # noqa: F811
     _, a, b = firms
     body = _recognize(client, a["hdr"], "upd.pdf", FIXTURE.read_bytes()).json()
     base = {"source": "pdf", "token": body["token"], "file_sha256": body["file_sha256"], "draft": body["draft"]}
-    for change in ({"file_sha256": "0" * 64}, {"source": "scan"}, {"token": body["token"][:-1] + "0"}, {"token": "x"}):
+    token = body["token"]
+    # v1.70.98: последний знак меняется всегда (раньше с вероятностью 1/16 «подделка» совпадала с настоящим токеном)
+    forged = token[:-1] + ("1" if token[-1] == "0" else "0")
+    assert forged != token
+    for change in ({"file_sha256": "0" * 64}, {"source": "scan"}, {"token": forged}, {"token": "x"}):
         res = client.post("/api/v1/primary/confirm", headers=a["hdr"], json={**base, **change})
         assert res.status_code == 400 and "распознайте файл заново" in res.json()["detail"]
     assert client.post("/api/v1/primary/confirm", headers=b["hdr"], json=base).status_code == 400

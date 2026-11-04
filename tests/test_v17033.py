@@ -192,6 +192,8 @@ class TestNoInlineStyles:
         элемент оформления — браузер не сообщит об ошибке."""
         html = no_comments(read(path))
         css = read(APP_CSS)
+        if path is INDEX:                       # v1.70.98: второй файл стилей — заставка загрузки
+            css = css + "\n" + read(ROOT / "app/static/css/splash.css")
         if path is MAXAPP:                      # у MAX-приложения свой <style>
             css = css + "\n" + re.search(r"<style>([\s\S]*?)</style>", html).group(1)
         css_body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
@@ -694,7 +696,7 @@ class TestRelease:
     # требование «своя запись первая» проверяет test_v17041.
     # v1.70.45: VERSION здесь — ТЕКУЩАЯ версия (класс сверяет точки
     # синхронизации, CHANGELOG и журнал), поэтому поднимается каждый выпуск.
-    VERSION = "1.70.97"
+    VERSION = "1.70.98"
 
     def test_all_sync_points(self):
         points = [

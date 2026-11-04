@@ -739,6 +739,9 @@ class TestNoDeadCss:
             used |= set(attr.split())
         defined = {n for _c, sel, _l, _p in rules_with_context()
                    for n in re.findall(r"\.([A-Za-z][\w-]*)", sel)}
+        # v1.70.98: у index.html второй файл стилей — заставка загрузки (css/splash.css)
+        splash = re.sub(r"/\*.*?\*/", "", read(ROOT / "app/static/css/splash.css"), flags=re.S)
+        defined |= set(re.findall(r"\.([A-Za-z][\w-]*)", splash))
         unstyled = sorted(c for c in used if c not in defined and c not in JS_HOOK_CLASSES)
         assert not unstyled, f"классы разметки без стиля и не хуки: {unstyled}"
 
@@ -791,7 +794,7 @@ class TestNoDeadCss:
 class TestRelease:
     # v1.70.41: точки синхронизации живут дальше; свою версию и
     # требование «своя запись первая» проверяет test_v17041.
-    VERSION = "1.70.97"
+    VERSION = "1.70.98"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

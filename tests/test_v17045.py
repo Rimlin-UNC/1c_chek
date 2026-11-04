@@ -1311,7 +1311,10 @@ class TestGate:
         """Схемы вынесены из статики: старый адрес отдаёт оболочку SPA."""
         for name in SVG_FILES:
             r = client.get(f"/img/api/{name}")
-            assert "<svg" not in r.text, f"{name} по-прежнему публична"
+            # v1.70.98: в оболочке SPA есть встроенные SVG заставки загрузки — проверяем, что это не файл схемы
+            assert "<!DOCTYPE html>" in r.text and 'id="app-shell"' in r.text, f"{name}: не оболочка SPA"
+            assert not r.text.lstrip().startswith(("<svg", "<?xml")), f"{name} по-прежнему публична"
+            assert "image/svg" not in r.headers.get("content-type", ""), f"{name} по-прежнему публична"
             assert not (ROOT / "app/static/img/api" / name).exists()
 
     def test_applications_require_verified_status(self, client, letters_box):

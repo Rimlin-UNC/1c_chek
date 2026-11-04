@@ -2234,6 +2234,11 @@ label.field[hidden] { display: none; }
 .dreq-error:empty { display: none; }
 .dreq-grid { display: grid; gap: 8px 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin: 8px 0; }
 .dreq-grid .field input { width: 100%; }
+/* v1.70.98 (T-45): банковская выписка — вкладки, группы «к возмещению» по сотрудникам */
+.bank-tabs { margin: 4px 0 10px; flex-wrap: wrap; }
+.bank-group { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.bank-group h4 { margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.bank-purpose { max-width: 360px; overflow-wrap: anywhere; }
 .dreq-check { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; cursor: pointer; }
 .dreq-check input { margin-top: 3px; flex: none; }
 .dreq-set { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px 8px; margin: 8px 0; }

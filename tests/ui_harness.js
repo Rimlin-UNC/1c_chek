@@ -251,6 +251,16 @@ sandbox.fetch = async (url, opts) => {
                           amount: 51000, status: 'open', assignee: '' }],
                 summary: { open: 1, received: 0, cancelled: 0 }, schedule: [], discipline: { share: null } };
   }
+  // v1.70.98: банковская выписка — платёж без документов и итоги (T-45)
+  if (String(url).includes('/api/v1/bank?')) {
+    specialPayload = true;
+    payload = { company: { id: 'c1', name: 'Ромашка' }, status: 'open', statements: [], staff: [],
+                operations: [{ id: 'op1', date: '2026-10-12', number: '14', amount: 15000, kind: 'transfer', card_tail: '',
+                               card_owner: '', counterparty_name: 'ООО «Песок»', counterparty_inn: '7702345678',
+                               purpose: 'Оплата по счёту № 45', status: 'open', match_note: '', decided_by: '' }],
+                totals: { open: { count: 1, amount: 15000 }, matched: { count: 2, amount: 12430 }, ignored: { count: 0, amount: 0 } },
+                reimburse: { pending_total: 1700, pending_count: 1 }, settings: { retention_days: 1095, cards: [] } };
+  }
   // v1.70.96: первичка — проверка выгрузки в 1С (T-60)
   if (String(url).endsWith('/api/v1/primary/export/check')) {
     specialPayload = true;
@@ -1026,6 +1036,18 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     await vcP.querySelector('#dreq-detect').onclick();
     const det = apiLog.slice(fromDet).find((c) => c.method === 'POST' && c.url === '/api/v1/doc-requests/detect');
     ok(det && det.body.period === '2026-10', 'v1.70.97: «Найти недостающее» ушло на сервер за выбранный месяц');
+    // v1.70.98 (T-45): «Банк: выписка» — платежи без документов и «к возмещению» в итоге
+    const fromB = apiLog.length;
+    sandbox.location.hash = '#/bank';
+    sandbox.route();
+    await tickP(80);
+    ok(sandbox.location.hash === '#/bank', 'v1.70.98: бухгалтер открыл «Банк: выписка» — раздел в его пространстве');
+    ok(vcP.innerHTML.includes('Банк: выписка'), 'v1.70.98: экран банковской выписки нарисован');
+    ok(apiLog.slice(fromB).some((c) => c.url.startsWith('/api/v1/bank?')), 'v1.70.98: операции запрошены у сервера');
+    ok(vcP.querySelector('#bank-out').innerHTML.includes('ООО «Песок»'), 'v1.70.98: виден платёж без документов');
+    ok(vcP.querySelector('#bank-kpi').textContent.includes('без документов: 1')
+       && vcP.querySelector('#bank-kpi').textContent.includes('к возмещению'),
+       'v1.70.98: в итоге — платежи без документов и сумма к возмещению');
     vcP.isConnected = undefined;
   }
 

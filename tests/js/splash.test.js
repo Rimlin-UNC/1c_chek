@@ -9,7 +9,10 @@
    Тест поднимает НАСТОЯЩИЙ app.js в jsdom: разметка index.html, заглушка
    fetch, билет в адресе — и сверяет, что заставка снята, экран входа и
    модальное окно ожидания видимы. Три сценария: билет в запросе, билет
-   во фрагменте, обычный вход без токена. */
+   во фрагменте, обычный вход без токена.
+   v1.70.98: заставка — «chek.ymaster.ru» (#ym-splash в index.html, js/splash.js).
+   Здесь splash.js не выполняется — проверяется запасная ветка (разметка
+   скрыта); четвёртый сценарий — с контроллером: app.js зовёт ymSplash.ready(). */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -121,7 +124,7 @@ describe('заставка на входе по билету (v1.70.66)', () => 
 
   it('билет в запросе: заставка снята, вход и окно ожидания видимы', () => {
     bootApp('/?maxlogin=' + TICKET);
-    const splash = document.getElementById('boot-splash');
+    const splash = document.getElementById('ym-splash');
     expect(splash).not.toBeNull();
     expect(splash.style.display).toBe('none');
     const login = document.getElementById('login-screen');
@@ -134,15 +137,28 @@ describe('заставка на входе по билету (v1.70.66)', () => 
 
   it('билет во фрагменте (поток приглашений): заставка снята', () => {
     bootApp('/#/max-login/' + TICKET);
-    const splash = document.getElementById('boot-splash');
+    const splash = document.getElementById('ym-splash');
     expect(splash.style.display).toBe('none');
   });
 
   it('без билета и токена: заставка снята, форма входа на экране', () => {
     bootApp('/');
-    const splash = document.getElementById('boot-splash');
+    const splash = document.getElementById('ym-splash');
     expect(splash.style.display).toBe('none');
     const login = document.getElementById('login-screen');
     expect(login.classList.contains('hidden')).toBe(false);
+  });
+
+  it('v1.70.98: с контроллером заставки app.js передаёт готовность, а не прячет разметку', () => {
+    const ready = vi.fn();
+    window.ymSplash = { ready, setVersion: vi.fn(), show: vi.fn() };
+    try {
+      bootApp('/?maxlogin=' + TICKET);
+      expect(ready).toHaveBeenCalled();
+      expect(document.getElementById('ym-splash').style.display).toBe('');
+      expect(document.getElementById('boot-splash')).toBeNull();   // прежней заставки больше нет
+    } finally {
+      delete window.ymSplash;
+    }
   });
 });

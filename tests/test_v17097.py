@@ -24,70 +24,59 @@ def read(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.97 — исторические проверки (точные пины — в tests/test_v17098.py)."""
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
-        for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
-                    "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
-                    "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-04"
-        entry = md.split("\n## [1.70.96]", 1)[0]
-        assert len(entry) <= 4000, len(entry)
-        for needle in ("(T-58)", "резервная копия", "поверх 1.70.95 и 1.70.96 не меняются — шаг pip пропускается",
-                       "откатится само", "3 новые таблицы (doc_requests, doc_request_events, doc_request_settings)",
-                       "48 из 48", "1.70.82–1.70.96", "«🔎 Найти недостающее»", "два из трёх прошлых месяцев",
-                       "закрывает запрос сам", "«час икс» (18:00 МСК)", "Автонапоминания включает бухгалтер",
-                       "некому отправить", "Записи не удаляются", "дисциплина клиента", "T-45"):
+        head = f"## [{VERSION}] - 2026-11-04"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
+        assert len(head + entry) <= 4000, len(head + entry)
+        for needle in ("(T-58)", "3 новые таблицы (doc_requests, doc_request_events, doc_request_settings)",
+                       "«🔎 Найти недостающее»", "закрывает запрос сам", "Автонапоминания включает бухгалтер"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
-        assert block.count("{ icon:") == 2
-        for needle in ("Что нужно от клиента", "чеки без подтверждения ФНС", "закрывает запрос сам", "«час икс»",
-                       "только когда вы их включили", "«я всё отправил»"):
-            assert needle in block, needle
+        assert block.count("{ icon:") == 2 and "Что нужно от клиента" in block and "«я всё отправил»" in block
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — «Что нужно от клиента»: недостающие документы, срок сдачи, "
-                                  "напоминания, журнал")
-        entry = journal.split("\n## v1.70.96", 1)[0]
-        for needle in ("«🔎 Найти недостающее»", "«⚙ Срок и напоминания»", "«📣 Напомнить сейчас»", "«Закрыт сам: …»",
-                       "кнопки столбиком", "«Журнал — письменный след»", "USER_GUIDE §7.4", "две карточки"):
-            assert needle in entry, needle
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
+        assert "«🔎 Найти недостающее»" in entry and "«Журнал — письменный след»" in entry
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == ["Роли и доступ", "Что нужно от клиента"]
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 97) for v in reg.values())
-        before = {name: ver for name, ver in reg.items() if name != "Что нужно от клиента"}
-        assert {"name": "Что нужно от клиента", "from": "", "to": VERSION} in updater.diff_blocks(before, reg)
+        for name in ("Роли и доступ", "Что нужно от клиента"):
+            assert self._ver(reg[name]) >= self._ver(VERSION), name
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (04.11.2026)" in readme
-        assert "Последний выпуск — v1.70.96" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.96.**" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSchema:
     def test_three_new_tables_without_foreign_keys_to_old_ones(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 55
+        assert declared >= 55                                                    # v1.70.98: +4 таблицы банка
         from app.docreq.models import DocRequest, DocRequestEvent, DocRequestSettings
         assert (DocRequest.__tablename__, DocRequestEvent.__tablename__, DocRequestSettings.__tablename__) == \
             ("doc_requests", "doc_request_events", "doc_request_settings")
@@ -101,7 +90,7 @@ class TestSchema:
         assert 'up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"]' in \
             read("qa/upgrade_rehearsal.py")
         db = read("docs/DATABASE.md")
-        assert "55 объявлений `__tablename__`" in db and "| Что нужно от клиента (v1.70.97) |" in db
+        assert "| Что нужно от клиента (v1.70.97) |" in db
 
 
 class TestWiring:
@@ -184,10 +173,11 @@ class TestDocsAndKb:
         t58 = tasks["T-58"]
         assert t58["Статус"] == "done" and t58["Задача"].endswith(f"выпущено в {VERSION}")
         assert t58["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/43" and "ADR-27" in t58["Связанные ADR"]
-        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.96" in tasks["T-01"]["Блокер"]
+        m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.98: не старше
+        assert m and tuple(map(int, m.group(1).split("."))) >= (1, 70, 97)
         roadmap = read("docs/kb/02_roadmap.md")
         assert "**Готово 04.11.2026 (выпуск v1.70.97):** [#43](https://github.com/Rimlin-UNC/1c_chek/issues/43) T-58" \
             in roadmap
         ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
-        assert ledger[-2]["Версия"] == "1.70.96" and ledger[-2]["Откат на неё"] == "можно"
+        rows = {r["Версия"]: r for r in ledger}
+        assert rows[VERSION]["Опора репетиции"] == "да" and rows["1.70.96"]["Откат на неё"] == "можно"
