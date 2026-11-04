@@ -347,3 +347,28 @@ test('первичка: отмеченный документ выгружает
   expect(body).toContain(`НомерДок="${number}"`);
   await expect(row).toContainText('✓');
 });
+
+// v1.70.97 (T-58): «Что нужно от клиента» — администратор выбирает компанию, добавляет запрос документа,
+// отмечает его полученным; в журнале — письменный след обоих событий.
+test('что нужно от клиента: запрос документа, отметка «получено» и журнал', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/docreq"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента');
+  await page.locator('#dreq-company').selectOption({ label: 'E2E Альфа' });
+  await expect(page.locator('#dreq-head')).toContainText('Срок сдачи за');
+  await expect(page.locator('#dreq-period')).toHaveValue(/^\d{4}-\d{2}$/);
+  const title = `E2E акт сверки ${Date.now()}`;
+  await page.getByRole('button', { name: '＋ Добавить запрос' }).click();
+  await page.fill('#dreq-a-title', title);
+  await page.fill('#dreq-a-amount', '1 500,00');
+  await page.getByRole('button', { name: 'Добавить', exact: true }).click();
+  const row = page.locator('#dreq-out tbody tr', { hasText: title });
+  await expect(row).toContainText('✍️ запрос бухгалтера');
+  await expect(row.locator('.chip')).toHaveText('Ждём');
+  await row.getByRole('button', { name: '✓ Получено' }).click();
+  await expect(row.locator('.chip')).toHaveText('Получено');
+  const journal = page.locator('#dreq-journal');
+  await expect(journal).toContainText('Запрос создан');
+  await expect(journal).toContainText('Получено');
+});

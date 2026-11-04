@@ -234,6 +234,23 @@ sandbox.fetch = async (url, opts) => {
     specialPayload = true;
     payload = { result: 'created', document: { kind: 'УПД', doc_number: 'Б-1', doc_date: '2026-10-20' }, issues: [] };
   }
+  // v1.70.97: «что нужно от клиента» — запросы, журнал, поиск недостающего (T-58)
+  if (String(url).includes('/api/v1/doc-requests/journal')) {
+    specialPayload = true;
+    payload = { items: [{ id: 'e1', kind: 'created', slot: '', channel: '', recipient: '', actor: 'программа', ok: true,
+                          at: '2026-11-01T06:00:00', text: 'ожидается по истории' }] };
+  } else if (String(url).includes('/api/v1/doc-requests/detect')) {
+    specialPayload = true;
+    payload = { created: 1, closed: 0 };
+  } else if (String(url).includes('/api/v1/doc-requests?')) {
+    specialPayload = true;
+    payload = { company: { id: 'c1', name: 'Ромашка' }, period: '2026-10', period_title: 'октябрь 2026',
+                deadline_human: '5 ноября 2026, 18:00', overdue: false,
+                settings: { enabled: false, remind_days: [3, 1, 0], channels: [], roles: ['manager'] }, channels: {},
+                items: [{ id: 'r1', kind: 'expected', title: 'Документ от ООО «Арендодатель» за октябрь 2026',
+                          amount: 51000, status: 'open', assignee: '' }],
+                summary: { open: 1, received: 0, cancelled: 0 }, schedule: [], discipline: { share: null } };
+  }
   // v1.70.96: первичка — проверка выгрузки в 1С (T-60)
   if (String(url).endsWith('/api/v1/primary/export/check')) {
     specialPayload = true;
@@ -994,6 +1011,21 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     await slotE.querySelector('#prim-exp-go').onclick();
     const exp = apiLog.slice(fromGo).find((c) => c.method === 'POST' && c.url === '/api/v1/primary/export');
     ok(exp && exp.body.format === 'upd', 'v1.70.96: «Скачать» запросила файл для 1С');
+    // v1.70.97 (T-58): «Что нужно от клиента» — срок сдачи, запросы, журнал, поиск недостающего
+    const fromD = apiLog.length;
+    sandbox.location.hash = '#/docreq';
+    sandbox.route();
+    await tickP(80);
+    ok(vcP.innerHTML.includes('Что нужно от клиента'), 'v1.70.97: бухгалтер открыл «Что нужно от клиента»');
+    ok(apiLog.slice(fromD).some((c) => c.url.startsWith('/api/v1/doc-requests?')), 'v1.70.97: запросы месяца запрошены у сервера');
+    ok(vcP.querySelector('#dreq-head').innerHTML.includes('5 ноября 2026, 18:00')
+       && vcP.querySelector('#dreq-out').innerHTML.includes('Арендодатель'),
+       'v1.70.97: виден срок сдачи и что нужно от клиента');
+    ok(apiLog.slice(fromD).some((c) => c.url.startsWith('/api/v1/doc-requests/journal')), 'v1.70.97: журнал запрошен');
+    const fromDet = apiLog.length;
+    await vcP.querySelector('#dreq-detect').onclick();
+    const det = apiLog.slice(fromDet).find((c) => c.method === 'POST' && c.url === '/api/v1/doc-requests/detect');
+    ok(det && det.body.period === '2026-10', 'v1.70.97: «Найти недостающее» ушло на сервер за выбранный месяц');
     vcP.isConnected = undefined;
   }
 

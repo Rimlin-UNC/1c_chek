@@ -198,6 +198,7 @@ ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
 res = {"version": app_version(),
        "unified_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("unified_")),
        "primary_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_")),
+       "docreq_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("doc_request")),
        "fingerprint_after_init": fingerprint()}
 with SessionLocal() as db:
     res["docs_after_init"] = db.query(UnifiedDocument).count()
@@ -690,9 +691,10 @@ def main() -> int:
         up = run_phase("обновление", UPGRADE, new_dir, env)
         out["upgrade"] = up
         check(checks, len(up["unified_tables"]) == 6
-              and up.get("primary_tables") == ["primary_document_lines", "primary_documents"],
-              "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links) "
-              "и 2 таблицы первички (с v1.70.94)")
+              and up.get("primary_tables") == ["primary_document_lines", "primary_documents"]
+              and up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"],
+              "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links), "
+              "2 таблицы первички (с v1.70.94) и 3 таблицы «что нужно от клиента» (с v1.70.97)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

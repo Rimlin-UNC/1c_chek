@@ -87,6 +87,7 @@ def _app_metadata():
     from app import models  # noqa: F401
     from app.b2b import models as _b2b  # noqa: F401
     from app.database import Base
+    from app.docreq import models as _docreq  # noqa: F401 — v1.70.97: что нужно от клиента
     from app.openstack_monitor import models as _os  # noqa: F401
     from app.pool import models as _pool  # noqa: F401
     from app.primary import models as _primary  # noqa: F401 — v1.70.94: первичка (УПД)

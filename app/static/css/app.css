@@ -2226,3 +2226,17 @@ label.field[hidden] { display: none; }
 .prim-export-format { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; cursor: pointer; }
 .prim-export-format input { margin-top: 3px; flex: none; }
 .prim-export-format .form-hint { display: block; }
+/* v1.70.97 (T-58): «Что нужно от клиента» — запросы, срок сдачи, напоминания, журнал */
+.dreq-controls, .dreq-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin: 8px 0; }
+.dreq-head p { margin: 4px 0; }
+.dreq-actions { display: flex; flex-direction: column; gap: 4px; align-items: stretch; min-width: 112px; }
+.dreq-actions .btn, .dreq-sum { white-space: nowrap; }
+.dreq-error:empty { display: none; }
+.dreq-grid { display: grid; gap: 8px 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin: 8px 0; }
+.dreq-grid .field input { width: 100%; }
+.dreq-check { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; cursor: pointer; }
+.dreq-check input { margin-top: 3px; flex: none; }
+.dreq-set { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px 8px; margin: 8px 0; }
+.dreq-set legend { font-weight: 600; padding: 0 4px; }
+.dreq-text { white-space: pre-wrap; margin: 6px 0 0; font: inherit; }
+.dreq-failed td { color: var(--bad-text); }

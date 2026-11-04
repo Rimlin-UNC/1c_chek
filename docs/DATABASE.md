@@ -26,7 +26,7 @@
 | Переход рабочей БД на PostgreSQL/Supabase | **не выполняется** — решение владельца 03.11.2026 (ADR-14, T-08): рабочая база остаётся на рабочем сервере (SQLite), её копии и выгрузки сюда не переносятся; здесь — только синтетические тесты. Совместимость кода с PostgreSQL 17 по-прежнему проверяет CI на синтетических данных (сквозной тест #20 нашёл и исправил: чистая установка на PostgreSQL падала на компании по умолчанию). Перенос рабочей базы с поштучной сверкой ([#23](https://github.com/Rimlin-UNC/1c_chek/issues/23)) отменён | [unified_receipts_wip.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/unified_receipts_wip.md) |
 | Прототип миграции копии `qa/migrate_receipt_copy.py` | экспериментальный, не для рабочих данных | unified_receipts_wip.md |
 | PR #2 | WIP, «не готов к эксплуатации»; целиком вошёл в PR #3 | [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2) |
-| Совместимость схемы приложения с проектом Supabase | **проверена в CI**: все 52 таблицы приложения (с 1.70.85 — и `unified_company_links`, с 1.70.94 — `primary_documents` и `primary_document_lines`) создаются на PostgreSQL 17 рядом с демо-контуром, аудит RLS/FK без ошибок | `tests/test_migration_compat_postgres.py`, раздел «Совместимость схемы приложения с Supabase» |
+| Совместимость схемы приложения с проектом Supabase | **проверена в CI**: все 55 таблиц приложения (с 1.70.85 — и `unified_company_links`, с 1.70.94 — `primary_documents` и `primary_document_lines`, с 1.70.97 — `doc_requests`, `doc_request_events` и `doc_request_settings`) создаются на PostgreSQL 17 рядом с демо-контуром, аудит RLS/FK без ошибок | `tests/test_migration_compat_postgres.py`, раздел «Совместимость схемы приложения с Supabase» |
 | Сквозной тест миграции (1.70.80 → текущая → перенос архива → сверка → откат и повтор) | **реализован**: `tests/test_migration_e2e.py`, CI на Python 3.11 и 3.12, SQLite и PostgreSQL 17 — 32 проверки на каждом (с 1.70.88 — сверка копий после правки старой версией, с 1.70.89 — правило слияния, с 1.70.90 — сохранение формы правки у чека по QR, с 1.70.91 — данные единой записи в карточке); шаг 6 (перенос SQLite → PostgreSQL) отменён решением владельца 03.11.2026 (ADR-14, [#23](https://github.com/Rimlin-UNC/1c_chek/issues/23)) | [issue #20](https://github.com/Rimlin-UNC/1c_chek/issues/20), раздел «Сквозной тест миграции (#20)» |
 
 ## Рабочая БД (SQLite, SQLAlchemy)
@@ -47,7 +47,7 @@
      слияния: пустое поле копии ничего не стирает.
 
   Версии схемы отслеживаются по CHANGELOG.
-- **Таблицы.** 52 объявления `__tablename__` в коде (с 1.70.85 — `unified_company_links`, с 1.70.94 — `primary_documents` и `primary_document_lines`):
+- **Таблицы.** 55 объявлений `__tablename__` в коде (с 1.70.85 — `unified_company_links`, с 1.70.94 — `primary_documents` и `primary_document_lines`, с 1.70.97 — три таблицы «что нужно от клиента»):
 
 | Домен | Таблицы |
 |---|---|
@@ -56,6 +56,7 @@
 | Чек-Пул | `pool_users`, `pool_receipts`, `pool_items`, `pool_points`, `pool_consents`, `pool_tokens`, `pool_fingerprints`, `pool_ip_log`, `pool_signals`, `pool_withdrawals`, `pool_achievements`, `pool_referrals`, `pool_leads`, `pool_api_keys`, `pool_api_calls` |
 | Единый реестр (v1.70.81–85) | `unified_documents`, `unified_items`, `unified_ownership`, `unified_origins`, `unified_events`, `unified_company_links` (v1.70.85) |
 | Первичка (v1.70.94) | `primary_documents`, `primary_document_lines` — электронные УПД и счета-фактуры; с v1.70.95 в `primary_documents` колонка `source` (xml, pdf, scan, manual — откуда документ), добавляется к таблице 1.70.94 при обновлении, по умолчанию `xml`; с v1.70.96 колонку `exported_at` заполняет выгрузка в 1С (из программы и `/onec/v1/primary/ack`) — схема не менялась |
+| Что нужно от клиента (v1.70.97) | `doc_requests` — недостающие документы компании за месяц (найдены программой или добавлены бухгалтером; не удаляются, а отменяются); `doc_request_events` — журнал: создан, напоминание (канал, получатель, текст), получен, отменён — письменный след; `doc_request_settings` — срок сдачи, «час икс», расписание и каналы напоминаний компании. Внешних ключей на старые таблицы нет (ADR-09), создаются при запуске |
 | B2B | `b2b_applications`, `b2b_companies`, `b2b_tokens`, `b2b_checks`, `b2b_events` |
 | Почта и события | `mail_rules`, `mail_log`, `webhook_logs` |
 | Мониторинг OpenStack | `openstack_settings`, `openstack_metrics`, `openstack_sync_log` |

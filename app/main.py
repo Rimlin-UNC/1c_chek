@@ -23,6 +23,7 @@ from .config import settings
 from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
+from .docreq import router as docreq_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
@@ -127,8 +128,30 @@ async def lifespan(app: FastAPI):
             except Exception:                            # noqa: BLE001
                 log.exception("mail bot tick failed")
 
+    # v1.70.97 (T-58): напоминания «что нужно от клиента» — тик раз в минуту, отдельно от ботов:
+    # приходят по любому подключённому каналу (Telegram, MAX, почта) у компаний, где их включил бухгалтер
+    def _doc_requests_once() -> None:
+        from .database import SessionLocal
+        from .docreq import service as docreq
+        db = SessionLocal()
+        try:
+            docreq.tick(db)
+        finally:
+            db.close()
+
+    async def _doc_requests_loop() -> None:
+        import asyncio as _aio
+        while True:
+            await _aio.sleep(60)
+            try:      # в отдельном потоке: отправка по сети не должна держать сервер
+                await _aio.to_thread(_doc_requests_once)
+            except Exception:                            # noqa: BLE001
+                log.exception("doc requests tick failed")
+
     import asyncio as _asyncio
     _asyncio.get_running_loop().create_task(_mail_bot_loop())
+    if _os.environ.get("YM_DOCREQ_OFF") != "1":           # тесты вызывают тик сами, с подменёнными каналами
+        _asyncio.get_running_loop().create_task(_doc_requests_loop())
     if secret_is_weak(settings.SECRET_KEY):              # v1.67.1: аудит
         log.warning("SECRET_KEY не задан, дефолтный или короче 32 символов — "
                     "задайте длинный случайный SECRET_KEY в .env (иначе "
@@ -423,6 +446,7 @@ app.include_router(dashboard.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(unified_router.router)  # единый фискальный документ
 app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
+app.include_router(docreq_router.router)  # v1.70.97: что нужно от клиента (T-58)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

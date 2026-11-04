@@ -226,6 +226,15 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "1С забрала УПД и счета-фактуры", f"количество: {d.get('count', 0)}"
     if action == "onec_primary_ack":
         return "1С подтвердила загрузку УПД", f"количество: {d.get('count', 0)}"
+    # v1.70.97 (T-58): что нужно от клиента
+    if action == "docreq_settings_updated":
+        state = "включены" if d.get("enabled") else "выключены"
+        return "изменены срок сдачи и напоминания клиенту", \
+            f"компания: „{d.get('company', '—')}“, срок: {d.get('deadline_day', '—')}-е число {d.get('x_hour', '')}, " \
+            f"напоминания {state}"
+    if action == "docreq_reminded":
+        return "клиенту отправлено напоминание о документах", \
+            f"компания: „{d.get('company', '—')}“, отправлено: {d.get('sent', 0)}, не доставлено: {d.get('failed', 0)}"
     if action == "mapping_updated":
         return "обновлены правила сопоставления статей", ""
     if action == "app_settings_updated":

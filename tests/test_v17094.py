@@ -115,7 +115,8 @@ class TestWiring:
         assert "import { viewPrimary } from './primary.js';" in js
         assert "  primary: 'Первичка'," in js
         assert "primary: (c, alive) => viewPrimary(c, { alive, isAdmin: isAdmin()," in js
-        assert js.count("'primary', 'settings']") == 2           # пространства admin и accountant
+        # пространства admin и accountant (v1.70.97: между ними — «что нужно от клиента»)
+        assert len(re.findall(r"'primary', (?:'docreq', )?'settings'\]", js)) == 2
         html = read("app/static/index.html")
         assert '<a href="#/primary" data-view="primary" class="nav-item accountant-only">' in html
         screen = read("app/static/js/primary.js")

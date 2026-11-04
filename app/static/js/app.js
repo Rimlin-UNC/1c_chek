@@ -20,6 +20,7 @@ import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный rea
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
 import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
+import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -66,6 +67,7 @@ const VIEW_TITLES = {
   supabase: 'Supabase демо',
   conflicts: 'Разбор конфликтов',      // v1.70.83: единый реестр, администратор
   primary: 'Первичка',                 // v1.70.94: электронные УПД и счета-фактуры (T-53)
+  docreq: 'Что нужно от клиента',      // v1.70.97: недостающие документы и напоминания (T-58)
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -110,10 +112,10 @@ const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
                         'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts',
-                        'primary', 'settings'],
+                        'primary', 'docreq', 'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'supabase', 'primary', 'settings'],
+                        'poolpick', 'supabase', 'primary', 'docreq', 'settings'],
                 secs: ['checks', 'personal'] },
   manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
                 secs: ['personal'] },
@@ -3947,6 +3949,8 @@ function route(silent = false) {
     conflicts: viewUnifiedReview,         // v1.70.83: разбор конфликтов единого реестра
     primary: (c, alive) => viewPrimary(c, { alive, isAdmin: isAdmin(),   // v1.70.94: первичка (T-53)
       companies: state.companies, companyFilter: state.companyFilter }),
+    docreq: (c, alive) => viewDocRequests(c, { alive, isAdmin: isAdmin(),   // v1.70.97: что нужно от клиента
+      companies: state.companies, companyFilter: state.companyFilter }),
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
@@ -6326,6 +6330,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.97': [
+    { icon: '📋', title: 'Что нужно от клиента — программа найдёт сама',
+      text: 'Новый раздел для бухгалтера: программа сама находит, чего не хватает за месяц, — документы от '
+        + 'поставщиков, которые присылают их каждый месяц, чеки без подтверждения ФНС, УПД с ошибками. '
+        + 'Пришедший документ закрывает запрос сам.' },
+    { icon: '📣', title: 'Срок сдачи, «час икс» и напоминания',
+      text: 'Срок — 5-е число следующего месяца и «час икс» 18:00 (настраивается). Напоминания клиенту в Telegram, '
+        + 'MAX и почту — до срока и после, только когда вы их включили. Каждое сообщение — в журнале: '
+        + 'письменный след на случай «я всё отправил».' },
+  ],
   '1.70.96': [
     { icon: '⬇', title: 'Первичка — в 1С без ручного ввода',
       text: 'Кнопка «В 1С» в «Первичке» готовит файл УПД, который типовая 1С:Бухгалтерия загружает сама: '
@@ -10395,6 +10409,7 @@ const AUDIT_KIND = {
   fns_settings_updated: ['info', '⚙️'], onec_token_updated: ['info', '🔗'],
   onec_pull: ['ok', '🔗'], onec_ack: ['ok', '🔗'],
   primary_exported: ['ok', '📤'], onec_primary_pull: ['ok', '🔗'], onec_primary_ack: ['ok', '🔗'],   // v1.70.96 (T-60)
+  docreq_settings_updated: ['info', '⚙️'], docreq_reminded: ['ok', '📣'],   // v1.70.97 (T-58)
   mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],
   external_settings_updated: ['info', '⚙️'],
   telegram_settings_saved: ['info', '✈️'], demo_data_loaded: ['info', '🧪'],
