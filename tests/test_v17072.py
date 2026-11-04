@@ -94,7 +94,8 @@ class TestTicketDocument:
         assert first["product_type_name"] == "Товар"
         assert first["payment_type_name"] == "Полный расчёт"
         assert first["measure"] == "шт"
-        assert first["nds_name"] == "значение 20 (ставка или код)"
+        # v1.70.93: 20 — не код тега 1199 (коды 1–12), значит ставка
+        assert first["nds_name"] == "20 %"
 
     def test_item_marking_supplier_industry_details(self, doc):
         second = doc["items"][1]
@@ -202,7 +203,7 @@ class TestRefs:
         assert fns_refs.product_type_name(1) == "Товар"
         assert fns_refs.payment_type_name(4) == "Полный расчёт"
         assert fns_refs.taxation_name(2) == "УСН (доходы − расходы)"
-        assert fns_refs.nds_name("20") == "значение 20 (ставка или код)"
+        assert fns_refs.nds_name("20") == "20 %"          # v1.70.93: коды 1–12, 20 — ставка
         assert fns_refs.measure_name("796") == "шт"
         assert "Минпромторг" in fns_refs.foiv_name("020")
 
@@ -716,7 +717,8 @@ def test_saved_extra_not_overwritten_by_derived_values():
     for key, value in extra.items():
         assert saved[key] == value
     card = build_card(receipt)
-    assert card['document']['items'][0]['nds_name'] == 'значение 11 (ставка или код)'
+    # v1.70.93: код 11 тега 1199 — НДС 22 % (приказ ФНС от 08.12.2025 № ЕД-7-20/1050@)
+    assert card['document']['items'][0]['nds_name'] == '22 %'
     assert '9297247158114454001' in card['saved_data_json']
     assert fns_refs.nds_name(None) == 'без НДС или не указано'
     assert fns_refs.nds_name('11') != '11 %'

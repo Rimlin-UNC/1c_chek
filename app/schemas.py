@@ -227,6 +227,8 @@ class PolicyPatch(BaseModel):
     limit_per_check: Optional[float] = Field(default=None, ge=0, le=10_000_000)
     limit_per_month: Optional[float] = Field(default=None, ge=0, le=1_000_000_000)
     forbidden_categories: Optional[list[str]] = None
+    # v1.70.93 (T-43): запрещённые группы товаров (app/services/goods.py)
+    forbidden_goods: Optional[list[str]] = Field(default=None, max_length=50)
 
 
 # --- v1.63.0: самообучающийся маппинг «запомнить для поставщика» --------------

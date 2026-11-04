@@ -3992,7 +3992,8 @@ function companyIdParam() {
 const POLICY_LABELS = {
   limit_check: 'сумма к учёту выше лимита чека',
   limit_month: 'превышен месячный лимит сотрудника',
-  forbidden_category: 'статья расходов запрещена политикой'
+  forbidden_category: 'статья расходов запрещена политикой',
+  forbidden_goods: 'в чеке запрещённые товары (алкоголь, табак, продукты и т. п.)'   // v1.70.93 (T-43)
 };
 function policyChip(flags) {
   if (!flags || !flags.length) return '';
@@ -5812,6 +5813,9 @@ async function openEditReceipt(r, onSaved) {
   const itemRow = (it = { name: '', quantity: 1, price: 0, total: 0 }) => {
     const row = document.createElement('div');
     row.className = 'item-row';
+    // v1.70.93: ставка и сумма НДС позиции уходят обратно — правка позиций их не сбрасывает
+    row.dataset.vatRate = it.vat_rate || 'none';
+    row.dataset.vatSum = String(it.vat_sum || 0);
     row.innerHTML = `
       <input class="it-name" value="${esc(it.name)}" placeholder="наименование позиции">
       <input class="it-qty" type="number" step="0.001" min="0" value="${it.quantity}" title="Количество">
@@ -5890,6 +5894,8 @@ async function openEditReceipt(r, onSaved) {
       quantity: parseFloat(row.querySelector('.it-qty').value) || 1,
       price: parseFloat(row.querySelector('.it-price').value) || 0,
       total: parseFloat(row.querySelector('.it-total').value) || 0,
+      vat_rate: row.dataset.vatRate || 'none',
+      vat_sum: parseFloat(row.dataset.vatSum) || 0,
     }))
     .filter(it => it.name);
 
@@ -6316,6 +6322,15 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.93': [
+    { icon: '🧾', title: 'НДС 22 % и верная ставка в выгрузке в 1С',
+      text: 'Программа понимает ставки НДС 22 % и 22/122 из чеков 2026 года, а в 1С уходит правильная ставка — '
+        + '«НДС22», «НДС20», «БезНДС» — вместо кода из чека. Правка позиций больше не сбрасывает их ставку.' },
+    { icon: '🚫', title: 'Запрещённые товары в чеке',
+      text: 'Алкоголь, табак, продукты и общепит в позициях отмечаются политикой, в карточке видно, какие позиции. '
+        + 'Личные покупки сотрудника нарушением не считаются. Стройматериалы распознаются первыми — щебень '
+        + 'и техническая соль больше не «продукты».' },
+  ],
   '1.70.92': [
     { icon: '🔐', title: 'Свой токен 1С для каждой компании',
       text: 'В «Выгрузке в 1С» появились «Токены компаний»: база 1С компании с таким токеном получает и отмечает '
@@ -9693,6 +9708,7 @@ async function receiptDrawer(id) {
         <dt>ФП</dt><dd class="cell-mono">${r.fp}</dd>
         <dt>Признак расчёта</dt><dd>${r.operation === 2 ? 'Возврат прихода' : 'Приход'}</dd>
         ${sellerRows(r)}
+        ${(r.policy_goods || []).length ? `<dt>Запрещённые товары</dt><dd>${r.policy_goods.map((h) => `${esc(h.name)} <span class="form-hint">(${esc(h.group)})</span>`).join('; ')}</dd>` : ''}
         <dt>Источник</dt><dd>${esc(r.source)}</dd>
         <dt>Кто добавил</dt><dd>${esc(r.created_by_name || r.created_by || '—')}${r.created_by_name && r.created_by ? ` <span class="form-hint">(${esc(r.created_by)})</span>` : ''}</dd>
         ${r.company_name ? `<dt>Компания</dt><dd>${esc(r.company_name)}${companyChip(r.company_id)}</dd>` : ''}
@@ -10560,6 +10576,13 @@ async function viewSettings(container, alive = routeGuard()) {
           <input id="pol-cats" placeholder="Алкоголь, Табак, Подарки" value="${esc((pol.forbidden_categories || []).join(', '))}">
           <span class="form-hint">Регистр не важен. Статья указывается в чеке
           (поле «Статья расходов»). Чеков с нарушениями сейчас: <b>${pol.flagged || 0}</b>.</span></label>
+        <div class="field" style="max-width:560px;margin-top:8px"><span>Запрещённые товары в позициях чека</span>
+          <div class="pol-goods" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px">
+          ${(pol.goods_groups || []).map((g) => `<label style="display:flex;gap:6px;align-items:center;font-size:13px">
+            <input type="checkbox" class="pol-good" value="${esc(g)}" style="width:auto" ${(pol.forbidden_goods || []).includes(g) ? 'checked' : ''}>${esc(g)}</label>`).join('')}
+          </div>
+          <span class="form-hint">Группа позиции — по наименованию (стройматериалы распознаются первыми). Позиции, отмеченные
+          сотрудником как личные, нарушением не считаются.</span></div>
         <button type="button" class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
         <div id="pol-msg" class="form-hint" style="margin-top:6px"></div>
       </div>` : ''}
@@ -12443,7 +12466,9 @@ async function viewSettings(container, alive = routeGuard()) {
         limit_per_check: parseFloat($('#pol-check').value) || 0,
         limit_per_month: parseFloat($('#pol-month').value) || 0,
         forbidden_categories: $('#pol-cats').value.split(',')
-          .map((s) => s.trim()).filter(Boolean) };
+          .map((s) => s.trim()).filter(Boolean),
+        // v1.70.93 (T-43): запрещённые группы товаров
+        forbidden_goods: [...document.querySelectorAll('.pol-good')].filter((x) => x.checked).map((x) => x.value) };
       const sel = $('#pol-company');
       if (sel && sel.value) body.company_id = sel.value;
       try {

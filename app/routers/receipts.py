@@ -1066,6 +1066,10 @@ def get_receipt(receipt_id: str,
     fill = unified_read.fills_for_receipts(db, [receipt]).get(receipt.id)
     if fill:
         d["unified_fill"] = fill
+    # v1.70.93 (T-43): какие позиции нарушают политику по товарам
+    if "forbidden_goods" in (receipt.policy_flags or ""):
+        from ..services import policy as _pol
+        d["policy_goods"] = _pol.goods_hits(receipt, _pol.forbidden_goods(db, receipt.company_id))
     return d
 
 
@@ -1216,12 +1220,16 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
             receipt.category_lc = cat.casefold()      # для регистронезависимого фильтра (кириллица)
             changed["fields"].append("category")
         if body.items is not None:
+            # v1.70.93: после правки чек читается как ручной — код тега 1199 из
+            # фискальных данных сразу переводится в ставку («1» → «20», «11» → «22»)
+            from ..services import fns_refs
+            coded = bool(receipt.details_source) and receipt.details_source != "manual_edit"
             receipt.items.clear()
             for pos, it in enumerate(body.items):
                 receipt.items.append(ReceiptItem(
                     name=it.name.strip()[:1000],
                     quantity=it.quantity, price=it.price, total=it.total,
-                    vat_rate=(it.vat_rate or "none")[:10],
+                    vat_rate=fns_refs.vat_canonical(it.vat_rate or "none", coded)[:10],
                     vat_sum=it.vat_sum or 0.0, position=pos))
             changed["fields"].append(f"items({len(body.items)})")
         if changed["fields"]:

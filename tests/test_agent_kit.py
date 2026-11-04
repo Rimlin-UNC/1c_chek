@@ -171,8 +171,8 @@ class TestAgentDocs:
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         for n in range(41, 50):
             row = tasks[f"T-{n}"]
-            # T-48 отложен владельцем 03.11.2026 (#33) — blocked, остальные — todo
-            assert row["Статус"] in ("todo", "blocked") and row["Источник"].endswith("docs/kb/10_research.md")
+            # T-48 отложен владельцем (#33) — blocked; выполненные кандидаты (T-43 в 1.70.93) — done
+            assert row["Статус"] in ("todo", "blocked", "done") and row["Источник"].endswith("docs/kb/10_research.md")
             assert f"| T-{n} " in research
             # у каждого кандидата — issue на GitHub, та же ссылка в таблице исследования
             assert row["Issue/PR"].startswith("https://github.com/Rimlin-UNC/1c_chek/issues/")

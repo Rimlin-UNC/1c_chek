@@ -354,6 +354,9 @@ def get_policy(company_id: str | None = Query(None, max_length=36),
         "limit_per_month": comp.limit_per_month if comp else None,
         "forbidden_categories": (policy_service.parse_categories(
             comp.forbidden_categories) if comp else []),
+        # v1.70.93 (T-43): запрещённые группы товаров и все группы классификатора
+        "forbidden_goods": policy_service.forbidden_goods(db, comp.id) if comp else [],
+        "goods_groups": policy_service.goods_groups(),
         "flagged": int(flagged),     # чеков с нарушениями политики сейчас
     }
 
@@ -380,12 +383,16 @@ def put_policy(body: PolicyPatch, db: Session = Depends(get_db),
                 if c and c.strip()][:50]
         comp.forbidden_categories = ", ".join(cats)
     from ..services import policy as policy_service
+    if body.forbidden_goods is not None:                        # v1.70.93 (T-43)
+        policy_service.set_forbidden_goods(db, comp.id, body.forbidden_goods)
+        db.flush()
     flagged = policy_service.refresh_company(db, comp.id)
     db.commit()
     log_action(user, "policy_updated", "company", comp.id, {
         "limit_per_check": comp.limit_per_check,
         "limit_per_month": comp.limit_per_month,
         "forbidden_categories": comp.forbidden_categories,
+        "forbidden_goods": policy_service.forbidden_goods(db, comp.id),
         "flagged": flagged})
     return {"ok": True, "message": "Политика расходов сохранена",
             "flagged": int(flagged), "company_id": comp.id}

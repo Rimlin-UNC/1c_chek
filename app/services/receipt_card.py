@@ -159,7 +159,8 @@ def normalize_ticket(ticket: dict, receipt_total: float | None = None) -> dict:
             "price": money(_get(raw_item, "price")),
             "total": money(_get(raw_item, "sum", "total", "itemSum")),
             "nds": str(_get(raw_item, "nds", default="none")),
-            "nds_name": fns_refs.nds_name(_get(raw_item, "nds", default="none")),
+            # v1.70.93: в ответе ФНС — код тега 1199 (табл. 8 ФФД, с 2026 года и 22 %)
+            "nds_name": fns_refs.nds_name(_get(raw_item, "nds", default="none"), coded=True),
             "nds_sum": money(_get(raw_item, "ndsSum", "ndsSumm")),
             "payment_type": _get(raw_item, "paymentType"),
             "payment_type_name": fns_refs.payment_type_name(
@@ -208,7 +209,7 @@ def normalize_ticket(ticket: dict, receipt_total: float | None = None) -> dict:
     for one in (_get(amounts, "amountsNds", default=[]) or []):
         if isinstance(one, dict):
             nds.append({"rate": _get(one, "nds", default=""),
-                        "rate_name": fns_refs.nds_name(_get(one, "nds")),
+                        "rate_name": fns_refs.nds_name(_get(one, "nds"), coded=True),
                         "sum": money(_get(one, "ndsSum"))})
 
     props: list[dict] = []
@@ -430,6 +431,15 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
     receipt.ext_json = json.dumps(ext, ensure_ascii=False)
     receipt.details_source = receipt.details_source or source
     receipt.full_data = bool(receipt.full_data or doc["items"])
+    # v1.70.93 (T-43): пришли позиции — пересчитать политику (запрещённые товары).
+    # Мягко, как после получения данных: статусы не трогаются, сбой политики данные
+    # не отменяет.
+    if db is not None:
+        try:
+            from . import policy
+            policy.refresh_receipt(db, receipt)
+        except Exception:                          # noqa: BLE001
+            pass
     return doc
 
 

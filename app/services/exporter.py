@@ -126,6 +126,31 @@ def _apply_mapping(receipt: Receipt, mapping: list[MappingSetting],
 # --------------------------------------------------------------------------
 #  EnterpriseData: JSON
 # --------------------------------------------------------------------------
+# v1.70.93: ставка НДС для 1С. В позициях из фискальных данных (ответ ФНС, ОФД,
+# Чек-Пул) лежит код тега 1199, у ручных — ставка (fns_refs.vat_canonical). До 1.70.93
+# код уходил в 1С как есть: «НДС1» вместо «НДС20», с 2026 года «НДС11» вместо «НДС22».
+VAT_1C = {"20": "НДС20", "10": "НДС10", "0": "НДС0", "none": "БезНДС", "20/120": "НДС20_120",
+          "10/110": "НДС10_110", "22": "НДС22", "22/122": "НДС22_122", "5": "НДС5", "7": "НДС7",
+          "5/105": "НДС5_105", "7/107": "НДС7_107", "18": "НДС18", "18/118": "НДС18_118"}
+
+
+def _coded(receipt: Receipt) -> bool:
+    """Позиции пришли из фискальных данных: число в ставке НДС — код тега 1199."""
+    return bool(receipt.details_source) and receipt.details_source != "manual_edit"
+
+
+def vat_rate_of(item, receipt: Receipt) -> str:
+    """Ставка позиции в одном виде: «20», «22/122», «none»."""
+    from . import fns_refs
+    return fns_refs.vat_canonical(item.vat_rate, _coded(receipt))
+
+
+def vat_1c(item, receipt: Receipt) -> str:
+    """Значение перечисления «СтавкиНДС» 1С для позиции."""
+    rate = vat_rate_of(item, receipt)
+    return VAT_1C.get(rate, f"НДС{rate}")
+
+
 def _ed_receipt_json(receipt: Receipt, target_object: str,
                      mapping: list[MappingSetting]) -> dict:
     """Одна выгрузка чека в структуре EnterpriseData (JSON)."""
@@ -159,7 +184,7 @@ def _ed_receipt_json(receipt: Receipt, target_object: str,
                 "Количество": item.quantity,
                 "Цена": round(item.price, 2),
                 "Сумма": round(item.total, 2),
-                "СтавкаНДС": f"НДС{item.vat_rate}" if item.vat_rate not in ("none", "") else "БезНДС",
+                "СтавкаНДС": vat_1c(item, receipt),
                 "СуммаНДС": round(item.vat_sum, 2),
             }
             for item in receipt.items
@@ -234,7 +259,7 @@ def build_enterprise_data_xml(receipts: list[Receipt],
                     ("Количество", f"{it.quantity:g}"),
                     ("Цена", f"{it.price:.2f}"),
                     ("Сумма", f"{it.total:.2f}"),
-                    ("СтавкаНДС", it.vat_rate),
+                    ("СтавкаНДС", vat_1c(it, r)),
                 ):
                     ET.SubElement(row, tag).text = str(val)
     rough = ET.tostring(root, encoding="unicode")
@@ -278,7 +303,7 @@ def build_push_payload(receipts: list[Receipt],
                         "qty": it.quantity,
                         "price": round(it.price, 2),
                         "sum": round(it.total, 2),
-                        "vat_rate": it.vat_rate,
+                        "vat_rate": vat_rate_of(it, r),
                         "vat_sum": round(it.vat_sum, 2),
                     } for it in r.items
                 ],
