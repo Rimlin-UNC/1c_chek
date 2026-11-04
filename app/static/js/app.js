@@ -19,6 +19,7 @@ import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мон�
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
+import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -64,6 +65,7 @@ const VIEW_TITLES = {
   poolpick: 'Чек-Пул: подбор для компании', // v1.37.0: бухгалтер
   supabase: 'Supabase демо',
   conflicts: 'Разбор конфликтов',      // v1.70.83: единый реестр, администратор
+  primary: 'Первичка',                 // v1.70.94: электронные УПД и счета-фактуры (T-53)
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -108,10 +110,10 @@ const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
                         'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts',
-                        'settings'],
+                        'primary', 'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'supabase', 'settings'],
+                        'poolpick', 'supabase', 'primary', 'settings'],
                 secs: ['checks', 'personal'] },
   manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
                 secs: ['personal'] },
@@ -3943,6 +3945,8 @@ function route(silent = false) {
     poolpick: viewPoolPick,               // v1.37.0: подбор из пула
     supabase: viewSupabaseDemo,           // отдельный read-only демо-контур
     conflicts: viewUnifiedReview,         // v1.70.83: разбор конфликтов единого реестра
+    primary: (c, alive) => viewPrimary(c, { alive, isAdmin: isAdmin(),   // v1.70.94: первичка (T-53)
+      companies: state.companies, companyFilter: state.companyFilter }),
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
@@ -6322,6 +6326,15 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.94': [
+    { icon: '📑', title: 'Первичка: электронные УПД и счета-фактуры',
+      text: 'Новый раздел «Первичка (УПД)»: загрузите XML или ZIP-архив из Диадока, СБИС или другого оператора ЭДО — '
+        + 'программа прочитает документ и проверит реквизиты, ИНН и КПП, суммы строк и итоги, ставку НДС 22 % и формат 5.03. '
+        + 'Дубли не загружаются, у каждого документа — итог проверки.' },
+    { icon: '🏢', title: 'Документ сам находит компанию',
+      text: 'Администратор может не выбирать компанию: документ попадёт к той, чей ИНН указан покупателем. '
+        + 'Каждая компания видит только свою первичку, а чужой покупатель в документе бухгалтера — замечание.' },
+  ],
   '1.70.93': [
     { icon: '🧾', title: 'НДС 22 % и верная ставка в выгрузке в 1С',
       text: 'Программа понимает ставки НДС 22 % и 22/122 из чеков 2026 года, а в 1С уходит правильная ставка — '

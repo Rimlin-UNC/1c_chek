@@ -225,6 +225,14 @@ sandbox.fetch = async (url, opts) => {
                headers: { get: () => 'application/json' } };
     }
   }
+  // v1.70.94: первичка — реестр электронных УПД (T-53)
+  if (String(url).includes('/api/v1/primary?')) {
+    specialPayload = true;
+    payload = { items: [{ id: 'p1', kind: 'УПД', doc_number: 'УТ-15', doc_date: '2026-03-10', correction_number: '',
+                          seller: { name: 'ООО «СтройБаза»', inn: '5001007326', kpp: '500101001' },
+                          total_with_vat: 7930, vat_total: 1430, status: 'warnings', errors: 0, warnings: 1 }],
+                total: 1, summary: { ok: 0, warnings: 1, errors: 0 } };
+  }
   if (!specialPayload) payload = {};
   if (String(url).includes('/card')) { specialPayload = true; payload = cardPayload; }
   // v1.70.91: полный чек для формы правки — в строке списка позиций нет (только items_count)
@@ -919,6 +927,24 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     const patch = apiLog.slice(from).find((c) => c.method === 'PATCH' && c.url.endsWith('/api/v1/receipts/r-edit'));
     ok(patch && !('items' in patch.body), 'v1.70.91: сохранение без правки позиций не отправляет items — позиции целы');
     ok(patch && patch.body.cashier === 'Кассир Пулов', 'v1.70.91: подставленное значение ушло в чек компании');
+  }
+
+  // v1.70.94: экран «Первичка» (T-53) — бухгалтеру доступен, реестр УПД с итогом проверки
+  {
+    const vcP = document.querySelector('#view-container');
+    vcP.isConnected = true;                // мини-DOM: контейнер раздела «в документе»
+    const tickP = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+    const from = apiLog.length;
+    sandbox.location.hash = '#/primary';
+    sandbox.route();
+    await tickP(80);
+    ok(sandbox.location.hash === '#/primary', 'v1.70.94: бухгалтер открыл «Первичку» — раздел в его пространстве');
+    ok(vcP.innerHTML.includes('Первичка: электронные УПД'), 'v1.70.94: экран «Первичка» нарисован');
+    ok(apiLog.slice(from).some((c) => c.url.startsWith('/api/v1/primary?')), 'v1.70.94: реестр запрошен у сервера');
+    const outP = vcP.querySelector('#prim-out');
+    ok(outP.innerHTML.includes('УТ-15') && outP.innerHTML.includes('Есть замечания'),
+       'v1.70.94: в реестре документ и итог проверки');
+    vcP.isConnected = undefined;
   }
 
   console.log(fails.length ? 'HARNESS FAIL: ' + fails.join('; ')

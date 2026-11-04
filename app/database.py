@@ -81,6 +81,7 @@ def init_db() -> None:
     """Создание таблиц при первом запуске + лёгкая миграция новых колонок."""
     from . import models  # noqa: F401 — регистрируем модели
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
+    from .primary import models as _primary_models  # noqa: F401 — v1.70.94: первичка (УПД)
     from .unified import models as _unified_models  # noqa: F401 — единый фискальный документ
     Base.metadata.create_all(bind=engine)
     _ensure_schema()

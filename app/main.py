@@ -23,6 +23,7 @@ from .config import settings
 from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
+from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
@@ -421,6 +422,7 @@ app.include_router(receipts.router)
 app.include_router(dashboard.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(unified_router.router)  # единый фискальный документ
+app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

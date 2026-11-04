@@ -41,6 +41,7 @@
 | scan | ✓ | ✓ | — | ✓ | — |
 | receipts | ✓ | ✓ | ✓ | ✓ | — |
 | export / mapping / poolpick / supabase | ✓ | ✓ | — | — | — |
+| primary (первичка: электронные УПД, с v1.70.94) | ✓ | ✓ | — | — | — |
 | boss (отчёт руководителя) | ✓ | — | ✓ | — | — |
 | users / audit / companies | ✓ | — | — | — | — |
 | pooladmin / poolpeople / fraud / b2badmin / conflicts | ✓ | — | — | — | — |

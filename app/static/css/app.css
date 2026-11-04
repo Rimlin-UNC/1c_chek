@@ -2188,3 +2188,13 @@ label.field[hidden] { display: none; }
   }
   body.print-ao1 .receipt-sheet .print-piece { width: 72mm; transform: none; }
 }
+
+/* v1.70.94 (T-53): первичка — список замечаний проверки и итог загрузки УПД */
+.prim-issues, .prim-results { list-style: none; padding: 0; margin: 6px 0 10px; display: grid; gap: 6px; }
+.prim-issues li, .prim-results li { padding: 6px 10px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--border-strong); }
+.prim-issues li[data-level="error"] { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.prim-issues li[data-level="warning"] { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.prim-lines td.num { white-space: nowrap; }
+.prim-company { max-width: 420px; margin-top: 12px; }
+@media (min-width: 641px) { .modal-slot.prim-modal { width: min(1040px, 96vw); } }

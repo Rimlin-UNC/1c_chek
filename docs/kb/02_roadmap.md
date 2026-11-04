@@ -49,7 +49,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 - [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21) T-25 — интеграция Supabase ↔ GitHub: владелец переключил её на ветку PR #3 (02.11.2026); после слияния PR #3 — переключить на `main`.
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
-- Горизонт 1 ([стратегия](11_strategy.md), [первичка](../primary_docs_design.md)), по порядку: T-53 — электронные УПД 5.03; T-58 — «что нужно от клиента»; [#31](https://github.com/Rimlin-UNC/1c_chek/issues/31) T-46 — согласование авансового отчёта; [#30](https://github.com/Rimlin-UNC/1c_chek/issues/30) T-45 — банковская выписка.
+- Горизонт 1 ([стратегия](11_strategy.md), [первичка](../primary_docs_design.md)), по порядку: [#45](https://github.com/Rimlin-UNC/1c_chek/issues/45) T-60 — выгрузка первички в 1С; [#43](https://github.com/Rimlin-UNC/1c_chek/issues/43) T-58 — «что нужно от клиента»; [#31](https://github.com/Rimlin-UNC/1c_chek/issues/31) T-46 — согласование авансового отчёта; [#30](https://github.com/Rimlin-UNC/1c_chek/issues/30) T-45 — банковская выписка.
 - [#26](https://github.com/Rimlin-UNC/1c_chek/issues/26) T-41 — контрактные тесты «интерфейс ↔ API» (P1); [#27](https://github.com/Rimlin-UNC/1c_chek/issues/27) T-42 — офлайн-очередь в мини-приложении MAX; [#29](https://github.com/Rimlin-UNC/1c_chek/issues/29) T-44 — подсказка статьи расходов; [#34](https://github.com/Rimlin-UNC/1c_chek/issues/34) T-49 — проверка зависимостей ([исследование](10_research.md)).
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
 
@@ -63,6 +63,8 @@ T-33 (выпуск 1.70.84), T-34 (заявки компаний, выпуск 1
 #15 закроются при слиянии PR #3 (`Closes` в описании).
 
 **Отменено:** T-14 — перенос базы знаний в Notion (ADR-16), issue #17; T-31 — перенос рабочей базы SQLite → PostgreSQL с поштучной сверкой ([#23](https://github.com/Rimlin-UNC/1c_chek/issues/23)), решение владельца 03.11.2026 (ADR-14).
+
+**Готово 04.11.2026 (выпуск v1.70.94):** [#38](https://github.com/Rimlin-UNC/1c_chek/issues/38) T-53 — первичка: электронные УПД и счета-фактуры 5.01–5.03 (загрузка XML и ZIP из ЭДО, проверка реквизитов, ИНН и КПП, арифметики и НДС 22 %, формата 5.03, исправлений и дублей; компания по ИНН покупателя; реестр). Выгрузка первички в 1С вынесена в T-60.
 
 **Готово 03.11.2026 (выпуск v1.70.93):** T-43 — запрещённые товары в позициях (алкоголь, табак, продукты; личные покупки не в счёт; стройматериалы распознаются первыми); исправлено — ставка НДС в выгрузке в 1С (код тега 1199 вместо ставки), НДС 22 % и 22/122 с 2026 года. Проект первички — [docs/primary_docs_design.md](../primary_docs_design.md): T-53, T-58, T-59.
 

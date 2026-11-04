@@ -242,3 +242,41 @@ test('дашборд: поздний ответ не подменяет откр
   await expect(page.locator('#rc-view-list')).toBeVisible();
   await expect(page.locator('#btn-focus')).toHaveCount(0);
 });
+
+// v1.70.94 (T-53): первичка — администратор загружает электронный УПД (синтетика) и видит
+// итог проверки в реестре и в карточке; тот же файл второй раз — «уже был загружен».
+function updXml(number) {
+  return '<?xml version="1.0" encoding="utf-8"?>'
+    + '<Файл ИдФайл="ON_NSCHFDOPPR_E2E" ВерсФорм="5.03" ВерсПрог="e2e">'
+    + '<Документ КНД="1115131" Функция="СЧФДОП" ДатаИнфПр="10.03.2026" ВремИнфПр="10.00.00" НаимЭконСубСост="Продавец">'
+    + `<СвСчФакт НомерДок="${number}" ДатаДок="10.03.2026">`
+    + '<СвПрод><ИдСв><СвЮЛУч НаимОрг="ООО «E2E Поставщик»" ИННЮЛ="5001007329" КПП="500101001"/></ИдСв></СвПрод>'
+    + '<СвПокуп><ИдСв><СвЮЛУч НаимОрг="ООО «E2E Покупатель»" ИННЮЛ="7704001236" КПП="770401001"/></ИдСв></СвПокуп>'
+    + '<ДенИзм КодОКВ="643" НаимОКВ="Российский рубль"/></СвСчФакт>'
+    + '<ТаблСчФакт><СведТов НомСтр="1" НаимТов="E2E цемент М500" ОКЕИ_Тов="796" НаимЕдИзм="шт" КолТов="10" '
+    + 'ЦенаТов="500.00" СтТовБезНДС="5000.00" НалСт="22%" СтТовУчНал="6100.00">'
+    + '<Акциз><БезАкциз>без акциза</БезАкциз></Акциз><СумНал><СумНал>1100.00</СумНал></СумНал></СведТов>'
+    + '<ВсегоОпл СтТовБезНДСВсего="5000.00" СтТовУчНалВсего="6100.00">'
+    + '<СумНалВсего><СумНал>1100.00</СумНал></СумНалВсего></ВсегоОпл>'
+    + '</ТаблСчФакт></Документ></Файл>';
+}
+
+test('первичка: администратор загружает УПД и видит итог проверки', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/primary"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Первичка');
+  const number = `E2E-${Date.now()}`;          // повтор попытки не упрётся в дубль прошлой
+  const file = { name: 'upd_e2e.xml', mimeType: 'text/xml', buffer: Buffer.from(updXml(number), 'utf-8') };
+  await page.setInputFiles('#prim-file', file);
+  await expect(page.locator('#prim-results')).toContainText('загружено 1');
+  const row = page.locator('#prim-out tbody tr', { hasText: number });
+  await expect(row.locator('.chip')).toHaveText('Без замечаний');
+  await row.getByRole('button', { name: 'Открыть' }).click();
+  const card = page.locator('.modal-slot');
+  await expect(card).toContainText(`УПД № ${number} от 10.03.2026`);
+  await expect(card).toContainText('E2E цемент М500');
+  await card.locator('.modal-close').click();
+  await page.setInputFiles('#prim-file', file);
+  await expect(page.locator('#prim-results')).toContainText('уже был загружен');
+});

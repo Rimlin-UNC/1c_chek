@@ -89,6 +89,7 @@ def _app_metadata():
     from app.database import Base
     from app.openstack_monitor import models as _os  # noqa: F401
     from app.pool import models as _pool  # noqa: F401
+    from app.primary import models as _primary  # noqa: F401 — v1.70.94: первичка (УПД)
     from app.unified import models as _unified  # noqa: F401
     return Base.metadata
 

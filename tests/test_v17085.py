@@ -164,7 +164,7 @@ class TestUserFacingTexts:
         assert "### Заявки компаний на чужие чеки (админ, v1.70.85)" in read("docs/USER_GUIDE.md")
         design = read("docs/single_base_design.md")
         assert "## 10. Фазы 1–2: сделано (T-34)" in design and "Выпущено в 1.70.85" in design
-        assert "50 объявлений `__tablename__`" in read("docs/DATABASE.md")
+        assert re.search(r"\d+ объявлени\w* `__tablename__`", read("docs/DATABASE.md"))  # 52 с 1.70.94
         assert "`GET /unified/claims`" in read("docs/rbac_matrix.md")
         assert "## Заявки компаний (выпуск 1.70.85" in read("docs/unified_receipts.md")
         assert "фазы 1–2 (T-34" in read("docs/ARCHITECTURE.md")
