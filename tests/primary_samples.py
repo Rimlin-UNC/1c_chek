@@ -46,7 +46,7 @@ def _attr(value: str) -> str:
     return escape(value, {'"': "&quot;"})
 
 
-def _party(tag: str, party) -> str:
+def _party(tag: str, party, version: str = "5.03") -> str:
     if party is None:
         return ""
     kind = party[0]
@@ -54,11 +54,15 @@ def _party(tag: str, party) -> str:
         surname, name, patronymic = party[2]
         ident = (f'<СвИП ИННФЛ="{party[1]}"><ФИО Фамилия="{_attr(surname)}" Имя="{_attr(name)}" '
                  f'Отчество="{_attr(patronymic)}"/></СвИП>')
+    elif kind == "ИН" and version == "5.03":   # v1.70.95: в 5.03 — «Наим», статус и страна обязательны
+        ident = (f'<СвИнНеУч ИдСтат="ИО" КодСтр="156" НаимСтран="Китай" Наим="{_attr(party[1])}" '
+                 f'Идентиф="FOREIGN-1"/>')
     elif kind == "ИН":
         ident = f'<СвИнНеУч НаимОрг="{_attr(party[1])}" Идентиф="FOREIGN-1"/>'
     else:
         ident = f'<СвЮЛУч НаимОрг="{_attr(party[0])}" ИННЮЛ="{party[1]}" КПП="{party[2]}"/>'
-    return f"<{tag}><ИдСв>{ident}</ИдСв><Адрес><АдрИнф КодСтр=\"643\" АдрТекст=\"г. Тест\"/></Адрес></{tag}>"
+    return (f"<{tag}><ИдСв>{ident}</ИдСв><Адрес><АдрИнф КодСтр=\"643\" НаимСтран=\"Россия\" "
+            f"АдрТекст=\"г. Тест\"/></Адрес></{tag}>")
 
 
 def _line(position: int, ln: dict) -> str:
@@ -69,8 +73,9 @@ def _line(position: int, ln: dict) -> str:
     head = " ".join(f'{k}="{_attr(v)}"' for k, v in attrs.items() if v != "")
     kiz = (f"<НомСредИдентТов><КИЗ>{ln['kiz']}</КИЗ></НомСредИдентТов>" if ln.get("kiz") else "")
     extra = f'<ДопСведТов КодТов="{_attr(ln["code"])}">{kiz}</ДопСведТов>' if ln.get("code") or kiz else ""
-    return (f"<СведТов {head}><Акциз><БезАкциз>без акциза</БезАкциз></Акциз>"
-            f"<СумНал>{vat}</СумНал>{extra}</СведТов>")
+    # Порядок по схеме ФНС 5.03: ДопСведТов → Акциз → СумНал (v1.70.95: образцы проходят XSD)
+    return (f"<СведТов {head}>{extra}<Акциз><БезАкциз>без акциза</БезАкциз></Акциз>"
+            f"<СумНал>{vat}</СумНал></СведТов>")
 
 
 def _sum(lines: list[dict], key: str) -> str:
@@ -82,7 +87,8 @@ def upd_xml(*, version: str = "5.03", function: str = "СЧФДОП", number: st
             day: str = "10.03.2026", seller=("ООО «СтройБаза»", SELLER_INN, "500101001"),
             buyer=("ООО «Ромашка-Строй»", None, "770401001"), lines: list[dict] | None = None,
             totals: dict | None = None, correction: tuple[str, str] | None = None,
-            file_id: str | None = None, currency: str = "643", encoding: str = "windows-1251") -> bytes:
+            file_id: str | None = None, currency: str = "643", encoding: str = "windows-1251",
+            signer: bool = True) -> bytes:
     """Собрать документ. buyer[1] = None → ИНН покупателя подставит тест (по умолчанию случайный)."""
     lines = [dict(CEMENT), dict(DELIVERY)] if lines is None else lines
     if buyer is not None and buyer[0] not in ("ИП", "ИН") and buyer[1] is None:
@@ -97,6 +103,12 @@ def upd_xml(*, version: str = "5.03", function: str = "СЧФДОП", number: st
         corr = (f'<ИспрСчФ НомИспрСчФ="{correction[0]}" ДатаИспрСчФ="{correction[1]}"/>' if correction else "")
         money = ""
     t = {"base": _sum(lines, "base"), "vat": _sum(lines, "vat"), "total": _sum(lines, "total"), **(totals or {})}
+    # v1.70.95: сведения о передаче и подписант — обязательные части по схеме ФНС (signer=False — без него)
+    transfer = (f'<СвПродПер><СвПер СодОпер="Товары переданы" ДатаПер="{day}"><ОснПер РеквНаимДок="Договор поставки" '
+                f'РеквНомерДок="12" РеквДатаДок="01.02.2026"/></СвПер></СвПродПер>'
+                if function in ("СЧФДОП", "ДОП") else "")
+    signer = ('<Подписант СпосПодтПолном="1" Должн="Директор"><ФИО Фамилия="Тестов" Имя="Тест"/></Подписант>'
+              if signer else "")
     total_xml = ("" if totals == {} else
                  f'<ВсегоОпл СтТовБезНДСВсего="{t["base"]}" СтТовУчНалВсего="{t["total"]}">'
                  f'<СумНалВсего><СумНал>{t["vat"]}</СумНал></СумНалВсего></ВсегоОпл>')
@@ -104,9 +116,10 @@ def upd_xml(*, version: str = "5.03", function: str = "СЧФДОП", number: st
             f'<Файл ИдФайл="{file_id}" ВерсФорм="{version}" ВерсПрог="Тестовый генератор">'
             f'<Документ КНД="1115131" Функция="{function}" ДатаИнфПр="{day}" ВремИнфПр="10.00.00" '
             f'НаимЭконСубСост="Продавец">'
-            f'<СвСчФакт {info_attrs}>{corr}{_party("СвПрод", seller)}{_party("СвПокуп", buyer)}{money}</СвСчФакт>'
+            f'<СвСчФакт {info_attrs}>{corr}{_party("СвПрод", seller, version)}{_party("СвПокуп", buyer, version)}'
+            f'{money}</СвСчФакт>'
             f'<ТаблСчФакт>{"".join(_line(i, ln) for i, ln in enumerate(lines, 1))}{total_xml}</ТаблСчФакт>'
-            f'</Документ></Файл>')
+            f'{transfer}{signer}</Документ></Файл>')
     return body.encode(encoding)
 
 

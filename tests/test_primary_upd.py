@@ -228,7 +228,8 @@ def test_upload_list_detail_delete(client, firms):
     assert doc["id"] in [d["id"] for d in listed["items"]] and listed["summary"]["ok"] >= 1
     detail = client.get(f"/api/v1/primary/{doc['id']}", headers=a["hdr"]).json()
     assert [ln["name"] for ln in detail["lines"]] == [CEMENT["name"], DELIVERY["name"]]
-    assert detail["lines"][0]["vat_rate"] == "22" and detail["issues"] == []
+    # v1.70.95: единственное сведение — файл прошёл официальную схему ФНС 5.03
+    assert detail["lines"][0]["vat_rate"] == "22" and [i["code"] for i in detail["issues"]] == ["xsd_ok"]
     assert CEMENT["kiz"] not in json.dumps(detail, ensure_ascii=False)
     assert client.delete(f"/api/v1/primary/{doc['id']}", headers=a["hdr"]).json() == {"ok": True}
     assert client.get(f"/api/v1/primary/{doc['id']}", headers=a["hdr"]).status_code == 404

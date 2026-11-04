@@ -33,6 +33,18 @@
   [oxyconit](https://blog.oxyconit.com/rails-8-pwa-offline-indexeddb-background-sync/).
   У нас идемпотентность уже есть: чек с той же фискальной тройкой не создаётся дважды.
 
+- **Распознавание первички без облаков (срез 04.11.2026, T-61).** Сравнены открытые механизмы
+  на GitHub и PyPI: [Tesseract 5](https://github.com/tesseract-ocr/tesseract) (★77 тыс.) через колесо
+  [tesserocr](https://github.com/sirfz/tesserocr) — 1,5–2 с на страницу и 70–150 МБ, помещается на сервер
+  1 ГБ; [RapidOCR](https://github.com/RapidAI/RapidOCR) — точнее на фото, но тяжелее (оставлен для
+  сервера от 2 ГБ); [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [EasyOCR](https://github.com/JaidedAI/EasyOCR)
+  и [docTR](https://github.com/mindee/doctr) тянут paddle или torch; локальные LLM требуют 8–16 ГБ.
+  Подход [invoice2data](https://github.com/invoice-x/invoice2data) (шаблоны вместо нейросети) взят без пакета:
+  у печатной формы УПД один утверждённый вид. Пакеты из присланного списка: universal-doc-reader (0.1.0 от
+  03.11.2026), docket-idp (нужна LLM), DocIntel (AGPL) — не взяты; upd-builder не существует. Официальная
+  схема ФНС 5.03 найдена на GitHub и сверена с независимой копией (247 из 262 объявлений дословно).
+  Подробно, с замерами и советом по серверу — [проект первички](../primary_docs_design.md).
+
 ## Нововведения — кандидаты (ценность, трудоёмкость, риск)
 
 Трудоёмкость: S — до дня, M — несколько дней, L — больше недели. «Решение владельца» —

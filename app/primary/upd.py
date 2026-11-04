@@ -32,11 +32,15 @@ VAT_22_FROM = date(2026, 1, 1)
 _VAT_TEXT = {"22%": "22", "20%": "20", "18%": "18", "10%": "10", "7%": "7", "5%": "5", "0%": "0",
              "безндс": "none", "22/122": "22/122", "20/120": "20/120", "18/118": "18/118",
              "10/110": "10/110", "7/107": "7/107", "5/105": "5/105",
-             "ндсисчисляетсяналоговымагентом": "agent"}
+             "ндсисчисляетсяналоговымагентом": "agent",
+             # v1.70.95: расчётные ставки в процентах из перечня схемы 5.03 — это 10/110, 20/120 и 22/122
+             "9,09%": "10/110", "9.09%": "10/110", "16,67%": "20/120", "16.67%": "20/120",
+             "18,03%": "22/122", "18.03%": "22/122"}
 _PERCENT = {"22": 22, "20": 20, "18": 18, "10": 10, "7": 7, "5": 5, "0": 0}
 _FRACTION = {"22/122": (22, 122), "20/120": (20, 120), "18/118": (18, 118), "10/110": (10, 110),
              "7/107": (7, 107), "5/105": (5, 105)}
 _KPP = re.compile(r"^\d{4}[\dA-Z]{2}\d{3}$")
+_NO_INN = frozenset({"ИН", "ФЛ"})      # иностранец и физлицо: ИНН в документе необязателен
 
 
 class UpdError(ValueError):
@@ -115,8 +119,13 @@ def _party(element) -> dict:
         return {"kind": "ИП", "name": f"ИП {name}".strip(), "inn": re.sub(r"\D", "", _attr(person, "ИННФЛ")),
                 "kpp": ""}
     foreign = _kid(ident, "СвИнНеУч")
-    if foreign is not None:
-        return {"kind": "ИН", "name": _attr(foreign, "НаимОрг"), "inn": "", "kpp": ""}
+    if foreign is not None:     # v1.70.95: в 5.03 наименование — «Наим», в 5.01 — «НаимОрг»
+        return {"kind": "ИН", "name": _attr(foreign, "Наим", "НаимОрг"), "inn": "", "kpp": ""}
+    citizen = _kid(ident, "СвФЛУч")
+    if citizen is not None:     # v1.70.95: физическое лицо (не ИП) из 5.03; ИНН у него необязателен
+        fio = _kid(citizen, "ФИО")
+        name = " ".join(p for p in (_attr(fio, "Фамилия"), _attr(fio, "Имя"), _attr(fio, "Отчество")) if p)
+        return {"kind": "ФЛ", "name": name, "inn": re.sub(r"\D", "", _attr(citizen, "ИННФЛ")), "kpp": ""}
     return {"kind": "", "name": "", "inn": "", "kpp": ""}
 
 
@@ -191,8 +200,11 @@ def _close(a: float | None, b: float | None, tolerance: float) -> bool:
     return a is None or b is None or abs(a - b) <= tolerance + 1e-9
 
 
-def check(doc: dict, *, company_inn: str = "", today: date | None = None) -> list[dict]:
-    """Замечания: [{level: error|warning|info, code, message}] — по-русски, для бухгалтера."""
+def check(doc: dict, *, company_inn: str = "", today: date | None = None, electronic: bool = True) -> list[dict]:
+    """Замечания: [{level: error|warning|info, code, message}] — по-русски, для бухгалтера.
+
+    electronic=False — черновик из PDF, скана или ручного ввода (v1.70.95): проверки формата ЭДО
+    (версия, титул покупателя) не нужны, а строк может не быть — документ сохраняется по итогам."""
     today = today or date.today()
     issues: list[dict] = []
 
@@ -200,15 +212,15 @@ def check(doc: dict, *, company_inn: str = "", today: date | None = None) -> lis
         issues.append({"level": level, "code": code, "message": message})
 
     function, version, day = doc["function"], doc["format_version"], doc["date"]
-    if doc["file_id"].upper().startswith(("ON_NSCHFDOPPOK", "ON_NKORSCHFDOPPOK")):
+    if electronic and doc["file_id"].upper().startswith(("ON_NSCHFDOPPOK", "ON_NKORSCHFDOPPOK")):
         add("error", "buyer_title", "Это титул покупателя — загрузите файл продавца (ON_NSCHFDOPPR)")
     if function in CORRECTIONS:
         add("error", "correction_doc", "Корректировочный документ (КСЧФ, ДИС) пока не поддерживается")
     elif function not in KINDS:
         add("error", "function", f"Функция документа «{function or 'не указана'}» не поддерживается")
-    if version not in KNOWN_VERSIONS:
+    if electronic and version not in KNOWN_VERSIONS:
         add("warning", "version", f"Версия формата «{version or 'не указана'}» неизвестна — проверьте документ")
-    elif version != "5.03" and day and day >= ONLY_503_FROM:
+    elif electronic and version != "5.03" and day and day >= ONLY_503_FROM:
         add("warning", "version_503",
             f"С 01.04.2026 в ЭДО принимается только формат 5.03, а документ — в формате {version}")
     if not doc["number"]:
@@ -218,9 +230,9 @@ def check(doc: dict, *, company_inn: str = "", today: date | None = None) -> lis
     elif day > today + timedelta(days=1):
         add("warning", "date_future", f"Дата документа {day:%d.%m.%Y} — в будущем: проверьте год")
     seller, buyer = doc["seller"], doc["buyer"]
-    if not seller["name"] or (seller["kind"] != "ИН" and not seller["inn"]):
+    if not seller["name"] or (seller["kind"] not in _NO_INN and not seller["inn"]):
         add("error", "seller", "Нет сведений о продавце: наименование и ИНН")
-    if function in ("СЧФ", "СЧФДОП") and (not buyer["name"] or (buyer["kind"] != "ИН" and not buyer["inn"])):
+    if function in ("СЧФ", "СЧФДОП") and (not buyer["name"] or (buyer["kind"] not in _NO_INN and not buyer["inn"])):
         add("error", "buyer", "Нет сведений о покупателе: наименование и ИНН")
     for role, party in (("продавца", seller), ("покупателя", buyer)):
         if party["inn"] and not inn_is_valid(party["inn"]):
@@ -241,8 +253,10 @@ def check(doc: dict, *, company_inn: str = "", today: date | None = None) -> lis
         add("info", "correction", f"Исправление № {doc['correction_number']} от {when} — заменяет первоначальный документ")
 
     lines = doc["lines"]
-    if not lines:
+    if not lines and electronic:
         add("error", "lines", "В документе нет строк с товарами, работами или услугами")
+    elif not lines:
+        add("info", "lines_absent", "Строки не заполнены — документ сохранится по итоговым суммам")
     old_rate = new_rate = False
     for ln in lines:
         n, base, vat, total = ln["position"], ln["sum_without_vat"], ln["vat_sum"], ln["sum_with_vat"]

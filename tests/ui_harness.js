@@ -225,6 +225,15 @@ sandbox.fetch = async (url, opts) => {
                headers: { get: () => 'application/json' } };
     }
   }
+  // v1.70.95: первичка — состояние распознавания сканов и сохранение ручного ввода (T-61)
+  if (String(url).endsWith('/api/v1/primary/ocr')) {
+    specialPayload = true;
+    payload = { ready: false, engine: '', missing: ['rus', 'eng'], reason: 'не установлен модуль tesserocr', last: {} };
+  }
+  if (String(url).endsWith('/api/v1/primary/confirm')) {
+    specialPayload = true;
+    payload = { result: 'created', document: { kind: 'УПД', doc_number: 'Б-1', doc_date: '2026-10-20' }, issues: [] };
+  }
   // v1.70.94: первичка — реестр электронных УПД (T-53)
   if (String(url).includes('/api/v1/primary?')) {
     specialPayload = true;
@@ -944,6 +953,26 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     const outP = vcP.querySelector('#prim-out');
     ok(outP.innerHTML.includes('УТ-15') && outP.innerHTML.includes('Есть замечания'),
        'v1.70.94: в реестре документ и итог проверки');
+    // v1.70.95 (T-61): состояние распознавания и ручной ввод бумажного УПД
+    ok(apiLog.slice(from).some((c) => c.url === '/api/v1/primary/ocr'), 'v1.70.95: запрошено состояние распознавания сканов');
+    ok(vcP.querySelector('#prim-ocr').innerHTML.includes('не настроено'),
+       'v1.70.95: бухгалтер видит, что распознавание сканов не настроено, и почему');
+    vcP.querySelector('#prim-manual').onclick();
+    await tickP(20);
+    const slotP = root.querySelector('.modal-slot');
+    ok(slotP.innerHTML.includes('Документ вручную'), 'v1.70.95: открылось окно ручного ввода');
+    ok(slotP.querySelector('#prim-save').disabled === true, 'v1.70.95: без номера и продавца сохранить нельзя');
+    slotP.querySelector('#prim-f-number').value = 'Б-1';
+    slotP.querySelector('#prim-f-date').value = '2026-10-20';
+    slotP.querySelector('#prim-f-seller-name').value = 'ООО «Песок»';
+    slotP.querySelector('#prim-f-seller-inn').value = '5001007329';
+    slotP.oninput();
+    ok(slotP.querySelector('#prim-save').disabled === false, 'v1.70.95: обязательные поля заполнены — можно сохранить');
+    const fromSave = apiLog.length;
+    await slotP.querySelector('#prim-save').onclick();
+    const conf = apiLog.slice(fromSave).find((c) => c.method === 'POST' && c.url === '/api/v1/primary/confirm');
+    ok(conf && conf.body.source === 'manual' && conf.body.draft.number === 'Б-1' && conf.body.draft.seller.inn === '5001007329',
+       'v1.70.95: ручной ввод ушёл на сервер с реквизитами');
     vcP.isConnected = undefined;
   }
 

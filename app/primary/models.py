@@ -5,6 +5,10 @@
 company_id, как в единой базе (ADR-20). Исходный XML не хранится: только разобранные
 реквизиты, строки, замечания проверки и хеш файла (повторная загрузка того же файла —
 отказ).
+
+С 1.70.95 (T-61) документ можно завести и из печатной формы: PDF, скан или фото распознаются
+на своём сервере, бухгалтер сверяет черновик и подтверждает. Сам файл не хранится и здесь:
+только реквизиты, строки, хеш файла и источник (колонка source).
 """
 from __future__ import annotations
 
@@ -51,6 +55,10 @@ class PrimaryDocument(Base):
     created_by: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     exported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # v1.70.95 (T-61): откуда документ — xml (файл ЭДО) | pdf | scan (скан или фото) | manual (введён вручную).
+    # Колонка добавляется к таблице 1.70.94 через database._ensure_schema; server_default — чтобы
+    # строки, записанные прежней версией после отката, тоже получили «xml».
+    source: Mapped[str] = mapped_column(String(10), default="xml", server_default="xml")
 
     lines: Mapped[list["PrimaryDocumentLine"]] = relationship(
         back_populates="document", cascade="all, delete-orphan",

@@ -1,6 +1,7 @@
 /* v1.70.60: браузерные сценарии пользователя (Playwright).
    Покрывают типичный путь: вход, отказ входа, настройки с читаемыми
    оглавлениями блоков и сворачиванием. Сервер поднимает конфиг. */
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 
 const password = 'playwright-test-password';
@@ -258,7 +259,12 @@ function updXml(number) {
     + '<Акциз><БезАкциз>без акциза</БезАкциз></Акциз><СумНал><СумНал>1100.00</СумНал></СумНал></СведТов>'
     + '<ВсегоОпл СтТовБезНДСВсего="5000.00" СтТовУчНалВсего="6100.00">'
     + '<СумНалВсего><СумНал>1100.00</СумНал></СумНалВсего></ВсегоОпл>'
-    + '</ТаблСчФакт></Документ></Файл>';
+    + '</ТаблСчФакт>'
+    // v1.70.95: сведения о передаче и подписант — обязательные части по схеме ФНС 5.03
+    + '<СвПродПер><СвПер СодОпер="Товары переданы" ДатаПер="10.03.2026">'
+    + '<ОснПер РеквНаимДок="Договор поставки" РеквНомерДок="12" РеквДатаДок="01.02.2026"/></СвПер></СвПродПер>'
+    + '<Подписант СпосПодтПолном="1" Должн="Директор"><ФИО Фамилия="Тестов" Имя="Тест"/></Подписант>'
+    + '</Документ></Файл>';
 }
 
 test('первичка: администратор загружает УПД и видит итог проверки', async ({ page }) => {
@@ -276,7 +282,37 @@ test('первичка: администратор загружает УПД и 
   const card = page.locator('.modal-slot');
   await expect(card).toContainText(`УПД № ${number} от 10.03.2026`);
   await expect(card).toContainText('E2E цемент М500');
+  await expect(card).toContainText('Файл соответствует схеме ФНС 5.03');   // v1.70.95: сверка с XSD
   await card.locator('.modal-close').click();
   await page.setInputFiles('#prim-file', file);
   await expect(page.locator('#prim-results')).toContainText('уже был загружен');
+});
+
+// v1.70.95 (T-61): «комбайн первички» — PDF печатной формы распознаётся на своём сервере (без OCR:
+// у PDF из 1С есть текстовый слой), администратор сверяет реквизиты в окне и сохраняет в реестр.
+test('первичка: PDF печатной формы распознан, сверен и сохранён', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/primary"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Первичка');
+  const stamp = Date.now();
+  // комментарий в конце PDF меняет хеш файла: повтор попытки не упрётся в дубль прошлой
+  const pdf = Buffer.concat([readFileSync('tests/fixtures/primary/upd_print_text.pdf'), Buffer.from(`\n% e2e ${stamp}\n`)]);
+  await page.setInputFiles('#prim-file', { name: 'upd_print.pdf', mimeType: 'application/pdf', buffer: pdf });
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Сверьте реквизиты: upd_print.pdf');
+  await expect(modal).toContainText('Все основные поля найдены');
+  await expect(page.locator('#prim-f-number')).toHaveValue('УТ-215');
+  await expect(page.locator('#prim-f-seller-inn')).toHaveValue('5001007329');
+  await expect(page.locator('#prim-f-total')).toHaveValue('105530,00');
+  await expect(modal).toContainText('Арматура А500С d12 мм');
+  const number = `УТ-215-${stamp}`;
+  await page.fill('#prim-f-number', number);
+  await page.getByRole('button', { name: 'Сохранить в реестр' }).click();
+  await expect(page.locator('#prim-results')).toContainText('«upd_print.pdf»: сохранён в реестр');
+  const row = page.locator('#prim-out tbody tr', { hasText: number });
+  await expect(row).toContainText('PDF');
+  await row.getByRole('button', { name: 'Открыть' }).click();
+  await expect(page.locator('.modal-slot')).toContainText('Источник: PDF');
+  await expect(page.locator('.modal-slot')).toContainText('Реквизиты распознаны из PDF и сверены пользователем');
 });

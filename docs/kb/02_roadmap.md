@@ -50,6 +50,7 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 
 **Можно брать агенту без подтверждения** (работа в ветке, затем PR):
 - Горизонт 1 ([стратегия](11_strategy.md), [первичка](../primary_docs_design.md)), по порядку: [#45](https://github.com/Rimlin-UNC/1c_chek/issues/45) T-60 — выгрузка первички в 1С; [#43](https://github.com/Rimlin-UNC/1c_chek/issues/43) T-58 — «что нужно от клиента»; [#31](https://github.com/Rimlin-UNC/1c_chek/issues/31) T-46 — согласование авансового отчёта; [#30](https://github.com/Rimlin-UNC/1c_chek/issues/30) T-45 — банковская выписка.
+- Продолжение «комбайна первички» (T-61): [#47](https://github.com/Rimlin-UNC/1c_chek/issues/47) T-62 — ТОРГ-12 и акты; [#48](https://github.com/Rimlin-UNC/1c_chek/issues/48) T-63 — приём первички из почты; [#49](https://github.com/Rimlin-UNC/1c_chek/issues/49) T-64 — фото первички из Telegram и MAX.
 - [#26](https://github.com/Rimlin-UNC/1c_chek/issues/26) T-41 — контрактные тесты «интерфейс ↔ API» (P1); [#27](https://github.com/Rimlin-UNC/1c_chek/issues/27) T-42 — офлайн-очередь в мини-приложении MAX; [#29](https://github.com/Rimlin-UNC/1c_chek/issues/29) T-44 — подсказка статьи расходов; [#34](https://github.com/Rimlin-UNC/1c_chek/issues/34) T-49 — проверка зависимостей ([исследование](10_research.md)).
 - [#16](https://github.com/Rimlin-UNC/1c_chek/issues/16) T-13 — формат блоков в журнале обновления (P3).
 
@@ -62,7 +63,9 @@ GitHub ([открытые issues](https://github.com/Rimlin-UNC/1c_chek/issues?q
 T-33 (выпуск 1.70.84), T-34 (заявки компаний, выпуск 1.70.85). Issues #8, #12, #14,
 #15 закроются при слиянии PR #3 (`Closes` в описании).
 
-**Отменено:** T-14 — перенос базы знаний в Notion (ADR-16), issue #17; T-31 — перенос рабочей базы SQLite → PostgreSQL с поштучной сверкой ([#23](https://github.com/Rimlin-UNC/1c_chek/issues/23)), решение владельца 03.11.2026 (ADR-14).
+**Отменено:** T-14 — перенос базы знаний в Notion (ADR-16), issue #17; T-31 — перенос рабочей базы SQLite → PostgreSQL с поштучной сверкой ([#23](https://github.com/Rimlin-UNC/1c_chek/issues/23)), решение владельца 03.11.2026 (ADR-14); T-54 — готовый платный сервис распознавания ([#39](https://github.com/Rimlin-UNC/1c_chek/issues/39)): заменён T-61 по решению владельца 04.11.2026 (ADR-25); issue #39 закрыть вручную.
+
+**Готово 04.11.2026 (выпуск v1.70.95):** [#46](https://github.com/Rimlin-UNC/1c_chek/issues/46) T-61 — «комбайн первички» на своём сервере: XML 5.03 по официальной схеме ФНС, PDF печатной формы, сканы и фото (Tesseract 5) → черновик → сверка человеком; ручной ввод. Сравнение механизмов, замеры и совет по серверу — [docs/primary_docs_design.md](../primary_docs_design.md).
 
 **Готово 04.11.2026 (выпуск v1.70.94):** [#38](https://github.com/Rimlin-UNC/1c_chek/issues/38) T-53 — первичка: электронные УПД и счета-фактуры 5.01–5.03 (загрузка XML и ZIP из ЭДО, проверка реквизитов, ИНН и КПП, арифметики и НДС 22 %, формата 5.03, исправлений и дублей; компания по ИНН покупателя; реестр). Выгрузка первички в 1С вынесена в T-60.
 

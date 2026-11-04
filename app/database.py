@@ -292,6 +292,10 @@ def _ensure_schema() -> None:
             ("marking_present",
              "ALTER TABLE receipt_items ADD COLUMN marking_present BOOLEAN NULL"),
         ],
+        # v1.70.95 (T-61): источник документа первички — xml | pdf | scan | manual
+        "primary_documents": [
+            ("source", "ALTER TABLE primary_documents ADD COLUMN source VARCHAR(10) DEFAULT 'xml'"),
+        ],
     }
     insp = inspect(engine)
     existing_tables = set(insp.get_table_names())
