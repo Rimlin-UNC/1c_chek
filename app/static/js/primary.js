@@ -6,7 +6,11 @@
    формы распознаются на своём сервере, черновик сверяется в окне: превью, поля «проверьте»,
    подсказки «Подставить». Есть ручной ввод бумажного документа. В реестр документ попадает
    только по кнопке «Сохранить». Все имена верхнего уровня — с приставкой prim (общая область
-   модулей в сборке). */
+   модулей в сборке).
+   v1.70.96 (T-60): выгрузка в 1С. Кнопка «В 1С» в реестре: файлы УПД 5.03 для типовой кнопки
+   1С «Загрузить → Из файла» (собираются из реквизитов и проверяются по схеме ФНС) или пакет
+   EnterpriseData. Сначала окно показывает, что уйдёт и почему пропущено остальное; после
+   скачивания документы отмечаются «выгружен». Отметки в реестре — выгрузить выбранные. */
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 
@@ -289,18 +293,75 @@ function primTitle(d) {
   return `${d.kind} № ${d.doc_number || 'без номера'} от ${primDay(d.doc_date)}${corr}`;
 }
 
-export function primRowsHtml(items) {
-  const list = Array.isArray(items) ? items : [];
-  if (!list.length) {
-    return '<tr><td colspan="7">Документов пока нет. Загрузите XML или ZIP из системы ЭДО — проверка займёт секунды.</td></tr>';
+// v1.70.96 (T-60): выгрузка в 1С
+export const PRIM_EXPORT_FORMATS = [
+  { code: 'upd', title: 'Файлы УПД для 1С',
+    hint: 'Типовая 1С:Бухгалтерия 3.0 загрузит их сама: «Покупки → Поступление (акты, накладные, УПД) → Загрузить → Из файла». Программист не нужен. Несколько документов — архив ZIP: распакуйте его и загрузите файлы.' },
+  { code: 'json', title: 'EnterpriseData, JSON', hint: 'Для обработки или расширения 1С — как выгрузка чеков.' },
+  { code: 'xml', title: 'EnterpriseData, XML', hint: 'То же в XML.' },
+];
+
+/** Когда документ выгружен в 1С: «✓ 11.03.2026». Сервер отдаёт время по UTC без пометки зоны. */
+export function primExportedLabel(iso) {
+  if (!iso) return '';
+  const d = new Date(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
+  return Number.isNaN(d.getTime()) ? '' : `✓ ${d.toLocaleDateString('ru-RU')}`;
+}
+
+/** Тело запроса выгрузки: отмеченные — по id, иначе новые документы в фильтре дат и компании. */
+export function primExportBody({ ids = [], format = 'upd', includeErrors = false, companyId = '', from = '', to = '' } = {}) {
+  const body = { format, include_errors: Boolean(includeErrors) };
+  if (ids.length) body.ids = ids.slice(0, 500);
+  else {
+    if (from) body.date_from = from;
+    if (to) body.date_to = to;
   }
-  return list.map((d) => `<tr data-id="${esc(d.id)}"><td>${esc(primDay(d.doc_date))}</td>
+  if (companyId) body.company_id = companyId;
+  return body;
+}
+
+/** Итог проверки выгрузки: сколько уйдёт, что пропущено и почему. */
+export function primExportSummaryHtml(check) {
+  if (!check) return '';
+  const limit = check.limit && check.count >= check.limit ? ` (за один раз — не больше ${check.limit})` : '';
+  const out = [`<p><b>Будет выгружено: ${Number(check.count) || 0}</b>${limit}.</p>`];
+  if (check.already_exported) {
+    out.push(`<p class="form-hint">Уже выгружались раньше: ${check.already_exported} — вы отметили их сами, они выгрузятся повторно. Если документ уже есть в 1С, второй раз его не загружайте.</p>`);
+  }
+  if (check.errors_excluded) {
+    out.push(`<p class="form-hint">С ошибками проверки не выгружаются: ${check.errors_excluded}. Исправьте их или включите «и документы с ошибками».</p>`);
+  }
+  const skipped = Array.isArray(check.skipped) ? check.skipped : [];
+  if (skipped.length) {
+    out.push(`<p class="form-hint">Файлом УПД не выгрузятся (${skipped.length}) — поправьте реквизиты или внесите документ в 1С вручную:</p>
+      <ul class="prim-results">${skipped.slice(0, 20).map((s) => `<li><b>${esc(s.title)}</b>: ${esc(s.reason)}</li>`).join('')}</ul>`);
+  }
+  return out.join('');
+}
+
+function primDownload(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+export function primRowsHtml(items, selected) {
+  const list = Array.isArray(items) ? items : [];
+  const picked = selected instanceof Set ? selected : new Set();
+  if (!list.length) {
+    return '<tr><td colspan="9">Документов пока нет. Загрузите XML или ZIP из системы ЭДО — проверка займёт секунды.</td></tr>';
+  }
+  return list.map((d) => `<tr data-id="${esc(d.id)}"><td><input type="checkbox" class="prim-pick" data-id="${esc(d.id)}"
+      ${picked.has(d.id) ? 'checked' : ''} aria-label="Отметить: ${esc(primTitle(d))}"></td><td>${esc(primDay(d.doc_date))}</td>
     <td>${esc(d.doc_number || '—')}${d.correction_number ? `<div class="form-hint">испр. № ${esc(d.correction_number)}</div>` : ''}${
       d.source && d.source !== 'xml' ? `<div class="form-hint">${esc(primSourceLabel(d.source))}</div>` : ''}</td>
     <td>${primParty(d.seller)}</td><td class="num">${primMoney(d.total_with_vat)}</td><td class="num">${primMoney(d.vat_total)}</td>
     <td>${primStatusChip(d.status)}${d.errors || d.warnings
       ? `<div class="form-hint">${[d.errors && `ошибок ${d.errors}`, d.warnings && `замечаний ${d.warnings}`].filter(Boolean).join(', ')}</div>`
       : ''}</td>
+    <td>${d.exported_at ? `<span title="Выгружен в 1С">${esc(primExportedLabel(d.exported_at))}</span>` : '<span class="form-hint">—</span>'}</td>
     <td><button type="button" class="btn btn-sm prim-open" data-id="${esc(d.id)}">Открыть</button></td></tr>`).join('');
 }
 
@@ -318,7 +379,7 @@ export async function viewPrimary(container, opts = {}) {
   const alive = typeof opts.alive === 'function' ? opts.alive : () => true;
   const companies = (Array.isArray(opts.companies) ? opts.companies : []).filter((c) => c.is_active !== false);
   const filterCompany = opts.companyFilter && opts.companyFilter !== 'all' ? opts.companyFilter : '';
-  const state = { status: '', q: '', from: '', to: '', offset: 0, limit: 50 };
+  const state = { status: '', q: '', from: '', to: '', exported: '', offset: 0, limit: 50, selected: new Set() };
   let req = 0;
   container.innerHTML = `
     <div class="glass card">
@@ -344,6 +405,8 @@ export async function viewPrimary(container, opts = {}) {
     </div>
     <div class="glass card">
       <div class="card-title">Реестр документов <span class="spacer"></span>
+        <span class="form-hint" id="prim-picked" aria-live="polite"></span>
+        <button type="button" class="btn btn-sm" id="prim-export" title="Файлы УПД или EnterpriseData для 1С">⬇ В 1С</button>
         <button type="button" class="btn btn-sm" id="prim-refresh">Обновить</button></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:6px 0 10px">
         <label class="field"><span>Проверка</span><select id="prim-status"><option value="">Все</option>
@@ -352,6 +415,8 @@ export async function viewPrimary(container, opts = {}) {
           placeholder="номер, продавец, ИНН"></label>
         <label class="field"><span>С даты</span><input id="prim-from" type="date"></label>
         <label class="field"><span>По дату</span><input id="prim-to" type="date"></label>
+        <label class="field"><span>1С</span><select id="prim-exported"><option value="">Все</option>
+          <option value="false">Не выгружены</option><option value="true">Выгружены</option></select></label>
       </div>
       <div id="prim-kpi" class="form-hint"></div>
       <div id="prim-out"><div class="skeleton" style="height:120px"></div></div>
@@ -366,6 +431,7 @@ export async function viewPrimary(container, opts = {}) {
     if (state.q) params.set('q', state.q);
     if (state.from) params.set('date_from', state.from);
     if (state.to) params.set('date_to', state.to);
+    if (state.exported) params.set('exported', state.exported);
     if (opts.isAdmin && filterCompany) params.set('company_id', filterCompany);
     try {
       const data = await api.get(`/api/v1/primary?${params}`);
@@ -373,15 +439,26 @@ export async function viewPrimary(container, opts = {}) {
       const s = data.summary || {};
       $('#prim-kpi').textContent = `Без замечаний: ${s.ok || 0} · с замечаниями: ${s.warnings || 0} · с ошибками: ${s.errors || 0}`;
       const total = Number(data.total) || 0;
-      out.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Дата</th><th>Номер</th>
-        <th>Продавец</th><th class="num">Сумма с НДС</th><th class="num">НДС</th><th>Проверка</th><th></th></tr></thead>
-        <tbody>${primRowsHtml(data.items)}</tbody></table></div>
+      out.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr>
+        <th><input type="checkbox" id="prim-pick-all" aria-label="Отметить все документы на странице"></th><th>Дата</th><th>Номер</th>
+        <th>Продавец</th><th class="num">Сумма с НДС</th><th class="num">НДС</th><th>Проверка</th><th>1С</th><th></th></tr></thead>
+        <tbody>${primRowsHtml(data.items, state.selected)}</tbody></table></div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
           <button type="button" class="btn btn-sm" id="prim-prev" ${state.offset <= 0 ? 'disabled' : ''}>← Назад</button>
           <span class="form-hint">Показано ${Math.min(total, state.offset + 1)}–${Math.min(total, state.offset + state.limit)} из ${total}</span>
           <button type="button" class="btn btn-sm" id="prim-next" ${state.offset + state.limit >= total ? 'disabled' : ''}>Вперёд →</button>
         </div>`;
       out.querySelectorAll('.prim-open').forEach((b) => { b.onclick = () => openCard(b.dataset.id); });
+      const picks = [...out.querySelectorAll('.prim-pick')];
+      picks.forEach((box) => {
+        box.onchange = () => { if (box.checked) state.selected.add(box.dataset.id); else state.selected.delete(box.dataset.id); showPicked(); };
+      });
+      const all = $('#prim-pick-all');
+      if (all) {
+        all.checked = picks.length > 0 && picks.every((box) => box.checked);
+        all.onchange = () => { picks.forEach((box) => { box.checked = all.checked; box.onchange(); }); };
+      }
+      showPicked();
       $('#prim-prev').onclick = () => { state.offset = Math.max(0, state.offset - state.limit); load(); };
       $('#prim-next').onclick = () => { state.offset += state.limit; load(); };
     } catch (e) {
@@ -403,8 +480,24 @@ export async function viewPrimary(container, opts = {}) {
         с НДС: <b>${primMoney(d.total_with_vat)}</b> ${primStatusChip(d.status)}</p>
       <h4>Проверка</h4>${primIssuesHtml(d.issues)}
       <h4>Строки</h4>${primLinesHtml(d.lines)}
-      <div class="modal-actions"><button type="button" class="btn btn-danger" id="prim-del">Удалить документ</button></div>`);
+      <p class="form-hint">1С: ${d.exported_at ? `выгружен ${esc(primExportedLabel(d.exported_at).replace('✓ ', ''))}` : 'ещё не выгружен'}.
+        Файл УПД загружается в 1С кнопкой «Загрузить → Из файла» в разделе «Покупки → Поступление (акты, накладные, УПД)».</p>
+      <div class="modal-actions"><button type="button" class="btn" id="prim-card-1c">⬇ Файл для 1С</button>
+        <button type="button" class="btn btn-danger" id="prim-del">Удалить документ</button></div>`);
     if (slot) slot.classList.add('prim-modal');   // шире обычного окна: строки документа — 8 колонок
+    const file1c = document.getElementById('prim-card-1c');
+    if (file1c) {
+      file1c.onclick = async () => {
+        try {
+          const { blob, filename } = await api.download('/api/v1/primary/export',
+            primExportBody({ ids: [id], format: 'upd', includeErrors: true }));
+          primDownload(blob, filename);
+          toast('Файл для 1С скачан — документ отмечен «выгружен»', 'ok');
+          if (typeof close === 'function') close();
+          load();
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    }
     const del = document.getElementById('prim-del');
     if (del) {
       del.onclick = async () => {
@@ -417,6 +510,66 @@ export async function viewPrimary(container, opts = {}) {
         } catch (e) { toast(e.message, 'err'); }
       };
     }
+  }
+
+  function showPicked() {
+    const label = $('#prim-picked');
+    if (label) label.textContent = state.selected.size ? `Отмечено: ${state.selected.size}` : '';
+  }
+
+  // v1.70.96 (T-60): выгрузка в 1С — сначала проверка (что уйдёт и почему пропущено), затем скачивание
+  async function openExport() {
+    const ids = [...state.selected];
+    const period = [state.from && `с ${primDay(state.from)}`, state.to && `по ${primDay(state.to)}`].filter(Boolean).join(' ');
+    const what = ids.length ? `Отмечено документов: ${ids.length}.`
+      : `Новые документы — ещё не выгруженные${period ? ` (${period})` : ''}. Чтобы выгрузить определённые, отметьте их в реестре.`;
+    const { slot, close } = openModal(`
+      <h3 class="modal-title">⬇ Выгрузка в 1С</h3>
+      <p class="form-hint">${esc(what)}</p>
+      <fieldset class="prim-export-formats"><legend>Формат</legend>
+        ${PRIM_EXPORT_FORMATS.map((f, i) => `<label class="prim-export-format"><input type="radio" name="prim-exp-format"
+          id="prim-exp-${f.code}" value="${f.code}" ${i === 0 ? 'checked' : ''}><span><b>${esc(f.title)}</b>
+          <span class="form-hint">${esc(f.hint)}</span></span></label>`).join('')}
+      </fieldset>
+      <label class="prim-export-format"><input type="checkbox" id="prim-exp-errors"><span>и документы с ошибками проверки</span></label>
+      <div id="prim-exp-check" aria-live="polite"><div class="skeleton" style="height:48px"></div></div>
+      <div class="modal-actions"><button type="button" class="btn btn-primary" id="prim-exp-go" disabled>Скачать</button></div>`);
+    if (!slot) return;
+    const get = (id) => slot.querySelector(`#${id}`);
+    const format = () => (PRIM_EXPORT_FORMATS.find((f) => get(`prim-exp-${f.code}`)?.checked) || PRIM_EXPORT_FORMATS[0]).code;
+    const body = () => primExportBody({ ids, format: format(), includeErrors: get('prim-exp-errors').checked,
+      companyId: opts.isAdmin ? filterCompany : '', from: state.from, to: state.to });
+    let seq = 0;
+    let ready = 0;
+    const refresh = async () => {
+      const mine = ++seq;
+      const go = get('prim-exp-go');
+      go.disabled = true;
+      try {
+        const check = await api.post('/api/v1/primary/export/check', body());
+        if (mine !== seq) return;
+        ready = Number(check.count) || 0;
+        get('prim-exp-check').innerHTML = primExportSummaryHtml(check);
+        go.disabled = !ready;
+      } catch (e) {
+        if (mine === seq) get('prim-exp-check').innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+      }
+    };
+    PRIM_EXPORT_FORMATS.forEach((f) => { const radio = get(`prim-exp-${f.code}`); if (radio) radio.onchange = refresh; });
+    get('prim-exp-errors').onchange = refresh;
+    get('prim-exp-go').onclick = async () => {
+      const go = get('prim-exp-go');
+      go.disabled = true;
+      try {
+        const { blob, filename } = await api.download('/api/v1/primary/export', body());
+        primDownload(blob, filename);
+        toast(`Выгружено документов: ${ready} — они отмечены «выгружен»`, 'ok');
+        state.selected.clear();
+        if (typeof close === 'function') close();
+        load();
+      } catch (e) { go.disabled = false; toast(e.message, 'err'); }
+    };
+    await refresh();
   }
 
   const companyChoice = () => { const sel = $('#prim-company'); return sel && sel.value ? sel.value : ''; };
@@ -579,6 +732,8 @@ export async function viewPrimary(container, opts = {}) {
   };
   $('#prim-from').onchange = (e) => { state.from = e.target.value; state.offset = 0; load(); };
   $('#prim-to').onchange = (e) => { state.to = e.target.value; state.offset = 0; load(); };
+  $('#prim-exported').onchange = (e) => { state.exported = e.target.value; state.offset = 0; load(); };
+  $('#prim-export').onclick = () => openExport();
   const listed = load();          // реестр — первым запросом, состояние распознавания — следом, не дожидаясь
   loadOcr();
   await listed;

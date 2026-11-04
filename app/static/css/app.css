@@ -2220,3 +2220,9 @@ label.field[hidden] { display: none; }
 .prim-form .field-inline { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
 .prim-issues details { margin-top: 4px; }
 .prim-issues details ul { margin: 4px 0 0 18px; padding: 0; list-style: disc; }
+/* v1.70.96 (T-60): окно «Выгрузка в 1С» — форматы списком, подсказка под названием */
+.prim-export-formats { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px 10px; margin: 8px 0; }
+.prim-export-formats legend { font-weight: 600; padding: 0 4px; }
+.prim-export-format { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; cursor: pointer; }
+.prim-export-format input { margin-top: 3px; flex: none; }
+.prim-export-format .form-hint { display: block; }

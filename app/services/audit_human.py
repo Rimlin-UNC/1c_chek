@@ -217,6 +217,15 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "1С забрала чеки", f"количество: {d.get('count', 0)}"
     if action == "onec_ack":
         return "1С подтвердила загрузку", ""
+    # v1.70.96 (T-60): первичка в 1С
+    if action == "primary_exported":
+        skipped = f", пропущено: {d['skipped']}" if d.get("skipped") else ""
+        what = {"upd": "файлы УПД", "json": "EnterpriseData JSON", "xml": "EnterpriseData XML"}.get(d.get("format"), "")
+        return "первичка выгружена в 1С", f"документов: {d.get('count', 0)}{skipped}" + (f", формат: {what}" if what else "")
+    if action == "onec_primary_pull":
+        return "1С забрала УПД и счета-фактуры", f"количество: {d.get('count', 0)}"
+    if action == "onec_primary_ack":
+        return "1С подтвердила загрузку УПД", f"количество: {d.get('count', 0)}"
     if action == "mapping_updated":
         return "обновлены правила сопоставления статей", ""
     if action == "app_settings_updated":

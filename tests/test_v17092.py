@@ -81,7 +81,9 @@ class TestCompanyTokens:
     def test_endpoints_take_scope_from_token(self):
         from app.routers import onec
         src = inspect.getsource(onec)
-        assert src.count("scope = _require_token(x_api_token, db)") == 4      # ping, pull, ack, enterprise-data
+        # каждый маршрут 1С берёт область из токена: ping, чеки (pull, ack, enterprise-data), с 1.70.96 — первичка
+        routes = len(re.findall(r"^@router\.(?:get|post)\(", src, re.M))
+        assert routes >= 4 and src.count("scope = _require_token(x_api_token, db)") == routes
         assert "Токен компании не даёт доступа к чекам другой компании" in src
         assert "if r and scope and r.company_id != scope:" in src
         assert "hmac" not in src                                             # сравнение — в onec_tokens

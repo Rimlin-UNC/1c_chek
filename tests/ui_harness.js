@@ -234,6 +234,11 @@ sandbox.fetch = async (url, opts) => {
     specialPayload = true;
     payload = { result: 'created', document: { kind: 'УПД', doc_number: 'Б-1', doc_date: '2026-10-20' }, issues: [] };
   }
+  // v1.70.96: первичка — проверка выгрузки в 1С (T-60)
+  if (String(url).endsWith('/api/v1/primary/export/check')) {
+    specialPayload = true;
+    payload = { count: 1, skipped: [], already_exported: 0, errors_excluded: 1, limit: 500, format: 'upd' };
+  }
   // v1.70.94: первичка — реестр электронных УПД (T-53)
   if (String(url).includes('/api/v1/primary?')) {
     specialPayload = true;
@@ -973,6 +978,22 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     const conf = apiLog.slice(fromSave).find((c) => c.method === 'POST' && c.url === '/api/v1/primary/confirm');
     ok(conf && conf.body.source === 'manual' && conf.body.draft.number === 'Б-1' && conf.body.draft.seller.inn === '5001007329',
        'v1.70.95: ручной ввод ушёл на сервер с реквизитами');
+    // v1.70.96 (T-60): «В 1С» — сначала проверка (что уйдёт, сколько с ошибками), затем скачивание
+    const fromExp = apiLog.length;
+    await vcP.querySelector('#prim-export').onclick();
+    await tickP(20);
+    const chk = apiLog.slice(fromExp).find((c) => c.method === 'POST' && c.url === '/api/v1/primary/export/check');
+    ok(chk && chk.body.format === 'upd' && chk.body.include_errors === false && !chk.body.ids,
+       'v1.70.96: окно выгрузки спросило у сервера, что уйдёт в 1С (новые, без ошибок, файлы УПД)');
+    const slotE = root.querySelector('.modal-slot');
+    ok(slotE.querySelector('#prim-exp-check').innerHTML.includes('Будет выгружено: 1')
+       && slotE.querySelector('#prim-exp-check').innerHTML.includes('С ошибками проверки не выгружаются: 1'),
+       'v1.70.96: бухгалтер видит, сколько уйдёт и сколько документов с ошибками останется');
+    ok(slotE.querySelector('#prim-exp-go').disabled === false, 'v1.70.96: есть что выгружать — «Скачать» доступна');
+    const fromGo = apiLog.length;
+    await slotE.querySelector('#prim-exp-go').onclick();
+    const exp = apiLog.slice(fromGo).find((c) => c.method === 'POST' && c.url === '/api/v1/primary/export');
+    ok(exp && exp.body.format === 'upd', 'v1.70.96: «Скачать» запросила файл для 1С');
     vcP.isConnected = undefined;
   }
 

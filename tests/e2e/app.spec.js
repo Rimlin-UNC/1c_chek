@@ -320,3 +320,30 @@ test('первичка: PDF печатной формы распознан, св
   await expect(page.locator('.modal-slot')).toContainText('Источник: PDF');
   await expect(page.locator('.modal-slot')).toContainText('Реквизиты распознаны из PDF и сверены пользователем');
 });
+
+// v1.70.96 (T-60): выгрузка в 1С — администратор отмечает документ в реестре, окно показывает, что уйдёт,
+// «Скачать» отдаёт файл УПД 5.03 для типовой кнопки 1С «Загрузить → Из файла»; документ отмечен «выгружен».
+test('первичка: отмеченный документ выгружается файлом УПД для 1С', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/primary"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Первичка');
+  const number = `E2E-1C-${Date.now()}`;
+  await page.setInputFiles('#prim-file', { name: 'upd_1c.xml', mimeType: 'text/xml', buffer: Buffer.from(updXml(number), 'utf-8') });
+  await expect(page.locator('#prim-results')).toContainText('загружено 1');
+  const row = page.locator('#prim-out tbody tr', { hasText: number });
+  await row.locator('.prim-pick').check();
+  await expect(page.locator('#prim-picked')).toHaveText('Отмечено: 1');
+  await page.locator('#prim-export').click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal.locator('#prim-exp-check')).toContainText('Будет выгружено: 1');
+  const download = page.waitForEvent('download');
+  await modal.locator('#prim-exp-go').click();
+  const file = await download;
+  expect(file.suggestedFilename()).toMatch(/^ON_NSCHFDOPPR_7704001236_5001007329_20260310_[0-9a-f-]{36}\.xml$/);
+  const body = new TextDecoder('windows-1251').decode(readFileSync(await file.path()));
+  expect(body).toContain('encoding="windows-1251"');
+  expect(body).toContain('ВерсФорм="5.03"');
+  expect(body).toContain(`НомерДок="${number}"`);
+  await expect(row).toContainText('✓');
+});

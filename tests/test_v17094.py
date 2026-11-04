@@ -162,7 +162,7 @@ class TestDocsAndKb:
         t53 = tasks["T-53"]
         assert t53["Статус"] == "done" and t53["Задача"].endswith(f"выпущено в {VERSION}")
         t60 = tasks["T-60"]
-        assert (t60["Статус"], t60["Приоритет"]) == ("todo", "P1")
+        assert t60["Статус"] in ("todo", "done") and t60["Приоритет"] == "P1"     # v1.70.96: выпущено (T-60)
         assert t60["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/45"
         assert t60["Источник"].endswith("docs/primary_docs_design.md")
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.95: не старше

@@ -35,6 +35,11 @@ class FakeSMTP:
         SENT.append(msg)
 
 
+def _sent_by_rule(subject):
+    """Письма одного правила: правила других тестов в общей базе тоже срабатывают на тике (v1.70.96)."""
+    return [m for m in SENT if m["Subject"] == subject]
+
+
 def _install_fake(monkeypatch):
     SENT.clear()
     monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
@@ -232,11 +237,11 @@ class TestMailBot:
         res = mail_center.tick(db, now=_now)
         assert any(x["rule"] == "Подтвердите e-mail" and x["sent"] == 1
                    for x in res["ran"]), res
-        assert len(SENT) == 1
+        assert len(_sent_by_rule("Подтвердите e-mail")) == 1
         # повторный тик в тот же день → не выполняется
         res2 = mail_center.tick(db, now=_now + dt.timedelta(minutes=30))
         assert res2["ran"] == []
-        assert len(SENT) == 1
+        assert len(_sent_by_rule("Подтвердите e-mail")) == 1
         # бот выключен → тик ничего не делает
         from app.services import appsettings as _as
         _as.set_setting(db, mail_center.SET_BOT_ON, "0")

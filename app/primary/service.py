@@ -304,6 +304,52 @@ def confirm(db: Session, user: User, payload: dict) -> dict:
     return {"result": "created", "document": brief(doc), "issues": issues}
 
 
+# ------------------------------------------------------------------ выгрузка в 1С (T-60, v1.70.96)
+EXPORT_LIMIT = 500
+
+
+def export_selection(db: Session, user: User, *, ids: list[str] | None = None, company_id: str | None = None,
+                     include_errors: bool = False, date_from: date | None = None,
+                     date_to: date | None = None) -> list[PrimaryDocument]:
+    """Документы для выгрузки в 1С в области пользователя.
+
+    Отмеченные (ids) выгружаются и повторно — это явный выбор бухгалтера; без отметок — только ещё
+    не выгруженные. Документы со статусом «Ошибки» выгружаются только при include_errors.
+    """
+    query = scope(db.query(PrimaryDocument), user, company_id)
+    if ids:
+        query = query.filter(PrimaryDocument.id.in_(ids))
+    else:
+        query = query.filter(PrimaryDocument.exported_at.is_(None))
+        if date_from:
+            query = query.filter(PrimaryDocument.doc_date >= date_from)
+        if date_to:
+            query = query.filter(PrimaryDocument.doc_date <= date_to)
+    if not include_errors:
+        query = query.filter(PrimaryDocument.status != "errors")
+    return (query.order_by(PrimaryDocument.doc_date.is_(None), PrimaryDocument.doc_date, PrimaryDocument.created_at)
+            .limit(EXPORT_LIMIT).all())
+
+
+def errors_left(db: Session, user: User, *, ids: list[str] | None = None, company_id: str | None = None) -> int:
+    """Сколько документов с ошибками осталось бы за бортом — подсказка в окне выгрузки."""
+    query = scope(db.query(PrimaryDocument), user, company_id).filter(PrimaryDocument.status == "errors")
+    query = query.filter(PrimaryDocument.id.in_(ids)) if ids else query.filter(PrimaryDocument.exported_at.is_(None))
+    return query.count()
+
+
+def mark_exported(db: Session, docs: list[PrimaryDocument], now) -> int:
+    for doc in docs:
+        doc.exported_at = now
+    db.commit()
+    return len(docs)
+
+
+def title(doc: PrimaryDocument) -> str:
+    day = doc.doc_date.strftime("%d.%m.%Y") if doc.doc_date else "без даты"
+    return f"{doc.kind} № {doc.doc_number or 'без номера'} от {day} — {doc.seller_name or 'продавец не указан'}"
+
+
 # ------------------------------------------------------------------ выдача
 def scope(query: Query, user: User, company_id: str | None = None) -> Query:
     if user.role == ROLE_ADMIN:

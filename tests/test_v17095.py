@@ -24,61 +24,50 @@ def read(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.95 — исторические проверки (точные пины — в tests/test_v17096.py)."""
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
-        for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
-                    "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
-                    "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-04"
-        entry = md.split("\n## [1.70.94]", 1)[0]
-        assert len(entry) <= 4000, len(entry)
-        for needle in ("(T-61)", "резервная копия", "Зависимости изменились", "lxml, pypdfium2 и tesserocr",
-                       "откатится само", "колонка source", "48 из 48", "1.70.82–1.70.94", "официальной XSD-схемой ФНС",
-                       "Tesseract 5", "«Сохранить в реестр»", "«Ввести вручную»", "«Скачать модели (8 МБ)»",
-                       "«Наим»", "СвФЛУч", "16,67 %", "T-62", "T-63", "T-64", "T-60"):
+        head = f"## [{VERSION}] - 2026-11-04"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
+        assert len(head + entry) <= 4000, len(head + entry)
+        for needle in ("(T-61)", "официальной XSD-схемой ФНС", "Tesseract 5", "«Наим»", "lxml, pypdfium2 и tesserocr"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
-        assert block.count("{ icon:") == 2
-        for needle in ("PDF, скан или фото", "без облаков", "«Сохранить»", "вручную", "схемой ФНС",
-                       "иностранных поставщиков"):
-            assert needle in block, needle
+        assert block.count("{ icon:") == 2 and "PDF, скан или фото" in block and "схемой ФНС" in block
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — «Первичка»: PDF, сканы и фото со сверкой, ручной ввод, схема ФНС")
-        entry = journal.split("\n## v1.70.94", 1)[0]
-        for needle in ("«✍️ Ввести вручную»", "«Скачать модели (8 МБ)»", "«Крупнее»", "⚠", "«Подставить»",
-                       "«Пропустить»", "«Подробно (N)»", "две карточки"):
-            assert needle in entry, needle
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
+        assert "«✍️ Ввести вручную»" in entry and "«Скачать модели (8 МБ)»" in entry
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == ["Первичка (электронные УПД)"]
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 95) for v in reg.values())
-        before = dict(reg, **{"Первичка (электронные УПД)": "1.70.94"})
-        assert {"name": "Первичка (электронные УПД)", "from": "1.70.94", "to": VERSION} in updater.diff_blocks(before, reg)
+        assert self._ver(reg["Первичка (электронные УПД)"]) >= self._ver(VERSION)
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (04.11.2026)" in readme
-        assert "Последний выпуск — v1.70.94" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.94.**" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestDependencies:
@@ -108,7 +97,7 @@ class TestSchema:
     def test_no_new_tables_one_new_column(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 52
+        assert declared >= 52
         from app.primary.models import PrimaryDocument
         col = PrimaryDocument.__table__.columns["source"]
         assert col.server_default is not None and col.server_default.arg == "xml" and col.type.length == 10
@@ -117,7 +106,7 @@ class TestSchema:
         assert ('("source", "ALTER TABLE primary_documents ADD COLUMN source VARCHAR(10) DEFAULT \'xml\'")'
                 in read("app/database.py"))
         db = read("docs/DATABASE.md")
-        assert "52 объявления `__tablename__`" in db and "колонка `source` (xml, pdf, scan, manual" in db
+        assert re.search(r"\d+ объявлени\w* `__tablename__`", db) and "колонка `source` (xml, pdf, scan, manual" in db
 
 
 class TestWiring:
@@ -204,9 +193,10 @@ class TestDocsAndKb:
         for tid, issue in (("T-62", 47), ("T-63", 48), ("T-64", 49)):
             assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         assert tasks["T-54"]["Статус"] == "cancelled" and "T-61" in tasks["T-54"]["Блокер"]
-        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.94" in tasks["T-01"]["Блокер"]
+        m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.96: не старше
+        assert m and tuple(map(int, m.group(1).split("."))) >= (1, 70, 95)
         roadmap = read("docs/kb/02_roadmap.md")
         assert "[#46](https://github.com/Rimlin-UNC/1c_chek/issues/46) T-61" in roadmap
         ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
-        assert ledger[-2]["Версия"] == "1.70.94" and ledger[-2]["Откат на неё"] == "можно"
+        rows = {r["Версия"]: r for r in ledger}
+        assert rows[VERSION]["Опора репетиции"] == "да" and rows["1.70.94"]["Откат на неё"] == "можно"

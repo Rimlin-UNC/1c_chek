@@ -55,7 +55,7 @@
 | Компании и доступ | `companies`, `users`, `invites`, `audit_log`, `app_settings`, `webauthn_credentials`, `webauthn_challenges`, `max_login_codes`, `telegram_login_codes` |
 | Чек-Пул | `pool_users`, `pool_receipts`, `pool_items`, `pool_points`, `pool_consents`, `pool_tokens`, `pool_fingerprints`, `pool_ip_log`, `pool_signals`, `pool_withdrawals`, `pool_achievements`, `pool_referrals`, `pool_leads`, `pool_api_keys`, `pool_api_calls` |
 | Единый реестр (v1.70.81–85) | `unified_documents`, `unified_items`, `unified_ownership`, `unified_origins`, `unified_events`, `unified_company_links` (v1.70.85) |
-| Первичка (v1.70.94) | `primary_documents`, `primary_document_lines` — электронные УПД и счета-фактуры; с v1.70.95 в `primary_documents` колонка `source` (xml, pdf, scan, manual — откуда документ), добавляется к таблице 1.70.94 при обновлении, по умолчанию `xml` |
+| Первичка (v1.70.94) | `primary_documents`, `primary_document_lines` — электронные УПД и счета-фактуры; с v1.70.95 в `primary_documents` колонка `source` (xml, pdf, scan, manual — откуда документ), добавляется к таблице 1.70.94 при обновлении, по умолчанию `xml`; с v1.70.96 колонку `exported_at` заполняет выгрузка в 1С (из программы и `/onec/v1/primary/ack`) — схема не менялась |
 | B2B | `b2b_applications`, `b2b_companies`, `b2b_tokens`, `b2b_checks`, `b2b_events` |
 | Почта и события | `mail_rules`, `mail_log`, `webhook_logs` |
 | Мониторинг OpenStack | `openstack_settings`, `openstack_metrics`, `openstack_sync_log` |

@@ -8,6 +8,10 @@
 С 1.70.95 — печатные формы: POST /recognize (PDF, скан, фото → черновик, база не трогается),
 POST /confirm (сверенный черновик или ручной ввод → документ), GET /ocr (готово ли распознавание
 сканов), POST /ocr/models (скачать языковые модели — только администратор).
+
+С 1.70.96 — выгрузка в 1С (T-60, export1c.py): POST /export/check (что уйдёт и почему пропущено,
+база не меняется), POST /export (файлы УПД 5.03 для «Загрузить → Из файла» в 1С или пакет
+EnterpriseData; документы отмечаются выгруженными). Для обмена без участия человека — /onec/v1/primary/*.
 """
 from __future__ import annotations
 
@@ -15,10 +19,11 @@ import io
 import zipfile
 import zlib
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -26,7 +31,8 @@ from sqlalchemy.orm import Session
 from ..auth import require_accountant, require_admin
 from ..database import get_db
 from ..models import User
-from . import ocr, service, upd
+from ..services.audit import log_action
+from . import export1c, ocr, service, upd
 from .models import PrimaryDocument
 
 router = APIRouter(prefix="/api/v1/primary", tags=["primary"])
@@ -83,6 +89,16 @@ class ConfirmIn(BaseModel):
     file_sha256: str = Field("", max_length=64)
     company_id: str | None = Field(None, max_length=36)
     draft: DraftIn
+
+
+class ExportIn(BaseModel):
+    """v1.70.96 (T-60): выгрузка в 1С — файлы УПД 5.03 (upd) или пакет EnterpriseData (json, xml)."""
+    ids: list[Annotated[str, Field(max_length=36)]] = Field(default_factory=list, max_length=500)
+    format: Literal["upd", "json", "xml"] = "upd"
+    company_id: str | None = Field(None, max_length=36)
+    include_errors: bool = False
+    date_from: DateType | None = None
+    date_to: DateType | None = None
 
 MAX_ZIP_BYTES = 20 * 1024 * 1024
 MAX_UNPACKED = 50 * 1024 * 1024
@@ -190,9 +206,13 @@ def list_documents(user: Accountant, db: Db,
                    q: Annotated[str | None, Query(max_length=100)] = None,
                    date_from: Annotated[date | None, Query()] = None,
                    date_to: Annotated[date | None, Query()] = None,
+                   exported: Annotated[bool | None, Query(description="v1.70.96: выгружен ли в 1С")] = None,
                    limit: Annotated[int, Query(ge=1, le=500)] = 100,
                    offset: Annotated[int, Query(ge=0)] = 0) -> dict:
     query = service.scope(db.query(PrimaryDocument), user, company_id)
+    if exported is not None:
+        query = query.filter(PrimaryDocument.exported_at.isnot(None) if exported
+                             else PrimaryDocument.exported_at.is_(None))
     if date_from:
         query = query.filter(PrimaryDocument.doc_date >= date_from)
     if date_to:
@@ -210,6 +230,63 @@ def list_documents(user: Accountant, db: Db,
             .offset(offset).limit(limit).all())
     return {"items": [service.brief(d) for d in rows], "total": total,
             "summary": {s: int(counts.get(s, 0)) for s in STATUSES}}
+
+
+# ------------------------------------------------------------------ выгрузка в 1С (T-60, v1.70.96)
+def _selection(db: Session, user: User, body: ExportIn) -> list[PrimaryDocument]:
+    return service.export_selection(db, user, ids=body.ids, company_id=body.company_id,
+                                    include_errors=body.include_errors, date_from=body.date_from,
+                                    date_to=body.date_to)
+
+
+@router.post("/export/check")
+def export_check(user: Accountant, db: Db, body: ExportIn) -> dict:
+    """Что уйдёт в 1С: сколько документов готово и почему пропущены остальные. База не меняется."""
+    docs = _selection(db, user, body)
+    skipped: list[dict] = []
+    count = len(docs)
+    if body.format == "upd":
+        prepared = export1c.prepare(docs)
+        skipped = [{"id": p["doc"].id, "title": service.title(p["doc"]), "reason": p["reason"]}
+                   for p in prepared if "reason" in p]
+        count = len(prepared) - len(skipped)
+    errors = 0 if body.include_errors else service.errors_left(db, user, ids=body.ids, company_id=body.company_id)
+    return {"count": count, "skipped": skipped, "already_exported": sum(1 for d in docs if d.exported_at),
+            "errors_excluded": errors, "limit": service.EXPORT_LIMIT, "format": body.format}
+
+
+@router.post("/export")
+def export_documents(user: Accountant, db: Db, body: ExportIn) -> Response:
+    """Скачать файл для 1С и отметить документы выгруженными (повторно — только отмеченные вручную)."""
+    docs = _selection(db, user, body)
+    if not docs:
+        raise HTTPException(404, "Нет документов для выгрузки: новые уже выгружены, а с ошибками не выгружаются")
+    stamp = datetime.now(export1c.MSK)
+    skipped = 0
+    if body.format == "upd":
+        prepared = export1c.prepare(docs, stamp)
+        ready = [p for p in prepared if "data" in p]
+        skipped = len(prepared) - len(ready)
+        if not ready:
+            reasons = "; ".join(f"{service.title(p['doc'])}: {p['reason']}" for p in prepared[:3])
+            raise HTTPException(422, f"Файл для 1С не собран — {reasons}")
+        docs = [p["doc"] for p in ready]
+        if len(ready) == 1:
+            content, media, name = ready[0]["data"], "application/xml", ready[0]["name"]
+        else:
+            content, media = export1c.zip_files(ready), "application/zip"
+            name = f"upd-dlya-1c-{stamp:%Y%m%d-%H%M}.zip"
+    elif body.format == "xml":
+        content, media = export1c.ed_xml(docs).encode("utf-8"), "application/xml; charset=utf-8"
+        name = f"enterprise-data-pervichka-{stamp:%Y%m%d-%H%M}.xml"
+    else:
+        content, media = export1c.ed_json(docs).encode("utf-8"), "application/json; charset=utf-8"
+        name = f"enterprise-data-pervichka-{stamp:%Y%m%d-%H%M}.json"
+    service.mark_exported(db, docs, stamp.astimezone(timezone.utc).replace(tzinfo=None))
+    log_action(user, "primary_exported", details={"count": len(docs), "skipped": skipped, "format": body.format})
+    return Response(content=content, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "X-Exported": str(len(docs)), "X-Skipped": str(skipped)})
 
 
 def _visible(db: Session, user: User, doc_id: str) -> PrimaryDocument:
