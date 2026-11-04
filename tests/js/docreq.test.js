@@ -161,7 +161,7 @@ describe('что нужно от клиента: экран', () => {
     expect(calls.put[0].path).toBe('/api/v1/doc-requests/settings');
     expect(calls.put[0].body).toEqual({ enabled: true, auto_detect: true, deadline_day: 5, x_hour: '18:00', remind_days: [2, 0],
       repeat_every: 2, repeat_max: 3, channels: ['telegram', 'email'], roles: ['manager', 'user'],
-      contact_email: 'buh@client.example' });
+      contact_email: 'buh@client.example', escalate_days: 3 });        // v1.70.99: эскалация, по умолчанию 3 дня
   });
 
   it('«Напомнить сейчас»: сначала кому и что уйдёт, потом отправка', async () => {

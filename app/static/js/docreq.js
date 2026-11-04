@@ -16,6 +16,7 @@ export const DREQ_KINDS = {
 };
 export const DREQ_EVENTS = {
   created: 'Запрос создан', reminder: 'Напоминание', received: 'Получено', cancelled: 'Отменено', reopened: 'Снова ждём',
+  escalated: 'Передано руководителю',   // v1.70.99: сотрудник не прислал документ N дней
 };
 export const DREQ_CHANNELS = { telegram: 'Telegram', max: 'MAX', email: 'почта' };
 const DREQ_ROLES = { manager: 'Руководителю компании', user: 'Сотрудникам компании' };
@@ -98,6 +99,7 @@ export function dreqSettingsHtml(s, channels) {
       <label class="field"><span>После срока — раз в, дней</span><input id="dreq-s-every" type="number" min="1" max="14" value="${esc(s.repeat_every)}"></label>
       <label class="field"><span>Повторов после срока</span><input id="dreq-s-times" type="number" min="0" max="10" value="${esc(s.repeat_max)}"></label>
       <label class="field"><span>Почта клиента для запросов</span><input id="dreq-s-email" type="email" maxlength="200" value="${esc(s.contact_email || '')}"></label>
+      <label class="field"><span>Чек или документ сотрудника не пришёл — показать руководителю через, дней (0 — не показывать)</span><input id="dreq-s-escalate" type="number" min="0" max="30" value="${esc(s.escalate_days ?? 3)}"></label>
     </div>
     <fieldset class="dreq-set"><legend>Каналы</legend>
       ${Object.entries(DREQ_CHANNELS).map(([code, title]) => box(`dreq-s-ch-${code}`, (s.channels || []).includes(code), title,
@@ -117,7 +119,14 @@ export function dreqSettingsHtml(s, channels) {
 export function dreqSettingsBody(get, companyId) {
   const days = dreqParseDays(get('dreq-s-days').value);
   if (days === null) return { error: 'Дни до срока — числа от 0 до 10 через запятую, не больше пяти' };
+  // v1.70.99: эскалация — через сколько дней личный запрос сотрудника видит руководитель (0 — не показывать)
+  const escalateField = get('dreq-s-escalate');
+  const escalate = escalateField ? Number(escalateField.value) : 3;
+  if (!Number.isInteger(escalate) || escalate < 0 || escalate > 30) {
+    return { error: 'Показать руководителю — через 0–30 дней (0 — не показывать)' };
+  }
   const body = {
+    escalate_days: escalate,
     enabled: get('dreq-s-enabled').checked, auto_detect: get('dreq-s-auto').checked,
     deadline_day: Number(get('dreq-s-day').value), x_hour: get('dreq-s-hour').value, remind_days: days,
     repeat_every: Number(get('dreq-s-every').value), repeat_max: Number(get('dreq-s-times').value),

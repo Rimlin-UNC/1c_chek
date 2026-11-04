@@ -150,30 +150,14 @@ def import_statement(db: Session, company: Company, raw: bytes, user: User) -> d
         raise BankError(f"Выписка другой организации (ИНН {', '.join(sorted(foreign))}), а компания — ИНН {own_inn}. "
                         "Выберите нужную компанию", 409)
     kinds = Counter(op["kind"] for op in ops)
-    statement = BankStatement(company_id=company.id, file_sha256=sha, uploaded_by=user.id,
+    statement = BankStatement(company_id=company.id, file_sha256=sha, uploaded_by=user.id, source="file",
                               account_tail=", ".join(a[-4:] for a in data["accounts"])[:40],
                               date_from=data["date_from"] or min((o["op_date"] for o in ops), default=None),
                               date_to=data["date_to"] or max((o["op_date"] for o in ops), default=None),
                               ops_total=len(ops), summary_json=json.dumps(dict(kinds), ensure_ascii=False))
     db.add(statement)
     db.flush()
-    known = {h for (h,) in db.query(BankOperation.op_hash).filter(BankOperation.company_id == company.id)}
-    saved: list[BankOperation] = []
-    duplicates = 0
-    for op in ops:
-        if op["kind"] not in parser.NEEDS_DOCUMENTS:
-            continue
-        digest = parser.op_hash(company.id, op)
-        if digest in known:
-            duplicates += 1
-            continue
-        known.add(digest)
-        row = BankOperation(company_id=company.id, statement_id=statement.id, op_hash=digest, op_date=op["op_date"],
-                            number=op["number"], amount=op["amount"], kind=op["kind"], card_tail=op["card_tail"],
-                            counterparty_name=op["counterparty_name"], counterparty_inn=op["counterparty_inn"],
-                            purpose=op["purpose"], status="open", updated_at=utcnow())
-        db.add(row)
-        saved.append(row)
+    saved, duplicates, _ = store_ops(db, company.id, statement.id, ops)
     statement.ops_saved = len(saved)
     statement.duplicates = duplicates
     statement.ops_skipped = len(ops) - len(saved) - duplicates
@@ -185,6 +169,57 @@ def import_statement(db: Session, company: Company, raw: bytes, user: User) -> d
     return {"statement": statement_dict(statement), "operations": len(ops), "saved": len(saved),
             "duplicates": duplicates, "skipped": statement.ops_skipped, "matched": matched,
             "open": len(saved) - matched, "kinds": dict(kinds), "purged": purged, "requests": requests}
+
+
+def _soft_key(op: dict) -> tuple | None:
+    """Вторая проверка дублей — для платежей с номером: дата, сумма, номер и ИНН. Ловит ту же операцию
+    из файла и из API банка, если назначение платежа в них записано по-разному (перенос строк, пробелы).
+    Покупки по карте без номера так не сравниваются: два одинаковых кофе в один день — разные операции."""
+    number = _norm_number(op.get("number") or "")
+    if not number:
+        return None
+    return (op["op_date"].isoformat(), f"{op['amount']:.2f}", number, op.get("counterparty_inn") or "")
+
+
+def store_ops(db: Session, company_id: str, statement_id: str, ops: list[dict]) -> tuple[list[BankOperation], int, int]:
+    """Сохранить операции, которым нужны документы. Возвращает (новые, дубли из других выписок, уже были в этой).
+
+    Общая для файла и для API банка (v1.70.99): выписка из API дополняется при каждой загрузке, поэтому
+    операции, сохранённые ею раньше, — не дубли, а «уже были»."""
+    known: dict[str, str] = {}
+    soft: dict[tuple, str] = {}
+    rows = (db.query(BankOperation.op_hash, BankOperation.statement_id, BankOperation.op_date, BankOperation.amount,
+                     BankOperation.number, BankOperation.counterparty_inn)
+            .filter(BankOperation.company_id == company_id))
+    for digest, sid, day, amount, number, inn in rows:
+        known[digest] = sid
+        key = _soft_key({"op_date": day, "amount": amount or 0.0, "number": number, "counterparty_inn": inn})
+        if key:
+            soft.setdefault(key, sid)
+    saved: list[BankOperation] = []
+    duplicates = already = 0
+    for op in ops:
+        if op["kind"] not in parser.NEEDS_DOCUMENTS:
+            continue
+        digest = parser.op_hash(company_id, op)
+        key = _soft_key(op)
+        owner = known.get(digest) or (soft.get(key) if key else None)
+        if owner is not None:
+            if owner == statement_id:
+                already += 1
+            else:
+                duplicates += 1
+            continue
+        known[digest] = statement_id
+        if key:
+            soft[key] = statement_id
+        row = BankOperation(company_id=company_id, statement_id=statement_id, op_hash=digest, op_date=op["op_date"],
+                            number=op["number"], amount=op["amount"], kind=op["kind"], card_tail=op["card_tail"],
+                            counterparty_name=op["counterparty_name"], counterparty_inn=op["counterparty_inn"],
+                            purpose=op["purpose"], status="open", updated_at=utcnow())
+        db.add(row)
+        saved.append(row)
+    return saved, duplicates, already
 
 
 def periods_of(ops: list[BankOperation]) -> set[str]:
@@ -518,6 +553,7 @@ def statement_dict(s: BankStatement, users: dict[str, User] | None = None) -> di
     return {"id": s.id, "account_tail": s.account_tail, "date_from": s.date_from.isoformat() if s.date_from else None,
             "date_to": s.date_to.isoformat() if s.date_to else None, "operations": s.ops_total, "saved": s.ops_saved,
             "skipped": s.ops_skipped, "duplicates": s.duplicates, "kinds": kinds,
+            "source": s.source or "file",                       # v1.70.99: file | tochka (API банка)
             "uploaded_by": (who.full_name or who.username) if who else "",
             "created_at": s.created_at.isoformat() if s.created_at else None}
 

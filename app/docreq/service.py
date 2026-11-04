@@ -43,7 +43,9 @@ ROLES = ("manager", "user")
 MAX_ITEMS = 25                                # в одном сообщении — не больше 25 строк
 DEFAULTS = {"enabled": False, "auto_detect": True, "deadline_day": 5, "x_hour": "18:00", "remind_days": "3,1,0",
             "repeat_every": 2, "repeat_max": 3, "channels": "telegram,max,email", "roles": "manager",
-            "contact_email": ""}
+            "contact_email": "", "escalate_days": 3}
+ESCALATE_ROLE = "manager"                     # v1.70.99: эскалация — руководителю компании
+ESCALATE_MAX = 30
 MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь",
           "ноябрь", "декабрь")
 MONTHS_GEN = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября",
@@ -129,7 +131,14 @@ def settings_dict(s: DocRequestSettings) -> dict:
             "deadline_day": s.deadline_day, "x_hour": s.x_hour, "remind_days": _days(s),
             "repeat_every": s.repeat_every, "repeat_max": s.repeat_max, "channels": _list(s.channels, CHANNELS),
             "roles": _list(s.roles, ROLES), "contact_email": s.contact_email or "",
+            "escalate_days": _escalate_days(s),
             "updated_at": s.updated_at.isoformat() if s.updated_at else None}
+
+
+def _escalate_days(s: DocRequestSettings) -> int:
+    """Через сколько дней личный запрос видит руководитель; 0 — не передавать (v1.70.99)."""
+    value = s.escalate_days if s.escalate_days is not None else DEFAULTS["escalate_days"]
+    return max(0, min(int(value), ESCALATE_MAX))
 
 
 def save_settings(db: Session, company_id: str, data: dict, user: User) -> DocRequestSettings:
@@ -152,6 +161,9 @@ def save_settings(db: Session, company_id: str, data: dict, user: User) -> DocRe
     email = str(data.get("contact_email", "") or "").strip()
     if email and (len(email) > 200 or not _EMAIL.match(email)):
         raise DocRequestError("Почта для запросов указана с ошибкой")
+    escalate = int(data.get("escalate_days", DEFAULTS["escalate_days"]))
+    if not 0 <= escalate <= ESCALATE_MAX:
+        raise DocRequestError(f"Передавать руководителю — через 0–{ESCALATE_MAX} дней (0 — не передавать)")
     row = db.get(DocRequestSettings, company_id) or DocRequestSettings(company_id=company_id)
     row.enabled = bool(data.get("enabled", False))
     row.auto_detect = bool(data.get("auto_detect", True))
@@ -161,6 +173,7 @@ def save_settings(db: Session, company_id: str, data: dict, user: User) -> DocRe
     row.channels = ",".join(c for c in CHANNELS if c in channels)
     row.roles = ",".join(r for r in ROLES if r in roles)
     row.contact_email = email
+    row.escalate_days = escalate
     row.updated_at = utcnow()
     row.updated_by = user.id
     db.add(row)
@@ -449,8 +462,10 @@ SENDERS = {"telegram": _send_telegram, "max": _send_max, "email": _send_email}
 
 
 # ------------------------------------------------------------------ напоминания
-def message(company: Company, period: str, due: datetime, items: list[DocRequest], now: datetime) -> str:
-    """Текст напоминания: что нужно, к какому сроку; после срока — без упрёков, но с датой."""
+def message(company: Company, period: str, due: datetime, items: list[DocRequest], now: datetime,
+            escalated: dict[str, str] | None = None) -> str:
+    """Текст напоминания: что нужно, к какому сроку; после срока — без упрёков, но с датой.
+    escalated — {id запроса: пометка} для руководителя: чей это запрос и сколько дней его ждут (v1.70.99)."""
     name = company.short_name or company.name
     lines = [f"{name}: для закрытия месяца ({period_title(period)}) бухгалтеру нужны документы."]
     if now < due:
@@ -459,7 +474,8 @@ def message(company: Company, period: str, due: datetime, items: list[DocRequest
         lines.append(f"Срок сдачи прошёл ({human_moment(due)}, МСК) — пришлите, пожалуйста, как можно скорее.")
     for i, req in enumerate(items[:MAX_ITEMS], 1):
         about = f" — обычно около {_money(req.amount)}" if req.kind == "expected" and req.amount else ""
-        lines.append(f"{i}. {req.title}{about}")
+        note = (escalated or {}).get(req.id)
+        lines.append(f"{i}. ⚠ {req.title} — {note}" if note else f"{i}. {req.title}{about}")
     if len(items) > MAX_ITEMS:
         lines.append(f"…и ещё {len(items) - MAX_ITEMS}: полный список — у бухгалтера.")
     lines.append("Документы можно прислать бухгалтеру фото, сканом или файлом из ЭДО; чеки — через сканер "
@@ -467,33 +483,50 @@ def message(company: Company, period: str, due: datetime, items: list[DocRequest
     return "\n".join(lines)
 
 
-def plan(db: Session, company_id: str, period: str, s: DocRequestSettings | None = None) -> list[dict]:
-    """Кто что получит: личные запросы (чек сотрудника) — ему; общие — по ролям и на почту компании."""
+def plan(db: Session, company_id: str, period: str, s: DocRequestSettings | None = None,
+         now: datetime | None = None) -> list[dict]:
+    """Кто что получит: личные запросы (чек сотрудника) — ему; общие — по ролям и на почту компании.
+    v1.70.99: личный запрос старше escalate_days дней видит и руководитель (время — момент напоминания)."""
     s = s or settings_of(db, company_id)
     items = (db.query(DocRequest)
              .filter(DocRequest.company_id == company_id, DocRequest.period == period, DocRequest.status == "open")
              .order_by(DocRequest.created_at).all())
     users = (db.query(User).filter(User.company_id == company_id, User.is_active.is_(True))
              .order_by(User.username).all())
-    active = {u.id for u in users}
+    active = {u.id: u for u in users}
     personal: dict[str, list[DocRequest]] = {}
     common: list[DocRequest] = []
+    late: list[DocRequest] = []
+    days = _escalate_days(s)
+    moment = (now or now_msk()).astimezone(timezone.utc).replace(tzinfo=None)
+    border = moment - timedelta(days=days) if days else None
     for req in items:
         # чек сотрудника и покупка по его карте — ему лично; сотрудника в компании больше нет — руководителю
         if req.kind in PERSONAL and req.assignee_id in active:
             personal.setdefault(req.assignee_id, []).append(req)
+            # v1.70.99: эскалация — сотрудник не прислал документ N дней: запрос видит и руководитель
+            if border is not None and req.created_at and req.created_at <= border:
+                late.append(req)
         else:
             common.append(req)
+    notes = {}
+    for req in late:
+        who = active[req.assignee_id]
+        waited = max(days, (moment - req.created_at).days)
+        notes[req.id] = f"{who.full_name or who.username} не прислал(а) документ {waited} дн."
     roles = _list(s.roles, ROLES)
     out = []
     for user in users:
         shared = common if user.role in roles else []
-        mine = shared + personal.pop(user.id, [])
+        escalated = [r for r in late if r.assignee_id != user.id] if user.role == ESCALATE_ROLE else []
+        mine = shared + personal.pop(user.id, []) + escalated
         if mine:
-            out.append({"user": user, "items": mine, "common": len(shared)})
+            out.append({"user": user, "items": mine, "common": len(shared), "escalated": len(escalated),
+                        "notes": {r.id: notes[r.id] for r in escalated}})
     channels = _list(s.channels, CHANNELS)
-    if "email" in channels and s.contact_email and common:
-        out.append({"email": s.contact_email, "items": common, "common": len(common)})
+    if "email" in channels and s.contact_email and (common or late):
+        out.append({"email": s.contact_email, "items": common + late, "common": len(common), "escalated": len(late),
+                    "notes": dict(notes)})
     return out
 
 
@@ -502,7 +535,7 @@ def _orphans(db: Session, company_id: str, period: str, entries: list[dict], cha
     """Общие запросы, которые некому доставить: нет руководителя с каналом и нет почты клиента."""
     total = (db.query(DocRequest)
              .filter(DocRequest.company_id == company_id, DocRequest.period == period, DocRequest.status == "open")
-             .count()) - sum(len(e["items"]) - e.get("common", 0) for e in entries)
+             .count()) - sum(len(e["items"]) - e.get("common", 0) - e.get("escalated", 0) for e in entries)
     if total <= 0 or any(e.get("common") and _targets(e, channels, ready) for e in entries):
         return ""
     return (f"Общие запросы ({total}) сейчас некому отправить: у получателей нет привязанного Telegram или MAX, "
@@ -532,12 +565,13 @@ def preview(db: Session, company_id: str, period: str, now: datetime | None = No
     ready = channel_status(db)
     channels = _list(s.channels, CHANNELS)
     out = []
-    for entry in plan(db, company_id, period, s):
+    entries = plan(db, company_id, period, s, now)
+    for entry in entries:
         targets = _targets(entry, channels, ready)
         who = entry.get("email") or f"{entry['user'].full_name or entry['user'].username} ({entry['user'].username})"
         out.append({"recipient": who, "items": len(entry["items"]), "channels": [t[0] for t in targets],
-                    "text": message(company, period, deadline(period, s), entry["items"], now)})
-    entries = plan(db, company_id, period, s)
+                    "escalated": entry.get("escalated", 0),
+                    "text": message(company, period, deadline(period, s), entry["items"], now, entry.get("notes"))})
     return {"recipients": out, "channels": ready, "warning": _orphans(db, company_id, period, entries, channels, ready)}
 
 
@@ -549,7 +583,7 @@ def send_reminders(db: Session, company_id: str, period: str, slot: str, actor_i
         s = settings_of(db, company_id)
         company = db.get(Company, company_id)
         refresh(db, company_id, period)
-        entries = plan(db, company_id, period, s)
+        entries = plan(db, company_id, period, s, now)
         if not entries:
             _event(db, None, "reminder", company_id=company_id, period=period, slot=slot, actor_id=actor_id,
                    text="Открытых запросов нет — напоминание не нужно")
@@ -559,8 +593,9 @@ def send_reminders(db: Session, company_id: str, period: str, slot: str, actor_i
         channels = _list(s.channels, CHANNELS)
         due = deadline(period, s)
         sent = failed = 0
+        escalated_to: dict[str, list[str]] = {}
         for entry in entries:
-            text = message(company, period, due, entry["items"], now)
+            text = message(company, period, due, entry["items"], now, entry.get("notes"))
             subject = f"Документы для бухгалтера: {period_title(period)}"
             for channel, address, label in _targets(entry, channels, ready):
                 ok, error = SENDERS[channel](db, address, text, subject)
@@ -568,6 +603,10 @@ def send_reminders(db: Session, company_id: str, period: str, slot: str, actor_i
                        recipient=label, actor_id=actor_id, ok=ok,
                        text=text if ok else f"Не доставлено ({error}).\n{text}")
                 sent, failed = sent + ok, failed + (not ok)
+                if ok:
+                    for req_id in entry.get("notes") or {}:
+                        escalated_to.setdefault(req_id, []).append(label)
+        _mark_escalated(db, escalated_to, entries, slot, actor_id)
         if not sent and not failed:
             _event(db, None, "reminder", company_id=company_id, period=period, slot=slot, actor_id=actor_id, ok=False,
                    text="Не отправлено: у получателей нет подключённых каналов (Telegram, MAX) и не задана почта "
@@ -579,6 +618,22 @@ def send_reminders(db: Session, company_id: str, period: str, slot: str, actor_i
         db.commit()
         note = "" if sent or failed else "Не отправлено: нет подключённых каналов у получателей"
         return {"sent": sent, "failed": failed, "note": note, "warning": orphans}
+
+
+def _mark_escalated(db: Session, escalated_to: dict[str, list[str]], entries: list[dict], slot: str,
+                    actor_id: str) -> None:
+    """Событие «передано руководителю» — один раз на запрос, когда эскалация впервые доставлена."""
+    if not escalated_to:
+        return
+    done = {rid for (rid,) in db.query(DocRequestEvent.request_id)
+            .filter(DocRequestEvent.request_id.in_(list(escalated_to)), DocRequestEvent.kind == "escalated")}
+    notes = {rid: note for e in entries for rid, note in (e.get("notes") or {}).items()}
+    for req_id, labels in escalated_to.items():
+        req = db.get(DocRequest, req_id)
+        if req is None or req_id in done:
+            continue
+        _event(db, req, "escalated", slot=slot, actor_id=actor_id, recipient=", ".join(sorted(set(labels)))[:200],
+               text=f"{notes.get(req_id, 'Документ не прислан')} — передано руководителю")
 
 
 def sent_slots(db: Session, company_id: str, period: str) -> set[str]:

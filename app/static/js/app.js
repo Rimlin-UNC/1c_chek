@@ -21,7 +21,8 @@ import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflicts
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
 import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
-import { viewBank } from './bank.js';          // v1.70.98: банковская выписка (T-45)
+import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';   // v1.70.98: банковская выписка (T-45);
+                                               // v1.70.99: банк по API в карточке компании (ADR-29)
 
 // --------------------------------------------------------------------------
 //  Состояние
@@ -3310,6 +3311,13 @@ function enterApp() {
   }).catch(() => {});
   applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
+  // v1.70.99 (ADR-29): возврат из Точки после подключения банка — уведомление; администратор
+  // попадает в ту же компанию (до initCompanyFilter — селектор в шапке сразу её покажет)
+  const bankBack = bankReturnNotice();
+  if (bankBack && bankBack.company && isAdmin()) {
+    state.companyFilter = bankBack.company;
+    try { localStorage.setItem('ymaster-company', bankBack.company); } catch { /* приватный режим */ }
+  }
   if (isAdmin()) initCompanyFilter();          // v1.11.0: селектор пространства
 
   // Один обработчик выхода (без дублирования при повторных входах)
@@ -4412,6 +4420,7 @@ async function openCompanyCard(id) {
       <button type="button" class="btn btn-sm" id="cc-inn">✎ ИНН/название</button>
       ${c.is_active ? '<button type="button" class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
     </div>
+    <div class="info-callout" id="cc-bank"></div>
     <div class="modal-actions" style="justify-content:space-between">
       <button type="button" class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
       <button type="button" class="btn" data-close>Закрыть</button>
@@ -4464,6 +4473,8 @@ async function openCompanyCard(id) {
     }
   };
   slot.querySelector('#cc-delete').onclick = () => { close(); openCompanyDelete(d); };
+  // v1.70.99 (ADR-29): выбор банка и доступ к нему по API (Точка: OAuth 2.0 или JWT-ключ)
+  bankConnectPanel(slot.querySelector('#cc-bank'), c.id);
 }
 
 function openCompanyDelete(d) {
@@ -6353,6 +6364,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.99': [
+    { icon: '🏦', title: 'Выписка из банка — сама, без файлов',
+      text: 'В карточке компании и на экране «Банк: выписка» — блок «Банк по API»: выберите Точку и способ доступа '
+        + '(OAuth 2.0 или JWT-ключ), подтвердите доступ в интернет-банке — и раз в 6 часов программа сама забирает '
+        + 'операции и ищет к ним чеки и УПД. Доступ только на чтение, ключи хранятся зашифрованными.' },
+    { icon: '⚠️', title: 'Напоминания с передачей руководителю',
+      text: 'Сотрудник не прислал чек по своей покупке за 3 дня — запрос видит и руководитель, с именем и числом '
+        + 'дней; в журнале — «Передано руководителю». Срок меняется в «Срок и напоминания». И исправлено: '
+        + '«Обновить ЕГРЮЛ (все)» теперь обновляет по очереди все компании, а не одни и те же 40.' },
+  ],
   '1.70.98': [
     { icon: '🏦', title: 'Банковская выписка: платежи без документов',
       text: 'Новый раздел «Банк: выписка»: загрузите выписку «в 1С» из интернет-банка — программа сама найдёт '
@@ -10446,6 +10467,8 @@ const AUDIT_KIND = {
   bank_statement_uploaded: ['ok', '🏦'], bank_statement_deleted: ['warn', '🏦'],   // v1.70.98 (T-45)
   bank_operation_ignored: ['info', '🏦'], bank_reimbursement_decided: ['ok', '💸'],
   bank_settings_updated: ['info', '⚙️'],
+  bank_connection_saved: ['info', '🏦'], bank_connected: ['ok', '🏦'], bank_connection_removed: ['warn', '🏦'],   // v1.70.99
+  bank_synced: ['ok', '🏦'],
   mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],
   external_settings_updated: ['info', '⚙️'],
   telegram_settings_saved: ['info', '✈️'], demo_data_loaded: ['info', '🧪'],

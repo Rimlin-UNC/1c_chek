@@ -3,15 +3,21 @@
 Бухгалтер работает со своей компанией, администратор — с выбранной (company_id обязателен). Чужие выписки,
 операции и чеки — 404, как у первички и «Что нужно от клиента». Файл выписки не хранится: только итоги
 разбора и операции, которым нужны документы (ADR-28).
+
+v1.70.99 (ADR-29): подключение к банку по API — /connection (состояние, сохранение, вход в Точку, проверка
+JWT-ключа, загрузка сейчас, отключение) и адрес возврата из банка /tochka/callback. Возврат открывает браузер
+клиента без заголовка авторизации — компанию определяет одноразовая отметка state (15 минут).
 """
 from __future__ import annotations
 
 import csv
 import io
+from datetime import date
 from typing import Annotated, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -19,7 +25,7 @@ from ..auth import ROLE_ADMIN, require_accountant
 from ..database import get_db
 from ..models import Company, User
 from ..services.audit import log_action
-from . import parser, service
+from . import connect, parser, service
 from .models import BankOperation, BankStatement
 
 router = APIRouter(prefix="/api/v1/bank", tags=["bank"])
@@ -51,6 +57,20 @@ class DecisionIn(BaseModel):
     company_id: str | None = Field(None, max_length=36)
     status: Literal["paid", "declined", "pending"]
     note: str = Field("", max_length=300)
+
+
+class ConnectionIn(BaseModel):
+    company_id: str | None = Field(None, max_length=36)
+    bank: Literal["tochka"] = "tochka"
+    method: Literal["oauth", "jwt"] = "oauth"
+    client_id: str = Field("", max_length=200)
+    client_secret: str = Field("", max_length=500)
+    jwt: str = Field("", max_length=8000)
+    start_date: date | None = None
+
+
+class CompanyIn(BaseModel):
+    company_id: str | None = Field(None, max_length=36)
 
 
 def _company(db: Session, user: User, company_id: str | None) -> Company:
@@ -183,3 +203,80 @@ def put_settings(user: Accountant, db: Db, body: SettingsIn) -> dict:
     log_action(user, "bank_settings_updated", details={"company": company.name, "retention_days": saved.retention_days,
                                                        "cards": len(service.cards_of(saved))})
     return service.settings_dict(db, saved)
+
+
+# ------------------------------------------------------------------ v1.70.99: банк по API (ADR-29)
+def _cfail(exc: connect.ConnectError) -> HTTPException:
+    return HTTPException(exc.status, str(exc))
+
+
+def _state(db: Session, company: Company) -> dict:
+    return connect.connection_dict(db, company, connect.connection_of(db, company.id))
+
+
+@router.get("/connection")
+def connection(user: Accountant, db: Db, company_id: CompanyId = None) -> dict:
+    return _state(db, _company(db, user, company_id))
+
+
+@router.put("/connection")
+def save_connection(user: Accountant, db: Db, body: ConnectionIn) -> dict:
+    company = _company(db, user, body.company_id)
+    try:
+        conn = connect.save(db, company, body.model_dump(), user)
+    except connect.ConnectError as exc:
+        raise _cfail(exc) from exc
+    log_action(user, "bank_connection_saved", details={"company": company.name, "bank": connect.BANKS[conn.bank],
+                                                       "method": connect.METHODS[conn.method]})
+    return _state(db, company)
+
+
+@router.post("/connection/authorize")
+def authorize(user: Accountant, db: Db, body: CompanyIn) -> dict:
+    """Адрес входа в Точку: браузер переходит туда, клиент подтверждает доступ, банк возвращает его к нам."""
+    company = _company(db, user, body.company_id)
+    try:
+        return {"url": connect.start_oauth(db, company, user)}
+    except connect.ConnectError as exc:
+        raise _cfail(exc) from exc
+
+
+@router.post("/connection/jwt")
+def check_jwt(user: Accountant, db: Db, body: CompanyIn) -> dict:
+    company = _company(db, user, body.company_id)
+    try:
+        connect.connect_jwt(db, company, user)
+    except connect.ConnectError as exc:
+        raise _cfail(exc) from exc
+    return _state(db, company)
+
+
+@router.post("/connection/sync")
+def sync_connection(user: Accountant, db: Db, body: CompanyIn) -> dict:
+    company = _company(db, user, body.company_id)
+    try:
+        result = connect.sync_now(db, company, user)
+    except connect.ConnectError as exc:
+        raise _cfail(exc) from exc
+    return {"result": result, "connection": _state(db, company)}
+
+
+@router.delete("/connection")
+def remove_connection(user: Accountant, db: Db, company_id: CompanyId = None) -> dict:
+    company = _company(db, user, company_id)
+    removed = connect.remove(db, company)
+    if removed:
+        log_action(user, "bank_connection_removed", details={"company": company.name})
+    return {"removed": removed}
+
+
+@router.get("/tochka/callback", include_in_schema=False)
+def tochka_callback(db: Db, state: Annotated[str, Query(max_length=100)] = "",
+                    code: Annotated[str, Query(max_length=600)] = "",
+                    error: Annotated[str, Query(max_length=200)] = "") -> RedirectResponse:
+    """Возврат из Точки после входа клиента: код → токены → счета; затем — обратно в программу."""
+    conn, problem = connect.finish_oauth(db, state, code, error)
+    company = f"&company={conn.company_id}" if conn is not None else ""
+    if problem:
+        return RedirectResponse(f"/?bank=error&reason={quote(problem[:240])}{company}#/bank", status_code=303)
+    return RedirectResponse(f"/?bank=connected{company}#/bank", status_code=303)

@@ -5,6 +5,10 @@
 минимум данных (ADR-28): из операций — только списания, которым нужны документы (оплаты поставщикам и
 покупки по картам); налоги, зарплата, комиссии, поступления и переводы между своими счетами считаются,
 но не сохраняются. Полных номеров счетов нет — только последние 4 цифры. Срок хранения — настройкой.
+
+v1.70.99 (ADR-29): подключение к банку по API (Точка, OAuth 2.0 или JWT-ключ) — таблица bank_connections.
+Секреты (client_secret, JWT-ключ, токены доступа) и идентификаторы счетов хранятся только зашифрованными
+(services.secretbox); наружу отдаются лишь признаки «задан» и последние 4 цифры счетов.
 """
 from __future__ import annotations
 
@@ -34,6 +38,9 @@ class BankStatement(Base):
     summary_json: Mapped[str] = mapped_column(Text, default="{}")         # счётчики по видам операций
     uploaded_by: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # v1.70.99 (ADR-29): file — загруженный файл; tochka — выписка из API банка (одна на счёт и месяц,
+    # дополняется при каждой загрузке). Колонка добавляется к базам 1.70.98 в database._ensure_schema.
+    source: Mapped[str] = mapped_column(String(10), default="file", server_default="file")
 
 
 class BankOperation(Base):
@@ -84,5 +91,45 @@ class BankSettings(Base):
     company_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     retention_days: Mapped[int] = mapped_column(Integer, default=1095, server_default="1095")
     cards_json: Mapped[str] = mapped_column(Text, default="[]")
+    updated_by: Mapped[str] = mapped_column(String(36), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class BankConnection(Base):
+    """Подключение компании к банку по API (v1.70.99, ADR-29): одна строка на компанию и банк.
+
+    Способ — OAuth 2.0 (рекомендуется: клиент сам разрешает доступ в интернет-банке, срок разрешения
+    виден) или JWT-ключ из интернет-банка. Секреты — только в зашифрованных колонках *_enc.
+    """
+    __tablename__ = "bank_connections"
+    __table_args__ = (UniqueConstraint("company_id", "bank", name="uq_bank_connections_company_bank"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    company_id: Mapped[str] = mapped_column(String(36), index=True)
+    bank: Mapped[str] = mapped_column(String(16), default="tochka")
+    method: Mapped[str] = mapped_column(String(8), default="oauth")          # oauth | jwt
+    client_id: Mapped[str] = mapped_column(String(200), default="")         # пусто — приложение сервера (.env)
+    client_secret_enc: Mapped[str] = mapped_column(Text, default="")
+    jwt_enc: Mapped[str] = mapped_column(Text, default="")
+    access_enc: Mapped[str] = mapped_column(Text, default="")
+    refresh_enc: Mapped[str] = mapped_column(Text, default="")
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consent_id: Mapped[str] = mapped_column(String(128), default="")         # consentId — до 128 символов
+    consent_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    customer_code: Mapped[str] = mapped_column(String(40), default="")
+    accounts_enc: Mapped[str] = mapped_column(Text, default="")             # [{id, tail, currency, status}]
+    oauth_state: Mapped[str] = mapped_column(String(64), default="", index=True)
+    oauth_state_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    oauth_user: Mapped[str] = mapped_column(String(36), default="")
+    status: Mapped[str] = mapped_column(String(10), default="new")          # new | awaiting | active | reauth | error
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)     # первая загрузка — с этой даты
+    synced_until: Mapped[date | None] = mapped_column(Date, nullable=True)   # по какой день выписка получена
+    pending_json: Mapped[str] = mapped_column(Text, default="[]")           # выписки, которые банк ещё готовит
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str] = mapped_column(String(300), default="")
+    last_result_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_by: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_by: Mapped[str] = mapped_column(String(36), default="")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

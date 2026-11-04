@@ -298,6 +298,14 @@ def _ensure_schema() -> None:
         "primary_documents": [
             ("source", "ALTER TABLE primary_documents ADD COLUMN source VARCHAR(10) DEFAULT 'xml'"),
         ],
+        # v1.70.99 (ADR-29): источник выписки — file | tochka (API банка)
+        "bank_statements": [
+            ("source", "ALTER TABLE bank_statements ADD COLUMN source VARCHAR(10) DEFAULT 'file'"),
+        ],
+        # v1.70.99: эскалация личных запросов руководителю через N дней (0 — выключена)
+        "doc_request_settings": [
+            ("escalate_days", "ALTER TABLE doc_request_settings ADD COLUMN escalate_days INTEGER DEFAULT 3"),
+        ],
     }
     insp = inspect(engine)
     existing_tables = set(insp.get_table_names())

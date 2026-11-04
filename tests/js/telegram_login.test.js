@@ -36,6 +36,7 @@ Object.assign(globalThis, {
   viewUnifiedReview: stub(), setConflictsBadge: stub(),   // v1.70.83
   applyFill: () => [], fillCallout: () => '', fillFields: () => ({}),   // v1.70.91
   fillItemsTable: () => '', fillMark: () => '', sellerRows: () => '',
+  bankReturnNotice: () => null, bankConnectPanel: stub(),   // v1.70.99: банк по API (ADR-29)
 });
 
 const bodyHtml = indexHtml

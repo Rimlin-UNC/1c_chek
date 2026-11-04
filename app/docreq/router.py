@@ -56,6 +56,7 @@ class SettingsIn(BaseModel):
     channels: list[Literal["telegram", "max", "email"]] = Field(default_factory=list, max_length=3)
     roles: list[Literal["manager", "user"]] = Field(default_factory=list, max_length=2)
     contact_email: str = Field("", max_length=200)
+    escalate_days: int = Field(3, ge=0, le=30)          # v1.70.99: эскалация руководителю, 0 — выключена
 
 
 def _company(db: Session, user: User, company_id: str | None) -> Company:

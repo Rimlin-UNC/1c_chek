@@ -162,8 +162,11 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "карточка компании обновлена из ЕГРЮЛ", \
             f"ИНН {d.get('inn', '—')}, „{d.get('name_full', '—')}“"
     if action == "company_cards_bulk_refreshed":
+        # v1.70.99 (#50): роутер пишет ok/errors/remaining, а фраза читала count — всегда «компаний: 0»
+        tail = (f", ошибок: {d['errors']}" if d.get("errors") else "") + \
+            (f", ещё ждут обновления: {d['remaining']}" if d.get("remaining") else "")
         return "массовое обновление карточек из ЕГРЮЛ", \
-            f"компаний: {d.get('count', 0)}"
+            f"компаний: {d.get('ok', d.get('count', 0))}{tail}"
     if action == "impersonate_start":
         return "включён режим просмотра", \
             f"глазами „{d.get('target', '—')}“ (роль: {_role(d.get('target_role'))})"
@@ -254,6 +257,20 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "изменены настройки банковской выписки", \
             f"компания: „{d.get('company', '—')}“, срок хранения: {d.get('retention_days', '—')} дн., " \
             f"карт сотрудников: {d.get('cards', 0)}"
+    # v1.70.99 (ADR-29): банк по API — Точка (секреты в журнал не пишутся)
+    if action == "bank_connection_saved":
+        return "сохранено подключение банка по API", \
+            f"компания: „{d.get('company', '—')}“, банк: {d.get('bank', '—')}, способ: {d.get('method', '—')}"
+    if action == "bank_connected":
+        return "банк подключён по API", \
+            f"компания: „{d.get('company', '—')}“, банк: {d.get('bank', '—')}, способ: {d.get('method', '—')}, " \
+            f"счетов: {d.get('accounts', 0)}"
+    if action == "bank_connection_removed":
+        return "банк отключён", f"компания: „{d.get('company', '—')}“"
+    if action == "bank_synced":
+        return "выписка загружена из банка", \
+            f"компания: „{d.get('company', '—')}“, операций: {d.get('operations', 0)}, " \
+            f"нужны документы: {d.get('saved', 0)}, найдено документов: {d.get('matched', 0)}"
     if action == "mapping_updated":
         return "обновлены правила сопоставления статей", ""
     if action == "app_settings_updated":

@@ -178,8 +178,11 @@ class TestNoDowngradeOnChannelSwitch:
 
     def test_newer_source_is_available(self, client, monkeypatch):
         from app.database import SessionLocal
+        # v1.70.99: «новее» считается от текущей версии — жёсткая 1.70.99 сравнялась с выпуском
+        major, minor, patch = (int(x) for x in settings.APP_VERSION.split("."))
+        newer = f"{major}.{minor}.{patch + 1}"
         monkeypatch.setattr(up, "_remote_version",
-                            lambda repo, branch: {"version": "1.70.99",
+                            lambda repo, branch: {"version": newer,
                                                   "source": "test",
                                                   "checked_at": "2026-10-17T00:00:00Z"})
         db = SessionLocal()

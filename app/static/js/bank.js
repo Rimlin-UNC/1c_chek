@@ -2,7 +2,9 @@
    находит списания без документов (оплаты поставщикам без УПД, покупки по картам без чека) и чеки, которых
    нет в выписке: сотрудник платил своими — ему нужно вернуть деньги. Платежи без документов сами попадают
    в «Что нужно от клиента»; покупка по карте сотрудника — запрос ему лично. Пришёл документ — запрос
-   закрывается сам. Все имена верхнего уровня — с приставкой bank (общая область модулей в сборке). */
+   закрывается сам. Все имена верхнего уровня — с приставкой bank (общая область модулей в сборке).
+   v1.70.99 (ADR-29): панель «Банк по API» — Точка по OAuth 2.0 или JWT-ключу; та же панель в карточке
+   компании у администратора. Секреты в браузер не приходят: только «задан» и последние 4 цифры счетов. */
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 
@@ -19,6 +21,12 @@ export const BANK_REFUND = {
 };
 const BANK_TABS = [['open', 'Без документов'], ['matched', 'Документ найден'], ['ignored', 'Не нужны'],
   ['refund', 'К возмещению'], ['statements', 'Выписки']];
+export const BANK_CONN_STATUS = {
+  none: ['chip unknown', 'не подключён'], new: ['chip unknown', 'не подключён'],
+  awaiting: ['chip unknown', 'ждём подтверждения в банке'], active: ['chip verified', 'подключён'],
+  reauth: ['chip failed', 'нужно подключить заново'], error: ['chip failed', 'ошибка подключения'],
+};
+export const BANK_SOURCES = { file: 'файл', tochka: 'Точка, API' };
 
 export function bankDate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
@@ -83,16 +91,22 @@ export function bankRefundHtml(data) {
   }).join('');
 }
 
+/** Откуда выписка: файл (кто загрузил) или API банка (по кнопке — кто нажал, иначе сама по расписанию). */
+export function bankStatementSource(s) {
+  if ((s && s.source) === 'tochka') return s.uploaded_by ? `${BANK_SOURCES.tochka} · ${s.uploaded_by}` : `${BANK_SOURCES.tochka}, сама`;
+  return (s && s.uploaded_by) || BANK_SOURCES.file;
+}
+
 export function bankStatementsHtml(list) {
   const items = Array.isArray(list) ? list : [];
   if (!items.length) return '<p class="form-hint">Выписок пока нет.</p>';
   const rows = items.map((s) => `<tr><td>${esc(bankDate(s.date_from))} — ${esc(bankDate(s.date_to))}</td>
     <td>${s.account_tail ? `счёт …${esc(s.account_tail)}` : '—'}</td>
     <td class="num">${esc(s.operations)}</td><td class="num">${esc(s.saved)}</td>
-    <td>${esc(s.uploaded_by || '—')}<div class="form-hint">${esc(bankDate(s.created_at))}</div></td>
+    <td>${esc(bankStatementSource(s))}<div class="form-hint">${esc(bankDate(s.created_at))}</div></td>
     <td><button type="button" class="btn btn-sm bank-del" data-id="${esc(s.id)}">Удалить</button></td></tr>`).join('');
   return `<div class="table-wrap"><table class="data"><thead><tr><th>Период</th><th>Счёт</th><th class="num">Операций</th>
-    <th class="num">Нужны документы</th><th>Загрузил</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <th class="num">Нужны документы</th><th>Откуда</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function bankSettingsHtml(settings, staff) {
@@ -127,6 +141,208 @@ export function bankSettingsBody(get, companyId) {
   const days = Number(get('bank-s-days').value);
   if (!Number.isInteger(days) || days < 30 || days > 3650) return { error: 'Срок хранения — от 30 до 3650 дней' };
   return { ...(companyId ? { company_id: companyId } : {}), retention_days: days, cards };
+}
+
+/** Момент из ответа сервера (UTC без зоны) — по местному времени: «04.11.2026 18:05». */
+export function bankWhen(iso) {
+  if (!iso) return '—';
+  const d = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
+  if (Number.isNaN(d.getTime())) return '—';
+  const two = (n) => String(n).padStart(2, '0');
+  return `${two(d.getDate())}.${two(d.getMonth() + 1)}.${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+/** Итог загрузки из банка одной строкой. */
+export function bankSyncSummary(res) {
+  if (!res) return '';
+  if (res.ok === false) return res.error || 'Загрузка не удалась';
+  const parts = [`операций: ${res.operations || 0}`, `нужны документы: ${res.saved || 0}`, `документ найден: ${res.matched || 0}`,
+    `без документов: ${res.open || 0}`];
+  if (res.duplicates) parts.push(`уже были в загруженных файлах: ${res.duplicates}`);
+  if (res.requests) parts.push(`в «Что нужно от клиента»: ${res.requests}`);
+  if (res.pending) parts.push('банк ещё готовит выписку — заберём через несколько минут');
+  return parts.join(' · ');
+}
+
+/** Панель «Банк по API»: состояние, счета, настройки и кнопки. c — ответ GET /api/v1/bank/connection. */
+export function bankConnHtml(c) {
+  const d = c || {};
+  const status = BANK_CONN_STATUS[d.status] ? d.status : 'none';
+  const active = status === 'active';
+  const oauth = (d.method || 'oauth') !== 'jwt';
+  const banks = (Array.isArray(d.banks) && d.banks.length ? d.banks : [{ id: 'tochka', title: 'Точка Банк' }])
+    .map((b) => `<option value="${esc(b.id)}" ${b.id === d.bank ? 'selected' : ''}>${esc(b.title)}</option>`).join('');
+  const accounts = (Array.isArray(d.accounts) ? d.accounts : [])
+    .map((a) => `<span class="${a.loaded ? 'chip verified' : 'chip unknown'}">*${esc(a.tail)} ${esc(a.currency)}${a.loaded ? '' : ' — не загружается'}</span>`)
+    .join(' ');
+  const res = d.last_result || {};
+  const facts = [d.synced_until ? `выписка загружена по ${bankDate(d.synced_until)}` : '',
+    d.last_sync_at ? `последняя проверка ${bankWhen(d.last_sync_at)}` : '',
+    d.consent_expires_at && oauth ? `доступ до ${bankDate(d.consent_expires_at)}` : ''].filter(Boolean).join(' · ');
+  const [cls, label] = BANK_CONN_STATUS[status];
+  return `<div class="bank-conn-head"><div class="card-title">🏦 Банк по API</div><span class="${cls}">${esc(label)}</span></div>
+    <p class="form-hint">Выписка приходит сама: раз в 6 часов программа забирает операции из банка и проверяет их так же,
+      как загруженный файл, — платежи без документов попадут в «Что нужно от клиента». Доступ — только на чтение счетов и выписок.</p>
+    ${active ? `<div class="form-hint">Счета: ${accounts || '—'}</div>${facts ? `<div class="form-hint">${esc(facts)}</div>` : ''}` : ''}
+    ${active && res.ok ? `<div class="form-hint">Последняя загрузка: ${esc(bankSyncSummary(res))}</div>` : ''}
+    ${d.pending ? '<div class="form-hint">Банк готовит выписку — заберём её через несколько минут.</div>' : ''}
+    ${d.awaiting ? '<div class="form-hint">Ждём подтверждения в интернет-банке Точки (ссылка действует 15 минут).</div>' : ''}
+    ${d.last_error ? `<div class="form-error">${esc(d.last_error)}</div>` : ''}
+    <details ${active ? '' : 'open'}><summary>Настройки подключения</summary>
+      <div class="dreq-grid">
+        <label class="field"><span>Банк</span><select id="bankc-bank">${banks}</select></label>
+        <label class="field"><span>Способ доступа</span><select id="bankc-method">
+          <option value="oauth" ${oauth ? 'selected' : ''}>OAuth 2.0</option>
+          <option value="jwt" ${oauth ? '' : 'selected'}>JWT-ключ</option></select></label>
+        <label class="field"><span>Загружать операции с</span><input id="bankc-start" type="date" value="${esc(d.start_date || '')}"></label>
+      </div>
+      <div id="bankc-oauth"${oauth ? '' : ' class="hidden"'}>
+        <div class="dreq-grid">
+          <label class="field"><span>client_id</span><input id="bankc-client" autocomplete="off" spellcheck="false" maxlength="200" value="${esc(d.client_id || '')}"></label>
+          <label class="field"><span>client_secret</span><input id="bankc-secret" type="password" autocomplete="new-password" maxlength="500"
+            placeholder="${d.secret_set ? 'задан — пусто, не менять' : 'выдаётся с client_id'}"></label>
+        </div>
+        <p class="form-hint">Рекомендуемый способ: доступ подтверждает сам клиент в банке, его срок виден, отозвать можно в любой момент.
+          Интернет-банк Точки → «Интеграции и API» → «Подключить OAuth»: банк выдаст client_id и client_secret.
+          Адрес возврата для приложения: <code class="bank-conn-uri">${esc(d.redirect_uri || '')}</code>${d.server_app
+    ? '. Поля можно оставить пустыми — подключение пойдёт через приложение сервера.' : ''}</p>
+      </div>
+      <div id="bankc-jwt-box"${oauth ? ' class="hidden"' : ''}>
+        <label class="field"><span>JWT-ключ</span><textarea id="bankc-jwt" rows="3" maxlength="8000" spellcheck="false"
+          placeholder="${d.jwt_set ? 'ключ задан — вставьте новый, чтобы заменить' : 'Интернет-банк → «Интеграции и API» → «Создать JWT-ключ»'}"></textarea></label>
+      </div>
+    </details>
+    <div class="dreq-tools">
+      <button type="button" class="btn btn-sm" id="bankc-save">Сохранить</button>
+      <button type="button" class="btn btn-sm btn-primary${oauth ? '' : ' hidden'}" id="bankc-auth">🔐 ${active || status === 'reauth' ? 'Подключить заново' : 'Подключить через Точку'}</button>
+      <button type="button" class="btn btn-sm btn-primary${oauth ? ' hidden' : ''}" id="bankc-jwtcheck">Проверить ключ и подключить</button>
+      ${active ? '<button type="button" class="btn btn-sm" id="bankc-sync">⬇ Загрузить сейчас</button>' : ''}
+      ${status !== 'none' ? '<button type="button" class="btn btn-sm btn-bad" id="bankc-del">Отключить</button>' : ''}
+    </div>
+    <div id="bankc-msg" class="form-hint" aria-live="polite"></div>`;
+}
+
+/** Тело PUT /api/v1/bank/connection из панели; ошибка ввода — { error }. */
+export function bankConnBody(get, companyId) {
+  const method = get('bankc-method').value === 'jwt' ? 'jwt' : 'oauth';
+  const body = { bank: get('bankc-bank').value || 'tochka', method };
+  if (companyId) body.company_id = companyId;
+  const start = get('bankc-start').value;
+  if (start) body.start_date = start;
+  if (method === 'oauth') {
+    body.client_id = get('bankc-client').value.trim();
+    body.client_secret = get('bankc-secret').value.trim();
+    if (/\s/.test(body.client_id) || /\s/.test(body.client_secret)) return { error: 'client_id и client_secret — без пробелов' };
+  } else {
+    body.jwt = get('bankc-jwt').value.replace(/\s+/g, '');
+    if (body.jwt && body.jwt.split('.').length !== 3) return { error: 'JWT-ключ — три части через точку, как его выдаёт интернет-банк' };
+  }
+  return body;
+}
+
+/** Панель подключения банка в элементе el: экран «Банк: выписка» и карточка компании. */
+export async function bankConnectPanel(el, companyId, opts = {}) {
+  if (!el) return;
+  const query = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+  const scope = () => (companyId ? { company_id: companyId } : {});
+  let data = null;
+
+  function render() {
+    el.innerHTML = bankConnHtml(data);
+    const get = (id) => el.querySelector(`#${id}`);
+    const say = (text, bad = false) => {
+      const m = get('bankc-msg');
+      if (!m) return;
+      m.textContent = text;
+      m.classList.toggle('form-error', bad);
+    };
+    const save = async () => {
+      const body = bankConnBody(get, companyId);
+      if (body.error) { say(body.error, true); return null; }
+      return api.put('/api/v1/bank/connection', body);
+    };
+    // видимость — классом .hidden (display: none !important): атрибут hidden проигрывает display кнопок .btn
+    get('bankc-method').onchange = (e) => {
+      const jwt = e.target.value === 'jwt';
+      get('bankc-oauth').classList.toggle('hidden', jwt);
+      get('bankc-jwt-box').classList.toggle('hidden', !jwt);
+      get('bankc-auth').classList.toggle('hidden', jwt);
+      get('bankc-jwtcheck').classList.toggle('hidden', !jwt);
+    };
+    get('bankc-save').onclick = async () => {
+      try {
+        const res = await save();
+        if (res) { data = res; render(); toast('Подключение сохранено', 'ok', '🏦'); }
+      } catch (e) { say(e.message, true); }
+    };
+    get('bankc-auth').onclick = async () => {
+      try {
+        if (!(await save())) return;
+        say('Открываем вход в интернет-банк Точки…');
+        const { url } = await api.post('/api/v1/bank/connection/authorize', scope());
+        window.location.assign(url);
+      } catch (e) { say(e.message, true); }
+    };
+    get('bankc-jwtcheck').onclick = async () => {
+      try {
+        if (!(await save())) return;
+        say('Проверяем ключ в банке…');
+        data = await api.post('/api/v1/bank/connection/jwt', scope());
+        render();
+        toast('Банк подключён — выписка загрузится в течение минуты', 'ok', '🏦');
+      } catch (e) { say(e.message, true); }
+    };
+    const sync = get('bankc-sync');
+    if (sync) {
+      sync.onclick = async () => {
+        sync.disabled = true;
+        say('Загружаем выписку из банка…');
+        try {
+          const res = await api.post('/api/v1/bank/connection/sync', scope());
+          data = res.connection;
+          render();
+          toast(bankSyncSummary(res.result), res.result && res.result.ok ? 'ok' : 'err', '🏦 Банк');
+          if (res.result && res.result.ok && typeof opts.onSynced === 'function') opts.onSynced(res.result);
+        } catch (e) { sync.disabled = false; say(e.message, true); }
+      };
+    }
+    const del = get('bankc-del');
+    if (del) {
+      del.onclick = async () => {
+        if (!window.confirm('Отключить банк? Загруженные выписки останутся, ключи и токены будут удалены. '
+          + 'Отозвать доступ можно и в интернет-банке Точки.')) return;
+        try {
+          await api.del(`/api/v1/bank/connection${query}`);
+          toast('Банк отключён', 'ok', '🏦');
+          load();
+        } catch (e) { say(e.message, true); }
+      };
+    }
+  }
+
+  async function load() {
+    el.innerHTML = '<div class="skeleton bank-conn-skeleton"></div>';
+    try {
+      data = await api.get(`/api/v1/bank/connection${query}`);
+      if (el.isConnected) render();
+    } catch (e) {
+      if (el.isConnected) el.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+  await load();
+}
+
+/** Возврат из Точки (?bank=connected|error): уведомление и чистый адрес. { status, company, reason } или null. */
+export function bankReturnNotice(loc = window.location) {
+  const q = new URLSearchParams(loc.search || '');
+  const status = q.get('bank');
+  if (status !== 'connected' && status !== 'error') return null;
+  const company = (q.get('company') || '').slice(0, 36);
+  const reason = (q.get('reason') || '').slice(0, 240);
+  try { window.history.replaceState(null, '', `${loc.pathname}${loc.hash || '#/bank'}`); } catch { /* адрес не меняем */ }
+  if (status === 'connected') toast('Точка подключена — выписка загрузится в течение минуты', 'ok', '🏦 Банк');
+  else toast(reason || 'Подключение банка не завершено', 'err', '🏦 Банк');
+  return { status, company, reason };
 }
 
 function bankDownload(blob, filename) {
@@ -164,6 +380,7 @@ export async function viewBank(container, opts = {}) {
       </div>
       <div id="bank-result" class="form-hint" aria-live="polite"></div>
     </div>
+    <div class="glass card" id="bank-conn"></div>
     <div class="glass card">
       <div class="card-title">Платежи и чеки</div>
       <p class="form-hint" id="bank-kpi" aria-live="polite"></p>
@@ -323,8 +540,15 @@ export async function viewBank(container, opts = {}) {
     };
   }
 
+  // v1.70.99 (ADR-29): подключение банка по API — у администратора для выбранной компании
+  function connection() {
+    const box = $('#bank-conn');
+    if (opts.isAdmin && !state.company) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    box.classList.remove('hidden');
+    bankConnectPanel(box, state.company, { onSynced: () => { state.tab = 'open'; load(); } });
+  }
   const company = $('#bank-company');
-  if (company) company.onchange = (e) => { state.company = e.target.value; load(); };
+  if (company) company.onchange = (e) => { state.company = e.target.value; connection(); load(); };
   const fileInput = $('#bank-file');
   $('#bank-upload').onclick = () => fileInput.click();
   fileInput.onchange = () => { const f = fileInput.files && fileInput.files[0]; fileInput.value = ''; upload(f); };
@@ -334,5 +558,6 @@ export async function viewBank(container, opts = {}) {
     const b = $(`#bank-tab-${id}`);
     if (b) b.onclick = () => { state.tab = id; if (state.data && (id === 'refund' || id === 'statements')) render(state.data); else load(); };
   });
+  connection();
   await load();
 }

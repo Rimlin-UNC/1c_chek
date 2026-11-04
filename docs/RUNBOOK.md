@@ -263,6 +263,9 @@ Projects токен интеграции создать не может (403).
 | `FNS_DAILY_LIMIT`, `FNS_DAILY_LIMIT_ENABLED`, `FNS_CACHE_TTL_DAYS`, `FNS_TIMEOUT_SECONDS` | суточный лимит запросов к ФНС, кэш результатов, таймаут |
 | `FNS_PROVIDER` | есть в `.env.example`, в коде не читается — **требует уточнения** (вероятно, устарела с v1.70.70) |
 | `ONEC_API_TOKEN`, `ONEC_BATCH_SIZE` | обмен с 1С (`/onec/v1/*`), размер пакета |
+| `TOCHKA_CLIENT_ID`, `TOCHKA_CLIENT_SECRET` | с v1.70.99: общее приложение OAuth 2.0 Точки для всех компаний сервера (пусто — у каждой компании свои client_id и client_secret или JWT-ключ в карточке; ADR-29) |
+| `TOCHKA_AUTH_BASE`, `TOCHKA_API_BASE` | адреса банка: по умолчанию `https://enter.tochka.com/connect` и `https://enter.tochka.com/uapi`; менять только для проверки на песочнице банка |
+| `YM_DOCREQ_OFF` | служебный выключатель минутного тика: напоминания «что нужно от клиента», срок хранения выписок и загрузка из банка по API (тесты) |
 | `CORS_ORIGINS` | кросс-доменные источники (по умолчанию пусто) |
 | `TELEGRAM_PROXY`, `TELEGRAM_API_BASE` | доступ Telegram-бота сквозь блокировки |
 | `MAX_UPLOAD_MB`, `PDF_MAX_MB`, `PAGE_MAX` | лимиты загрузки и пагинации |

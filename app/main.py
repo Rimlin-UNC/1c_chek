@@ -147,6 +147,16 @@ async def lifespan(app: FastAPI):
                 bank.purge(db)
         finally:
             db.close()
+        # v1.70.99 (ADR-29): выписки из банка по API — подключённым компаниям раз в 6 часов (не больше трёх
+        # за тик); отдельная сессия и свой перехват: сбой банка не мешает напоминаниям, и наоборот
+        from .bank import connect as bank_api
+        db = SessionLocal()
+        try:
+            bank_api.sync_due(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("bank api tick failed")
+        finally:
+            db.close()
 
     async def _doc_requests_loop() -> None:
         import asyncio as _aio

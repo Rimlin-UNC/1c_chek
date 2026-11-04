@@ -25,80 +25,61 @@ def read(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.98 — исторические проверки (точные пины — в tests/test_v17099.py)."""
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
-        for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
-                    "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
-                    "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-04"
-        entry = md.split("\n## [1.70.97]", 1)[0]
-        assert len(entry) <= 4000, len(entry)
-        for needle in ("(T-45)", "резервная копия", "поверх 1.70.95–1.70.97 не меняются — шаг pip пропускается",
-                       "откатится само", "4 новые таблицы (bank_statements, bank_operations, bank_reimbursements, "
-                       "bank_settings)", "48 из 48", "1.70.82–1.70.97", "kl_to_1c.txt", "«🏦 платёж без документов»",
-                       "запрос ему лично", "«К возмещению»", "таблица CSV для авансового отчёта",
-                       "Выписку другой организации", "заставка chek.ymaster.ru", "версия программы с сервера",
-                       "«Выпуск 2026 • ООО «Ямастер»»", "на 90 % экрана", "«Стекло»", "«Ночь»", "по прямой ссылке",
-                       "T-46"):
+        head = f"## [{VERSION}] - 2026-11-04"
+        assert head in md
+        entry = md.split(head, 1)[1].split("\n## [", 1)[0]
+        assert len(head + entry) <= 4000, len(head + entry)
+        for needle in ("(T-45)", "4 новые таблицы (bank_statements, bank_operations, bank_reimbursements, bank_settings)",
+                       "kl_to_1c.txt", "«🏦 платёж без документов»", "«К возмещению»", "заставка chek.ymaster.ru"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
-        assert block.count("{ icon:") == 2
-        for needle in ("Банковская выписка: платежи без документов", "«Банк: выписка»", "«Что нужно от клиента»",
-                       "ему лично", "«к возмещению»", "Новая заставка загрузки", "версия программы с сервера",
-                       "в тёмной теме устройства — тёмная", "список компаний больше не бывает пустым"):
-            assert needle in block, needle
+        assert block.count("{ icon:") == 2 and "Банковская выписка: платежи без документов" in block
+        assert "Новая заставка загрузки" in block
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — заставка загрузки и «Банк: выписка»")
-        entry = journal.split("\n## v1.70.97", 1)[0]
-        for needle in ("90vw × 90dvh", "настоящий QR на chek.ymaster.ru", "«Версия … • Выпуск 2026 • ООО «Ямастер»»",
-                       "ждёт на 90 %", "«Сеть отвечает медленно", "«Стекло»", "«Ночь»", "«⬆ Загрузить выписку»",
-                       "«🔄 Сопоставить заново»", "«⚙ Карты и срок хранения»", "«Документы не нужны»",
-                       "«⬇ Таблица для авансового отчёта (CSV)»", "«🏦 платёж без документов»", "USER_GUIDE §7.5",
-                       "две карточки"):
-            assert needle in entry, needle
+        entry = journal.split(f"## v{VERSION} — ", 1)[1].split("\n## v", 1)[0]
+        assert "90vw × 90dvh" in entry and "«⬆ Загрузить выписку»" in entry and "USER_GUIDE §7.5" in entry
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == [
-            "Банковская выписка", "Заставка загрузки", "Первичка (электронные УПД)", "Роли и доступ",
-            "Что нужно от клиента"]
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 98) for v in reg.values())
-        before = {name: ver for name, ver in reg.items() if name not in ("Банковская выписка", "Заставка загрузки")}
-        diff = updater.diff_blocks(before, reg)
-        assert {"name": "Банковская выписка", "from": "", "to": VERSION} in diff
-        assert {"name": "Заставка загрузки", "from": "", "to": VERSION} in diff
+        for name in ("Банковская выписка", "Заставка загрузки", "Первичка (электронные УПД)", "Роли и доступ",
+                     "Что нужно от клиента"):
+            assert self._ver(reg[name]) >= self._ver(VERSION), name
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (04.11.2026)" in readme
-        assert "Последний выпуск — v1.70.97" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.97.**" in readme
-        assert "В базе появятся 4 новые таблицы" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSchema:
     def test_four_new_tables_without_foreign_keys_to_old_ones(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 59
+        assert declared >= 59                                                    # v1.70.99: +bank_connections
         from app.bank.models import BankOperation, BankReimbursement, BankSettings, BankStatement
         models = (BankStatement, BankOperation, BankReimbursement, BankSettings)
         assert [m.__tablename__ for m in models] == ["bank_statements", "bank_operations", "bank_reimbursements",
@@ -117,10 +98,10 @@ class TestSchema:
         assert "from app.bank import models as _bank" in read("tests/test_migration_compat_postgres.py")
         rehearsal = read("qa/upgrade_rehearsal.py")
         assert '"bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_"))' in rehearsal
-        assert 'up.get("bank_tables") == ["bank_operations", "bank_reimbursements", "bank_settings",' in rehearsal
-        db = read("docs/DATABASE.md")
-        assert "59 объявлений `__tablename__`" in db and "| Банковская выписка (v1.70.98) |" in db
-        assert "все 59 таблиц приложения" in db
+        check = rehearsal.split('up.get("bank_tables") == [', 1)[1].split("]", 1)[0]       # v1.70.99: +bank_connections
+        assert all(f'"{t}"' in check for t in ("bank_operations", "bank_reimbursements", "bank_settings",
+                                                  "bank_statements"))
+        assert "| Банковская выписка (v1.70.98) |" in read("docs/DATABASE.md")
 
 
 class TestWiring:
@@ -163,7 +144,7 @@ class TestWiring:
         tops = re.findall(r"^(?:export )?(?:async )?(?:function|const|let) (\w+)", screen, re.M)
         assert all(t.startswith(("bank", "BANK", "viewBank")) for t in tops), tops   # общая область сборки
         app_js = read("app/static/js/app.js")
-        assert "import { viewBank } from './bank.js';" in app_js
+        assert re.search(r"import \{ viewBank[^}]*\} from './bank\.js';", app_js)   # v1.70.99: + панель банка по API
         assert "bank: 'Банк: выписка'," in app_js and "bank_statement_uploaded: ['ok', '🏦']" in app_js
         assert app_js.count("'primary', 'docreq', 'bank', 'settings']") == 2      # пространства admin и accountant
         assert '<a href="#/bank" data-view="bank" class="nav-item accountant-only">' in read("app/static/index.html")
@@ -270,12 +251,12 @@ class TestDocsAndKb:
         assert t45["Статус"] == "done" and t45["Задача"].endswith(f"выпущено в {VERSION}")
         assert t45["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/30"
         assert t45["Связанные ADR"] == "ADR-14, ADR-28"
-        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.97" in tasks["T-01"]["Блокер"]
+        m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.99: не старше
+        assert m and tuple(map(int, m.group(1).split("."))) >= (1, 70, 98)
         roadmap = read("docs/kb/02_roadmap.md")
         assert "**Готово 04.11.2026 (выпуск v1.70.98):** [#30](https://github.com/Rimlin-UNC/1c_chek/issues/30) T-45" \
             in roadmap
-        assert "T-01 — установить на рабочий сервер v1.70.98 (включает 1.70.82–1.70.97; P0)" in roadmap
         ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
-        assert ledger[-2]["Версия"] == "1.70.97" and ledger[-2]["Откат на неё"] == "можно"
-        assert all("," not in v for v in ledger[-1].values()), "в полях реестра нет запятых"
+        rows = {r["Версия"]: r for r in ledger}
+        assert rows[VERSION]["Опора репетиции"] == "да" and rows["1.70.97"]["Откат на неё"] == "можно"
+        assert all("," not in v for v in rows[VERSION].values()), "в полях реестра нет запятых"

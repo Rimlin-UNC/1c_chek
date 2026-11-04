@@ -261,6 +261,16 @@ sandbox.fetch = async (url, opts) => {
                 totals: { open: { count: 1, amount: 15000 }, matched: { count: 2, amount: 12430 }, ignored: { count: 0, amount: 0 } },
                 reimburse: { pending_total: 1700, pending_count: 1 }, settings: { retention_days: 1095, cards: [] } };
   }
+  // v1.70.99 (ADR-29): банк по API — подключение Точки (секретов в ответе нет)
+  if (String(url).includes('/api/v1/bank/connection')) {
+    specialPayload = true;
+    payload = { banks: [{ id: 'tochka', title: 'Точка Банк' }], bank: 'tochka', method: 'oauth', status: 'active',
+                client_id: 'app-synthetic', secret_set: true, jwt_set: false, server_app: false,
+                redirect_uri: 'https://chek.ymaster.ru/api/v1/bank/tochka/callback', start_date: '2026-10-01',
+                accounts: [{ tail: '0001', currency: 'RUB', loaded: true }], synced_until: '2026-11-04',
+                last_sync_at: '2026-11-04T09:05:00', last_error: '', pending: 0, awaiting: false,
+                last_result: { ok: true, operations: 9, saved: 3, matched: 2, open: 1 } };
+  }
   // v1.70.96: первичка — проверка выгрузки в 1С (T-60)
   if (String(url).endsWith('/api/v1/primary/export/check')) {
     specialPayload = true;
@@ -339,6 +349,10 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   ok(slotHtml().includes('Удалить компанию'), 'card: кнопка удаления');
   ok(slotHtml().includes('CSV все чеки'), 'card: CSV-кнопка');
   ok(slotHtml().includes('Действующая'), 'card: статус ЕГРЮЛ');
+  // v1.70.99 (ADR-29): выбор банка и доступ по API — в карточке компании
+  ok(slotHtml().includes('id="cc-bank"'), 'v1.70.99: в карточке компании есть блок «Банк по API»');
+  ok(apiLog.some((c) => c.url === '/api/v1/bank/connection?company_id=x1'),
+     'v1.70.99: карточка запросила подключение банка именно этой компании');
 
   // 3) Диалог удаления
   root.innerHTML = '';
@@ -1038,6 +1052,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     ok(det && det.body.period === '2026-10', 'v1.70.97: «Найти недостающее» ушло на сервер за выбранный месяц');
     // v1.70.98 (T-45): «Банк: выписка» — платежи без документов и «к возмещению» в итоге
     const fromB = apiLog.length;
+    vcP.querySelector('#bank-conn').isConnected = true;   // v1.70.99: мини-DOM — панель банка «в документе»
     sandbox.location.hash = '#/bank';
     sandbox.route();
     await tickP(80);
@@ -1048,6 +1063,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     ok(vcP.querySelector('#bank-kpi').textContent.includes('без документов: 1')
        && vcP.querySelector('#bank-kpi').textContent.includes('к возмещению'),
        'v1.70.98: в итоге — платежи без документов и сумма к возмещению');
+    // v1.70.99 (ADR-29): панель «Банк по API» — Точка подключена, счёт и итог последней загрузки
+    const conn = vcP.querySelector('#bank-conn').innerHTML;
+    ok(apiLog.slice(fromB).some((c) => c.url === '/api/v1/bank/connection'),
+       'v1.70.99: бухгалтер — состояние подключения своей компании запрошено');
+    ok(conn.includes('Банк по API') && conn.includes('*0001 RUB') && conn.includes('подключён'),
+       'v1.70.99: панель «Банк по API»: подключён, счёт *0001');
+    ok(conn.includes('Загрузить сейчас') && !conn.includes('s3cret'), 'v1.70.99: кнопка «Загрузить сейчас», секретов нет');
     vcP.isConnected = undefined;
   }
 

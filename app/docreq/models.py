@@ -34,6 +34,9 @@ class DocRequestSettings(Base):
                                           server_default="telegram,max,email")
     roles: Mapped[str] = mapped_column(String(60), default="manager", server_default="manager")
     contact_email: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # v1.70.99: эскалация — личный запрос (чек, покупка по карте) открыт дольше N дней → его видят и
+    # руководители. 0 — не передавать. Колонка добавляется к базам 1.70.97–1.70.98 в _ensure_schema.
+    escalate_days: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(36), default="", server_default="")
 
@@ -72,7 +75,7 @@ class DocRequestEvent(Base):
     period: Mapped[str] = mapped_column(String(7))
     request_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    kind: Mapped[str] = mapped_column(String(20))       # created | reminder | received | cancelled | reopened
+    kind: Mapped[str] = mapped_column(String(20))       # created | reminder | received | cancelled | reopened | escalated
     slot: Mapped[str] = mapped_column(String(16), default="")     # D-3, D-1, D0, D+2 … или manual
     channel: Mapped[str] = mapped_column(String(12), default="")  # telegram | max | email
     recipient: Mapped[str] = mapped_column(String(200), default="")

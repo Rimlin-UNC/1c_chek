@@ -431,3 +431,32 @@ test('прямая ссылка: у администратора список к
   await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента', { timeout: 15000 });
   await expect(page.locator('#dreq-company option', { hasText: 'E2E Альфа' })).toHaveCount(1);
 });
+
+// v1.70.99 (ADR-29): банк по API — в карточке компании выбирается Точка и способ доступа; секрет
+// сохраняется, но на страницу не возвращается. «Подключить» не нажимаем: это вход в настоящий банк.
+test('банк по API: карточка компании — Точка, OAuth 2.0, секрет не возвращается', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/companies"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Компании');
+  await page.locator('#cp-table tr', { hasText: 'E2E Бета' }).locator('.cp-card').click();
+  const panel = page.locator('#cc-bank');
+  await expect(panel).toContainText('Банк по API', { timeout: 15000 });
+  await expect(panel).toContainText('не подключён');
+  await expect(panel.locator('#bankc-bank')).toHaveValue('tochka');
+  await expect(panel.locator('.bank-conn-uri')).toContainText('/api/v1/bank/tochka/callback');
+  await panel.locator('#bankc-client').fill('e2e-app-synthetic');
+  await panel.locator('#bankc-secret').fill('s3cret-e2e-synthetic');
+  await panel.locator('#bankc-save').click();
+  await expect(panel.locator('#bankc-secret')).toHaveAttribute('placeholder', /задан/, { timeout: 15000 });
+  await expect(panel.locator('#bankc-secret')).toHaveValue('');
+  await expect(panel.locator('#bankc-client')).toHaveValue('e2e-app-synthetic');
+  expect(await page.content()).not.toContain('s3cret-e2e-synthetic');
+  await panel.locator('#bankc-method').selectOption('jwt');
+  await expect(panel.locator('#bankc-jwt')).toBeVisible();
+  await expect(panel.locator('#bankc-auth')).toBeHidden();
+  page.once('dialog', (dialog) => dialog.accept());
+  await panel.locator('#bankc-del').click();
+  await expect(panel).toContainText('не подключён', { timeout: 15000 });
+  await expect(panel.locator('#bankc-del')).toHaveCount(0);
+});
