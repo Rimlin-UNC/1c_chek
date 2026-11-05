@@ -25,6 +25,10 @@
 }
 .ym-splash.is-leaving { animation: ym-out .52s cubic-bezier(.4, 0, .2, 1) forwards; }
 .ym-splash.is-gone { display: none; }
+/* v1.70.103 (T-74): гостю заставка не показывается, пока администратор не включит её для гостей — класс ставит
+   js/boot.js до первой отрисовки; стартовая страница видна сразу (полноэкранное окно перед содержимым
+   поисковики считают навязчивым) */
+.ym-guest .ym-splash { display: none; }
 .ym-splash__stage { perspective: 1900px; width: 100%; height: 100%; display: grid; place-items: center;
   animation: ym-in 1s cubic-bezier(.22, 1, .36, 1) both; }
 .ym-splash__card {

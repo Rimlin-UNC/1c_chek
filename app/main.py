@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
@@ -427,6 +427,7 @@ async def ws_status(ws: WebSocket):
 # спотыкаются. HEAD для GET-маршрута Starlette добавляет сам, поэтому
 # достаточно @app.get — и проверка nginx/systemd (`curl -I /health`) работает.
 @app.get("/health", tags=["Служебные"], summary="Проверка работоспособности")
+@app.head("/health", include_in_schema=False)   # v1.70.103: HEAD явно — раньше отвечал SPA-фолбэк (теперь 404)
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION,
             "vendor": settings.VENDOR, "site": settings.VENDOR_SITE}
@@ -443,6 +444,7 @@ def about():
         receipts_count = db.query(Receipt).count()
         mx_username = _mx.bot_username(db, refresh=False)  # v1.70.1
         splash_seconds = _splash.seconds(db)               # v1.70.100: длительность заставки (до входа)
+        splash_guests = _splash.guests(db)                 # v1.70.103: заставка и для гостей (по умолчанию нет)
     finally:
         db.close()
     return {
@@ -455,6 +457,7 @@ def about():
         "receipts_total": receipts_count,
         "fns_provider": "fns",
         "splash_seconds": splash_seconds,
+        "splash_guests": splash_guests,
     }
 
 
@@ -527,7 +530,53 @@ app.include_router(legal_page.router)      # /oferta, /oferta.txt, /api/v1/legal
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static
 # --------------------------------------------------------------------------
 from .config import BASE_DIR  # noqa: E402
+from .services import seo as _seo  # noqa: E402
 STATIC_DIR = BASE_DIR / "app" / "static"
+
+
+# v1.70.103 (T-74, ADR-33): SEO стартовой страницы. Главная отдаётся с подстановкой вместо метки seo:head:
+# canonical при разрешённой индексации, иначе noindex, и коды подтверждения поисковиков. Индексация решается по
+# адресу (Host), а не по роботу: люди и роботы получают одну и ту же страницу (не клоакинг).
+def _scheme(request: Request) -> str:
+    return (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+
+
+def _index_response(request: Request, status_code: int = 200) -> HTMLResponse:
+    from .database import SessionLocal
+    template = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    host = request.headers.get("host")
+    cfg = _seo.load_safely(SessionLocal)          # база недоступна — значения по умолчанию, главная открывается
+    enabled = _seo.indexing_enabled(cfg, host)
+    body = _seo.render_index(template, cfg, host, _scheme(request))
+    headers = {} if enabled and status_code == 200 else {"X-Robots-Tag": "noindex, nofollow"}
+    return HTMLResponse(body, status_code=status_code, headers=headers)
+
+
+@app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
+def robots_txt(request: Request):
+    """Правила для роботов: на рабочем адресе — открыто всё, кроме служебных разделов; иначе — всё закрыто."""
+    from .database import SessionLocal
+    text = _seo.robots_txt(_seo.load_safely(SessionLocal), request.headers.get("host"), _scheme(request))
+    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+
+
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
+def sitemap_xml(request: Request):
+    """Карта сайта — только при разрешённой индексации (иначе 404); дата — последнего обновления главной."""
+    from datetime import date
+
+    from .database import SessionLocal
+    lastmod = date.fromtimestamp((STATIC_DIR / "index.html").stat().st_mtime).isoformat()
+    xml = _seo.sitemap_xml(_seo.load_safely(SessionLocal), request.headers.get("host"), _scheme(request), lastmod)
+    if xml is None:
+        return JSONResponse({"detail": "Not found"}, status_code=404, headers={"X-Robots-Tag": "noindex"})
+    return Response(xml, media_type="application/xml; charset=utf-8")
+
+
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+def favicon():
+    """Значок по адресу по умолчанию (его запрашивают браузеры и роботы) — PNG 64×64."""
+    return FileResponse(STATIC_DIR / "img" / "icon-64.png", media_type="image/png")
 
 # Каталог assets должен существовать (git не хранит пустые папки — страховка)
 (STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
@@ -536,6 +585,7 @@ app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets"
 
 @app.get("/maxapp", include_in_schema=False)
 @app.get("/maxapp/", include_in_schema=False)
+@app.head("/maxapp/", include_in_schema=False)   # v1.70.103: HEAD явно (SPA-фолбэк теперь 404)
 @app.get("/maxapp/{fname}", include_in_schema=False)
 async def maxapp_page(fname: str = ""):
     """Мини-приложение MAX (v1.69.0): статика без авторизации.
@@ -554,6 +604,7 @@ async def maxapp_page(fname: str = ""):
 
 @app.get("/b2b", include_in_schema=False)
 @app.get("/b2b/", include_in_schema=False)
+@app.head("/b2b/", include_in_schema=False)      # v1.70.103: HEAD явно (SPA-фолбэк теперь 404)
 @app.get("/b2b/{fname}", include_in_schema=False)
 async def b2b_page(fname: str = ""):
     """Кабинет компании для доступа к платному API (v1.70.45).
@@ -574,16 +625,27 @@ async def b2b_page(fname: str = ""):
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-async def spa(full_path: str):
-    """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
+async def spa(full_path: str, request: Request = None):
+    """SPA-fallback: всё, что не API, отдаёт веб-клиент.
+
+    v1.70.103: главная — «/» и «/index.html» (200); прочие несуществующие адреса — 404 с той же оболочкой
+    и noindex: раньше любой адрес отвечал 200 копией главной («мягкие 404», дубли в поиске). Программа
+    ходит по разделам через «#/…», поэтому живых адресов без файла у неё нет.
+    """
     if full_path.startswith(("api/", "onec/", "ws/", "maxapp/", "b2b/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     if ".." in full_path:
         # v1.70.11: страховка от траверсала сверх нормализации сервера
         # (живая проверка v1.70.11: и так не эксплуатируется, но замок важнее)
         return JSONResponse({"detail": "Not found"}, status_code=404)
-    # Прямые файлы (manifest, sw, иконки)
+    # главная и «/index.html» — всегда с подстановкой seo:head (canonical или noindex), а не сырым файлом
+    if full_path in ("", "index.html") and request is not None:
+        return _index_response(request, 200)
+    # Прямые файлы (manifest, sw, иконки, шрифты)
     candidate = STATIC_DIR / full_path
     if full_path and candidate.is_file():
         return FileResponse(candidate)
-    return FileResponse(STATIC_DIR / "index.html")
+    status_code = 200 if full_path in ("", "index.html") else 404
+    if request is None:                                  # прямой вызов функции (тесты) — без подстановки
+        return FileResponse(STATIC_DIR / "index.html", status_code=status_code)
+    return _index_response(request, status_code)

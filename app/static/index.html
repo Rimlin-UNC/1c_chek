@@ -12,19 +12,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f5">
 <meta name="color-scheme" content="light">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
-<meta name="description" content="Ямастер Чек — сканирование кассовых чеков и загрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)">
-<title>Ямастер Чек — сканирование чеков и загрузка в 1С</title>
+<!-- v1.70.103 (T-74, ADR-33): SEO стартовой страницы. Заголовок и описание — под запрос «проверка чека», каждый
+     ключ один раз (docs/kb/12_seo.md). Вместо метки seo:head сервер подставляет canonical (индексация разрешена)
+     или noindex (копии программы не на рабочем адресе) и коды подтверждения поисковиков (app/services/seo.py) -->
+<title>Проверка чека по QR-коду онлайн — Ямастер Чек</title>
+<meta name="description" content="Бесплатная проверка кассового чека по QR-коду: сверка с данными ФНС, баллы и кэшбэк за чеки. Бухгалтеру — авансовые чеки, выписки банков и выгрузка в 1С.">
+<!-- seo:head -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ямастер Чек">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:title" content="Проверка чека по QR-коду онлайн — Ямастер Чек">
+<meta property="og:description" content="Сверка кассового чека с данными ФНС, баллы и кэшбэк за чеки, выгрузка авансовых чеков и выписок банков в 1С.">
+<meta property="og:url" content="https://chek.ymaster.ru/">
+<meta property="og:image" content="https://chek.ymaster.ru/img/manual/hero.jpg">
+<meta property="og:image:width" content="1100">
+<meta property="og:image:height" content="613">
+<meta property="og:image:alt" content="Бухгалтер разбирает кассовые чеки за ноутбуком">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
+<!-- v1.70.103: шрифты — со своего сервера (шрифты Google запрещала политика CSP); основной — заранее -->
+<link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<!-- v1.70.103: решения до первой отрисовки — гостю стартовая страница без заставки, у вошедших она не мелькает -->
+<script src="/js/boot.js"></script>
 <!-- v1.70.98: заставка загрузки — стили до app.css (оформлена с первого кадра), контроллер с defer
      выполняется после разбора страницы и до app.js -->
 <link rel="stylesheet" href="/css/splash.css">
 <script src="/js/splash.js" defer></script>
-<link rel="stylesheet" href="/css/app.css?v=1.70.102">
+<link rel="stylesheet" href="/css/app.css?v=1.70.103">
 </head>
 <body>
   <!-- v1.70.98: заставка загрузки «chek.ymaster.ru» — видна с первого кадра, таймлайн около 3 с (js/splash.js) -->
@@ -70,14 +88,21 @@
     <div class="blob blob-3"></div>
   </div>
 
-  <!-- Экран входа -->
-  <div id="login-screen" class="login-screen hidden">
+  <!-- Экран входа (стартовая страница).
+       v1.70.103 (T-74): виден с первого кадра, без класса hidden — содержимое читают поисковики и человек видит его
+       сразу; у вошедших и на особых адресах его прячет класс ym-hold до решения программы (js/boot.js). Один
+       заголовок H1 — у стартовой страницы; микроразметка schema.org (WebSite и Organization) — только на видимом
+       тексте: Яндекс читает микроданные, JSON-LD не поддерживает (docs/kb/12_seo.md) -->
+  <div id="login-screen" class="login-screen">
     <div class="land-wrap">
-    <div class="land-left">
+    <div class="land-left" itemscope itemtype="https://schema.org/WebSite">
+      <meta itemprop="name" content="Ямастер Чек">
+      <meta itemprop="alternateName" content="chek.ymaster.ru">
+      <link itemprop="url" href="https://chek.ymaster.ru/">
       <span class="land-badge" id="land-badge">Чек-Пул уже работает</span>
-      <h1 class="land-h1">Сканируйте чеки —<br>получайте <span class="land-accent">баллы и кэшбэк</span></h1>
-      <p class="land-lead">Каждый кассовый чек — баллы в открытой базе «Чек-Пул»
-      и кэшбэк у партнёров. Для первого чека регистрация не нужна:
+      <h1 class="land-h1">Проверка чека по QR-коду —<br><span class="land-accent">баллы и кэшбэк</span> за каждый чек</h1>
+      <p class="land-lead" itemprop="description">Сканируйте чеки камерой телефона: сверим кассовый чек с данными ФНС
+      и начислим балл в открытой базе «Чек-Пул», а у партнёров — кэшбэк. Для первого чека регистрация не нужна:
       навели камеру — балл засчитан.</p>
       <div class="land-stats" id="land-stats">
         <span class="land-stat"><b>—</b><small>чеков в базе</small></span>
@@ -108,6 +133,14 @@
         <div id="land-lead-msg" class="form-hint mt-6"></div>
       </form>
       <div class="land-faq">
+        <details><summary>Как проверить чек по QR-коду?</summary>
+          <p>Нажмите «Сканировать чек» и наведите камеру на QR-код или загрузите фото чека — дата,
+          сумма, ФН, ФД и ФП распознаются сами, и чек сверяется с данными ФНС. Если QR-код стёрся,
+          реквизиты можно ввести вручную.</p></details>
+        <details><summary>Как понять, что чек настоящий?</summary>
+          <p>Онлайн-касса передаёт каждый чек в ФНС через оператора фискальных данных. Чек, который
+          нашёлся в данных ФНС, получает статус «Принят в пул»; остальные уходят на ручную проверку
+          или не принимаются — статус виден в кабинете.</p></details>
         <details><summary>Это законно и безопасно?</summary>
           <p>Мы принимаем только фискальные реквизиты чека (ФН, ФД, ФП) — они напечатаны
           на самом чеке. Из персональных данных — только e-mail и только по вашему
@@ -120,15 +153,20 @@
           в сутки с одного устройства.</p></details>
         <details><summary>А для компаний?</summary>
           <p>Сотрудники сканируют авансовые и командировочные чеки телефоном,
-          бухгалтер видит их в базе и выгружает в 1С одной кнопкой.</p></details>
+          бухгалтер видит их в базе и выгружает в 1С одной кнопкой. Бухгалтерам и аутсорсингу —
+          несколько компаний в одном окне, выписки банков по API и УПД из ЭДО.</p></details>
       </div>
-      <p class="land-note">ООО «Ямастер» · ymaster.ru · chek@ymaster.ru</p>
+      <p class="land-note" itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
+        <link itemprop="logo" href="https://chek.ymaster.ru/img/icon-512.png">
+        <span itemprop="name">ООО «Ямастер»</span> ·
+        <a itemprop="url" href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:chek@ymaster.ru"><span itemprop="email">chek@ymaster.ru</span></a></p>
     </div>
     <div class="land-right">
     <div class="login-card glass">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64">
-        <h1>Ямастер <span class="grad-text">Чек</span></h1>
+        <p class="login-name">Ямастер <span class="grad-text">Чек</span></p>
         <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
       </div>
       <!-- v1.70.37: первый визит — два способа сделать всё в MAX.
@@ -205,7 +243,7 @@
     <div class="login-card glass">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 class="screen-title">Приглашение в <span class="grad-text">Ямастер Чек</span></h1>
+        <h2 class="screen-title">Приглашение в <span class="grad-text">Ямастер Чек</span></h2>
         <div id="reg-invite-badge" class="chip new badge-center"><span class="dot"></span>—</div>
       </div>
       <form id="register-form" autocomplete="on">
@@ -242,7 +280,7 @@
     <div class="login-card glass login-card-wide">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 class="screen-title">Сдать чек в <span class="grad-text">Чек-Пул</span></h1>
+        <h2 class="screen-title">Сдать чек в <span class="grad-text">Чек-Пул</span></h2>
         <p class="screen-sub">Проверяем чек по официальным источникам и начисляем
         баллы. Регистрация не нужна.</p>
       </div>
@@ -262,7 +300,7 @@
     <div class="login-card glass login-card-wide">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 class="screen-title">Кабинет <span class="grad-text">Чек-Пула</span></h1>
+        <h2 class="screen-title">Кабинет <span class="grad-text">Чек-Пула</span></h2>
         <p class="screen-sub">Баллы, мои чеки и профиль участника открытой базы.</p>
       </div>
       <div id="pool-account-root"></div>
@@ -447,6 +485,6 @@
   <!-- v1.70.51: Chart.js — графики истории в блоке «Мониторинг OpenStack».
        Вендорен, как и jsQR: без обращения к внешним сетям при загрузке. -->
   <script src="/js/vendor/chart.umd.js"></script>
-  <script type="module" src="/js/app.js?v=1.70.102"></script>
+  <script type="module" src="/js/app.js?v=1.70.103"></script>
 </body>
 </html>

@@ -421,12 +421,12 @@ class TestCssIsValid:
             ".alt-line больше не рисует разделитель границей темы"
 
     def test_loaded_webfonts_are_actually_used(self):
-        """index.html грузит Inter, JetBrains Mono и Caveat; каждый обязан
-        быть применён через токен, иначе шрифты скачиваются впустую."""
-        html = read("app/static/index.html")
-        for font in ("Inter", "JetBrains+Mono", "Caveat"):
-            assert font in html, f"{font} не подключён"
+        """Inter, JetBrains Mono и Caveat подключены; каждый обязан быть
+        применён через токен, иначе шрифты скачиваются впустую.
+        v1.70.103: подключение — @font-face в app.css (свои файлы), а не ссылка на Google Fonts в index.html."""
         c = read(APP_CSS)
+        for font in ("Inter", "JetBrains Mono", "Caveat"):
+            assert f'font-family: "{font}";' in c, f"{font} не подключён"
         assert '"JetBrains Mono"' in c
         assert '"Caveat"' in c
         assert '"Inter"' in c

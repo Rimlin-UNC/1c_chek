@@ -151,7 +151,7 @@ def render_html(db: Session | None = None) -> str:
 """
 
 
-@router.get("/oferta", include_in_schema=False)
+@router.api_route("/oferta", methods=["GET", "HEAD"], include_in_schema=False)   # и HEAD: SPA-фолбэк его больше не ловит
 def offerta_page(db: Session = Depends(get_db)):
     """Страница публичной оферты — без авторизации, целиком с сервера."""
     return HTMLResponse(render_html(db))

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 import secrets
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -264,8 +264,20 @@ class ConsentRequisitesPatch(BaseModel):
 
 
 class SplashPatch(BaseModel):
-    """v1.70.100: длительность заставки загрузки, секунд (0 — без заставки)."""
+    """v1.70.100: длительность заставки загрузки, секунд (0 — без заставки).
+
+    v1.70.103: guests — показывать ли заставку гостям на стартовой странице (не передан — не меняется)."""
     seconds: int = Field(ge=0, le=60)
+    guests: bool | None = None
+
+
+class SeoPatch(BaseModel):
+    """v1.70.103 (T-74, ADR-33): индексация стартовой страницы и коды подтверждения поисковиков.
+
+    Не переданное поле не меняется; пустой код — убрать код."""
+    mode: Literal["auto", "on", "off"] | None = None
+    yandex: str | None = Field(default=None, max_length=400)
+    google: str | None = Field(default=None, max_length=400)
 
 
 @router.get("/splash", summary="Заставка загрузки: длительность (админ)", dependencies=[Depends(require_admin)])
@@ -273,7 +285,7 @@ def get_splash_settings(db: Annotated[Session, Depends(get_db)]):
     from ..services import splash
     value = splash.seconds(db)
     return {"seconds": value, "default": splash.DEFAULT, "min": splash.MIN_SECONDS, "max": splash.MAX_SECONDS,
-            "mode": splash.mode(value)}
+            "mode": splash.mode(value), "guests": splash.guests(db)}
 
 
 @router.put("/splash", summary="Сохранить длительность заставки загрузки (админ)")
@@ -282,8 +294,35 @@ def put_splash_settings(body: SplashPatch, db: Annotated[Session, Depends(get_db
     from ..services import splash
     before = splash.seconds(db)
     value = splash.save(db, body.seconds)
-    log_action(user, "splash_settings_updated", "settings", None, {"seconds": value, "before": before})
-    return {"seconds": value, "mode": splash.mode(value)}
+    if body.guests is not None:
+        splash.save_guests(db, body.guests)
+    guests = splash.guests(db)
+    log_action(user, "splash_settings_updated", "settings", None, {"seconds": value, "before": before,
+                                                                   "guests": guests})
+    return {"seconds": value, "mode": splash.mode(value), "guests": guests}
+
+
+@router.get("/seo", summary="Поисковики: индексация и коды подтверждения (админ)", dependencies=[Depends(require_admin)])
+def get_seo_settings(request: Request, db: Annotated[Session, Depends(get_db)]):
+    from ..services import seo
+    return seo.status(seo.load(db), request.headers.get("host"))
+
+
+@router.put("/seo", summary="Сохранить индексацию и коды подтверждения поисковиков (админ)")
+def put_seo_settings(body: SeoPatch, request: Request, db: Annotated[Session, Depends(get_db)],
+                     user: Annotated[User, Depends(require_admin)]):
+    from ..services import seo
+    before = seo.mode(db)
+    try:
+        seo.save(db, mode_value=body.mode, yandex=body.yandex, google=body.google)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    state = seo.status(seo.load(db), request.headers.get("host"))
+    # в журнал — режим и признаки кодов, сами коды не пишем
+    log_action(user, "seo_settings_updated", "settings", None, {"mode": state["mode"], "before": before,
+                                                                "yandex": bool(state["yandex"]),
+                                                                "google": bool(state["google"])})
+    return state
 
 
 @router.get("/consent", summary="Реквизиты оператора в согласии 152-ФЗ (админ)")

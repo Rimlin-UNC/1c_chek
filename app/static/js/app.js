@@ -152,6 +152,10 @@ async function loadAppVersion() {
     if (window.ymSplash && window.ymSplash.setDuration && about.splash_seconds !== undefined) {
       window.ymSplash.setDuration(about.splash_seconds);
     }
+    // v1.70.103: показывать ли заставку гостям — решение для следующих загрузок принимает js/boot.js
+    if (window.ymSplash && window.ymSplash.setGuests && about.splash_guests !== undefined) {
+      window.ymSplash.setGuests(about.splash_guests);
+    }
   } catch { /* версия не критична */ }
 }
 
@@ -294,6 +298,8 @@ function bindLanding() {
 // вместо «Сдать чек в Чек-Пул» и кабинета. Теперь каждый показ экрана
 // одновременно прячет все остальные — рассинхрон невозможен.
 function showScreen(...ids) {
+  // v1.70.103: экран выбран — стартовая страница больше не придержана классом ym-hold (js/boot.js)
+  document.documentElement.classList.remove('ym-hold');
   for (const id of ['login-screen', 'register-screen', 'public-screen',
                     'pool-account-screen', 'app-shell']) {
     const el = document.getElementById(id);
@@ -4093,12 +4099,17 @@ function bindSplashCard() {
   };
   range.oninput = () => show(range.value, range);
   num.oninput = () => show(num.value, num);
-  api.get('/api/v1/settings/splash').then((cfg) => show(cfg.seconds)).catch(() => show(5));
+  const guests = $('#sp-guests');
+  api.get('/api/v1/settings/splash').then((cfg) => {
+    show(cfg.seconds);
+    if (guests) guests.checked = !!cfg.guests;                 // v1.70.103: заставка для гостей
+  }).catch(() => show(5));
   $('#sp-save').onclick = async () => {
     const sec = show(num.value);
     try {
-      const res = await api.put('/api/v1/settings/splash', { seconds: sec });
+      const res = await api.put('/api/v1/settings/splash', { seconds: sec, guests: !!(guests && guests.checked) });
       if (window.ymSplash && window.ymSplash.setDuration) window.ymSplash.setDuration(res.seconds);
+      if (window.ymSplash && window.ymSplash.setGuests) window.ymSplash.setGuests(res.guests);
       toast(res.seconds ? `Заставка — ${res.seconds} с: ${res.mode}` : 'Заставка отключена', 'ok', 'Сохранено');
     } catch (e) { toast(e.message, 'err'); }
   };
@@ -4108,6 +4119,34 @@ function bindSplashCard() {
     if (!(window.ymSplash && window.ymSplash.preview && window.ymSplash.preview(sec))) {
       toast('Заставка недоступна в этом окне — обновите страницу', 'warn');
     }
+  };
+}
+
+// v1.70.103 (T-74, ADR-33): «Поисковики» — индексация по адресу и коды подтверждения, только администратор
+function seoStateText(cfg) {
+  const where = cfg.host ? `на адресе ${cfg.host}` : 'на этом адресе';
+  return cfg.enabled
+    ? `Сейчас ${where} индексация разрешена: canonical, robots.txt и карта сайта открыты поисковикам.`
+    : `Сейчас ${where} индексация запрещена: robots.txt закрывает сайт, страница помечена noindex.`;
+}
+
+function bindSeoCard() {
+  const sel = $('#seo-mode'), state = $('#seo-state'), ya = $('#seo-yandex'), go = $('#seo-google');
+  if (!sel || !state) return;
+  const fill = (cfg) => {
+    sel.innerHTML = (cfg.modes || []).map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
+    sel.value = cfg.mode;
+    ya.value = cfg.yandex || '';
+    go.value = cfg.google || '';
+    state.textContent = seoStateText(cfg);
+  };
+  api.get('/api/v1/settings/seo').then(fill).catch((e) => { state.textContent = e.message; });
+  $('#seo-save').onclick = async () => {
+    try {
+      const cfg = await api.put('/api/v1/settings/seo', { mode: sel.value, yandex: ya.value, google: go.value });
+      fill(cfg);
+      toast(seoStateText(cfg), 'ok', 'Сохранено');
+    } catch (e) { toast(e.message, 'err'); }
   };
 }
 
@@ -6453,6 +6492,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.103': [
+    { icon: '🔎', title: 'Стартовую страницу находят по «проверке чека»',
+      text: 'Заголовок, описание и карточка для соцсетей — под запрос «проверка чека по QR-коду»; один главный '
+        + 'заголовок, микроразметка, robots.txt и карта сайта. Индексация — только на рабочем адресе: копии '
+        + 'программы у компаний поисковикам закрыты. Коды Вебмастера и Search Console — в «Настройки → Поисковики».' },
+    { icon: '⚡', title: 'Гостю — сразу содержимое, а не заставка',
+      text: 'Стартовая страница открывается без заставки (включить её для гостей — флажок в «Заставке загрузки»). '
+        + 'Шрифты Inter, JetBrains Mono и Caveat — со своего сервера: раньше их не пускала политика безопасности. '
+        + 'Несуществующие адреса отвечают «404», кнопки в карточке компании на телефоне не дробятся по буквам.' },
+  ],
   '1.70.102': [
     { icon: '🏦', title: 'Все банки клиента в карточке',
       text: 'Кроме Точки — Т-Банк, Сбербанк, Альфа-Банк и Модульбанк. Выберите банк в блоке «Банк по API» — поля '
@@ -11418,9 +11467,30 @@ async function viewSettings(container, alive = routeGuard()) {
           <label class="field"><span>Секунд</span><input type="number" id="sp-sec" min="0" max="60" step="1" value="5"></label>
         </div>
         <p class="form-hint" id="sp-mode"></p>
+        <label class="consent-label sp-guests"><input type="checkbox" id="sp-guests">
+          <span>Показывать заставку и гостям на стартовой странице — по умолчанию выключено: стартовую
+          страницу читают поисковики, а полноэкранное окно перед содержимым они считают навязчивым</span></label>
         <div class="splash-actions">
           <button type="button" class="btn btn-primary" id="sp-save">Сохранить</button>
           <button type="button" class="btn" id="sp-preview" title="Показать заставку с выбранной длительностью — закрыть щелчком или Esc">▶ Показать</button>
+        </div>
+      </div>` : ''}
+      ${isAdmin() ? `
+      <div class="glass card" id="st-seo" data-sec="device" style="order:48">
+        <div class="card-title">🔎 Поисковики <span class="form-hint">Яндекс и Google видят стартовую страницу</span></div>
+        <p class="form-hint">Индексация решается по адресу сайта: «Авто» разрешает её только на рабочем адресе
+        chek.ymaster.ru, копии программы у компаний и стенды отвечают поисковикам запретом — иначе они попали бы в
+        выдачу дублями. Коды подтверждения из Яндекс Вебмастера и Google Search Console можно вставить тегом целиком.</p>
+        <label class="field"><span>Индексация</span><select id="seo-mode"></select></label>
+        <p class="form-hint" id="seo-state"></p>
+        <label class="field"><span>Код Яндекс Вебмастера (yandex-verification)</span>
+          <input type="text" id="seo-yandex" maxlength="400" autocomplete="off" placeholder="&lt;meta name=&quot;yandex-verification&quot; content=&quot;…&quot;&gt;"></label>
+        <label class="field"><span>Код Google Search Console (google-site-verification)</span>
+          <input type="text" id="seo-google" maxlength="400" autocomplete="off" placeholder="&lt;meta name=&quot;google-site-verification&quot; content=&quot;…&quot;&gt;"></label>
+        <div class="splash-actions">
+          <button type="button" class="btn btn-primary" id="seo-save">Сохранить</button>
+          <a class="btn" href="/robots.txt" target="_blank" rel="noopener">robots.txt</a>
+          <a class="btn" href="/sitemap.xml" target="_blank" rel="noopener">sitemap.xml</a>
         </div>
       </div>` : ''}
       ${isAdmin() ? `
@@ -11509,6 +11579,7 @@ async function viewSettings(container, alive = routeGuard()) {
     });
   };
   if (isAdmin()) bindSplashCard();          // v1.70.100: длительность заставки — только администратор
+  if (isAdmin()) bindSeoCard();             // v1.70.103: поисковики — только администратор
   const snav = $('#settings-nav');
   if (snav) {
     snav.insertAdjacentHTML('afterbegin',
@@ -11800,7 +11871,7 @@ async function viewSettings(container, alive = routeGuard()) {
           '<span class="cell-mono">sudo bash rollback.sh</span></p>';
       } else {
         relBox.innerHTML = head +
-          '<table class="data" style="min-width:0"><thead>' +
+          '<table class="data rb-table" style="min-width:0"><thead>' +   // v1.70.103: rb-table — кнопка не дробится
           '<tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th></th></tr></thead><tbody>' +
           relItems.map(v => `<tr>
             <td><b>v${esc(v.version)}</b>${v.current

@@ -319,7 +319,7 @@
       ]
     },
     {
-      "name": "SPA-фолбэк: правовой путь отдаёт оболочку",
+      "name": "SPA-фолбэк: неизвестный путь — 404 с оболочкой",
       "request": {
         "method": "GET",
         "url": {
@@ -339,8 +339,9 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('статус 200', () => pm.response.to.have.status(200));",
-              "pm.test('оболочка кабинета', () => pm.expect(pm.response.text()).to.include('Ямастер Чек'));"
+              "pm.test('статус 404 (v1.70.103: без мягких 404)', () => pm.response.to.have.status(404));",
+              "pm.test('оболочка кабинета', () => pm.expect(pm.response.text()).to.include('Ямастер Чек'));",
+              "pm.test('не для индекса', () => pm.expect(pm.response.headers.get('X-Robots-Tag')).to.include('noindex'));"
             ]
           }
         }

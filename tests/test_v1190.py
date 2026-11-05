@@ -108,9 +108,15 @@ class TestYamasterStyle:
             assert needle in css, needle
 
     def test_fonts_connected(self):
-        idx = open("app/static/index.html", encoding="utf-8").read()
-        assert "fonts.googleapis.com" in idx
-        assert "Inter" in idx and "JetBrains+Mono" in idx and "Caveat" in idx
+        # v1.70.103: шрифты — со своего сервера (@font-face в app.css, файлы app/static/fonts): Google Fonts
+        # запрещала политика CSP (default-src 'self'), и интерфейс рисовался запасными шрифтами
+        from pathlib import Path
+        idx = Path("app/static/index.html").read_text(encoding="utf-8")
+        css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+        assert "fonts.googleapis.com" not in idx
+        for family in ("Inter", "JetBrains Mono", "Caveat"):
+            assert f'font-family: "{family}";' in css, family
+        assert '<link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2"' in idx
 
     def test_light_theme_default(self):
         # v1.25.0: светлая — единственная (переключателей нет)

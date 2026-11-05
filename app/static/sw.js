@@ -5,17 +5,19 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.70.102';
+const CACHE = 'ymaster-check-v1.70.103';
 // v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
 // SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.70.102', '/js/app.js?v=1.70.102',   // v1.12.2: как в index.html
+  '/css/app.css?v=1.70.103', '/js/app.js?v=1.70.103',   // v1.12.2: как в index.html
   '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
   '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
   '/css/splash.css', '/js/splash.js',                 // v1.70.98: заставка загрузки
+  '/js/boot.js',                                      // v1.70.103: решения до первой отрисовки
+  '/fonts/inter-cyrillic-wght-normal.woff2', '/fonts/inter-latin-wght-normal.woff2',   // v1.70.103: свои шрифты
   '/img/manual/hero.jpg', '/img/manual/scan.jpg',
   '/img/manual/report.jpg', '/img/manual/update.jpg',   // v1.21.0: инструкция
   '/img/manual/settings.jpg',   // v1.70.9: инструкция «Настройки»

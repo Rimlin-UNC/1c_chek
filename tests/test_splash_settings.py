@@ -16,8 +16,8 @@ def test_admin_sets_duration_public_about_shows_it(client):
         got = client.get("/api/v1/settings/splash", headers=admin).json()
         assert {k: got[k] for k in ("default", "min", "max")} == {"default": 5, "min": 0, "max": 60}
         saved = client.put("/api/v1/settings/splash", headers=admin, json={"seconds": 12})
-        assert saved.status_code == 200 and saved.json() == {
-            "seconds": 12, "mode": "длинная — этапы, прогресс и подсказки о возможностях программы"}
+        assert saved.status_code == 200 and saved.json() == {          # v1.70.103: + guests (заставка гостям)
+            "seconds": 12, "mode": "длинная — этапы, прогресс и подсказки о возможностях программы", "guests": False}
         assert client.get("/api/v1/about").json()["splash_seconds"] == 12          # без входа
         assert client.put("/api/v1/settings/splash", headers=admin, json={"seconds": 0}).json()["mode"] == "без заставки"
         assert client.get("/api/v1/about").json()["splash_seconds"] == 0

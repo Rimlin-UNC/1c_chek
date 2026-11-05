@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 from . import appsettings
 
 KEY = "splash_seconds"
+# v1.70.103 (T-74): показывать ли заставку гостям на стартовой странице — по умолчанию нет: стартовую страницу
+# читают поисковики, а полноэкранное окно перед содержимым Google относит к навязчивым (docs/kb/12_seo.md)
+KEY_GUESTS = "splash_guests"
 DEFAULT = 5
 MIN_SECONDS = 0
 MAX_SECONDS = 60
@@ -42,3 +45,13 @@ def mode(value: int) -> str:
     if value >= 8:
         return "длинная — этапы, прогресс и подсказки о возможностях программы"
     return "обычная — этапы загрузки и прогресс"
+
+
+def guests(db: Session) -> bool:
+    """Заставка и для гостей (без входа) — только если администратор включил."""
+    return appsettings.get_setting(db, KEY_GUESTS, "0") == "1"
+
+
+def save_guests(db: Session, on: bool) -> bool:
+    appsettings.set_setting(db, KEY_GUESTS, "1" if on else "0")
+    return bool(on)

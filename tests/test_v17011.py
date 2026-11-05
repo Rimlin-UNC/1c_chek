@@ -80,5 +80,7 @@ class TestSpaTraversalGuard:
         assert resp.status_code == 404
 
     def test_normal_path_still_works(self):
+        # v1.70.103: несуществующий адрес — 404 с той же оболочкой (без «мягких 404»); главная — 200
         resp = asyncio.run(spa("dashboard"))
-        assert resp.status_code == 200
+        assert resp.status_code == 404 and str(resp.path).endswith("index.html")
+        assert asyncio.run(spa("")).status_code == 200

@@ -377,9 +377,15 @@ test('что нужно от клиента: запрос документа, о
 });
 
 // v1.70.98: заставка загрузки — версия с сервера, финал «Готово к запуску», уход; вход доступен после неё
+// v1.70.103 (T-74): гостю по умолчанию заставки нет — стартовая страница видна сразу; показ гостям включает флажок
 test('заставка загрузки: версия с сервера, «Готово к запуску» и уход', async ({ page, request }) => {
   const about = await (await request.get('/api/v1/about')).json();
+  expect(about.splash_guests).toBe(false);
   await page.goto('/');
+  await expect(page.locator('h1.land-h1')).toContainText('Проверка чека по QR-коду');
+  await expect(page.locator('#ym-splash')).toBeHidden();                         // гость: без заставки
+  await page.evaluate(() => localStorage.setItem('ym-splash-guests', '1'));     // как после флажка администратора
+  await page.reload();
   const splash = page.locator('#ym-splash');
   await expect(splash).toHaveClass(/is-ready/, { timeout: 15000 });
   await expect(page.locator('#ym-splash-version')).toHaveText(about.version);

@@ -9,6 +9,51 @@
    тоже светлые.
    ====================================================================== */
 
+/* v1.70.103 (T-74): шрифты — со своего сервера (app/static/fonts, пакеты @fontsource-variable 5.3.0, лицензия
+   SIL OFL 1.1 — файлы LICENSE-*.txt рядом). Шрифты Google не загружались вовсе: политика CSP
+   (default-src 'self') запрещает чужие адреса, и интерфейс рисовался запасными шрифтами. Переменные шрифты:
+   один файл на набор символов покрывает все начертания; браузер скачивает только нужные наборы
+   (unicode-range): кириллица, латиница и для Inter — расширенная латиница (знак рубля ₽). */
+@font-face {
+  font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(/fonts/inter-cyrillic-wght-normal.woff2) format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(/fonts/inter-latin-ext-wght-normal.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(/fonts/inter-latin-wght-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 100 800;
+  src: url(/fonts/jetbrains-mono-cyrillic-wght-normal.woff2) format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 100 800;
+  src: url(/fonts/jetbrains-mono-latin-wght-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Caveat"; font-style: normal; font-display: swap; font-weight: 400 700;
+  src: url(/fonts/caveat-cyrillic-wght-normal.woff2) format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Caveat"; font-style: normal; font-display: swap; font-weight: 400 700;
+  src: url(/fonts/caveat-latin-wght-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme: light;
   --bg: #f5f5f5;                       /* нейтральный фон-подложка #F5F5F5 */
@@ -216,7 +261,12 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .login-logo { text-align: center; margin-bottom: 28px; }
 .login-logo img { filter: drop-shadow(0 6px 18px rgba(255,122,0,.35));   /* v1.25.0 */
   margin-inline: auto; }   /* v1.56.1: img теперь block — центрируем явно */
-.login-logo h1 { font-size: 1.875rem; margin-top: 12px; letter-spacing: .3px; }
+/* v1.70.103: заголовок H1 на стартовой странице один — название в карточке входа и заголовки скрытых экранов
+   (h2) оформлены как прежний h1 */
+.login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.875rem; margin-top: 12px; letter-spacing: .3px; }
+.login-logo .login-name { font-weight: 700; color: var(--indigo); line-height: 1.2; }
+/* v1.70.103: у вошедших и на особых адресах стартовая страница не мелькает до решения программы (js/boot.js) */
+.ym-hold #login-screen { display: none; }
 .login-sub { color: var(--text-dim); font-size: 0.84375rem; margin-top: 4px; }
 .login-card form { display: flex; flex-direction: column; gap: 14px; }
 .login-footer { text-align: center; margin-top: 22px; font-size: 12.5px; color: var(--text-faint); }
@@ -1668,7 +1718,7 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
   .login-card { padding: 24px 16px 16px; }
   .login-logo { margin-bottom: 18px; }
   .login-logo img { width: 52px; height: 52px; }
-  .login-logo h1 { font-size: 1.5rem; }
+  .login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.5rem; }
   .login-card input,
   .land-lead-form input[type="email"],
   .land-lead-form input[type="text"] { font-size: 16px; }
@@ -1804,7 +1854,14 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
     background: var(--panel); border-top: 1px solid var(--border);   /* v1.70.32: --bg-card не объявлен — липкая панель кнопок была ПРОЗРАЧНОЙ, содержимое модалки просвечивало под ней */
   }
   .modal-actions .btn { flex: 1 1 auto; }
+  /* v1.70.103: подпись кнопки не дробится по буквам («Закрыт / ь» в карточке компании на 360 px) — ряд
+     переносится целыми кнопками; слишком длинное слово всё равно переносится, а не вылезает за край */
+  .modal-actions { flex-wrap: wrap; }
+  .modal-actions > .btn { overflow-wrap: break-word; }
 }
+/* v1.70.103: «↩ Откатиться» в таблице «Последние рабочие версии» узкой карточки настроек дробилась по буквам
+   (на 360 и 768 px) — переносится только по пробелу */
+.rb-table .btn { overflow-wrap: normal; }
 @keyframes sheetUp { from { transform: translateY(8%); opacity: .6; } to { transform: none; opacity: 1; } }
 
 /* --- Ультраширокие мониторы: контент не растягивается бесконечно --- */
@@ -2314,6 +2371,9 @@ label.field[hidden] { display: none; }
 .splash-set input[type="range"] { flex: 1 1 220px; accent-color: var(--accent); }
 .splash-set .field input { width: 96px; }
 .splash-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+/* v1.70.103: флажок «заставка и гостям» и карточка «Поисковики» */
+.sp-guests { margin: 6px 0 2px; }
+#st-seo .field { max-width: 560px; }
 
 /* v1.70.101 (T-69): понимание чеков — читаемые позиции, категории, память и профиль */
 .gd-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }

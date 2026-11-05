@@ -8,7 +8,10 @@
    свежее значение приходит из /api/v1/about (ymSplash.setDuration). Автотесты (webdriver) — не дольше 1,3 с.
    Версия — из адреса стилей (?v=), затем с сервера (ymSplash.setVersion). Обычный скрипт с defer в <head>:
    выполняется после разбора страницы и до app.js; встроенные скрипты запрещены политикой CSP. Разметка — в
-   index.html, стили — css/splash.css. */
+   index.html, стили — css/splash.css.
+   v1.70.103 (T-74): гостю (нет токена входа) заставка не показывается, пока администратор не включит её для
+   гостей: класс ym-guest ставит js/boot.js до первой отрисовки, здесь таймлайн не запускается. Флаг с сервера
+   (about.splash_guests) запоминается в localStorage (ym-splash-guests) — ymSplash.setGuests. */
 (function () {
   'use strict';
   var root = document.getElementById('ym-splash');
@@ -17,6 +20,7 @@
   if (performance.now() > 14000) { root.classList.add('is-gone'); return; }
   root.classList.add('is-js');
   var KEY = 'ym-splash-sec', DEFAULT_SEC = 5, MAX_SEC = 60, QUICK_MS = 1300;
+  var GUESTS_KEY = 'ym-splash-guests';               // v1.70.103: заставка для гостей (флаг администратора)
   var byId = function (id) { return document.getElementById(id); };
   var status = byId('ym-splash-status'), pct = byId('ym-splash-pct'), bar = byId('ym-splash-progress');
   var tip = byId('ym-splash-tip'), slow = byId('ym-splash-slow');
@@ -208,6 +212,10 @@
       plan(next);
     },
     duration: function () { return sec; },
+    // v1.70.103: показывать ли заставку гостям — для следующих загрузок (решение принимает boot.js до отрисовки)
+    setGuests: function (on) {
+      try { window.localStorage.setItem(GUESTS_KEY, on ? '1' : '0'); } catch (e) { void e; /* приватный режим */ }
+    },
     // просмотр из настроек: показать заставку с выбранной длительностью (приложение уже готово)
     preview: function (v) {
       var s = clampSec(v === undefined ? sec : v);
@@ -221,5 +229,7 @@
     isDone: function () { return done; },
   };
   if (!sec) { done = true; root.classList.add('is-gone'); return; }   // 0 — без заставки
+  // v1.70.103: гостю без заставки (класс ym-guest от boot.js) таймлайн не нужен
+  if (document.documentElement.classList.contains('ym-guest')) { done = true; root.classList.add('is-gone'); return; }
   start(sec);
 })();
