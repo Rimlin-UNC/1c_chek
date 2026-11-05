@@ -233,7 +233,10 @@ def _conn(company_id: str) -> BankConnection:
 def test_oauth_connect_and_first_sync(client, api_firm):
     a, fake = api_firm["a"], api_firm["fake"]
     state = client.get("/api/v1/bank/connection", headers=a["hdr"]).json()
-    assert state["status"] == "none" and state["banks"] == [{"id": "tochka", "title": "Точка Банк"}]
+    assert state["status"] == "none" and state["bank"] == "tochka"
+    # v1.70.102 (ADR-32): в списке — все банки по API; Точка первая
+    assert [b["id"] for b in state["banks"]] == ["tochka", "tbank", "sber", "alfa", "modul"]
+    assert state["banks"][0]["title"] == "Точка Банк" and state["banks"][0]["methods"] == ["oauth", "jwt"]
     assert state["redirect_uri"].endswith("/api/v1/bank/tochka/callback")
     _connect(client, api_firm)
     row = _conn(a["id"])

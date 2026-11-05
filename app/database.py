@@ -317,6 +317,10 @@ def _ensure_schema() -> None:
         "doc_request_settings": [
             ("escalate_days", "ALTER TABLE doc_request_settings ADD COLUMN escalate_days INTEGER DEFAULT 3"),
         ],
+        # v1.70.102 (ADR-32): несколько банков у компании; сертификат клиента для взаимного TLS (Сбер, Альфа)
+        "bank_connections": [
+            ("cert_enc", "ALTER TABLE bank_connections ADD COLUMN cert_enc TEXT DEFAULT ''"),
+        ],
     }
     insp = inspect(engine)
     existing_tables = set(insp.get_table_names())

@@ -461,6 +461,36 @@ test('банк по API: карточка компании — Точка, OAuth
   await expect(panel.locator('#bankc-del')).toHaveCount(0);
 });
 
+// v1.70.102 (ADR-32): несколько банков у компании — в карточке выбирается Т-Банк и вводится ключ API; ключ не
+// возвращается, банк встаёт в список, у Сбера обязателен сертификат; банк отключается отдельно. Ключ синтетический,
+// в банк сценарий не ходит (только сохранение).
+test('банки по API: карточка компании — Т-Банк по ключу API, список банков, ключ не возвращается', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/companies"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Компании');
+  await page.locator('#cp-table tr', { hasText: 'E2E Бета' }).locator('.cp-card').click();
+  const panel = page.locator('#cc-bank');
+  await expect(panel).toContainText('Банк по API', { timeout: 15000 });
+  await panel.locator('#bankc-bank').selectOption('tbank');
+  await expect(panel.locator('#bankc-token')).toBeVisible({ timeout: 15000 });
+  await expect(panel.locator('#bankc-auth')).toBeHidden();
+  await expect(panel).toContainText('Выпуск токена');
+  await panel.locator('#bankc-token').fill('t.e2e-synthetic-token-102');
+  await panel.locator('#bankc-save').click();
+  await expect(panel.locator('#bankc-token')).toHaveAttribute('placeholder', /ключ задан/, { timeout: 15000 });
+  expect(await page.content()).not.toContain('t.e2e-synthetic-token-102');
+  await expect(panel.locator('.bank-conn-row', { hasText: 'Т-Банк' })).toHaveCount(1);
+  await panel.locator('#bankc-bank').selectOption('sber');
+  await expect(panel.locator('#bankc-cert-box')).toContainText('обязательно', { timeout: 15000 });
+  await expect(panel.locator('#bankc-refresh')).toBeVisible();
+  await panel.locator('.bank-conn-open[data-bank="tbank"]').click();
+  await expect(panel.locator('#bankc-bank')).toHaveValue('tbank', { timeout: 15000 });
+  page.once('dialog', (dialog) => dialog.accept());
+  await panel.locator('#bankc-del').click();
+  await expect(panel.locator('.bank-conn-row')).toHaveCount(0, { timeout: 15000 });
+});
+
 // v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — клиента бухгалтеру назначает администратор,
 // бухгалтер видит все компании в одном окне и переключается между ними без перевхода
 test('рабочее место аутсорсера: назначение клиента, «Клиенты» и переключение без перевхода', async ({ page, request }) => {

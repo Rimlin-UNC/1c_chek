@@ -272,7 +272,11 @@ sandbox.fetch = async (url, opts) => {
                 redirect_uri: 'https://chek.ymaster.ru/api/v1/bank/tochka/callback', start_date: '2026-10-01',
                 accounts: [{ tail: '0001', currency: 'RUB', loaded: true }], synced_until: '2026-11-04',
                 last_sync_at: '2026-11-04T09:05:00', last_error: '', pending: 0, awaiting: false,
-                last_result: { ok: true, operations: 9, saved: 3, matched: 2, open: 1 } };
+                last_result: { ok: true, operations: 9, saved: 3, matched: 2, open: 1 },
+                // v1.70.102 (ADR-32): у компании два банка; ВТБ — без открытого API, выписка файлом
+                connections: [{ bank: 'tochka', bank_title: 'Точка Банк', status: 'active', accounts: ['0001'], synced_until: '2026-11-04' },
+                              { bank: 'tbank', bank_title: 'Т-Банк', status: 'active', accounts: ['0002'], synced_until: '2026-11-04' }],
+                file_banks: [{ title: 'ВТБ', note: 'по договору' }] };
   }
   // v1.70.100 (T-50): рабочее место аутсорсера — сводка по клиентам за отчётный месяц
   if (String(url).startsWith('/api/v1/clients') && !String(url).includes('/access/')) {
@@ -1133,6 +1137,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     ok(conn.includes('Банк по API') && conn.includes('*0001 RUB') && conn.includes('подключён'),
        'v1.70.99: панель «Банк по API»: подключён, счёт *0001');
     ok(conn.includes('Загрузить сейчас') && !conn.includes('s3cret'), 'v1.70.99: кнопка «Загрузить сейчас», секретов нет');
+    // v1.70.102 (ADR-32): несколько банков у компании — список над настройками, другой банк открывается кнопкой
+    const rowsB = conn.split('class="bank-conn-row').length - 1;      // мини-DOM без разбора HTML — считаем по разметке
+    ok(rowsB === 2 && conn.includes('Т-Банк') && conn.includes('*0002'),
+       'v1.70.102: панель «Банк по API» — список банков компании (Точка и Т-Банк)');
+    ok(conn.includes('data-bank="tbank"') && !conn.includes('data-bank="tochka"') && conn.includes('Другие банки — выписка файлом'),
+       'v1.70.102: Т-Банк открывается кнопкой; банки без API — выписка файлом');
     // v1.70.100 (T-50): «Клиенты» — все компании бухгалтера в одном окне; цифра открывает экран в этой компании
     const fromC = apiLog.length;
     sandbox.location.hash = '#/clients';

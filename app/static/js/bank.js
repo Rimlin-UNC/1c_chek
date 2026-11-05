@@ -4,7 +4,9 @@
    в «Что нужно от клиента»; покупка по карте сотрудника — запрос ему лично. Пришёл документ — запрос
    закрывается сам. Все имена верхнего уровня — с приставкой bank (общая область модулей в сборке).
    v1.70.99 (ADR-29): панель «Банк по API» — Точка по OAuth 2.0 или JWT-ключу; та же панель в карточке
-   компании у администратора. Секреты в браузер не приходят: только «задан» и последние 4 цифры счетов. */
+   компании у администратора. Секреты в браузер не приходят: только «задан» и последние 4 цифры счетов.
+   v1.70.102 (ADR-32): банков у компании несколько — Т-Банк и Модульбанк (ключ API), Сбербанк (токены и
+   сертификат клиента), Альфа-Банк (ключ API, сертификат — если выдан); список банков компании над настройками. */
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 
@@ -26,7 +28,8 @@ export const BANK_CONN_STATUS = {
   awaiting: ['chip unknown', 'ждём подтверждения в банке'], active: ['chip verified', 'подключён'],
   reauth: ['chip failed', 'нужно подключить заново'], error: ['chip failed', 'ошибка подключения'],
 };
-export const BANK_SOURCES = { file: 'файл', tochka: 'Точка, API' };
+export const BANK_SOURCES = { file: 'файл', tochka: 'Точка, API', tbank: 'Т-Банк, API', sber: 'Сбербанк, API',
+  alfa: 'Альфа-Банк, API', modul: 'Модульбанк, API' };
 
 export function bankDate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
@@ -93,7 +96,8 @@ export function bankRefundHtml(data) {
 
 /** Откуда выписка: файл (кто загрузил) или API банка (по кнопке — кто нажал, иначе сама по расписанию). */
 export function bankStatementSource(s) {
-  if ((s && s.source) === 'tochka') return s.uploaded_by ? `${BANK_SOURCES.tochka} · ${s.uploaded_by}` : `${BANK_SOURCES.tochka}, сама`;
+  const src = s && s.source;
+  if (src && src !== 'file' && BANK_SOURCES[src]) return s.uploaded_by ? `${BANK_SOURCES[src]} · ${s.uploaded_by}` : `${BANK_SOURCES[src]}, сама`;
   return (s && s.uploaded_by) || BANK_SOURCES.file;
 }
 
@@ -164,54 +168,119 @@ export function bankSyncSummary(res) {
   return parts.join(' · ');
 }
 
-/** Панель «Банк по API»: состояние, счета, настройки и кнопки. c — ответ GET /api/v1/bank/connection. */
+export const BANK_METHOD_TITLES = { oauth: 'OAuth 2.0', jwt: 'JWT-ключ', token: 'Ключ API', refresh: 'OAuth 2.0 — токены из кабинета' };
+
+/** Банк из реестра ответа сервера; старый ответ (только id и title) — как у Точки в 1.70.99. */
+export function bankMeta(d, id) {
+  const list = Array.isArray(d && d.banks) && d.banks.length ? d.banks : [{ id: 'tochka', title: 'Точка Банк' }];
+  const found = list.find((b) => b.id === id) || list[0];
+  return { methods: found.id === 'tochka' ? ['oauth', 'jwt'] : ['token'], cert: '', how: '', docs: '', ...found };
+}
+
+/** v1.70.102 (ADR-32): банки компании одной строкой каждый — состояние, хвосты счетов, по какой день выписка. */
+export function bankListHtml(list, current) {
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) return '';
+  const rows = items.map((x) => {
+    const [cls, label] = BANK_CONN_STATUS[x.status] || BANK_CONN_STATUS.none;
+    const tails = (Array.isArray(x.accounts) ? x.accounts : []).map((t) => `*${esc(t)}`).join(' ');
+    const when = x.synced_until ? `выписка по ${bankDate(x.synced_until)}` : '';
+    const facts = [tails, esc(when)].filter(Boolean).join(' · ');
+    return `<li class="bank-conn-row${x.bank === current ? ' is-current' : ''}"><span class="bank-conn-name">${esc(x.bank_title || x.bank)}</span>
+      <span class="${cls}">${esc(label)}</span>${facts ? `<span class="form-hint">${facts}</span>` : ''}
+      ${x.bank === current ? '<span class="form-hint">открыт ниже</span>'
+    : `<button type="button" class="btn btn-sm bank-conn-open" data-bank="${esc(x.bank)}">Открыть</button>`}</li>`;
+  }).join('');
+  return `<ul class="bank-conn-list" aria-label="Банки компании">${rows}</ul>`;
+}
+
+/** Банки первой десятки без открытого API выписок: честно — выписка файлом в формате 1С. */
+export function bankFileBanksHtml(list) {
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) return '';
+  return `<details class="bank-conn-files"><summary>Другие банки — выписка файлом</summary>
+    <p class="form-hint">У этих банков нет открытого API выписок для своей компании (или оно по отдельному договору).
+      Выгрузите выписку в формате 1С из интернет-банка и загрузите её на экране «Банк: выписка» — проверка та же.</p>
+    <ul class="bank-conn-file-list">${items.map((b) => `<li><b>${esc(b.title)}</b> — ${esc(b.note)}</li>`).join('')}</ul></details>`;
+}
+
+/** Панель «Банк по API»: банки компании, состояние, счета, настройки и кнопки. c — ответ GET /api/v1/bank/connection. */
 export function bankConnHtml(c) {
   const d = c || {};
   const status = BANK_CONN_STATUS[d.status] ? d.status : 'none';
   const active = status === 'active';
-  const oauth = (d.method || 'oauth') !== 'jwt';
+  const bankId = d.bank || 'tochka';
+  const meta = bankMeta(d, bankId);
+  const tochka = bankId === 'tochka';
+  const method = meta.methods.includes(d.method) ? d.method : meta.methods[0];
+  const oauth = method === 'oauth';
   const banks = (Array.isArray(d.banks) && d.banks.length ? d.banks : [{ id: 'tochka', title: 'Точка Банк' }])
-    .map((b) => `<option value="${esc(b.id)}" ${b.id === d.bank ? 'selected' : ''}>${esc(b.title)}</option>`).join('');
+    .map((b) => `<option value="${esc(b.id)}" ${b.id === bankId ? 'selected' : ''}>${esc(b.title)}</option>`).join('');
+  const methods = meta.methods
+    .map((m) => `<option value="${esc(m)}" ${m === method ? 'selected' : ''}>${esc(BANK_METHOD_TITLES[m] || m)}</option>`).join('');
   const accounts = (Array.isArray(d.accounts) ? d.accounts : [])
     .map((a) => `<span class="${a.loaded ? 'chip verified' : 'chip unknown'}">*${esc(a.tail)} ${esc(a.currency)}${a.loaded ? '' : ' — не загружается'}</span>`)
     .join(' ');
   const res = d.last_result || {};
   const facts = [d.synced_until ? `выписка загружена по ${bankDate(d.synced_until)}` : '',
     d.last_sync_at ? `последняя проверка ${bankWhen(d.last_sync_at)}` : '',
-    d.consent_expires_at && oauth ? `доступ до ${bankDate(d.consent_expires_at)}` : ''].filter(Boolean).join(' · ');
+    d.consent_expires_at && oauth ? `доступ до ${bankDate(d.consent_expires_at)}` : '',
+    d.cert && d.cert.until ? `сертификат до ${bankDate(d.cert.until)}` : ''].filter(Boolean).join(' · ');
   const [cls, label] = BANK_CONN_STATUS[status];
+  const certNeed = meta.cert === 'required' ? ' — обязательно' : ' — если банк его выдал';
+  const cert = meta.cert ? `<div id="bankc-cert-box" class="bank-conn-cert">
+        <label class="field"><span>Сертификат клиента и закрытый ключ (PEM)${certNeed}</span><textarea id="bankc-cert" rows="3"
+          spellcheck="false" maxlength="70000" placeholder="${d.cert_set ? `задан${d.cert && d.cert.until ? `, до ${esc(bankDate(d.cert.until))}` : ''} — вставьте новый, чтобы заменить`
+    : '-----BEGIN CERTIFICATE----- … -----BEGIN PRIVATE KEY----- …'}"></textarea></label>
+        <div class="dreq-grid">
+          <label class="field"><span>или файл .p12, .pfx, .pem</span><input id="bankc-cert-file" type="file" accept=".p12,.pfx,.pem,.crt,.cer,.key"></label>
+          <label class="field"><span>Пароль ключа (если есть)</span><input id="bankc-cert-pass" type="password" autocomplete="new-password" maxlength="200"></label>
+        </div>
+        <p class="form-hint">Сертификат хранится зашифрованным и нужен только для защищённого канала к банку (взаимный TLS).</p>
+      </div>` : '';
   return `<div class="bank-conn-head"><div class="card-title">🏦 Банк по API</div><span class="${cls}">${esc(label)}</span></div>
+    ${bankListHtml(d.connections, bankId)}
     <p class="form-hint">Выписка приходит сама: раз в 6 часов программа забирает операции из банка и проверяет их так же,
-      как загруженный файл, — платежи без документов попадут в «Что нужно от клиента». Доступ — только на чтение счетов и выписок.</p>
-    ${active ? `<div class="form-hint">Счета: ${accounts || '—'}</div>${facts ? `<div class="form-hint">${esc(facts)}</div>` : ''}` : ''}
+      как загруженный файл, — платежи без документов попадут в «Что нужно от клиента». Доступ — только на чтение счетов и выписок.
+      Банков у компании может быть несколько: Точка, Т-Банк, Сбербанк, Альфа-Банк, Модульбанк.</p>
+    ${active ? `<div class="form-hint">${esc(meta.title)} · счета: ${accounts || '—'}</div>${facts ? `<div class="form-hint">${esc(facts)}</div>` : ''}` : ''}
     ${active && res.ok ? `<div class="form-hint">Последняя загрузка: ${esc(bankSyncSummary(res))}</div>` : ''}
     ${d.pending ? '<div class="form-hint">Банк готовит выписку — заберём её через несколько минут.</div>' : ''}
     ${d.awaiting ? '<div class="form-hint">Ждём подтверждения в интернет-банке Точки (ссылка действует 15 минут).</div>' : ''}
     ${d.last_error ? `<div class="form-error">${esc(d.last_error)}</div>` : ''}
-    <details ${active ? '' : 'open'}><summary>Настройки подключения</summary>
+    <details ${active ? '' : 'open'}><summary>Настройки подключения — ${esc(meta.title)}</summary>
       <div class="dreq-grid">
         <label class="field"><span>Банк</span><select id="bankc-bank">${banks}</select></label>
-        <label class="field"><span>Способ доступа</span><select id="bankc-method">
-          <option value="oauth" ${oauth ? 'selected' : ''}>OAuth 2.0</option>
-          <option value="jwt" ${oauth ? '' : 'selected'}>JWT-ключ</option></select></label>
+        <label class="field"><span>Способ доступа</span><select id="bankc-method">${methods}</select></label>
         <label class="field"><span>Загружать операции с</span><input id="bankc-start" type="date" value="${esc(d.start_date || '')}"></label>
       </div>
-      <div id="bankc-oauth"${oauth ? '' : ' class="hidden"'}>
+      ${meta.how && !tochka ? `<p class="form-hint bank-conn-how">Где взять ключи: ${esc(meta.how)}</p>` : ''}
+      <div id="bankc-oauth"${oauth || method === 'refresh' ? '' : ' class="hidden"'}>
         <div class="dreq-grid">
           <label class="field"><span>client_id</span><input id="bankc-client" autocomplete="off" spellcheck="false" maxlength="200" value="${esc(d.client_id || '')}"></label>
           <label class="field"><span>client_secret</span><input id="bankc-secret" type="password" autocomplete="new-password" maxlength="500"
             placeholder="${d.secret_set ? 'задан — пусто, не менять' : 'выдаётся с client_id'}"></label>
         </div>
-        <p class="form-hint">Рекомендуемый способ: доступ подтверждает сам клиент в банке, его срок виден, отозвать можно в любой момент.
+        <p class="form-hint${tochka ? '' : ' hidden'}">Рекомендуемый способ: доступ подтверждает сам клиент в банке, его срок виден, отозвать можно в любой момент.
           Интернет-банк Точки → «Интеграции и API» → «Подключить OAuth»: банк выдаст client_id и client_secret.
           Адрес возврата для приложения: <code class="bank-conn-uri">${esc(d.redirect_uri || '')}</code>${d.server_app
     ? '. Поля можно оставить пустыми — подключение пойдёт через приложение сервера.' : ''}</p>
       </div>
-      <div id="bankc-jwt-box"${oauth ? ' class="hidden"' : ''}>
+      <div id="bankc-jwt-box"${method === 'jwt' ? '' : ' class="hidden"'}>
         <label class="field"><span>JWT-ключ</span><textarea id="bankc-jwt" rows="3" maxlength="8000" spellcheck="false"
           placeholder="${d.jwt_set ? 'ключ задан — вставьте новый, чтобы заменить' : 'Интернет-банк → «Интеграции и API» → «Создать JWT-ключ»'}"></textarea></label>
       </div>
+      <div id="bankc-token-box"${method === 'token' ? '' : ' class="hidden"'}>
+        <label class="field"><span>Ключ API</span><textarea id="bankc-token" rows="2" maxlength="4000" spellcheck="false"
+          placeholder="${d.token_set ? 'ключ задан — вставьте новый, чтобы заменить' : 'вставьте ключ из интернет-банка'}"></textarea></label>
+      </div>
+      <div id="bankc-refresh-box"${method === 'refresh' ? '' : ' class="hidden"'}>
+        <label class="field"><span>refresh_token</span><input id="bankc-refresh" type="password" autocomplete="new-password" maxlength="4000"
+          placeholder="${d.refresh_set ? 'задан — пусто, не менять' : 'из личного кабинета банка'}"></label>
+      </div>
+      ${cert}
     </details>
+    ${bankFileBanksHtml(d.file_banks)}
     <div class="dreq-tools">
       <button type="button" class="btn btn-sm" id="bankc-save">Сохранить</button>
       <button type="button" class="btn btn-sm btn-primary${oauth ? '' : ' hidden'}" id="bankc-auth">🔐 ${active || status === 'reauth' ? 'Подключить заново' : 'Подключить через Точку'}</button>
@@ -224,32 +293,71 @@ export function bankConnHtml(c) {
 
 /** Тело PUT /api/v1/bank/connection из панели; ошибка ввода — { error }. */
 export function bankConnBody(get, companyId) {
-  const method = get('bankc-method').value === 'jwt' ? 'jwt' : 'oauth';
-  const body = { bank: get('bankc-bank').value || 'tochka', method };
+  const bank = get('bankc-bank').value || 'tochka';
+  let method = get('bankc-method').value || 'oauth';
+  if (bank === 'tochka') method = method === 'jwt' ? 'jwt' : 'oauth';
+  const body = { bank, method };
   if (companyId) body.company_id = companyId;
   const start = get('bankc-start').value;
   if (start) body.start_date = start;
-  if (method === 'oauth') {
+  if (method === 'oauth' || method === 'refresh') {
     body.client_id = get('bankc-client').value.trim();
     body.client_secret = get('bankc-secret').value.trim();
     if (/\s/.test(body.client_id) || /\s/.test(body.client_secret)) return { error: 'client_id и client_secret — без пробелов' };
-  } else {
+  }
+  if (method === 'jwt') {
     body.jwt = get('bankc-jwt').value.replace(/\s+/g, '');
     if (body.jwt && body.jwt.split('.').length !== 3) return { error: 'JWT-ключ — три части через точку, как его выдаёт интернет-банк' };
+  }
+  if (method === 'token') {
+    body.token = get('bankc-token').value.replace(/\s+/g, '');
+    if (body.token && body.token.length < 8) return { error: 'Ключ API слишком короткий — скопируйте его из интернет-банка целиком' };
+  }
+  if (method === 'refresh') body.refresh_token = get('bankc-refresh').value.replace(/\s+/g, '');
+  const cert = get('bankc-cert');
+  if (cert) {
+    const pem = cert.value.trim();
+    const file = get('bankc-cert-file');
+    const p12 = (file && file.dataset && file.dataset.p12) || '';
+    if (pem && !pem.includes('-----BEGIN CERTIFICATE-----')) return { error: 'Сертификат — блок «-----BEGIN CERTIFICATE-----» и закрытый ключ к нему' };
+    if (pem) body.cert = pem;
+    if (p12) body.cert_p12 = p12;
+    const pass = get('bankc-cert-pass');
+    if ((pem || p12) && pass && pass.value) body.cert_password = pass.value;
   }
   return body;
 }
 
-/** Панель подключения банка в элементе el: экран «Банк: выписка» и карточка компании. */
+/** Файл сертификата: .p12/.pfx — в base64, PEM — текстом. */
+export function bankReadFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const binary = /\.(p12|pfx)$/i.test(file.name || '');
+    reader.onload = () => resolve({ binary, text: binary ? String(reader.result).split(',')[1] || '' : String(reader.result) });
+    reader.onerror = () => reject(new Error('Файл сертификата не читается'));
+    if (binary) reader.readAsDataURL(file); else reader.readAsText(file);
+  });
+}
+
+/** Панель подключения банка в элементе el: экран «Банк: выписка» и карточка компании.
+    v1.70.102: банков несколько — список банков компании, выбор банка перерисовывает настройки под него. */
 export async function bankConnectPanel(el, companyId, opts = {}) {
   if (!el) return;
-  const query = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
-  const scope = () => (companyId ? { company_id: companyId } : {});
+  const url = (bank, forDelete = false) => {
+    const q = new URLSearchParams();
+    if (companyId) q.set('company_id', companyId);
+    if (bank && !(forDelete && bank === 'tochka')) q.set('bank', bank);
+    const text = q.toString();
+    return `/api/v1/bank/connection${text ? `?${text}` : ''}`;
+  };
+  const scope = (bank) => ({ ...(companyId ? { company_id: companyId } : {}), ...(bank && bank !== 'tochka' ? { bank } : {}) });
   let data = null;
 
   function render() {
     el.innerHTML = bankConnHtml(data);
     const get = (id) => el.querySelector(`#${id}`);
+    const bank = (data && data.bank) || 'tochka';
+    const title = bankMeta(data, bank).title;
     const say = (text, bad = false) => {
       const m = get('bankc-msg');
       if (!m) return;
@@ -263,12 +371,29 @@ export async function bankConnectPanel(el, companyId, opts = {}) {
     };
     // видимость — классом .hidden (display: none !important): атрибут hidden проигрывает display кнопок .btn
     get('bankc-method').onchange = (e) => {
-      const jwt = e.target.value === 'jwt';
-      get('bankc-oauth').classList.toggle('hidden', jwt);
-      get('bankc-jwt-box').classList.toggle('hidden', !jwt);
+      const method = e.target.value;
+      const jwt = method !== 'oauth';               // всё, кроме входа через Точку, — «проверить ключ»
+      get('bankc-oauth').classList.toggle('hidden', !(method === 'oauth' || method === 'refresh'));
+      get('bankc-jwt-box').classList.toggle('hidden', method !== 'jwt');
+      get('bankc-token-box').classList.toggle('hidden', method !== 'token');
+      get('bankc-refresh-box').classList.toggle('hidden', method !== 'refresh');
       get('bankc-auth').classList.toggle('hidden', jwt);
       get('bankc-jwtcheck').classList.toggle('hidden', !jwt);
     };
+    get('bankc-bank').onchange = (e) => load(e.target.value);
+    el.querySelectorAll('.bank-conn-open').forEach((btn) => { btn.onclick = () => load(btn.dataset.bank); });
+    const file = get('bankc-cert-file');
+    if (file) {
+      file.onchange = async () => {
+        const picked = file.files && file.files[0];
+        if (!picked) return;
+        try {
+          const read = await bankReadFile(picked);
+          if (read.binary) { file.dataset.p12 = read.text; say(`Файл «${picked.name}» прочитан — укажите пароль и сохраните`); }
+          else { get('bankc-cert').value = `${get('bankc-cert').value.trim()}\n${read.text.trim()}`.trim(); say('Сертификат вставлен — сохраните'); }
+        } catch (e) { say(e.message, true); }
+      };
+    }
     get('bankc-save').onclick = async () => {
       try {
         const res = await save();
@@ -279,7 +404,7 @@ export async function bankConnectPanel(el, companyId, opts = {}) {
       try {
         if (!(await save())) return;
         say('Открываем вход в интернет-банк Точки…');
-        const { url } = await api.post('/api/v1/bank/connection/authorize', scope());
+        const { url } = await api.post('/api/v1/bank/connection/authorize', scope(bank));
         window.location.assign(url);
       } catch (e) { say(e.message, true); }
     };
@@ -287,9 +412,9 @@ export async function bankConnectPanel(el, companyId, opts = {}) {
       try {
         if (!(await save())) return;
         say('Проверяем ключ в банке…');
-        data = await api.post('/api/v1/bank/connection/jwt', scope());
+        data = await api.post(bank === 'tochka' ? '/api/v1/bank/connection/jwt' : '/api/v1/bank/connection/check', scope(bank));
         render();
-        toast('Банк подключён — выписка загрузится в течение минуты', 'ok', '🏦');
+        toast(`${title} подключён — выписка загрузится в течение минуты`, 'ok', '🏦');
       } catch (e) { say(e.message, true); }
     };
     const sync = get('bankc-sync');
@@ -298,10 +423,10 @@ export async function bankConnectPanel(el, companyId, opts = {}) {
         sync.disabled = true;
         say('Загружаем выписку из банка…');
         try {
-          const res = await api.post('/api/v1/bank/connection/sync', scope());
+          const res = await api.post('/api/v1/bank/connection/sync', scope(bank));
           data = res.connection;
           render();
-          toast(bankSyncSummary(res.result), res.result && res.result.ok ? 'ok' : 'err', '🏦 Банк');
+          toast(bankSyncSummary(res.result), res.result && res.result.ok ? 'ok' : 'err', `🏦 ${title}`);
           if (res.result && res.result.ok && typeof opts.onSynced === 'function') opts.onSynced(res.result);
         } catch (e) { sync.disabled = false; say(e.message, true); }
       };
@@ -309,10 +434,10 @@ export async function bankConnectPanel(el, companyId, opts = {}) {
     const del = get('bankc-del');
     if (del) {
       del.onclick = async () => {
-        if (!window.confirm('Отключить банк? Загруженные выписки останутся, ключи и токены будут удалены. '
-          + 'Отозвать доступ можно и в интернет-банке Точки.')) return;
+        if (!window.confirm(`Отключить банк «${title}»? Загруженные выписки останутся, ключи и токены будут удалены. `
+          + 'Отозвать доступ можно и в интернет-банке.')) return;
         try {
-          await api.del(`/api/v1/bank/connection${query}`);
+          await api.del(url(bank, true));
           toast('Банк отключён', 'ok', '🏦');
           load();
         } catch (e) { say(e.message, true); }
@@ -320,16 +445,16 @@ export async function bankConnectPanel(el, companyId, opts = {}) {
     }
   }
 
-  async function load() {
+  async function load(bank = '') {
     el.innerHTML = '<div class="skeleton bank-conn-skeleton"></div>';
     try {
-      data = await api.get(`/api/v1/bank/connection${query}`);
+      data = await api.get(url(bank));
       if (el.isConnected) render();
     } catch (e) {
       if (el.isConnected) el.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
     }
   }
-  await load();
+  await load(opts.bank || '');
 }
 
 /** Возврат из Точки (?bank=connected|error): уведомление и чистый адрес. { status, company, reason } или null. */

@@ -15,12 +15,15 @@ const dbDir = mkdtempSync(join(tmpdir(), 'ymaster-playwright-'));
 // ждёт Playwright, и после закрытого контекста с приложением создаёт новый ≈ 18 с.
 // Под нагрузкой полного прогона сценарий упирался в 30 с, поэтому для своего
 // браузера лимит — 60 с. В CI (штатный браузер Playwright) — прежние 30 с.
+// v1.70.102: на машине с 2 ядрами полный прогон (3 воркера pytest, сервер и Chromium одновременно) дважды
+// подряд не уложил второй сценарий в 60 с: новый контекст ≈ 18 с плюс заставка, кадры которой ждут процессор
+// (отдельно сценарий проходит за 34 с). Своему браузеру — 90 с; в CI по-прежнему 30 с.
 const localChromium = process.env.YM_PLAYWRIGHT_CHROMIUM;
 
 
 export default defineConfig({
   testDir: 'tests/e2e',
-  timeout: localChromium ? 60_000 : 30_000,
+  timeout: localChromium ? 90_000 : 30_000,
   retries: 0,
   reporter: [['list']],
   use: {

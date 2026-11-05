@@ -40,6 +40,7 @@ class BankStatement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     # v1.70.99 (ADR-29): file — загруженный файл; tochka — выписка из API банка (одна на счёт и месяц,
     # дополняется при каждой загрузке). Колонка добавляется к базам 1.70.98 в database._ensure_schema.
+    # v1.70.102 (ADR-32): ещё tbank | sber | alfa | modul — выписки из API других банков.
     source: Mapped[str] = mapped_column(String(10), default="file", server_default="file")
 
 
@@ -100,6 +101,10 @@ class BankConnection(Base):
 
     Способ — OAuth 2.0 (рекомендуется: клиент сам разрешает доступ в интернет-банке, срок разрешения
     виден) или JWT-ключ из интернет-банка. Секреты — только в зашифрованных колонках *_enc.
+
+    v1.70.102 (ADR-32): банков у компании может быть несколько (Точка, Т-Банк, Сбер, Альфа-Банк, Модульбанк).
+    jwt_enc хранит постоянный ключ: JWT-ключ Точки или ключ API (Т-Банк, Модульбанк, Альфа-Банк); refresh_enc —
+    refresh_token (Точка, Сбер); cert_enc — сертификат клиента с закрытым ключом (PEM) для взаимного TLS.
     """
     __tablename__ = "bank_connections"
     __table_args__ = (UniqueConstraint("company_id", "bank", name="uq_bank_connections_company_bank"),)
@@ -107,12 +112,14 @@ class BankConnection(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     company_id: Mapped[str] = mapped_column(String(36), index=True)
     bank: Mapped[str] = mapped_column(String(16), default="tochka")
-    method: Mapped[str] = mapped_column(String(8), default="oauth")          # oauth | jwt
+    method: Mapped[str] = mapped_column(String(8), default="oauth")          # oauth | jwt | token | refresh
     client_id: Mapped[str] = mapped_column(String(200), default="")         # пусто — приложение сервера (.env)
     client_secret_enc: Mapped[str] = mapped_column(Text, default="")
     jwt_enc: Mapped[str] = mapped_column(Text, default="")
     access_enc: Mapped[str] = mapped_column(Text, default="")
     refresh_enc: Mapped[str] = mapped_column(Text, default="")
+    # v1.70.102 (ADR-32): сертификат клиента с ключом (PEM); server_default — 1.70.101 после отката пишет без него
+    cert_enc: Mapped[str] = mapped_column(Text, default="", server_default="")
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     consent_id: Mapped[str] = mapped_column(String(128), default="")         # consentId — до 128 символов
     consent_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

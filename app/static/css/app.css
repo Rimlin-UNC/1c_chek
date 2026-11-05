@@ -2252,6 +2252,18 @@ label.field[hidden] { display: none; }
 .bank-conn-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .bank-conn-uri { overflow-wrap: anywhere; user-select: all; }
 .bank-conn-skeleton { height: 64px; }
+/* v1.70.102 (ADR-32): несколько банков у компании — список над настройками, другие банки — файлом */
+.bank-conn-list { list-style: none; margin: 10px 0 4px; padding: 0; display: grid; gap: 6px; }
+.bank-conn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.bank-conn-row.is-current { border-color: var(--border-strong); }
+.bank-conn-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.bank-conn-row .bank-conn-open { margin-left: auto; }
+.bank-conn-how { overflow-wrap: anywhere; }
+.bank-conn-cert textarea { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.bank-conn-files { margin-top: 8px; }
+.bank-conn-file-list { margin: 6px 0 0; padding-left: 18px; }
+.bank-conn-file-list li { margin: 2px 0; overflow-wrap: anywhere; }
 
 /* v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — «Клиенты»: карточки компаний по убыванию внимания */
 .cl-top { padding-bottom: 14px; }

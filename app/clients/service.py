@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from ..auth import ROLE_ACCOUNTANT, ROLE_ADMIN
 from ..bank.models import BankConnection, BankOperation
+from ..bank.providers import TITLES as BANK_TITLES
 from ..docreq import service as docreq
 from ..docreq.models import DocRequest, DocRequestEvent, DocRequestSettings
 from ..models import Company, Receipt, User
@@ -271,11 +272,21 @@ def _fill(db: Session, user: User, rows: dict[str, dict], cids: list[str], perio
                          .group_by(BankOperation.company_id))
     for cid, count in bank_open.items():
         rows[cid]["bank"]["open"] = count
+    # v1.70.102 (ADR-32): банков у компании может быть несколько — в сводке худшее состояние, последняя
+    # проверка и первая ошибка с названием банка; список banks — для подсказки «какие банки подключены»
+    rank = {"reauth": 4, "error": 3, "awaiting": 2, "new": 1, "active": 0}
     for conn in db.execute(select(BankConnection).where(BankConnection.company_id.in_(cids))).scalars():
         info = rows[conn.company_id]["bank"]
-        info["status"] = conn.status or "new"
-        info["last_sync_at"] = conn.last_sync_at.isoformat() + "Z" if conn.last_sync_at else ""
-        info["last_error"] = (conn.last_error or "")[:200]
+        status = conn.status or "new"
+        title = BANK_TITLES.get(conn.bank, conn.bank)
+        info.setdefault("banks", []).append({"bank": conn.bank, "title": title, "status": status})
+        if info["status"] == "none" or rank.get(status, 1) > rank.get(info["status"], 1):
+            info["status"] = status
+        last = conn.last_sync_at.isoformat() + "Z" if conn.last_sync_at else ""
+        if last > info["last_sync_at"]:
+            info["last_sync_at"] = last
+        if conn.last_error and not info["last_error"]:
+            info["last_error"] = f"{title}: {conn.last_error}"[:200]
 
 
 def _totals(rows: list[dict]) -> dict:

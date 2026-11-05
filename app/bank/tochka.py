@@ -27,6 +27,8 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
+from .http import BankApiError
+
 log = logging.getLogger("ymaster.bank.tochka")
 
 AUTH_BASE = os.environ.get("TOCHKA_AUTH_BASE", "https://enter.tochka.com/connect").rstrip("/")
@@ -46,13 +48,9 @@ sleep = time.sleep                                # тесты подменяю�
 _ssl: ssl.SSLContext | None = None
 
 
-class TochkaError(Exception):
-    """Ошибка обмена с банком. kind: auth | forbidden | rate | unavailable | tls | bad."""
-
-    def __init__(self, message: str, kind: str = "bad", status: int = 0):
-        super().__init__(message)
-        self.kind = kind
-        self.status = status
+class TochkaError(BankApiError):
+    """Ошибка обмена с Точкой. kind: auth | forbidden | rate | unavailable | tls | bad.
+    v1.70.102: частный случай общей ошибки банков (app/bank/http.py) — загрузка ловит их одинаково."""
 
 
 def ssl_context() -> ssl.SSLContext:

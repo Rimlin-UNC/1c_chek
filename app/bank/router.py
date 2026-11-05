@@ -7,6 +7,10 @@
 v1.70.99 (ADR-29): подключение к банку по API — /connection (состояние, сохранение, вход в Точку, проверка
 JWT-ключа, загрузка сейчас, отключение) и адрес возврата из банка /tochka/callback. Возврат открывает браузер
 клиента без заголовка авторизации — компанию определяет одноразовая отметка state (15 минут).
+
+v1.70.102 (ADR-32): банков у компании несколько — параметр bank (tochka | tbank | sber | alfa | modul) у
+состояния, сохранения, проверки ключей (/connection/check, прежний адрес /connection/jwt — тот же), загрузки
+и отключения. Без bank: состояние — первого подключённого банка компании, остальное — Точка (как в 1.70.99).
 """
 from __future__ import annotations
 
@@ -59,18 +63,28 @@ class DecisionIn(BaseModel):
     note: str = Field("", max_length=300)
 
 
+BankId = Literal["tochka", "tbank", "sber", "alfa", "modul"]
+
+
 class ConnectionIn(BaseModel):
     company_id: str | None = Field(None, max_length=36)
-    bank: Literal["tochka"] = "tochka"
-    method: Literal["oauth", "jwt"] = "oauth"
+    bank: BankId = "tochka"
+    method: Literal["oauth", "jwt", "token", "refresh"] = "oauth"
     client_id: str = Field("", max_length=200)
     client_secret: str = Field("", max_length=500)
     jwt: str = Field("", max_length=8000)
+    token: str = Field("", max_length=4000)              # v1.70.102: ключ API (Т-Банк, Модульбанк, Альфа-Банк)
+    refresh_token: str = Field("", max_length=4000)      # v1.70.102: Сбер — из личного кабинета Sber API
+    cert: str = Field("", max_length=70000)              # v1.70.102: сертификат клиента и ключ (PEM)
+    cert_p12: str = Field("", max_length=90000)          # или .p12/.pfx в base64
+    cert_password: str = Field("", max_length=200)
+    cert_remove: bool = False
     start_date: date | None = None
 
 
 class CompanyIn(BaseModel):
     company_id: str | None = Field(None, max_length=36)
+    bank: BankId | None = None
 
 
 def _company(db: Session, user: User, company_id: str | None) -> Company:
@@ -210,13 +224,17 @@ def _cfail(exc: connect.ConnectError) -> HTTPException:
     return HTTPException(exc.status, str(exc))
 
 
-def _state(db: Session, company: Company) -> dict:
-    return connect.connection_dict(db, company, connect.connection_of(db, company.id))
+def _state(db: Session, company: Company, bank: str = "tochka") -> dict:
+    return connect.connection_dict(db, company, connect.connection_of(db, company.id, bank), bank)
+
+
+BankQuery = Annotated[BankId | None, Query()]
 
 
 @router.get("/connection")
-def connection(user: Accountant, db: Db, company_id: CompanyId = None) -> dict:
-    return _state(db, _company(db, user, company_id))
+def connection(user: Accountant, db: Db, company_id: CompanyId = None, bank: BankQuery = None) -> dict:
+    company = _company(db, user, company_id)
+    return _state(db, company, connect.bank_of(db, company.id, bank))
 
 
 @router.put("/connection")
@@ -228,13 +246,15 @@ def save_connection(user: Accountant, db: Db, body: ConnectionIn) -> dict:
         raise _cfail(exc) from exc
     log_action(user, "bank_connection_saved", details={"company": company.name, "bank": connect.BANKS[conn.bank],
                                                        "method": connect.METHODS[conn.method]})
-    return _state(db, company)
+    return _state(db, company, conn.bank)
 
 
 @router.post("/connection/authorize")
 def authorize(user: Accountant, db: Db, body: CompanyIn) -> dict:
     """Адрес входа в Точку: браузер переходит туда, клиент подтверждает доступ, банк возвращает его к нам."""
     company = _company(db, user, body.company_id)
+    if body.bank not in (None, "tochka"):
+        raise HTTPException(409, "Вход через интернет-банк — для Точки; у этого банка — «Проверить и подключить»")
     try:
         return {"url": connect.start_oauth(db, company, user)}
     except connect.ConnectError as exc:
@@ -243,30 +263,40 @@ def authorize(user: Accountant, db: Db, body: CompanyIn) -> dict:
 
 @router.post("/connection/jwt")
 def check_jwt(user: Accountant, db: Db, body: CompanyIn) -> dict:
+    """Проверить ключ запросом в банк и запомнить счета: JWT-ключ Точки, ключ API или токены других банков."""
     company = _company(db, user, body.company_id)
+    bank = body.bank or "tochka"
     try:
-        connect.connect_jwt(db, company, user)
+        connect.connect_key(db, company, user, bank)
     except connect.ConnectError as exc:
         raise _cfail(exc) from exc
-    return _state(db, company)
+    return _state(db, company, bank)
+
+
+@router.post("/connection/check")
+def check_key(user: Accountant, db: Db, body: CompanyIn) -> dict:
+    """v1.70.102: то же, что /connection/jwt, — понятное имя для всех банков."""
+    return check_jwt(user, db, body)
 
 
 @router.post("/connection/sync")
 def sync_connection(user: Accountant, db: Db, body: CompanyIn) -> dict:
     company = _company(db, user, body.company_id)
+    bank = body.bank or "tochka"
     try:
-        result = connect.sync_now(db, company, user)
+        result = connect.sync_now(db, company, user, bank)
     except connect.ConnectError as exc:
         raise _cfail(exc) from exc
-    return {"result": result, "connection": _state(db, company)}
+    return {"result": result, "connection": _state(db, company, bank)}
 
 
 @router.delete("/connection")
-def remove_connection(user: Accountant, db: Db, company_id: CompanyId = None) -> dict:
+def remove_connection(user: Accountant, db: Db, company_id: CompanyId = None, bank: BankQuery = None) -> dict:
     company = _company(db, user, company_id)
-    removed = connect.remove(db, company)
+    removed = connect.remove(db, company, bank or "tochka")
     if removed:
-        log_action(user, "bank_connection_removed", details={"company": company.name})
+        log_action(user, "bank_connection_removed", details={"company": company.name,
+                                                             "bank": connect.BANKS[bank or "tochka"]})
     return {"removed": removed}
 
 
