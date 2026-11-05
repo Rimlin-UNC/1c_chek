@@ -282,6 +282,8 @@ def _send_welcome(token: str, user_id: int | str) -> None:
             "начислим баллы.\n"
             "🛡 Кнопка ниже открывает мини-приложение: сканер QR, баллы, "
             "история.\n"
+            "📄 Сотрудникам компаний: фото УПД или накладной — черновик "
+            "бухгалтеру.\n"
             "🔑 Код привязки уведомлений — в «Настройках» сайта "
             + SITE_URL.replace("https://", "") + ".")
     buttons = [{"type": "open_app", "text": "🛡 Открыть приложение"},
@@ -295,13 +297,67 @@ def _send_welcome(token: str, user_id: int | str) -> None:
             send_message(token, user_id, text)
 
 
+MAX_FILES_PER_MESSAGE = 10
+
+
+def _document_message(db: Session, msg: dict, user_id: str, files: list[dict]) -> None:
+    """Фото или PDF в личном диалоге: привязанный сотрудник → очередь распознавания его компании (ADR-35).
+
+    В одном сообщении MAX может быть несколько вложений (альбом) — каждое становится отдельным черновиком,
+    ответ один: итог по всем файлам."""
+    from ..models import User
+    from ..primary import bots
+    token = get_token(db)
+
+    def _send(txt: str) -> None:
+        try:
+            send_message(token, user_id, txt)
+        except MaxError as exc:
+            log.warning("max: ответ на фото не отправлен: %s", exc)
+
+    user = (db.query(User).filter(User.max_user_id == user_id[:32], User.is_active.is_(True)).first())
+    if user is None:
+        _send(bots.not_linked_text("max"))
+        return
+    body = msg.get("body") or {}
+    caption = str(body.get("text") or "")
+    ref = f"max:{user_id}:{body.get('mid') or ''}"
+    results: list[dict] = []
+    for att in files[:MAX_FILES_PER_MESSAGE]:
+        payload = att.get("payload") or {}
+        name = str(att.get("filename") or payload.get("filename") or "")
+        if int(att.get("size") or payload.get("size") or 0) > bots.MAX_BYTES:
+            results.append({"ok": False, "result": "big",
+                            "message": "📦 Файл больше 20 МБ — пришлите фото или PDF поменьше."})
+            continue
+        try:
+            data = bots.download_public(str(payload.get("url") or ""))
+        except bots.BotFileError as exc:
+            results.append({"ok": False, "result": "download", "message": str(exc)})
+            continue
+        results.append(bots.accept(db, user, data, bots.file_name_for("max", name, data), caption, "max", ref=ref))
+    if len(results) == 1:
+        _send(results[0]["message"])
+        return
+    queued = [r for r in results if r["result"] == "queued"]
+    text = f"📄 Принято документов: {len(queued)} из {len(results)}"
+    text += (f" — бухгалтер «{queued[0]['company']}» сверит черновики в «Первичке»." if queued else ".")
+    other = next((r["message"] for r in results if r["result"] != "queued"), "")
+    _send(text + ("\n" + other if other else ""))
+
+
 def handle_update(db: Session, upd: dict) -> None:
-    """Сообщение /start КОД → привязка max_user_id к пользователю."""
+    """Сообщение /start КОД → привязка max_user_id к пользователю; фото документа → «Первичка» (T-64)."""
     msg = ((upd.get("update") or {}).get("message")
            or upd.get("message") or upd)
     text = (msg.get("body") or {}).get("text") or ""
     sender = msg.get("sender") or {}
     user_id = str(sender.get("user_id") or "")
+    files = [a for a in ((msg.get("body") or {}).get("attachments") or [])
+             if isinstance(a, dict) and a.get("type") in ("image", "file")]
+    if user_id and files and (msg.get("recipient") or {}).get("chat_type", "dialog") == "dialog":
+        _document_message(db, msg, user_id, files)          # v1.70.105 (T-64): фото документа от сотрудника
+        return
     if not user_id or not text:
         return
     token = get_token(db)
@@ -321,7 +377,8 @@ def handle_update(db: Session, upd: dict) -> None:
         db.commit()
         send_message(token, user_id,
                      "✅ Готово! Теперь сюда будут приходить напоминания "
-                     "о чеках и уведомления «Ямастер Чек».")
+                     "о чеках и уведомления «Ямастер Чек». Фото УПД или "
+                     "накладной присылайте сюда — бухгалтер получит черновик.")
         return
     m_login = re.search(r"login_[A-Za-z0-9_-]{16,120}", text)
     if m_login:

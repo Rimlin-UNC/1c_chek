@@ -202,6 +202,9 @@ res = {"version": app_version(),
        "primary_mail_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_mail")),
        "primary_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_documents")
                                  if c["name"] in ("source", "channel")),
+       # v1.70.105 (T-64): канал входящего файла и сотрудник — у очереди почты и ботов
+       "primary_mail_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_mail_items")
+                                      if c["name"] in ("channel", "user_id")),
        "docreq_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("doc_request")),
        "bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_")),
        "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
@@ -705,6 +708,7 @@ def main() -> int:
               and up.get("primary_tables") == ["primary_document_lines", "primary_documents"]
               and up.get("primary_mail_tables") == ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]
               and up.get("primary_columns") == ["channel", "source"]
+              and up.get("primary_mail_columns") == ["channel", "user_id"]
               and up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"]
               and up.get("bank_tables") == ["bank_connections", "bank_operations", "bank_reimbursements",
                                             "bank_settings", "bank_statements"]

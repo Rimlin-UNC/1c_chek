@@ -204,12 +204,17 @@ function mailDay(iso) {
 }
 
 /** Карточка «Из почты»: черновики на сверку и последние вложения. */
+// v1.70.105 (T-64): фото документов от сотрудников приходят через ботов — канал виден в карточке и при сверке
+export const CHANNEL_MARK = { telegram: '✈️ Telegram', max: '💬 MAX' };
+export const CHANNEL_FROM = { mail: '📬 Из почты', telegram: '✈️ Из Telegram', max: '💬 Из MAX' };
+
 export function mailInboxHtml(data, opts = {}) {
   const drafts = Array.isArray(data && data.drafts) ? data.drafts : [];
   const recent = Array.isArray(data && data.recent) ? data.recent : [];
   const week = (data && data.week) || {};
   const company = (i) => (opts.isAdmin && i.company ? `<div class="form-hint">${esc(i.company)}</div>` : '');
-  const from = (i) => `${esc(i.sender || 'без адреса')}${i.subject ? ` · «${esc(i.subject)}»` : ''}`;
+  const mark = (i) => (CHANNEL_MARK[i.channel] ? `${CHANNEL_MARK[i.channel]} · ` : '');
+  const from = (i) => `${mark(i)}${esc(i.sender || 'без адреса')}${i.subject ? ` · «${esc(i.subject)}»` : ''}`;
   const draftRows = drafts.map((i) => {
     const d = i.draft || {};
     const what = i.result === 'queued' ? 'распознаётся…'
@@ -222,17 +227,19 @@ export function mailInboxHtml(data, opts = {}) {
         <button type="button" class="btn btn-sm mail-dismiss" data-id="${esc(i.id)}">Не нужен</button></div></div>`;
   }).join('');
   const recentRows = recent.slice(0, 10).map((i) => `<tr><td>${esc(mailWhen(i.received_at || i.created_at))}</td>
-      <td>${esc(i.sender || '—')}</td><td>${esc(i.file_name)}</td>
+      <td>${mark(i)}${esc(i.sender || '—')}</td><td>${esc(i.file_name)}</td>
       <td title="${esc(i.message || '')}">${esc(i.result_title || i.result)}</td></tr>`).join('');
   const weekText = Object.keys(week).length
     ? `За неделю: в реестр — ${Number(week.created || 0) + Number(week.confirmed || 0)}, дублей — ${Number(week.duplicate || 0)}, `
-      + `не принято — ${Number(week.rejected || 0)}, не УПД — ${Number(week.skipped || 0)}.` : 'Из почты ещё ничего не приходило.';
-  return `<div class="card-title">📬 Из почты <span class="spacer"></span>
+      + `не принято — ${Number(week.rejected || 0)}, не УПД — ${Number(week.skipped || 0)}.`
+    : 'Из почты и от сотрудников через ботов ещё ничего не приходило.';
+  return `<div class="card-title mail-title">📥 Входящие: почта и боты <span class="spacer"></span>
       <button type="button" class="btn btn-sm" id="mail-setup">⚙ Почтовый ящик</button>
       <button type="button" class="btn btn-sm" id="mail-refresh">Обновить</button></div>
     <p class="form-hint">${esc(weekText)}</p>
     ${drafts.length ? `<h4>Ждут сверки: ${drafts.length}</h4>${draftRows}`
-    : '<p class="form-hint">Черновиков на сверку нет. XML и ZIP из писем попадают в реестр сами.</p>'}
+    : '<p class="form-hint">Черновиков на сверку нет. XML и ZIP из писем попадают в реестр сами, фото документов '
+      + 'от сотрудников из Telegram и MAX — сюда, на сверку.</p>'}
     ${recentRows ? `<details><summary>Последние вложения</summary><div class="table-wrap"><table class="data">
       <thead><tr><th>Когда</th><th>От кого</th><th>Файл</th><th>Итог</th></tr></thead><tbody>${recentRows}</tbody></table></div></details>` : ''}`;
 }

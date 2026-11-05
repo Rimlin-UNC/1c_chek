@@ -311,6 +311,11 @@ def _ensure_schema() -> None:
             # v1.70.104 (T-63): канал документа — пусто (загрузка на экране) | mail (из почтового ящика)
             ("channel", "ALTER TABLE primary_documents ADD COLUMN channel VARCHAR(10) DEFAULT ''"),
         ],
+        # v1.70.105 (T-64): канал входящего файла (mail | telegram | max) и сотрудник, приславший фото в бот
+        "primary_mail_items": [
+            ("channel", "ALTER TABLE primary_mail_items ADD COLUMN channel VARCHAR(10) DEFAULT 'mail'"),
+            ("user_id", "ALTER TABLE primary_mail_items ADD COLUMN user_id VARCHAR(36) DEFAULT ''"),
+        ],
         # v1.70.99 (ADR-29): источник выписки — file | tochka (API банка)
         "bank_statements": [
             ("source", "ALTER TABLE bank_statements ADD COLUMN source VARCHAR(10) DEFAULT 'file'"),

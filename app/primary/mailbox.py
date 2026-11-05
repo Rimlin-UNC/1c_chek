@@ -736,7 +736,7 @@ def brief(item: PrimaryMailItem, names: dict[str, str] | None = None) -> dict:
             "received_at": _iso(item.received_at), "created_at": _iso(item.created_at), "sender": item.sender,
             "subject": item.subject, "file_name": item.file_name, "kind": item.kind, "result": item.result,
             "result_title": RESULTS.get(item.result, item.result), "message": item.message,
-            "document_id": item.document_id, "size": item.size,
+            "document_id": item.document_id, "size": item.size, "channel": item.channel or "mail",
             "draft": _draft_summary(item) if item.result == "draft" else None}
 
 
@@ -764,6 +764,7 @@ def item_for_review(db: Session, item: PrimaryMailItem) -> dict:
         rec = _empty_rec(item)
     blob = db.get(PrimaryMailFile, item.id)
     rec.update({"item_id": item.id, "source": item.kind, "company_id": item.company_id, "sender": item.sender,
+                "channel": item.channel or "mail",
                 "subject": item.subject, "received_at": _iso(item.received_at), "message": item.message,
                 "queued": item.result == "queued",
                 "media_type": blob.media_type if blob else "", "file_url": f"/api/v1/primary/inbox/{item.id}/file"
@@ -772,7 +773,7 @@ def item_for_review(db: Session, item: PrimaryMailItem) -> dict:
 
 
 def confirm_item(db: Session, user: User, item: PrimaryMailItem, draft: dict, company_id: str | None) -> dict:
-    """Сверенный бухгалтером черновик из почты → документ реестра (подпись черновика выдаёт сервер сам)."""
+    """Сверенный бухгалтером черновик из почты или бота → документ реестра (подпись черновика выдаёт сервер сам)."""
     if item.result != "draft":
         raise MailboxError("Этот черновик уже разобран", 409)
     source = item.kind if item.kind in ("pdf", "scan") else "pdf"
@@ -780,7 +781,7 @@ def confirm_item(db: Session, user: User, item: PrimaryMailItem, draft: dict, co
                "file_name": item.file_name, "file_sha256": item.file_sha256,
                "company_id": company_id or item.company_id, "draft": draft}
     try:
-        res = service.confirm(db, user, payload, channel="mail")
+        res = service.confirm(db, user, payload, channel=item.channel or "mail")
     except service.RecognizeError as exc:
         raise MailboxError(str(exc), exc.status) from exc
     item.result = "confirmed" if res["result"] == "created" else "duplicate"

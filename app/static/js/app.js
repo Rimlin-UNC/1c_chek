@@ -6496,6 +6496,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.105': [
+    { icon: '📸', title: 'Фото УПД прямо с объекта',
+      text: 'Сотрудник отправляет фото или PDF документа боту Telegram или MAX, к которому привязан в «Настройках». '
+        + 'Файл приходит в «Первичку» — в карточку «📥 Входящие: почта и боты» с пометкой канала и именем сотрудника; '
+        + 'бухгалтер сверяет черновик в привычном окне и сохраняет в реестр.' },
+    { icon: '🛡', title: 'Только свои и без дублей',
+      text: 'Фото принимаются только от привязанных сотрудников компании и только в личном чате. Тот же файл второй '
+        + 'раз не примется; до 20 МБ и не больше 30 файлов в сутки от сотрудника. Бот сразу отвечает, получен ли '
+        + 'документ или что не так.' },
+  ],
   '1.70.104': [
     { icon: '📬', title: 'УПД из почты — сами в реестр',
       text: 'Подключите ящик компании: «⚙ Почтовый ящик» на экране «Первичка» или блок «Почта для документов» в '
@@ -11182,7 +11192,8 @@ async function viewSettings(container, alive = routeGuard()) {
         <div class="card-title">🔔 Telegram — личное <span class="form-hint">(v1.16.0)</span></div>
         ${me.telegram_bound
           ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат привязан — уведомления приходят в Telegram.
-               Напоминание приходит, если за день ни одного чека.</div>
+               Напоминание приходит, если за день ни одного чека.${me.company_id
+    ? '<br>📄 Фото УПД или накладной отправляйте боту — бухгалтер компании получит черновик на сверку.' : ''}</div>
              <button type="button" class="btn btn-sm btn-bad" id="tg-unbind">🔌 Отвязать</button>`
           : `<p class="form-hint" style="margin-bottom:10px">Получайте уведомления о чеках и напоминания.
              Нажмите «Получить код», затем в Telegram отправьте боту: <b>/start КОД</b>.</p>
@@ -11197,7 +11208,8 @@ async function viewSettings(container, alive = routeGuard()) {
       <div class="glass card" id="st-maxme" data-sec="personal" style="order:36">
         <div class="card-title">🛡 MAX — личное <span class="form-hint">(v1.66.0)</span></div>
         ${me.max_bound
-          ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.</div>
+          ? `<div class="info-callout" style="margin-bottom:10px">✅ Чат MAX привязан — напоминания и уведомления приходят и сюда.${me.company_id
+    ? '<br>📄 Фото УПД или накладной отправляйте боту — бухгалтер компании получит черновик на сверку.' : ''}</div>
              <button type="button" class="btn btn-sm btn-bad" id="mx-unbind">🔌 Отвязать</button>`
           : `<p class="form-hint" style="margin-bottom:10px"><b>Войти через MAX</b> — мини-приложение бота MAX: скан QR и баллы. Для напоминаний здесь — классика: «Получить код» → боту <b>/start КОД</b> (или войдите с логином, совпадающим с username MAX — привяжем сами).</p>
              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">

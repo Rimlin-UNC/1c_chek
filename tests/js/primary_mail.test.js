@@ -167,10 +167,25 @@ describe('карточка «Из почты»', () => {
     expect(box.querySelector('tbody').textContent).toContain('в реестре');
   });
 
+  it('v1.70.105: фото от сотрудников из ботов — канал виден в черновике и в журнале, у писем пометки нет', () => {
+    const box = document.getElementById('box');
+    box.innerHTML = mailInboxHtml({
+      drafts: [{ id: 'b1', file_name: 'telegram-фото.jpg', sender: 'Иван Петров', subject: 'объект на Лесной', channel: 'telegram',
+        created_at: '2026-11-05T08:00:00', result: 'draft', draft: { number: '', date: null, seller: '' } }],
+      recent: [{ id: 'b2', file_name: 'УПД.pdf', sender: 'Мария', channel: 'max', result: 'skipped', result_title: 'не УПД',
+        created_at: '2026-11-05T08:01:00' }, { ...data.recent[0], channel: 'mail' }],
+      week: { draft: 1 } });
+    expect(box.querySelector('.card-title').textContent).toContain('📥 Входящие: почта и боты');
+    expect(box.querySelector('.mail-draft').textContent).toContain('✈️ Telegram · Иван Петров · «объект на Лесной»');
+    expect(box.querySelector('.mail-draft').textContent).toContain('реквизиты не распознаны — заполните по файлу');
+    const cells = [...box.querySelectorAll('tbody tr')].map((tr) => tr.children[1].textContent);
+    expect(cells).toEqual(['💬 MAX · Мария', 'docs@supplier.ru']);
+  });
+
   it('пусто: понятные подсказки, компания видна только администратору', () => {
     const box = document.getElementById('box');
     box.innerHTML = mailInboxHtml({ drafts: [], recent: [], week: {} });
-    expect(box.textContent).toContain('Из почты ещё ничего не приходило.');
+    expect(box.textContent).toContain('Из почты и от сотрудников через ботов ещё ничего не приходило.');
     expect(box.textContent).toContain('Черновиков на сверку нет');
     expect(box.querySelector('table')).toBeNull();
     box.innerHTML = mailInboxHtml(data, { isAdmin: false });
@@ -203,5 +218,23 @@ describe('сверка черновика из почты на экране «П
     expect(calls.post.some((c) => c.path === '/api/v1/primary/confirm')).toBe(false);
     for (let i = 0; i < 4; i += 1) await flush();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mail-1');
+  });
+
+  it('v1.70.105: черновик из бота — в окне сверки «✈️ Из Telegram: сотрудник, «подпись»»', async () => {
+    document.body.innerHTML = '<div id="toast-container"></div><div id="modal-root" class="hidden"><div class="modal-backdrop"></div>'
+      + '<div class="modal-slot"></div></div><div id="box"></div>';
+    Object.assign(draftRec, { channel: 'telegram', sender: 'Иван Петров', subject: 'объект на Лесной' });
+    try {
+      const box = document.getElementById('box');
+      await viewPrimary(box, { isAdmin: false });
+      for (let i = 0; i < 6; i += 1) await flush();
+      box.querySelector('.mail-review').onclick();
+      for (let i = 0; i < 6; i += 1) await flush();
+      const slot = document.querySelector('.modal-slot');
+      expect(slot.textContent).toContain('✈️ Из Telegram: Иван Петров, «объект на Лесной»');
+      expect(slot.textContent).not.toContain('📬 Из почты');
+    } finally {
+      Object.assign(draftRec, { channel: undefined, sender: 'docs@supplier.ru', subject: 'Документы' });
+    }
   });
 });

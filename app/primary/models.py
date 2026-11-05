@@ -141,7 +141,7 @@ class PrimaryMailbox(Base):
 
 
 class PrimaryMailItem(Base):
-    """Вложение из письма и что с ним сделала программа: в реестр, дубль, отказ, черновик на сверку, пропуск."""
+    """Вложение из письма или фото из бота и что с ним сделала программа: в реестр, дубль, отказ, черновик, пропуск."""
     __tablename__ = "primary_mail_items"
     __table_args__ = (Index("ix_primary_mail_items_company_result", "company_id", "result"),)
 
@@ -166,6 +166,10 @@ class PrimaryMailItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     decided_by: Mapped[str] = mapped_column(String(36), default="")
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # v1.70.105 (T-64): откуда пришёл файл — mail (ящик компании) | telegram | max (фото сотрудника в боте);
+    # user_id — сотрудник, приславший фото (для ботов), у писем пусто
+    channel: Mapped[str] = mapped_column(String(10), default="mail", server_default="mail")
+    user_id: Mapped[str] = mapped_column(String(36), default="", server_default="")
 
 
 class PrimaryMailFile(Base):

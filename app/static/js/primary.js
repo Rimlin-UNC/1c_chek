@@ -15,7 +15,7 @@
    окне (файл письма — кнопкой «Открыть файл»), XML и ZIP из писем попадают в реестр сами. */
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
-import { mailConnectPanel, mailInboxHtml } from './primary_mail.js';
+import { CHANNEL_FROM, mailConnectPanel, mailInboxHtml } from './primary_mail.js';
 
 export const PRIMARY_STATUSES = [
   { code: 'ok', title: 'Без замечаний', chip: 'verified' },
@@ -212,7 +212,7 @@ export function primReviewHtml(rec, opts = {}) {
   return `
     <h3 class="modal-title">${manual ? '✍️ Документ вручную' : `🔍 Сверьте реквизиты: ${esc(rec.file_name || 'документ')}`}</h3>
     <p class="form-hint">${summary} В реестр документ попадёт только после «Сохранить».</p>
-    ${opts.mail ? `<p class="form-hint">📬 Из почты: ${esc(opts.mail)}</p>` : ''}${rec.message ? `<p class="form-hint">${esc(rec.message)}</p>` : ''}
+    ${opts.mail ? `<p class="form-hint">${esc(opts.mailLabel || '📬 Из почты')}: ${esc(opts.mail)}</p>` : ''}${rec.message ? `<p class="form-hint">${esc(rec.message)}</p>` : ''}
     ${rec.duplicate ? `<div class="form-error">Такой документ уже есть в реестре: ${esc(primTitle(rec.duplicate))}.</div>` : ''}
     <div class="prim-review">
       <div class="prim-preview">${preview}${ocr}</div>
@@ -612,7 +612,7 @@ export async function viewPrimary(container, opts = {}) {
       const isImage = file && /^image\//.test(file.type || '');
       const blobUrl = isImage && typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL(file) : '';
       const { slot, close } = openModal(primReviewHtml(rec, { previewUrl: extra.previewUrl || rec.preview || blobUrl,
-        fileUrl: extra.fileUrl, mail: extra.mail, skipLabel: extra.skipLabel }), {
+        fileUrl: extra.fileUrl, mail: extra.mail, mailLabel: extra.mailLabel, skipLabel: extra.skipLabel }), {
         onClose: () => { if (blobUrl && URL.revokeObjectURL) URL.revokeObjectURL(blobUrl); resolve(result); },
       });
       if (!slot) { resolve(result); return; }
@@ -785,7 +785,8 @@ export async function viewPrimary(container, opts = {}) {
     }
     const previewUrl = fileUrl && /^image\/(jpeg|png)$/.test(rec.media_type || '') ? fileUrl : '';
     const mail = [rec.sender, rec.subject ? `«${rec.subject}»` : ''].filter(Boolean).join(', ');
-    const result = await review(rec, null, { confirmUrl: `${base}/confirm`, fileUrl, previewUrl, mail,
+    const mailLabel = CHANNEL_FROM[rec.channel] || CHANNEL_FROM.mail;
+    const result = await review(rec, null, { confirmUrl: `${base}/confirm`, fileUrl, previewUrl, mail, mailLabel,
       skipLabel: 'Не нужен', onSkip: () => api.post(`${base}/dismiss`, {}) });
     if (fileUrl && URL.revokeObjectURL) URL.revokeObjectURL(fileUrl);
     if (result !== 'closed') loadMail();
@@ -793,7 +794,8 @@ export async function viewPrimary(container, opts = {}) {
   }
 
   async function dismissMail(id) {
-    if (!window.confirm('Убрать вложение из сверки? Файл удалится из программы, письмо в ящике останется.')) return;
+    if (!window.confirm('Убрать файл из сверки? Он удалится из программы, письмо в ящике или сообщение '
+      + 'в мессенджере останется.')) return;
     try {
       await api.post(`/api/v1/primary/inbox/${encodeURIComponent(id)}/dismiss`, {});
       toast('Убрано из сверки', 'ok', '📬');

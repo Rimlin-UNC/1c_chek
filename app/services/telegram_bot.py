@@ -208,6 +208,10 @@ def handle_update(db: Session, upd: dict) -> None:
     chat = msg.get("chat") or {}
     chat_id = str(chat.get("id") or "")
     text = (msg.get("text") or "").strip()
+    if chat_id and not text and (msg.get("photo") or msg.get("document")) \
+            and chat.get("type", "private") == "private":
+        _document_message(db, msg, chat_id)                 # v1.70.105 (T-64): фото документа от сотрудника
+        return
     if not chat_id or not text:
         return
     token = get_token(db)
@@ -229,14 +233,6 @@ def handle_update(db: Session, upd: dict) -> None:
                                      text)
         if reply:
             _send(reply)
-        return
-    if msg.get("photo") and not text:
-        # QR с фото на Этапе 1 не расшифровываем — честная подсказка
-        from ..pool import ingest as _pool
-        if _pool.pool_enabled(db):
-            _send("📸 Фото пока не разбираю — пришлите QR строкой текстом: "
-                  "в приложении ФНС откройте чек → «Поделиться» → скопируйте "
-                  "строку и отправьте сюда.")
         return
     if text_low.startswith("/balance"):
         frm = msg.get("from") or {}
@@ -289,7 +285,8 @@ def handle_update(db: Session, upd: dict) -> None:
         db.commit()
         _send(
                      f"✅ Привязано: {user.full_name or user.username}. "
-                     "Присылаю напоминания о чеках. Команды: /status, /help, /unbind")
+                     "Присылаю напоминания о чеках. Фото УПД или накладной присылайте сюда — "
+                     "бухгалтер получит черновик. Команды: /status, /help, /unbind")
         log.info("telegram bind: user=%s", user.username)
         return
     user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
@@ -313,8 +310,94 @@ def handle_update(db: Session, upd: dict) -> None:
                  "/status — мои чеки за сегодня\n"
                  "/balance — баллы «Чек-Пула»\n"
                  "Чек в пул: пришлите строку QR текстом.\n"
+                 "Фото УПД или накладной — черновик бухгалтеру вашей компании.\n"
                  "/unbind — отвязать уведомления\n"
                  "Привязка: Настройки → Telegram → код → /start КОД")
+
+
+# --------------------------------------------------------------------------
+#  v1.70.105 (T-64): фото и PDF документов от сотрудников → «Первичка»
+# --------------------------------------------------------------------------
+DOC_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/tiff")
+
+
+def _pick_file(msg: dict) -> tuple[str, str, int]:
+    """file_id, имя и размер: самое крупное фото (Telegram присылает размеры по возрастанию) или файл."""
+    photos = msg.get("photo") or []
+    if photos:
+        best = photos[-1]
+        return str(best.get("file_id") or ""), "", int(best.get("file_size") or 0)
+    doc = msg.get("document") or {}
+    return str(doc.get("file_id") or ""), str(doc.get("file_name") or ""), int(doc.get("file_size") or 0)
+
+
+def download_file(token: str, file_id: str, proxy: str = "", base: str = "",
+                  limit: int = 20 * 1024 * 1024) -> bytes:
+    """Скачать файл из Telegram: getFile → /file/bot…/путь (тот же прокси и мост, что у остальных вызовов)."""
+    info = api(token, "getFile", {"file_id": file_id}, proxy=proxy, base=base)
+    path = str(info.get("file_path") or "")
+    if not path:
+        raise TelegramError("Telegram не отдал файл")
+    if int(info.get("file_size") or 0) > limit:
+        raise TelegramError("Файл больше 20 МБ")
+    origin = (base or "").rstrip("/") or API_BASE.rsplit("/bot", 1)[0]
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        with httpx.stream("GET", origin + "/file/bot" + token + "/" + path, timeout=60.0,
+                          proxy=proxy or None) as resp:
+            if resp.status_code != 200:
+                raise TelegramError(f"Telegram: файл не скачан (HTTP {resp.status_code})")
+            for chunk in resp.iter_bytes():
+                total += len(chunk)
+                if total > limit:
+                    raise TelegramError("Файл больше 20 МБ")
+                chunks.append(chunk)
+    except httpx.HTTPError as exc:
+        raise TelegramError("Telegram недоступен с сервера") from exc
+    return b"".join(chunks)
+
+
+def _document_message(db: Session, msg: dict, chat_id: str) -> None:
+    """Фото или PDF в личном чате: привязанный сотрудник → очередь распознавания его компании (ADR-35)."""
+    from ..models import User
+    from ..primary import bots
+    token, proxy, base = get_token(db), get_proxy(db), get_api_base(db)
+
+    def _send(txt: str) -> None:
+        try:
+            send_message(token, chat_id, txt, proxy=proxy, base=base)
+        except TelegramError as exc:
+            log.warning("telegram: ответ на фото не отправлен: %s", exc)
+
+    user = db.query(User).filter(User.telegram_chat_id == chat_id, User.is_active.is_(True)).first()
+    if user is None:
+        from ..pool import ingest as _pool
+        if _pool.pool_enabled(db) and msg.get("photo"):
+            # QR с фото не расшифровываем — честная подсказка участнику «Чек-Пула»
+            _send("📸 Фото чеков пока не разбираю — пришлите QR строкой текстом: в приложении ФНС откройте "
+                  "чек → «Поделиться» → скопируйте строку и отправьте сюда.")
+        else:
+            _send(bots.not_linked_text("telegram"))
+        return
+    file_id, name, size = _pick_file(msg)
+    mime = str((msg.get("document") or {}).get("mime_type") or "")
+    if not file_id or (msg.get("document") and mime and mime not in DOC_TYPES):
+        _send("🤔 Принимаются фото документа (JPG, PNG, TIFF) и PDF. Снимите УПД или накладную целиком "
+              "и пришлите сюда.")
+        return
+    if size > bots.MAX_BYTES:
+        _send("📦 Файл больше 20 МБ — пришлите фото или PDF поменьше.")
+        return
+    try:
+        data = download_file(token, file_id, proxy=proxy, base=base, limit=bots.MAX_BYTES)
+    except TelegramError as exc:
+        log.warning("telegram: файл документа не скачан: %s", exc)
+        _send("⚠️ Не удалось получить файл — пришлите ещё раз.")
+        return
+    res = bots.accept(db, user, data, bots.file_name_for("telegram", name, data), str(msg.get("caption") or ""),
+                      "telegram", ref=f"telegram:{chat_id}:{msg.get('message_id') or ''}")
+    _send(res["message"])
 
 
 # --------------------------------------------------------------------------

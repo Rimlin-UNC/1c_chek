@@ -2328,6 +2328,9 @@ label.field[hidden] { display: none; }
 .mail-draft-main { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .mail-draft-tools { display: flex; gap: 6px; flex-wrap: wrap; }
 .mail-draft-tools .btn { white-space: nowrap; }
+/* v1.70.105: заголовок «Входящие: почта и боты» длиннее — на узком экране кнопки уходят под него целиком */
+.mail-title { flex-wrap: wrap; }
+.mail-title .btn { white-space: nowrap; }
 
 /* v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — «Клиенты»: карточки компаний по убыванию внимания */
 .cl-top { padding-bottom: 14px; }
