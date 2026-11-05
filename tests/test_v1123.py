@@ -33,7 +33,8 @@ class TestAuthorAndCompanyOnReceipts:
                           json={"qr_data": _qr(), "source": "web"},
                           headers=hdr_u).json()["receipt"]["id"]
         # список (админ): автор и компания на месте
-        item = next(x for x in client.get("/api/v1/receipts",
+        # v1.70.101: адресно по ids — в общей базе воркера чеков с поздними датами больше страницы
+        item = next(x for x in client.get(f"/api/v1/receipts?ids={rid}",
                                           headers=hdr).json()["items"]
                     if x["id"] == rid)
         assert item["created_by_name"] == "Виктория Векторная"

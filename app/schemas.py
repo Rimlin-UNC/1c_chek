@@ -229,6 +229,10 @@ class PolicyPatch(BaseModel):
     forbidden_categories: Optional[list[str]] = None
     # v1.70.93 (T-43): запрещённые группы товаров (app/services/goods.py)
     forbidden_goods: Optional[list[str]] = Field(default=None, max_length=50)
+    # v1.70.101 (T-69): отраслевой профиль компании (app/goods/profiles.py); reset_goods — снова
+    # «по профилю» вместо своей настройки запрещённых групп
+    goods_profile: Optional[str] = Field(default=None, max_length=20)
+    reset_goods: Optional[bool] = None
 
 
 # --- v1.63.0: самообучающийся маппинг «запомнить для поставщика» --------------

@@ -415,6 +415,16 @@ class ReceiptItem(Base):
     # товар немаркированный: данных могло не быть в ответе или при импорте.
     marking_present: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     #   маркировка, агент, поставщик, страна, таможенная декларация, ФОИВ
+    # --- v1.70.101 (T-69, ADR-31): понимание чеков — категория позиции и почему она такая.
+    # Группа и отрасль (product_group, industry) — производные категории; ФНС их не присылает.
+    goods_category: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    #   код категории (app/services/goods.py CATEGORIES), пусто — разобрано до 1.70.101
+    group_source: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    #   manual | memory | fns | dictionary | model | context | none — ручную правку каскад не трогает
+    group_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #   уверенность 0..1 (модель и контекст ниже 0,9 не считаются нарушением политики)
+    group_note: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    #   причина для человека: «по слову «цемент»», «модель — 82 %», «исправлено вручную: …»
 
     receipt: Mapped[Receipt] = relationship(back_populates="items")
 
@@ -434,7 +444,15 @@ class ReceiptItem(Base):
             "industry": self.industry or "",
             "extra": (_safe_json(self.extra_json)
                       if getattr(self, "extra_json", "") else {}),
+            # v1.70.101 (T-69): читаемое название, фасовка, категория и её причина
+            **_goods_view(self),
         }
+
+
+def _goods_view(item) -> dict:
+    """Поля понимания чеков для позиции (без запросов к базе)."""
+    from .goods.view import item_view
+    return item_view(item)
 
 
 def has_saved_marking(extra_json: str | None) -> bool:

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_accountant, require_admin, verify_password
 from ..config import settings as cfg
 from ..database import get_db
+from ..goods import profiles as goods_profiles
 from ..models import AppSetting, Company, Receipt, User
 from ..schemas import (AppSettingsPatch, ExternalSettingsPatch, PolicyPatch,
                        ExternalTestRequest, FnsSettingsPatch, MappingSave,
@@ -380,6 +381,10 @@ def get_policy(company_id: str | None = Query(None, max_length=36),
         # v1.70.93 (T-43): запрещённые группы товаров и все группы классификатора
         "forbidden_goods": policy_service.forbidden_goods(db, comp.id) if comp else [],
         "goods_groups": policy_service.goods_groups(),
+        # v1.70.101 (T-69): отраслевой профиль — статьи расходов и запреты по умолчанию
+        "goods_profile": goods_profiles.get(db, comp.id) if comp else goods_profiles.DEFAULT,
+        "goods_profiles": goods_profiles.catalog(),
+        "goods_own": policy_service.has_own_goods(db, comp.id) if comp else False,
         "flagged": int(flagged),     # чеков с нарушениями политики сейчас
     }
 
@@ -406,7 +411,17 @@ def put_policy(body: PolicyPatch, db: Session = Depends(get_db),
                 if c and c.strip()][:50]
         comp.forbidden_categories = ", ".join(cats)
     from ..services import policy as policy_service
-    if body.forbidden_goods is not None:                        # v1.70.93 (T-43)
+    if body.goods_profile is not None:                          # v1.70.101 (T-69)
+        if body.goods_profile not in goods_profiles.codes():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нет такого профиля компании")
+        goods_profiles.set_profile(db, comp.id, body.goods_profile)
+        db.flush()
+    if body.reset_goods:                                        # снова «по профилю»
+        own = db.get(AppSetting, policy_service.GOODS_KEY + comp.id)
+        if own is not None:
+            db.delete(own)
+            db.flush()
+    elif body.forbidden_goods is not None:                      # v1.70.93 (T-43)
         policy_service.set_forbidden_goods(db, comp.id, body.forbidden_goods)
         db.flush()
     flagged = policy_service.refresh_company(db, comp.id)
@@ -416,6 +431,7 @@ def put_policy(body: PolicyPatch, db: Session = Depends(get_db),
         "limit_per_month": comp.limit_per_month,
         "forbidden_categories": comp.forbidden_categories,
         "forbidden_goods": policy_service.forbidden_goods(db, comp.id),
+        "goods_profile": goods_profiles.get(db, comp.id),
         "flagged": flagged})
     return {"ok": True, "message": "Политика расходов сохранена",
             "flagged": int(flagged), "company_id": comp.id}

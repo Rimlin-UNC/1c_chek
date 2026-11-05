@@ -384,10 +384,13 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
                                        ("industry_details", it["industry_details"]))
                      if v}, ensure_ascii=False),
             ))
-    elif receipt.items:
-        # Позиции уже были — проставим отрасль/группу по наименованиям,
-        # чтобы фильтры работали и для чеков, полученных до v1.70.72.
-        enrich_items(receipt)
+    # v1.70.101 (T-69): категории позиций — каскадом понимания чеков (память
+    # компании → признак ФНС → словарь → модель → тип чека и продавец). Новые
+    # позиции разбираются целиком, у старых — только неразобранные; ручная
+    # правка бухгалтера не перезаписывается.
+    if receipt.items:
+        from ..goods import service as goods_service
+        goods_service.classify_receipt(db, receipt)
 
     # Расширенные данные источника: слияние, а не замена
     try:
@@ -444,24 +447,17 @@ def apply_to_receipt(db, receipt, ticket: dict, *, force_items: bool = False,
 
 
 def enrich_items(receipt) -> int:
-    """Проставить группу/отрасль позициям, у которых их ещё нет.
+    """Проставить категорию, группу и отрасль позициям, которые ещё не разобраны.
 
     Работает без обращения к ФНС — только по сохранённым наименованиям.
-    Возвращает число обновлённых позиций.
+    v1.70.101 (T-69): каскадом понимания чеков; позиции, разобранные до
+    1.70.101 (есть группа, нет категории), разбираются заново, ручная правка
+    бухгалтера — нет. Возвращает число обновлённых позиций.
     """
-    changed = 0
-    for it in receipt.items:
-        industry, group = goods.classify_name(
-            it.name, getattr(it, "product_type", None))
-        upd = False
-        if not (it.product_group or ""):
-            it.product_group = group[:100]
-            upd = True
-        if not (it.industry or ""):
-            it.industry = industry[:100]
-            upd = True
-        changed += 1 if upd else 0
-    return changed
+    from sqlalchemy.orm import object_session
+
+    from ..goods import service as goods_service
+    return goods_service.classify_receipt(object_session(receipt), receipt)["items"]
 
 
 def enrich_receipt(db, receipt) -> dict:
@@ -491,15 +487,8 @@ def enrich_receipt(db, receipt) -> dict:
         receipt.region_city = geo["city"] or ""
     if geo.get("city") and not receipt.region_city:
         receipt.region_city = geo["city"][:120]
-    enrich_items(receipt)
-    calc = goods.classify_items(
-        [{"name": it.name, "total": it.total,
-          "product_type": getattr(it, "product_type", None)}
-         for it in receipt.items])
-    if calc.get("industry") and not receipt.industry:
-        receipt.industry = calc["industry"][:100]
-        receipt.industry_lc = calc["industry"].casefold()[:100]
-        receipt.product_group = calc["group"][:100]
+    from ..goods import service as goods_service
+    goods_service.classify_receipt(db, receipt)        # v1.70.101: и отрасль чека по категориям
     return {"ticket": False, "items": len(receipt.items)}
 
 
@@ -560,6 +549,7 @@ def build_card(receipt) -> dict:
         }
 
     # Позиции: из чека (в них есть группы/маркировка), документ — дополнение
+    from ..goods.view import item_view
     items = []
     doc_items = {it["pos"]: it for it in doc.get("items", [])}
     for idx, row in enumerate(receipt.items):
@@ -598,13 +588,17 @@ def build_card(receipt) -> dict:
             "customs": extra.get("customs") or "",
             "excise": extra.get("excise") or 0.0,
             "industry_details": extra.get("industry_details") or [],
+            # v1.70.101 (T-69): читаемое название, фасовка, категория и почему она такая
+            **item_view(row),
         })
     if not items and doc.get("items"):
         items = doc["items"]
 
     calc = goods.classify_items(
         [{"name": it["name"], "total": it["total"],
-          "product_type": it.get("product_type")} for it in items])
+          "product_type": it.get("product_type"),
+          "group": it.get("group") if it.get("industry") else "",
+          "industry": it.get("industry") or ""} for it in items])
     ext = {}
     try:
         ext = json.loads(receipt.ext_json) if receipt.ext_json else {}

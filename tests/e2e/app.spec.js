@@ -504,3 +504,43 @@ test('рабочее место аутсорсера: назначение кл�
     headers: { Authorization: `Bearer ${token}` }, data: { company_ids: [] } });
   expect(reset.ok()).toBeTruthy();
 });
+
+// v1.70.101 (T-69, ADR-31): понимание чеков — читаемая позиция и категория с причиной; бухгалтер меняет категорию,
+// выбор запоминается для компании и виден в «Настройках» → «Память товаров». Чек — синтетика через API.
+test('понимание чеков: категория позиции, выбор бухгалтера и «Память товаров»', async ({ page, request }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  const accAuth = await request.post('/api/v1/auth/login',
+    { data: { username: 'e2e_acc_alpha', password: 'e2e-accountant-password' } });
+  const { access_token: accToken } = await accAuth.json();
+  const H = { Authorization: `Bearer ${accToken}` };
+  const created = await request.post('/api/v1/receipts/manual', { headers: H, data: {
+    date_time: '04.11.2026 12:10', total_sum: 9150, fn: '9999999999990101', fd: '101', fp: '9990101' } });
+  expect(created.ok()).toBeTruthy();
+  const rid = (await created.json()).receipt.id;
+  const patched = await request.patch(`/api/v1/receipts/${rid}`, { headers: H, data: { items: [
+    { name: 'ПЕРФОРАТОР BOSCH GBH 2-26 SDS-PLUS', quantity: 1, price: 9000, total: 9000 },
+    { name: 'Абвгд ёжз 12', quantity: 1, price: 150, total: 150 }] } });
+  expect(patched.ok()).toBeTruthy();
+  await page.locator('#btn-logout').click();
+  const reloaded = page.waitForEvent('load');
+  await page.locator('#lo-exit').click();
+  await reloaded;
+  await page.fill('#login-username', 'e2e_acc_alpha');
+  await page.fill('#login-password', 'e2e-accountant-password');
+  await page.click('#login-submit');
+  await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+  await page.locator('a[href="#/receipts"]').click();
+  await page.locator('#rc-view-list').click();
+  await page.locator('#receipts-table tbody tr', { hasText: '9999999999990101' }).locator('td.cell-sum').click();
+  const drawer = page.locator('.drawer');
+  await expect(drawer.locator('.gd-name').first()).toHaveText('Перфоратор BOSCH GBH 2-26 SDS-PLUS');
+  await expect(drawer.locator('[data-gd-item]').first()).toContainText('Инструмент');
+  await drawer.locator('[data-gd-item]').nth(1).click();
+  await drawer.locator('.gd-pick').selectOption('build_finish');
+  await expect(page.locator('#toast-container')).toContainText('запомнено для компании');
+  await expect(drawer.locator('[data-gd-item]').nth(1)).toContainText('Отделочные материалы');
+  await drawer.locator('.modal-close').click();
+  await page.locator('a[href="#/settings"]').click();
+  await expect(page.locator('#st-goods')).toContainText('ключ: абвгд ежз', { timeout: 15000 });
+});

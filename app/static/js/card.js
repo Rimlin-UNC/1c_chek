@@ -192,12 +192,17 @@ function fullCardItemsHTML(d) {
   if (!items.length) {
     return cardEmpty('📦', 'Позиции не получены: нужен полный документ ФНС');
   }
+  // v1.70.101 (T-69): читаемое название, строка «в чеке» и категория с причиной — сразу под названием
+  // (правая колонка в узком окне видна только после прокрутки)
   return `<div class="table-wrap"><table class="data" style="min-width:0">
     <thead><tr><th>№</th><th>Наименование</th><th>Тип</th><th>Кол.</th>
       <th>Цена</th><th>Сумма</th><th>НДС</th><th>Группа</th></tr></thead>
     <tbody>${items.map(it => `<tr style="cursor:default">
       <td>${it.pos}</td>
-      <td>${esc(it.name)}${(it.marking || []).length
+      <td>${esc(it.display_name || it.name)}${it.display_name && it.display_name !== it.name
+        ? `<div class="form-hint">в чеке: ${esc(it.name)}</div>` : ''}${it.category_title
+        ? `<div class="form-hint">${esc(it.category_icon || '')} ${esc(it.category_title)}${it.category_note
+          ? ' · ' + esc([it.category_source_title, it.category_note].filter(Boolean).join(': ')) : ''}</div>` : ''}${(it.marking || []).length
         ? `<div class="form-hint">маркировка: ${esc((it.marking[0].gtin || '') + ' ' + (it.marking[0].serial || ''))}</div>` : ''}
         ${(it.supplier && it.supplier.name) ? `<div class="form-hint">поставщик: ${esc(it.supplier.name)}${it.supplier.inn ? ', ИНН ' + esc(it.supplier.inn) : ''}</div>` : ''}
         ${(it.industry_details || []).length ? `<div class="form-hint">ФОИВ ${esc(it.industry_details[0].foiv)}: ${esc(it.industry_details[0].value || '')}</div>` : ''}</td>

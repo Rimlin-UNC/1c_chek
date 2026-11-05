@@ -1070,6 +1070,10 @@ def get_receipt(receipt_id: str,
     if "forbidden_goods" in (receipt.policy_flags or ""):
         from ..services import policy as _pol
         d["policy_goods"] = _pol.goods_hits(receipt, _pol.forbidden_goods(db, receipt.company_id))
+    # v1.70.101 (T-69): позиции по категориям с иконками и подсказка статьи расходов
+    if receipt.items:
+        from ..goods import service as goods_service
+        d["goods"] = goods_service.summary(db, receipt)
     return d
 
 
@@ -1232,6 +1236,9 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
                     vat_rate=fns_refs.vat_canonical(it.vat_rate or "none", coded)[:10],
                     vat_sum=it.vat_sum or 0.0, position=pos))
             changed["fields"].append(f"items({len(body.items)})")
+            # v1.70.101 (T-69): категории новых позиций — каскадом понимания чеков
+            from ..goods import service as goods_service
+            goods_service.classify_receipt(db, receipt)
         if changed["fields"]:
             # Ручная правка — последний и главный источник данных о чеке
             receipt.details_source = "manual_edit"
@@ -1425,6 +1432,9 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
                     price=it.price, total=it.total,
                     vat_rate=it.vat_rate[:10], vat_sum=it.vat_sum,
                     position=pos))
+            # v1.70.101 (T-69): категории позиций — каскадом понимания чеков
+            from ..goods import service as goods_service
+            goods_service.classify_receipt(db, receipt)
     if not human_edited:
         receipt.details_source = res.source or receipt.details_source
     receipt.details_fetched_at = dt.datetime.utcnow()

@@ -6,7 +6,6 @@ import json
 from fastapi import HTTPException
 
 from ..models import Receipt, ReceiptItem
-from ..services import goods, receipt_card
 from .models import PoolItem
 
 
@@ -66,11 +65,9 @@ def copy_to_registry(db, pool, company_id: str, user) -> tuple[Receipt, bool]:
     for pos, it in enumerate(items):
         receipt.items.append(ReceiptItem(name=it.name, quantity=it.quantity, price=it.price,
             total=it.total, vat_rate=it.vat_rate, vat_sum=it.vat_sum, position=pos))
-    receipt_card.enrich_items(receipt)
-    calc = goods.classify_items([{"name": it.name, "total": it.total} for it in receipt.items])
-    receipt.industry = (calc.get("industry") or "")[:100]
-    receipt.industry_lc = receipt.industry.casefold()[:100]
-    receipt.product_group = (calc.get("group") or "")[:100]
+    # v1.70.101 (T-69): категории позиций и отрасль чека — каскадом понимания чеков
+    from ..goods import service as goods_service
+    goods_service.classify_receipt(db, receipt)
     db.add(receipt)
     db.flush()
     unified.register_source(db, unified.REGISTRY, receipt, user,

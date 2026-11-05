@@ -201,6 +201,9 @@ res = {"version": app_version(),
        "docreq_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("doc_request")),
        "bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_")),
        "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
+       "goods_tables": sorted(t for t in inspect(engine).get_table_names() if t == "goods_memory"),
+       "goods_columns": sorted(c["name"] for c in inspect(engine).get_columns("receipt_items")
+                               if c["name"] in ("goods_category", "group_source", "group_score", "group_note")),
        "fingerprint_after_init": fingerprint()}
 with SessionLocal() as db:
     res["docs_after_init"] = db.query(UnifiedDocument).count()
@@ -697,11 +700,14 @@ def main() -> int:
               and up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"]
               and up.get("bank_tables") == ["bank_connections", "bank_operations", "bank_reimbursements",
                                             "bank_settings", "bank_statements"]
-              and up.get("clients_tables") == ["accountant_clients"],
+              and up.get("clients_tables") == ["accountant_clients"]
+              and up.get("goods_tables") == ["goods_memory"]
+              and up.get("goods_columns") == ["goods_category", "group_note", "group_score", "group_source"],
               "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links), "
               "2 таблицы первички (с v1.70.94), 3 таблицы «что нужно от клиента» (с v1.70.97) и 5 таблиц "
               "банковской выписки (с v1.70.98; bank_connections — с v1.70.99), клиенты бухгалтера "
-              "accountant_clients (с v1.70.100)")
+              "accountant_clients (с v1.70.100), память товаров goods_memory и 4 колонки категории "
+              "позиции в receipt_items (с v1.70.101)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

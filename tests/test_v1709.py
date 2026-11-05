@@ -103,7 +103,8 @@ class TestSettingsMenuStructure:
         # облаку по API с параметрами Keystone и кнопкой «Проверить
         # подключение» структурно повторяет st-checko, st-onec и
         # st-webhooks, поэтому раздел выбран integr, а не device или data.
-        assert len(with_sec) == 31, with_sec
+        # v1.70.101: карточек 32 — «Память товаров» st-goods в разделе «Проверка чеков и почта» (T-69).
+        assert len(with_sec) == 32, with_sec
         assert ("st-consent", "integr", "38") in with_sec
         assert ("st-adguard", "device", "49") in with_sec
         assert ("st-clients", "data", "14") in with_sec
@@ -123,7 +124,8 @@ class TestSettingsMenuStructure:
         # v1.70.51: integr 7 -> 8 — блок «Мониторинг OpenStack». Считаем по
         # app.js и osm.js вместе: разметку новой карточки рисует osm.js.
         # v1.70.100: device 5 -> 6 — «Заставка загрузки» (длительность задаёт администратор).
-        expect = {"data": 6, "checks": 6, "integr": 8, "personal": 6,
+        # v1.70.101: checks 6 -> 7 — «Память товаров» (исправления категорий, T-69).
+        expect = {"data": 6, "checks": 7, "integr": 8, "personal": 6,
                   "device": 6}
         js_all = self.settings_js()
         for sec, n in expect.items():

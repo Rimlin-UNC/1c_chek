@@ -83,6 +83,7 @@ def init_db() -> None:
     from .bank import models as _bank_models  # noqa: F401 — v1.70.98: банковская выписка (T-45)
     from .clients import models as _clients_models  # noqa: F401 — v1.70.100: клиенты бухгалтера (T-50)
     from .docreq import models as _docreq_models  # noqa: F401 — v1.70.97: что нужно от клиента
+    from .goods import models as _goods_models  # noqa: F401 — v1.70.101: память исправлений (T-69)
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
     from .primary import models as _primary_models  # noqa: F401 — v1.70.94: первичка (УПД)
     from .unified import models as _unified_models  # noqa: F401 — единый фискальный документ
@@ -294,6 +295,15 @@ def _ensure_schema() -> None:
              "ALTER TABLE receipt_items ADD COLUMN extra_json TEXT DEFAULT ''"),
             ("marking_present",
              "ALTER TABLE receipt_items ADD COLUMN marking_present BOOLEAN NULL"),
+            # v1.70.101 (T-69, ADR-31): категория позиции, источник, уверенность и причина
+            ("goods_category",
+             "ALTER TABLE receipt_items ADD COLUMN goods_category VARCHAR(40) DEFAULT ''"),
+            ("group_source",
+             "ALTER TABLE receipt_items ADD COLUMN group_source VARCHAR(20) DEFAULT ''"),
+            ("group_score",
+             "ALTER TABLE receipt_items ADD COLUMN group_score FLOAT NULL"),
+            ("group_note",
+             "ALTER TABLE receipt_items ADD COLUMN group_note VARCHAR(160) DEFAULT ''"),
         ],
         # v1.70.95 (T-61): источник документа первички — xml | pdf | scan | manual
         "primary_documents": [

@@ -26,18 +26,20 @@ def read(rel: str) -> str:
 
 
 class TestRelease:
+    """Выпуск 1.70.100 — исторические проверки (точные пины — в tests/test_v170101.py)."""
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
-        for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
-                    "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
-                    "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
     def test_updater_sees_three_digit_patch_as_newer(self):
         from app.services import updater
@@ -45,10 +47,11 @@ class TestRelease:
         assert updater._is_newer("1.70.99", VERSION) is False
         assert updater._is_newer(VERSION, "1.70.80") is True
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-05"
-        entry = md.split("\n## [1.70.99]", 1)[0]
+        head = f"## [{VERSION}] - 2026-11-05"
+        assert head in md
+        entry = head + md.split(head, 1)[1].split("\n## [", 1)[0]
         assert len(entry) <= 4000, len(entry)
         for needle in ("Рабочее место аутсорсера", "резервная копия", "поверх 1.70.95–1.70.99 не меняются — шаг pip "
                        "пропускается", "откатится само", "новая таблица accountant_clients", "48 из 48", "1.70.82–1.70.99",
@@ -57,48 +60,46 @@ class TestRelease:
                        "0 — без заставки", "T-69", "T-70", "T-63", "T-64"):
             assert needle in entry, needle
 
-    def test_whats_new_first(self):
+    def test_whats_new_has_entry(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 2
         for needle in ("Все клиенты в одном окне", "«Клиенты»", "без '\n        + 'перевхода",
                        "Пакет за месяц и своя длительность заставки", "от 0 до 60 секунд, по умолчанию 5"):
             assert needle in block, needle
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — «Клиенты», пакет для других учётных систем и длительность заставки")
-        entry = journal.split("\n## v1.70.99", 1)[0]
+        head = f"## v{VERSION} — «Клиенты», пакет для других учётных систем и длительность заставки"
+        assert head in journal
+        entry = journal.split(head, 1)[1].split("\n## v", 1)[0]
         for needle in ("«🏢 Все клиенты в\n  одном окне»", "«Компания · своя»", "«🏢 Клиенты»", "«Выбрано клиентов: N»",
                        "«📦 Пакет для других учётных систем»", "«⬇ Скачать пакет»", "«🎬 Заставка загрузки»",
                        "«▶ Показать»", "USER_GUIDE §7.7 и §7.8", "две карточки"):
             assert needle in entry, needle
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == [
-            "Заставка загрузки", "Инструкция", "Настройки", "Печать и выгрузка в 1С", "Рабочее место аутсорсера",
-            "Роли и доступ"]
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 100) for v in reg.values())
+        for name in ("Заставка загрузки", "Инструкция", "Настройки", "Печать и выгрузка в 1С", "Рабочее место аутсорсера",
+                     "Роли и доступ"):
+            assert self._ver(reg[name]) >= self._ver(VERSION), name
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
         before = {name: ver for name, ver in reg.items() if name != "Рабочее место аутсорсера"}
-        assert {"name": "Рабочее место аутсорсера", "from": "", "to": VERSION} in updater.diff_blocks(before, reg)
+        assert {"name": "Рабочее место аутсорсера", "from": "", "to": reg["Рабочее место аутсорсера"]} in \
+            updater.diff_blocks(before, reg)
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (05.11.2026)" in readme
-        assert "Последний выпуск — v1.70.99" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.99.**" in readme
-        assert "В базе появится 1 новая таблица, прежние" in readme
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSchema:
     def test_clients_table_without_foreign_keys(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 61
+        assert declared >= 61                                                    # v1.70.101: +goods_memory
         from app.clients.models import AccountantClient
         table = AccountantClient.__table__
         assert table.name == "accountant_clients" and not table.foreign_keys                     # ADR-09
@@ -109,10 +110,12 @@ class TestSchema:
         assert "from app.clients import models as _clients" in read("tests/test_migration_compat_postgres.py")
         rehearsal = read("qa/upgrade_rehearsal.py")
         assert '"clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),' \
-            in rehearsal and 'and up.get("clients_tables") == ["accountant_clients"],' in rehearsal
+            in rehearsal and 'and up.get("clients_tables") == ["accountant_clients"]' in rehearsal
         db = read("docs/DATABASE.md")
-        assert "61 объявление `__tablename__`" in db and "| Клиенты бухгалтера (v1.70.100) |" in db
-        assert "все 61 таблица приложения" in db and "с 1.70.100 — `accountant_clients`" in db
+        m = re.search(r"(\d+) объявлени\w* `__tablename__`", db)                # v1.70.101: число растёт
+        assert m and int(m.group(1)) >= 61 and "| Клиенты бухгалтера (v1.70.100) |" in db
+        m = re.search(r"все (\d+) таблиц\w* приложения", db)
+        assert m and int(m.group(1)) >= 61 and "с 1.70.100 — `accountant_clients`" in db
 
 
 class TestWiring:
@@ -245,17 +248,21 @@ class TestDocsAndKb:
             assert row["Статус"] == "done" and row["Задача"].endswith(f"выпущено в {VERSION}"), tid
             assert row["Issue/PR"] == f"https://github.com/Rimlin-UNC/1c_chek/issues/{issue}", tid
         assert "ADR-30" in tasks["T-50"]["Связанные ADR"] and "ADR-30" in tasks["T-68"]["Связанные ADR"]
-        for tid, issue in (("T-69", 54), ("T-70", 55), ("T-71", 56)):
-            assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+        for tid, issue in (("T-69", 54), ("T-70", 55), ("T-71", 56)):                # v1.70.101: T-69, T-70 — done
+            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         assert tasks["T-72"]["Статус"] == "done" and tasks["T-72"]["Задача"].endswith(f"выпущено в {VERSION}")
-        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.99" in tasks["T-01"]["Блокер"]
+        m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.101: не старше
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         for tid in ("T-41", "T-42", "T-43", "T-44", "T-45", "T-46", "T-47", "T-48", "T-49"):
             assert tasks[tid]["Источник"].endswith("docs/kb/10_research.md"), tid
         roadmap = read("docs/kb/02_roadmap.md")
         assert "**Готово 05.11.2026 (выпуск v1.70.100):** [#35](https://github.com/Rimlin-UNC/1c_chek/issues/35) T-50" \
             in roadmap
-        assert "T-01 — установить на рабочий сервер v1.70.100 (включает 1.70.82–1.70.99; P0)" in roadmap
+        m = re.search(r"T-01 — установить на рабочий сервер v([\d.]+) ", roadmap)  # v1.70.101: не старше
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
-        assert ledger[-2]["Версия"] == "1.70.99" and ledger[-2]["Откат на неё"] == "можно"
-        assert all("," not in v for v in ledger[-1].values()), "в полях реестра нет запятых"
+        versions = [r["Версия"] for r in ledger]
+        row = ledger[versions.index(VERSION)]
+        assert row["Опора репетиции"] == "да"
+        assert ledger[versions.index("1.70.99")]["Откат на неё"] == "можно"
+        assert all("," not in v for v in row.values()), "в полях реестра нет запятых"

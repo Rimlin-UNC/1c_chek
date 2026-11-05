@@ -163,6 +163,18 @@ describe('товары', () => {
     expect(html).toContain('Прочее');
   });
 
+  it('v1.70.101: читаемое название, строка «в чеке» и категория с причиной', () => {
+    const view = fullCardItemsHTML({ items: [{ ...doc.items[0], name: 'ЦЕМЕНТ М500 50КГ',
+      display_name: 'Цемент М500, 50 кг', category_title: 'Стройматериалы', category_icon: '🧱',
+      category_source_title: 'словарь', category_note: 'по слову «цемент»',
+      group: 'Строительные материалы и инструмент' }] });
+    expect(view).toContain('<th>Группа</th>');
+    expect(view).toContain('Цемент М500, 50 кг');
+    expect(view).toContain('в чеке: ЦЕМЕНТ М500 50КГ');
+    expect(view).toContain('🧱 Стройматериалы · словарь: по слову «цемент»');
+    expect(view).toContain('<td>Строительные материалы и инструмент</td>');
+  });
+
   it('маркировка, поставщик и отраслевой реквизит видны', () => {
     expect(html).toContain('04601234567890');
     expect(html).toContain('ООО Поставщик');

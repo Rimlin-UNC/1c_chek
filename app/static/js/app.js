@@ -22,7 +22,8 @@ import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRow
 import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
 import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } from './clients.js';   // v1.70.100: рабочее место аутсорсера (T-50), пакет (T-68)
-import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';   // v1.70.98: банковская выписка (T-45);
+import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';
+import { goodsItemsHTML, goodsBindItems, goodsArticleHintHTML, goodsSummaryHTML, goodsMemoryHTML, goodsBindMemory, goodsProfileHTML, goodsBindProfile } from './goods.js';   // v1.70.101: понимание чеков (T-69)   // v1.70.98: банковская выписка (T-45);
                                                // v1.70.99: банк по API в карточке компании (ADR-29)
 
 // --------------------------------------------------------------------------
@@ -6452,6 +6453,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.101': [
+    { icon: '🏷', title: 'Чеки читаются по-человечески',
+      text: 'Позиции — без кодов и капса: «Цемент М500 Д0, 50 кг», строка из ФНС — по наведению. У каждой позиции '
+        + 'категория и причина: словарь, модель на своём сервере или другие товары чека. Нажмите на категорию, '
+        + 'чтобы поменять, — программа запомнит товар для компании и поправит такие же позиции.' },
+    { icon: '💡', title: 'Статья по товарам и профиль компании',
+      text: 'Над позициями — сводка по категориям и подсказка статьи расходов с кнопкой «Подставить». Профиль '
+        + 'компании в политике расходов задаёт статьи и запреты по умолчанию; догадка ниже 90 % нарушением не '
+        + 'считается. Картинки — у всех разделов инструкции.' },
+  ],
   '1.70.100': [
     { icon: '🏢', title: 'Все клиенты в одном окне',
       text: 'Новый экран «Клиенты»: по каждой компании — срок сдачи, что нужно от клиента, ошибки ФНС и УПД, '
@@ -9922,12 +9933,10 @@ async function receiptDrawer(id) {
           <input id="d-assignee" value="${esc(r.assignee || '')}" placeholder="Иванов А.А."></label>
         <label class="field"><span>Комментарий</span>
           <input id="d-comment" value="${esc(r.comment || '')}" placeholder="например: канцтовары для офиса"></label>
-      </div>` : ''}
+      </div>
+      ${(r.category || '').trim() ? '' : goodsArticleHintHTML(r.goods, true)}` : ''}
       ${r.items.length || !fillItemsTable(r) ? `<div class="card-title">Позиции чека (${r.items.length})</div>` : ''}
-      ${r.items.length ? `<table class="data" style="min-width:0"><thead><tr><th>Наименование</th><th>Кол.</th><th>Цена</th><th>Сумма</th></tr></thead>
-        <tbody>${r.items.map(it => `<tr style="cursor:default">
-          <td>${esc(it.name)}</td><td>${it.quantity}</td>
-          <td class="cell-sum">${fmtSum(it.price)}</td><td class="cell-sum">${fmtSum(it.total)}</td></tr>`).join('')}</tbody></table>`
+      ${r.items.length ? `<div class="gd-wrap">${goodsItemsHTML(r.items, { editable: acc, goods: r.goods })}</div>`
         : (fillItemsTable(r) || emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)'))}
       <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
         <button type="button" class="btn btn-sm" id="d-fullcard">📄 Полная информация по чеку</button>
@@ -9959,6 +9968,23 @@ async function receiptDrawer(id) {
   };
   const fullBtn = drawer.querySelector('#d-fullcard');
   if (fullBtn) fullBtn.onclick = () => receiptFullCard(id);
+  // v1.70.101 (T-69): категория позиции — выбор бухгалтера; подсказка статьи по товарам чека
+  if (acc) goodsBindItems(drawer.querySelector('.gd-wrap'), r.items, { onSaved: async () => {
+    // сводка по категориям — по свежим данным (исправление могло затронуть и другие позиции)
+    try {
+      const fresh = await api.get('/api/v1/receipts/' + id);
+      const sum = drawer.querySelector('.gd-summary');
+      if (sum) sum.outerHTML = goodsSummaryHTML(fresh.goods);
+    } catch (e) { void e; }
+  } });
+  const applyArticle = drawer.querySelector('#gd-apply-article');
+  if (applyArticle) applyArticle.onclick = async () => {
+    try {
+      await api.patch('/api/v1/receipts/' + id, { category: applyArticle.dataset.article });
+      toast(`Статья «${applyArticle.dataset.article}» подставлена`, 'ok', '💡');
+      applyArticle.closest('.gd-hint').remove();
+    } catch (e) { toast(e.message, 'err'); }
+  };
   const save = drawer.querySelector('#d-save');
   if (save) save.onclick = async () => {
     try {
@@ -10661,6 +10687,12 @@ async function viewSettings(container, alive = routeGuard()) {
   if (isAdmin()) { try { osStatus = await api.get('/api/v1/openstack/status'); } catch {} }
   // v1.62.0: политика расходов — бухгалтер и админ
   if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
+  // v1.70.101 (T-69): память исправлений категорий товаров — по компании политики
+  let gmem = null;
+  if (isAccountant()) {
+    const q = isAdmin() && pol && pol.company_id ? `?company_id=${encodeURIComponent(pol.company_id)}` : '';
+    try { gmem = await api.get('/api/v1/goods/memory' + q); } catch {}
+  }
   if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
   // v1.63.0: правила поставщиков — бухгалтер и админ
   if (isAccountant()) { try { mrules = await api.get('/api/v1/receipts/merchant-rules'); } catch {} }
@@ -10790,16 +10822,21 @@ async function viewSettings(container, alive = routeGuard()) {
           <input id="pol-cats" placeholder="Алкоголь, Табак, Подарки" value="${esc((pol.forbidden_categories || []).join(', '))}">
           <span class="form-hint">Регистр не важен. Статья указывается в чеке
           (поле «Статья расходов»). Чеков с нарушениями сейчас: <b>${pol.flagged || 0}</b>.</span></label>
+        ${goodsProfileHTML(pol, isAdmin())}
         <div class="field" style="max-width:560px;margin-top:8px"><span>Запрещённые товары в позициях чека</span>
           <div class="pol-goods" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px">
           ${(pol.goods_groups || []).map((g) => `<label style="display:flex;gap:6px;align-items:center;font-size:13px">
             <input type="checkbox" class="pol-good" value="${esc(g)}" style="width:auto" ${(pol.forbidden_goods || []).includes(g) ? 'checked' : ''}>${esc(g)}</label>`).join('')}
           </div>
-          <span class="form-hint">Группа позиции — по наименованию (стройматериалы распознаются первыми). Позиции, отмеченные
+          <span class="form-hint">Категория позиции — каскадом: память компании, признак ФНС, словарь, модель, другие товары
+          чека и продавец. Догадка с уверенностью ниже 90 % нарушением не считается. Позиции, отмеченные
           сотрудником как личные, нарушением не считаются.</span></div>
         <button type="button" class="btn btn-primary btn-sm" id="pol-save" style="margin-top:10px">💾 Сохранить политику</button>
         <div id="pol-msg" class="form-hint" style="margin-top:6px"></div>
       </div>` : ''}
+
+      ${isAccountant() && gmem ? `
+      <div class="glass card" id="st-goods" data-sec="checks" style="order:25">${goodsMemoryHTML(gmem.items, true)}</div>` : ''}
 
       ${isAccountant() && mrules ? `
       <div class="glass card" id="st-mrules" data-sec="checks" style="order:25">
@@ -12700,6 +12737,12 @@ async function viewSettings(container, alive = routeGuard()) {
           .map((s) => s.trim()).filter(Boolean),
         // v1.70.93 (T-43): запрещённые группы товаров
         forbidden_goods: [...document.querySelectorAll('.pol-good')].filter((x) => x.checked).map((x) => x.value) };
+      // v1.70.101 (T-69): профиль компании; пока своей настройки нет — запреты остаются «по профилю»
+      const prof = $('#pol-profile');
+      const profChanged = Boolean(prof && prof.value !== pol.goods_profile);
+      if (prof) body.goods_profile = prof.value;
+      const sameGoods = JSON.stringify([...body.forbidden_goods].sort()) === JSON.stringify([...(pol.forbidden_goods || [])].sort());
+      if (!pol.goods_own && sameGoods) delete body.forbidden_goods;
       const sel = $('#pol-company');
       if (sel && sel.value) body.company_id = sel.value;
       try {
@@ -12708,10 +12751,26 @@ async function viewSettings(container, alive = routeGuard()) {
         if (m) m.textContent = (r.message || 'Сохранено')
           + (r.flagged ? ` · чеков с нарушениями: ${r.flagged}` : '');
         toast(r.message || 'Политика сохранена', 'ok', '⚖️');
+        if (profChanged) viewSettings(container);
       } catch (e) { toast(e.message, 'err'); }
     };
     const polSel = $('#pol-company');
     if (polSel) polSel.onchange = () => { viewSettings(container); };
+    goodsBindProfile(document.querySelector('#st-policy'), pol);
+    const polReset = $('#pol-goods-reset');
+    if (polReset) polReset.onclick = async () => {
+      const sel = $('#pol-company');
+      try {
+        const r = await api.put('/api/v1/settings/policy', { reset_goods: true, company_id: (sel && sel.value) || pol.company_id });
+        toast(r.message || 'Запреты — снова по профилю', 'ok', '⚖️');
+        viewSettings(container);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+  // v1.70.101 (T-69): «Память товаров» — забыть исправление
+  if (gmem) {
+    goodsBindMemory(document.querySelector('#st-goods'), {
+      companyId: isAdmin() && pol ? pol.company_id : '', onChange: () => viewSettings(container) });
   }
 
   // v1.63.0: правила поставщиков — «к старым» и удаление

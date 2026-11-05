@@ -265,6 +265,20 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "банк подключён по API", \
             f"компания: „{d.get('company', '—')}“, банк: {d.get('bank', '—')}, способ: {d.get('method', '—')}, " \
             f"счетов: {d.get('accounts', 0)}"
+    # v1.70.101 (T-69, ADR-31): понимание чеков — категория позиции и память товаров
+    if action == "goods_category_set":
+        from . import goods as _goods
+        before = _goods.category(d.get("before") or "").title if d.get("before") else "не разобрана"
+        tail = ""
+        if d.get("remembered"):
+            tail = "; запомнено для компании" + (f", ещё {d.get('applied', 0)} таких же позиций"
+                                                 if d.get("applied") else "")
+        return "изменена категория позиции чека", \
+            f"было: {before}, стало: {_goods.category(d.get('after') or '').title}{tail}"
+    if action == "goods_memory_forget":
+        from . import goods as _goods
+        return "забыто исправление категории товара", \
+            f"товар: „{d.get('name_key', '—')}“, категория: {_goods.category(d.get('category') or '').title}"
     # v1.70.100: длительность заставки загрузки задаёт администратор
     if action == "splash_settings_updated":
         def _sec(v: Any) -> str:

@@ -1662,6 +1662,8 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 /* v1.55.1: телефон — поля 16px (iOS не зумит при вводе), кнопки во всю
    ширину, компактные отступы: форма входа и регистрации всегда видна */
 @media (max-width: 520px) {
+  /* v1.70.101 (T-69): позиции чека — цена за единицу видна в «Полной информации», здесь важнее сумма */
+  .gd-table .gd-price { display: none; }
   .login-screen { padding: 12px; }
   .login-card { padding: 24px 16px 16px; }
   .login-logo { margin-bottom: 18px; }
@@ -2300,3 +2302,41 @@ label.field[hidden] { display: none; }
 .splash-set input[type="range"] { flex: 1 1 220px; accent-color: var(--accent); }
 .splash-set .field input { width: 96px; }
 .splash-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+/* v1.70.101 (T-69): понимание чеков — читаемые позиции, категории, память и профиль */
+.gd-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
+.gd-sum-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent-text); font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+table.data.gd-table { min-width: 0; }   /* перебивает table.data { min-width: 720px } в узкой карточке */
+.gd-row { cursor: default; }
+.gd-name { font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.gd-name[title] { text-decoration: underline dotted var(--border-strong); text-underline-offset: 3px; }
+.gd-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.gd-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text-dim); font: inherit; font-size: 12px;
+  white-space: nowrap;
+}
+.gd-edit-btn { cursor: pointer; transition: border-color var(--speed), color var(--speed); }
+.gd-edit-btn:hover { border-color: var(--hover-border); color: var(--text); }
+.gd-chip.gd-unsure { border-style: dashed; color: var(--warn-text); }
+.gd-chip.gd-src-manual, .gd-chip.gd-src-memory { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok-text); }
+.gd-chip.gd-src-none { color: var(--text-faint); }
+.gd-pack { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.gd-editor { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.gd-pick { max-width: 260px; font-size: 13px; }
+.gd-remember { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.gd-remember input { width: auto; }
+.gd-note { margin: 6px 0 12px; }
+.gd-hint {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: -6px 0 14px; padding: 8px 12px;
+  border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-text);
+}
+.gd-intro { margin-bottom: 8px; max-width: 70ch; }
+.gd-mem td { vertical-align: top; }
+.gd-forget { white-space: nowrap; }
+.gd-empty { color: var(--text-dim); }
+.gd-profile { max-width: 560px; margin-top: 10px; }
+.gd-own { max-width: 560px; margin: 4px 0 2px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

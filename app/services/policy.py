@@ -39,16 +39,30 @@ def goods_groups() -> list[str]:
     return [group for _, group, _ in goods.RULES]
 
 
+def default_goods(db: Session, company_id: str | None) -> list[str]:
+    """Запреты по умолчанию — из отраслевого профиля компании (v1.70.101, T-69).
+
+    Профиль «Общий» (не выбран) — прежние DEFAULT_FORBIDDEN_GOODS; у общепита продукты — сырьё кухни.
+    """
+    from ..goods import profiles
+    return list(profiles.default_forbidden(profiles.get(db, company_id)))
+
+
 def forbidden_goods(db: Session, company_id: str | None) -> list[str]:
-    """Запрещённые группы товаров компании (нет своей настройки — по умолчанию)."""
+    """Запрещённые группы товаров компании (нет своей настройки — по профилю компании)."""
     row = db.get(AppSetting, GOODS_KEY + company_id) if company_id else None
     if row is None:
-        return list(DEFAULT_FORBIDDEN_GOODS)
+        return default_goods(db, company_id) if company_id else list(DEFAULT_FORBIDDEN_GOODS)
     try:
         value = json.loads(row.value or "[]")
     except ValueError:
-        return list(DEFAULT_FORBIDDEN_GOODS)
+        return default_goods(db, company_id)
     return [g for g in value if isinstance(g, str)]
+
+
+def has_own_goods(db: Session, company_id: str | None) -> bool:
+    """У компании своя настройка запрещённых групп (а не профиль по умолчанию)."""
+    return bool(company_id) and db.get(AppSetting, GOODS_KEY + company_id) is not None
 
 
 def set_forbidden_goods(db: Session, company_id: str, groups: list[str]) -> list[str]:
@@ -60,8 +74,15 @@ def set_forbidden_goods(db: Session, company_id: str, groups: list[str]) -> list
 
 
 def item_group(item) -> str:
-    """Группа товара позиции: сохранённая или по наименованию."""
+    """Группа товара позиции для политики: сохранённая или по наименованию.
+
+    v1.70.101 (T-69): догадка модели или контекста ниже порога уверенности нарушением не считается —
+    нарушение только по уверенным признакам (память, ФНС, словарь, ручная правка).
+    """
     if getattr(item, "product_group", ""):
+        from ..goods.view import is_certain
+        if not is_certain(getattr(item, "group_source", "") or "", getattr(item, "group_score", None)):
+            return ""
         return item.product_group
     from . import goods
     return goods.classify_name(item.name or "", getattr(item, "product_type", None))[1]
@@ -168,6 +189,7 @@ def _goods_violations(db: Session, receipts) -> set[str]:
     Один запрос нужных колонок позиций на 500 чеков; группа — сохранённая или по
     наименованию, одинаковые наименования классифицируются один раз.
     """
+    from ..goods.view import is_certain
     from ..models import ReceiptItem
     from . import goods as goods_service
     by_company: dict[str, list[Receipt]] = defaultdict(list)
@@ -184,10 +206,13 @@ def _goods_violations(db: Session, receipts) -> set[str]:
         ids = list(personal)
         totals: dict[str, float] = defaultdict(float)
         for i in range(0, len(ids), 500):
-            for rid, name, group, ptype, total in (
+            for rid, name, group, ptype, total, source, score in (
                     db.query(ReceiptItem.receipt_id, ReceiptItem.name, ReceiptItem.product_group,
-                             ReceiptItem.product_type, ReceiptItem.total)
+                             ReceiptItem.product_type, ReceiptItem.total, ReceiptItem.group_source,
+                             ReceiptItem.group_score)
                     .filter(ReceiptItem.receipt_id.in_(ids[i:i + 500]))):
+                if group and not is_certain(source or "", score):
+                    continue                     # v1.70.101: неуверенная догадка — не нарушение
                 if not group:
                     group = known.get((name, ptype))
                     if group is None:

@@ -40,7 +40,9 @@ class El {
   click() {}
   appendChild(c) { this.children.push(c); return c; }
   remove() {}
-  addEventListener() {}
+  // v1.70.101: обработчик запоминается — сценарий может вызвать его сам (делегирование кликов)
+  addEventListener(type, fn) { (this._ev = this._ev || {})[type] = fn; }
+  contains() { return true; }
   focus() {}
   querySelector(sel) {
     if (sel === '[data-close]') return this._dc || (this._dc = new El('button'));
@@ -289,6 +291,48 @@ sandbox.fetch = async (url, opts) => {
                     primary: { errors: 0, to_export: 0 },
                     docreq: { open: 0, overdue: 0, escalated: 0, deadline: '2026-11-05T18:00:00+03:00', days_left: 2 },
                     bank: { open: 0, status: 'none', last_sync_at: '', last_error: '' } }] };
+  }
+  // v1.70.101 (T-69): понимание чеков — позиции с категориями, справочник, исправление, профиль и память
+  if (String(url).endsWith('/api/v1/receipts/r-goods')) {
+    specialPayload = true;
+    payload = { id: 'r-goods', fn: '9999078900001234', fd: '1201', fp: '3399001122', total_sum: 1740, operation: 1,
+                receipt_date: '2026-11-04T12:10:00', status: 'verified', fns_status: 'valid', exported: false,
+                created_by_id: 'u1', qr_data: 't=20261104T1210&s=1740.00', category: '', merchant_name: 'Строймаркет',
+                items: [
+                  { id: 'i1', name: 'ЦЕМЕНТ М500 Д0 50КГ', display_name: 'Цемент М500 Д0, 50 кг', pack: '50 кг',
+                    quantity: 2, price: 620, total: 1240, category: 'build_base', category_title: 'Стройматериалы',
+                    category_icon: '🏗', category_source: 'dictionary', category_source_title: 'словарь',
+                    category_note: 'по слову «цемент»', category_certain: true },
+                  { id: 'i2', name: 'Смесь Абвгд 25кг', display_name: 'Смесь Абвгд, 25 кг', pack: '25 кг', quantity: 1,
+                    price: 500, total: 500, category: 'build_base', category_title: 'Стройматериалы', category_icon: '🏗',
+                    category_source: 'context', category_source_title: 'по чеку и продавцу',
+                    category_note: 'по другим товарам чека', category_certain: false }],
+                goods: { categories: [{ category: 'build_base', title: 'Стройматериалы', icon: '🏗', count: 2, sum: 1740 }],
+                         article_hint: { article: 'Материалы', share: 1, reason: 'по товарам чека: 100 % суммы' } } };
+  }
+  if (String(url).endsWith('/api/v1/goods/catalog')) {
+    specialPayload = true;
+    payload = { categories: [{ code: 'build_base', title: 'Стройматериалы', group: 'Строительные материалы и инструмент', icon: '🏗' },
+                             { code: 'build_finish', title: 'Отделочные материалы', group: 'Строительные материалы и инструмент', icon: '🎨' }] };
+  }
+  if (String(url).includes('/api/v1/goods/items/') && (opts && opts.method) === 'PUT') {
+    specialPayload = true;
+    payload = { ok: true, message: '«Смесь Абвгд, 25 кг» — Отделочные материалы; запомнено для компании', remembered: true,
+                applied: 0, item: { category: 'build_finish', category_title: 'Отделочные материалы', category_icon: '🎨',
+                                    category_source: 'manual', category_certain: true } };
+  }
+  if (String(url).startsWith('/api/v1/settings/policy')) {
+    specialPayload = true;
+    payload = { company_id: 'c1', company_name: 'Ромашка', limit_per_check: null, limit_per_month: null, forbidden_categories: [],
+                forbidden_goods: ['Алкогольные напитки'], goods_groups: ['Алкогольные напитки', 'Продукты питания'],
+                goods_profile: 'construction', goods_own: false, flagged: 0,
+                goods_profiles: [{ code: 'general', title: 'Общий', hint: 'как раньше', forbidden: [] },
+                                 { code: 'construction', title: 'Стройка и ремонт', hint: 'стройматериалы — «Материалы»', forbidden: [] }] };
+  }
+  if (String(url).startsWith('/api/v1/goods/memory')) {
+    specialPayload = true;
+    payload = { company_id: 'c1', items: [{ id: 'm1', name_key: 'смесь абвгд', sample_name: 'Смесь Абвгд, 25 кг',
+                                            category: 'build_finish', category_title: 'Отделочные материалы', icon: '🎨', hits: 2 }] };
   }
   // v1.70.96: первичка — проверка выгрузки в 1С (T-60)
   if (String(url).endsWith('/api/v1/primary/export/check')) {
@@ -1117,6 +1161,41 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     await tickP(80);
     ok(vcP.innerHTML.includes('📦 Пакет для других учётных систем') && vcP.innerHTML.includes('id="pkg-download"'),
        'v1.70.100: на экране выгрузки — пакет JSON, CSV и УПД за месяц');
+    // v1.70.101 (T-69): карточка чека — читаемые позиции, чипы категорий, сводка и подсказка статьи
+    const before101 = document.body.children.length;
+    await sandbox.receiptDrawer('r-goods');
+    await tickP(40);
+    const drawer101 = document.body.children[document.body.children.length - 1];
+    const dh = (document.body.children.length > before101 && drawer101.innerHTML) || '';
+    ok(dh.includes('Цемент М500 Д0, 50 кг') && dh.includes('title="В чеке: ЦЕМЕНТ М500 Д0 50КГ"')
+       && dh.includes('data-gd-item="i1"') && dh.includes('🏗 Стройматериалы · 2 · ') && dh.includes('Стройматериалы ?')
+       && dh.includes('data-article="Материалы"'),
+       'v1.70.101: позиции чека — читаемые названия и чипы категорий');
+    const wrap101 = drawer101.querySelector('.gd-wrap');
+    const slot101 = new El('span');
+    const fromG = apiLog.length;
+    await wrap101._ev.click({ target: { closest: (sel) => (sel === '.gd-edit-btn'
+      ? { dataset: { gdItem: 'i2' }, parentElement: slot101 } : null) } });
+    const pick101 = slot101.querySelector('.gd-pick');
+    slot101.querySelector('.gd-remember-box').checked = true;          // в живом DOM галочка включена разметкой
+    pick101.value = 'build_finish';
+    await pick101.onchange();
+    await tickP(20);
+    const put101 = apiLog.slice(fromG).find((c) => c.method === 'PUT' && c.url === '/api/v1/goods/items/i2');
+    ok(put101 && put101.body.category === 'build_finish' && put101.body.remember === true
+       && slot101.innerHTML.includes('Отделочные материалы'),
+       'v1.70.101: бухгалтер меняет категорию — запрос с «запомнить»');
+    if (sandbox.receiptDrawer._close) sandbox.receiptDrawer._close();
+    // v1.70.101: «Настройки» — профиль компании в политике и карточка «Память товаров»
+    const fromS = apiLog.length;
+    sandbox.location.hash = '#/settings';
+    sandbox.route();
+    await tickP(120);
+    const sh = vcP.innerHTML;
+    ok(apiLog.slice(fromS).some((c) => c.url.startsWith('/api/v1/goods/memory'))
+       && sh.includes('Профиль компании') && sh.includes('Стройка и ремонт') && sh.includes('Память товаров')
+       && sh.includes('ключ: смесь абвгд'),
+       'v1.70.101: в настройках — профиль компании и «Память товаров»');
     vcP.isConnected = undefined;
   }
 

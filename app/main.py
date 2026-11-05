@@ -26,6 +26,7 @@ from .database import init_db
 from .bank import router as bank_router
 from .clients import router as clients_router
 from .exportpkg import router as exportpkg_router
+from .goods import router as goods_router
 from .docreq import router as docreq_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
@@ -474,6 +475,7 @@ app.include_router(docreq_router.router)  # v1.70.97: что нужно от к�
 app.include_router(bank_router.router)  # v1.70.98: банковская выписка (T-45)
 app.include_router(clients_router.router)  # v1.70.100: рабочее место аутсорсера (T-50)
 app.include_router(exportpkg_router.router)  # v1.70.100: пакет для других учётных систем (T-68)
+app.include_router(goods_router.router)  # v1.70.101: понимание чеков (T-69)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)
