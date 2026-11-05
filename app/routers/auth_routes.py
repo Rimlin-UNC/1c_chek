@@ -230,6 +230,12 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
         c = db.get(Company, user.company_id)
         if c:
             d["company_inn"] = c.inn or ""
+    # v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер — компании для переключателя клиента; company_id
+    # выше — активная компания (выбранный клиент), home_company_id — своя
+    if user.role == "accountant":
+        from ..clients import service as clients
+        d["home_company_id"] = clients.home_company_id(user)
+        d["clients"] = clients.clients_of(db, user)
     # v1.18.0: режим просмотра — клиенту нужно знать, чьими глазами смотрят
     if token:
         admin_id = act_admin_id(decode_token(token))

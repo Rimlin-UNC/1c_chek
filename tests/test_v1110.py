@@ -108,7 +108,8 @@ class TestIsolation:
                             headers=ha).status_code == 404
         assert client.delete(f"/api/v1/receipts/{rb['id']}", headers=ha).status_code == 404
         # админ видит обе компании
-        adm = client.get("/api/v1/receipts", headers=hdr).json()["items"]
+        # v1.70.100: адресно по ids — в общей базе воркера чеков с поздними датами больше страницы
+        adm = client.get(f"/api/v1/receipts?ids={ra['id']},{rb['id']}", headers=hdr).json()["items"]
         assert {ra["id"], rb["id"]} <= {x["id"] for x in adm}
         # админ с фильтром — только одну
         admf = client.get(f"/api/v1/receipts?company_id={ca['id']}",

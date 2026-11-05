@@ -265,6 +265,23 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "банк подключён по API", \
             f"компания: „{d.get('company', '—')}“, банк: {d.get('bank', '—')}, способ: {d.get('method', '—')}, " \
             f"счетов: {d.get('accounts', 0)}"
+    # v1.70.100: длительность заставки загрузки задаёт администратор
+    if action == "splash_settings_updated":
+        def _sec(v: Any) -> str:
+            return "без заставки" if str(v) == "0" else f"{v} с"
+        return "изменена длительность заставки загрузки", \
+            f"было: {_sec(d.get('before', '—'))}, стало: {_sec(d.get('seconds', '—'))}"
+    # v1.70.100 (T-68): пакет для других учётных систем — JSON, CSV и УПД за месяц
+    if action == "export_package":
+        return "выгружен пакет для других учётных систем", \
+            f"компания: „{d.get('company', '—')}“, месяц: {d.get('period', '—')}, чеков: {d.get('receipts', 0)}, " \
+            f"документов: {d.get('primary_documents', 0)}, файлов УПД: {d.get('upd_files', 0)}, " \
+            f"банковских операций: {d.get('bank_operations', 0)}"
+    # v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — клиентов бухгалтеру назначает администратор
+    if action == "clients_access_set":
+        return "назначены клиенты бухгалтера", \
+            f"бухгалтер: „{d.get('username', '—')}“, клиентов: {d.get('total', 0)} " \
+            f"(добавлено {d.get('added', 0)}, снято {d.get('removed', 0)})"
     if action == "bank_connection_removed":
         return "банк отключён", f"компания: „{d.get('company', '—')}“"
     if action == "bank_synced":

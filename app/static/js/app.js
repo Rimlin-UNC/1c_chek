@@ -8,7 +8,7 @@
 // Регистрация — только по приглашению администратора, роль в приглашении.
 // ======================================================================
 
-import { api, getToken, setToken, clearToken } from './api.js';
+import { api, getToken, setToken, clearToken, setClient } from './api.js';
 import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, openModal, animateNumber } from './ui.js';
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
@@ -21,6 +21,7 @@ import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflicts
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
 import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
+import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } from './clients.js';   // v1.70.100: рабочее место аутсорсера (T-50), пакет (T-68)
 import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';   // v1.70.98: банковская выписка (T-45);
                                                // v1.70.99: банк по API в карточке компании (ADR-29)
 
@@ -71,6 +72,7 @@ const VIEW_TITLES = {
   primary: 'Первичка',                 // v1.70.94: электронные УПД и счета-фактуры (T-53)
   docreq: 'Что нужно от клиента',      // v1.70.97: недостающие документы и напоминания (T-58)
   bank: 'Банк: выписка',               // v1.70.98: платежи без документов и чеки к возмещению (T-45)
+  clients: 'Клиенты',                  // v1.70.100: все компании бухгалтера в одном окне (T-50)
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -115,10 +117,10 @@ const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
                         'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts',
-                        'primary', 'docreq', 'bank', 'settings'],
+                        'primary', 'docreq', 'bank', 'clients', 'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'supabase', 'primary', 'docreq', 'bank', 'settings'],
+                        'poolpick', 'supabase', 'primary', 'docreq', 'bank', 'clients', 'settings'],
                 secs: ['checks', 'personal'] },
   manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
                 secs: ['personal'] },
@@ -145,6 +147,10 @@ async function loadAppVersion() {
     const els = [$('#brand-version'), $('#footer-version')];
     els.forEach(el => { if (el) el.textContent = 'v' + about.version; });
     if (window.ymSplash) window.ymSplash.setVersion(about.version);   // v1.70.98: версия с сервера
+    // v1.70.100: длительность заставки задаёт администратор — запоминается для следующих загрузок
+    if (window.ymSplash && window.ymSplash.setDuration && about.splash_seconds !== undefined) {
+      window.ymSplash.setDuration(about.splash_seconds);
+    }
   } catch { /* версия не критична */ }
 }
 
@@ -3319,11 +3325,17 @@ function enterApp() {
     try { localStorage.setItem('ymaster-company', bankBack.company); } catch { /* приватный режим */ }
   }
   if (isAdmin()) initCompanyFilter();          // v1.11.0: селектор пространства
+  if (state.me && state.me.role === 'accountant') initClientSwitch();   // v1.70.100: клиенты бухгалтера (T-50)
 
   // Один обработчик выхода (без дублирования при повторных входах)
   if (!window.__ymasterLogoutBound) {
     window.__ymasterLogoutBound = true;
     window.addEventListener('ymaster:logout', () => logout());
+    // v1.70.100: доступ к клиенту отозван или компания отключена — назад в свою компанию
+    window.addEventListener('ymaster:client-reset', (e) => {
+      toast((e.detail && e.detail.message) || 'Доступ к компании клиента закрыт', 'warn', 'Вы снова в своей компании');
+      initClientSwitch().then(() => route());
+    });
   }
 
   // При входе по ссылке-приглашению убираем токен приглашения из адреса
@@ -3970,6 +3982,8 @@ function route(silent = false) {
       const companies = await adminCompanies();
       if (alive()) return viewBank(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter });
     },
+    // v1.70.100 (T-50): все клиенты в одном окне; цифра открывает экран уже в этой компании
+    clients: (c, alive) => viewClients(c, { alive, open: openClientCompany }),
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
@@ -4019,6 +4033,80 @@ async function initCompanyFilter() {
     state.companyFilter = sel.value;
     try { localStorage.setItem('ymaster-company', sel.value); } catch (e) {}
     route();
+  };
+}
+
+// v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер — переключатель клиента в шапке. Свежий /me несёт список
+// клиентов; выбор уходит заголовком X-Ym-Company (api.js), сервер проверяет назначение администратором.
+async function refreshMe() {
+  try { state.me = await api.get('/api/v1/auth/me', { retries: 1 }); } catch (e) { /* остаётся прежний */ }
+  return state.me;
+}
+
+async function initClientSwitch() {
+  const me = await refreshMe();
+  clientsSwitcher($('#client-switch'), me, async () => {
+    await refreshMe();
+    route();
+  });
+}
+
+// Экран «Клиенты»: открыть раздел в выбранной компании — администратору через фильтр компании,
+// бухгалтеру — сменой активного клиента (без перевхода)
+async function openClientCompany(companyId, view) {
+  if (isAdmin()) {
+    state.companyFilter = companyId;
+    try { localStorage.setItem('ymaster-company', companyId); } catch (e) { /* приватный режим */ }
+    const sel = $('#company-filter');
+    if (sel) sel.value = companyId;
+  } else {
+    const home = state.me && state.me.home_company_id;
+    setClient(companyId === home ? '' : companyId);
+    await refreshMe();
+    clientsSwitcher($('#client-switch'), state.me, async () => { await refreshMe(); route(); });
+  }
+  const target = '#/' + view;
+  if (location.hash === target) route();
+  else location.hash = target;
+}
+
+// v1.70.100: «Заставка загрузки» — длительность 0–60 с (по умолчанию 5), только администратор
+const SPLASH_MAX = 60;
+function splashMode(sec) {
+  if (sec <= 0) return 'Заставки не будет — программа откроется сразу.';
+  if (sec <= 2) return 'Короткая заставка: прогресс без списка этапов.';
+  if (sec >= 8) return 'Длинная заставка: этапы, прогресс и подсказки о возможностях программы.';
+  return 'Обычная заставка: этапы загрузки и прогресс.';
+}
+
+function bindSplashCard() {
+  const range = $('#sp-range'), num = $('#sp-sec'), mode = $('#sp-mode');
+  if (!range || !num) return;
+  const clamp = (v) => Math.max(0, Math.min(SPLASH_MAX, Math.round(Number(v) || 0)));
+  const show = (v, from) => {
+    const sec = clamp(v);
+    if (from !== range) range.value = String(sec);
+    if (from !== num) num.value = String(sec);
+    mode.textContent = splashMode(sec);
+    return sec;
+  };
+  range.oninput = () => show(range.value, range);
+  num.oninput = () => show(num.value, num);
+  api.get('/api/v1/settings/splash').then((cfg) => show(cfg.seconds)).catch(() => show(5));
+  $('#sp-save').onclick = async () => {
+    const sec = show(num.value);
+    try {
+      const res = await api.put('/api/v1/settings/splash', { seconds: sec });
+      if (window.ymSplash && window.ymSplash.setDuration) window.ymSplash.setDuration(res.seconds);
+      toast(res.seconds ? `Заставка — ${res.seconds} с: ${res.mode}` : 'Заставка отключена', 'ok', 'Сохранено');
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $('#sp-preview').onclick = () => {
+    const sec = show(num.value);
+    if (!sec) return toast('При 0 секунд заставки нет — показывать нечего', 'info');
+    if (!(window.ymSplash && window.ymSplash.preview && window.ymSplash.preview(sec))) {
+      toast('Заставка недоступна в этом окне — обновите страницу', 'warn');
+    }
   };
 }
 
@@ -6364,6 +6452,17 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.100': [
+    { icon: '🏢', title: 'Все клиенты в одном окне',
+      text: 'Новый экран «Клиенты»: по каждой компании — срок сдачи, что нужно от клиента, ошибки ФНС и УПД, '
+        + 'платежи без документов и что готово к выгрузке. Сначала — где нужны действия; любая цифра открывает '
+        + 'экран уже в этой компании. Бухгалтер, который ведёт несколько компаний, выбирает клиента в шапке — без '
+        + 'перевхода; клиентов назначает администратор в «Пользователях».' },
+    { icon: '📦', title: 'Пакет за месяц и своя длительность заставки',
+      text: '«📦 Пакет за месяц» — чеки, первичка, банк и возмещения в JSON и CSV плюс файлы УПД 5.03 для «Моего '
+        + 'дела» и других систем. Длительность заставки задаёт администратор: от 0 до 60 секунд, по умолчанию 5 — '
+        + 'заставка перестраивается под время. В инструкции — новые разделы и картинки.' },
+  ],
   '1.70.99': [
     { icon: '🏦', title: 'Выписка из банка — сама, без файлов',
       text: 'В карточке компании и на экране «Банк: выписка» — блок «Банк по API»: выберите Точку и способ доступа '
@@ -9941,7 +10040,10 @@ async function viewExport(container, alive = routeGuard()) {
           Статистика: выгружено <b>${stats.exported}</b> · ожидают <b>${stats.pending_export}</b> чеков.
         </div>
       </div>
-    </div>`;
+    </div>
+    ${clientsPackageHtml({ isAdmin: isAdmin(), companyId: companyIdParam() })}`;
+  // v1.70.100 (T-68): пакет для других учётных систем — JSON, CSV и УПД за месяц
+  clientsPackageBind(container, { companyId: companyIdParam() });
 
   $('#btn-export-all').onclick = () => doExport({ receipt_ids: [] });
   $('#btn-export-verified').onclick = async () => {
@@ -10179,6 +10281,7 @@ async function viewUsers(container, alive = routeGuard()) {
           <td>${u.is_active ? '<span class="chip verified"><span class="dot"></span>активен</span>' : '<span class="chip failed"><span class="dot"></span>отключён</span>'}</td>
           <td class="cell-date">${fmtDate(u.last_login_at)}</td>
           <td style="white-space:nowrap">
+            ${u.role === 'accountant' && u.is_active ? `<button type="button" class="btn btn-sm u-clients" data-id="${u.id}" data-name="${esc(u.full_name || u.username)}" title="Компании-клиенты, которые ведёт бухгалтер">🏢 Клиенты</button>` : ''}
             ${u.role === 'accountant' && u.is_active ? `<button type="button" class="btn btn-sm u-admin" data-id="${u.id}" data-name="${esc(u.username)}" title="Передать права администратора">⬆ Админом</button>` : ''}
             ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-role" data-id="${u.id}" data-role="accountant" data-name="${esc(u.username)}" title="Сменить роль (бухгалтер ↔ пользователь)">↕ Роль</button>` : ''}
             ${u.role !== 'admin' && u.is_active ? `<button type="button" class="btn btn-sm u-reset" data-id="${u.id}" data-name="${esc(u.username)}" title="Выдать временный пароль">🔑</button>` : ''}
@@ -10269,6 +10372,11 @@ async function viewUsers(container, alive = routeGuard()) {
     catch (e) { toast(e.message, 'err'); }
   });
 
+  // v1.70.100 (T-50): клиенты бухгалтера-аутсорсера
+  $$('.u-clients').forEach(btn => btn.onclick = async () => {
+    const companies = await adminCompanies();
+    clientsAccessDialog({ id: btn.dataset.id, name: btn.dataset.name }, companies);
+  });
   $$('.u-admin').forEach(btn => btn.onclick = async () => {
     if (!confirm(`Передать права администратора пользователю ${btn.dataset.name}?\n\n` +
       'Вы станете бухгалтером. Администратор в системе всегда один.')) return;
@@ -11253,6 +11361,22 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>
 
       ${isAdmin() ? `
+      <div class="glass card" id="st-splash" data-sec="device" style="order:48">
+        <div class="card-title">🎬 Заставка загрузки <span class="form-hint">видят все при открытии программы</span></div>
+        <p class="form-hint">Сколько секунд показывать заставку: от 0 до 60, по умолчанию 5. Под заданное время
+        заставка перестраивается: до 2 секунд — коротко, без списка этапов; от 8 секунд — с подсказками о
+        возможностях программы; 0 — без заставки. Если программа загружается дольше, заставка дождётся её.</p>
+        <div class="splash-set">
+          <input type="range" id="sp-range" min="0" max="60" step="1" value="5" aria-label="Длительность заставки, секунд">
+          <label class="field"><span>Секунд</span><input type="number" id="sp-sec" min="0" max="60" step="1" value="5"></label>
+        </div>
+        <p class="form-hint" id="sp-mode"></p>
+        <div class="splash-actions">
+          <button type="button" class="btn btn-primary" id="sp-save">Сохранить</button>
+          <button type="button" class="btn" id="sp-preview" title="Показать заставку с выбранной длительностью — закрыть щелчком или Esc">▶ Показать</button>
+        </div>
+      </div>` : ''}
+      ${isAdmin() ? `
       <div class="glass card" id="st-adguard" data-sec="device" style="order:49">
         <div class="card-title">🛡 AdGuard VPN на сервере <span class="form-hint">(v1.70.28)</span></div>
         <p class="form-hint" style="margin-bottom:12px">Через туннель идёт <b>только Telegram</b>,
@@ -11337,6 +11461,7 @@ async function viewSettings(container, alive = routeGuard()) {
         b.classList.toggle('active', !!cur.card && b.getAttribute('data-open') === cur.card));
     });
   };
+  if (isAdmin()) bindSplashCard();          // v1.70.100: длительность заставки — только администратор
   const snav = $('#settings-nav');
   if (snav) {
     snav.insertAdjacentHTML('afterbegin',

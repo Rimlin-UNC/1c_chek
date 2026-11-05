@@ -158,6 +158,15 @@ def get_current_user(
     user = db.get(User, payload.get("sub", ""))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Пользователь не найден или отключён")
+    # v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер работает в выбранной компании клиента —
+    # заголовок X-Ym-Company; компания должна быть назначена ему администратором (иначе 403)
+    requested = request.headers.get("x-ym-company")
+    if requested and user.role == ROLE_ACCOUNTANT:
+        from .clients import service as clients
+        try:
+            clients.activate(db, user, requested)
+        except clients.ClientsError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
     return user
 
 

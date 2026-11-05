@@ -460,3 +460,47 @@ test('банк по API: карточка компании — Точка, OAuth
   await expect(panel).toContainText('не подключён', { timeout: 15000 });
   await expect(panel.locator('#bankc-del')).toHaveCount(0);
 });
+
+// v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — клиента бухгалтеру назначает администратор,
+// бухгалтер видит все компании в одном окне и переключается между ними без перевхода
+test('рабочее место аутсорсера: назначение клиента, «Клиенты» и переключение без перевхода', async ({ page, request }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/users"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Пользователи и приглашения');
+  await page.locator('tr', { hasText: 'e2e_acc_alpha' }).locator('.u-clients').click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Клиенты бухгалтера', { timeout: 15000 });
+  await expect(modal.locator('label', { hasText: 'E2E Альфа' })).toHaveCount(0);   // своя компания — всегда доступна
+  await modal.locator('label', { hasText: 'E2E Бета' }).locator('input').check();
+  await expect(modal.locator('#cla-count')).toHaveText('Выбрано клиентов: 1');
+  await modal.locator('#cla-save').click();
+  await expect(page.locator('#toast-container')).toContainText('Клиентов у бухгалтера: 1');
+  await page.locator('#btn-logout').click();
+  const reloaded = page.waitForEvent('load');
+  await page.locator('#lo-exit').click();
+  await reloaded;
+  await page.fill('#login-username', 'e2e_acc_alpha');
+  await page.fill('#login-password', 'e2e-accountant-password');
+  await page.click('#login-submit');
+  await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+  const sw = page.locator('#client-switch');
+  await expect(sw).toBeVisible({ timeout: 15000 });
+  await expect(sw.locator('option')).toHaveCount(2);
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  await expect(page.locator('.cl-card')).toHaveCount(2, { timeout: 15000 });
+  await page.locator('.cl-card', { hasText: 'E2E Бета' }).locator('[data-open="docreq"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента', { timeout: 15000 });
+  await expect(sw.locator('option:checked')).toHaveText('E2E Бета');
+  await sw.selectOption({ label: 'E2E Альфа · своя' });
+  await expect(sw.locator('option:checked')).toHaveText('E2E Альфа · своя');
+  // уборка: снять назначение, чтобы следующие сценарии видели бухгалтера как прежде
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const users = await (await request.get('/api/v1/users', { headers: { Authorization: `Bearer ${token}` } })).json();
+  const acc = users.find((u) => u.username === 'e2e_acc_alpha');
+  const reset = await request.put(`/api/v1/clients/access/${acc.id}`, {
+    headers: { Authorization: `Bearer ${token}` }, data: { company_ids: [] } });
+  expect(reset.ok()).toBeTruthy();
+});

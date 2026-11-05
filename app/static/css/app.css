@@ -2250,3 +2250,53 @@ label.field[hidden] { display: none; }
 .bank-conn-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .bank-conn-uri { overflow-wrap: anywhere; user-select: all; }
 .bank-conn-skeleton { height: 64px; }
+
+/* v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — «Клиенты»: карточки компаний по убыванию внимания */
+.cl-top { padding-bottom: 14px; }
+.cl-top-row { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
+.cl-top-row p { margin: 0 0 10px; max-width: 70ch; }
+.cl-period select { min-width: 170px; }
+.cl-kpis { margin: 6px 0 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.cl-kpis .kpi-value { font-size: 26px; }
+.kpi.cl-bad { border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.kpi.cl-bad .kpi-value { color: var(--bad-text); }
+.kpi.cl-warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.kpi.cl-warn .kpi-value { color: var(--warn-text); }
+.cl-tools { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.cl-filter { flex-wrap: wrap; }
+.cl-search { min-width: 240px; flex: 1 1 240px; max-width: 420px; }
+.cl-list { display: grid; gap: 12px; margin-top: 12px; }
+.cl-card { padding: 14px 16px; border-left: 4px solid var(--border-strong); }
+.cl-card.cl-bad { border-left-color: var(--bad); }
+.cl-card.cl-warn { border-left-color: var(--warn); }
+.cl-card.cl-ok { border-left-color: var(--ok); }
+.cl-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.cl-head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cl-pack-card { margin-top: 16px; }
+.cl-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 16px; }
+.cl-deadline { margin: 6px 0 10px; color: var(--text-dim); }
+.cl-deadline.cl-late { color: var(--bad-text); }
+.cl-deadline.cl-soon { color: var(--warn-text); }
+.cl-deadline.cl-done { color: var(--ok-text); }
+.cl-tiles { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.cl-tile {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left; cursor: pointer;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+  color: inherit; font: inherit; transition: transform var(--speed), border-color var(--speed);
+}
+.cl-tile:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+.cl-tile.cl-bad { border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.cl-tile.cl-warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.cl-tile-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
+.cl-tile-main { font-size: 15px; font-variant-numeric: tabular-nums; }
+.cl-tile-lines { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; color: var(--text-dim); }
+.cl-line.cl-bad { color: var(--bad-text); }
+.cl-line.cl-warn { color: var(--warn-text); }
+.cl-empty { color: var(--text-dim); }
+.cl-access-list { max-height: 46vh; overflow: auto; margin: 8px 0; padding-right: 4px; }
+
+/* v1.70.100: «Заставка загрузки» — длительность 0–60 с (администратор) */
+.splash-set { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin: 6px 0 4px; }
+.splash-set input[type="range"] { flex: 1 1 220px; accent-color: var(--accent); }
+.splash-set .field input { width: 96px; }
+.splash-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }

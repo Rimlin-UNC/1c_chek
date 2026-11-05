@@ -200,6 +200,7 @@ res = {"version": app_version(),
        "primary_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_")),
        "docreq_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("doc_request")),
        "bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_")),
+       "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
        "fingerprint_after_init": fingerprint()}
 with SessionLocal() as db:
     res["docs_after_init"] = db.query(UnifiedDocument).count()
@@ -695,10 +696,12 @@ def main() -> int:
               and up.get("primary_tables") == ["primary_document_lines", "primary_documents"]
               and up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"]
               and up.get("bank_tables") == ["bank_connections", "bank_operations", "bank_reimbursements",
-                                            "bank_settings", "bank_statements"],
+                                            "bank_settings", "bank_statements"]
+              and up.get("clients_tables") == ["accountant_clients"],
               "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links), "
               "2 таблицы первички (с v1.70.94), 3 таблицы «что нужно от клиента» (с v1.70.97) и 5 таблиц "
-              "банковской выписки (с v1.70.98; bank_connections — с v1.70.99)")
+              "банковской выписки (с v1.70.98; bank_connections — с v1.70.99), клиенты бухгалтера "
+              "accountant_clients (с v1.70.100)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

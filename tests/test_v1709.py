@@ -122,8 +122,9 @@ class TestSettingsMenuStructure:
         # и сеть» встали в раздел «Данные» рядом с «Сервер и команды».
         # v1.70.51: integr 7 -> 8 — блок «Мониторинг OpenStack». Считаем по
         # app.js и osm.js вместе: разметку новой карточки рисует osm.js.
+        # v1.70.100: device 5 -> 6 — «Заставка загрузки» (длительность задаёт администратор).
         expect = {"data": 6, "checks": 6, "integr": 8, "personal": 6,
-                  "device": 5}
+                  "device": 6}
         js_all = self.settings_js()
         for sec, n in expect.items():
             assert f'data-sec="{sec}"' in js_all

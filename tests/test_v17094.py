@@ -118,7 +118,7 @@ class TestWiring:
         assert "viewPrimary(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter })" in js
         # пространства admin и accountant (v1.70.97: между ними — «что нужно от клиента»)
         # v1.70.98: и «банк: выписка» — между ними может стоять 'bank'
-        assert len(re.findall(r"'primary', (?:'docreq', )?(?:'bank', )?'settings'\]", js)) == 2
+        assert len(re.findall(r"'primary', (?:'docreq', )?(?:'bank', )?(?:'clients', )?'settings'\]", js)) == 2
         html = read("app/static/index.html")
         assert '<a href="#/primary" data-view="primary" class="nav-item accountant-only">' in html
         screen = read("app/static/js/primary.js")

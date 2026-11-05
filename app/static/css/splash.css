@@ -202,6 +202,22 @@
   .ym-splash.is-ready .ym-splash__tile { border-color: rgba(47, 224, 177, .5); }
 }
 
+/* ---------- v1.70.100: длительность задаёт администратор (0–60 с, по умолчанию 5 с) ----------
+   --ym-t — множитель времени от splash.js (заданное время / 3,3 с, в пределах 0,3…3): вступление, прорисовка
+   схемы и значки растягиваются под заданное время. Короткая заставка (до 2 с) — без списка этапов; длинная
+   (от 8 с) — с подсказками о возможностях программы и спокойным покачиванием объекта. */
+.ym-splash__stage { animation-duration: calc(1s * var(--ym-t, 1)); }
+.ym-splash__circuit path { animation-duration: calc(1.3s * var(--ym-t, 1)); animation-delay: calc(.25s * var(--ym-t, 1)); }
+.ym-splash__circuit circle { animation-duration: calc(.5s * var(--ym-t, 1)); animation-delay: calc(1.2s * var(--ym-t, 1)); }
+.ym-splash__badge--check { animation-delay: calc(.55s * var(--ym-t, 1)); }
+.ym-splash__badge--gear { animation-delay: calc(.8s * var(--ym-t, 1)); }
+.ym-splash[data-length="short"] .ym-splash__steps { display: none; }
+.ym-splash[data-length="long"] .ym-splash__tile { animation-duration: 9s; }
+.ym-splash__tip { max-width: min(640px, 82%); min-height: 2.6em; text-align: center; font-size: clamp(12px, 1.7vmin, 16px);
+  line-height: 1.3; color: var(--ink); opacity: .82; }
+.ym-splash__tip b { color: var(--accent); font-weight: 600; }
+.ym-splash__tip.is-swap { animation: ym-swap .6s cubic-bezier(.22, 1, .36, 1); }
+
 /* ---------- анимации ---------- */
 @keyframes ym-in { from { opacity: 0; transform: translateY(22px) scale(.955) rotateX(10deg); } to { opacity: 1; transform: none; } }
 @keyframes ym-out { to { opacity: 0; transform: scale(1.04); filter: blur(6px); visibility: hidden; } }

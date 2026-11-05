@@ -19,8 +19,9 @@ JS_DIR = "app/static/js"
 # v1.70.86: unified_review.js — его функции (значок «🏢 N» числа организаций)
 # реестр чеков вызывает при отрисовке строки, поэтому модуль нужен стенду DOM.
 # v1.70.98: bank.js — экран «Банк: выписка» (T-45), его viewBank зовёт маршрутизатор app.js.
-MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js",
-           "printpack.js", "api.js", "bank.js", "primary.js", "docreq.js", "unified_fill.js", "unified_review.js", "app.js"]
+# v1.70.100: clients.js — экран «Клиенты» и пакет выгрузки (T-50, T-68), его зовёт маршрутизатор app.js.
+MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js", "printpack.js", "clients.js",
+           "api.js", "bank.js", "primary.js", "docreq.js", "unified_fill.js", "unified_review.js", "app.js"]
 
 
 import os

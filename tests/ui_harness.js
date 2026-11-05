@@ -193,7 +193,8 @@ function gate(key, fail = false) {
 
 sandbox.fetch = async (url, opts) => {
   apiLog.push({ url: String(url), method: (opts && opts.method) || 'GET',
-                body: opts && opts.body ? JSON.parse(opts.body) : null });
+                body: opts && opts.body ? JSON.parse(opts.body) : null,
+                headers: (opts && opts.headers) || {} });   // v1.70.100: заголовок выбранного клиента
   const held = [...gates.keys()].find((key) => String(url).includes(key));
   if (held) {
     const { opened, fail } = gates.get(held);
@@ -270,6 +271,24 @@ sandbox.fetch = async (url, opts) => {
                 accounts: [{ tail: '0001', currency: 'RUB', loaded: true }], synced_until: '2026-11-04',
                 last_sync_at: '2026-11-04T09:05:00', last_error: '', pending: 0, awaiting: false,
                 last_result: { ok: true, operations: 9, saved: 3, matched: 2, open: 1 } };
+  }
+  // v1.70.100 (T-50): рабочее место аутсорсера — сводка по клиентам за отчётный месяц
+  if (String(url).startsWith('/api/v1/clients') && !String(url).includes('/access/')) {
+    specialPayload = true;
+    payload = { period: '2026-10', period_title: 'Октябрь 2026', periods: [{ period: '2026-10', title: 'Октябрь 2026' }],
+                totals: { companies: 2, bad: 1, warn: 0, ok: 1, overdue: 2, open: 2, escalated: 0, fns_bad: 1,
+                          upd_errors: 0, bank_open: 1, to_export: 3, upd_to_export: 0 },
+                companies: [
+                  { id: 'c2', name: 'ООО «Клиент»', inn: '7702000002', home: false, level: 'bad', score: 15,
+                    receipts: { count: 5, sum: 12000, attention: 0, fns_bad: 1, policy: 0, to_export: 3 },
+                    primary: { errors: 0, to_export: 0 },
+                    docreq: { open: 2, overdue: 2, escalated: 0, deadline: '2026-11-05T18:00:00+03:00', days_left: -1 },
+                    bank: { open: 1, status: 'active', last_sync_at: '2026-11-04T07:05:00Z', last_error: '' } },
+                  { id: 'c1', name: 'Ромашка', inn: '7701000001', home: true, level: 'ok', score: 0,
+                    receipts: { count: 0, sum: 0, attention: 0, fns_bad: 0, policy: 0, to_export: 0 },
+                    primary: { errors: 0, to_export: 0 },
+                    docreq: { open: 0, overdue: 0, escalated: 0, deadline: '2026-11-05T18:00:00+03:00', days_left: 2 },
+                    bank: { open: 0, status: 'none', last_sync_at: '', last_error: '' } }] };
   }
   // v1.70.96: первичка — проверка выгрузки в 1С (T-60)
   if (String(url).endsWith('/api/v1/primary/export/check')) {
@@ -1070,6 +1089,34 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     ok(conn.includes('Банк по API') && conn.includes('*0001 RUB') && conn.includes('подключён'),
        'v1.70.99: панель «Банк по API»: подключён, счёт *0001');
     ok(conn.includes('Загрузить сейчас') && !conn.includes('s3cret'), 'v1.70.99: кнопка «Загрузить сейчас», секретов нет');
+    // v1.70.100 (T-50): «Клиенты» — все компании бухгалтера в одном окне; цифра открывает экран в этой компании
+    const fromC = apiLog.length;
+    sandbox.location.hash = '#/clients';
+    sandbox.route();
+    await tickP(80);
+    ok(sandbox.location.hash === '#/clients' && vcP.innerHTML.includes('Все клиенты в одном окне'),
+       'v1.70.100: бухгалтер открыл «Клиенты» — раздел в его пространстве');
+    ok(apiLog.slice(fromC).some((c) => c.url === '/api/v1/clients'), 'v1.70.100: сводка по клиентам запрошена у сервера');
+    const cards = vcP.querySelector('#cl-list').innerHTML;
+    ok(cards.indexOf('ООО «Клиент»') >= 0 && cards.indexOf('ООО «Клиент»') < cards.indexOf('Ромашка'),
+       'v1.70.100: сначала компания, где нужны действия');
+    ok(cards.includes('просрочено на 1 день') && cards.includes('<b>2</b> просрочено'),
+       'v1.70.100: срок сдачи и просроченные запросы видны');
+    const fromSw = apiLog.length;
+    vcP.querySelector('#cl-list').onclick({ target: { closest: (sel) => (sel === '[data-open]'
+      ? { dataset: { company: 'c2', open: 'docreq' } } : null) } });
+    await tickP(40);
+    ok(storage['ymaster-client'] === 'c2', 'v1.70.100: переход в компанию клиента — клиент выбран');
+    const meCall = apiLog.slice(fromSw).find((c) => c.url.startsWith('/api/v1/auth/me'));
+    ok(meCall && meCall.headers['X-Ym-Company'] === 'c2', 'v1.70.100: запросы уходят с заголовком выбранного клиента');
+    ok(sandbox.location.hash === '#/docreq', 'v1.70.100: открыт «Что нужно от клиента» этой компании');
+    delete storage['ymaster-client'];
+    // v1.70.100 (T-68): пакет для других учётных систем — на экране «Выгрузка в 1С»
+    sandbox.location.hash = '#/export';
+    sandbox.route();
+    await tickP(80);
+    ok(vcP.innerHTML.includes('📦 Пакет для других учётных систем') && vcP.innerHTML.includes('id="pkg-download"'),
+       'v1.70.100: на экране выгрузки — пакет JSON, CSV и УПД за месяц');
     vcP.isConnected = undefined;
   }
 

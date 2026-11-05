@@ -24,7 +24,7 @@
      выполняется после разбора страницы и до app.js -->
 <link rel="stylesheet" href="/css/splash.css">
 <script src="/js/splash.js" defer></script>
-<link rel="stylesheet" href="/css/app.css?v=1.70.99">
+<link rel="stylesheet" href="/css/app.css?v=1.70.100">
 </head>
 <body>
   <!-- v1.70.98: заставка загрузки «chek.ymaster.ru» — видна с первого кадра, таймлайн около 3 с (js/splash.js) -->
@@ -56,6 +56,7 @@
           <li data-step="2"><span class="ym-splash__ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4l4 2.2L8 8.4 4 6.2z" fill="#a9d5ff"/><path d="M4 6.2v4.4L8 12.8V8.4z" fill="#5aa2f7"/><path d="M12 6.2v4.4L8 12.8V8.4z" fill="#2a6ddc"/><path d="M16.5 9.5l3.5 1.9-3.5 1.9-3.5-1.9z" fill="#a9d5ff"/><path d="M13 11.4v3.8l3.5 1.9v-3.8z" fill="#5aa2f7"/><path d="M20 11.4v3.8l-3.5 1.9v-3.8z" fill="#2a6ddc"/><path d="M9 14.5l3 1.6-3 1.6-3-1.6z" fill="#a9d5ff"/><path d="M6 16.1v3.2l3 1.6v-3.2z" fill="#5aa2f7"/><path d="M12 16.1v3.2l-3 1.6v-3.2z" fill="#2a6ddc"/><circle cx="18.6" cy="5.4" r="1.3" fill="#7fbcff"/><circle cx="3.6" cy="15.6" r="1" fill="#7fbcff"/><circle cx="20.6" cy="19.4" r=".9" fill="#7fbcff"/></svg></span><span class="ym-splash__num">2</span><span class="ym-splash__lbl">Подключение модулей</span></li>
           <li data-step="3"><span class="ym-splash__ico ym-splash__ico--check"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path class="ym-splash__tick" d="M7.6 12.3l3 3 5.8-6.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ym-splash__num">3</span><span class="ym-splash__lbl">Готово к запуску</span></li>
         </ol>
+        <div class="ym-splash__tip" id="ym-splash-tip" hidden></div>
         <div class="ym-splash__meta">Версия <span id="ym-splash-version">…</span><i>•</i>Выпуск 2026<i>•</i>ООО «Ямастер»</div>
         <div class="ym-splash__slow" id="ym-splash-slow" hidden>Сеть отвечает медленно — подождите или <button type="button" id="ym-splash-reload">обновите страницу</button></div>
       </div>
@@ -322,6 +323,10 @@
           <span class="nav-icon" data-icon="audit"></span>API для бизнеса: модерация
         </a>
         <div class="nav-group">Чеки и учёт</div>
+        <!-- v1.70.100 (T-50): рабочее место аутсорсера — все клиенты в одном окне -->
+        <a href="#/clients" data-view="clients" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="list"></span>Клиенты
+        </a>
         <a href="#/receipts" data-view="receipts" class="nav-item">
           <span class="nav-icon" data-icon="list"></span>Чеки
           <span class="nav-badge" id="nav-receipts-badge">0</span>
@@ -389,6 +394,9 @@
         <div class="topbar-right">
           <select id="company-filter" class="company-select admin-only hidden"
                   title="Пространство: все компании или одна (администратор)"></select>
+          <!-- v1.70.100 (T-50): бухгалтер-аутсорсер — переключатель клиента (виден при двух и более компаниях) -->
+          <select id="client-switch" class="company-select hidden" aria-label="Компания-клиент"
+                  title="Компания-клиент: данные и действия — в выбранной компании"></select>
           <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
             ⚡ Офлайн
           </div>
@@ -439,6 +447,6 @@
   <!-- v1.70.51: Chart.js — графики истории в блоке «Мониторинг OpenStack».
        Вендорен, как и jsQR: без обращения к внешним сетям при загрузке. -->
   <script src="/js/vendor/chart.umd.js"></script>
-  <script type="module" src="/js/app.js?v=1.70.99"></script>
+  <script type="module" src="/js/app.js?v=1.70.100"></script>
 </body>
 </html>

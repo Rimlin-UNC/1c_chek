@@ -24,6 +24,8 @@ from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
 from .bank import router as bank_router
+from .clients import router as clients_router
+from .exportpkg import router as exportpkg_router
 from .docreq import router as docreq_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
@@ -434,10 +436,12 @@ def about():
     from .models import Receipt
     from .database import SessionLocal
     from .services import max_bot as _mx
+    from .services import splash as _splash
     db = SessionLocal()
     try:
         receipts_count = db.query(Receipt).count()
         mx_username = _mx.bot_username(db, refresh=False)  # v1.70.1
+        splash_seconds = _splash.seconds(db)               # v1.70.100: длительность заставки (до входа)
     finally:
         db.close()
     return {
@@ -449,6 +453,7 @@ def about():
         "max_bot_username": mx_username,
         "receipts_total": receipts_count,
         "fns_provider": "fns",
+        "splash_seconds": splash_seconds,
     }
 
 
@@ -467,6 +472,8 @@ app.include_router(unified_router.router)  # единый фискальный �
 app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
 app.include_router(docreq_router.router)  # v1.70.97: что нужно от клиента (T-58)
 app.include_router(bank_router.router)  # v1.70.98: банковская выписка (T-45)
+app.include_router(clients_router.router)  # v1.70.100: рабочее место аутсорсера (T-50)
+app.include_router(exportpkg_router.router)  # v1.70.100: пакет для других учётных систем (T-68)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

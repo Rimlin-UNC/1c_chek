@@ -146,7 +146,8 @@ class TestWiring:
         app_js = read("app/static/js/app.js")
         assert re.search(r"import \{ viewBank[^}]*\} from './bank\.js';", app_js)   # v1.70.99: + панель банка по API
         assert "bank: 'Банк: выписка'," in app_js and "bank_statement_uploaded: ['ok', '🏦']" in app_js
-        assert app_js.count("'primary', 'docreq', 'bank', 'settings']") == 2      # пространства admin и accountant
+        # пространства admin и accountant; v1.70.100: после «bank» в обоих — ещё «clients» (рабочее место аутсорсера)
+        assert app_js.count("'primary', 'docreq', 'bank', ") == 2
         assert '<a href="#/bank" data-view="bank" class="nav-item accountant-only">' in read("app/static/index.html")
         assert '"api.js", "bank.js", "primary.js", "docreq.js"' in read("tests/test_v1121.py")
         assert "payment: '🏦 платёж без документов'" in read("app/static/js/docreq.js")
@@ -155,7 +156,8 @@ class TestWiring:
     def test_admin_companies_on_direct_link(self):
         app_js = read("app/static/js/app.js")
         assert "async function adminCompanies() {" in app_js
-        assert app_js.count("const companies = await adminCompanies();") == 3          # первичка, docreq, банк
+        # первичка, docreq, банк; v1.70.100: + «🏢 Клиенты» бухгалтера на экране «Пользователи»
+        assert app_js.count("const companies = await adminCompanies();") >= 3
         spec = read("tests/e2e/app.spec.js")
         for name in ("заставка загрузки: версия с сервера, «Готово к запуску» и уход",
                      "банк: платёж без документов из выписки уходит в «Что нужно от клиента»",
@@ -199,10 +201,13 @@ class TestSplash:
     def test_controller_and_app_integration(self):
         js = read("app/static/js/splash.js")
         assert not re.search(r"^\s*(?:import|export)\b", js, re.M)                   # обычный скрипт, не модуль
+        # v1.70.100: таймлайн — доли заданного администратором времени (по умолчанию 5 с) вместо мгновений
+        # 3-секундной заставки; быстрый повтор в той же вкладке ('ym-splash-seen') заменён настройкой длительности,
+        # автотесты (webdriver) по-прежнему быстрые — не дольше 1,3 с
         for needle in ("window.ymSplash = {", "ready: function () { isReady = true; }", "setVersion: function (v)",
-                       "'ym-splash-seen'", "navigator.webdriver ? 0.4 : 1", "performance.now() > 14000",
-                       "[500, 25, 'Инициализация…', 1], [1300, 68, 'Подключение модулей…', 2]",
-                       "[2000, 90, 'Финальная настройка…', 3], [2600, 100, 'Готово к запуску', 4]",
+                       "var quick = !!navigator.webdriver;", "performance.now() > 14000",
+                       "[0.15 * T, 25, 'Инициализация…', 1], [0.40 * T, 68, 'Подключение модулей…', 2],",
+                       "[0.62 * T, 90, 'Финальная настройка…', 3], [0.80 * T, 100, 'Готово к запуску', 4]];",
                        "link[href*=\"app.css?v=\"]", "new CustomEvent('ym-splash-done')"):
             assert needle in js, needle
         app_js = read("app/static/js/app.js")

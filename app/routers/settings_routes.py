@@ -262,6 +262,29 @@ class ConsentRequisitesPatch(BaseModel):
     contact: str | None = Field(default=None, max_length=120)
 
 
+class SplashPatch(BaseModel):
+    """v1.70.100: длительность заставки загрузки, секунд (0 — без заставки)."""
+    seconds: int = Field(ge=0, le=60)
+
+
+@router.get("/splash", summary="Заставка загрузки: длительность (админ)", dependencies=[Depends(require_admin)])
+def get_splash_settings(db: Annotated[Session, Depends(get_db)]):
+    from ..services import splash
+    value = splash.seconds(db)
+    return {"seconds": value, "default": splash.DEFAULT, "min": splash.MIN_SECONDS, "max": splash.MAX_SECONDS,
+            "mode": splash.mode(value)}
+
+
+@router.put("/splash", summary="Сохранить длительность заставки загрузки (админ)")
+def put_splash_settings(body: SplashPatch, db: Annotated[Session, Depends(get_db)],
+                        user: Annotated[User, Depends(require_admin)]):
+    from ..services import splash
+    before = splash.seconds(db)
+    value = splash.save(db, body.seconds)
+    log_action(user, "splash_settings_updated", "settings", None, {"seconds": value, "before": before})
+    return {"seconds": value, "mode": splash.mode(value)}
+
+
 @router.get("/consent", summary="Реквизиты оператора в согласии 152-ФЗ (админ)")
 def get_consent_settings(db: Session = Depends(get_db),
                          user: User = Depends(require_admin)):

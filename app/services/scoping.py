@@ -57,6 +57,12 @@ def canonical_pool_visible_filter():
     return ~_quarantined("pool", PoolReceipt.id)
 
 
+def registry_visible_filter():
+    """Фильтр реестра для ролей компании: спорные по принадлежности чеки скрыты до разбора
+    (тот же, что в scope_receipts; v1.70.100 — сводка по клиентам, T-50)."""
+    return ~_quarantined("registry", Receipt.id)
+
+
 def user_company_id(user: User) -> str | None:
     """Компания пользователя (у админа — None = вся платформа)."""
     return user.company_id if user.role != ROLE_ADMIN else None
