@@ -538,6 +538,11 @@ from .legal import page as legal_page  # noqa: E402
 
 app.include_router(legal_page.router)      # /oferta, /oferta.txt, /api/v1/legal/*
 
+# v1.70.106 (T-75, ADR-36): страницы под кластеры запросов — серверный HTML без скриптов, тоже до SPA-перехвата
+from .services import seo_pages as _seo_pages  # noqa: E402
+
+app.include_router(_seo_pages.router)      # /kak-proverit-chek, /cheki-sotrudnikov-v-1c, /dlya-buhgalterov
+
 
 # --------------------------------------------------------------------------
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static

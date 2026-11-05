@@ -1623,6 +1623,10 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .land-faq summary { cursor: pointer; font-weight: 600; font-size: 0.875rem; }
 .land-faq p { margin: 8px 0 2px; color: var(--text-dim); font-size: 0.84375rem; line-height: 1.55; }
 .land-note { color: var(--text-dim); font-size: 0.78125rem; margin: 14px 0 0; }
+/* v1.70.106 (T-75): видимые ссылки на страницы под кластеры запросов — переносятся целиком */
+.land-more { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 14px 0 0; font-size: 0.84375rem; font-weight: 600; }
+.land-more span { color: var(--text-dim); font-weight: 400; }
+.land-more a { color: var(--accent-2); white-space: nowrap; text-underline-offset: 2px; }
 #login-screen .land-right { min-width: 0; }
 #login-screen .land-right .login-card { margin: 0; }
 .b2badm-funnel { margin: 0 0 12px; }

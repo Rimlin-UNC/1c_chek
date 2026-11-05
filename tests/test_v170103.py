@@ -89,7 +89,7 @@ class TestRelease:
             assert self._ver(reg[name]) >= self._ver(VERSION), name
         assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
         before = {name: ver for name, ver in reg.items() if name != new}
-        assert {"name": new, "from": "", "to": VERSION} in updater.diff_blocks(before, reg)
+        assert {"name": new, "from": "", "to": reg[new]} in updater.diff_blocks(before, reg)     # v1.70.106: блок новее
 
     def test_readme_latest_release_not_older(self):
         m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
@@ -139,7 +139,7 @@ class TestSeoService:
         assert closed.endswith("User-agent: *\nDisallow: /\n") and "Sitemap" not in closed
         xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-05")
         assert "<loc>https://chek.ymaster.ru/</loc><lastmod>2026-11-05</lastmod>" in xml
-        assert "<loc>https://chek.ymaster.ru/oferta</loc>" in xml and xml.count("<url>") == 2
+        assert "<loc>https://chek.ymaster.ru/oferta</loc>" in xml and xml.count("<url>") >= 2     # v1.70.106: + страницы
         assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-05") is None
 
     def test_verification_codes(self):
@@ -353,7 +353,7 @@ class TestDocsAndKb:
         assert row["Статус"] == "done" and row["Задача"].endswith(f"выпущено в {VERSION}")
         assert row["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/58" and "ADR-33" in row["Связанные ADR"]
         assert row["Источник"].endswith("docs/kb/12_seo.md")
-        assert tasks["T-75"]["Статус"] == "todo" and tasks["T-75"]["Issue/PR"].endswith("/issues/59")
+        assert tasks["T-75"]["Статус"] in ("todo", "done") and tasks["T-75"]["Issue/PR"].endswith("/issues/59")
         for tid, issue in (("T-63", 48), ("T-64", 49), ("T-71", 56)):     # v1.70.104: T-63 выпущена
             assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.104: не старше
