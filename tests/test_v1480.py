@@ -82,11 +82,13 @@ class TestBackupFiltersAndVerify:
         assert name, "нет ручной копии"
         ok, msg = backups.verify_backup(name)
         assert ok and "хеш совпадает" in msg and "В копии:" in msg
-        # подмена байта → хеш не совпадает
-        import os
+        # подмена байта → хеш не совпадает. v1.70.105: меняется поле user_version в заголовке (байты 60–63) —
+        # база остаётся целой. Прежде менялся последний байт файла: если там лежал указатель страницы
+        # переполнения, quick_check срабатывал раньше сверки хеша и тест падал случайно (CI 42089090974, 3.11)
         p = backups.backup_path(name)
         data = open(p, "rb").read()
-        open(p, "wb").write(data[:-1] + bytes([data[-1] ^ 0xFF]))
+        version = int.from_bytes(data[60:64], "big") ^ 0x5A5A5A5A
+        open(p, "wb").write(data[:60] + version.to_bytes(4, "big") + data[64:])
         try:
             ok2, msg2 = backups.verify_backup(name)
             assert not ok2 and "изменился" in msg2
