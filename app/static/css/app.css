@@ -2321,6 +2321,13 @@ label.field[hidden] { display: none; }
 .bank-conn-files { margin-top: 8px; }
 .bank-conn-file-list { margin: 6px 0 0; padding-left: 18px; }
 .bank-conn-file-list li { margin: 2px 0; overflow-wrap: anywhere; }
+/* v1.70.104 (T-63, ADR-34): первичка из почты — панель ящика и черновики на сверку */
+.mail-how { overflow-wrap: anywhere; }
+.mail-draft { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px; margin: 6px 0;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.mail-draft-main { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.mail-draft-tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.mail-draft-tools .btn { white-space: nowrap; }
 
 /* v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — «Клиенты»: карточки компаний по убыванию внимания */
 .cl-top { padding-bottom: 14px; }

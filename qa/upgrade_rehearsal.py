@@ -197,7 +197,11 @@ from app.unified.models import UnifiedDocument
 ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
 res = {"version": app_version(),
        "unified_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("unified_")),
-       "primary_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_")),
+       "primary_tables": sorted(t for t in inspect(engine).get_table_names()
+                                if t.startswith("primary_") and not t.startswith("primary_mail")),
+       "primary_mail_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_mail")),
+       "primary_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_documents")
+                                 if c["name"] in ("source", "channel")),
        "docreq_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("doc_request")),
        "bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_")),
        "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
@@ -699,6 +703,8 @@ def main() -> int:
         out["upgrade"] = up
         check(checks, len(up["unified_tables"]) == 6
               and up.get("primary_tables") == ["primary_document_lines", "primary_documents"]
+              and up.get("primary_mail_tables") == ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]
+              and up.get("primary_columns") == ["channel", "source"]
               and up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"]
               and up.get("bank_tables") == ["bank_connections", "bank_operations", "bank_reimbursements",
                                             "bank_settings", "bank_statements"]
@@ -711,7 +717,8 @@ def main() -> int:
               "банковской выписки (с v1.70.98; bank_connections — с v1.70.99), клиенты бухгалтера "
               "accountant_clients (с v1.70.100), память товаров goods_memory и 4 колонки категории "
               "позиции в receipt_items (с v1.70.101), сертификат клиента cert_enc в bank_connections "
-              "(с v1.70.102)")
+              "(с v1.70.102), почта для первички: 3 таблицы primary_mail* и колонка channel в primary_documents "
+              "(с v1.70.104)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

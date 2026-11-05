@@ -23,6 +23,7 @@ import { viewPrimary } from './primary.js'; // v1.70.94: первичка — э
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
 import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } from './clients.js';   // v1.70.100: рабочее место аутсорсера (T-50), пакет (T-68)
 import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';
+import { mailConnectPanel } from './primary_mail.js';
 import { goodsItemsHTML, goodsBindItems, goodsArticleHintHTML, goodsSummaryHTML, goodsMemoryHTML, goodsBindMemory, goodsProfileHTML, goodsBindProfile } from './goods.js';   // v1.70.101: понимание чеков (T-69)   // v1.70.98: банковская выписка (T-45);
                                                // v1.70.99: банк по API в карточке компании (ADR-29)
 
@@ -4549,6 +4550,7 @@ async function openCompanyCard(id) {
       ${c.is_active ? '<button type="button" class="btn btn-sm" id="cc-archive">📦 В архив</button>' : ''}
     </div>
     <div class="info-callout" id="cc-bank"></div>
+    <div class="info-callout" id="cc-mail"></div>
     <div class="modal-actions" style="justify-content:space-between">
       <button type="button" class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
       <button type="button" class="btn" data-close>Закрыть</button>
@@ -4603,6 +4605,8 @@ async function openCompanyCard(id) {
   slot.querySelector('#cc-delete').onclick = () => { close(); openCompanyDelete(d); };
   // v1.70.99 (ADR-29): выбор банка и доступ к нему по API (Точка: OAuth 2.0 или JWT-ключ)
   bankConnectPanel(slot.querySelector('#cc-bank'), c.id);
+  // v1.70.104 (T-63): почтовый ящик компании для первички — IMAP только на чтение
+  mailConnectPanel(slot.querySelector('#cc-mail'), c.id);
 }
 
 function openCompanyDelete(d) {
@@ -6492,6 +6496,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.104': [
+    { icon: '📬', title: 'УПД из почты — сами в реестр',
+      text: 'Подключите ящик компании: «⚙ Почтовый ящик» на экране «Первичка» или блок «Почта для документов» в '
+        + 'карточке компании. Раз в 15 минут XML и ZIP из писем поставщиков попадают в реестр с теми же проверками, '
+        + 'а PDF, сканы и фото — в «Ждут сверки»: «Сверить» открывает окно сверки и сам файл из письма.' },
+    { icon: '🔒', title: 'Только чтение, без дублей',
+      text: 'Письма остаются непрочитанными, ничего не удаляется и не перемещается. Печатная форма документа, '
+        + 'который уже пришёл в XML, и повторно присланный файл не задваиваются. Пароль приложения хранится '
+        + 'зашифрованным, файл письма — только пока черновик ждёт сверки, не дольше 30 дней.' },
+  ],
   '1.70.103': [
     { icon: '🔎', title: 'Стартовую страницу находят по «проверке чека»',
       text: 'Заголовок, описание и карточка для соцсетей — под запрос «проверка чека по QR-коду»; один главный '
@@ -10661,6 +10675,8 @@ const AUDIT_KIND = {
   bank_operation_ignored: ['info', '🏦'], bank_reimbursement_decided: ['ok', '💸'],
   bank_settings_updated: ['info', '⚙️'],
   bank_connection_saved: ['info', '🏦'], bank_connected: ['ok', '🏦'], bank_connection_removed: ['warn', '🏦'],   // v1.70.99
+  primary_mailbox_saved: ['info', '📬'], primary_mailbox_connected: ['ok', '📬'], primary_mailbox_removed: ['warn', '📬'],
+  primary_mail_checked: ['ok', '📬'],   // v1.70.104 (T-63): первичка из почты
   bank_synced: ['ok', '🏦'],
   mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],
   external_settings_updated: ['info', '⚙️'],

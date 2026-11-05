@@ -96,7 +96,7 @@ class TestSchema:
     def test_cert_column_without_new_tables(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 62                                                  # новых таблиц нет
+        assert declared >= 62                                   # в 1.70.102 новых таблиц нет; v1.70.104 — прибавились
         from app.bank.models import BankConnection
         col = BankConnection.__table__.columns["cert_enc"]
         assert col.server_default is not None and not BankConnection.__table__.foreign_keys   # ADR-09
@@ -107,7 +107,8 @@ class TestSchema:
         assert 'and up.get("bank_columns") == ["cert_enc"]' in rehearsal
         db = read("docs/DATABASE.md")
         assert "| Несколько банков по API (v1.70.102) |" in db and "`bank_connections.cert_enc`" in db
-        assert "62 объявления `__tablename__`" in db
+        m = re.search(r"(\d+) объявлени[яй] `__tablename__`", db)           # v1.70.104: число — не меньше
+        assert m and int(m.group(1)) >= 62
 
 
 class TestWiring:
@@ -196,7 +197,7 @@ class TestDocsAndKb:
         assert row["Источник"].endswith("docs/bank_api.md")
         assert tasks["T-74"]["Статус"] in ("todo", "done") and tasks["T-74"]["Issue/PR"].endswith("/issues/58")
         for tid, issue in (("T-63", 48), ("T-64", 49), ("T-71", 56)):
-            assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.103: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         for tid in ("T-41", "T-42", "T-43", "T-44", "T-45", "T-46", "T-47", "T-48", "T-49"):

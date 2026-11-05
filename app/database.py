@@ -308,6 +308,8 @@ def _ensure_schema() -> None:
         # v1.70.95 (T-61): источник документа первички — xml | pdf | scan | manual
         "primary_documents": [
             ("source", "ALTER TABLE primary_documents ADD COLUMN source VARCHAR(10) DEFAULT 'xml'"),
+            # v1.70.104 (T-63): канал документа — пусто (загрузка на экране) | mail (из почтового ящика)
+            ("channel", "ALTER TABLE primary_documents ADD COLUMN channel VARCHAR(10) DEFAULT ''"),
         ],
         # v1.70.99 (ADR-29): источник выписки — file | tochka (API банка)
         "bank_statements": [

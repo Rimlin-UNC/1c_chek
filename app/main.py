@@ -28,6 +28,7 @@ from .clients import router as clients_router
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
 from .docreq import router as docreq_router
+from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
@@ -158,6 +159,16 @@ async def lifespan(app: FastAPI):
             bank_api.sync_due(db)
         except Exception:                                # noqa: BLE001
             log.exception("bank api tick failed")
+        finally:
+            db.close()
+        # v1.70.104 (T-63, ADR-34): первичка из почтовых ящиков компаний — раз в 15 минут (не больше трёх ящиков
+        # за тик), распознавание очереди PDF и сканов, раз в сутки — чистка; свой перехват, как у банка
+        from .primary import mailbox as primary_mailbox
+        db = SessionLocal()
+        try:
+            primary_mailbox.check_due(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("primary mailbox tick failed")
         finally:
             db.close()
 
@@ -473,6 +484,8 @@ app.include_router(receipts.router)
 app.include_router(dashboard.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(unified_router.router)  # единый фискальный документ
+# v1.70.104 (T-63): первичка из почты — раньше основного роутера первички, иначе /inbox поймал бы /{doc_id}
+app.include_router(primary_mail_router.router)
 app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
 app.include_router(docreq_router.router)  # v1.70.97: что нужно от клиента (T-58)
 app.include_router(bank_router.router)  # v1.70.98: банковская выписка (T-45)

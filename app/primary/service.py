@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
 import json
 import time
+import zipfile
+import zlib
 from datetime import date
 
 from sqlalchemy import select
@@ -32,6 +35,8 @@ from .models import PrimaryDocument, PrimaryDocumentLine
 # Не первичный документ продавца — не сохраняем, только объясняем причину
 REJECT_CODES = frozenset({"buyer_title", "correction_doc", "function"})
 MAX_FILES = 50
+MAX_ZIP_BYTES = 20 * 1024 * 1024
+MAX_UNPACKED = 50 * 1024 * 1024
 SOURCES = {"xml": "файл ЭДО", "pdf": "PDF", "scan": "скан или фото", "manual": "введён вручную"}
 TOKEN_TTL = 24 * 3600
 IMAGE_TYPES = {b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"II*\x00": ".tif", b"MM\x00*": ".tif"}
@@ -76,7 +81,7 @@ def find_duplicate(db: Session, company_id: str | None, parsed: dict, sha: str) 
 
 
 def _store(db: Session, user: User, parsed: dict, issues: list[dict], company_id: str | None, name: str,
-           sha: str, source: str) -> PrimaryDocument:
+           sha: str, source: str, channel: str = "") -> PrimaryDocument:
     seller, buyer, totals = parsed["seller"], parsed["buyer"], parsed["totals"]
 
     def total(key: str, line_key: str) -> float:
@@ -93,7 +98,7 @@ def _store(db: Session, user: User, parsed: dict, issues: list[dict], company_id
         currency=parsed["currency"][:3], total_without_vat=total("without_vat", "sum_without_vat"),
         vat_total=total("vat", "vat_sum"), total_with_vat=total("with_vat", "sum_with_vat"),
         status=upd.status_of(issues), issues_json=json.dumps(issues, ensure_ascii=False),
-        created_by=user.id, source=source)
+        created_by=user.id, source=source, channel=channel)
     doc.lines = [PrimaryDocumentLine(
         position=ln["position"] or i, name=ln["name"], unit_code=ln["unit_code"][:10], unit_name=ln["unit_name"][:40],
         quantity=ln["quantity"], price=ln["price"], sum_without_vat=ln["sum_without_vat"],
@@ -104,8 +109,46 @@ def _store(db: Session, user: User, parsed: dict, issues: list[dict], company_id
     return doc
 
 
-def accept(db: Session, user: User, data: bytes, file_name: str, requested: str | None) -> dict:
-    """Один файл → результат для интерфейса: created | duplicate | rejected."""
+def unpack(name: str, data: bytes) -> list[tuple[str, bytes | None, str]]:
+    """Архив → [(имя, байты | None, причина отказа)]; не архив — как есть.
+
+    Из архива берутся только .xml (подписи и печатные формы пропускаются); пределы — защита от «zip-бомб».
+    С 1.70.104 живёт здесь, а не в роутере: тем же разбором пользуется приём из почты (T-63).
+    """
+    if not data.startswith(b"PK"):
+        return [(name, data, "")]
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return [(name, None, "Архив повреждён")]
+    out, unpacked = [], 0
+    for info in archive.infolist():
+        inner = info.filename
+        if info.is_dir() or not inner.lower().endswith(".xml") or inner.startswith("__MACOSX/"):
+            continue
+        label = f"{name}/{inner}"[:255]
+        if len(out) >= MAX_FILES:
+            out.append((label, None, "В архиве больше 50 документов — остальные не загружены"))
+            break
+        if info.file_size > upd.MAX_BYTES or unpacked + info.file_size > MAX_UNPACKED:
+            out.append((label, None, "Файл в архиве слишком большой"))
+            continue
+        try:                        # зашифрованный, повреждённый, неизвестное сжатие
+            with archive.open(info) as fh:
+                body = fh.read(upd.MAX_BYTES + 1)
+        except (RuntimeError, NotImplementedError, EOFError, OSError, zipfile.BadZipFile, zlib.error):
+            out.append((label, None, "Файл в архиве не читается: зашифрован или повреждён"))
+            continue
+        unpacked += len(body)       # по фактически прочитанному: заявленный размер можно подделать
+        if unpacked > MAX_UNPACKED:
+            out.append((label, None, "Архив слишком большой после распаковки"))
+            break
+        out.append((label, body, ""))
+    return out or [(name, None, "В архиве нет XML-документов")]
+
+
+def accept(db: Session, user: User, data: bytes, file_name: str, requested: str | None, channel: str = "") -> dict:
+    """Один файл → результат для интерфейса: created | duplicate | rejected (channel — откуда пришёл, T-63)."""
     name = (file_name or "")[:255]
     try:
         parsed = upd.parse(data)
@@ -123,7 +166,7 @@ def accept(db: Session, user: User, data: bytes, file_name: str, requested: str 
     if duplicate is not None:
         return {"file": name, "result": "duplicate", "issues": issues, "document": brief(duplicate),
                 "message": "Этот документ уже загружен"}
-    doc = _store(db, user, parsed, issues, company_id, name, sha, "xml")
+    doc = _store(db, user, parsed, issues, company_id, name, sha, "xml", channel)
     return {"file": name, "result": "created", "issues": issues, "document": brief(doc)}
 
 
@@ -280,7 +323,7 @@ def draft_to_parsed(draft: dict) -> dict:
     }
 
 
-def confirm(db: Session, user: User, payload: dict) -> dict:
+def confirm(db: Session, user: User, payload: dict, channel: str = "") -> dict:
     """Сверенный человеком черновик → документ реестра (created | duplicate)."""
     source = payload["source"]
     sha = (payload.get("file_sha256") or "").lower()
@@ -300,7 +343,7 @@ def confirm(db: Session, user: User, payload: dict) -> dict:
     if duplicate is not None:
         return {"result": "duplicate", "document": brief(duplicate), "message": "Этот документ уже есть в реестре"}
     name = (payload.get("file_name") or "")[:255] if source != "manual" else ""
-    doc = _store(db, user, parsed, issues, company_id, name, sha, source)
+    doc = _store(db, user, parsed, issues, company_id, name, sha, source, channel)
     return {"result": "created", "document": brief(doc), "issues": issues}
 
 
@@ -391,6 +434,7 @@ def brief(doc: PrimaryDocument) -> dict:
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "exported_at": doc.exported_at.isoformat() if doc.exported_at else None,
         "source": doc.source or "xml",
+        "channel": doc.channel or "",
     }
 
 

@@ -128,7 +128,8 @@ class TestCatalogIsGrounded:
 
     def test_flows_are_complete(self):
         _surfaces, flows, _facts, _tables = _catalog()
-        assert len(flows) == 11, "потоков должно быть одиннадцать"
+        # v1.70.104: + почтовый ящик компании для первички (mail_in, T-63)
+        assert len(flows) == 12, "потоков должно быть двенадцать"
         for f in flows:
             assert self.FLOW_FIELDS <= set(f), f"{f.get('id')}: неполный состав"
             for k in self.FLOW_FIELDS - {"id", "hosts", "log"}:

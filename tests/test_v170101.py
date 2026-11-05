@@ -95,7 +95,7 @@ class TestSchema:
     def test_memory_table_and_item_columns(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 62
+        assert declared >= 62                                   # v1.70.104: таблиц только прибавляется
         from app.goods.models import GoodsMemory
         table = GoodsMemory.__table__
         assert table.name == "goods_memory" and not table.foreign_keys                           # ADR-09
@@ -120,8 +120,9 @@ class TestSchema:
         assert 'and up.get("goods_columns") == ["goods_category", "group_note", "group_score", "group_source"],' \
             in rehearsal
         db = read("docs/DATABASE.md")
-        assert "62 объявления `__tablename__`" in db and "| Понимание чеков (v1.70.101) |" in db
-        assert "все 62 таблицы приложения" in db and "с 1.70.101 — `goods_memory`" in db
+        assert "| Понимание чеков (v1.70.101) |" in db and "с 1.70.101 — `goods_memory`" in db
+        m = re.search(r"(\d+) объявлени[яй] `__tablename__`", db)           # v1.70.104: число — не меньше
+        assert m and int(m.group(1)) >= 62
 
 
 class TestWiring:
@@ -251,7 +252,7 @@ class TestDocsAndKb:
         assert "ADR-31" in tasks["T-69"]["Связанные ADR"]
         assert tasks["T-69"]["Источник"].endswith("docs/receipt_understanding.md")
         for tid, issue in (("T-63", 48), ("T-64", 49), ("T-71", 56)):
-            assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.102: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         for tid in ("T-41", "T-42", "T-43", "T-44", "T-45", "T-46", "T-47", "T-48", "T-49"):

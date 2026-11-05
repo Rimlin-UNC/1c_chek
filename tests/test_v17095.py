@@ -191,7 +191,7 @@ class TestDocsAndKb:
         assert t61["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/46"
         assert t61["Связанные ADR"] == "ADR-23, ADR-25"
         for tid, issue in (("T-62", 47), ("T-63", 48), ("T-64", 49)):
-            assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         assert tasks["T-54"]["Статус"] == "cancelled" and "T-61" in tasks["T-54"]["Блокер"]
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.96: не старше
         assert m and tuple(map(int, m.group(1).split("."))) >= (1, 70, 95)

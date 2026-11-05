@@ -15,9 +15,6 @@ EnterpriseData; документы отмечаются выгруженными
 """
 from __future__ import annotations
 
-import io
-import zipfile
-import zlib
 from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Annotated, Literal
@@ -100,43 +97,9 @@ class ExportIn(BaseModel):
     date_from: DateType | None = None
     date_to: DateType | None = None
 
-MAX_ZIP_BYTES = 20 * 1024 * 1024
-MAX_UNPACKED = 50 * 1024 * 1024
+MAX_ZIP_BYTES = service.MAX_ZIP_BYTES
 STATUSES = ("ok", "warnings", "errors")
-
-
-def _unpack(name: str, data: bytes) -> list[tuple[str, bytes | None, str]]:
-    """Архив → [(имя, байты | None, причина отказа)]; не архив — как есть."""
-    if not data.startswith(b"PK"):
-        return [(name, data, "")]
-    try:
-        archive = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile:
-        return [(name, None, "Архив повреждён")]
-    out, unpacked = [], 0
-    for info in archive.infolist():
-        inner = info.filename
-        if info.is_dir() or not inner.lower().endswith(".xml") or inner.startswith("__MACOSX/"):
-            continue
-        label = f"{name}/{inner}"[:255]
-        if len(out) >= service.MAX_FILES:
-            out.append((label, None, "В архиве больше 50 документов — остальные не загружены"))
-            break
-        if info.file_size > upd.MAX_BYTES or unpacked + info.file_size > MAX_UNPACKED:
-            out.append((label, None, "Файл в архиве слишком большой"))
-            continue
-        try:                        # зашифрованный, повреждённый, неизвестное сжатие
-            with archive.open(info) as fh:
-                body = fh.read(upd.MAX_BYTES + 1)
-        except (RuntimeError, NotImplementedError, EOFError, OSError, zipfile.BadZipFile, zlib.error):
-            out.append((label, None, "Файл в архиве не читается: зашифрован или повреждён"))
-            continue
-        unpacked += len(body)       # по фактически прочитанному: заявленный размер можно подделать
-        if unpacked > MAX_UNPACKED:
-            out.append((label, None, "Архив слишком большой после распаковки"))
-            break
-        out.append((label, body, ""))
-    return out or [(name, None, "В архиве нет XML-документов")]
+_unpack = service.unpack          # v1.70.104: разбор архива переехал в service — им пользуется и приём из почты
 
 
 @router.post("/upload")

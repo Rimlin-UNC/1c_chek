@@ -10,9 +10,12 @@
    v1.70.96 (T-60): выгрузка в 1С. Кнопка «В 1С» в реестре: файлы УПД 5.03 для типовой кнопки
    1С «Загрузить → Из файла» (собираются из реквизитов и проверяются по схеме ФНС) или пакет
    EnterpriseData. Сначала окно показывает, что уйдёт и почему пропущено остальное; после
-   скачивания документы отмечаются «выгружен». Отметки в реестре — выгрузить выбранные. */
+   скачивания документы отмечаются «выгружен». Отметки в реестре — выгрузить выбранные.
+   v1.70.104 (T-63): карточка «Из почты» — черновики PDF и сканов из почтового ящика компании сверяются в том же
+   окне (файл письма — кнопкой «Открыть файл»), XML и ZIP из писем попадают в реестр сами. */
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
+import { mailConnectPanel, mailInboxHtml } from './primary_mail.js';
 
 export const PRIMARY_STATUSES = [
   { code: 'ok', title: 'Без замечаний', chip: 'verified' },
@@ -191,11 +194,15 @@ export function primReviewHtml(rec, opts = {}) {
       <button type="button" class="btn btn-sm" id="prim-hint-${role}">Подставить</button></p>` : '';
   };
   const lines = Array.isArray(d.lines) ? d.lines : [];
+  // v1.70.104: у черновика из почты файла в браузере нет — он открывается кнопкой (blob-адрес из /inbox/{id}/file)
+  const openFile = opts.fileUrl ? `<a class="btn btn-sm" id="prim-open-file" href="${esc(opts.fileUrl)}" target="_blank"
+      rel="noopener">📄 Открыть файл</a>` : '';
   const preview = opts.previewUrl
-    ? `<button type="button" class="btn btn-sm" id="prim-zoom" aria-pressed="false">🔍 Крупнее</button>
+    ? `<button type="button" class="btn btn-sm" id="prim-zoom" aria-pressed="false">🔍 Крупнее</button>${openFile}
       <img src="${esc(opts.previewUrl)}" alt="Изображение документа для сверки">`
-    : `<p class="form-hint">${manual ? 'Введите реквизиты с бумажного документа.'
-      : 'Сверьте поля с PDF-файлом: текст взят из файла как есть, ошибиться могла только разметка.'}</p>`;
+    : opts.fileUrl ? `<p class="form-hint">Сверьте поля с файлом из письма.</p>${openFile}`
+      : `<p class="form-hint">${manual ? 'Введите реквизиты с бумажного документа.'
+        : 'Сверьте поля с PDF-файлом: текст взят из файла как есть, ошибиться могла только разметка.'}</p>`;
   const ocr = rec.ocr ? `<p class="form-hint">Распознано на сервере: ${esc(rec.ocr.engine || 'Tesseract')}, ${esc(String(rec.ocr.seconds ?? '—'))} с.</p>` : '';
   const missing = [...Object.keys(PRIM_FIELD_TITLES)].filter((k) => !found.has(k) && k !== 'lines');
   const unsure = [...uncertain].map((k) => PRIM_FIELD_TITLES[k] || k);
@@ -205,6 +212,7 @@ export function primReviewHtml(rec, opts = {}) {
   return `
     <h3 class="modal-title">${manual ? '✍️ Документ вручную' : `🔍 Сверьте реквизиты: ${esc(rec.file_name || 'документ')}`}</h3>
     <p class="form-hint">${summary} В реестр документ попадёт только после «Сохранить».</p>
+    ${opts.mail ? `<p class="form-hint">📬 Из почты: ${esc(opts.mail)}</p>` : ''}${rec.message ? `<p class="form-hint">${esc(rec.message)}</p>` : ''}
     ${rec.duplicate ? `<div class="form-error">Такой документ уже есть в реестре: ${esc(primTitle(rec.duplicate))}.</div>` : ''}
     <div class="prim-review">
       <div class="prim-preview">${preview}${ocr}</div>
@@ -241,7 +249,7 @@ export function primReviewHtml(rec, opts = {}) {
         <h4>Проверка</h4><div id="prim-check" aria-live="polite"></div>
         <div class="modal-actions">
           <button type="button" class="btn btn-primary" id="prim-save">Сохранить в реестр</button>
-          ${manual ? '' : '<button type="button" class="btn" id="prim-skip">Пропустить</button>'}
+          ${manual ? '' : `<button type="button" class="btn" id="prim-skip">${esc(opts.skipLabel || 'Пропустить')}</button>`}
         </div>
       </div>
     </div>`;
@@ -403,6 +411,7 @@ export async function viewPrimary(container, opts = {}) {
         <span class="form-hint" id="prim-ocr" aria-live="polite"></span></div>
       <div id="prim-results" aria-live="polite"></div>
     </div>
+    <div class="glass card" id="prim-mail"><div class="skeleton" style="height:60px"></div></div>
     <div class="glass card">
       <div class="card-title">Реестр документов <span class="spacer"></span>
         <span class="form-hint" id="prim-picked" aria-live="polite"></span>
@@ -595,12 +604,15 @@ export async function viewPrimary(container, opts = {}) {
     } catch { box.innerHTML = ''; }
   }
 
-  function review(rec, file) {
+  // extra (v1.70.104, черновик из почты): confirmUrl — куда сохранять, fileUrl и previewUrl — файл письма,
+  // mail — от кого и тема, skipLabel и onSkip — «Не нужен» вместо «Пропустить»
+  function review(rec, file, extra = {}) {
     return new Promise((resolve) => {
       let result = 'closed';
       const isImage = file && /^image\//.test(file.type || '');
       const blobUrl = isImage && typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL(file) : '';
-      const { slot, close } = openModal(primReviewHtml(rec, { previewUrl: rec.preview || blobUrl }), {
+      const { slot, close } = openModal(primReviewHtml(rec, { previewUrl: extra.previewUrl || rec.preview || blobUrl,
+        fileUrl: extra.fileUrl, mail: extra.mail, skipLabel: extra.skipLabel }), {
         onClose: () => { if (blobUrl && URL.revokeObjectURL) URL.revokeObjectURL(blobUrl); resolve(result); },
       });
       if (!slot) { resolve(result); return; }
@@ -639,7 +651,15 @@ export async function viewPrimary(container, opts = {}) {
       slot.onchange = check;
       check();
       const skip = get('prim-skip');
-      if (skip) skip.onclick = () => { result = 'skipped'; close(); };
+      if (skip) {
+        skip.onclick = async () => {
+          if (typeof extra.onSkip === 'function') {
+            try { await extra.onSkip(); } catch (e) { toast(e.message, 'err'); return; }
+          }
+          result = 'skipped';
+          close();
+        };
+      }
       get('prim-save').onclick = async () => {
         const draft = primReadDraft(get, rec);
         const payload = { source: rec.source, token: rec.token || '', file_name: rec.file_name || '',
@@ -647,7 +667,9 @@ export async function viewPrimary(container, opts = {}) {
         const company = companyChoice() || rec.company_id;
         if (company) payload.company_id = company;
         try {
-          const res = await api.post('/api/v1/primary/confirm', payload);
+          const res = extra.confirmUrl
+            ? await api.post(extra.confirmUrl, rec.company_id ? { draft, company_id: rec.company_id } : { draft })
+            : await api.post('/api/v1/primary/confirm', payload);
           toast(res.result === 'duplicate' ? 'Такой документ уже есть в реестре'
             : `Сохранено: ${res.document ? primTitle(res.document) : 'документ'}`, res.result === 'duplicate' ? 'err' : 'ok');
           result = res.result === 'duplicate' ? 'duplicate' : 'saved';
@@ -734,7 +756,67 @@ export async function viewPrimary(container, opts = {}) {
   $('#prim-to').onchange = (e) => { state.to = e.target.value; state.offset = 0; load(); };
   $('#prim-exported').onchange = (e) => { state.exported = e.target.value; state.offset = 0; load(); };
   $('#prim-export').onclick = () => openExport();
+  // ---------------------------------------------------------------- v1.70.104 (T-63): из почты
+  const mailQuery = () => (opts.isAdmin && filterCompany ? `?company_id=${encodeURIComponent(filterCompany)}` : '');
+
+  async function loadMail() {
+    const box = $('#prim-mail');
+    if (!box) return;
+    try {
+      const data = await api.get(`/api/v1/primary/inbox${mailQuery()}`);
+      if (!container.isConnected) return;
+      box.innerHTML = mailInboxHtml(data, { isAdmin: opts.isAdmin });
+      box.querySelectorAll('.mail-review').forEach((b) => { b.onclick = () => reviewMail(b.dataset.id); });
+      box.querySelectorAll('.mail-dismiss').forEach((b) => { b.onclick = () => dismissMail(b.dataset.id); });
+      box.querySelector('#mail-refresh').onclick = () => loadMail();
+      box.querySelector('#mail-setup').onclick = () => openMailSetup();
+    } catch (e) {
+      if (container.isConnected) box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  async function reviewMail(id) {
+    const base = `/api/v1/primary/inbox/${encodeURIComponent(id)}`;
+    let rec;
+    try { rec = await api.get(base); } catch (e) { toast(e.message, 'err'); loadMail(); return; }
+    let fileUrl = '';
+    if (rec.file_url && typeof URL !== 'undefined' && URL.createObjectURL) {
+      try { fileUrl = URL.createObjectURL((await api.download(rec.file_url)).blob); } catch { fileUrl = ''; }
+    }
+    const previewUrl = fileUrl && /^image\/(jpeg|png)$/.test(rec.media_type || '') ? fileUrl : '';
+    const mail = [rec.sender, rec.subject ? `«${rec.subject}»` : ''].filter(Boolean).join(', ');
+    const result = await review(rec, null, { confirmUrl: `${base}/confirm`, fileUrl, previewUrl, mail,
+      skipLabel: 'Не нужен', onSkip: () => api.post(`${base}/dismiss`, {}) });
+    if (fileUrl && URL.revokeObjectURL) URL.revokeObjectURL(fileUrl);
+    if (result !== 'closed') loadMail();
+    if (result === 'saved') { state.offset = 0; load(); }
+  }
+
+  async function dismissMail(id) {
+    if (!window.confirm('Убрать вложение из сверки? Файл удалится из программы, письмо в ящике останется.')) return;
+    try {
+      await api.post(`/api/v1/primary/inbox/${encodeURIComponent(id)}/dismiss`, {});
+      toast('Убрано из сверки', 'ok', '📬');
+      loadMail();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  function openMailSetup() {
+    const companyId = opts.isAdmin ? (companyChoice() || filterCompany) : '';
+    if (opts.isAdmin && !companyId) {
+      toast('Выберите компанию в поле «Компания» выше — у каждой компании свой ящик', 'err', '📬');
+      return;
+    }
+    const { slot, close } = openModal(`<div class="info-callout" id="prim-mail-setup"></div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`, { onClose: () => loadMail() });
+    if (!slot) return;
+    slot.querySelector('[data-close]').onclick = close;
+    mailConnectPanel(slot.querySelector('#prim-mail-setup'), companyId, {
+      onSynced: () => { state.offset = 0; load(); } });
+  }
+
   const listed = load();          // реестр — первым запросом, состояние распознавания — следом, не дожидаясь
   loadOcr();
+  loadMail();
   await listed;
 }

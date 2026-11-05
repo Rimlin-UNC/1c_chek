@@ -298,6 +298,19 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
             f"(добавлено {d.get('added', 0)}, снято {d.get('removed', 0)})"
     if action == "bank_connection_removed":
         return "банк отключён", f"компания: „{d.get('company', '—')}“"
+    # v1.70.104 (T-63, ADR-34): первичка из почтового ящика (пароль в журнал не пишется)
+    if action == "primary_mailbox_saved":
+        return "сохранён почтовый ящик для первички", \
+            f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, папка: {d.get('folder', '—')}"
+    if action == "primary_mailbox_connected":
+        return "почтовый ящик для первички подключён", \
+            f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, писем в папке: {d.get('messages', 0)}"
+    if action == "primary_mailbox_removed":
+        return "почтовый ящик для первички отключён", f"компания: „{d.get('company', '—')}“"
+    if action == "primary_mail_checked":
+        return "первичка загружена из почты", \
+            f"компания: „{d.get('company', '—')}“, писем: {d.get('messages', 0)}, в реестр: {d.get('created', 0)}, " \
+            f"на сверку: {d.get('drafts', 0)}, дублей: {d.get('duplicates', 0)}, не принято: {d.get('rejected', 0)}"
     if action == "bank_synced":
         return "выписка загружена из банка", \
             f"компания: „{d.get('company', '—')}“, операций: {d.get('operations', 0)}, " \
