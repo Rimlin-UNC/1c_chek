@@ -24,6 +24,7 @@ import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно о
 import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } from './clients.js';   // v1.70.100: рабочее место аутсорсера (T-50), пакет (T-68)
 import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';
 import { mailConnectPanel } from './primary_mail.js';
+import { mdConnectPanel } from './moedelo.js';
 import { goodsItemsHTML, goodsBindItems, goodsArticleHintHTML, goodsSummaryHTML, goodsMemoryHTML, goodsBindMemory, goodsProfileHTML, goodsBindProfile } from './goods.js';   // v1.70.101: понимание чеков (T-69)   // v1.70.98: банковская выписка (T-45);
                                                // v1.70.99: банк по API в карточке компании (ADR-29)
 
@@ -4551,6 +4552,7 @@ async function openCompanyCard(id) {
     </div>
     <div class="info-callout" id="cc-bank"></div>
     <div class="info-callout" id="cc-mail"></div>
+    <div class="info-callout" id="cc-moedelo"></div>
     <div class="modal-actions" style="justify-content:space-between">
       <button type="button" class="btn btn-bad" id="cc-delete">🗑 Удалить компанию…</button>
       <button type="button" class="btn" data-close>Закрыть</button>
@@ -4607,6 +4609,8 @@ async function openCompanyCard(id) {
   bankConnectPanel(slot.querySelector('#cc-bank'), c.id);
   // v1.70.104 (T-63): почтовый ящик компании для первички — IMAP только на чтение
   mailConnectPanel(slot.querySelector('#cc-mail'), c.id);
+  // v1.70.107 (T-71, ADR-37): «Моё дело» — ключ API и проверка; акты покупок уходят из первички
+  mdConnectPanel(slot.querySelector('#cc-moedelo'), c.id);
 }
 
 function openCompanyDelete(d) {
@@ -6496,6 +6500,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.107': [
+    { icon: '📒', title: '«Моё дело» без ручного ввода',
+      text: 'Ключ API — в карточке компании, блок «📒 «Моё дело»». Документ из «Первички» уходит актом покупки '
+        + 'кнопкой «📒 В «Моё дело»», пакет — по отмеченным документам или за период. Первый этап — услуги, '
+        + 'накладные с товарами — следующим.' },
+    { icon: '🛡', title: 'Без дублей и со сверкой сумм',
+      text: 'Поставщик находится или добавляется по ИНН, такой же акт сначала ищется в «Моём деле», отправленный '
+        + 'документ повторно не уходит. Строки — с явными суммами; если сумма там другая — предупреждение. Ключ '
+        + 'хранится зашифрованным.' },
+  ],
   '1.70.106': [
     { icon: '🧭', title: 'Три страницы для поисковиков',
       text: '«Как проверить чек», «Чеки сотрудников в 1С» и «Для бухгалтеров» открываются без входа: инструкция с '
@@ -10697,6 +10711,8 @@ const AUDIT_KIND = {
   bank_connection_saved: ['info', '🏦'], bank_connected: ['ok', '🏦'], bank_connection_removed: ['warn', '🏦'],   // v1.70.99
   primary_mailbox_saved: ['info', '📬'], primary_mailbox_connected: ['ok', '📬'], primary_mailbox_removed: ['warn', '📬'],
   primary_mail_checked: ['ok', '📬'],   // v1.70.104 (T-63): первичка из почты
+  moedelo_key_saved: ['info', '📒'], moedelo_connected: ['ok', '📒'], moedelo_disconnected: ['warn', '📒'],
+  moedelo_document_sent: ['ok', '📒'], moedelo_link_removed: ['warn', '📒'], moedelo_batch_sent: ['ok', '📒'],   // v1.70.107 (T-71)
   bank_synced: ['ok', '🏦'],
   mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],
   external_settings_updated: ['info', '⚙️'],

@@ -435,7 +435,9 @@ test('прямая ссылка: у администратора список к
   await page.evaluate(() => { window.location.hash = '#/docreq'; });
   await page.reload();
   await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента', { timeout: 15000 });
-  await expect(page.locator('#dreq-company option', { hasText: 'E2E Альфа' })).toHaveCount(1);
+  // v1.70.107: список компаний приходит отдельным запросом после перезагрузки — под нагрузкой полного прогона
+  // 5 секунд по умолчанию не всегда хватало (в одиночку сценарий проходит); ждём столько же, сколько заголовок
+  await expect(page.locator('#dreq-company option', { hasText: 'E2E Альфа' })).toHaveCount(1, { timeout: 15000 });
 });
 
 // v1.70.99 (ADR-29): банк по API — в карточке компании выбирается Точка и способ доступа; секрет

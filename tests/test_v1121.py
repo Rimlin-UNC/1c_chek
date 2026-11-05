@@ -21,7 +21,8 @@ JS_DIR = "app/static/js"
 # v1.70.98: bank.js — экран «Банк: выписка» (T-45), его viewBank зовёт маршрутизатор app.js.
 # v1.70.100: clients.js — экран «Клиенты» и пакет выгрузки (T-50, T-68), его зовёт маршрутизатор app.js.
 # v1.70.101: goods.js — позиции чека с категориями и память товаров (T-69), их рисует карточка чека app.js.
-MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js", "printpack.js", "clients.js", "goods.js",
+# v1.70.107: moedelo.js — панель «Моё дело» (T-71): её зовут карточка компании app.js и первичка primary.js.
+MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js", "printpack.js", "moedelo.js", "clients.js", "goods.js",
            "primary_mail.js", "api.js", "bank.js", "primary.js", "docreq.js", "unified_fill.js", "unified_review.js", "app.js"]
 
 

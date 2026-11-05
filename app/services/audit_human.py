@@ -307,6 +307,25 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
             f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, писем в папке: {d.get('messages', 0)}"
     if action == "primary_mailbox_removed":
         return "почтовый ящик для первички отключён", f"компания: „{d.get('company', '—')}“"
+    # v1.70.107 (T-71, ADR-37): «Моё дело» по API — ключ в журнал не пишется
+    if action == "moedelo_key_saved":
+        return "сохранён ключ «Моего дела»", f"компания: „{d.get('company', '—')}“"
+    if action == "moedelo_connected":
+        return "«Моё дело» подключено: ключ проверен", f"компания: „{d.get('company', '—')}“"
+    if action == "moedelo_disconnected":
+        return "«Моё дело» отключено", f"компания: „{d.get('company', '—')}“"
+    if action == "moedelo_document_sent":
+        return "документ отправлен в «Моё дело»", \
+            f"компания: „{d.get('company', '—')}“, документ: {d.get('document', '—')}, " \
+            f"акт № {d.get('number', '—')}, итог: {d.get('status', '—')}" + \
+            ("; поставщик добавлен по ИНН" if d.get("kontragent_new") else "")
+    if action == "moedelo_link_removed":
+        return "забыта отправка в «Моё дело»", \
+            f"компания: „{d.get('company', '—')}“, документ: {d.get('document', '—')}"
+    if action == "moedelo_batch_sent":
+        return "пакет отправлен в «Моё дело»", \
+            f"компания: „{d.get('company', '—')}“, отправлено: {d.get('sent', 0)}, уже было: {d.get('found', 0)}, " \
+            f"сумма не совпала: {d.get('mismatch', 0)}, не ушло: {d.get('failed', 0)}, пропущено: {d.get('skipped', 0)}"
     if action == "primary_mail_checked":
         return "первичка загружена из почты", \
             f"компания: „{d.get('company', '—')}“, писем: {d.get('messages', 0)}, в реестр: {d.get('created', 0)}, " \

@@ -16,6 +16,7 @@
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 import { CHANNEL_FROM, mailConnectPanel, mailInboxHtml } from './primary_mail.js';
+import { mdBatchSummaryHtml, mdDocPanel, mdResultSummary } from './moedelo.js';
 
 export const PRIMARY_STATUSES = [
   { code: 'ok', title: 'Без замечаний', chip: 'verified' },
@@ -416,6 +417,7 @@ export async function viewPrimary(container, opts = {}) {
       <div class="card-title">Реестр документов <span class="spacer"></span>
         <span class="form-hint" id="prim-picked" aria-live="polite"></span>
         <button type="button" class="btn btn-sm" id="prim-export" title="Файлы УПД или EnterpriseData для 1С">⬇ В 1С</button>
+        <button type="button" class="btn btn-sm" id="prim-md" title="Акты покупок в «Моё дело»">📒 В «Моё дело»</button>
         <button type="button" class="btn btn-sm" id="prim-refresh">Обновить</button></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:6px 0 10px">
         <label class="field"><span>Проверка</span><select id="prim-status"><option value="">Все</option>
@@ -491,9 +493,12 @@ export async function viewPrimary(container, opts = {}) {
       <h4>Строки</h4>${primLinesHtml(d.lines)}
       <p class="form-hint">1С: ${d.exported_at ? `выгружен ${esc(primExportedLabel(d.exported_at).replace('✓ ', ''))}` : 'ещё не выгружен'}.
         Файл УПД загружается в 1С кнопкой «Загрузить → Из файла» в разделе «Покупки → Поступление (акты, накладные, УПД)».</p>
+      <div id="prim-md-doc" aria-live="polite"></div>
       <div class="modal-actions"><button type="button" class="btn" id="prim-card-1c">⬇ Файл для 1С</button>
         <button type="button" class="btn btn-danger" id="prim-del">Удалить документ</button></div>`);
     if (slot) slot.classList.add('prim-modal');   // шире обычного окна: строки документа — 8 колонок
+    // v1.70.107 (T-71): «Моё дело» — что уйдёт, что мешает, отметка об отправке
+    mdDocPanel(document.getElementById('prim-md-doc'), id, { onSent: () => load() });
     const file1c = document.getElementById('prim-card-1c');
     if (file1c) {
       file1c.onclick = async () => {
@@ -579,6 +584,53 @@ export async function viewPrimary(container, opts = {}) {
       } catch (e) { go.disabled = false; toast(e.message, 'err'); }
     };
     await refresh();
+  }
+
+  // v1.70.107 (T-71, ADR-37): пакет в «Моё дело» — отмеченные документы или период; сначала проверка
+  async function openMd() {
+    const ids = [...state.selected];
+    const period = [state.from && `с ${primDay(state.from)}`, state.to && `по ${primDay(state.to)}`].filter(Boolean).join(' ');
+    const what = ids.length ? `Отмечено документов: ${ids.length}.`
+      : `Документы${period ? ` ${period}` : ' за всё время'} — задайте период фильтром дат или отметьте документы в реестре.`;
+    const { slot, close } = openModal(`
+      <h3 class="modal-title">📒 В «Моё дело»</h3>
+      <p class="form-hint">${esc(what)} Услуги уходят актами покупки; поставщик находится или добавляется по ИНН;
+        уже отправленные повторно не уходят. Накладные с товарами — следующим этапом.</p>
+      <div id="prim-md-check" aria-live="polite"><div class="skeleton" style="height:48px"></div></div>
+      <div class="modal-actions"><button type="button" class="btn btn-primary" id="prim-md-go" disabled>Отправить</button></div>`);
+    if (!slot) return;
+    const get = (sel) => slot.querySelector(`#${sel}`);
+    const body = { ids: ids.slice(0, 500) };
+    if (!ids.length) {
+      if (state.from) body.date_from = state.from;
+      if (state.to) body.date_to = state.to;
+    }
+    if (opts.isAdmin && filterCompany) body.company_id = filterCompany;
+    try {
+      const check = await api.post('/api/v1/moedelo/send/check', body);
+      get('prim-md-check').innerHTML = mdBatchSummaryHtml(check);
+      get('prim-md-go').disabled = !Number(check.count);
+    } catch (e) {
+      get('prim-md-check').innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+      return;
+    }
+    get('prim-md-go').onclick = async () => {
+      const go = get('prim-md-go');
+      go.disabled = true;
+      go.textContent = 'Отправляем…';
+      try {
+        const res = await api.post('/api/v1/moedelo/send', body);
+        const failed = Array.isArray(res.failed) ? res.failed : [];
+        toast(mdResultSummary(res), failed.length ? 'warn' : 'ok', '📒 «Моё дело»');
+        if (failed.length || res.stopped) {
+          get('prim-md-check').innerHTML = `${res.stopped ? `<div class="form-error">${esc(res.stopped)}</div>` : ''}
+            <ul class="prim-results">${failed.slice(0, 20).map((f) => `<li><b>${esc(f.title)}</b>: ${esc(f.reason)}</li>`).join('')}</ul>`;
+          go.textContent = 'Отправлено';
+        } else if (typeof close === 'function') close();
+        state.selected.clear();
+        load();
+      } catch (e) { go.disabled = false; go.textContent = 'Отправить'; toast(e.message, 'err'); }
+    };
   }
 
   const companyChoice = () => { const sel = $('#prim-company'); return sel && sel.value ? sel.value : ''; };
@@ -756,6 +808,7 @@ export async function viewPrimary(container, opts = {}) {
   $('#prim-to').onchange = (e) => { state.to = e.target.value; state.offset = 0; load(); };
   $('#prim-exported').onchange = (e) => { state.exported = e.target.value; state.offset = 0; load(); };
   $('#prim-export').onclick = () => openExport();
+  $('#prim-md').onclick = () => openMd();
   // ---------------------------------------------------------------- v1.70.104 (T-63): из почты
   const mailQuery = () => (opts.isAdmin && filterCompany ? `?company_id=${encodeURIComponent(filterCompany)}` : '');
 

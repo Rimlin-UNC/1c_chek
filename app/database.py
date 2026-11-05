@@ -84,6 +84,7 @@ def init_db() -> None:
     from .clients import models as _clients_models  # noqa: F401 — v1.70.100: клиенты бухгалтера (T-50)
     from .docreq import models as _docreq_models  # noqa: F401 — v1.70.97: что нужно от клиента
     from .goods import models as _goods_models  # noqa: F401 — v1.70.101: память исправлений (T-69)
+    from .moedelo import models as _moedelo_models  # noqa: F401 — v1.70.107: «Моё дело» по API (T-71)
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
     from .primary import models as _primary_models  # noqa: F401 — v1.70.94: первичка (УПД)
     from .unified import models as _unified_models  # noqa: F401 — единый фискальный документ

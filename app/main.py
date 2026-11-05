@@ -27,6 +27,7 @@ from .bank import router as bank_router
 from .clients import router as clients_router
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
+from .moedelo import router as moedelo_router
 from .docreq import router as docreq_router
 from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
@@ -492,6 +493,7 @@ app.include_router(bank_router.router)  # v1.70.98: банковская вып�
 app.include_router(clients_router.router)  # v1.70.100: рабочее место аутсорсера (T-50)
 app.include_router(exportpkg_router.router)  # v1.70.100: пакет для других учётных систем (T-68)
 app.include_router(goods_router.router)  # v1.70.101: понимание чеков (T-69)
+app.include_router(moedelo_router.router)  # v1.70.107: «Моё дело» по API (T-71)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

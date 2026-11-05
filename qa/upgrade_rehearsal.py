@@ -200,6 +200,8 @@ res = {"version": app_version(),
        "primary_tables": sorted(t for t in inspect(engine).get_table_names()
                                 if t.startswith("primary_") and not t.startswith("primary_mail")),
        "primary_mail_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_mail")),
+       # v1.70.107 (T-71): «Моё дело» — ключ компании и отметки об отправленных документах
+       "moedelo_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("moedelo_")),
        "primary_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_documents")
                                  if c["name"] in ("source", "channel")),
        # v1.70.105 (T-64): канал входящего файла и сотрудник — у очереди почты и ботов
@@ -713,6 +715,7 @@ def main() -> int:
               and up.get("bank_tables") == ["bank_connections", "bank_operations", "bank_reimbursements",
                                             "bank_settings", "bank_statements"]
               and up.get("clients_tables") == ["accountant_clients"]
+              and up.get("moedelo_tables") == ["moedelo_connections", "moedelo_links"]
               and up.get("bank_columns") == ["cert_enc"]
               and up.get("goods_tables") == ["goods_memory"]
               and up.get("goods_columns") == ["goods_category", "group_note", "group_score", "group_source"],
@@ -722,7 +725,7 @@ def main() -> int:
               "accountant_clients (с v1.70.100), память товаров goods_memory и 4 колонки категории "
               "позиции в receipt_items (с v1.70.101), сертификат клиента cert_enc в bank_connections "
               "(с v1.70.102), почта для первички: 3 таблицы primary_mail* и колонка channel в primary_documents "
-              "(с v1.70.104)")
+              "(с v1.70.104), «Моё дело»: moedelo_connections и moedelo_links (с v1.70.107)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},
