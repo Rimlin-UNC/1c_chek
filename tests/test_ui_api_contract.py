@@ -321,13 +321,14 @@ def test_receipt_patch_handles_every_model_field():
 # --------------------------------------------------------------------------
 @dataclass
 class Backend:
-    """База для прогона: сессии, бухгалтер компании, сотрудник, компания."""
+    """База для прогона: сессии, бухгалтер компании, сотрудник, компания, администратор."""
     name: str
     session: Callable[[], Session]
     staff: dict
     employee: dict
     employee_id: str
     company_id: str
+    admin: dict
 
 
 def _call(ui_calls, func: str, method: str, url: str) -> dict:
@@ -459,7 +460,7 @@ def _sqlite_backend(client, companies_fixture) -> Backend:
     hdr, c1, _, a1, _ = companies_fixture
     employee = _mk_user(client, hdr, c1, "contract_emp_" + uuid4().hex[:10], role="user")
     me = client.get("/api/v1/auth/me", headers=employee).json()
-    return Backend("SQLite", SessionLocal, a1, employee, me["id"], c1)
+    return Backend("SQLite", SessionLocal, a1, employee, me["id"], c1, hdr)
 
 
 @pytest.fixture
@@ -499,13 +500,16 @@ def pg_backend():
                          role="accountant", company_id=company.id)
             employee = User(username="pg_emp_" + uuid4().hex[:8], password_hash=hash_password("parol123"),
                             role="user", company_id=company.id)
-            db.add_all([staff, employee])
+            admin = User(username="pg_adm_" + uuid4().hex[:8], password_hash=hash_password("parol123"),
+                         role="admin")
+            db.add_all([staff, employee, admin])
             db.commit()
             appsettings.set_setting(db, "pool_enabled", "1")
             backend = Backend("PostgreSQL", pg_session,
                               {"Authorization": "Bearer " + create_access_token(staff)},
                               {"Authorization": "Bearer " + create_access_token(employee)},
-                              employee.id, company.id)
+                              employee.id, company.id,
+                              {"Authorization": "Bearer " + create_access_token(admin)})
         app.dependency_overrides[get_db] = pg_db
         yield backend
     finally:

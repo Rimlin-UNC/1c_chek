@@ -184,6 +184,51 @@ function fmtCount(n) {
   return Math.round(n).toLocaleString('ru-RU');
 }
 
+// v1.70.111 (T-78): время чеков, сдвинутое формой правки до 1.70.110
+// (GET /api/v1/unified/receipt-time). Время показывается как есть — нарезкой строки, без
+// new Date: пересчёт в часовой пояс браузера и был причиной сдвига.
+export function wallTime(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));
+  return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : '—';
+}
+
+export function fmtShift(hours) {
+  const h = num(hours);
+  return `${h > 0 ? '+' : h < 0 ? '−' : ''}${Math.abs(h)} ч`;
+}
+
+export function timeSummary(data) {
+  const d = data || {};
+  const shifted = num(d.shifted);
+  const shown = (d.items || []).length;
+  if (!shifted) return `Проверено чеков с QR: ${fmtCount(num(d.checked))}. Сдвинутого времени нет.`;
+  return `Проверено чеков с QR: ${fmtCount(num(d.checked))}. Время сдвинуто у ${fmtCount(shifted)}, `
+    + `вернуть по QR можно у ${fmtCount(num(d.fixable))}.`
+    + (shifted > shown ? ` В таблице — первые ${fmtCount(shown)}.` : '');
+}
+
+export function timeRows(data) {
+  return ((data || {}).items || []).map((it) => ({
+    company: it.company || '—',
+    receipt: `${it.fn} / ${it.fd} / ${it.fp}`,
+    stored: wallTime(it.receipt_date),
+    qr: wallTime(it.qr_time),
+    shift: fmtShift(it.hours),
+    action: it.fixable ? 'вернуть по QR' : (it.reason || 'проверьте вручную'),
+  }));
+}
+
+export function timeConfirmText(fixable) {
+  return `Вернуть время из QR у ${fmtCount(num(fixable))} чеков? Перед исправлением будет создана резервная `
+    + 'копия базы, у каждого чека в журнале останется старое время.';
+}
+
+export function timeRestoredText(res) {
+  const r = res || {};
+  return `Время возвращено у ${fmtCount(num(r.restored))} чеков`
+    + (r.backup ? `; резервная копия — ${r.backup}` : '');
+}
+
 export function buildClaimDecisionBody(item, reason) {
   return { expected_version: item.version, reason: String(reason || '').trim() };
 }
@@ -374,6 +419,7 @@ export async function viewUnifiedReview(container) {
           <span class="nav-badge hidden" id="ur-claims-badge">0</span></button>
         <button type="button" class="btn btn-sm" id="ur-tab-visibility" role="tab" aria-selected="false">Показ компаниям</button>
         <button type="button" class="btn btn-sm" id="ur-tab-readiness" role="tab" aria-selected="false">Готовность</button>
+        <button type="button" class="btn btn-sm" id="ur-tab-time" role="tab" aria-selected="false">Время чеков</button>
       </div>
       <div id="ur-pane-conflicts">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0">
@@ -413,12 +459,21 @@ export async function viewUnifiedReview(container) {
           <code>python -m app.unified.backfill --soft</code>. В единую запись попадают только чеки без расхождений;
           спорные остаются как сейчас и видны как раньше.</p>
       </div>
+      <div id="ur-pane-time" class="hidden">
+        <p class="form-hint">До 1.70.110 сохранение формы правки сдвигало время чека на часовой пояс браузера
+          (Челябинск — на 5 часов, Москва — на 3), и сдвиг уходил в единую запись и Чек-Пул. Исходное время кассы
+          хранится в строке QR. Здесь — чеки, у которых время расходится с QR на целое число часов; список ничего
+          не меняет. Вернуть можно чеки, которые правили формой; ручной ввод и прочие расхождения — только в списке.</p>
+        <div id="ur-time-out"></div>
+      </div>
     </div>`;
   const out = container.querySelector('#ur-out');
   const claimsOut = container.querySelector('#ur-claims-out');
   const visOut = container.querySelector('#ur-vis-out');
   const readyOut = container.querySelector('#ur-ready-out');
   let readyReq = 0;
+  const timeOut = container.querySelector('#ur-time-out');
+  let timeReq = 0;
 
   async function loadStats() {
     const box = container.querySelector('#ur-kpi');
@@ -696,7 +751,49 @@ export async function viewUnifiedReview(container) {
     }
   }
 
-  const PANES = ['conflicts', 'claims', 'visibility', 'readiness'];
+  // v1.70.111 (T-78): время чеков по QR — отчёт и возврат кнопкой администратора
+  async function loadTime() {
+    const current = ++timeReq;
+    timeOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get('/api/v1/unified/receipt-time');
+      if (current !== timeReq || !container.isConnected) return;
+      renderTime(data);
+    } catch (e) {
+      if (current !== timeReq || !container.isConnected) return;
+      timeOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderTime(data) {
+    const rows = timeRows(data);
+    const fixable = num(data.fixable);
+    timeOut.innerHTML = `
+      <p id="ur-time-summary">${esc(timeSummary(data))}</p>
+      ${rows.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Компания</th>
+        <th>Чек (ФН / ФД / ФП)</th><th>В базе</th><th>По QR</th><th>Сдвиг</th><th>Что делать</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td>${esc(r.company)}</td><td>${esc(r.receipt)}</td><td>${esc(r.stored)}</td>
+          <td>${esc(r.qr)}</td><td>${esc(r.shift)}</td><td>${esc(r.action)}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+      ${fixable ? `<button type="button" class="btn btn-primary" id="ur-time-restore" style="margin-top:10px">
+        Вернуть время из QR (${esc(fmtCount(fixable))})</button>` : ''}`;
+    const restore = timeOut.querySelector('#ur-time-restore');
+    if (!restore) return;
+    restore.onclick = async () => {
+      if (!window.confirm(timeConfirmText(fixable))) return;
+      restore.disabled = true;
+      try {
+        const res = await api.post('/api/v1/unified/receipt-time/restore', {});
+        toast(timeRestoredText(res), 'ok', '🕒 ');
+        if (container.isConnected) loadTime();
+      } catch (e) {
+        restore.disabled = false;
+        toast(e.message, 'err');
+      }
+    };
+  }
+
+  const PANES = ['conflicts', 'claims', 'visibility', 'readiness', 'time'];
   function showTab(tab) {
     state.tab = tab;
     PANES.forEach((key) => {
@@ -708,6 +805,7 @@ export async function viewUnifiedReview(container) {
     if (tab === 'claims') loadClaims();
     if (tab === 'visibility') loadVisibility();
     if (tab === 'readiness') loadReadiness();
+    if (tab === 'time') loadTime();
   }
 
   PANES.forEach((key) => { container.querySelector(`#ur-tab-${key}`).onclick = () => showTab(key); });
@@ -721,6 +819,7 @@ export async function viewUnifiedReview(container) {
     if (state.tab === 'claims') loadClaims();
     else if (state.tab === 'visibility') loadVisibility();
     else if (state.tab === 'readiness') loadReadiness();
+    else if (state.tab === 'time') loadTime();
     else loadList();
   };
   container.querySelector('#ur-flag').onchange = (e) => {

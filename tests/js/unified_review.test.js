@@ -1,7 +1,8 @@
 /* v1.70.83: экран разбора конфликтов единого реестра (#9).
    v1.70.85: вкладка «Заявки» и блок «Организации» («Единая база», T-34).
    v1.70.86: вкладка «Показ компаниям», значок «🏢 N», отказ перемещения (T-35, Q-24).
-   v1.70.88: вкладка «Готовность» единой записи — только числа (фаза 4а, T-37). */
+   v1.70.88: вкладка «Готовность» единой записи — только числа (фаза 4а, T-37).
+   v1.70.111: вкладка «Время чеков» — сдвиг формой правки до 1.70.110, возврат по QR (T-78). */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../app/static/js/api.js';
 import {
@@ -9,6 +10,7 @@ import {
   buildResolveBody, buildVisibilityBody, canResolve, claimActions, claimSourceTitle, claimStatusTitle,
   companiesHtml, companyRoleTitle, decodeFlags, eventTitle, orgCountChip, orgCountRow, orgWord,
   readinessCards, readinessRows, setConflictsBadge, validateReason, viewUnifiedReview, visibilityWarning,
+  fmtShift, timeConfirmText, timeRestoredText, timeRows, timeSummary, wallTime,
 } from '../../app/static/js/unified_review.js';
 
 vi.mock('../../app/static/js/api.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
@@ -574,5 +576,98 @@ describe('готовность единой записи (v1.70.88)', () => {
     view.querySelector('#ur-tab-readiness').click();
     await flush();
     expect(view.querySelector('#ur-ready-out').textContent).toContain('Только администратор');
+  });
+});
+
+const TIME = {
+  checked: 120, shifted: 2, fixable: 1, limit: 500,
+  items: [
+    { receipt_id: 'r1', company: 'Альфа', fn: '7000000000000001', fd: '3467', fp: '2882574203',
+      receipt_date: '2026-09-22T10:56:00', qr_time: '2026-09-22T15:56:00', hours: -5, fixable: true, reason: '' },
+    { receipt_id: 'r2', company: 'Бета', fn: '7000000000000002', fd: '12', fp: '777', receipt_date: '2026-09-22T12:56:00',
+      qr_time: '2026-09-22T15:56:00', hours: -3, fixable: false, reason: 'ручной ввод: время в QR — введённое' },
+  ],
+};
+
+describe('время чеков: чистые функции (T-78)', () => {
+  it('время — как есть, без пересчёта в пояс браузера', () => {
+    expect(wallTime('2026-09-22T10:56:00')).toBe('22.09.2026 10:56');
+    expect(wallTime('2026-09-22T23:30:00+05:00')).toBe('22.09.2026 23:30');
+    expect(wallTime(null)).toBe('—');
+    expect([fmtShift(-5), fmtShift(3), fmtShift(0)]).toEqual(['−5 ч', '+3 ч', '0 ч']);
+  });
+
+  it('сводка, строки и тексты', () => {
+    expect(timeSummary({ checked: 7, shifted: 0, items: [] })).toBe('Проверено чеков с QR: 7. Сдвинутого времени нет.');
+    expect(timeSummary(TIME)).toBe('Проверено чеков с QR: 120. Время сдвинуто у 2, вернуть по QR можно у 1.');
+    expect(timeSummary({ ...TIME, shifted: 600 })).toContain('В таблице — первые 2.');
+    const rows = timeRows(TIME);
+    expect(rows[0]).toEqual({ company: 'Альфа', receipt: '7000000000000001 / 3467 / 2882574203',
+      stored: '22.09.2026 10:56', qr: '22.09.2026 15:56', shift: '−5 ч', action: 'вернуть по QR' });
+    expect(rows[1].action).toBe('ручной ввод: время в QR — введённое');
+    expect(timeConfirmText(1)).toContain('резервная копия базы');
+    expect(timeRestoredText({ restored: 1, backup: 'db-manual-1.db' }))
+      .toBe('Время возвращено у 1 чеков; резервная копия — db-manual-1.db');
+    expect(timeRestoredText({ restored: 2, backup: null })).toBe('Время возвращено у 2 чеков');
+  });
+});
+
+describe('время чеков: вкладка (T-78)', () => {
+  beforeEach(() => {
+    api.get.mockReset();
+    api.post.mockReset();
+  });
+
+  function routeTime(payload = TIME) {
+    routeGet();
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation(async (path) => (path === '/api/v1/unified/receipt-time' ? payload : base(path)));
+  }
+
+  it('список и возврат по QR после подтверждения', async () => {
+    routeTime();
+    api.post.mockResolvedValue({ restored: 1, skipped: 0, backup: 'db-manual-20261106.db' });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-time').click();
+    await flush();
+    expect(view.querySelector('#ur-tab-time').getAttribute('aria-selected')).toBe('true');
+    expect(view.querySelector('#ur-pane-readiness').classList.contains('hidden')).toBe(true);
+    expect(view.querySelector('#ur-time-summary').textContent).toContain('Время сдвинуто у 2');
+    const cells = [...view.querySelectorAll('#ur-time-out tbody tr')].map((tr) => tr.textContent);
+    expect(cells[0]).toContain('22.09.2026 10:56');
+    expect(cells[0]).toContain('−5 ч');
+    expect(cells[1]).toContain('ручной ввод');
+    const button = view.querySelector('#ur-time-restore');
+    expect(button.textContent).toContain('Вернуть время из QR (1)');
+    button.click();
+    await flush();
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(api.post).toHaveBeenCalledWith('/api/v1/unified/receipt-time/restore', {});
+    expect(document.querySelector('#toast-container').textContent)
+      .toContain('Время возвращено у 1 чеков; резервная копия — db-manual-20261106.db');
+    expect(api.get.mock.calls.filter(([path]) => path === '/api/v1/unified/receipt-time')).toHaveLength(2);
+    confirm.mockRestore();
+  });
+
+  it('без подтверждения ничего не меняется, без сдвигов кнопки нет', async () => {
+    routeTime();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const view = mountDom();
+    await viewUnifiedReview(view);
+    view.querySelector('#ur-tab-time').click();
+    await flush();
+    view.querySelector('#ur-time-restore').click();
+    await flush();
+    expect(api.post).not.toHaveBeenCalled();
+    confirm.mockRestore();
+    routeTime({ checked: 5, shifted: 0, fixable: 0, items: [] });
+    const again = mountDom();
+    await viewUnifiedReview(again);
+    again.querySelector('#ur-tab-time').click();
+    await flush();
+    expect(again.querySelector('#ur-time-summary').textContent).toContain('Сдвинутого времени нет');
+    expect(again.querySelector('#ur-time-restore')).toBeNull();
   });
 });

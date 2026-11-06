@@ -29,7 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PG_TESTS = ["tests/test_postgres_identity_optin.py", "tests/test_unified_postgres.py",
             "tests/test_supabase_migrations.py", "tests/test_migration_compat_postgres.py",
             # v1.70.110 (T-41): формы чека из app.js через API на PostgreSQL
-            "tests/test_ui_api_contract.py"]
+            "tests/test_ui_api_contract.py",
+            # v1.70.111 (T-78): отчёт и возврат времени чеков по QR на PostgreSQL
+            "tests/test_receipt_time_repair.py"]
 
 
 def _environment(url: str) -> dict[str, str]:

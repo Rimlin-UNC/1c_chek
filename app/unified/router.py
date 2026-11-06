@@ -221,3 +221,39 @@ def update_visibility(body: VisibilityBody,
         "mode": payload["mode"], "roles": payload["roles"],
         "companies": sum(1 for c in payload["companies"] if c["enabled"])})
     return payload
+
+
+# --------------------------------------------------------------------------
+#  T-78 (v1.70.111): время чеков, сдвинутое формой правки до 1.70.110
+# --------------------------------------------------------------------------
+class TimeRestoreBody(BaseModel):
+    ids: list[str] | None = Field(default=None, max_length=5000,
+                                  description="Чеки из отчёта; без списка — все, которые можно вернуть")
+
+
+@router.get("/receipt-time", summary="Единый реестр: время чеков, сдвинутое формой правки (только чтение)")
+def receipt_time(db: Annotated[Session, Depends(get_db)],
+                 _admin: Annotated[User, Depends(require_admin)]):
+    """Чеки, у которых время расходится с QR на целое число часов, — след формы правки до
+    1.70.110 (ADR-40). База не меняется."""
+    from .time_repair import report
+    return report(db)
+
+
+@router.post("/receipt-time/restore", summary="Единый реестр: вернуть время чеков из QR")
+def receipt_time_restore(body: TimeRestoreBody,
+                         db: Annotated[Session, Depends(get_db)],
+                         user: Annotated[User, Depends(require_admin)]):
+    """Перед исправлением — резервная копия базы SQLite; без неё время не меняется. На
+    PostgreSQL копию делает сервер базы, старое время остаётся в журнале каждого чека."""
+    import os
+
+    from ..services import backups
+    from .time_repair import restore
+    backup = None
+    if db.get_bind().dialect.name == "sqlite":
+        path = backups.create_backup("manual")
+        if not path:
+            raise HTTPException(500, "Не удалось создать резервную копию — время чеков не менялось")
+        backup = os.path.basename(path)
+    return {**restore(db, user, body.ids), "backup": backup}

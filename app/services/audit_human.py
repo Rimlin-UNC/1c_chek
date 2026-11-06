@@ -307,6 +307,10 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
             f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, писем в папке: {d.get('messages', 0)}"
     if action == "primary_mailbox_removed":
         return "почтовый ящик для первички отключён", f"компания: „{d.get('company', '—')}“"
+    # v1.70.111 (T-78): время чека возвращено по QR — след формы правки до 1.70.110
+    if action == "receipt_time_restored":
+        return "время чека возвращено по QR", \
+            f"было: {d.get('from', '—')}, стало: {d.get('to', '—')}, сдвиг: {d.get('hours', '—')} ч"
     # v1.70.109 (T-77, ADR-39): режим второго прочтения сканов и фото
     if action == "primary_ocr_second":
         modes = {"auto": "по сомнению", "always": "всегда", "off": "выключено"}
