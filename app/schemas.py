@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Аутентификация ------------------------------------------------------
@@ -177,6 +177,17 @@ class ReceiptPatch(BaseModel):
     region_code: Optional[str] = Field(default=None, max_length=4)
     region_name: Optional[str] = Field(default=None, max_length=120)
     items: Optional[list["ReceiptItemPatch"]] = None
+
+    @field_validator("receipt_date")
+    @classmethod
+    def _wall_time(cls, value: Optional[datetime]) -> Optional[datetime]:
+        """v1.70.110: время чека — местное время кассы, как в QR («t=20260922T1556»).
+
+        Часовой пояс отбрасывается без пересчёта: «15:56+05:00» — это 15:56. Прежде форма
+        правки слала время в UTC, и каждое сохранение сдвигало чек на пояс браузера;
+        PostgreSQL к тому же переводит время с поясом по настройке сервера.
+        """
+        return value.replace(tzinfo=None) if value is not None and value.tzinfo else value
 
 
 class ReceiptItemPatch(BaseModel):

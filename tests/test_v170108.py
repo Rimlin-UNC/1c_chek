@@ -251,7 +251,7 @@ class TestDocsAndKb:
         assert f"**Заморожено 06.11.2026 (выпуск v{VERSION}):** [#56](https://github.com/Rimlin-UNC/1c_chek/issues/56) " \
                "T-71 и [#60](https://github.com/Rimlin-UNC/1c_chek/issues/60) T-76" in roadmap
         agent = roadmap.split("**Можно брать агенту без подтверждения**", 1)[1].split("\n\n", 1)[0]
-        assert "[#26](https://github.com/Rimlin-UNC/1c_chek/issues/26) T-41" in agent and "T-76" not in agent
+        assert "T-76" not in agent                       # v1.70.110: T-41 выпущен и из раздела ушёл
         rows = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
         assert rows[VERSION]["Опора репетиции"] == "да"
         assert all("," not in v for v in rows[VERSION].values()), "в полях реестра нет запятых"

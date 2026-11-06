@@ -5846,6 +5846,8 @@ async function openEditReceipt(r, onSaved) {
     try { r = await api.get('/api/v1/receipts/' + encodeURIComponent(r.id)); } catch (e) { toast(e.message, 'err', 'Чек'); return; }
   }
   const isAdminUser = isAdmin();
+  // v1.70.110: время чека — местное время кассы (как в QR), поле показывает его как есть
+  const dateShown = _dtLocal(r.receipt_date);
   const exportedWarn = r.exported && !isAdminUser
     ? '<div class="info-callout" style="margin-bottom:12px">⚠️ Чек уже выгружен в 1С: реквизиты и позиции менять нельзя (только администратор).</div>' : '';
   const { slot, close } = openModal(`
@@ -5854,7 +5856,7 @@ async function openEditReceipt(r, onSaved) {
     ${r.exported && !isAdminUser ? '' : fillCallout(r)}
     <div class="form-grid">
       <label class="field"><span>Дата и время</span>
-        <input id="er-date" type="datetime-local" value="${_dtLocal(r.receipt_date)}"
+        <input id="er-date" type="datetime-local" value="${dateShown}"
           ${r.exported && !isAdminUser ? 'disabled' : ''}></label>
       <label class="field"><span>Сумма, ₽</span>
         <input id="er-sum" type="number" step="0.01" min="0" value="${r.total_sum}"
@@ -6094,7 +6096,10 @@ async function openEditReceipt(r, onSaved) {
     const fdEl = slot.querySelector('#er-fd'), fpEl = slot.querySelector('#er-fp');
     const coreLocked = r.exported && !isAdminUser;
     if (!coreLocked) {
-      if (dateEl.value) body.receipt_date = new Date(dateEl.value).toISOString();
+      // v1.70.110: дата уходит, только если её меняли, и ровно как введена. Прежде
+      // форма пересчитывала время в UTC (toISOString), и каждое сохранение сдвигало
+      // время чека на часовой пояс браузера: 15:56 в Челябинске становилось 10:56.
+      if (dateEl.value && dateEl.value !== dateShown) body.receipt_date = dateEl.value;
       body.total_sum = parseFloat(sumEl.value) || 0;
       body.operation = parseInt(opEl.value);
       body.fn = fnEl.value.trim(); body.fd = fdEl.value.trim(); body.fp = fpEl.value.trim();
@@ -6496,6 +6501,15 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.110': [
+    { icon: '🕒', title: 'Время чека больше не сдвигается',
+      text: 'Сохранение формы правки сдвигало время чека на часовой пояс браузера — в Челябинске на 5 часов. '
+        + 'Теперь время уходит, только если его меняли, и ровно как введено. Уже сдвинутые чеки поправим по QR '
+        + 'следующим выпуском.' },
+    { icon: '🧪', title: 'Формы проверяются против сервера',
+      text: 'Тесты берут поля прямо из форм программы и проверяют, что сервер принимает каждое. Так нашлись и '
+        + 'исправлены ещё две мелочи: стёртый в карточке комментарий теперь стирается.' },
+  ],
   '1.70.109': [
     { icon: '🔁', title: 'Второе прочтение сканов и фото',
       text: 'Если Tesseract не нашёл поле или сомневается, документ перечитывает второй движок — PP-OCRv6 для '
@@ -10098,9 +10112,11 @@ async function receiptDrawer(id) {
   const save = drawer.querySelector('#d-save');
   if (save) save.onclick = async () => {
     try {
+      // v1.70.110: стёртое поле очищается — пустая строка. Прежде уходил null, а для
+      // сервера null — «не менять»: «Сохранено», но комментарий оставался прежним.
       await api.patch('/api/v1/receipts/' + id, {
-        assignee: drawer.querySelector('#d-assignee').value.trim() || null,
-        comment: drawer.querySelector('#d-comment').value.trim() || null,
+        assignee: drawer.querySelector('#d-assignee').value.trim(),
+        comment: drawer.querySelector('#d-comment').value.trim(),
       });
       toast('Сохранено', 'ok');
       close();
@@ -10543,7 +10559,7 @@ async function viewUsers(container, alive = routeGuard()) {
           <select id="u-active"><option value="1" ${u.is_active ? 'selected' : ''}>Да</option>
           <option value="0" ${!u.is_active ? 'selected' : ''}>Нет</option></select></label>` : ''}
         ${isAdmin() && state.companies.length ? `<label class="field full"><span>Компания (пространство)</span>
-          <select id="u-company"><option value="">— без компании —</option>
+          <select id="u-company">${u && u.company_id ? '' : '<option value="">— без компании —</option>'}
           ${state.companies.map(c => `<option value="${c.id}" ${(u ? (u.company_id || '') : state.companyFilter) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
           </select></label>` : ''}
       </div>
@@ -10565,6 +10581,8 @@ async function viewUsers(container, alive = routeGuard()) {
           const active = slot.querySelector('#u-active');
           if (active) patch.is_active = active.value === '1';
           const uc = slot.querySelector('#u-company');
+          // null — «не переводить»: сервер переводит в другую компанию, но не отвязывает
+          // (v1.11.0), поэтому у сотрудника с компанией пункта «без компании» нет (v1.70.110)
           if (uc) patch.company_id = uc.value || null;
           await api.patch('/api/v1/users/' + u.id, patch);
         } else {
@@ -13595,9 +13613,11 @@ async function b2bAdmCompany() {
       const blocked = c.status !== 'blocked';
       const reason = blocked ? (prompt('Причина закрытия доступа:') || '') : '';
       if (blocked && !reason.trim()) { toast('Укажите причину', 'err'); return; }
-      const path = blocked ? 'block' : 'unblock';
       try {
-        const r = await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/${path}`, { reason });
+        // v1.70.110: причина — только у закрытия доступа, восстановление тела не читает
+        const r = blocked
+          ? await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/block`, { reason })
+          : await api.post(`/api/v1/b2b-admin/companies/${encodeURIComponent(cid)}/unblock`, {});
         toast(r.message || 'Готово', 'ok'); b2bAdmCompany();
       } catch (e) { toast(e.message, 'err'); }
     };

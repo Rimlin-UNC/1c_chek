@@ -3021,10 +3021,23 @@ class TestDynamicsMethod:
     @pytest.fixture
     def seed(self):
         """Чеки пула для ряда. Удаляются после теста: база общая на весь
-        прогон, и чужие счётчики не должны поехать от наших данных."""
+        прогон, и чужие счётчики не должны поехать от наших данных.
+
+        v1.70.110: и наоборот — ряд считает весь пул, а проверенные чеки пула
+        соседних тестов (единая запись, контракт форм) без verified_at попадали
+        в окно по created_at и сдвигали итоги: тест падал в зависимости от того,
+        какие файлы раньше достались тому же процессу прогона. На время теста
+        чужие проверенные чеки пула прячем и после возвращаем."""
         from app.pool.models import PoolReceipt
         created = []
         counter = [0]
+        db = _db()
+        hidden = [row.id for row in db.query(PoolReceipt.id).filter(PoolReceipt.status == "verified")]
+        if hidden:
+            db.query(PoolReceipt).filter(PoolReceipt.id.in_(hidden)).update(
+                {"status": "dyn_hidden"}, synchronize_session=False)
+            db.commit()
+        db.close()
 
         def make(days_ago, count=1, total=1000.0, region="77",
                  industry="Продукты", status="verified"):
@@ -3052,6 +3065,9 @@ class TestDynamicsMethod:
             row = db.get(PoolReceipt, rid)
             if row is not None:
                 db.delete(row)
+        if hidden:
+            db.query(PoolReceipt).filter(PoolReceipt.id.in_(hidden)).update(
+                {"status": "verified"}, synchronize_session=False)
         db.commit()
         db.close()
 
