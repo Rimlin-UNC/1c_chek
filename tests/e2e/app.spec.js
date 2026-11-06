@@ -582,3 +582,74 @@ test('понимание чеков: категория позиции, выбо
   await page.locator('a[href="#/settings"]').click();
   await expect(page.locator('#st-goods')).toContainText('ключ: абвгд ежз', { timeout: 15000 });
 });
+
+// v1.70.112 (T-46, ADR-24): согласование авансового отчёта — администратор включает согласование в компании,
+// сотрудник собирает отчёт из своих чеков и подписывает простой электронной подписью, руководитель и бухгалтер
+// согласуют; в журнале — три подписи с отметкой ПЭП, печати целостности сходятся. Данные — синтетические.
+async function approvalsRelogin(page, username) {
+  const open = page.locator('#modal-root:not(.hidden) .modal-close');
+  if (await open.count()) await open.click();                     // окно отчёта закрывает кнопку выхода
+  await expect(page.locator('#modal-root')).toBeHidden();
+  await page.locator('#btn-logout').click();
+  const reloaded = page.waitForEvent('load');
+  await page.locator('#lo-exit').click();
+  await reloaded;
+  await page.fill('#login-username', username);
+  await page.fill('#login-password', 'e2e-approval-password');
+  await page.click('#login-submit');
+  // локальный Chromium из npm после перезагрузки бывает занят 15 с и дольше (см. playwright.config.js) — запас;
+  // в CI экран входа уходит за доли секунды
+  await expect(page.locator('#login-screen')).toBeHidden({ timeout: 45000 });
+  await page.locator('a[href="#/approvals"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Согласования', { timeout: 15000 });
+}
+
+async function approvalsDecide(page, button) {
+  const card = page.locator('.ap-card', { hasText: 'E2E Сотрудник Согласования' }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await card.click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Журнал решений', { timeout: 15000 });
+  await modal.locator('#ap-agree').check();
+  await modal.getByRole('button', { name: button }).click();
+  return modal;
+}
+
+test('согласование авансового отчёта: сотрудник → руководитель → бухгалтер с простой подписью', async ({ page }) => {
+  test.slow();                                                     // четыре входа подряд — тройной лимит времени
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/approvals"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Согласования');
+  await page.locator('#ap-company').selectOption({ label: 'E2E Согласование' });
+  await page.locator('#ap-enabled').check();
+  await page.getByRole('button', { name: 'Сохранить' }).click();
+  await expect(page.locator('#toast-container')).toContainText('Согласование включено', { timeout: 15000 });
+
+  await approvalsRelogin(page, 'e2e_emp_appr');
+  await page.getByRole('button', { name: '＋ Авансовый отчёт' }).click();
+  const create = page.locator('.modal-slot');
+  await create.locator('#ap-from').fill('2026-10-01');
+  await create.locator('#ap-to').fill('2026-10-31');
+  await create.getByRole('button', { name: 'Показать чеки' }).click();
+  await expect(create.locator('#ap-preview')).toContainText('2 чека', { timeout: 15000 });
+  await create.getByRole('button', { name: 'Сформировать' }).click();
+  const draft = page.locator('.modal-slot');
+  await expect(draft).toContainText('ждёт подписи сотрудника', { timeout: 15000 });
+  await expect(draft.locator('#ap-do-sign')).toBeDisabled();
+  await draft.locator('#ap-agree').check();
+  await draft.getByRole('button', { name: 'Подписать и отправить' }).click();
+  await expect(page.locator('#toast-container')).toContainText('Отчёт подписан и отправлен', { timeout: 15000 });
+  await expect(page.locator('.modal-slot')).toContainText('на согласовании', { timeout: 15000 });
+
+  await approvalsRelogin(page, 'e2e_boss_appr');
+  await approvalsDecide(page, 'Согласовать');
+  await expect(page.locator('#toast-container')).toContainText('Отчёт согласован', { timeout: 15000 });
+
+  await approvalsRelogin(page, 'e2e_acc_appr');
+  const done = await approvalsDecide(page, 'Согласовать');
+  await expect(done).toContainText('согласован', { timeout: 15000 });
+  await expect(done.locator('.ap-pep')).toHaveCount(3, { timeout: 15000 });
+  await expect(done).toContainText('Содержимое и журнал целы');
+  await expect(done.locator('.ap-step.ap-done')).toHaveCount(3);
+});

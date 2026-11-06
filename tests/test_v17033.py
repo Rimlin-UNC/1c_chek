@@ -65,6 +65,8 @@ def js_modules() -> list[pathlib.Path]:
 JS_HOOKS = {
     # v1.70.82: supabase-only — пункт «Supabase демо» виден при включённом контуре
     "admin-only", "accountant-only", "boss-only", "pool-only", "supabase-only",
+    # v1.70.112: approvals-only — «Согласования» видны, когда согласование включено (администратору — всегда)
+    "approvals-only",
     "hidden", "open", "selected", "active", "disabled", "expanded", "loading",
 }
 
@@ -696,7 +698,7 @@ class TestRelease:
     # требование «своя запись первая» проверяет test_v17041.
     # v1.70.45: VERSION здесь — ТЕКУЩАЯ версия (класс сверяет точки
     # синхронизации, CHANGELOG и журнал), поэтому поднимается каждый выпуск.
-    VERSION = "1.70.111"
+    VERSION = "1.70.112"
 
     def test_all_sync_points(self):
         points = [

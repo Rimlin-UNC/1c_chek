@@ -85,6 +85,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text PRIMARY KEY, na
 def _app_metadata():
     """Все таблицы приложения — те же модули, что регистрирует init_db()."""
     from app import models  # noqa: F401
+    from app.approvals import models as _approvals  # noqa: F401 — v1.70.112: согласование авансовых отчётов
     from app.b2b import models as _b2b  # noqa: F401
     from app.bank import models as _bank  # noqa: F401 — v1.70.98: банковская выписка
     from app.clients import models as _clients  # noqa: F401 — v1.70.100: клиенты бухгалтера

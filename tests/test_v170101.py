@@ -236,7 +236,7 @@ class TestDocsAndKb:
         from app.services.manual_content import SECTIONS, build_manual
         by_id = {s["id"]: s for s in SECTIONS}
         assert "С версии 1.70.101" in by_id["goods"]["html"] and "«🏷 Память товаров»" in by_id["goods"]["html"]
-        assert len(SECTIONS) == 33 and all(s.get("image") for s in SECTIONS)                 # T-70: у всех разделов
+        assert len(SECTIONS) >= 33 and all(s.get("image") for s in SECTIONS)                 # T-70: у всех разделов; v1.70.112: +«Согласования»
         for sid in ("goods", "claims", "orgcount"):
             image = by_id[sid]["image"]
             assert image == f"/img/manual/{sid}.jpg", sid

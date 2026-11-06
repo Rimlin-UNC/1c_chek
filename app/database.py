@@ -80,6 +80,7 @@ def get_db():
 def init_db() -> None:
     """Создание таблиц при первом запуске + лёгкая миграция новых колонок."""
     from . import models  # noqa: F401 — регистрируем модели
+    from .approvals import models as _approvals_models  # noqa: F401 — v1.70.112: согласование авансовых отчётов (T-46)
     from .bank import models as _bank_models  # noqa: F401 — v1.70.98: банковская выписка (T-45)
     from .clients import models as _clients_models  # noqa: F401 — v1.70.100: клиенты бухгалтера (T-50)
     from .docreq import models as _docreq_models  # noqa: F401 — v1.70.97: что нужно от клиента

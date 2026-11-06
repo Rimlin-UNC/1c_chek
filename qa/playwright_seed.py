@@ -87,4 +87,26 @@ with SessionLocal() as db:
                                   attempts=1, first_at=when, last_at=when)], None)
     db.add(User(username='e2e_acc_alpha', full_name='E2E Бухгалтер Альфы', role='accountant',
                 company_id=alpha.id, password_hash=hash_password('e2e-accountant-password')))
+    # v1.70.112 (T-46): согласование авансового отчёта — своя компания, чтобы не менять числа других сценариев;
+    # сотрудник с двумя чеками за октябрь, руководитель и бухгалтер. Включает согласование администратор в сценарии.
+    approval_co = Company(name='E2E Согласование')
+    db.add(approval_co)
+    db.flush()
+    for login_name, full_name, role in (('e2e_emp_appr', 'E2E Сотрудник Согласования', 'user'),
+                                        ('e2e_boss_appr', 'E2E Руководитель Согласования', 'manager'),
+                                        ('e2e_acc_appr', 'E2E Бухгалтер Согласования', 'accountant')):
+        db.add(User(username=login_name, full_name=full_name, role=role, company_id=approval_co.id,
+                    password_hash=hash_password('e2e-approval-password')))
+    for number, (day, total) in enumerate(((6, 1250.0), (14, 640.5)), start=1):
+        # фискальные номера — свои: …0101 занят чеком сценария «понимание чеков»
+        fn, fd, fp = f'99999999999903{number:02d}', f'3{number:02d}', f'99903{number:02d}'
+        spent = Receipt(qr_data=f't=202610{day:02d}T1100&s={total:.2f}&fn={fn}&i={fd}&fp={fp}&n=1', fn=fn, fd=fd,
+                        fp=fp, receipt_date=datetime(2026, 10, day, 11, 0), total_sum=total, operation=1,
+                        company_id=approval_co.id, merchant_name=f'E2E Стройбаза {number}',
+                        merchant_inn='4703148343', assignee='E2E Сотрудник Согласования',
+                        assignee_lc='e2e сотрудник согласования', status='verified', fns_status='valid',
+                        category='Материалы')
+        db.add(spent)
+        db.flush()
+        unified.register_source(db, unified.REGISTRY, spent)
     db.commit()

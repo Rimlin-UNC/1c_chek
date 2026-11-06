@@ -47,17 +47,17 @@ _ROLE_VIEWS: dict[str, frozenset[str]] = {
     ROLE_ADMIN: frozenset({
         "dashboard", "scan", "receipts", "export", "mapping", "poolpick", "supabase",
         "boss", "users", "audit", "companies", "pooladmin", "poolpeople",
-        "fraud", "b2badmin", "conflicts", "primary", "docreq", "bank", "clients", "settings",
+        "fraud", "b2badmin", "conflicts", "primary", "docreq", "bank", "clients", "approvals", "settings",
     }),
     ROLE_ACCOUNTANT: frozenset({
         "dashboard", "scan", "receipts", "export", "mapping", "poolpick", "supabase",
-        "primary", "docreq", "bank", "clients", "settings",
+        "primary", "docreq", "bank", "clients", "approvals", "settings",
     }),
     ROLE_MANAGER: frozenset({
-        "dashboard", "receipts", "boss", "settings",
+        "dashboard", "receipts", "boss", "approvals", "settings",
     }),
     ROLE_USER: frozenset({
-        "dashboard", "scan", "receipts", "settings",
+        "dashboard", "scan", "receipts", "approvals", "settings",
     }),
     ROLE_DONOR: frozenset({"public", "my", "partners"}),
     ROLE_GUEST: frozenset({"public", "my", "partners"}),

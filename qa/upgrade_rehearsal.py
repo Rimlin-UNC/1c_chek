@@ -209,6 +209,9 @@ res = {"version": app_version(),
        "bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_")),
        "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
        "goods_tables": sorted(t for t in inspect(engine).get_table_names() if t == "goods_memory"),
+       # v1.70.112 (T-46): согласование авансовых отчётов — настройки, отчёты и журнал решений
+       "approvals_tables": sorted(t for t in inspect(engine).get_table_names()
+                                  if t in ("approval_settings", "advance_approvals", "advance_approval_events")),
        "goods_columns": sorted(c["name"] for c in inspect(engine).get_columns("receipt_items")
                                if c["name"] in ("goods_category", "group_source", "group_score", "group_note")),
        "bank_columns": sorted(c["name"] for c in inspect(engine).get_columns("bank_connections")
@@ -715,6 +718,7 @@ def main() -> int:
               and up.get("clients_tables") == ["accountant_clients"]
               and up.get("bank_columns") == ["cert_enc"]
               and up.get("goods_tables") == ["goods_memory"]
+              and up.get("approvals_tables") == ["advance_approval_events", "advance_approvals", "approval_settings"]
               and up.get("goods_columns") == ["goods_category", "group_note", "group_score", "group_source"],
               "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links), "
               "2 таблицы первички (с v1.70.94), 3 таблицы «что нужно от клиента» (с v1.70.97) и 5 таблиц "
@@ -722,7 +726,8 @@ def main() -> int:
               "accountant_clients (с v1.70.100), память товаров goods_memory и 4 колонки категории "
               "позиции в receipt_items (с v1.70.101), сертификат клиента cert_enc в bank_connections "
               "(с v1.70.102), почта для первички: 3 таблицы primary_mail* и колонка channel в primary_documents "
-              "(с v1.70.104)")
+              "(с v1.70.104), согласование авансовых отчётов: 3 таблицы approval_settings, advance_approvals и "
+              "advance_approval_events (с v1.70.112)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

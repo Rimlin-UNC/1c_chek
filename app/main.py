@@ -23,6 +23,7 @@ from .config import settings
 from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
+from .approvals import router as approvals_router
 from .bank import router as bank_router
 from .clients import router as clients_router
 from .exportpkg import router as exportpkg_router
@@ -169,6 +170,16 @@ async def lifespan(app: FastAPI):
             primary_mailbox.check_due(db)
         except Exception:                                # noqa: BLE001
             log.exception("primary mailbox tick failed")
+        finally:
+            db.close()
+        # v1.70.112 (T-46, ADR-24): согласование авансовых отчётов — этап без ответа за срок компании (72 ч)
+        # считается согласованным, затем уведомления в Telegram и MAX; свой перехват, как у банка и почты
+        from .approvals import service as approvals
+        db = SessionLocal()
+        try:
+            approvals.tick(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("approvals tick failed")
         finally:
             db.close()
 
@@ -492,6 +503,7 @@ app.include_router(bank_router.router)  # v1.70.98: банковская вып�
 app.include_router(clients_router.router)  # v1.70.100: рабочее место аутсорсера (T-50)
 app.include_router(exportpkg_router.router)  # v1.70.100: пакет для других учётных систем (T-68)
 app.include_router(goods_router.router)  # v1.70.101: понимание чеков (T-69)
+app.include_router(approvals_router.router)  # v1.70.112: согласование авансовых отчётов (T-46)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

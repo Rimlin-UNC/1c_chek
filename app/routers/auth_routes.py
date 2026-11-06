@@ -225,6 +225,10 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
     d["telegram_bound"] = bool(user.telegram_chat_id)
     # v1.66.0: привязка ассистента MAX
     d["max_bound"] = bool(user.max_user_id)
+    # v1.70.112 (T-46, ADR-24): согласование авансовых отчётов включено в (активной) компании — пункт меню
+    # «Согласования» виден сотрудникам только тогда; администратор видит его всегда (включает он)
+    from ..approvals import service as approvals
+    d["approvals_enabled"] = approvals.is_enabled(db, user.company_id)
     # v1.17.0: реквизиты своей компании — для блока «Ваша компания»
     if user.company_id:
         c = db.get(Company, user.company_id)

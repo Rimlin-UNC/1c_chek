@@ -22,6 +22,7 @@ import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRow
 import { viewPrimary } from './primary.js'; // v1.70.94: первичка — электронные УПД (T-53)
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
 import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } from './clients.js';   // v1.70.100: рабочее место аутсорсера (T-50), пакет (T-68)
+import { viewApprovals } from './approvals.js';   // v1.70.112: согласование авансовых отчётов (T-46)
 import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';
 import { mailConnectPanel } from './primary_mail.js';
 import { goodsItemsHTML, goodsBindItems, goodsArticleHintHTML, goodsSummaryHTML, goodsMemoryHTML, goodsBindMemory, goodsProfileHTML, goodsBindProfile } from './goods.js';   // v1.70.101: понимание чеков (T-69)   // v1.70.98: банковская выписка (T-45);
@@ -75,6 +76,7 @@ const VIEW_TITLES = {
   docreq: 'Что нужно от клиента',      // v1.70.97: недостающие документы и напоминания (T-58)
   bank: 'Банк: выписка',               // v1.70.98: платежи без документов и чеки к возмещению (T-45)
   clients: 'Клиенты',                  // v1.70.100: все компании бухгалтера в одном окне (T-50)
+  approvals: 'Согласования',           // v1.70.112: авансовые отчёты — сотрудник → руководитель → бухгалтер
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -118,15 +120,15 @@ const isAdmin = () => state.me && state.me.role === 'admin';
 const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
-                        'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts',
+                        'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts', 'approvals',
                         'primary', 'docreq', 'bank', 'clients', 'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'supabase', 'primary', 'docreq', 'bank', 'clients', 'settings'],
+                        'poolpick', 'supabase', 'approvals', 'primary', 'docreq', 'bank', 'clients', 'settings'],
                 secs: ['checks', 'personal'] },
-  manager:    { views: ['dashboard', 'receipts', 'boss', 'settings'],
+  manager:    { views: ['dashboard', 'receipts', 'boss', 'approvals', 'settings'],
                 secs: ['personal'] },
-  user:       { views: ['dashboard', 'scan', 'receipts', 'settings'],
+  user:       { views: ['dashboard', 'scan', 'receipts', 'approvals', 'settings'],
                 secs: ['personal'] },
   donor:      { views: ['public', 'my', 'partners'], secs: [] },
 };
@@ -3301,6 +3303,20 @@ function enterApp() {
   $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
   // v1.64.0: отчёт руководителя — руководителю и администратору
   $$('.boss-only').forEach(el => el.classList.toggle('hidden', !(isAdmin() || isManager())));
+  // v1.70.112 (T-46, ADR-24): «Согласования» — администратору всегда (он и включает); сотрудникам компании —
+  // когда согласование включено или у человека уже есть отчёты (после выключения начатые не теряются). Признак
+  // берётся из списка «Ждут меня»: после входа state.me — ответ входа, в нём нет флагов компании. Значок — сколько
+  // отчётов ждут именно этого человека.
+  $$('.approvals-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
+  if (['user', 'manager', 'accountant'].includes(state.me.role)) {
+    api.get('/api/v1/approvals?box=todo&limit=1').then((r) => {
+      const counts = (r && r.counts) || {};
+      const on = !!(r && r.enabled) || !!(counts.todo || counts.mine);
+      $$('.approvals-only').forEach(el => el.classList.toggle('hidden', !on || !spaceHas('view:approvals')));
+      const badge = $('#nav-approvals-badge');
+      if (badge) { badge.textContent = String(counts.todo || 0); badge.classList.toggle('hidden', !counts.todo); }
+    }).catch(() => {});
+  }
   // v1.70.82: демо-контур Supabase — пункт меню только там, где контур
   // включён в .env (или включён с ошибкой — чтобы её было видно). На
   // рабочем сервере без настроек Supabase пункта в меню нет.
@@ -3992,6 +4008,11 @@ function route(silent = false) {
     },
     // v1.70.100 (T-50): все клиенты в одном окне; цифра открывает экран уже в этой компании
     clients: (c, alive) => viewClients(c, { alive, open: openClientCompany }),
+    // v1.70.112 (T-46): согласование авансовых отчётов; администратору — выбор компании, как в «Первичке»
+    approvals: async (c, alive) => {
+      const companies = isAdmin() ? await adminCompanies() : [];
+      if (alive()) return viewApprovals(c, { alive, me: state.me, companies, companyFilter: state.companyFilter });
+    },
     b2badmin: viewB2bAdmin,               // v1.70.45: модерация контура B2B
     boss: viewBoss,                       // v1.64.0: отчёт руководителя
   };
@@ -6501,6 +6522,15 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.70.112': [
+    { icon: '✍️', title: 'Авансовые отчёты — с подписью',
+      text: 'Новый раздел «Согласования»: сотрудник собирает отчёт из своих чеков и подписывает простой '
+        + 'электронной подписью, затем руководитель и бухгалтер согласуют. Этап без ответа 72 часа — согласовано. '
+        + 'Включает администратор.' },
+    { icon: '🔒', title: 'Каждое решение — в журнале',
+      text: 'Кто, когда, с какого адреса и под каким содержимым подписал — в журнале отчёта; правка задним '
+        + 'числом видна. «Лист согласования» печатается к АО-1, уведомления приходят в Telegram и MAX.' },
+  ],
   '1.70.111': [
     { icon: '🕒', title: 'Время чеков — по QR',
       text: 'Администратору: «Разбор конфликтов» → «Время чеков». Там чеки, время которых сдвинула форма правки до '
@@ -10741,6 +10771,8 @@ const AUDIT_KIND = {
   primary_mailbox_saved: ['info', '📬'], primary_mailbox_connected: ['ok', '📬'], primary_mailbox_removed: ['warn', '📬'],
   primary_ocr_second: ['info', '🔁'],   // v1.70.109 (T-77): режим второго прочтения сканов
   receipt_time_restored: ['warn', '🕒'],   // v1.70.111 (T-78): время чека возвращено по QR
+  approvals_settings: ['info', '⚙️'], approval_created: ['info', '✍️'], approval_signed: ['ok', '✍️'],   // v1.70.112 (T-46)
+  approval_approved: ['ok', '✅'], approval_rejected: ['bad', '⛔'], approval_cancelled: ['warn', '✍️'],
   primary_mail_checked: ['ok', '📬'],   // v1.70.104 (T-63): первичка из почты
   bank_synced: ['ok', '🏦'],
   mapping_updated: ['info', '⚙️'], app_settings_updated: ['info', '⚙️'],

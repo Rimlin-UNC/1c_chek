@@ -187,7 +187,7 @@ class TestDocsAndKb:
         from app.services.manual_content import SECTIONS, build_manual
         bank = next(s for s in SECTIONS if s["id"] == "bank")
         assert "С версии 1.70.102 — несколько банков у компании." in bank["html"] and "(пока Точка)" not in bank["html"]
-        assert len(SECTIONS) == 33 and build_manual()["updated"] >= "2026-11-05"   # v1.70.108: не раньше
+        assert len(SECTIONS) >= 33 and build_manual()["updated"] >= "2026-11-05"   # v1.70.108: не раньше; v1.70.112: +1 раздел
 
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}

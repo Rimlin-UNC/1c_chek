@@ -311,6 +311,24 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "receipt_time_restored":
         return "время чека возвращено по QR", \
             f"было: {d.get('from', '—')}, стало: {d.get('to', '—')}, сдвиг: {d.get('hours', '—')} ч"
+    # v1.70.112 (T-46, ADR-24): согласование авансовых отчётов — подпись и решения (подробности — в журнале отчёта)
+    if action == "approvals_settings":
+        limits = (f"порог руководителя: {d.get('manager_limit') or 'нет'}, порог бухгалтера: "
+                  f"{d.get('accountant_limit') or 'нет'}")
+        return "изменены настройки согласования авансовых отчётов", \
+            f"{'включено' if d.get('enabled') else 'выключено'}, срок ответа: {d.get('timeout_hours', '—')} ч, {limits}"
+    stages = {"manager": "руководитель", "accountant": "бухгалтер"}
+    if action == "approval_created":
+        return "авансовый отчёт сформирован на согласование", \
+            f"{d.get('number', '—')}: {d.get('employee', '—')}, к учёту {d.get('total', '—')} ₽"
+    if action == "approval_signed":
+        return "авансовый отчёт подписан сотрудником (ПЭП)", f"{d.get('number', '—')}"
+    if action in ("approval_approved", "approval_rejected"):
+        verb = "согласован" if action == "approval_approved" else "отклонён"
+        return f"авансовый отчёт {verb} (ПЭП)", \
+            f"{d.get('number', '—')}, этап: {stages.get(d.get('stage'), d.get('stage') or '—')}"
+    if action == "approval_cancelled":
+        return "авансовый отчёт отменён", f"{d.get('number', '—')}"
     # v1.70.109 (T-77, ADR-39): режим второго прочтения сканов и фото
     if action == "primary_ocr_second":
         modes = {"auto": "по сомнению", "always": "всегда", "off": "выключено"}
