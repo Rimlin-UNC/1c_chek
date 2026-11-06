@@ -159,15 +159,52 @@ export function primDraftChecksHtml(checks) {
   return primIssuesHtml(checks);
 }
 
+// v1.70.109 (T-77, ADR-39): второе прочтение сканов — режимы администратора
+export const PRIM_SECOND_MODES = { auto: 'по сомнению', always: 'всегда', off: 'выключено' };
+
+function primLastRun(last, label) {
+  return last && last.seconds
+    ? ` ${label}: ${String(last.seconds).replace('.', ',')} с, память ${String(last.peak_mb || '—')} МБ.` : '';
+}
+
+/** Строка о втором прочтении (PP-OCRv6): готово и в каком режиме, или почему нет. */
+export function primSecondHtml(st, isAdmin) {
+  const s = st && st.second;
+  if (!s || typeof s.ready !== 'boolean') return '';
+  const mode = PRIM_SECOND_MODES[st.second_mode] ? st.second_mode : 'auto';
+  if (s.ready) {
+    const what = mode === 'off' ? 'выключено' : mode === 'always' ? 'для каждого скана'
+      : 'для черновиков, где Tesseract не нашёл поле или сомневается';
+    const select = isAdmin ? ` <label class="prim-second-mode">Режим: <select id="prim-ocr-second">${
+      Object.entries(PRIM_SECOND_MODES).map(([k, t]) => `<option value="${k}"${k === mode ? ' selected' : ''}>${esc(t)}</option>`).join('')
+    }</select></label>` : '';
+    return `<br><span aria-hidden="true">🔁</span> Второе прочтение (PP-OCRv6, Apache-2.0): ${esc(what)}.${
+      esc(primLastRun(s.last, 'Последнее'))}${select}`;
+  }
+  const can = isAdmin && st.ready && s.modules && Array.isArray(s.missing) && s.missing.length;
+  return `<br><span aria-hidden="true">🔁</span> Второе прочтение: не настроено — ${esc(s.reason || 'нет данных')}.${
+    can ? ' <button type="button" class="btn btn-sm" id="prim-ocr-models">Скачать модель (2,5 МБ)</button>' : ''}`;
+}
+
 export function primOcrStatusHtml(st, isAdmin) {
   if (!st || typeof st.ready !== 'boolean') return '';
-  const last = st.last && st.last.seconds
-    ? ` Последний скан: ${String(st.last.seconds).replace('.', ',')} с, память ${esc(String(st.last.peak_mb || '—'))} МБ.` : '';
-  if (st.ready) return `<span aria-hidden="true">🔎</span> Распознавание сканов и фото: готово.${esc(last)}`;
+  const last = primLastRun(st.last, 'Последний скан');
+  if (st.ready) return `<span aria-hidden="true">🔎</span> Распознавание сканов и фото: готово.${esc(last)}${primSecondHtml(st, isAdmin)}`;
   const can = isAdmin && st.engine && Array.isArray(st.missing) && st.missing.length;
+  const extra = st.second && st.second.modules && Array.isArray(st.second.missing) && st.second.missing.length;
   return `<span aria-hidden="true">🔎</span> Распознавание сканов и фото: не настроено — ${esc(st.reason || 'нет данных')}.
     PDF из 1С и систем ЭДО распознаются и без него.
-    ${can ? '<button type="button" class="btn btn-sm" id="prim-ocr-models">Скачать модели (8 МБ)</button>' : ''}`;
+    ${can ? `<button type="button" class="btn btn-sm" id="prim-ocr-models">Скачать модели (${extra ? '11' : '8'} МБ)</button>` : ''}`;
+}
+
+/** Чем распознан черновик: Tesseract и, если было, второе прочтение. */
+export function primOcrUsedHtml(info) {
+  if (!info) return '';
+  const sec = (v) => String(v ?? '—').replace('.', ',');
+  const second = info.second;
+  const tail = !second ? '' : second.error ? ` Второе прочтение не выполнено: ${second.error}`
+    : `; второе прочтение (PP-OCRv6) — ${sec(second.seconds)} с, поля сведены из двух прочтений`;
+  return `<p class="form-hint">Распознано на сервере: ${esc(info.engine || 'Tesseract')}, ${esc(sec(info.seconds))} с${esc(tail)}.</p>`;
 }
 
 function primField(id, label, value, opts = {}) {
@@ -203,7 +240,7 @@ export function primReviewHtml(rec, opts = {}) {
     : opts.fileUrl ? `<p class="form-hint">Сверьте поля с файлом из письма.</p>${openFile}`
       : `<p class="form-hint">${manual ? 'Введите реквизиты с бумажного документа.'
         : 'Сверьте поля с PDF-файлом: текст взят из файла как есть, ошибиться могла только разметка.'}</p>`;
-  const ocr = rec.ocr ? `<p class="form-hint">Распознано на сервере: ${esc(rec.ocr.engine || 'Tesseract')}, ${esc(String(rec.ocr.seconds ?? '—'))} с.</p>` : '';
+  const ocr = primOcrUsedHtml(rec.ocr);
   const missing = [...Object.keys(PRIM_FIELD_TITLES)].filter((k) => !found.has(k) && k !== 'lines');
   const unsure = [...uncertain].map((k) => PRIM_FIELD_TITLES[k] || k);
   const summary = manual ? 'Ручной ввод: заполните реквизиты бумажного документа.'
@@ -589,6 +626,17 @@ export async function viewPrimary(container, opts = {}) {
       const st = await api.get('/api/v1/primary/ocr');
       if (!container.isConnected) return;
       box.innerHTML = primOcrStatusHtml(st, opts.isAdmin);
+      const modeSel = box.querySelector('#prim-ocr-second');
+      if (modeSel) {
+        modeSel.onchange = async () => {
+          modeSel.disabled = true;
+          try {
+            await api.put('/api/v1/primary/ocr/second', { mode: modeSel.value });
+            toast(`Второе прочтение: ${PRIM_SECOND_MODES[modeSel.value] || modeSel.value}`, 'ok');
+          } catch (e) { toast(e.message, 'err'); }
+          loadOcr();
+        };
+      }
       const btn = box.querySelector('#prim-ocr-models');
       if (btn) {
         btn.onclick = async () => {

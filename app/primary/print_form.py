@@ -366,6 +366,17 @@ def _unsupported(text: str) -> str:
     return "Не похоже на УПД или счёт-фактуру: не найдена строка «Счёт-фактура № … от …»"
 
 
+# v1.70.109 (T-77): латинские буквы, которые на скане не отличить от русских
+_TWINS = frozenset("ABCEHKMOPTXYaceopxy")
+
+
+def latin_twins(number: str) -> bool:
+    """В номере есть буквы, и все они — латинские двойники русских: «YT-215» вместо «УТ-215».
+    Такой номер Tesseract читает уверенно, а ошибку не видно глазами — помечаем «проверьте»."""
+    letters = [ch for ch in number if ch.isalpha()]
+    return bool(letters) and all(ch in _TWINS for ch in letters)
+
+
 def parse_text(plain: str, layout: str = "") -> dict:
     """Текст печатной формы → черновик в формате upd.parse + found и uncertain."""
     text = (plain or "").translate(_SPACES)[:MAX_TEXT]
@@ -384,6 +395,8 @@ def parse_text(plain: str, layout: str = "") -> dict:
     day = parse_date(folded[m.start("date"):m.end("date")]) if m else None
     if number:
         found.append("number")
+        if latin_twins(number):
+            uncertain.append("number")
     if day:
         found.append("date")
     status = _STATUS.search(folded)

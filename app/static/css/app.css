@@ -2280,6 +2280,9 @@ label.field[hidden] { display: none; }
 .prim-uncertain input { border-color: var(--warn); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent); }
 .prim-missing input { border-style: dashed; border-color: var(--border-strong); }
 .prim-hint { margin: 0; color: var(--info-text); }
+/* v1.70.109 (T-77): режим второго прочтения — в строке состояния распознавания */
+.prim-second-mode { display: inline-flex; gap: 6px; align-items: center; margin-left: 6px; }
+.prim-second-mode select { width: auto; }
 .prim-form .field-inline { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
 .prim-issues details { margin-top: 4px; }
 .prim-issues details ul { margin: 4px 0 0 18px; padding: 0; list-style: disc; }

@@ -149,9 +149,21 @@ def confirm(user: Accountant, db: Db, body: ConfirmIn) -> dict:
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+class SecondModeIn(BaseModel):
+    mode: Literal["auto", "always", "off"]
+
+
 @router.get("/ocr", dependencies=[Depends(require_accountant)])
-def ocr_status() -> dict:
-    return ocr.status()
+def ocr_status(db: Db) -> dict:
+    return {**ocr.status(), "second_mode": service.second_mode(db)}
+
+
+@router.put("/ocr/second")
+def ocr_second(user: Annotated[User, Depends(require_admin)], db: Db, body: SecondModeIn) -> dict:
+    """v1.70.109 (T-77): режим второго прочтения — по сомнению, всегда или выключено."""
+    service.set_second_mode(db, body.mode)
+    log_action(user, "primary_ocr_second", details={"mode": body.mode})
+    return {**ocr.status(), "second_mode": service.second_mode(db)}
 
 
 @router.post("/ocr/models", dependencies=[Depends(require_admin)])

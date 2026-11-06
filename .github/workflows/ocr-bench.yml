@@ -1,7 +1,9 @@
 # Ямастер Чек — замер движков распознавания (T-77, issue #61).
 #
 # Что делает: на синтетических документах сравнивает наш Tesseract (рабочий путь ocr_worker.py) с
-# кандидатами: RapidOCR + PP-OCRv6 Cyrillic (Apache-2.0), Indra OCR и Occular-OCR. Документы — печатная
+# кандидатами: RapidOCR + PP-OCRv6 Cyrillic (Apache-2.0), Indra OCR и Occular-OCR. С v1.70.109 (ADR-39)
+# проверяет и второе прочтение программы: модель скачивает сам код программы (ревизия и хеши), читает
+# тот же ocr_worker.py с аргументом second:. Документы — печатная
 # форма УПД из tests/fixtures в шести видах и искусственный кассовый чек (ADR-14: настоящих документов
 # здесь нет). Каждый движок — в своём окружении и своём процессе, на двух ядрах (taskset), как на
 # сервере 2 ГБ и 2 ядра. Итог — по полям черновика УПД, тихим ошибкам, времени и пику памяти.
@@ -68,6 +70,14 @@ jobs:
       - name: Корпус и веса (вне замера)
         run: |
           /tmp/v-app/bin/python qa/ocr_bench.py corpus /tmp/corpus
+          /tmp/v-app/bin/python - <<'PY'
+          import json
+          from app.primary import ocr
+          result = ocr.download_models()
+          print(json.dumps(result["log"], ensure_ascii=False))
+          assert result["second"]["ready"], result["second"]["reason"]
+          print("::notice title=OCR модель программы::" + "; ".join(result["log"]))
+          PY
           /tmp/v-rapid/bin/python qa/ocr_bench.py fetch /tmp/models
           /tmp/v-rapid/bin/python qa/ocr_bench.py warmup rapid_v6t /tmp/corpus
           /tmp/v-indra/bin/python qa/ocr_bench.py warmup indra /tmp/corpus
@@ -82,16 +92,17 @@ jobs:
               || echo "::warning title=OCR $1 t$3::прогон не завершён (код $?)"
           }
           # Первый прогон (42145047596) показал: второй поток не ускоряет ни один движок, только
-          # удваивает процессорное время; Medium без рецепта карточки теряет поля (15 из 60).
-          # Поэтому — один поток (как в рабочем ocr_worker.py), Medium — два потока для связки.
+          # удваивает процессорное время. Поэтому — один поток, как в рабочем ocr_worker.py.
+          # Medium (46 с на страницу) и облегчённый Occular (пик 2 ГБ) измерены в прогоне 42147246976
+          # и записаны в docs/primary_docs_design.md; при нужде их можно вернуть строками ниже:
+          #   run rapid_v6m /tmp/v-rapid 2 · run occular_lite /tmp/v-occ 1
           run tesseract /tmp/v-app 1
+          run worker_second /tmp/v-app 1
           run tess_det /tmp/v-rapid 1
           run rapid_v6t /tmp/v-rapid 1
           run rapid_v6t_fast /tmp/v-rapid 1
-          run rapid_v6m /tmp/v-rapid 2
           run indra /tmp/v-indra 1
           run occular /tmp/v-occ 1
-          run occular_lite /tmp/v-occ 1
 
       - name: Размеры окружений и весов
         if: always()

@@ -307,6 +307,10 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
             f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, писем в папке: {d.get('messages', 0)}"
     if action == "primary_mailbox_removed":
         return "почтовый ящик для первички отключён", f"компания: „{d.get('company', '—')}“"
+    # v1.70.109 (T-77, ADR-39): режим второго прочтения сканов и фото
+    if action == "primary_ocr_second":
+        modes = {"auto": "по сомнению", "always": "всегда", "off": "выключено"}
+        return "изменён режим второго прочтения сканов", f"режим: {modes.get(d.get('mode'), d.get('mode') or '—')}"
     if action == "primary_mail_checked":
         return "первичка загружена из почты", \
             f"компания: „{d.get('company', '—')}“, писем: {d.get('messages', 0)}, в реестр: {d.get('created', 0)}, " \

@@ -1,9 +1,10 @@
 """Распознавание скана или фото в отдельном процессе (T-61, v1.70.95).
 
 Запускается из app/primary/ocr.py так: python -I ocr_worker.py <файл> <tessdata> <языки> <страниц>
-<1|0 превью>. Приложение не импортирует: в памяти процесса только Pillow, pypdfium2 и Tesseract.
-После ответа процесс завершается, и вся его память возвращается системе. Падение библиотеки
-не роняет сервер, а зависание обрывается тайм-аутом родителя.
+<1|0 превью> [second:<папка модели>]. Приложение не импортирует: в памяти процесса только Pillow,
+pypdfium2 и Tesseract, а при втором прочтении (T-77, v1.70.109) — RapidOCR и onnxruntime вместо
+Tesseract. После ответа процесс завершается, и вся его память возвращается системе. Падение
+библиотеки не роняет сервер, а зависание обрывается тайм-аутом родителя.
 
 Ответ — одна строка JSON в stdout:
   {"ok": true, "engine": "...", "pages": [{"text", "layout", "confidence", "angle"}],
@@ -232,6 +233,83 @@ def recognize_page(img, run, tessdata: str, lang: str) -> dict:
             "confidence": result["confidence"], "angle": angle}
 
 
+# ------------------------------------------------------------------ второе прочтение (T-77, v1.70.109)
+# RapidOCR (Apache-2.0): детектор строк PP-OCRv6 small лежит в колесе rapidocr, распознаватель
+# PP-OCRv6 Tiny Cyrillic (metrika-labs, Apache-2.0, 2,5 МБ) — в data/ocr_models. Замер на синтетике
+# (qa/ocr_bench.py, docs/primary_docs_design.md): 2,5 с на страницу и пик около 500 МБ в один поток.
+DET_SIDE = 1280            # длинная сторона входа детектора: на 2000 точках пик доходил до 900 МБ
+REC_MIN_WIDTH = 640        # рецепт из карточки модели: строка не уже 640 точек (+3 поля из 60 на замере)
+
+
+def second_engine(models: str):
+    """Движок второго прочтения: один поток, детектор на DET_SIDE точках, распознаватель из models."""
+    from rapidocr import RapidOCR
+    engine = RapidOCR(params={
+        "Global.log_level": "error", "Det.limit_type": "max", "Det.limit_side_len": DET_SIDE,
+        "Rec.model_path": os.path.join(models, "inference.onnx"),
+        "Rec.rec_keys_path": os.path.join(models, "rec_keys.txt"),
+        "Rec.rec_img_shape": [3, 48, REC_MIN_WIDTH],
+        "EngineConfig.onnxruntime.intra_op_num_threads": 1,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1})
+    # Рецепт карточки модели: высота входа 48, ширина — не меньше REC_MIN_WIDTH и с запасом в полтора раза
+    rec = engine._load_rec_model()
+    rec.rec_image_shape = [3, 48, 48]
+    resize = rec.resize_norm_img
+    rec.resize_norm_img = lambda img, ratio: resize(img, max(REC_MIN_WIDTH / 48, 1.5 * ratio))
+    return engine
+
+
+def _ocr_second(img, engine, cls: bool = True) -> dict:
+    """Страница → строки RapidOCR в том же виде, что слова Tesseract: текст, рамка, наклон, уверенность."""
+    out = engine(img.convert("RGB"), use_cls=cls)
+    if out.boxes is None:
+        return {"text": "", "words": [], "slope": 0.0, "confidence": 0}
+    words, tops = [], []
+    for quad, text in zip(out.boxes.tolist(), out.txts):
+        xs, ys = [p[0] for p in quad], [p[1] for p in quad]
+        words.append({"t": text, "x0": min(xs), "y0": min(ys), "x1": max(xs), "y1": max(ys)})
+        tops.append((quad[0][0], quad[0][1], quad[1][0], quad[1][1]))
+    scores = [float(v) for v in out.scores]
+    return {"text": "\n".join(out.txts), "words": words, "slope": median_slope(tops),
+            "confidence": int(100 * sum(scores) / len(scores)) if scores else 0}
+
+
+def vertical(words: list[dict]) -> bool:
+    """Больше половины строк выше своей ширины — лист лежит боком."""
+    tall = sum(1 for w in words if w["y1"] - w["y0"] > 1.5 * (w["x1"] - w["x0"]))
+    return bool(words) and tall * 2 > len(words)
+
+
+def recognize_page_second(img, engine) -> dict:
+    """Второе прочтение страницы.
+
+    RapidOCR читает и лист боком: высокие строки он поворачивает сам, опорные слова находятся, а строки
+    таблицы стоят столбиком. Поэтому строки столбиком → поворот на 90° или 270°; сторону решает пробное
+    чтение без классификатора переворота строк: на неверной стороне строки читаются вверх ногами и
+    опорных слов почти нет. Мало опорных слов на ровном листе — те же пробы, что у Tesseract."""
+    result, angle = _ocr_second(img, engine), 0
+    if vertical(result["words"]):
+        angle = max((90, 270), key=lambda t: anchors(_ocr_second(img.rotate(t, expand=True), engine, cls=False)["text"]))
+        result = _ocr_second(img.rotate(angle, expand=True), engine)
+    elif anchors(result["text"]) < MIN_ANCHORS:
+        for turn in (90, 270, 180):
+            other = _ocr_second(img.rotate(turn, expand=True), engine)
+            if anchors(other["text"]) > anchors(result["text"]):
+                result, angle = other, turn
+            if anchors(result["text"]) >= 2 * MIN_ANCHORS:
+                break
+    return {"text": result["text"], "layout": build_layout(result["words"], result["slope"]),
+            "confidence": result["confidence"], "angle": angle}
+
+
+def _second_name() -> str:
+    try:
+        from importlib.metadata import version
+        return f"PP-OCRv6 Tiny Cyrillic (RapidOCR {version('rapidocr')})"
+    except Exception:                                   # noqa: BLE001 — подпись не важнее распознавания
+        return "PP-OCRv6 Tiny Cyrillic (RapidOCR)"
+
+
 def _preview(img) -> str:
     small = img.copy()
     small.thumbnail((1400, 1400))
@@ -242,15 +320,24 @@ def _preview(img) -> str:
 
 def main(argv: list[str]) -> dict:
     path, tessdata, lang, max_pages, want_preview = argv[0], argv[1], argv[2], int(argv[3]), argv[4] == "1"
+    second = argv[5][len("second:"):] if len(argv) > 5 and argv[5].startswith("second:") else ""
     started = time.time()
     with open(path, "rb") as fh:
         head = fh.read(5)
     pages = _pdf_pages(path, max_pages) if head.startswith(b"%PDF") else _image_pages(path, max_pages)
     if not pages:
         raise WorkerError("В файле нет страниц")
-    engine, run = engine_name()
     prepared = [prepare(p) for p in pages]
-    result_pages = [recognize_page(img, run, tessdata, lang) for img in prepared]
+    if second:
+        try:
+            reader = second_engine(second)
+        except ImportError as exc:
+            raise WorkerError("Не установлены модули второго прочтения (rapidocr, onnxruntime)") from exc
+        engine = _second_name()
+        result_pages = [recognize_page_second(img, reader) for img in prepared]
+    else:
+        engine, run = engine_name()
+        result_pages = [recognize_page(img, run, tessdata, lang) for img in prepared]
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
     return {"ok": True, "engine": engine, "pages": result_pages,
             "preview": _preview(prepared[0]) if want_preview else None,

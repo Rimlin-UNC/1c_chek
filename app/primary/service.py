@@ -27,6 +27,7 @@ from sqlalchemy.orm import Query, Session
 from ..auth import ROLE_ADMIN
 from ..config import settings
 from ..models import Company, User
+from ..services import appsettings
 from ..services.companies_util import inn_is_valid
 from ..services.scoping import target_company_id
 from . import ocr, print_form, schema, upd
@@ -40,6 +41,10 @@ MAX_UNPACKED = 50 * 1024 * 1024
 SOURCES = {"xml": "файл ЭДО", "pdf": "PDF", "scan": "скан или фото", "manual": "введён вручную"}
 TOKEN_TTL = 24 * 3600
 IMAGE_TYPES = {b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"II*\x00": ".tif", b"MM\x00*": ".tif"}
+# Второе прочтение сканов (T-77, v1.70.109, ADR-39): режим — настройка администратора
+SECOND_KEY = "ocr_second_reading"
+SECOND_MODES = {"auto": "по сомнению", "always": "всегда", "off": "выключено"}
+SECOND_FIELDS = ("number", "date", "seller_name", "seller_inn", "buyer_name", "buyer_inn", "lines", "totals")
 
 
 def resolve_company(db: Session, user: User, parsed: dict, requested: str | None) -> str | None:
@@ -206,11 +211,55 @@ def file_kind(data: bytes) -> tuple[str, str]:
     raise RecognizeError("Распознаются PDF, JPG, PNG и TIFF; XML и ZIP загружайте обычной загрузкой", 400)
 
 
-def _draft_from_ocr(answer: dict) -> dict:
+def _ocr_variants(answer: dict) -> list[tuple[str, str]]:
+    """Прочтение распознавателя → варианты для parse_variants: простой текст и строки по координатам."""
     pages = answer.get("pages") or []
     plain = "\n".join(p.get("text", "") for p in pages)
     layout = "\n".join(p.get("layout", "") for p in pages)
-    return print_form.parse_variants([(plain, layout), (layout, layout), (plain, "")])
+    return [(plain, layout), (layout, layout), (plain, "")]
+
+
+def _draft_from_ocr(answer: dict) -> dict:
+    return print_form.parse_variants(_ocr_variants(answer))
+
+
+def second_mode(db: Session) -> str:
+    value = appsettings.get_setting(db, SECOND_KEY, "auto")
+    return value if value in SECOND_MODES else "auto"
+
+
+def set_second_mode(db: Session, mode: str) -> None:
+    if mode not in SECOND_MODES:
+        raise RecognizeError("Режим второго прочтения: по сомнению, всегда или выключено", 422)
+    appsettings.set_setting(db, SECOND_KEY, mode)
+
+
+def needs_second_reading(draft: dict | None) -> bool:
+    """Черновику нужно второе прочтение: он не собрался, основное поле не найдено или под сомнением."""
+    if draft is None:
+        return True
+    found = set(draft.get("found") or [])
+    return bool(draft.get("uncertain")) or any(key not in found for key in SECOND_FIELDS)
+
+
+def _second_reading(db: Session, data: bytes, suffix: str, variants: list, draft: dict | None,
+                    ocr_info: dict) -> dict | None:
+    """Второе прочтение по режиму администратора. Поля сводит тот же parse_variants: каждое берётся из
+    прочтения, где оно найдено без сомнений. Сбой или занятость сервера — остаётся черновик Tesseract."""
+    mode = second_mode(db)
+    if mode == "off" or (mode == "auto" and not needs_second_reading(draft)) or not ocr.second_status()["ready"]:
+        return draft
+    try:
+        answer = ocr.recognize(data, suffix, wait=ocr.SECOND_WAIT, second=True)
+    except ocr.OcrError as exc:
+        ocr_info["second"] = {"error": str(exc)}
+        return draft
+    ocr_info["second"] = {"engine": answer.get("engine", ""), **answer.get("stats", {}),
+                          "angle": [p.get("angle") for p in answer.get("pages") or []]}
+    try:
+        return print_form.parse_variants(variants + _ocr_variants(answer))
+    except print_form.PrintFormError:
+        return draft
 
 
 def hints(db: Session, user: User, draft: dict) -> dict:
@@ -259,7 +308,14 @@ def recognize_file(db: Session, user: User, data: bytes, file_name: str, request
             ocr_info = {"engine": answer.get("engine", ""), **answer.get("stats", {}),
                         "confidence": [p.get("confidence") for p in answer.get("pages") or []],
                         "angle": [p.get("angle") for p in answer.get("pages") or []]}
-            draft = _draft_from_ocr(answer)
+            variants = _ocr_variants(answer)
+            try:
+                draft, first_error = print_form.parse_variants(variants), None
+            except print_form.PrintFormError as exc:
+                draft, first_error = None, exc
+            draft = _second_reading(db, data, suffix, variants, draft, ocr_info)
+            if draft is None:
+                raise first_error
     except print_form.PrintFormError as exc:
         raise RecognizeError(str(exc)) from exc
     except ocr.OcrUnavailable as exc:

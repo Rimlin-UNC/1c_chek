@@ -56,18 +56,20 @@ def program_files():
 
 
 class TestRelease:
+    """Выпуск 1.70.108 — исторические проверки (точные пины — в tests/test_v170109.py)."""
+
+    @staticmethod
+    def _ver(value: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in value.split("."))
+
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
-        for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
-                    "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
-                    "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+        current = settings.APP_VERSION
+        assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
     def test_updater_order(self):
         from app.services import updater
@@ -75,10 +77,11 @@ class TestRelease:
             assert updater._is_newer(VERSION, older) is True
             assert updater._is_newer(older, VERSION) is False
 
-    def test_changelog_first_entry_fits_update_window(self):
+    def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-06"
-        entry = md.split("\n## [1.70.107]", 1)[0]
+        head = f"## [{VERSION}] - 2026-11-06"
+        assert head in md
+        entry = head + md.split(head, 1)[1].split("\n## [", 1)[0]
         assert len(entry) <= 4000, len(entry)
         for needle in ("«Моё дело» заморожено", "резервная копия", "поверх 1.70.95–1.70.107 не меняются — шаг pip "
                        "пропускается", "откатится само", "Схема базы не меняется", "Таблицы moedelo_connections и "
@@ -91,10 +94,9 @@ class TestRelease:
         assert md.split("## [1.70.107] - 2026-11-05\n\n", 1)[1].startswith(
             "> Модуль «Моё дело» из этого выпуска заморожен владельцем 06.11.2026 и убран в 1.70.108 (ADR-38).\n")
 
-    def test_whats_new_first(self):
+    def test_whats_new_kept(self):
         js = read("app/static/js/app.js")
-        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
+        assert f"'{VERSION}': [" in js
         block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 2
         for needle in ("Без лишнего — как в 1.70.106", "Учётные системы — открытыми форматами",
@@ -103,34 +105,28 @@ class TestRelease:
         assert "'1.70.107': [" not in js                     # карточки убранного модуля не хранятся
         assert "'1.70.106': [" in js                         # история прочих выпусков на месте
 
-    def test_journal_entry_first(self):
+    def test_journal_entry(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — «Моё дело» убрано: карточка компании и «Первичка» — как в "
-                                  "1.70.106")
-        entry = journal.split("\n## v1.70.107", 1)[0]
+        head = f"## v{VERSION} — «Моё дело» убрано: карточка компании и «Первичка» — как в 1.70.106"
+        assert head in journal
+        entry = journal.split(head, 1)[1].split("\n## v", 1)[0]
         for needle in ("«📬 Почтой для документов»", "«⬇ В 1С» и «Обновить»", "«⬇ Файл для 1С» и «Удалить документ»",
                        "значков 📒", "«для других учётных систем»", "USER_GUIDE §7.14 убран", "ADR-38",
                        "две карточки"):
             assert needle in entry, needle
 
-    def test_changed_blocks(self):
+    def test_changed_blocks_not_older_than_release(self):
+        from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == ["Первичка (электронные УПД)"]
+        assert self._ver(reg["Первичка (электронные УПД)"]) >= self._ver(VERSION)
         assert "«Моё дело» по API (акты покупок)" not in reg
         assert reg["Ассистенты (Telegram и MAX)"] == "1.66.0"           # закреплено tests/test_v1660.py
-        assert all(tuple(map(int, v.split("."))) <= (1, 70, 108) for v in reg.values())
-        before = {**reg, "Первичка (электронные УПД)": "1.70.107", "«Моё дело» по API (акты покупок)": "1.70.107"}
-        assert updater.diff_blocks(before, reg) == [{"name": "Первичка (электронные УПД)", "from": "1.70.107",
-                                                     "to": VERSION}]
+        assert all(self._ver(v) <= self._ver(settings.APP_VERSION) for v in reg.values())
 
-    def test_readme_latest_release(self):
-        readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (06.11.2026)" in readme
-        assert "Последний выпуск — v1.70.107" not in readme
-        assert f"**Ставьте {VERSION} вместо\n1.70.107.**" in readme
-        section = readme.split(f"## 🆕 Последний выпуск — v{VERSION}", 1)[1].split("\n## ", 1)[0]
-        assert "Схема базы не меняется" in section and "«Моё дело» заморожено:" in section
+    def test_readme_latest_release_not_older(self):
+        m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
+        assert m and self._ver(m.group(1)) >= self._ver(VERSION)
 
 
 class TestSurgery:
@@ -201,7 +197,7 @@ class TestOpenFormatsKept:
         assert "- **Другие системы** — JSON или CSV по описанию выше" in fmt
         from app.services.manual_content import build_manual
         manual = build_manual()
-        assert manual["updated"] == "2026-11-06"
+        assert manual["updated"] >= "2026-11-06"
         html = "".join(s.get("html", "") for s in manual["sections"])
         assert "их принимают 1С и другие учётные системы через ЭДО" in html
         assert 'title="JSON, CSV и УПД за месяц — для других учётных систем"' in read("app/static/js/clients.js")
@@ -244,20 +240,20 @@ class TestDocsAndKb:
         assert t76["Блокер"] == "Заморожено решением владельца 06.11.2026 вместе с T-71 (комментарий в #60)"
         assert t71["Issue/PR"].endswith("/issues/56") and t76["Issue/PR"].endswith("/issues/60")
         t01 = tasks["T-01"]["Блокер"]
-        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.107 без замороженного «Моего дела»" in t01
-        assert "на рабочем сервере — v1.70.106 (отчёт владельца 06.11.2026)" in t01
+        m = re.search(r"Ставить сразу v([\d.]+)", t01)                         # v1.70.109: не старше
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
+        assert "без замороженного «Моего дела»" in t01
         roadmap = read("docs/kb/02_roadmap.md")
-        assert "## Срез на 2026-11-06" in roadmap
-        assert f"T-01 — установить на рабочий сервер v{VERSION} (включает 1.70.82–1.70.107 без замороженного " \
-               "«Моего дела»; P0)" in roadmap
+        m = re.search(r"## Срез на (\d{4}-\d{2}-\d{2})", roadmap)
+        assert m and m.group(1) >= "2026-11-06"
+        m = re.search(r"T-01 — установить на рабочий сервер v([\d.]+) ", roadmap)  # v1.70.109: не старше
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         assert f"**Заморожено 06.11.2026 (выпуск v{VERSION}):** [#56](https://github.com/Rimlin-UNC/1c_chek/issues/56) " \
                "T-71 и [#60](https://github.com/Rimlin-UNC/1c_chek/issues/60) T-76" in roadmap
         agent = roadmap.split("**Можно брать агенту без подтверждения**", 1)[1].split("\n\n", 1)[0]
         assert "[#26](https://github.com/Rimlin-UNC/1c_chek/issues/26) T-41" in agent and "T-76" not in agent
-        ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
-        assert all("," not in v for v in ledger[-1].values()), "в полях реестра нет запятых"
-        assert ledger[-2]["Версия"] == "1.70.107"
-        assert ledger[-2]["Откат на неё"] == f"не стоит: в ней замороженный модуль «Моё дело» (убран в {VERSION})"
-        assert ledger[-3]["Версия"] == "1.70.106"
-        assert ledger[-3]["Откат на неё"] == "можно: на ней рабочий сервер (отчёт владельца 06.11.2026)"
+        rows = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
+        assert rows[VERSION]["Опора репетиции"] == "да"
+        assert all("," not in v for v in rows[VERSION].values()), "в полях реестра нет запятых"
+        assert rows["1.70.107"]["Откат на неё"] == f"не стоит: в ней замороженный модуль «Моё дело» (убран в {VERSION})"
+        assert rows["1.70.106"]["Откат на неё"] == "можно: на ней рабочий сервер (отчёт владельца 06.11.2026)"

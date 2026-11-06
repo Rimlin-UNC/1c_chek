@@ -7,6 +7,8 @@ app/primary/print_form.py), а не только по доле верных си
 
 Что сравнивается:
   tesseract  — рабочий путь программы: app/primary/ocr_worker.py, отдельный процесс на документ;
+  worker_second — второе прочтение в программе (v1.70.109, ADR-39): тот же ocr_worker.py с аргументом
+               second:, модель скачана кодом программы (ocr.download_models — ревизия и хеши);
   tess_det   — Tesseract и детектор строк PP-OCRv6 (приём из статьи на Хабре): читает Tesseract,
                а детектор только раскладывает слова по строкам и ячейкам;
   rapid_v6t  — RapidOCR и PP-OCRv6 Tiny Cyrillic (metrika-labs, Apache-2.0, 2,5 МБ);
@@ -70,12 +72,12 @@ MODELS = Path(os.environ.get("YM_BENCH_MODELS", "/tmp/models"))
 DET_SIDE = int(os.environ.get("YM_BENCH_DET_SIDE", "1280"))
 LANG = "rus+eng"
 SEED = 77
-ENGINES = ("tesseract", "tess_det", "rapid_v6t", "rapid_v6t_fast", "rapid_v6m", "rapid_v6m_fast", "indra", "occular",
-           "occular_lite")
+ENGINES = ("tesseract", "worker_second", "tess_det", "rapid_v6t", "rapid_v6t_fast", "rapid_v6m", "rapid_v6m_fast",
+           "indra", "occular", "occular_lite")
 HF_REC = {"rapid_v6t": "metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx",
           "rapid_v6m": "metrika-labs/PP-OCRv6_medium_rec_cyrillic_onnx"}
 RAPID = ("rapidocr", "onnxruntime")
-PACKAGES = {"tesseract": ("tesserocr",), "tess_det": ("tesserocr", *RAPID), "rapid_v6t": RAPID, "rapid_v6t_fast": RAPID,
+PACKAGES = {"tesseract": ("tesserocr",), "worker_second": RAPID, "tess_det": ("tesserocr", *RAPID), "rapid_v6t": RAPID, "rapid_v6t_fast": RAPID,
             "rapid_v6m": RAPID, "rapid_v6m_fast": RAPID, "indra": ("indra-ocr", "onnxruntime"),
             "occular": ("occular-ocr", "onnxruntime-gpu", "pymupdf"), "occular_lite": ("occular-ocr", "onnxruntime-gpu")}
 
@@ -376,7 +378,7 @@ def _make_indra(threads: int):
     import indra_ocr
     conv = indra_ocr.load(threads=threads, mode="ocr")
 
-    def run(path: Path, kind: str) -> dict:
+    def run(path: Path, _kind: str) -> dict:
         page = conv.ocr(np.asarray(_image(path).convert("L")))
         lines = []
         for line in page.lines:
@@ -393,7 +395,7 @@ def _make_occular(threads: int, lite: bool = False):
         options["reading_order"] = False
     pipe = OCRPipeline(settings=Settings(**options))
 
-    def run(path: Path, kind: str) -> dict:
+    def run(path: Path, _kind: str) -> dict:
         lines = [_item(ln["text"], ln["quad"], ln.get("confidence", 0)) for ln in pipe.process_image(str(path))]
         return {"text": "\n".join(it["t"] for it in lines), "lines": lines}
     return run
@@ -416,14 +418,16 @@ def _versions(name: str) -> dict:
     return found
 
 
-def _run_tesseract(corpus: Path, files: list, threads: int) -> dict:
-    """Рабочий путь: на каждый документ — отдельный процесс ocr_worker.py, как в app/primary/ocr.py."""
+def _run_worker(corpus: Path, files: list, threads: int, second: str = "") -> dict:
+    """Рабочий путь: на каждый документ — отдельный процесс ocr_worker.py, как в app/primary/ocr.py.
+    second — папка модели второго прочтения (тогда вместо Tesseract читает RapidOCR)."""
     env = dict(os.environ, OMP_THREAD_LIMIT=str(threads))
+    extra = [f"second:{second}"] if second else []
     results, peak = [], 0
     for item in files:
         before, started = resource.getrusage(resource.RUSAGE_CHILDREN), time.perf_counter()
-        run = subprocess.run([sys.executable, "-I", str(WORKER), str(corpus / item["file"]), TESSDATA, LANG, "5", "0"],
-                             capture_output=True, timeout=600, env=env, check=False)
+        run = subprocess.run([sys.executable, "-I", str(WORKER), str(corpus / item["file"]), TESSDATA, LANG, "5", "0",
+                              *extra], capture_output=True, timeout=600, env=env, check=False)
         after = resource.getrusage(resource.RUSAGE_CHILDREN)
         try:
             answer = json.loads(run.stdout.decode("utf-8") or "{}")
@@ -448,7 +452,13 @@ def warmup(name: str, corpus: Path) -> None:
 def run_engine(name: str, corpus: Path, out: Path, threads: int) -> None:
     files = json.loads((corpus / "manifest.json").read_text(encoding="utf-8"))["files"]
     if name == "tesseract":
-        result = _run_tesseract(corpus, files, threads)
+        result = _run_worker(corpus, files, threads)
+    elif name == "worker_second":
+        sys.path.insert(0, str(ROOT))
+        from app.primary import ocr
+        if not ocr.second_status()["ready"]:
+            raise SystemExit(f"второе прочтение не готово: {ocr.second_status()['reason']}")
+        result = _run_worker(corpus, files, threads, str(ocr.SECOND_DIR))
     else:
         started = time.perf_counter()
         run = FACTORIES[name](threads)
@@ -575,8 +585,8 @@ def _layout(lines: list, worker) -> str:
     return worker.build_layout([{k: it[k] for k in ("t", "x0", "y0", "x1", "y1")} for it in lines], slope)
 
 
-COMBOS = (("tesseract", 1, "rapid_v6t", 1), ("tesseract", 1, "rapid_v6t_fast", 1), ("tesseract", 1, "indra", 1),
-          ("tesseract", 1, "occular", 1), ("tesseract", 1, "rapid_v6m", 2))
+COMBOS = (("tesseract", 1, "worker_second", 1), ("tesseract", 1, "rapid_v6t", 1), ("tesseract", 1, "rapid_v6t_fast", 1),
+          ("tesseract", 1, "indra", 1), ("tesseract", 1, "occular", 1), ("tesseract", 1, "rapid_v6m", 2))
 
 
 def _reading(page: dict, worker) -> list[tuple[str, str]]:
@@ -699,7 +709,7 @@ def main(argv: list[str]) -> None:
     sub.add_parser("corpus").add_argument("dir", type=Path)
     sub.add_parser("fetch").add_argument("dir", type=Path)
     warm = sub.add_parser("warmup")
-    warm.add_argument("name", choices=ENGINES[1:])
+    warm.add_argument("name", choices=tuple(FACTORIES))
     warm.add_argument("dir", type=Path)
     eng = sub.add_parser("engine")
     eng.add_argument("name", choices=ENGINES)

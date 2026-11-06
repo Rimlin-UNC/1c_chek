@@ -510,6 +510,8 @@ def test_status_explains_what_is_missing(monkeypatch, tmp_path):
 
 def test_models_are_verified_by_hash(monkeypatch, tmp_path):
     body = b"traineddata-test"
+    # v1.70.109: модель второго прочтения проверяется в tests/test_v170109.py; здесь — только Tesseract
+    monkeypatch.setattr(ocr, "_second_modules", lambda: False)
     monkeypatch.setattr(ocr, "TESSDATA_DIR", tmp_path)
     monkeypatch.setattr(ocr, "SYSTEM_TESSDATA", ())
     monkeypatch.setattr(ocr, "MODELS", {"tst": {"sha1": ocr.git_blob_sha1(body), "size": len(body)}})
@@ -522,9 +524,9 @@ def test_models_are_verified_by_hash(monkeypatch, tmp_path):
         return body
 
     log = ocr.download_models(fetch=flaky)["log"]
-    assert (tmp_path / "tst.traineddata").read_bytes() == body and log == ["tst: скачано с raw.githubusercontent.com"]
+    assert (tmp_path / "tst.traineddata").read_bytes() == body and log[0] == "tst: скачано с raw.githubusercontent.com"
     assert "git/blobs/" + ocr.git_blob_sha1(body) in calls[0]
-    assert ocr.download_models(fetch=flaky)["log"] == ["tst: уже есть"]
+    assert ocr.download_models(fetch=flaky)["log"][0] == "tst: уже есть"
     (tmp_path / "tst.traineddata").unlink()
     with pytest.raises(ocr.OcrError, match="не совпал по хешу"):
         ocr.download_models(fetch=lambda url, headers: b"poisoned-model!")
