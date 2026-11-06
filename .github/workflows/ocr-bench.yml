@@ -1,0 +1,128 @@
+# Ямастер Чек — замер движков распознавания (T-77, issue #61).
+#
+# Что делает: на синтетических документах сравнивает наш Tesseract (рабочий путь ocr_worker.py) с
+# кандидатами: RapidOCR + PP-OCRv6 Cyrillic (Apache-2.0), Indra OCR и Occular-OCR. Документы — печатная
+# форма УПД из tests/fixtures в шести видах и искусственный кассовый чек (ADR-14: настоящих документов
+# здесь нет). Каждый движок — в своём окружении и своём процессе, на двух ядрах (taskset), как на
+# сервере 2 ГБ и 2 ядра. Итог — по полям черновика УПД, тихим ошибкам, времени и пику памяти.
+#
+# Веса кандидатов скачиваются с Hugging Face только здесь, на раннере GitHub: программа на сервере их
+# не скачивает. Секретов не использует, рабочий сервер, Supabase и Vercel не затрагивает.
+# Итог: сводка задания, аннотации (их читает агент через API проверок) и артефакт ocr-bench.
+# Запуск: вручную (Actions → OCR bench) или при изменении qa/ocr_bench.py и этого файла.
+name: OCR bench
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - "qa/ocr_bench.py"
+      - ".github/workflows/ocr-bench.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ocr-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      YM_BENCH_TESSDATA: /tmp/tessdata
+      YM_BENCH_MODELS: /tmp/models
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Окружение программы (корпус, Tesseract, оценка)
+        run: |
+          if [ ! -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq fonts-dejavu-core
+          fi
+          python -m venv /tmp/v-app
+          /tmp/v-app/bin/pip install -q -r requirements.txt
+          mkdir -p /tmp/tessdata
+          for lang in rus eng; do
+            curl -fsSL -o "/tmp/tessdata/$lang.traineddata" \
+              "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$lang.traineddata"
+          done
+
+      - name: Окружения кандидатов
+        run: |
+          python -m venv /tmp/v-rapid
+          /tmp/v-rapid/bin/pip install -q "rapidocr==3.10.0" onnxruntime tesserocr huggingface_hub
+          python -m venv /tmp/v-indra
+          /tmp/v-indra/bin/pip install -q "indra-ocr==1.1.2" pillow
+          python -m venv /tmp/v-occ
+          /tmp/v-occ/bin/pip install -q "occular-ocr==0.5.2"
+
+      - name: Корпус и веса (вне замера)
+        run: |
+          /tmp/v-app/bin/python qa/ocr_bench.py corpus /tmp/corpus
+          /tmp/v-rapid/bin/python qa/ocr_bench.py fetch /tmp/models
+          /tmp/v-rapid/bin/python qa/ocr_bench.py warmup rapid_v6t /tmp/corpus
+          /tmp/v-indra/bin/python qa/ocr_bench.py warmup indra /tmp/corpus
+          /tmp/v-occ/bin/python qa/ocr_bench.py warmup occular /tmp/corpus
+
+      - name: Прогоны на двух ядрах
+        run: |
+          mkdir -p /tmp/bench
+          run() {
+            timeout 1500 taskset -c 0,1 "$2/bin/python" qa/ocr_bench.py engine "$1" /tmp/corpus \
+              "/tmp/bench/$1-t$3.json" --threads "$3" \
+              || echo "::warning title=OCR $1 t$3::прогон не завершён (код $?)"
+          }
+          run tesseract /tmp/v-app 1
+          run tesseract /tmp/v-app 2
+          run tess_det /tmp/v-rapid 1
+          run rapid_v6t_fast /tmp/v-rapid 1
+          run rapid_v6t_fast /tmp/v-rapid 2
+          run rapid_v6t /tmp/v-rapid 1
+          run rapid_v6t /tmp/v-rapid 2
+          run rapid_v6m_fast /tmp/v-rapid 2
+          run rapid_v6m /tmp/v-rapid 2
+          run indra /tmp/v-indra 1
+          run indra /tmp/v-indra 2
+          run occular /tmp/v-occ 1
+          run occular /tmp/v-occ 2
+
+      - name: Размеры окружений и весов
+        if: always()
+        run: |
+          python qa/ocr_bench.py sizes /tmp/bench/sizes.json \
+            app=/tmp/v-app rapid=/tmp/v-rapid indra=/tmp/v-indra occular=/tmp/v-occ
+
+      - name: Оценка
+        if: always()
+        run: /tmp/v-app/bin/python qa/ocr_bench.py score /tmp/corpus /tmp/bench --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Итог по движкам
+        if: always()
+        run: cat /tmp/bench/notes_engines.txt
+
+      - name: Итог по видам документов
+        if: always()
+        run: cat /tmp/bench/notes_variants.txt
+
+      - name: Размеры (аннотация)
+        if: always()
+        run: echo "::notice title=OCR размеры::$(tr -d '\n' < /tmp/bench/sizes.json)"
+
+      - name: Артефакт
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ocr-bench
+          path: |
+            /tmp/bench
+            /tmp/corpus/manifest.json
+          retention-days: 30
