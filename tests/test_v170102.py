@@ -187,7 +187,7 @@ class TestDocsAndKb:
         from app.services.manual_content import SECTIONS, build_manual
         bank = next(s for s in SECTIONS if s["id"] == "bank")
         assert "С версии 1.70.102 — несколько банков у компании." in bank["html"] and "(пока Точка)" not in bank["html"]
-        assert len(SECTIONS) == 33 and build_manual()["updated"] == "2026-11-05"
+        assert len(SECTIONS) == 33 and build_manual()["updated"] >= "2026-11-05"   # v1.70.108: не раньше
 
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
@@ -197,7 +197,7 @@ class TestDocsAndKb:
         assert row["Источник"].endswith("docs/bank_api.md")
         assert tasks["T-74"]["Статус"] in ("todo", "done") and tasks["T-74"]["Issue/PR"].endswith("/issues/58")
         for tid, issue in (("T-63", 48), ("T-64", 49), ("T-71", 56)):
-            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done", "blocked") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.103: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         for tid in ("T-41", "T-42", "T-43", "T-44", "T-45", "T-46", "T-47", "T-48", "T-49"):

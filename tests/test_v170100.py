@@ -239,7 +239,7 @@ class TestDocsAndKb:
             image = by_id[sid]["image"]
             assert image == f"/img/manual/{sid}.jpg", sid
             assert (ROOT / "app/static" / image.lstrip("/")).read_bytes()[:2] == b"\xff\xd8", sid    # JPEG
-        assert build_manual()["updated"] == "2026-11-05"
+        assert build_manual()["updated"] >= "2026-11-05"                  # v1.70.108: не раньше
 
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
@@ -249,7 +249,7 @@ class TestDocsAndKb:
             assert row["Issue/PR"] == f"https://github.com/Rimlin-UNC/1c_chek/issues/{issue}", tid
         assert "ADR-30" in tasks["T-50"]["Связанные ADR"] and "ADR-30" in tasks["T-68"]["Связанные ADR"]
         for tid, issue in (("T-69", 54), ("T-70", 55), ("T-71", 56)):                # v1.70.101: T-69, T-70 — done
-            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done", "blocked") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         assert tasks["T-72"]["Статус"] == "done" and tasks["T-72"]["Задача"].endswith(f"выпущено в {VERSION}")
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.101: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)

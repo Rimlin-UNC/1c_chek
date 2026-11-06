@@ -355,7 +355,7 @@ class TestDocsAndKb:
         assert row["Источник"].endswith("docs/kb/12_seo.md")
         assert tasks["T-75"]["Статус"] in ("todo", "done") and tasks["T-75"]["Issue/PR"].endswith("/issues/59")
         for tid, issue in (("T-63", 48), ("T-64", 49), ("T-71", 56)):     # v1.70.104: T-63 выпущена
-            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done", "blocked") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.104: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         roadmap = read("docs/kb/02_roadmap.md")

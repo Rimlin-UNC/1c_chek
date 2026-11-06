@@ -186,11 +186,13 @@ const creatorsPayload = [
 // ответа, а пользователь тем временем уходит в другой раздел — гонка отрисовки
 // воспроизводится детерминированно. fail — ответ «500», как при сбое сервера.
 const gates = new Map();
-function gate(key, fail = false) {
+// v1.70.108: sticky — держать ВСЕ совпавшие запросы до отпускания, а не только первый
+// (второй запрос того же адреса от фонового route(true) иначе проходил мимо шлюза)
+function gate(key, fail = false, sticky = false) {
   let release;
   const opened = new Promise((resolve) => { release = resolve; });
-  gates.set(key, { opened, fail });
-  return () => release();
+  gates.set(key, { opened, fail, sticky });
+  return () => { if (sticky) gates.delete(key); release(); };
 }
 
 sandbox.fetch = async (url, opts) => {
@@ -199,8 +201,8 @@ sandbox.fetch = async (url, opts) => {
                 headers: (opts && opts.headers) || {} });   // v1.70.100: заголовок выбранного клиента
   const held = [...gates.keys()].find((key) => String(url).includes(key));
   if (held) {
-    const { opened, fail } = gates.get(held);
-    gates.delete(held);
+    const { opened, fail, sticky } = gates.get(held);
+    if (!sticky) gates.delete(held);
     await opened;
     if (fail) {
       const j = JSON.stringify({ detail: 'сбой сервера (стенд)' });
@@ -994,7 +996,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     if (typeof sandbox.viewSupabaseDemo !== 'function') sandbox.viewSupabaseDemo = async () => {};
     const vc = document.querySelector('#view-container');
     const tick = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
-    const releaseStats = gate('/dashboard/stats?days=14');
+    // v1.70.108: шаг не зависит от хвостов прежних шагов. Под нагрузкой ворот (1 раз из ~5400)
+    // кнопка «Умный фокус» успевала появиться не из-за этого перехода: стартовая отрисовка
+    // дашборда при загрузке стенда дописывалась в контейнер позже, а отложенное обновление
+    // раздела (scheduleRouteRefresh → route(true)) слало второй запрос статистики мимо шлюза.
+    // Поэтому — чистый контейнер и шлюз, который держит все запросы статистики до отпускания.
+    vc.innerHTML = '';
+    const releaseStats = gate('/dashboard/stats?days=14', false, true);
     sandbox.location.hash = '#/dashboard';
     sandbox.route();
     await tick();

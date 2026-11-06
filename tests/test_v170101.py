@@ -241,7 +241,7 @@ class TestDocsAndKb:
             image = by_id[sid]["image"]
             assert image == f"/img/manual/{sid}.jpg", sid
             assert (ROOT / "app/static" / image.lstrip("/")).read_bytes()[:2] == b"\xff\xd8", sid    # JPEG
-        assert build_manual()["updated"] == "2026-11-05"
+        assert build_manual()["updated"] >= "2026-11-05"                  # v1.70.108: не раньше
 
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
@@ -252,7 +252,7 @@ class TestDocsAndKb:
         assert "ADR-31" in tasks["T-69"]["Связанные ADR"]
         assert tasks["T-69"]["Источник"].endswith("docs/receipt_understanding.md")
         for tid, issue in (("T-63", 48), ("T-64", 49), ("T-71", 56)):
-            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done", "blocked") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.102: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         for tid in ("T-41", "T-42", "T-43", "T-44", "T-45", "T-46", "T-47", "T-48", "T-49"):

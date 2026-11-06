@@ -91,7 +91,7 @@ class TestSchema:
     def test_two_columns_no_new_tables(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared >= 65                                    # v1.70.107: + 2 таблицы «Моего дела»
+        assert declared >= 65                                    # v1.70.108: снова 65 — таблицы 1.70.107 убраны
         from app.primary.models import PrimaryMailItem
         cols = PrimaryMailItem.__table__.columns
         assert cols["channel"].server_default is not None and cols["user_id"].server_default is not None
@@ -170,7 +170,7 @@ class TestDocsAndKb:
         assert row["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/49" and "ADR-35" in row["Связанные ADR"]
         assert row["Источник"].endswith("docs/primary_docs_design.md")
         for tid, issue in (("T-71", 56), ("T-75", 59)):                  # v1.70.106: T-75 выпущена
-            assert tasks[tid]["Статус"] in ("todo", "done") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
+            assert tasks[tid]["Статус"] in ("todo", "done", "blocked") and tasks[tid]["Issue/PR"].endswith(f"/issues/{issue}"), tid
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.106: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         roadmap = read("docs/kb/02_roadmap.md")

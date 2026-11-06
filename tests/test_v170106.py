@@ -91,7 +91,7 @@ class TestWiring:
         assert tuple(p.path for p in seo_pages.PAGES) == seo.CONTENT_PAGES
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared >= 65                                    # v1.70.107: + 2 таблицы «Моего дела»
+        assert declared >= 65                                    # v1.70.108: снова 65 — таблицы 1.70.107 убраны
 
     def test_start_page_links_and_styles(self):
         index = read("app/static/index.html")
@@ -129,7 +129,7 @@ class TestDocsAndKb:
         assert row["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/59"
         assert row["Связанные ADR"] == "ADR-33, ADR-36" and row["Источник"].endswith("docs/kb/12_seo.md")
         assert row["Нужно подтверждение владельца"] == "тексты — по поручению владельца 05.11.2026; цены — требует уточнения"
-        assert tasks["T-71"]["Статус"] in ("todo", "done") and tasks["T-71"]["Issue/PR"].endswith("/issues/56")
+        assert tasks["T-71"]["Статус"] in ("todo", "done", "blocked") and tasks["T-71"]["Issue/PR"].endswith("/issues/56")
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])      # v1.70.107: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         roadmap = read("docs/kb/02_roadmap.md")

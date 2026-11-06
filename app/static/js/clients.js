@@ -85,7 +85,7 @@ export function clientsCardHtml(row) {
       <div class="cl-head-actions">
         <span class="${cls}">${label}</span>
         <button type="button" class="btn btn-sm" data-pack="${esc(row.id)}"
-          title="JSON, CSV и УПД за месяц — для «Моего дела» и других учётных систем">📦 Пакет за месяц</button>
+          title="JSON, CSV и УПД за месяц — для других учётных систем">📦 Пакет за месяц</button>
       </div>
     </header>
     <div class="cl-deadline ${dl.cls}">Срок сдачи: ${esc(dl.when || '—')}${dl.text ? ` — <b>${esc(dl.text)}</b>` : ''}</div>
@@ -264,7 +264,7 @@ export function clientsPackageHtml(opts = {}) {
     <div class="card-title">📦 Пакет для других учётных систем</div>
     <p class="form-hint">Всё за отчётный месяц одним архивом: чеки с позициями, первичка, банковские операции без
       документов и возмещения сотрудникам — в JSON и CSV (Excel открывает сразу), файлы УПД 5.03 по схеме ФНС для
-      «Моего дела» и других систем, описание формата FORMAT.md и контрольные суммы. Чеки при этом не помечаются
+      других учётных систем, описание формата FORMAT.md и контрольные суммы. Чеки при этом не помечаются
       выгруженными.</p>
     <div class="dreq-tools">
       <label class="field"><span>Месяц</span><select id="pkg-period">${periods.map((p) =>

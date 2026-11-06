@@ -60,7 +60,6 @@ UNIFIED_TABLES = ["unified_company_links", "unified_documents", "unified_events"
                   "unified_origins", "unified_ownership"]
 PRIMARY_TABLES = ["primary_document_lines", "primary_documents"]      # v1.70.94: первичка (УПД)
 PRIMARY_MAIL_TABLES = ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]   # v1.70.104: из почты
-MOEDELO_TABLES = ["moedelo_connections", "moedelo_links"]   # v1.70.107: «Моё дело» по API (T-71)
 # v1.70.86 (фаза 3): компания, которую создаёт старая версия во время отката, —
 # без колонки показа числа; флаг «нет» ей ставит значение по умолчанию в базе.
 AFTER_ROLLBACK_COMPANY = "Компания после отката"
@@ -139,8 +138,7 @@ res = {"version": app_version(), "fingerprint": fingerprint(),
        "unified_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("unified_")),
        "primary_tables": sorted(t for t in inspect(engine).get_table_names()
                                 if t.startswith("primary_") and not t.startswith("primary_mail")),
-       "primary_mail_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_mail")),
-       "moedelo_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("moedelo_"))}
+       "primary_mail_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_mail"))}
 with SessionLocal() as db:
     res["documents"] = db.query(UnifiedDocument).count()
 with TestClient(app) as c:
@@ -762,11 +760,10 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
     # 2. обновление
     up = phase("обновление: init_db и сверка при старте", UPGRADE, new_dir)
     rep.check(up["unified_tables"] == UNIFIED_TABLES and up.get("primary_tables") == PRIMARY_TABLES
-              and up.get("primary_mail_tables") == PRIMARY_MAIL_TABLES
-              and up.get("moedelo_tables") == MOEDELO_TABLES and up["documents"] == 0,
+              and up.get("primary_mail_tables") == PRIMARY_MAIL_TABLES and up["documents"] == 0,
               "обновление: init_db() создал 6 таблиц unified_* (с 1.70.85 — заявки компаний), 2 таблицы "
-              "первички (с 1.70.94), 3 таблицы первички из почты (с 1.70.104) и 2 таблицы «Моего дела» "
-              "(с 1.70.107), перенос архива при старте не запускается",
+              "первички (с 1.70.94) и 3 таблицы первички из почты (с 1.70.104), перенос архива при старте "
+              "не запускается",
               f"таблицы {up['unified_tables']} {up.get('primary_tables')} {up.get('primary_mail_tables')}, "
               f"документов {up['documents']}")
     rep.check(up["fingerprint"] == seed["fingerprint"], "обновление не изменило старые таблицы (побайтно)",
