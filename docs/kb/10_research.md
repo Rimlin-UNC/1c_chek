@@ -44,6 +44,16 @@
   03.11.2026), docket-idp (нужна LLM), DocIntel (AGPL) — не взяты; upd-builder не существует. Официальная
   схема ФНС 5.03 найдена на GitHub и сверена с независимой копией (247 из 262 объявлений дословно).
   Подробно, с замерами и советом по серверу — [проект первички](../primary_docs_design.md).
+- **Распознавание русскоязычных документов (срез 06.11.2026, T-77, [#61](https://github.com/Rimlin-UNC/1c_chek/issues/61)).** Проверен присланный
+  разбор: [Occular-OCR](https://github.com/Bodhi42/Occular-ocr) (★78, веса платные для организаций от 20 млн ₽
+  выручки или от 8 сотрудников, пик памяти 2,5 ГБ), [Indra OCR](https://github.com/datalab-to/indra) (★1,6 тыс.,
+  веса — OpenRAIL-M с запретом конкуренции с Datalab), [RapidOCR](https://github.com/RapidAI/RapidOCR) с моделями
+  [PP-OCRv6 Cyrillic](https://huggingface.co/metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx) (Apache-2.0) и открытый
+  [бенчмарк ru-ocr-benchmark-hard](https://huggingface.co/datasets/metrika-labs/ru-ocr-benchmark-hard). Статья
+  [Хабра](https://habr.com/ru/articles/1079484/) в разборе пересказана наоборот. Свой замер на синтетике
+  ([qa/ocr_bench.py](../../qa/ocr_bench.py)): связка Tesseract + PP-OCRv6 Tiny даёт 57 полей УПД из 60 против 51
+  у Tesseract; цена — 510 МБ и +2,5 с на сомнительный документ. Подробно —
+  [проект первички](../primary_docs_design.md), решение — Q-30.
 - **Как первичка попадает в 1С без программиста (срез 04.11.2026, T-60).** В 1С:Бухгалтерии 3.0 есть типовая
   загрузка XML УПД в формате ФНС: «Покупки → Поступление (акты, накладные, УПД) → Загрузить → Из файла» — так
   загружают документы из ЭДО Лайт и от поставщиков без оператора ЭДО; 1С создаёт поступление и предлагает
