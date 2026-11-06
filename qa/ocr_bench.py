@@ -15,7 +15,13 @@ app/primary/print_form.py), а не только по доле верных си
                проверяем, сколько стоит рецепт по времени и что он даёт по точности;
   indra      — Indra OCR (код Apache-2.0, веса — изменённая OpenRAIL-M);
   occular    — Occular-OCR (код Apache-2.0, веса — OpenRAIL-M: платно для организаций с выручкой
-               от 20 млн ₽ или от 8 сотрудников).
+               от 20 млн ₽ или от 8 сотрудников);
+  occular_lite — Occular без определения поворота и без порядка чтения по разметке: проверяем,
+               помещается ли он в память сервера 2 ГБ хотя бы так.
+
+Кроме движков по отдельности score считает «второе прочтение»: Tesseract и ещё один движок, поля
+сводит тот же parse_variants, что и в программе (каждое поле — из прочтения, где оно найдено без
+сомнений). Так видно, что даст каскад «сначала Tesseract, при сомнениях — второй движок».
 
 Данные — только синтетика (ADR-14). Это печатная форма УПД из tests/fixtures/primary в шести видах:
 скан 300 и 200 точек, фото, плохое качество, дефекты печати, лист боком. Плюс искусственный
@@ -64,13 +70,14 @@ MODELS = Path(os.environ.get("YM_BENCH_MODELS", "/tmp/models"))
 DET_SIDE = int(os.environ.get("YM_BENCH_DET_SIDE", "1280"))
 LANG = "rus+eng"
 SEED = 77
-ENGINES = ("tesseract", "tess_det", "rapid_v6t", "rapid_v6t_fast", "rapid_v6m", "rapid_v6m_fast", "indra", "occular")
+ENGINES = ("tesseract", "tess_det", "rapid_v6t", "rapid_v6t_fast", "rapid_v6m", "rapid_v6m_fast", "indra", "occular",
+           "occular_lite")
 HF_REC = {"rapid_v6t": "metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx",
           "rapid_v6m": "metrika-labs/PP-OCRv6_medium_rec_cyrillic_onnx"}
 RAPID = ("rapidocr", "onnxruntime")
 PACKAGES = {"tesseract": ("tesserocr",), "tess_det": ("tesserocr", *RAPID), "rapid_v6t": RAPID, "rapid_v6t_fast": RAPID,
             "rapid_v6m": RAPID, "rapid_v6m_fast": RAPID, "indra": ("indra-ocr", "onnxruntime"),
-            "occular": ("occular-ocr", "onnxruntime-gpu", "pymupdf")}
+            "occular": ("occular-ocr", "onnxruntime-gpu", "pymupdf"), "occular_lite": ("occular-ocr", "onnxruntime-gpu")}
 
 # Поля черновика: ключ разбора print_form → подпись в отчёте.
 FIELDS = {"number": "номер", "date": "дата", "seller_name": "продавец", "seller_inn": "ИНН продавца",
@@ -253,13 +260,30 @@ def _rect(x0, y0, x1, y1) -> list:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
-def _rotating(read, worker):
+def _vertical(lines: list) -> bool:
+    """Больше половины строк выше своей ширины — лист лежит боком."""
+    tall = sum(1 for it in lines if it["y1"] - it["y0"] > 1.5 * (it["x1"] - it["x0"]))
+    return len(lines) > 0 and tall * 2 > len(lines)
+
+
+def _rotating(read, worker, probe=None):
     """Поворот листа как в рабочем ocr_worker.py: мало опорных слов формы — пробуем 90°, 270° и 180°.
-    Нужен движкам без своего определения поворота (RapidOCR и Tesseract с детектором)."""
+    Нужен движкам без своего определения поворота (RapidOCR и Tesseract с детектором).
+
+    RapidOCR читает и лист боком: высокие строки он поворачивает сам. Опорные слова тогда находятся,
+    а строки таблицы стоят столбиком. Поэтому второй признак — вертикальные строки. Сторону поворота
+    (90° или 270°) решает пробное чтение probe без классификатора переворота строк: на неверной стороне
+    строки читаются вверх ногами, и опорных слов почти нет."""
     def run(path: Path, kind: str) -> dict:
         img = _image(path)
         result, angle = read(img), 0
-        if kind == "upd" and worker.anchors(result["text"]) < worker.MIN_ANCHORS:
+        if kind != "upd":
+            return {**result, "angle": 0}
+        if _vertical(result["lines"]):
+            look = probe or read
+            angle = max((90, 270), key=lambda t: worker.anchors(look(img.rotate(t, expand=True))["text"]))
+            result = read(img.rotate(angle, expand=True))
+        elif worker.anchors(result["text"]) < worker.MIN_ANCHORS:
             for turn in (90, 270, 180):
                 other = read(img.rotate(turn, expand=True))
                 if worker.anchors(other["text"]) > worker.anchors(result["text"]):
@@ -294,13 +318,13 @@ def _make_rapid(model: str, recipe: bool):
     def factory(threads: int):
         engine = _rapid_engine(threads, MODELS / model, recipe)
 
-        def read(img) -> dict:
-            out = engine(img)
+        def read(img, cls: bool = True) -> dict:
+            out = engine(img, use_cls=cls)
             if out.boxes is None:
                 return {"text": "", "lines": []}
             lines = [_item(t, q, s) for q, t, s in zip(out.boxes.tolist(), out.txts, out.scores)]
             return {"text": "\n".join(out.txts), "lines": lines}
-        return _rotating(read, _worker())
+        return _rotating(read, _worker(), probe=lambda img: read(img, cls=False))
     return factory
 
 
@@ -362,13 +386,12 @@ def _make_indra(threads: int):
     return run
 
 
-def _make_occular(threads: int):
+def _make_occular(threads: int, lite: bool = False):
     from occular import OCRPipeline, Settings
-    try:
-        settings = Settings(num_threads=threads, orientation=True, workers=1)
-    except TypeError:
-        settings = Settings(num_threads=threads, orientation=True)
-    pipe = OCRPipeline(settings=settings)
+    options = {"num_threads": threads, "orientation": not lite}
+    if lite:
+        options["reading_order"] = False
+    pipe = OCRPipeline(settings=Settings(**options))
 
     def run(path: Path, kind: str) -> dict:
         lines = [_item(ln["text"], ln["quad"], ln.get("confidence", 0)) for ln in pipe.process_image(str(path))]
@@ -378,7 +401,8 @@ def _make_occular(threads: int):
 
 FACTORIES = {"tess_det": _make_tess_det, "rapid_v6t": _make_rapid("rapid_v6t", True),
              "rapid_v6t_fast": _make_rapid("rapid_v6t", False), "rapid_v6m": _make_rapid("rapid_v6m", True),
-             "rapid_v6m_fast": _make_rapid("rapid_v6m", False), "indra": _make_indra, "occular": _make_occular}
+             "rapid_v6m_fast": _make_rapid("rapid_v6m", False), "indra": _make_indra, "occular": _make_occular,
+             "occular_lite": lambda threads: _make_occular(threads, lite=True)}
 
 
 def _versions(name: str) -> dict:
@@ -524,10 +548,42 @@ def _upd_score(doc: dict | None, truth: dict) -> dict:
             "names": sum(a.get("name") == b.get("name") for a, b in pairs), "silent": silent, "missed": missed}
 
 
+def _pair_slope(lines: list) -> float:
+    """Наклон листа по соседним рамкам одной строки (у прямоугольных рамок Indra кромки наклона не знают):
+    медиана dy/dx между рамкой и ближайшей соседкой справа той же высоты."""
+    boxes = sorted((it["x0"], it["y0"], it["x1"], it["y1"]) for it in lines)
+    slopes = []
+    for i, (x0, y0, x1, y1) in enumerate(boxes):
+        for a0, b0, a1, b1 in boxes[i + 1:]:
+            if a0 - x1 > 600:
+                break
+            h, hh = y1 - y0, b1 - b0
+            if a0 < x1 or abs(hh - h) > 0.5 * max(h, hh) or min(y1, b1) - max(y0, b0) < 0.3 * min(h, hh):
+                continue
+            dx = (a0 + a1 - x0 - x1) / 2
+            if dx > 150:
+                slopes.append(((b0 + b1) - (y0 + y1)) / 2 / dx)
+                break
+    return statistics.median(slopes) if len(slopes) >= 5 else 0.0
+
+
 def _layout(lines: list, worker) -> str:
     tops = [tuple(it["top"]) for it in lines if it.get("top")]
     slope = worker.median_slope(tops) if tops else 0.0
+    if abs(slope) < 1e-4:
+        slope = _pair_slope(lines)
     return worker.build_layout([{k: it[k] for k in ("t", "x0", "y0", "x1", "y1")} for it in lines], slope)
+
+
+COMBOS = (("tesseract", 1, "rapid_v6t", 1), ("tesseract", 1, "rapid_v6t_fast", 1), ("tesseract", 1, "indra", 1),
+          ("tesseract", 1, "occular", 1), ("tesseract", 1, "rapid_v6m", 2))
+
+
+def _reading(page: dict, worker) -> list[tuple[str, str]]:
+    """Прочтение страницы в виде вариантов для parse_variants — как в app/primary/service.py."""
+    text = page.get("text") or ""
+    layout = page["layout"] if "layout" in page else _layout(page.get("lines") or [], worker)
+    return [(text, layout), (layout, layout), (text, "")]
 
 
 def _md(rows: list[list]) -> str:
@@ -563,7 +619,7 @@ def score(corpus: Path, results_dir: Path, summary: Path | None) -> None:
         for page in run["files"]:
             item = kinds[page["file"]]
             text = page.get("text") or ""
-            page_layout = page["layout"] if "layout" in page else _layout(page.get("lines") or [], worker)
+            variants = _reading(page, worker)
             seconds.append(page["seconds"])
             cpu.append(page.get("cpu_seconds") or 0)
             errors += bool(page.get("error"))
@@ -573,7 +629,7 @@ def score(corpus: Path, results_dir: Path, summary: Path | None) -> None:
                 cells[page["file"]].append(f"{len(found)}/6 · {receipt_recall:.0%}")
                 continue
             try:
-                doc = print_form.parse_variants([(text, page_layout), (page_layout, page_layout), (text, "")])
+                doc = print_form.parse_variants(variants)
             except print_form.PrintFormError:
                 doc = None
             got = _upd_score(doc, truth)
@@ -592,10 +648,36 @@ def score(corpus: Path, results_dir: Path, summary: Path | None) -> None:
         notes[run["engine"]][0] += "" if len(notes[run["engine"]]) > 1 else f"; версии={run.get('versions')}"
     for file in cells:
         detail.append(cells[file])
+    by_key = {(r["engine"], r["threads"]): r for r in runs}
+    combo = [["Связка", "Поля УПД (из 60)", "Строки целиком (из 18)", "Названия (из 18)", "Тихие ошибки",
+              "Время на стр., с (оба движка)", "Пик памяти, МБ (больший)"]]
+    for first, t1, second, t2 in COMBOS:
+        a, b = by_key.get((first, t1)), by_key.get((second, t2))
+        if a is None or b is None:
+            continue
+        pages_b = {f["file"]: f for f in b["files"]}
+        total = {"fields": 0, "lines_exact": 0, "names": 0, "silent": 0}
+        times = []
+        for page in a["files"]:
+            other = pages_b.get(page["file"])
+            if kinds[page["file"]]["kind"] != "upd" or other is None:
+                continue
+            try:
+                doc = print_form.parse_variants(_reading(page, worker) + _reading(other, worker))
+            except print_form.PrintFormError:
+                doc = None
+            got = _upd_score(doc, truth)
+            for key in total:
+                total[key] += len(got[key]) if key == "silent" else got[key]
+            times.append(page["seconds"] + other["seconds"])
+        combo.append([f"{first} t{t1} + {second} t{t2}", total["fields"], total["lines_exact"], total["names"],
+                      total["silent"], round(statistics.median(times), 2) if times else "—", max(a["peak_mb"], b["peak_mb"])])
+        notes.setdefault("связки", []).append(" · ".join(map(str, combo[-1])))
     parts = ["## Замер распознавания (T-77): синтетика, 2 ядра", "",
              "Поля — черновик УПД после разбора print_form, как его увидит бухгалтер. «Тихая ошибка» — "
              "неверное значение без пометки «проверьте». Слова — доля слов эталона, найденных в тексте.", "",
-             _md(table), "", "### По вариантам: поля из 10 · слова · время", "", _md(detail)]
+             _md(table), "", "### По вариантам: поля из 10 · слова · время", "", _md(detail), "",
+             "### Второе прочтение: Tesseract и ещё один движок, поля сводит parse_variants", "", _md(combo)]
     if size_info:
         parts += ["", "### Размеры", "", "```json", json.dumps(size_info, ensure_ascii=False, indent=1), "```"]
     text = "\n".join(parts) + "\n"

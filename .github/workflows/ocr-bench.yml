@@ -81,19 +81,17 @@ jobs:
               "/tmp/bench/$1-t$3.json" --threads "$3" \
               || echo "::warning title=OCR $1 t$3::прогон не завершён (код $?)"
           }
+          # Первый прогон (42145047596) показал: второй поток не ускоряет ни один движок, только
+          # удваивает процессорное время; Medium без рецепта карточки теряет поля (15 из 60).
+          # Поэтому — один поток (как в рабочем ocr_worker.py), Medium — два потока для связки.
           run tesseract /tmp/v-app 1
-          run tesseract /tmp/v-app 2
           run tess_det /tmp/v-rapid 1
-          run rapid_v6t_fast /tmp/v-rapid 1
-          run rapid_v6t_fast /tmp/v-rapid 2
           run rapid_v6t /tmp/v-rapid 1
-          run rapid_v6t /tmp/v-rapid 2
-          run rapid_v6m_fast /tmp/v-rapid 2
+          run rapid_v6t_fast /tmp/v-rapid 1
           run rapid_v6m /tmp/v-rapid 2
           run indra /tmp/v-indra 1
-          run indra /tmp/v-indra 2
           run occular /tmp/v-occ 1
-          run occular /tmp/v-occ 2
+          run occular_lite /tmp/v-occ 1
 
       - name: Размеры окружений и весов
         if: always()
