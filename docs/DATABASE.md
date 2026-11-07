@@ -21,7 +21,7 @@
 
 | Компонент | Статус | Основание |
 |---|---|---|
-| Единый слой (`unified_*`, хуки, сверка при старте) | выпущен в v1.70.82 ([PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3)); с v1.70.88 — сверка копий реестра и Чек-Пула с единой записью и отчёт «Готовность единой записи» (`python -m app.unified.readiness`, только числа). На рабочем сервере — v1.70.106 (отчёт владельца 06.11.2026, [#60](https://github.com/Rimlin-UNC/1c_chek/issues/60#issuecomment-6671891019); 1.70.107 не ставилась) | автотесты; `qa/upgrade_rehearsal.py` 48/48 от 33 версий (v1.70.114); настоящее обновление из программы с откатом `qa/live_update.py` — после публикации (v1.70.113: 21/21 от 32 версий); сквозной тест [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20) |
+| Единый слой (`unified_*`, хуки, сверка при старте) | выпущен в v1.70.82 ([PR #3](https://github.com/Rimlin-UNC/1c_chek/pull/3)); с v1.70.88 — сверка копий реестра и Чек-Пула с единой записью и отчёт «Готовность единой записи» (`python -m app.unified.readiness`, только числа). На рабочем сервере — v1.70.114 (обновление владельцем 07.11.2026) | автотесты; `qa/upgrade_rehearsal.py` 48/48 от 33 версий (v1.70.114); настоящее обновление из программы с откатом `qa/live_update.py` — после публикации (v1.70.113: 21/21 от 32 версий); сквозной тест [#20](https://github.com/Rimlin-UNC/1c_chek/issues/20) |
 | Перенос архива (`python -m app.unified.backfill`) | **не готов для рабочего сервера**: запуск — только по «да» владельца (T-07, #10). С v1.70.88 есть мягкая регистрация (`--soft`: только чеки без расхождений, спорные пропускаются) — тоже только командой владельца после `--soft --dry-run` (Q-26). Экран разбора конфликтов — с v1.70.83 (T-06); путь с переносом, разбором спора, откатом и повторным обновлением проверен сквозным тестом (#20) | [unified_receipts.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/unified_receipts.md) |
 | Переход рабочей БД на PostgreSQL/Supabase | **не выполняется** — решение владельца 03.11.2026 (ADR-14, T-08): рабочая база остаётся на рабочем сервере (SQLite), её копии и выгрузки сюда не переносятся; здесь — только синтетические тесты. Совместимость кода с PostgreSQL 17 по-прежнему проверяет CI на синтетических данных (сквозной тест #20 нашёл и исправил: чистая установка на PostgreSQL падала на компании по умолчанию). Перенос рабочей базы с поштучной сверкой ([#23](https://github.com/Rimlin-UNC/1c_chek/issues/23)) отменён | [unified_receipts_wip.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/unified_receipts_wip.md) |
 | Прототип миграции копии `qa/migrate_receipt_copy.py` | экспериментальный, не для рабочих данных | unified_receipts_wip.md |
@@ -124,7 +124,6 @@ PostgreSQL). История в Supabase не менялась. В CI
 |---|---|---|
 | `chek_demo` | 4 таблицы: `companies` (2), `participants` (3), `receipts` (12), `receipt_items` (24) — синтетика; RLS включён и принудителен; политик 0 | нет USAGE, нет прав на таблицы |
 | `public` | 0 таблиц; 4 представления `chek_demo_*` (security_barrier, без security_invoker); RPC `chek_demo_snapshot()` (SECURITY DEFINER, `search_path=chek_demo, public`); функция `rls_auto_enable()` с событийным триггером `ensure_rls` — **не из миграций проекта** (Q-10) | SELECT на представления; EXECUTE на RPC; запись запрещена |
-| `qa_lock_965266689e1c4867b98ef79644d72d2c` | см. ниже | нет |
 | `supabase_migrations` | история миграций (3 записи) | нет |
 | служебные | `auth`, `storage`, `realtime`, `vault`, `graphql`, `graphql_public`, `extensions`, `pgbouncer` — стандартные Supabase | по умолчанию Supabase |
 
@@ -175,7 +174,7 @@ T-22, [issue #18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
 | R4 | у функций SECURITY DEFINER фиксирован `search_path` |
 | F1 | внешние ключи провалидированы (`convalidated`): ссылочная целостность гарантирована базой |
 | F2 | под внешним ключом есть индекс |
-| S1 | временная схема `qa_lock_…` и доступ `anon` к ней |
+| S1 | временная схема `qa_lock_…` и доступ `anon` к ней (схема удалена 07.11.2026 — проверка остаётся на случай повтора) |
 | S2 | событийный триггер `ensure_rls` |
 | M1 | история миграций = файлам `supabase/migrations` |
 
@@ -189,10 +188,10 @@ T-22, [issue #18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
 |---|---|
 | F1, F2 | 4 внешних ключа `chek_demo` провалидированы, под каждым есть индекс — OK |
 | M1 | 20261101154331, 20261101155225, 20261101164303 — OK |
-| R1 | 4 таблицы `chek_demo`: RLS принудителен, политик 0 — OK; `qa_lock_…receipt_identity_locks` — ВНИМАНИЕ (#7) |
+| R1 | 4 таблицы `chek_demo`: RLS принудителен, политик 0 — OK; `qa_lock_…receipt_identity_locks` — ВНИМАНИЕ (на 02.11.2026; схема удалена 07.11.2026, #7) |
 | R2, R4 | записи для `anon`/`authenticated` нет; `search_path` у функций SECURITY DEFINER фиксирован — OK |
 | R3 | 4 представления `chek_demo_*` — ВНИМАНИЕ (Q-15, #18) |
-| S1, S2 | схема `qa_lock_…` (USAGE у `anon` нет), триггер `ensure_rls` — ВНИМАНИЕ (#7, #11) |
+| S1, S2 | схема `qa_lock_…` (USAGE у `anon` нет; удалена 07.11.2026), триггер `ensure_rls` — ВНИМАНИЕ (#7, #11) |
 
 ## Совместимость схемы приложения с Supabase
 
@@ -276,23 +275,23 @@ python3 qa/pg_local.py pytest tests/test_migration_e2e.py   # оба бэкен�
   [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21), T-25. Агент настройки
   интеграции не меняет.
 
-## Временная схема `qa_lock_965266689e1c4867b98ef79644d72d2c`
+## Удалённая временная схема `qa_lock_965266689e1c4867b98ef79644d72d2c`
 
 - **Происхождение.** Оставлена в Supabase после проверки блокировок PostgreSQL
   (два параллельных SQL-сеанса, синтетические ключи) в ходе работ по PR #2.
-  Источники: [docs/unified_receipts_wip.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/unified_receipts_wip.md),
-  [docs/development_environment.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/development_environment.md),
+  Источники: [docs/unified_receipts_wip.md](unified_receipts_wip.md),
+  [docs/development_environment.md](development_environment.md),
   описание [PR #2](https://github.com/Rimlin-UNC/1c_chek/pull/2).
-- **Удаление заблокировано провайдером коннектора** (фильтр безопасности).
-- **Только синтетические данные:** 1 таблица `receipt_identity_locks`
-  (1 колонка `key`, 3 строки синтетических ключей блокировки); RLS выключен.
-  Доступ закрыт правами на схему.
-- **Публичные права отозваны:** права на схему только у `postgres`
-  (`{postgres=UC/postgres}`); у `anon`, `authenticated` и `PUBLIC` нет USAGE.
-- **Нужна задача на очистку с явным подтверждением владельца** — T-04,
-  [issue #7](https://github.com/Rimlin-UNC/1c_chek/issues/7). Агент её не удаляет.
-- **Проверка 2026-11-02:** 3 строки (счётчик), зависимых объектов 0, USAGE у `anon`
-  нет (проверки R1 и S1). Удаление на структуру не повлияет: схема ни с чем не связана.
+- **Удалена 07.11.2026** по явному «да» владельца (он подтвердил, что в базе
+  только синтетические тестовые данные): `drop schema … cascade` через коннектор
+  Supabase прошёл, схема и таблица `receipt_identity_locks` (3 строки
+  синтетических ключей) больше не существуют.
+- **Проверка после удаления:** в `pg_namespace` 11 схем, `qa_lock_…` среди них нет;
+  USAGE у `anon` и `authenticated` остался только у стандартных схем Supabase, у
+  `chek_demo` — нет. Структура и права не изменились.
+- **Задача:** T-04, [issue #7](https://github.com/Rimlin-UNC/1c_chek/issues/7) —
+  закрыта. Проверка S1 в `supabase/checks/rls_fk_audit.sql` оставлена: если схема
+  появится снова, аудит её покажет.
 
 ## Проверка состояния в новой сессии (только чтение)
 
