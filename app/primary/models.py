@@ -79,6 +79,11 @@ class PrimaryDocument(Base):
     # v1.70.104 (T-63): канал — пусто (загрузка на экране) | mail (из почтового ящика). Добавляется к таблице
     # прежних версий через database._ensure_schema; server_default — строки после отката тоже получат пустое.
     channel: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    # v1.70.114 (T-62): заполняемые поля печатной формы УПД — правки бухгалтера в JSON (адреса сторон,
+    # грузоотправитель и грузополучатель, основание передачи, подписанты, число листов). Реквизиты самого
+    # документа здесь не хранятся: они берутся из записи, чтобы печатная форма и файл для 1С не расходились.
+    # Колонка добавляется к таблице прежних версий через database._ensure_schema; по умолчанию пусто.
+    print_json: Mapped[str] = mapped_column(Text, default="", server_default="")
 
     lines: Mapped[list["PrimaryDocumentLine"]] = relationship(
         back_populates="document", cascade="all, delete-orphan",

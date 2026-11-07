@@ -2277,6 +2277,13 @@ label.field[hidden] { display: none; }
 .prim-review.prim-zoom .prim-preview img { max-height: none; }
 .prim-form legend { font-weight: 600; padding: 0 4px; }
 .prim-form .field input, .prim-form .field select { width: 100%; }
+
+/* v1.70.114 (T-62): окно «Печатная форма УПД» — поля бланка в две колонки, на телефоне в одну (ADR-45) */
+.prim-print-form { display: grid; gap: 10px 14px; grid-template-columns: minmax(0, 1fr); margin-top: 6px; }
+@media (min-width: 760px) { .prim-print-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.prim-print-form .field { min-width: 0; }
+.prim-print-form .field input, .prim-print-form .field select { width: 100%; }
+.prim-print-form .field span { font-size: 12px; }
 .prim-uncertain input { border-color: var(--warn); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent); }
 .prim-missing input { border-style: dashed; border-color: var(--border-strong); }
 .prim-hint { margin: 0; color: var(--info-text); }

@@ -311,6 +311,8 @@ def _ensure_schema() -> None:
             ("source", "ALTER TABLE primary_documents ADD COLUMN source VARCHAR(10) DEFAULT 'xml'"),
             # v1.70.104 (T-63): канал документа — пусто (загрузка на экране) | mail (из почтового ящика)
             ("channel", "ALTER TABLE primary_documents ADD COLUMN channel VARCHAR(10) DEFAULT ''"),
+            # v1.70.114 (T-62): заполняемые поля печатной формы УПД (JSON); пусто — значения из документа
+            ("print_json", "ALTER TABLE primary_documents ADD COLUMN print_json TEXT DEFAULT ''"),
         ],
         # v1.70.105 (T-64): канал входящего файла (mail | telegram | max) и сотрудник, приславший фото в бот
         "primary_mail_items": [

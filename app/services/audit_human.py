@@ -225,6 +225,13 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         skipped = f", пропущено: {d['skipped']}" if d.get("skipped") else ""
         what = {"upd": "файлы УПД", "json": "EnterpriseData JSON", "xml": "EnterpriseData XML"}.get(d.get("format"), "")
         return "первичка выгружена в 1С", f"документов: {d.get('count', 0)}{skipped}" + (f", формат: {what}" if what else "")
+    # v1.70.114 (T-62, ADR-45): печатная форма УПД
+    if action == "primary_print_form":
+        filled = d.get("filled") or []
+        return "заполнены поля печатной формы УПД", \
+            (f"полей: {len(filled)}" + (f" ({', '.join(filled[:6])})" if filled else ""))
+    if action == "primary_printed":
+        return "напечатана печатная форма УПД", ""
     if action == "onec_primary_pull":
         return "1С забрала УПД и счета-фактуры", f"количество: {d.get('count', 0)}"
     if action == "onec_primary_ack":

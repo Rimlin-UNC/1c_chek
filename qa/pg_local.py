@@ -35,7 +35,9 @@ PG_TESTS = ["tests/test_postgres_identity_optin.py", "tests/test_unified_postgre
             # v1.70.112 (T-46): согласование авансовых отчётов — маршрут, версия строки, нумерация на PostgreSQL
             "tests/test_approvals.py",
             # v1.70.113 (T-79): папка с УПД по компаниям, поступления и сверка выписки с документами на PostgreSQL
-            "tests/test_bank_closing.py"]
+            "tests/test_bank_closing.py",
+            # v1.70.114 (T-62): печатная форма УПД — сохранение полей и печатная страница на PostgreSQL
+            "tests/test_primary_printupd.py"]
 
 
 def _environment(url: str) -> dict[str, str]:

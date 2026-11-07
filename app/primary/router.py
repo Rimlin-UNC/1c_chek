@@ -12,6 +12,10 @@ POST /confirm (сверенный черновик или ручной ввод 
 С 1.70.96 — выгрузка в 1С (T-60, export1c.py): POST /export/check (что уйдёт и почему пропущено,
 база не меняется), POST /export (файлы УПД 5.03 для «Загрузить → Из файла» в 1С или пакет
 EnterpriseData; документы отмечаются выгруженными). Для обмена без участия человека — /onec/v1/primary/*.
+
+С 1.70.114 — печатная форма УПД (T-62, printupd.py): GET /{id}/print-form (заполняемые поля и их
+значения по умолчанию), PUT /{id}/print-form (запомнить правки к документу), GET /{id}/print —
+готовая страница формы для печати и «Сохранить как PDF» (ADR-45).
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from datetime import date, datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -29,7 +33,7 @@ from ..auth import require_accountant, require_admin
 from ..database import get_db
 from ..models import User
 from ..services.audit import log_action
-from . import export1c, ocr, service, upd
+from . import export1c, ocr, printupd, service, upd
 from .models import PrimaryDocument
 
 router = APIRouter(prefix="/api/v1/primary", tags=["primary"])
@@ -86,6 +90,26 @@ class ConfirmIn(BaseModel):
     file_sha256: str = Field("", max_length=64)
     company_id: str | None = Field(None, max_length=36)
     draft: DraftIn
+
+
+class PrintFormIn(BaseModel):
+    """v1.70.114 (T-62): заполняемые поля печатной формы УПД — то, чего нет в электронном документе."""
+    status: Literal["1", "2"] = "1"
+    seller_address: str = Field("", max_length=300)
+    buyer_address: str = Field("", max_length=300)
+    shipper: str = Field("", max_length=300)
+    consignee: str = Field("", max_length=300)
+    payment_doc: str = Field("", max_length=200)
+    shipment_doc: str = Field("", max_length=200)
+    contract_id: str = Field("", max_length=100)
+    currency: str = Field("", max_length=100)
+    basis: str = Field("", max_length=300)
+    sheets: str = Field("1", max_length=3)
+    signer_chief_role: str = Field("", max_length=200)
+    signer_chief: str = Field("", max_length=200)
+    signer_accountant_role: str = Field("", max_length=200)
+    signer_accountant: str = Field("", max_length=200)
+    signer_entrepreneur: str = Field("", max_length=200)
 
 
 class ExportIn(BaseModel):
@@ -302,6 +326,36 @@ def _visible(db: Session, user: User, doc_id: str) -> PrimaryDocument:
     if doc is None or not service.visible(user, doc):
         raise HTTPException(404, "Документ не найден")
     return doc
+
+
+@router.get("/{doc_id}/print-form")
+def get_print_form(doc_id: str, user: Accountant, db: Db) -> dict:
+    """Поля печатной формы: значения по умолчанию (из документа) и сохранённые правки. База не меняется."""
+    doc = _visible(db, user, doc_id)
+    saved = printupd.clean(printupd.stored(doc))
+    return {"title": printupd.title(doc), "defaults": printupd.defaults(doc), "saved": saved,
+            "form": printupd.form(doc, saved), "fields": list(printupd.FIELDS)}
+
+
+@router.put("/{doc_id}/print-form")
+def save_print_form(doc_id: str, user: Accountant, db: Db, body: PrintFormIn) -> dict:
+    """Запомнить заполняемые поля печатной формы к документу (одна запись на документ)."""
+    doc = _visible(db, user, doc_id)
+    values = printupd.clean(body.model_dump())
+    doc.print_json = printupd.dump(values)
+    db.commit()
+    log_action(user, "primary_print_form", details={"document": doc.id,
+                                                    "filled": sorted(k for k, v in values.items() if v)})
+    return {"ok": True, "form": printupd.form(doc, values)}
+
+
+@router.get("/{doc_id}/print", response_class=HTMLResponse)
+def print_form(doc_id: str, user: Accountant, db: Db, print_: Annotated[int, Query(alias="print")] = 0) -> HTMLResponse:
+    """Готовая печатная форма УПД (A4, альбомная): печать из браузера, «Сохранить как PDF» (T-62, ADR-45)."""
+    doc = _visible(db, user, doc_id)
+    page = printupd.html(doc, auto_print=bool(print_))
+    log_action(user, "primary_printed", details={"document": doc.id})
+    return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/{doc_id}")
