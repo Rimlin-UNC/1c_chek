@@ -38,10 +38,12 @@ package.json
 package-lock.json
 node_modules/
 
-# Окружения, кеши и данные приложения
+# Окружения, кеши и данные приложения.
+# «/data/» — только корневой каталог данных: справочники app/pool/geo/data
+# нужны приложению (в .gitignore для них такая же оговорка).
 .venv/
 venv/
-data/
+/data/
 .hypothesis/
 .pytest_cache/
 .ruff_cache/

@@ -165,6 +165,14 @@ Projects токен интеграции создать не может (403).
   тяжёлое; следующий шаг — отдельный `requirements-vercel.txt` без
   `opencv-python-headless`, `onnxruntime`, `rapidocr`, `tesserocr` и
   `openstacksdk` (демо тогда работает без распознавания сканов).
+- **Проверено 07.11.2026** (ветка `arena/7724a622-1c-chek`, коммит `acb5f3d`): «Found
+  .vercelignore», отсечено 493 файла, сборка 9 с, пакет **496,17 МБ** вместо 506,08,
+  деплой `dpl_8huZqPCbF3Aq4PwQune9y11r8rwm` — `READY` за 26 с. Важная оговорка:
+  шаблон `/data/` привязан к корню (так же, как в `.gitignore`), иначе из сборки
+  пропадают справочники `app/pool/geo/data/`.
+- **Проверка новой сборки:** коннектором `list_deployments` (проект `1c-chek`) —
+  последний деплой ветки в `READY`, затем `get_deployment_events` — в журнале
+  «Bundle size (…MB)» и нет `LAMBDA_SIZE_EXCEEDED`.
 
 ## Стандарт выпуска
 
