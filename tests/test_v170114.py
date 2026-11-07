@@ -1,0 +1,214 @@
+"""v1.70.114: печатная форма УПД — бланк из данных реестра, заполняемые поля и печать в PDF (T-62, #47, ADR-45).
+
+Поведение — tests/test_primary_printupd.py (SQLite и PostgreSQL), окно — tests/js/primary_print.test.js.
+Здесь — точки выпуска, маршруты, регистрация колонки, документы и база знаний. Только синтетика (ADR-14).
+"""
+from __future__ import annotations
+
+import csv
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+VERSION = "1.70.114"
+ISSUE = "https://github.com/Rimlin-UNC/1c_chek/issues/47"
+
+
+def read(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+# ====================================================================== выпуск
+class TestRelease:
+    def test_sync_points(self):
+        from app.config import settings
+        assert settings.APP_VERSION == VERSION
+        for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
+                    "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
+                    "app/static/b2b/index.html"):
+            assert VERSION in read(rel), rel
+        sw = read("app/static/sw.js")
+        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
+        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
+        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
+        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+
+    def test_updater_order(self):
+        from app.services import updater
+        for older in ("1.70.113", "1.70.106"):           # на рабочем сервере — 1.70.106 (владелец, 06.11.2026)
+            assert updater._is_newer(VERSION, older) is True
+            assert updater._is_newer(older, VERSION) is False
+
+    def test_changelog_first_entry_fits_update_window(self):
+        md = read("CHANGELOG.md")
+        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-07"
+        entry = md.split("\n## [1.70.113]", 1)[0]
+        assert len(entry) <= 4000, len(entry)
+        for needle in ("резервная копия", "поверх 1.70.109–1.70.113 не меняются — шаг pip пропускается",
+                       "откатится само", "новых таблиц нет", "колонка `print_json`",
+                       "прежняя версия новую колонку просто не видит", "48 из 48", "1.70.82–1.70.113",
+                       "T-62, #47, ADR-45", "«🖨 Печатная форма»", "постановлению № 1137",
+                       "графами А–9", "Всего к оплате (9)", "Заполняемые поля", "Сохранить как PDF",
+                       "альбомная ориентация", "экранируются", "SQLite и PostgreSQL", "T-80", "1.71.0"):
+            assert needle in entry, needle
+
+    def test_whats_new_first(self):
+        js = read("app/static/js/app.js")
+        m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
+        assert m and m.group(1) == VERSION
+        block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
+        assert block.count("{ icon:") == 2
+        for needle in ("УПД печатается как оригинал", "«🖨 Печатная форма»", "постановлению № 1137",
+                       "графами А–9", "Печать в PDF и правка полей", "Сохранить как PDF", "запоминаются"):
+            assert needle in block, needle
+        assert "'1.70.113': [" in js                         # история выпусков на месте
+
+    def test_journal_entry_first(self):
+        journal = read("docs/ui_journal.md")
+        assert journal.startswith(f"## v{VERSION} — «Первичка»: печатная форма УПД и печать в PDF")
+        entry = journal.split("\n## v1.70.113", 1)[0]
+        for needle in ("«🖨 Печатная форма»", "16 полей", "«↩ Значения из документа»", "«Сохранить поля»",
+                       "«👁 Предпросмотр»", "«🖨 Печать / PDF»", "A4 альбомная", "«Всего к оплате (9)»",
+                       "«Документ составлен на N листах»", "ADR-45", "две карточки"):
+            assert needle in entry, needle
+
+    def test_changed_blocks(self):
+        from app.services import updater
+        reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
+        assert sorted(n for n, v in reg.items() if v == VERSION) == ["Первичка (электронные УПД)"]
+        assert reg["Банковская выписка"] == "1.70.113"
+
+    def test_readme_latest_release(self):
+        readme = read("README.md")
+        assert f"## 🆕 Последний выпуск — v{VERSION} (07.11.2026)" in readme
+        assert "Последний выпуск — v1.70.113" not in readme
+        assert f"**Ставьте {VERSION} вместо 1.70.113.**" in readme
+        section = readme.split(f"## 🆕 Последний выпуск — v{VERSION}", 1)[1].split("\n## ", 1)[0]
+        assert "Новых таблиц нет" in section and "**Печатная форма УПД:**" in section
+        assert "**Правка заполняемых полей и PDF:**" in section and "**Из 1.70.113:**" in section
+
+    def test_manual(self):
+        from app.services.manual_content import SECTIONS, build_manual
+        assert build_manual()["updated"] == "2026-11-07"
+        by_id = {s["id"]: s for s in SECTIONS}
+        html = by_id["primary"]["html"]
+        assert "<b>С версии 1.70.114 — печатная форма УПД.</b>" in html
+        assert "«🖨 Печатная форма»" in html and "Сохранить как PDF" in html
+        assert all(s.get("image") for s in SECTIONS)
+
+
+# ====================================================================== код
+class TestCode:
+    def test_routes_and_audit(self):
+        from app.main import app
+        from app.services.audit_human import humanize_audit
+        paths = app.openapi()["paths"]
+        assert "get" in paths["/api/v1/primary/{doc_id}/print"]
+        assert {"get", "put"} <= set(paths["/api/v1/primary/{doc_id}/print-form"])
+        body = paths["/api/v1/primary/{doc_id}/print-form"]["put"]["requestBody"]["content"]["application/json"]
+        schema = body["schema"]
+        assert schema.get("$ref", "").endswith("PrintFormIn") or "properties" in schema
+        title, details = humanize_audit("primary_print_form", {"filled": ["basis", "signer_chief"]})
+        assert title == "заполнены поля печатной формы УПД" and "полей: 2" in details
+        assert humanize_audit("primary_printed", {})[0] == "напечатана печатная форма УПД"
+        js = read("app/static/js/app.js")
+        assert "primary_print_form: ['info', '🖨'], primary_printed: ['info', '🖨']" in js
+        router = read("app/primary/router.py")
+        assert 'Query(alias="print")' in router and "HTMLResponse" in router
+
+    def test_column_registered_and_guarded(self):
+        from app.primary.models import PrimaryDocument
+        assert PrimaryDocument.__table__.c.print_json is not None
+        db = read("app/database.py")
+        assert ('("print_json", "ALTER TABLE primary_documents ADD COLUMN print_json TEXT DEFAULT \'\'")') in db
+        rehearsal = read("qa/upgrade_rehearsal.py")
+        assert 'if c["name"] in ("source", "channel", "print_json")' in rehearsal
+        assert 'up.get("primary_columns") == ["channel", "print_json", "source"]' in rehearsal
+        assert '"tests/test_primary_printupd.py"' in read("qa/pg_local.py")
+        declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
+                       for p in (ROOT / "app").rglob("*.py"))
+        assert declared == 70                                    # новых таблиц выпуск не добавляет
+
+    def test_form_rules(self):
+        from app.primary import printupd
+        assert printupd.LIMITS["status"] == 1 and printupd.LIMITS["sheets"] == 3
+        assert len(printupd.FIELDS) == 16 and len(printupd.COLUMNS) == 13
+        assert printupd.status_title("ДОП") == "2" and printupd.status_title("СЧФДОП") == "1"
+        assert printupd.VAT_LABELS["22/122"] == "22/122%"
+        source = read("app/primary/printupd.py")
+        assert "from html import escape" in source and "escape(" in source
+        assert "A4 landscape" in source and "@media print" in source
+
+    def test_screen_modules(self):
+        primary = read("app/static/js/primary.js")
+        assert "export const PRIM_PRINT_FIELDS = [" in primary
+        assert "export function primPrintHtml(data) {" in primary
+        assert "export function primPrintBody(get) {" in primary
+        for needle in ("id=\"prim-card-print\"", "print-form`", "/print?print=1", "window.open('', '_blank')"):
+            assert needle in primary, needle
+        page = read("app/static/js/primary_print_page.js")
+        assert "window.print()" in page and "dataset.print" in page
+        assert "script-src 'self'" in read("app/security.py")            # встроенных скриптов нет
+        assert 'src="/js/primary_print_page.js"' in read("app/primary/printupd.py")
+        css = read("app/static/css/app.css")
+        assert ".prim-print-form" in css and "@media (min-width: 760px) { .prim-print-form" in css
+
+
+# ====================================================================== документы и база знаний
+class TestDocsAndKb:
+    def test_adr_and_guide(self):
+        arch = read("docs/ARCHITECTURE.md")
+        assert "| [ADR-45](#adr-45) |" in arch and "## ADR-45" in arch
+        adr = arch.split("## ADR-45", 1)[1].split("## Как добавлять решение", 1)[0]
+        for needle in ("**с версии / даты:** 1.70.114, 2026-11-07", "`primary_documents`", "`print_json`",
+                       "[ADR-26](#adr-26)", "[ADR-25](#adr-25)", "[ADR-03](#adr-03)", "[ADR-09](#adr-09)",
+                       "[ADR-33](#adr-33)", "«Сохранить как PDF»", "недоверенный", "T-62", f"[#47]({ISSUE})"):
+            assert needle in adr, needle
+        guide = read("docs/USER_GUIDE.md")
+        assert "### 7.18. Печатная форма УПД (с v1.70.114) — бухгалтер/админ" in guide
+        assert "«Сохранить как PDF»" in guide and "юридическую силу имеет подписанный" in guide
+
+    def test_database_doc_and_counts(self):
+        db = read("docs/DATABASE.md")
+        assert "70 объявлений `__tablename__`" in db and "все 70 таблиц приложения" in db
+        assert "с v1.70.114 (T-62, ADR-45) колонка `print_json`" in db
+
+    def test_design_and_counterparties(self):
+        design = read("docs/counterparties_design.md")
+        for needle in ("T-80", "T-81", "[#65]", "[#66]", "1.71.0", "1.72.0", "ADR-44", "падеж",
+                       "«Реквизиты стороны»", "«Преамбула договора»", "«Для платёжного поручения»",
+                       "только синтетика (ADR-14)", "Требует уточнения"):
+            assert needle in design, needle
+        arch = read("docs/ARCHITECTURE.md")
+        assert "## ADR-44" in arch and "1.70.N+1" in arch
+
+    def test_kb(self):
+        tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
+        t62 = tasks["T-62"]
+        assert t62["Статус"] == "done" and t62["Задача"].endswith(f"выпущено в {VERSION}")
+        assert t62["Issue/PR"] == ISSUE and t62["Связанные ADR"] == "ADR-25, ADR-45"
+        assert t62["Обновлено"] == "2026-11-07"
+        for tid, prio in (("T-80", "P1"), ("T-81", "P2"), ("T-82", "P1")):
+            assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Приоритет"] == prio, tid
+        assert tasks["T-80"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/65"
+        assert tasks["T-81"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/66"
+        assert tasks["T-82"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/59"
+        assert "1.71.0" in tasks["T-80"]["Задача"] and "1.72.0" in tasks["T-81"]["Задача"]
+        t01 = tasks["T-01"]["Блокер"]
+        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.113 без замороженного «Моего дела»" in t01
+        assert "с каждой из 1.70.82–1.70.113 — 48 из 48 проверок" in t01
+        roadmap = read("docs/kb/02_roadmap.md")
+        assert f"**Готово 07.11.2026 (выпуск v{VERSION}):** [#47]({ISSUE}) T-62" in roadmap
+        assert "## Новые запросы владельца 07.11.2026 — разбивка на задачи" in roadmap
+        assert "T-80" in roadmap and "T-82" in roadmap and "ADR-44" in roadmap
+        ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
+        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
+        assert all("," not in v for v in ledger[-1].values()), "в полях реестра нет запятых"
+        assert ledger[-1]["Коммит"] == "после публикации" or re.fullmatch(r"[0-9a-f]{40}", ledger[-1]["Коммит"])
+        assert ledger[-2]["Версия"] == "1.70.113" and ledger[-2]["Откат на неё"] == "можно"
+        kb = read("docs/kb/README.md")
+        assert f"| Последний выпуск | **v{VERSION}** — печатная форма УПД (T-62; ADR-45)" in kb
+        assert "#3 — v1.70.82–v1.70.114 |" in kb and "issues #4–#66" in kb
+        seo = read("docs/kb/12_seo.md")
+        assert "## 8. Запрос владельца 07.11.2026: блог, 25 ключей и картинки (T-82)" in seo
+        assert "проверка чеков на сайте налоговой" in seo

@@ -115,7 +115,9 @@ class TestSchema:
         rehearsal = read("qa/upgrade_rehearsal.py")
         assert '"primary_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_documents")' \
             in rehearsal
-        assert 'and up.get("primary_columns") == ["channel", "source"]' in rehearsal
+        # v1.70.114: набор колонок растёт (print_json) — сверяем вхождение, а не точный список
+        m = re.search(r'and up\.get\("primary_columns"\) == \[([^\]]*)\]', rehearsal)
+        assert m and {"channel", "source"} <= set(re.findall(r'"(\w+)"', m.group(1)))
         assert 'and up.get("primary_mail_tables") == ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]' \
             in rehearsal
         assert 'PRIMARY_MAIL_TABLES = ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]' \

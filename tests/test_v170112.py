@@ -231,7 +231,8 @@ class TestDocsAndKb:
         m = re.search(r"T-01 — установить на рабочий сервер v([\d.]+) ", roadmap)  # v1.70.113: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
         agent = roadmap.split("**Можно брать агенту без подтверждения**", 1)[1].split("\n\n", 1)[0]
-        assert "- Дальше по порядку: [#47](https://github.com/Rimlin-UNC/1c_chek/issues/47) T-62" in agent
+        # v1.70.114: строка «дальше» двигается выпусками — проверяем формат и что это не закрытые задачи
+        assert re.search(r"- Дальше по порядку: \[#\d+\]\(https://github\.com/Rimlin-UNC/1c_chek/issues/\d+\) T-\d+", agent)
         assert "T-46" not in agent and "T-78" not in agent
         ledger = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
         row = ledger[VERSION]

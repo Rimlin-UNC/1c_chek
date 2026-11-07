@@ -12,7 +12,10 @@
    EnterpriseData. Сначала окно показывает, что уйдёт и почему пропущено остальное; после
    скачивания документы отмечаются «выгружен». Отметки в реестре — выгрузить выбранные.
    v1.70.104 (T-63): карточка «Из почты» — черновики PDF и сканов из почтового ящика компании сверяются в том же
-   окне (файл письма — кнопкой «Открыть файл»), XML и ZIP из писем попадают в реестр сами. */
+   окне (файл письма — кнопкой «Открыть файл»), XML и ZIP из писем попадают в реестр сами.
+   v1.70.114 (T-62): печатная форма УПД (ADR-45). В карточке документа — «🖨 Печатная форма»: окно с полями,
+   которых нет в электронном документе (адреса сторон, грузоотправитель и грузополучатель, основание передачи,
+   подписанты, число листов). Правки запоминаются к документу, форма открывается для печати и «Сохранить как PDF». */
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 import { CHANNEL_FROM, mailConnectPanel, mailInboxHtml } from './primary_mail.js';
@@ -393,6 +396,73 @@ function primDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 }
 
+/* ---- v1.70.114 (T-62): печатная форма УПД (ADR-45) ---- */
+// Заполняемые поля формы в том же порядке, что в бланке. Реквизиты документа (номер, дата,
+// стороны, строки, суммы) не редактируются: они пришли из ЭДО или из сверенного черновика,
+// и печатная форма должна совпадать с файлом для 1С.
+export const PRIM_PRINT_FIELDS = [
+  { key: 'status', label: 'Статус документа (1 или 2)', type: 'select', options: [
+    { value: '1', title: '1 — счёт-фактура и передаточный документ (акт)' },
+    { value: '2', title: '2 — передаточный документ (акт)' }] },
+  { key: 'seller_address', label: 'Адрес продавца (2а)', max: 300 },
+  { key: 'buyer_address', label: 'Адрес покупателя (6а)', max: 300 },
+  { key: 'shipper', label: 'Грузоотправитель и его адрес (3)', max: 300 },
+  { key: 'consignee', label: 'Грузополучатель и его адрес (4)', max: 300 },
+  { key: 'payment_doc', label: 'К платёжно-расчётному документу (5)', max: 200 },
+  { key: 'shipment_doc', label: 'Документ об отгрузке (5а)', max: 200 },
+  { key: 'contract_id', label: 'Идентификатор госконтракта, договора (8)', max: 100 },
+  { key: 'currency', label: 'Валюта: наименование, код (7)', max: 100 },
+  { key: 'basis', label: 'Основание передачи (сдачи) / получения (приёмки)', max: 300 },
+  { key: 'sheets', label: 'Документ составлен на … листах', max: 3, inputmode: 'numeric' },
+  { key: 'signer_chief_role', label: 'Руководитель: должность', max: 200 },
+  { key: 'signer_chief', label: 'Руководитель: ФИО', max: 200 },
+  { key: 'signer_accountant_role', label: 'Главный бухгалтер: должность', max: 200 },
+  { key: 'signer_accountant', label: 'Главный бухгалтер: ФИО', max: 200 },
+  { key: 'signer_entrepreneur', label: 'Индивидуальный предприниматель: ФИО и реквизиты', max: 200 },
+];
+
+/** Окно «Печатная форма»: поля из ответа /print-form (значения документа + сохранённые правки). */
+export function primPrintHtml(data) {
+  const form = (data && data.form) || (data && data.defaults) || {};
+  const fields = PRIM_PRINT_FIELDS.map((f) => {
+    const id = `prim-pf-${f.key}`;
+    const value = form[f.key] ?? '';
+    if (f.type === 'select') {
+      const options = (f.options || []).map((o) => `<option value="${esc(o.value)}" ${
+        String(value) === String(o.value) ? 'selected' : ''}>${esc(o.title)}</option>`).join('');
+      return `<label class="field"><span>${esc(f.label)}</span><select id="${id}">${options}</select></label>`;
+    }
+    return `<label class="field"><span>${esc(f.label)}</span><input id="${id}" type="text" maxlength="${f.max || 200}"
+      ${f.inputmode ? `inputmode="${f.inputmode}"` : ''} value="${esc(value)}"></label>`;
+  }).join('');
+  const saved = data && data.saved && Object.keys(data.saved).length;
+  return `
+    <h3 class="modal-title">🖨 Печатная форма УПД: ${esc((data && data.title) || 'документ')}</h3>
+    <p class="form-hint">Форма по постановлению Правительства № 1137 — как оригинал: шапка со строками (1)–(8),
+      таблица с графами А–9, «Всего к оплате (9)», подписи и основание передачи. Реквизиты документа берутся из
+      записи и не меняются, а поля ниже можно заполнить: ${saved ? 'сохранённые правки подставлены' : 'значения взяты из документа'}.
+      Печать — кнопкой «Печать / PDF»: в окне печати выберите «Сохранить как PDF».</p>
+    <div class="prim-print-form">${fields}</div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="prim-print-reset">↩ Значения из документа</button>
+      <button type="button" class="btn" id="prim-print-save">Сохранить поля</button>
+      <button type="button" class="btn" id="prim-print-view">👁 Предпросмотр</button>
+      <button type="button" class="btn btn-primary" id="prim-print-go">🖨 Печать / PDF</button>
+    </div>`;
+}
+
+/** Значения полей окна → тело PUT /print-form. get(id) — элемент по id (в тестах — подделка). */
+export function primPrintBody(get) {
+  const body = {};
+  for (const f of PRIM_PRINT_FIELDS) {
+    const el = get(`prim-pf-${f.key}`);
+    body[f.key] = String((el && el.value) ?? '').trim();
+  }
+  if (!body.status) body.status = '1';
+  if (!body.sheets) body.sheets = '1';
+  return body;
+}
+
 export function primRowsHtml(items, selected) {
   const list = Array.isArray(items) ? items : [];
   const picked = selected instanceof Set ? selected : new Set();
@@ -532,7 +602,8 @@ export async function viewPrimary(container, opts = {}) {
       <h4>Строки</h4>${primLinesHtml(d.lines)}
       <p class="form-hint">1С: ${d.exported_at ? `выгружен ${esc(primExportedLabel(d.exported_at).replace('✓ ', ''))}` : 'ещё не выгружен'}.
         Файл УПД загружается в 1С кнопкой «Загрузить → Из файла» в разделе «Покупки → Поступление (акты, накладные, УПД)».</p>
-      <div class="modal-actions"><button type="button" class="btn" id="prim-card-1c">⬇ Файл для 1С</button>
+      <div class="modal-actions"><button type="button" class="btn" id="prim-card-print">🖨 Печатная форма</button>
+        <button type="button" class="btn" id="prim-card-1c">⬇ Файл для 1С</button>
         <button type="button" class="btn btn-danger" id="prim-del">Удалить документ</button></div>`);
     if (slot) slot.classList.add('prim-modal');   // шире обычного окна: строки документа — 8 колонок
     const file1c = document.getElementById('prim-card-1c');
@@ -548,6 +619,8 @@ export async function viewPrimary(container, opts = {}) {
         } catch (e) { toast(e.message, 'err'); }
       };
     }
+    const printBtn = document.getElementById('prim-card-print');
+    if (printBtn) printBtn.onclick = () => openPrint(id);
     const del = document.getElementById('prim-del');
     if (del) {
       del.onclick = async () => {
@@ -560,6 +633,48 @@ export async function viewPrimary(container, opts = {}) {
         } catch (e) { toast(e.message, 'err'); }
       };
     }
+  }
+
+  // v1.70.114 (T-62): печатная форма — правка заполняемых полей к документу и печать в PDF (ADR-45)
+  async function openPrint(id) {
+    let data;
+    try { data = await api.get(`/api/v1/primary/${encodeURIComponent(id)}/print-form`); }
+    catch (e) { toast(e.message, 'err'); return; }
+    const { slot, close } = openModal(primPrintHtml(data));
+    if (!slot) return;
+    slot.classList.add('prim-modal');
+    const get = (fieldId) => slot.querySelector(`#${fieldId}`);
+    const save = async () => {
+      const body = primPrintBody(get);
+      await api.put(`/api/v1/primary/${encodeURIComponent(id)}/print-form`, body);
+      return body;
+    };
+    const openPage = (suffix) => window.open(`/api/v1/primary/${encodeURIComponent(id)}/print${suffix}`, '_blank', 'noopener');
+    get('prim-print-reset').onclick = () => {
+      const form = (data && data.defaults) || {};
+      for (const f of PRIM_PRINT_FIELDS) {
+        const el = get(`prim-pf-${f.key}`);
+        if (el) el.value = form[f.key] ?? '';
+      }
+      toast('Поля заполнены значениями документа — не забудьте сохранить', 'ok');
+    };
+    get('prim-print-save').onclick = async () => {
+      try { await save(); toast('Поля печатной формы сохранены к документу', 'ok'); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+    get('prim-print-view').onclick = async () => {
+      const win = window.open('', '_blank');
+      try { await save(); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
+      if (win) win.location = `/api/v1/primary/${encodeURIComponent(id)}/print`;
+      else openPage('');
+    };
+    get('prim-print-go').onclick = async () => {
+      const win = window.open('', '_blank');          // окно открывается сразу: иначе браузер заблокирует
+      try { await save(); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
+      if (win) win.location = `/api/v1/primary/${encodeURIComponent(id)}/print?print=1`;
+      else openPage('?print=1');
+      if (typeof close === 'function') close();
+    };
   }
 
   function showPicked() {
