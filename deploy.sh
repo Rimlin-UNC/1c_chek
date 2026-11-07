@@ -4,8 +4,9 @@
 # Разработчик и владелец идеи: ООО «Ямастер»
 # Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
-# БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru = 94.183.236.179):
-#   ssh root@94.183.236.179
+# БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru; адрес сервера
+# в публичном репозитории не публикуется — берите его у владельца):
+#   ssh root@<адрес рабочего сервера>
 #   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
 #   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
