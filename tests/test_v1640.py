@@ -12,7 +12,7 @@
 #  - инструкция: раздел руководителя (аудитория manager), админ — вкладки;
 #  - МИГРАЦИЙ НЕТ (users.role — строка); замки ФНС/пула/1С не тронуты.
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -65,7 +65,8 @@ def _mk_receipt(db, cid, total, assignee="", cat="", personal=0.0,
                 # 07.11.2026: дата чека — от текущего момента, а не календарная:
                 # отчёт берёт окно «дни назад» от utcnow, и фиксированное 08.10.2026
                 # выпадало из окна 30 дней после 13:30 UTC
-                receipt_date=date or datetime.utcnow() - timedelta(days=3),
+                receipt_date=date or (datetime.now(timezone.utc).replace(tzinfo=None)
+                                       - timedelta(days=3)),
                 total_sum=total, personal_sum=personal, operation=op,
                 status=status, company_id=cid,
                 assignee=assignee, assignee_lc=assignee.casefold(),
