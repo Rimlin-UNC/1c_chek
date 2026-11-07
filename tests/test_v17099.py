@@ -114,7 +114,8 @@ class TestSchema:
         assert ('("escalate_days", "ALTER TABLE doc_request_settings ADD COLUMN escalate_days INTEGER DEFAULT 3")'
                 in db_py)
         rehearsal = read("qa/upgrade_rehearsal.py")
-        assert 'up.get("bank_tables") == ["bank_connections", "bank_operations", "bank_reimbursements",' in rehearsal
+        check = rehearsal.split('up.get("bank_tables") == [', 1)[1].split("]", 1)[0]   # v1.70.113: +bank_incomes, bank_links
+        assert all(f'"{t}"' in check for t in ("bank_connections", "bank_operations", "bank_reimbursements"))
         db = read("docs/DATABASE.md")
         m = re.search(r"(\d+) объявлени\w* `__tablename__`", db)                # v1.70.100: число растёт
         assert m and int(m.group(1)) >= 60 and "| Банк по API (v1.70.99) |" in db

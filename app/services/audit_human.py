@@ -311,6 +311,13 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "receipt_time_restored":
         return "время чека возвращено по QR", \
             f"было: {d.get('from', '—')}, стало: {d.get('to', '—')}, сдвиг: {d.get('hours', '—')} ч"
+    # v1.70.113 (T-79, ADR-43): закрытие выписки документами — ручная привязка платежа к УПД
+    if action == "bank_closing_linked":
+        side = "поступление" if d.get("side") == "income" else "списание"
+        return "платёж привязан к документам вручную", \
+            f"компания: „{d.get('company', '—')}“, {side}, документов: {d.get('documents', 0)}"
+    if action == "bank_closing_unlinked":
+        return "ручная привязка платежа снята", f"компания: „{d.get('company', '—')}“"
     # v1.70.112 (T-46, ADR-24): согласование авансовых отчётов — подпись и решения (подробности — в журнале отчёта)
     if action == "approvals_settings":
         limits = (f"порог руководителя: {d.get('manager_limit') or 'нет'}, порог бухгалтера: "

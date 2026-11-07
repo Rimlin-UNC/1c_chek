@@ -20,8 +20,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
-from app.main import app  # noqa: E402
+
 from app.database import init_db  # noqa: E402
+from app.main import app  # noqa: E402
 
 init_db()
 
@@ -30,6 +31,56 @@ init_db()
 def client():
     with TestClient(app) as c:
         yield c
+
+
+class Store:
+    """База для прогона на двух СУБД (v1.70.113 — общая для согласований и сверки выписки): name и фабрика сессий."""
+
+    def __init__(self, name, session):
+        self.name, self.session = name, session
+
+
+@pytest.fixture(params=["sqlite", "postgresql"])
+def store(request):
+    """SQLite тестов или одноразовая схема PostgreSQL (get_db подменён на её сессии). PostgreSQL-вариант — в CI и
+    qa/pg_local.py (UNIFIED_POSTGRES_TEST_URL); там ворота требуют ноль пропусков."""
+    from uuid import uuid4
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import Base, SessionLocal, get_db
+    if request.param == "sqlite":
+        yield Store("SQLite", SessionLocal)
+        return
+    url = os.getenv("UNIFIED_POSTGRES_TEST_URL")
+    if not url:
+        pytest.skip("PostgreSQL-вариант: нужен UNIFIED_POSTGRES_TEST_URL (CI, qa/pg_local.py)")
+    schema = "qa_store_" + uuid4().hex
+    engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+    if engine.dialect.name != "postgresql":
+        engine.dispose()
+        pytest.fail("UNIFIED_POSTGRES_TEST_URL должен вести в PostgreSQL")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+    pg_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    def pg_db():
+        db = pg_session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    try:
+        Base.metadata.create_all(bind=engine)
+        app.dependency_overrides[get_db] = pg_db
+        yield Store("PostgreSQL", pg_session)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)

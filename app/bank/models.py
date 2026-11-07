@@ -70,6 +70,50 @@ class BankOperation(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class BankIncome(Base):
+    """Поступление от контрагента с ИНН — для сверки продаж с УПД (T-79, v1.70.113, ADR-43).
+
+    Отдельная таблица, а не строки bank_operations: списания, запросы «Что нужно от клиента», их сопоставление
+    и счётчики остаются прежними. Минимум данных (ADR-28): дата, номер, сумма, ИНН и наименование плательщика,
+    назначение; поступления без ИНН (наличные, физлица) не хранятся — сверять их не с чем.
+    """
+    __tablename__ = "bank_incomes"
+    __table_args__ = (UniqueConstraint("company_id", "op_hash", name="uq_bank_incomes_company_hash"),
+                      Index("ix_bank_incomes_company_date", "company_id", "op_date"))
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    company_id: Mapped[str] = mapped_column(String(36), index=True)
+    statement_id: Mapped[str] = mapped_column(String(36), index=True)
+    op_hash: Mapped[str] = mapped_column(String(64))
+    op_date: Mapped[date] = mapped_column(Date)
+    number: Mapped[str] = mapped_column(String(20), default="")
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    counterparty_name: Mapped[str] = mapped_column(String(200), default="")
+    counterparty_inn: Mapped[str] = mapped_column(String(12), default="")
+    purpose: Mapped[str] = mapped_column(String(210), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BankLink(Base):
+    """Ручная привязка бухгалтера: этот платёж (списание или поступление) закрывается этим документом (T-79).
+
+    Автоматическая сверка не хранится — она пересчитывается (closing.settle); здесь только решения людей, которые
+    пересчёт обязан уважать: привязанная пара получает сумму первой. amount пусто — сколько позволит остаток.
+    """
+    __tablename__ = "bank_links"
+    __table_args__ = (UniqueConstraint("side", "operation_id", "document_id", name="uq_bank_links_pair"),
+                      Index("ix_bank_links_company", "company_id"))
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    company_id: Mapped[str] = mapped_column(String(36))
+    side: Mapped[str] = mapped_column(String(8), default="expense")       # expense | income
+    operation_id: Mapped[str] = mapped_column(String(36), index=True)     # bank_operations.id или bank_incomes.id
+    document_id: Mapped[str] = mapped_column(String(36), index=True)      # primary_documents.id
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class BankReimbursement(Base):
     """Решение по чеку, оплаченному сотрудником лично: возмещено или не возмещать (с причиной)."""
     __tablename__ = "bank_reimbursements"

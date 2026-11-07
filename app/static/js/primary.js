@@ -16,6 +16,7 @@
 import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 import { CHANNEL_FROM, mailConnectPanel, mailInboxHtml } from './primary_mail.js';
+import { primFolderFromDrop, primFolderSummaryHtml, primFolderUpload } from './primary_folder.js';   // v1.70.113 (T-79)
 
 export const PRIMARY_STATUSES = [
   { code: 'ok', title: 'Без замечаний', chip: 'verified' },
@@ -441,10 +442,13 @@ export async function viewPrimary(container, opts = {}) {
         ${companies.map((c) => `<option value="${esc(c.id)}" ${filterCompany === c.id ? 'selected' : ''}>${esc(c.short_name || c.name)}</option>`).join('')}
       </select></label>` : ''}
       <div class="dropzone" id="prim-drop" role="button" tabindex="0" aria-label="Выбрать файлы УПД">
-        <span class="big-ico" aria-hidden="true">📥</span>Перетащите сюда XML, ZIP, PDF, скан или фото — или нажмите, чтобы выбрать
+        <span class="big-ico" aria-hidden="true">📥</span>Перетащите сюда XML, ZIP, PDF, скан или фото — или целую папку с УПД, — или нажмите, чтобы выбрать
       </div>
       <input type="file" id="prim-file" accept=".xml,.zip,.pdf,.jpg,.jpeg,.png,.tif,.tiff" multiple class="hidden">
-      <div class="prim-tools"><button type="button" class="btn btn-sm" id="prim-manual">✍️ Ввести вручную</button>
+      <input type="file" id="prim-folder" webkitdirectory multiple class="hidden">
+      <div class="prim-tools"><button type="button" class="btn btn-sm" id="prim-folder-btn"
+          title="Папка с подпапками: программа сама найдёт УПД среди файлов и разложит их по компаниям по ИНН">📁 Папка с УПД</button>
+        <button type="button" class="btn btn-sm" id="prim-manual">✍️ Ввести вручную</button>
         <span class="form-hint" id="prim-ocr" aria-live="polite"></span></div>
       <div id="prim-results" aria-live="polite"></div>
     </div>
@@ -777,6 +781,27 @@ export async function viewPrimary(container, opts = {}) {
     }
   }
 
+  // v1.70.113 (T-79): папка с УПД — отбор в браузере, порции, компании по ИНН, затем сверка с выпиской
+  async function folderUpload(files) {
+    const list = [...(files || [])];
+    if (!list.length) return;
+    const box = $('#prim-results');
+    box.innerHTML = '<p class="form-hint prim-folder-progress" id="prim-folder-progress" aria-live="polite">Смотрим папку…</p>';
+    try {
+      const sum = await primFolderUpload(list, {
+        onProgress: (text) => { const el = $('#prim-folder-progress'); if (el) el.textContent = text; },
+      });
+      if (!container.isConnected) return;
+      box.innerHTML = primFolderSummaryHtml(sum);
+      toast(`Папка: загружено УПД ${sum.created}, уже были ${sum.duplicates + sum.known}, не принято ${sum.rejected}`,
+        sum.rejected && !sum.created ? 'err' : 'ok');
+      state.offset = 0;
+      load();
+    } catch (e) {
+      if (container.isConnected) box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
   async function manual() {
     const rec = { source: 'manual', draft: { function: 'СЧФДОП', seller: {}, buyer: {}, totals: {}, lines: [] },
                   found: [], uncertain: [], hints: {} };
@@ -790,8 +815,18 @@ export async function viewPrimary(container, opts = {}) {
   drop.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } };
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('dragover'); };
   drop.ondragleave = () => drop.classList.remove('dragover');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('dragover'); upload(e.dataTransfer && e.dataTransfer.files); };
+  drop.ondrop = (e) => {
+    e.preventDefault();
+    drop.classList.remove('dragover');
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];       // после события список пропадёт
+    const folder = primFolderFromDrop(e.dataTransfer);                         // v1.70.113: перетащили папку
+    if (folder) folder.then(folderUpload).catch((err) => toast(err.message, 'err'));
+    else upload(files);
+  };
   input.onchange = () => { upload(input.files); input.value = ''; };
+  const folderInput = $('#prim-folder');
+  $('#prim-folder-btn').onclick = () => folderInput.click();
+  folderInput.onchange = () => { const files = [...folderInput.files]; folderInput.value = ''; folderUpload(files); };
   $('#prim-manual').onclick = () => manual();
   $('#prim-refresh').onclick = () => load();
   $('#prim-status').onchange = (e) => { state.status = e.target.value; state.offset = 0; load(); };

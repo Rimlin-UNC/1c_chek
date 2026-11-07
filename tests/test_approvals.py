@@ -6,71 +6,22 @@
 """
 from __future__ import annotations
 
-import os
 import re
-from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.approvals import service as svc
 from app.approvals.models import AdvanceApproval, AdvanceApprovalEvent, ApprovalSettings
 from app.auth import create_access_token, hash_password
-from app.database import Base, SessionLocal, get_db
 from app.docreq import service as docreq
-from app.main import app
 from app.models import Company, Receipt, User
 
 T0 = datetime(2026, 11, 2, 9, 0)            # наивное UTC, как в базе
 PASSWORD_HASH = hash_password("parol123")
-
-
-@dataclass
-class Store:
-    name: str
-    session: Callable[[], Session]
-
-
-@pytest.fixture(params=["sqlite", "postgresql"])
-def store(request):
-    """SQLite тестов или одноразовая схема PostgreSQL (get_db подменён на её сессии)."""
-    if request.param == "sqlite":
-        yield Store("SQLite", SessionLocal)
-        return
-    url = os.getenv("UNIFIED_POSTGRES_TEST_URL")
-    if not url:
-        pytest.skip("PostgreSQL-вариант: нужен UNIFIED_POSTGRES_TEST_URL (CI, qa/pg_local.py)")
-    schema = "qa_approvals_" + uuid4().hex
-    engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
-    if engine.dialect.name != "postgresql":
-        engine.dispose()
-        pytest.fail("UNIFIED_POSTGRES_TEST_URL должен вести в PostgreSQL")
-    with engine.begin() as conn:
-        conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
-    pg_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-
-    def pg_db():
-        db = pg_session()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    try:
-        Base.metadata.create_all(bind=engine)
-        app.dependency_overrides[get_db] = pg_db
-        yield Store("PostgreSQL", pg_session)
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-        with engine.begin() as conn:
-            conn.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
-        engine.dispose()
 
 
 def _user(db, company_id: str | None, role: str, name: str, **kw) -> User:

@@ -27,7 +27,14 @@ from ..models import Company, Receipt, User, utcnow
 from ..primary.models import PrimaryDocument
 from ..services.policy import accountable_of
 from . import parser
-from .models import BankOperation, BankReimbursement, BankSettings, BankStatement
+from .models import (
+    BankIncome,
+    BankLink,
+    BankOperation,
+    BankReimbursement,
+    BankSettings,
+    BankStatement,
+)
 
 log = logging.getLogger("ymaster.bank")
 CARD_BEFORE, CARD_AFTER = 3, 1           # чек — за 3 дня до списания … днём позже
@@ -139,12 +146,19 @@ def import_statement(db: Session, company: Company, raw: bytes, user: User) -> d
     except parser.StatementError as exc:
         raise BankError(str(exc)) from exc
     sha = hashlib.sha256(raw).hexdigest()
+    own_inn = "".join(ch for ch in (company.inn or "") if ch.isdigit())
+    ops = [op for doc in data["documents"] if (op := parser.classify(doc, data["accounts"], own_inn))]
     same = (db.query(BankStatement).filter(BankStatement.company_id == company.id, BankStatement.file_sha256 == sha)
             .first())
     if same:
-        raise BankError(f"Эта выписка уже загружена {same.created_at:%d.%m.%Y}", 409)
-    own_inn = "".join(ch for ch in (company.inn or "") if ch.isdigit())
-    ops = [op for doc in data["documents"] if (op := parser.classify(doc, data["accounts"], own_inn))]
+        # v1.70.113 (T-79): выписки до 1.70.113 поступлений не хранили — повторная загрузка того же файла их дописывает
+        added, _dup = store_incomes(db, company.id, same.id, ops)
+        if not added:
+            raise BankError(f"Эта выписка уже загружена {same.created_at:%d.%m.%Y}", 409)
+        db.commit()
+        return {"statement": statement_dict(same), "operations": len(ops), "saved": 0, "duplicates": 0,
+                "skipped": 0, "matched": 0, "open": 0, "kinds": {}, "purged": 0, "requests": 0, "incomes": len(added),
+                "incomes_only": True}
     foreign = {op["own_inn"] for op in ops if op["own_inn"]} - {own_inn}
     if own_inn and foreign and not any(op["own_inn"] == own_inn for op in ops):
         raise BankError(f"Выписка другой организации (ИНН {', '.join(sorted(foreign))}), а компания — ИНН {own_inn}. "
@@ -158,17 +172,22 @@ def import_statement(db: Session, company: Company, raw: bytes, user: User) -> d
     db.add(statement)
     db.flush()
     saved, duplicates, _ = store_ops(db, company.id, statement.id, ops)
+    incomes, _inc_dup = store_incomes(db, company.id, statement.id, ops)      # v1.70.113: для сверки продаж
     statement.ops_saved = len(saved)
     statement.duplicates = duplicates
     statement.ops_skipped = len(ops) - len(saved) - duplicates
     db.commit()
-    matched = match(db, company.id, saved)
+    from . import closing  # v1.70.113 (T-79): УПД — сверкой, затем чеки
+    closing.settle_expense(db, company, refresh=False)
+    match(db, company.id, saved)
+    matched = sum(1 for op in saved if op.status == "matched")
     purged = purge(db, company.id)
     requests = sync_requests(db, company.id, periods_of(saved))
     log.info("bank statement %s: %s ops, %s saved, %s matched", company.id, len(ops), len(saved), matched)
     return {"statement": statement_dict(statement), "operations": len(ops), "saved": len(saved),
             "duplicates": duplicates, "skipped": statement.ops_skipped, "matched": matched,
-            "open": len(saved) - matched, "kinds": dict(kinds), "purged": purged, "requests": requests}
+            "open": len(saved) - matched, "kinds": dict(kinds), "purged": purged, "requests": requests,
+            "incomes": len(incomes)}
 
 
 def _soft_key(op: dict) -> tuple | None:
@@ -222,6 +241,41 @@ def store_ops(db: Session, company_id: str, statement_id: str, ops: list[dict]) 
     return saved, duplicates, already
 
 
+def store_incomes(db: Session, company_id: str, statement_id: str, ops: list[dict]) -> tuple[list[BankIncome], int]:
+    """v1.70.113 (T-79, ADR-43): сохранить поступления от контрагентов с ИНН — для сверки продаж с УПД.
+
+    Только добавление в отдельную таблицу: списания, запросы и их счётчики не меняются. Дубли — по тому же отпечатку
+    операции и второй проверке «дата, сумма, номер, ИНН» (файл и API банка пишут назначение по-разному)."""
+    rows = (db.query(BankIncome.op_hash, BankIncome.op_date, BankIncome.amount, BankIncome.number,
+                     BankIncome.counterparty_inn).filter(BankIncome.company_id == company_id))
+    known, soft = set(), set()
+    for digest, day, amount, number, inn in rows:
+        known.add(digest)
+        key = _soft_key({"op_date": day, "amount": amount or 0.0, "number": number, "counterparty_inn": inn})
+        if key:
+            soft.add(key)
+    saved: list[BankIncome] = []
+    duplicates = 0
+    for op in ops:
+        inn = op.get("counterparty_inn") or ""
+        if op.get("kind") != "income" or len(inn) not in (10, 12):
+            continue
+        digest = parser.op_hash(company_id, op)
+        key = _soft_key(op)
+        if digest in known or (key and key in soft):
+            duplicates += 1
+            continue
+        known.add(digest)
+        if key:
+            soft.add(key)
+        row = BankIncome(company_id=company_id, statement_id=statement_id, op_hash=digest, op_date=op["op_date"],
+                         number=op["number"], amount=op["amount"], counterparty_name=op["counterparty_name"],
+                         counterparty_inn=inn, purpose=op["purpose"])
+        db.add(row)
+        saved.append(row)
+    return saved, duplicates
+
+
 def periods_of(ops: list[BankOperation]) -> set[str]:
     return {f"{op.op_date.year:04d}-{op.op_date.month:02d}" for op in ops if op.op_date}
 
@@ -258,23 +312,11 @@ def _find_card(db: Session, op: BankOperation, used: set[str]) -> Receipt | None
     return found[0] if found else None
 
 
-def _find_transfer(db: Session, op: BankOperation, used_receipts: set[str],
-                   used_docs: set[str]) -> tuple[str, object, bool] | None:
+def _find_transfer(db: Session, op: BankOperation, used_receipts: set[str]) -> tuple[str, object, bool] | None:
+    """Чек продавца на ту же сумму (оплата по счёту, ±5 дней). v1.70.113: УПД и счета-фактуры подбирает сверка
+    closing.settle — с несколькими документами на платёж и частичным закрытием, — она запускается раньше."""
     if not op.counterparty_inn:
         return None
-    lo, hi = op.op_date - timedelta(days=DOC_BEFORE), op.op_date + timedelta(days=DOC_AFTER)
-    docs = (db.query(PrimaryDocument)
-            .filter(PrimaryDocument.company_id == op.company_id, PrimaryDocument.seller_inn == op.counterparty_inn,
-                    PrimaryDocument.doc_date >= lo, PrimaryDocument.doc_date <= hi).all())
-    docs = [d for d in docs if d.id not in used_docs]
-    exact = sorted((d for d in docs if _close(d.total_with_vat, op.amount)),
-                   key=lambda d: abs((d.doc_date - op.op_date).days))
-    if exact:
-        return "primary", exact[0], False
-    numbers = {_norm_number(n) for n in _NUMBER.findall(op.purpose or "")}
-    by_number = [d for d in docs if d.doc_number and _norm_number(d.doc_number) in numbers]
-    if by_number:
-        return "primary", by_number[0], True
     lo_r = datetime.combine(op.op_date - timedelta(days=RECEIPT_DAYS), time.min)
     hi_r = datetime.combine(op.op_date + timedelta(days=RECEIPT_DAYS + 1), time.min)
     recs = (db.query(Receipt)
@@ -294,7 +336,7 @@ def match_one(db: Session, op: BankOperation, used: tuple[set[str], set[str]] | 
         rec = _find_card(db, op, used_receipts)
         hit = ("receipt", rec, False) if rec else None
     else:
-        hit = _find_transfer(db, op, used_receipts, used_docs)
+        hit = _find_transfer(db, op, used_receipts)
     if not hit:
         return False
     kind, obj, partial = hit
@@ -318,13 +360,18 @@ def match(db: Session, company_id: str, ops: list[BankOperation] | None = None) 
 
 def rematch(db: Session, company_id: str) -> int:
     """Пришли новые чеки и УПД: сопоставить открытые операции и закрыть запросы по найденным."""
+    from . import closing  # v1.70.113 (T-79): сначала сверка с УПД
+    company = db.get(Company, company_id)
+    periods, newly = set(), 0
+    if company is not None:
+        _result, _changed, periods, newly = closing.settle_expense(db, company, refresh=False)
     ops = (db.query(BankOperation).filter(BankOperation.company_id == company_id, BankOperation.status == "open")
            .order_by(BankOperation.op_date).all())
     used = _used(db, company_id)
     hits = [op for op in ops if match_one(db, op, used)]
     db.commit()
-    _refresh_requests(db, company_id, periods_of(hits))
-    return len(hits)
+    _refresh_requests(db, company_id, periods | periods_of(hits))
+    return newly + len(hits)
 
 
 def satisfied(db: Session, op_id: str) -> str:
@@ -332,6 +379,9 @@ def satisfied(db: Session, op_id: str) -> str:
     op = db.get(BankOperation, op_id)
     if op is None:
         return ""
+    if op.status == "open" and op.kind == "transfer":
+        from . import closing  # v1.70.113: УПД — сверкой, один раз за запрос
+        closing.settle_once(db, op.company_id)
     if op.status == "open" and match_one(db, op):
         db.commit()
     return f"найден {op.match_note}" if op.status == "matched" else ""
@@ -431,8 +481,12 @@ def delete_statement(db: Session, statement: BankStatement, user: User) -> int:
     """Удалить выписку и её операции; открытые запросы по ним — отменить с пометкой."""
     ops = db.query(BankOperation).filter(BankOperation.statement_id == statement.id).all()
     _cancel_requests(db, [op.id for op in ops], user, "Выписка удалена бухгалтером")
-    for op in ops:
-        db.delete(op)
+    incomes = db.query(BankIncome).filter(BankIncome.statement_id == statement.id).all()     # v1.70.113
+    gone = [op.id for op in ops] + [inc.id for inc in incomes]
+    if gone:
+        db.query(BankLink).filter(BankLink.operation_id.in_(gone)).delete(synchronize_session=False)
+    for row in [*ops, *incomes]:
+        db.delete(row)
     db.delete(statement)
     db.commit()
     return len(ops)
@@ -453,8 +507,17 @@ def purge(db: Session, company_id: str | None = None, today: date | None = None)
             for op in old:
                 db.delete(op)
             deleted += len(old)
+        # v1.70.113 (T-79): поступления живут по тому же сроку; ручные привязки удалённых строк уходят вместе с ними
+        old_in = db.query(BankIncome).filter(BankIncome.company_id == cid, BankIncome.op_date < border).all()
+        gone = [op.id for op in old] + [inc.id for inc in old_in]
+        if gone:
+            db.query(BankLink).filter(BankLink.operation_id.in_(gone)).delete(synchronize_session=False)
+        for inc in old_in:
+            db.delete(inc)
+        db.flush()        # autoflush выключен: без этого удалённые строки ещё «держат» выписку до следующего запуска
         for st in db.query(BankStatement).filter(BankStatement.company_id == cid, BankStatement.date_to < border):
-            if not db.query(BankOperation.id).filter(BankOperation.statement_id == st.id).first():
+            if not (db.query(BankOperation.id).filter(BankOperation.statement_id == st.id).first()
+                    or db.query(BankIncome.id).filter(BankIncome.statement_id == st.id).first()):
                 db.delete(st)
     db.commit()
     return deleted

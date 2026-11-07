@@ -199,4 +199,5 @@ class TestDocsAndKb:
         kb = read("docs/kb/README.md")
         m = re.search(r"\| Последний выпуск \| \*\*v([\d.]+)\*\*", kb)          # v1.70.111: не старше
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
-        assert "issues #4–#62" in kb
+        m = re.search(r"issues #4–#(\d+)", kb)                                     # v1.70.113: задач больше
+        assert m and int(m.group(1)) >= 62

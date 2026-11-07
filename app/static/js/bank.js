@@ -22,7 +22,83 @@ export const BANK_REFUND = {
   pending: ['chip unknown', 'К возмещению'], paid: ['chip verified', 'Возмещено'], declined: ['chip failed', 'Не возмещать'],
 };
 const BANK_TABS = [['open', 'Без документов'], ['matched', 'Документ найден'], ['ignored', 'Не нужны'],
-  ['refund', 'К возмещению'], ['statements', 'Выписки']];
+  ['closing', 'Закрытие документами'], ['refund', 'К возмещению'], ['statements', 'Выписки']];
+
+// v1.70.113 (T-79, #63, ADR-43): «Закрытие документами» — какие расходы и поступления выписки закрыты УПД
+export const BANK_CLOSING_STATUS = {
+  closed: ['chip verified', 'закрыт'], partial: ['chip verifying', 'частично'], open: ['chip failed', 'без документов'],
+  not_needed: ['chip mono', 'не нужны'],
+};
+export const BANK_CLOSING_HOW = {
+  manual: 'привязал бухгалтер', number: 'номер в назначении', sum: 'та же сумма', set: 'сумма нескольких документов',
+  fifo: 'по очереди дат', receipt: 'кассовый чек',
+};
+const BANK_CLOSING_FILTERS = [['all', 'Все'], ['open', 'Без документов'], ['partial', 'Частично'], ['closed', 'Закрыты']];
+
+/** Сводка стороны: сколько и на какую сумму, сколько закрыто документами. */
+export function bankClosingSummary(s, side) {
+  if (!s || !s.count) {
+    return side === 'income' ? 'Поступлений от контрагентов с ИНН за период нет.' : 'Списаний за период нет.';
+  }
+  const what = side === 'income' ? 'Поступления' : 'Расходы';
+  const pct = String(s.percent).replace('.', ',');
+  return `${what}: ${s.count} на ${fmtSum(s.amount)} — закрыто документами ${fmtSum(s.closed_amount)} (${pct} %);`
+    + ` частично: ${s.partial_count}, без документов: ${s.open_count} на ${fmtSum(s.open_amount)}`
+    + (s.not_needed_count ? `; не нужны: ${s.not_needed_count}` : '');
+}
+
+/** Строки платежей: статус, закрыто, документы с суммами и способом подбора, кнопки привязки. */
+export function bankClosingRowsHtml(rows, filter = 'all') {
+  const list = (rows || []).filter((r) => filter === 'all' || r.status === filter);
+  if (!list.length) return '<tr><td colspan="7" class="form-hint">Под фильтр ничего не попало.</td></tr>';
+  return list.map((r) => {
+    const chip = bankChip(BANK_CLOSING_STATUS, r.status);
+    const docs = (r.links || []).map((l) => `<div>${esc(l.title)}${l.how !== 'receipt' ? ` — ${esc(fmtSum(l.amount))}` : ''}
+      <span class="form-hint">· ${esc(BANK_CLOSING_HOW[l.how] || l.how)}</span></div>`).join('')
+      || (r.note ? `<span class="form-hint">${esc(r.note)}</span>` : '<span class="form-hint">—</span>');
+    const linkable = r.kind !== 'card' && r.status !== 'not_needed' && r.counterparty_inn;
+    const act = linkable ? `<button type="button" class="btn btn-sm bank-cl-link" data-id="${esc(r.id)}" data-side="${esc(r.side)}">Привязать</button>`
+      + (r.manual ? ` <button type="button" class="btn btn-sm bank-cl-unlink" data-id="${esc(r.id)}" data-side="${esc(r.side)}">Отвязать</button>` : '') : '';
+    const rest = r.status === 'partial' ? `<div class="form-hint">осталось ${esc(fmtSum(r.rest))}</div>` : '';
+    return `<tr class="bank-cl-${esc(r.status)}"><td>${esc(bankDate(r.date))}${r.number ? `<div class="form-hint">№ ${esc(r.number)}</div>` : ''}</td>
+      <td>${esc(r.counterparty_name || '—')}${r.counterparty_inn ? `<div class="form-hint">ИНН ${esc(r.counterparty_inn)}</div>` : ''}</td>
+      <td class="bank-cl-purpose">${esc(r.purpose || '')}</td><td class="num">${esc(fmtSum(r.amount))}</td>
+      <td>${chip}${rest}</td><td>${docs}</td><td>${act}</td></tr>`;
+  }).join('');
+}
+
+/** Документы без оплаты в выписке за период. */
+export function bankClosingUnpaidHtml(list, side) {
+  if (!list || !list.length) return '';
+  const who = side === 'income' ? 'Покупатель' : 'Продавец';
+  return `<h4 class="bank-cl-h">Документы без оплаты в выписке (${list.length})</h4>
+    <p class="form-hint">Оплачены наличными, зачётом, с другого счёта или ещё не оплачены.</p>
+    <div class="table-wrap"><table class="data"><thead><tr><th>Документ</th><th>${who}</th><th class="num">Сумма</th>
+    <th class="num">Оплачено</th><th class="num">Осталось</th></tr></thead><tbody>${list.map((d) => `<tr><td>${esc(d.title)}</td>
+    <td>${esc(d.counterparty_name || '—')}<div class="form-hint">ИНН ${esc(d.counterparty_inn)}</div></td>
+    <td class="num">${esc(fmtSum(d.amount))}</td><td class="num">${esc(fmtSum(d.paid))}</td>
+    <td class="num">${esc(fmtSum(d.rest))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+/** Сальдо по контрагентам: оплачено, документов, разница (+ — оплачено больше документов, − — документов больше). */
+export function bankClosingCounterpartiesHtml(list, side) {
+  const rows = (list || []).filter((c) => Math.abs(c.balance) >= 0.005);
+  if (!rows.length) return '';
+  const plus = side === 'income' ? 'получено больше, чем отгружено' : 'оплачено больше, чем документов';
+  const minus = side === 'income' ? 'отгружено больше, чем получено' : 'документов больше, чем оплачено';
+  return `<h4 class="bank-cl-h">Расхождения по контрагентам (${rows.length})</h4>
+    <div class="table-wrap"><table class="data"><thead><tr><th>Контрагент</th><th class="num">Платежи</th><th class="num">Документы</th>
+    <th class="num">Разница</th><th>Что это</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.name || '—')}
+    <div class="form-hint">ИНН ${esc(c.inn)}</div></td><td class="num">${esc(fmtSum(c.payments))}</td>
+    <td class="num">${esc(fmtSum(c.documents))}</td><td class="num">${esc(fmtSum(c.balance))}</td>
+    <td class="form-hint">${c.balance > 0 ? plus : minus}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+/** Период по умолчанию — с начала года по сегодня. */
+export function bankClosingPeriod(now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` };
+}
 export const BANK_CONN_STATUS = {
   none: ['chip unknown', 'не подключён'], new: ['chip unknown', 'не подключён'],
   awaiting: ['chip unknown', 'ждём подтверждения в банке'], active: ['chip verified', 'подключён'],
@@ -482,7 +558,8 @@ export async function viewBank(container, opts = {}) {
   const alive = typeof opts.alive === 'function' ? opts.alive : () => true;
   const companies = (Array.isArray(opts.companies) ? opts.companies : []).filter((c) => c.is_active !== false);
   const filterCompany = opts.companyFilter && opts.companyFilter !== 'all' ? opts.companyFilter : '';
-  const state = { company: opts.isAdmin ? filterCompany : '', tab: 'open', data: null };
+  const state = { company: opts.isAdmin ? filterCompany : '', tab: 'open', data: null,
+    closing: { side: 'expense', filter: 'all', ...bankClosingPeriod() } };          // v1.70.113 (T-79)
   let req = 0;
   container.innerHTML = `
     <div class="glass card">
@@ -552,11 +629,105 @@ export async function viewBank(container, opts = {}) {
     }
   }
 
+  // v1.70.113 (T-79): закрытие документами — отчёт за период, расходы и поступления, ручная привязка
+  async function showClosing() {
+    const c = state.closing;
+    $('#bank-out').innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get(`/api/v1/bank/closing?${query({ date_from: c.from, date_to: c.to })}`);
+      if (!container.isConnected || state.tab !== 'closing') return;
+      c.data = data;
+      paintClosing();
+    } catch (e) {
+      if (container.isConnected) $('#bank-out').innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function paintClosing() {
+    const c = state.closing;
+    const data = c.data;
+    const side = data[c.side];
+    const s = side.summary || {};
+    const pct = Math.max(0, Math.min(100, Number(s.percent) || 0));
+    const noIncome = c.side === 'income' && !data.has_incomes
+      ? `<p class="form-hint">Поступления сохраняются с версии 1.70.113: загрузите выписку заново (тот же файл добавит
+          поступления) или дождитесь следующей загрузки из банка.</p>` : '';
+    $('#bank-out').innerHTML = `
+      <p class="form-hint">Подбор: ручная привязка, номер документа в назначении платежа, та же сумма, сумма нескольких
+        документов, остаток — по очереди дат, как погашение задолженности в 1С. Платёж может закрываться несколькими
+        УПД, УПД — несколькими платежами.</p>
+      <div class="dreq-controls bank-cl-controls">
+        <label class="field"><span>С</span><input type="date" id="bank-cl-from" value="${esc(c.from || '')}"></label>
+        <label class="field"><span>По</span><input type="date" id="bank-cl-to" value="${esc(c.to || '')}"></label>
+        <div class="segmented" id="bank-cl-side"><button type="button" data-side="expense" class="${c.side === 'expense' ? 'active' : ''}">Расходы</button><button type="button" data-side="income" class="${c.side === 'income' ? 'active' : ''}">Поступления</button></div>
+        <div class="segmented" id="bank-cl-filter">${BANK_CLOSING_FILTERS.map(([id, label]) => `<button type="button" data-filter="${id}" class="${c.filter === id ? 'active' : ''}">${label}</button>`).join('')}</div>
+        <button type="button" class="btn btn-sm" id="bank-cl-csv">⬇ CSV</button>
+      </div>
+      <p class="bank-cl-sum" id="bank-cl-sum">${esc(bankClosingSummary(s, c.side))}</p>
+      <div class="bank-cl-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Закрыто документами"><span style="width:${pct}%"></span></div>
+      ${noIncome}
+      <div class="table-wrap"><table class="data bank-cl-table"><thead><tr><th>Дата</th><th>${c.side === 'income' ? 'Плательщик' : 'Получатель'}</th>
+        <th>Назначение</th><th class="num">Сумма</th><th>Статус</th><th>Документы</th><th></th></tr></thead>
+        <tbody>${bankClosingRowsHtml(side.rows, c.filter)}</tbody></table></div>
+      ${bankClosingUnpaidHtml(side.unpaid, c.side)}
+      ${bankClosingCounterpartiesHtml(side.counterparties, c.side)}`;
+    const out = $('#bank-out');
+    out.querySelector('#bank-cl-from').onchange = (e) => { c.from = e.target.value; showClosing(); };
+    out.querySelector('#bank-cl-to').onchange = (e) => { c.to = e.target.value; showClosing(); };
+    out.querySelectorAll('#bank-cl-side button').forEach((b) => { b.onclick = () => { c.side = b.dataset.side; paintClosing(); }; });
+    out.querySelectorAll('#bank-cl-filter button').forEach((b) => { b.onclick = () => { c.filter = b.dataset.filter; paintClosing(); }; });
+    out.querySelector('#bank-cl-csv').onclick = async () => {
+      try {
+        const { blob, filename } = await api.download(`/api/v1/bank/closing.csv?${query({ date_from: c.from, date_to: c.to, side: c.side })}`);
+        bankDownload(blob, filename);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    out.querySelectorAll('.bank-cl-link').forEach((b) => { b.onclick = () => closingLink(b.dataset.id, b.dataset.side); });
+    out.querySelectorAll('.bank-cl-unlink').forEach((b) => { b.onclick = () => closingUnlink(b.dataset.id, b.dataset.side); });
+  }
+
+  async function closingLink(id, side) {
+    let cand;
+    try {
+      cand = await api.get(`/api/v1/bank/closing/candidates?${query({ operation_id: id, side })}`);
+    } catch (e) { toast(e.message, 'err'); return; }
+    const op = cand.operation;
+    const items = cand.items || [];
+    const { slot, close } = openModal(`<h3>Документы к платежу</h3>
+      <p>${esc(bankDate(op.date))} · ${esc(op.counterparty_name || '')} · ${esc(fmtSum(op.amount))}</p>
+      ${items.length ? `<div class="bank-cl-cands">${items.map((d) => `<label class="check"><input type="checkbox" value="${esc(d.id)}" ${d.linked ? 'checked' : ''}>
+        ${esc(d.title)} — ${esc(fmtSum(d.amount))}${d.rest > 0.004 && d.rest < d.amount ? ` <span class="form-hint">(осталось ${esc(fmtSum(d.rest))})</span>` : ''}
+        ${d.rest <= 0.004 && !d.linked ? ' <span class="form-hint">(уже закрыт другими платежами)</span>' : ''}</label>`).join('')}</div>`
+        : '<p class="form-hint">У этого контрагента документов нет. Загрузите УПД — в «Первичке» или папкой.</p>'}
+      <p class="form-hint">Ручная привязка — первой при подборе; остаток документов достанется другим платежам.</p>
+      <div class="modal-actions"><button type="button" class="btn btn-primary" id="bank-cl-save" ${items.length ? '' : 'disabled'}>Привязать</button></div>`);
+    if (!slot) return;
+    slot.querySelector('#bank-cl-save').onclick = async () => {
+      const ids = [...slot.querySelectorAll('.bank-cl-cands input:checked')].map((x) => x.value);
+      if (!ids.length) { toast('Отметьте документы', 'err'); return; }
+      try {
+        await api.post('/api/v1/bank/closing/link', { ...(state.company ? { company_id: state.company } : {}), side, operation_id: id, document_ids: ids });
+        if (typeof close === 'function') close();
+        toast('Привязано', 'ok');
+        showClosing();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  async function closingUnlink(id, side) {
+    try {
+      await api.post('/api/v1/bank/closing/unlink', { ...(state.company ? { company_id: state.company } : {}), side, operation_id: id });
+      toast('Привязка снята — подбирает программа', 'ok');
+      showClosing();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
   function render(data) {
     state.data = data;
     kpi(data);
     BANK_TABS.forEach(([id]) => { const b = $(`#bank-tab-${id}`); if (b) b.classList.toggle('active', id === state.tab); });
     if (state.tab === 'refund') { showRefund(); return; }
+    if (state.tab === 'closing') { showClosing(); return; }
     if (state.tab === 'statements') {
       $('#bank-out').innerHTML = bankStatementsHtml(data.statements);
       $('#bank-out').querySelectorAll('.bank-del').forEach((b) => { b.onclick = () => removeStatement(b.dataset.id); });
@@ -681,7 +852,7 @@ export async function viewBank(container, opts = {}) {
   $('#bank-settings').onclick = () => settings();
   BANK_TABS.forEach(([id]) => {
     const b = $(`#bank-tab-${id}`);
-    if (b) b.onclick = () => { state.tab = id; if (state.data && (id === 'refund' || id === 'statements')) render(state.data); else load(); };
+    if (b) b.onclick = () => { state.tab = id; if (state.data && ['refund', 'statements', 'closing'].includes(id)) render(state.data); else load(); };
   });
   connection();
   await load();

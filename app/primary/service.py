@@ -175,6 +175,100 @@ def accept(db: Session, user: User, data: bytes, file_name: str, requested: str 
     return {"file": name, "result": "created", "issues": issues, "document": brief(doc)}
 
 
+# ------------------------------------------------------------------ v1.70.113 (T-79): папка с УПД — компании по ИНН
+def _inn(value: str | None) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def company_inns(db: Session, ids: set[str]) -> dict[str, str]:
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    return {cid: _inn(inn) for cid, inn in db.execute(select(Company.id, Company.inn).where(Company.id.in_(ids)))}
+
+
+def is_sale(doc: PrimaryDocument, company_inn: str) -> bool:
+    """Документ продажи: компания — продавец. В 1С он не выгружается как поступление."""
+    inn = _inn(company_inn)
+    return bool(inn) and _inn(doc.seller_inn) == inn and _inn(doc.buyer_inn) != inn
+
+
+def route_targets(db: Session, user: User, parsed: dict) -> tuple[list[tuple[Company, str]], str]:
+    """Куда положить документ из папки: [(компания, "in" — расход | "out" — продажа)] среди доступных пользователю.
+
+    Покупатель — наша компания: расход; продавец — наша: продажа; документ между двумя своими компаниями — в обе.
+    Администратору доступны все компании, бухгалтеру — своя и назначенные клиенты (аутсорсер)."""
+    from ..clients import service as clients
+    seller, buyer = _inn(parsed["seller"]["inn"]), _inn(parsed["buyer"]["inn"])
+    wanted = [inn for inn in dict.fromkeys((buyer, seller)) if inn]
+    if not wanted:
+        return [], "В документе нет ИНН продавца и покупателя — не понять, чей он"
+    allowed = clients.allowed_company_ids(db, user)            # None — администратор
+    query = select(Company).where(Company.is_active.is_(True))
+    if allowed is not None:
+        query = query.where(Company.id.in_(allowed or [""]))
+    by_inn: dict[str, list[Company]] = {}
+    for company in db.execute(query).scalars():
+        inn = _inn(company.inn)
+        if inn in wanted:
+            by_inn.setdefault(inn, []).append(company)
+    targets = [(c, "in") for c in by_inn.get(buyer, [])]
+    if seller != buyer:
+        targets += [(c, "out") for c in by_inn.get(seller, [])]
+    if targets:
+        return targets, ""
+    return [], (f"Ни покупатель (ИНН {buyer or '—'}), ни продавец (ИНН {seller or '—'}) — не ваши компании: "
+                "документ не загружен")
+
+
+def accept_routed(db: Session, user: User, data: bytes, file_name: str, channel: str = "") -> list[dict]:
+    """Один файл из папки → результаты по каждой компании, куда он лёг (обычно одна; между своими — две)."""
+    name = (file_name or "")[:255]
+    try:
+        parsed = upd.parse(data)
+    except upd.UpdError as exc:
+        return [{"file": name, "result": "rejected", "message": str(exc), "issues": []}]
+    targets, reason = route_targets(db, user, parsed)
+    if not targets:
+        return [{"file": name, "result": "rejected", "message": reason, "issues": [], "reason": "foreign"}]
+    sha = hashlib.sha256(data).hexdigest()
+    schema_issues = None
+    out = []
+    for company, direction in targets:
+        meta = {"company_id": company.id, "company_name": company.short_name or company.name, "direction": direction}
+        issues = upd.check(parsed, company_inn=_inn(company.inn) if direction == "in" else "")
+        rejected = [i for i in issues if i["code"] in REJECT_CODES]
+        if rejected:
+            out.append({"file": name, "result": "rejected", "message": rejected[0]["message"], "issues": issues,
+                        **meta})
+            continue
+        if schema_issues is None:                           # сверка со схемой ФНС — один раз на файл
+            schema_issues = schema.issues(schema.validate(data, parsed["format_version"]))
+        issues += schema_issues
+        duplicate = find_duplicate(db, company.id, parsed, sha)
+        if duplicate is not None:
+            out.append({"file": name, "result": "duplicate", "issues": issues, "document": brief(duplicate),
+                        "message": "Этот документ уже загружен", **meta})
+            continue
+        doc = _store(db, user, parsed, issues, company.id, name, sha, "xml", channel)
+        out.append({"file": name, "result": "created", "issues": issues, "document": brief(doc, _inn(company.inn)),
+                    **meta})
+    return out
+
+
+def known_hashes(db: Session, user: User, hashes: list[str]) -> list[str]:
+    """Какие файлы (SHA-256) уже загружены в доступные пользователю компании — их браузер не отправляет."""
+    from ..clients import service as clients
+    wanted = sorted({h.lower() for h in hashes if len(h) == 64})
+    if not wanted:
+        return []
+    query = select(PrimaryDocument.file_sha256).where(PrimaryDocument.file_sha256.in_(wanted))
+    allowed = clients.allowed_company_ids(db, user)
+    if allowed is not None:
+        query = query.where(PrimaryDocument.company_id.in_(allowed or [""]))
+    return sorted(set(db.execute(query).scalars()))
+
+
 # ------------------------------------------------------------------ печатные формы: черновик → подтверждение
 class RecognizeError(ValueError):
     """Файл не распознан — сообщение для пользователя (status — код ответа API)."""
@@ -426,8 +520,11 @@ def export_selection(db: Session, user: User, *, ids: list[str] | None = None, c
             query = query.filter(PrimaryDocument.doc_date <= date_to)
     if not include_errors:
         query = query.filter(PrimaryDocument.status != "errors")
-    return (query.order_by(PrimaryDocument.doc_date.is_(None), PrimaryDocument.doc_date, PrimaryDocument.created_at)
+    docs = (query.order_by(PrimaryDocument.doc_date.is_(None), PrimaryDocument.doc_date, PrimaryDocument.created_at)
             .limit(EXPORT_LIMIT).all())
+    # v1.70.113 (T-79): документ продажи (компания — продавец) в 1С как поступление не выгружается
+    inns = company_inns(db, {d.company_id for d in docs if d.company_id})
+    return [d for d in docs if not is_sale(d, inns.get(d.company_id, ""))]
 
 
 def errors_left(db: Session, user: User, *, ids: list[str] | None = None, company_id: str | None = None) -> int:
@@ -472,7 +569,8 @@ def _issues(doc: PrimaryDocument) -> list[dict]:
     return value if isinstance(value, list) else []
 
 
-def brief(doc: PrimaryDocument) -> dict:
+def brief(doc: PrimaryDocument, company_inn: str = "") -> dict:
+    """company_inn — ИНН компании документа: по нему direction «out» (продажа) или «in» (расход)."""
     issues = _issues(doc)
     return {
         "id": doc.id, "company_id": doc.company_id, "kind": doc.kind, "function": doc.function,
@@ -491,6 +589,7 @@ def brief(doc: PrimaryDocument) -> dict:
         "exported_at": doc.exported_at.isoformat() if doc.exported_at else None,
         "source": doc.source or "xml",
         "channel": doc.channel or "",
+        "direction": "out" if is_sale(doc, company_inn) else "in",     # v1.70.113 (T-79)
     }
 
 

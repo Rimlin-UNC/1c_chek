@@ -29,7 +29,7 @@ from ..auth import ROLE_ADMIN, require_accountant
 from ..database import get_db
 from ..models import Company, User
 from ..services.audit import log_action
-from . import connect, parser, service
+from . import closing, connect, parser, service
 from .models import BankOperation, BankStatement
 
 router = APIRouter(prefix="/api/v1/bank", tags=["bank"])
@@ -85,6 +85,28 @@ class ConnectionIn(BaseModel):
 class CompanyIn(BaseModel):
     company_id: str | None = Field(None, max_length=36)
     bank: BankId | None = None
+
+
+Side = Literal["expense", "income"]
+
+
+class LinkIn(BaseModel):
+    """v1.70.113 (T-79): ручная привязка платежа к документам (заменяет прежние ручные привязки платежа)."""
+    company_id: str | None = Field(None, max_length=36)
+    side: Side = "expense"
+    operation_id: str = Field(..., min_length=1, max_length=36)
+    document_ids: list[Annotated[str, Field(max_length=36)]] = Field(default_factory=list, max_length=50)
+
+
+class UnlinkIn(BaseModel):
+    company_id: str | None = Field(None, max_length=36)
+    side: Side = "expense"
+    operation_id: str = Field(..., min_length=1, max_length=36)
+
+
+class SettleIn(BaseModel):
+    """После загрузки папки с УПД: пересчитать сверку компаний, куда легли документы."""
+    company_ids: list[Annotated[str, Field(max_length=36)]] = Field(default_factory=list, max_length=200)
 
 
 def _company(db: Session, user: User, company_id: str | None) -> Company:
@@ -310,3 +332,88 @@ def tochka_callback(db: Db, state: Annotated[str, Query(max_length=100)] = "",
     if problem:
         return RedirectResponse(f"/?bank=error&reason={quote(problem[:240])}{company}#/bank", status_code=303)
     return RedirectResponse(f"/?bank=connected{company}#/bank", status_code=303)
+
+
+# ------------------------------------------------------------------ v1.70.113 (T-79): закрытие выписки документами
+def _period(date_from: date | None, date_to: date | None) -> tuple[date | None, date | None]:
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "Начало периода позже конца")
+    return date_from, date_to
+
+
+def _closing_fail(exc: closing.ClosingError) -> HTTPException:
+    return HTTPException(exc.status, str(exc))
+
+
+@router.get("/closing")
+def closing_report(user: Accountant, db: Db, company_id: CompanyId = None, date_from: date | None = None,
+                   date_to: date | None = None) -> dict:
+    """Какие расходы и поступления за период закрыты документами (перед отчётом — пересчёт сверки)."""
+    company = _company(db, user, company_id)
+    start, end = _period(date_from, date_to)
+    return closing.report(db, company, start, end)
+
+
+@router.get("/closing.csv")
+def closing_csv(user: Accountant, db: Db, company_id: CompanyId = None, date_from: date | None = None,
+                date_to: date | None = None, side: Side = "expense") -> Response:
+    company = _company(db, user, company_id)
+    start, end = _period(date_from, date_to)
+    data = closing.report(db, company, start, end)
+    tail = f"{start or 'начало'}_{end or 'сегодня'}"
+    name = f"zakrytie-{'rashody' if side == 'expense' else 'postupleniya'}-{company.inn or company.id[:8]}-{tail}.csv"
+    return Response(closing.to_csv(data, side), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+@router.get("/closing/candidates")
+def closing_candidates(user: Accountant, db: Db, operation_id: Annotated[str, Query(max_length=36)],
+                       company_id: CompanyId = None, side: Side = "expense") -> dict:
+    company = _company(db, user, company_id)
+    try:
+        return closing.candidates(db, company, side, operation_id)
+    except closing.ClosingError as exc:
+        raise _closing_fail(exc) from exc
+
+
+@router.post("/closing/link")
+def closing_link(user: Accountant, db: Db, body: LinkIn) -> dict:
+    company = _company(db, user, body.company_id)
+    try:
+        count = closing.link(db, company, body.side, body.operation_id, body.document_ids, user)
+    except closing.ClosingError as exc:
+        raise _closing_fail(exc) from exc
+    log_action(user, "bank_closing_linked", "bank_operation", body.operation_id,
+               details={"company": company.short_name or company.name, "side": body.side, "documents": count})
+    return {"linked": count, "settle": closing.settle(db, company)}
+
+
+@router.post("/closing/unlink")
+def closing_unlink(user: Accountant, db: Db, body: UnlinkIn) -> dict:
+    company = _company(db, user, body.company_id)
+    try:
+        count = closing.unlink(db, company, body.side, body.operation_id)
+    except closing.ClosingError as exc:
+        raise _closing_fail(exc) from exc
+    if count:
+        log_action(user, "bank_closing_unlinked", "bank_operation", body.operation_id,
+                   details={"company": company.short_name or company.name, "side": body.side})
+    return {"unlinked": count, "settle": closing.settle(db, company)}
+
+
+@router.post("/closing/settle")
+def closing_settle(user: Accountant, db: Db, body: SettleIn) -> dict:
+    """Пересчёт сверки компаний после загрузки папки: только доступные пользователю, итог — по каждой."""
+    from ..clients import service as clients
+    allowed = clients.allowed_company_ids(db, user)            # None — администратор, все компании
+    out = []
+    for cid in dict.fromkeys(body.company_ids):
+        if allowed is not None and cid not in allowed:
+            continue
+        company = db.get(Company, cid)
+        if company is None:
+            continue
+        result = closing.settle(db, company)
+        out.append({"company_id": company.id, "company_name": company.short_name or company.name,
+                    "matched": result["matched"], "expense": result["expense"], "income": result["income"]})
+    return {"companies": out}

@@ -2430,6 +2430,20 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 .gd-profile { max-width: 560px; margin-top: 10px; }
 .gd-own { max-width: 560px; margin: 4px 0 2px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
+/* v1.70.113 (T-79, ADR-43): папка с УПД и «Закрытие документами» в «Банк: выписка» */
+.prim-folder-progress { margin: 8px 0; }
+.prim-folder-sum { margin-top: 10px; }
+.prim-folder-sum p { margin: 4px 0; }
+.prim-folder-problems { margin: 6px 0 0 18px; padding: 0; max-height: 40vh; overflow: auto; font-size: 13px; }
+.bank-cl-controls { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 6px 0 10px; }
+.bank-cl-sum { margin: 6px 0; font-variant-numeric: tabular-nums; }
+.bank-cl-bar { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; margin: 4px 0 12px; }
+.bank-cl-bar span { display: block; height: 100%; background: var(--ok); border-radius: 999px; }
+.bank-cl-table td { vertical-align: top; }
+.bank-cl-purpose { max-width: 32ch; font-size: 13px; color: var(--text-dim); }
+.bank-cl-h { margin: 18px 0 6px; font-size: 15px; }
+.bank-cl-cands { display: grid; gap: 6px; max-height: 50vh; overflow: auto; margin: 8px 0; }
+
 /* v1.70.112 (T-46, ADR-24): согласование авансовых отчётов — карточки, маршрут из трёх шагов, журнал с ПЭП */
 .ap-top { padding-bottom: 14px; }
 .ap-top p { margin: 0 0 10px; max-width: 72ch; }

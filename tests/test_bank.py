@@ -267,12 +267,14 @@ def test_manual_link_and_rematch(client, bank_firm):
         db.add(late)
         db.commit()
         late_id, foreign_id = late.id, foreign.id
-    # документ с номером из назначения платежа (частичная оплата) находится при повторном сопоставлении
+    # документ с номером из назначения платежа находится при повторном сопоставлении. v1.70.113 (T-79): УПД № 45 на
+    # 9 000 ₽ при оплате 15 000 ₽ закрывает платёж частично — на 6 000 ₽ документов нет, запрос остаётся открытым
     res = client.post("/api/v1/bank/match", headers=a["hdr"])
-    assert res.status_code == 200 and res.json()["matched"] == 1
+    assert res.status_code == 200 and res.json()["matched"] == 0
     op14 = _ops(a["id"])["14"]
-    assert op14.match_id == late_id and op14.match_note.endswith("(по номеру из назначения платежа)")
-    assert _payment_requests(a["id"])[op14.id].status == "received"
+    assert op14.status == "open" and op14.match_note == ("частично: УПД № 45 от 20.10.2026 — 9 000,00 ₽; "
+                                                         "осталось 6 000,00 ₽")
+    assert _payment_requests(a["id"])[op14.id].status == "open"
     bad = client.post(f"/api/v1/bank/operations/{ops['12'].id}", headers=a["hdr"],
                       json={"action": "link", "ref_type": "receipt", "ref_id": foreign_id})
     assert bad.status_code == 404                                    # чек чужой компании

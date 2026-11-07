@@ -104,7 +104,10 @@ _unpack = service.unpack          # v1.70.104: разбор архива пер�
 
 @router.post("/upload")
 async def upload(user: Accountant, db: Db, files: Annotated[list[UploadFile], File()],
-                 company_id: Annotated[str | None, Form()] = None) -> dict:
+                 company_id: Annotated[str | None, Form()] = None,
+                 route: Annotated[Literal["auto"] | None, Form()] = None) -> dict:
+    """route=auto (v1.70.113, T-79, папка с УПД): компания каждого документа — по ИНН покупателя (расход) или
+    продавца (продажа) среди доступных пользователю; company_id тогда не нужен."""
     if not files:
         raise HTTPException(400, "Выберите файлы УПД (XML или ZIP)")
     items: list[tuple[str, bytes | None, str]] = []
@@ -117,12 +120,41 @@ async def upload(user: Accountant, db: Db, files: Annotated[list[UploadFile], Fi
         items.extend(_unpack(name, data))
     if len(items) > service.MAX_FILES:
         raise HTTPException(400, f"Не больше {service.MAX_FILES} документов за одну загрузку")
-    results = [service.accept(db, user, body, label, company_id) if body is not None
-               else {"file": label, "result": "rejected", "message": reason, "issues": []}
-               for label, body, reason in items]
+    if route == "auto":
+        results = []
+        for label, body, reason in items:
+            results.extend(service.accept_routed(db, user, body, label) if body is not None
+                           else [{"file": label, "result": "rejected", "message": reason, "issues": []}])
+    else:
+        results = [service.accept(db, user, body, label, company_id) if body is not None
+                   else {"file": label, "result": "rejected", "message": reason, "issues": []}
+                   for label, body, reason in items]
     counts = Counter(r["result"] for r in results)
-    return {"results": results, "created": counts["created"], "duplicates": counts["duplicate"],
-            "rejected": counts["rejected"]}
+    out = {"results": results, "created": counts["created"], "duplicates": counts["duplicate"],
+           "rejected": counts["rejected"]}
+    if route == "auto":
+        companies: dict[str, dict] = {}
+        for r in results:
+            if r.get("company_id"):
+                c = companies.setdefault(r["company_id"], {"company_id": r["company_id"], "name": r["company_name"],
+                                                           "in": 0, "out": 0, "duplicates": 0})
+                if r["result"] == "created":
+                    c[r["direction"]] += 1
+                elif r["result"] == "duplicate":
+                    c["duplicates"] += 1
+        out["companies"] = list(companies.values())
+    return out
+
+
+class KnownIn(BaseModel):
+    """v1.70.113 (T-79): SHA-256 файлов папки — какие уже загружены (их браузер не отправляет)."""
+    hashes: list[Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")]] = Field(
+        default_factory=list, max_length=2000)
+
+
+@router.post("/known")
+def known(user: Accountant, db: Db, body: KnownIn) -> dict:
+    return {"known": service.known_hashes(db, user, body.hashes)}
 
 
 @router.post("/recognize")
@@ -203,7 +235,8 @@ def list_documents(user: Accountant, db: Db,
     rows = (query.order_by(PrimaryDocument.doc_date.is_(None), PrimaryDocument.doc_date.desc(),
                            PrimaryDocument.created_at.desc())
             .offset(offset).limit(limit).all())
-    return {"items": [service.brief(d) for d in rows], "total": total,
+    inns = service.company_inns(db, {d.company_id for d in rows if d.company_id})       # v1.70.113: продажа или расход
+    return {"items": [service.brief(d, inns.get(d.company_id, "")) for d in rows], "total": total,
             "summary": {s: int(counts.get(s, 0)) for s in STATUSES}}
 
 

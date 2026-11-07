@@ -1,7 +1,9 @@
 /* v1.70.60: браузерные сценарии пользователя (Playwright).
    Покрывают типичный путь: вход, отказ входа, настройки с читаемыми
    оглавлениями блоков и сворачиванием. Сервер поднимает конфиг. */
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 
 const password = 'playwright-test-password';
@@ -652,4 +654,65 @@ test('согласование авансового отчёта: сотрудн
   await expect(done.locator('.ap-pep')).toHaveCount(3, { timeout: 15000 });
   await expect(done).toContainText('Содержимое и журнал целы');
   await expect(done.locator('.ap-step.ap-done')).toHaveCount(3);
+});
+
+
+// v1.70.113 (T-79, #63): папка с УПД — браузер отбирает УПД среди файлов (титул покупателя и подпись пропускает),
+// документы ложатся в компанию по ИНН; затем выписка и вкладка «Закрытие документами»: платёж закрыт двумя УПД.
+const CLOSING_INN = '7703001018';
+const CLOSING_SUPPLIER = '5002002027';
+function closingUpd(number, day, base, id) {
+  const vat = base * 22 / 100;
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Файл ИдФайл="${id}" ВерсФорм="5.03" ВерсПрог="E2E"><Документ КНД="1115131" Функция="СЧФДОП" ДатаИнфПр="${day}" ВремИнфПр="10.00.00" НаимЭконСубСост="Продавец"><СвСчФакт НомерДок="${number}" ДатаДок="${day}"><СвПрод><ИдСв><СвЮЛУч НаимОрг="ООО «E2E Поставщик»" ИННЮЛ="${CLOSING_SUPPLIER}" КПП="500201001"/></ИдСв><Адрес><АдрИнф КодСтр="643" НаимСтран="Россия" АдрТекст="г. Тест"/></Адрес></СвПрод><СвПокуп><ИдСв><СвЮЛУч НаимОрг="E2E Закрытие" ИННЮЛ="${CLOSING_INN}" КПП="770301001"/></ИдСв><Адрес><АдрИнф КодСтр="643" НаимСтран="Россия" АдрТекст="г. Тест"/></Адрес></СвПокуп><ДенИзм КодОКВ="643" НаимОКВ="Российский рубль"/></СвСчФакт><ТаблСчФакт><СведТов НомСтр="1" НаимТов="Материалы" ОКЕИ_Тов="796" НаимЕдИзм="шт" КолТов="1" ЦенаТов="${base.toFixed(2)}" СтТовБезНДС="${base.toFixed(2)}" НалСт="22%" СтТовУчНал="${(base + vat).toFixed(2)}"><Акциз><БезАкциз>без акциза</БезАкциз></Акциз><СумНал><СумНал>${vat.toFixed(2)}</СумНал></СумНал></СведТов><ВсегоОпл СтТовБезНДСВсего="${base.toFixed(2)}" СтТовУчНалВсего="${(base + vat).toFixed(2)}"><СумНалВсего><СумНал>${vat.toFixed(2)}</СумНал></СумНалВсего></ВсегоОпл></ТаблСчФакт><СвПродПер><СвПер СодОпер="Товары переданы" ДатаПер="${day}"><ОснПер РеквНаимДок="Договор поставки" РеквНомерДок="12" РеквДатаДок="01.02.2026"/></СвПер></СвПродПер><Подписант СпосПодтПолном="1" Должн="Директор"><ФИО Фамилия="Тестов" Имя="Тест"/></Подписант></Документ></Файл>`;
+}
+
+test('папка с УПД: документы по ИНН компании и «Закрытие документами» в выписке', async ({ page }) => {
+  test.slow();
+  const root = mkdtempSync(join(tmpdir(), 'ym-upd-folder-'));
+  // имена папок — латиницей: Playwright с локальным Chromium зависает на пути папки с кириллицей и пробелом
+  // (у пользователя папку выбирает сам браузер — там имена любые)
+  const folder = join(root, 'edo-oktyabr');
+  mkdirSync(join(folder, 'supplier'), { recursive: true });
+  writeFileSync(join(folder, 'supplier', 'ON_NSCHFDOPPR_e2e_1.xml'), closingUpd('E-101', '05.10.2026', 50000, 'ON_NSCHFDOPPR_e2e_1'));
+  writeFileSync(join(folder, 'supplier', 'ON_NSCHFDOPPR_e2e_2.xml'), closingUpd('E-102', '15.10.2026', 30000, 'ON_NSCHFDOPPR_e2e_2'));
+  writeFileSync(join(folder, 'supplier', 'ON_NSCHFDOPPOK_e2e_1.xml'), closingUpd('E-101', '05.10.2026', 50000, 'ON_NSCHFDOPPOK_e2e_1'));
+  writeFileSync(join(folder, 'supplier', 'ON_NSCHFDOPPR_e2e_1.xml.sig'), 'подпись');
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/primary"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Первичка');
+  await page.locator('#prim-folder').setInputFiles(folder);
+  const results = page.locator('#prim-results');
+  await expect(results).toContainText('УПД загружено: 2', { timeout: 30000 });
+  await expect(results).toContainText('титулы покупателя: 1');
+  await expect(results.locator('table')).toContainText('E2E Закрытие');
+
+  await page.locator('a[href="#/bank"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Банк: выписка');
+  await page.locator('#bank-company').selectOption({ label: 'E2E Закрытие' });
+  const account = '40702810900000000777';
+  const lines = ['1CClientBankExchange', 'ВерсияФормата=1.03', 'Кодировка=Windows', 'ДатаНачала=01.10.2026',
+    'ДатаКонца=31.10.2026', `РасчСчет=${account}`, 'СекцияРасчСчет', 'ДатаНачала=01.10.2026', 'ДатаКонца=31.10.2026',
+    `РасчСчет=${account}`, 'НачальныйОстаток=500000.00', 'КонецРасчСчет', 'СекцияДокумент=Платежное поручение', 'Номер=1',
+    'Дата=10.10.2026', 'Сумма=97600.00', `ПлательщикСчет=${account}`, `ПлательщикИНН=${CLOSING_INN}`, 'Плательщик1=E2E Закрытие',
+    'ПолучательСчет=40702810100000000555', `ПолучательИНН=${CLOSING_SUPPLIER}`, 'Получатель1=ООО «E2E Поставщик»',
+    'ДатаСписано=10.10.2026', 'НазначениеПлатежа=Оплата по счёту 12 за материалы', 'КонецДокумента', 'КонецФайла'];
+  await page.locator('#bank-file').setInputFiles({ name: 'kl_to_1c.txt', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\r\n'), 'utf-8') });
+  await expect(page.locator('#bank-result')).toContainText('Выписка', { timeout: 30000 });
+  await page.locator('#bank-tab-closing').click();
+  // период — явно: по умолчанию «с начала года по сегодня» зависит от часов машины, где идёт прогон
+  await page.locator('#bank-cl-from').fill('2026-10-01');
+  await page.locator('#bank-cl-from').dispatchEvent('change');
+  await expect(page.locator('#bank-cl-from')).toHaveValue('2026-10-01', { timeout: 15000 });
+  await page.locator('#bank-cl-to').fill('2026-10-31');
+  await page.locator('#bank-cl-to').dispatchEvent('change');
+  await expect(page.locator('#bank-cl-to')).toHaveValue('2026-10-31', { timeout: 15000 });
+  const sum = page.locator('#bank-cl-sum');
+  await expect(sum).toContainText('Расходы: 1', { timeout: 15000 });
+  await expect(sum).toContainText('(100 %)');
+  const row = page.locator('.bank-cl-table tbody tr').first();
+  await expect(row).toContainText('закрыт');
+  await expect(row).toContainText('УПД № E-101 от 05.10.2026');
+  await expect(row).toContainText('сумма нескольких документов');
 });

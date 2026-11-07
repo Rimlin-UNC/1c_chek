@@ -659,6 +659,7 @@ def _apply_docs(db: Session, company: Company, bank: str, account: dict, own_acc
     row.ops_total = len(ops)
     row.summary_json = json.dumps(dict(Counter(op["kind"] for op in ops)), ensure_ascii=False)
     saved, duplicates, _ = service.store_ops(db, company.id, row.id, ops)
+    service.store_incomes(db, company.id, row.id, ops)       # v1.70.113 (T-79): поступления — для сверки продаж
     db.flush()
     row.ops_saved = db.query(BankOperation.id).filter(BankOperation.statement_id == row.id).count()
     row.duplicates = duplicates
@@ -719,7 +720,12 @@ def _sync_other(db: Session, conn: BankConnection, company: Company, user: User 
     conn.pending_json = "[]"
     conn.synced_until = hi_all
     db.commit()
-    matched = service.match(db, company.id, saved_all) if saved_all else 0
+    matched = 0
+    if saved_all:                                            # v1.70.113 (T-79): сначала сверка с УПД, затем чеки
+        from . import closing
+        closing.settle_expense(db, company, refresh=False)
+        service.match(db, company.id, saved_all)
+        matched = sum(1 for op in saved_all if op.status == "matched")
     requests = service.sync_requests(db, company.id, service.periods_of(saved_all)) if saved_all else 0
     service.purge(db, company.id)
     result = {"ok": True, "operations": total, "saved": len(saved_all), "duplicates": duplicates, "matched": matched,
@@ -782,7 +788,12 @@ def _sync(db: Session, conn: BankConnection, company: Company, user: User | None
     if not pending:
         conn.synced_until = hi_all
     db.commit()
-    matched = service.match(db, company.id, saved_all) if saved_all else 0
+    matched = 0
+    if saved_all:                                            # v1.70.113 (T-79): сначала сверка с УПД, затем чеки
+        from . import closing
+        closing.settle_expense(db, company, refresh=False)
+        service.match(db, company.id, saved_all)
+        matched = sum(1 for op in saved_all if op.status == "matched")
     requests = service.sync_requests(db, company.id, service.periods_of(saved_all)) if saved_all else 0
     service.purge(db, company.id)
     result = {"ok": True, "operations": total, "saved": len(saved_all), "duplicates": duplicates, "matched": matched,
