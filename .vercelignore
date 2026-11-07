@@ -1,0 +1,57 @@
+# Демо-контур Vercel (ADR-13, T-10).
+#
+# Сборка на Vercel ограничена 500 МБ на функцию, а приложение тянет тяжёлые
+# пакеты (opencv, onnxruntime, rapidocr, tesserocr). В архив для сборки кладём
+# только то, что нужно, чтобы демо открывалось: код приложения, статику
+# и requirements.txt. Документация, тесты, инструменты разработки и
+# JavaScript-обвязка тестов в сборку не попадают.
+#
+# Сама программа от этого файла не зависит: рабочий сервер ставится
+# deploy.sh и берёт весь репозиторий.
+
+# Документация и материалы
+"API 2.0.9 от 10.12.2024/"
+brand/
+docs/
+integration_1c/
+deploy/
+
+# Тесты и инструменты разработки
+tests/
+qa/
+.github/
+supabase/
+test.sh
+deploy.sh
+install.sh
+rollback.sh
+playwright.config.js
+vitest.config.mjs
+eslint.config.mjs
+.stylelintrc.json
+ruff.toml
+requirements-dev.txt
+
+# JavaScript-обвязка тестов: без package.json Vercel не ставит node_modules
+# и не включает их в функцию
+package.json
+package-lock.json
+node_modules/
+
+# Окружения, кеши и данные приложения
+.venv/
+venv/
+data/
+.hypothesis/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.db
+*.db-*
+.env
+.env.*
+!.env.example
+
+# Контейнеры: демо собирается рантаймом Python, а не Docker
+Dockerfile
+docker-compose.yml
