@@ -1,0 +1,19 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"><soap:Header><wsse:Security soap:actor="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"><wsse:BinarySecurityToken EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary" ValueType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3" wsu:Id="CertId">MIIDVTCCAwSgAwIBAgITEgAyS92bmq5GymmV9QAAADJL3TAIBgYqhQMCAgMwfzEjMCEGCSqGSIb3
+    DQEJARYUc3VwcG9ydEBjcnlwdG9wcm8ucnUxCzAJBgNVBAYTAlJVMQ8wDQYDVQQHEwZNb3Njb3cx
+    FzAVBgNVBAoTDkNSWVBUTy1QUk8gTExDMSEwHwYDVQQDExhDUllQVE8tUFJPIFRlc3QgQ2VudGVy
+    IDIwHhcNMTkwMjExMTAzODI5WhcNMTkwNTExMTA0ODI5WjAxMQswCQYDVQQGEwJSVTESMBAGA1UE
+    CgwJQ3J5cHRvUHJvMQ4wDAYDVQQDDAVBbGlhczCBqjAhBggqhQMHAQEBAjAVBgkqhQMHAQIBAgEG
+    CCqFAwcBAQIDA4GEAASBgKbEQ1IA3xlw3CPfIA+XoiJFAS8R361cQ8uGGW/2kTGDFHvar4WnE/Iq
+    +p1BVhJwveboiOfC+gZqNPVS5g33M0Ch/wMDcfGdHTCNoWoD22w2ts3YPjcKil2Db0UIf5mJ7kzr
+    qpySTn6cXUFdBxIah0/DzneHuAT6we57qT4BXOswo4IBWzCCAVcwDgYDVR0PAQH/BAQDAgbAMB0G
+    A1UdDgQWBBT2osv+rsr5QEIOpHSG6uV2WaIkPjAfBgNVHSMEGDAWgBQVMXywjRreZtcVnElSlxck
+    uQF6gzBZBgNVHR8EUjBQME6gTKBKhkhodHRwOi8vdGVzdGNhLmNyeXB0b3Byby5ydS9DZXJ0RW5y
+    b2xsL0NSWVBUTy1QUk8lMjBUZXN0JTIwQ2VudGVyJTIwMi5jcmwwgakGCCsGAQUFBwEBBIGcMIGZ
+    MGEGCCsGAQUFBzAChlVodHRwOi8vdGVzdGNhLmNyeXB0b3Byby5ydS9DZXJ0RW5yb2xsL3Rlc3Qt
+    Y2EtMjAxNF9DUllQVE8tUFJPJTIwVGVzdCUyMENlbnRlciUyMDIuY3J0MDQGCCsGAQUFBzABhiho
+    dHRwOi8vdGVzdGNhLmNyeXB0b3Byby5ydS9vY3NwL29jc3Auc3JmMAgGBiqFAwICAwNBAItAqLUg
+    uTkm9+82KxaO06xq8/o7tIojQDCveY8ysJgbuPilt4CsCPX0ZBlF2h95vdTcy141/OXNnbLS02kR
+    iDw=</wsse:BinarySecurityToken><Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"/><SignatureMethod Algorithm="urn:ietf:params:xml:ns:cpxmlsec:algorithms:gostr34102012-gostr34112012-512"/><Reference URI="#PostRegistrationRequest"><DigestMethod Algorithm="urn:ietf:params:xml:ns:cpxmlsec:algorithms:gostr34112012-512"/><DigestValue>KT6/zXNFPhwlE15mFUhbgVR0eMzQF22gvO1K1Py4dxdNjZabEDnQ2qdqnwcAsPnbcIFkC6j7cfjv
+    p/fNjsg1RA==</DigestValue></Reference></SignedInfo><SignatureValue>aLQWq/ZOdIlDGpW8xc1/aAM1nDPFQxl5mGynlhn8KscQqJUmkYEc/5CMXgmoccBrI462SObBhZzE
+    mxaMB8rVas/+LriiHPVME7QiFbUYNBs0et95dUbFzzNRDXm5hsKUrW4XXQpbReOJRioYx4BB1Wyg
+    fKPlUkvNNhkgIyIB61Y=</SignatureValue><KeyInfo><wsse:SecurityTokenReference><wsse:Reference URI="#CertId" ValueType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3"/></wsse:SecurityTokenReference></KeyInfo></Signature></wsse:Security></soap:Header><soap:Body><SendMessageRequest xmlns="urn://x-artefacts-gnivc-ru/inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0"><Message><ns:PostRegistrationRequest xmlns:ns="urn://x-artefacts-gnivc-ru/ais3/SMZ/SmzPartnersIntegrationService/types/1.0" wsu:Id="PostRegistrationRequest">                        </ns:PostRegistrationRequest></Message></SendMessageRequest></soap:Body></soap:Envelope>

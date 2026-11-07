@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Аутентификация и авторизация: JWT (HS256), PBKDF2-хеширование паролей, RBAC.
 """
@@ -45,11 +45,22 @@ def hash_password(password: str) -> str:
     return f"pbkdf2${_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
 
 
+# v1.70.38 (аудит): потолок числа итераций в записи хэша. Значение берётся из
+# самой записи, поэтому битая или подделанная строка вроде
+# «pbkdf2$999999999999$..$..» заставляла бы процесс считать хэш часами —
+# прожог ЦП без единого падения в журнал. Граница растёт вместе с рабочей
+# константой, так что повышение итераций в будущем проверку не сломает.
+_PBKDF2_ITERS_MAX = max(1_000_000, _PBKDF2_ITERATIONS * 4)
+
+
 def verify_password(password: str, stored: str) -> bool:
     try:
         _, iters, salt_hex, digest_hex = stored.split("$")
+        iters = int(iters)
+        if not 1000 <= iters <= _PBKDF2_ITERS_MAX:
+            return False            # запись не похожа на нашу — не жжём ЦП
         digest = hashlib.pbkdf2_hmac(
-            "sha256", password.encode(), bytes.fromhex(salt_hex), int(iters)
+            "sha256", password.encode(), bytes.fromhex(salt_hex), iters
         )
         return hmac.compare_digest(digest.hex(), digest_hex)
     except Exception:
@@ -147,6 +158,15 @@ def get_current_user(
     user = db.get(User, payload.get("sub", ""))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Пользователь не найден или отключён")
+    # v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер работает в выбранной компании клиента —
+    # заголовок X-Ym-Company; компания должна быть назначена ему администратором (иначе 403)
+    requested = request.headers.get("x-ym-company")
+    if requested and user.role == ROLE_ACCOUNTANT:
+        from .clients import service as clients
+        try:
+            clients.activate(db, user, requested)
+        except clients.ClientsError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
     return user
 
 

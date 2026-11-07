@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Главный модуль: FastAPI-приложение, WebSocket-канал статусов, раздача SPA.
 """
@@ -16,16 +16,25 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .security import (rate_limit_middleware, secret_is_weak,
                        security_headers_middleware)
 from .database import init_db
+from .approvals import router as approvals_router
+from .bank import router as bank_router
+from .clients import router as clients_router
+from .exportpkg import router as exportpkg_router
+from .goods import router as goods_router
+from .docreq import router as docreq_router
+from .primary import mail_router as primary_mail_router
+from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
-                      receipts, settings_routes, users, webauthn)
+                      receipts, settings_routes, supabase_demo, users, webauthn)
 from .services.events import broadcast, register_loop, subscribe, unsubscribe
+from .unified import router as unified_router
 
 import datetime as _dt
 import os as _os
@@ -89,12 +98,25 @@ async def lifespan(app: FastAPI):
 
     # v1.68.0: демоны очереди автозагрузки деталей чеков (2 воркера)
     try:
-        from .routers.receipts import start_fetch_workers
+        from .routers.receipts import (start_fetch_workers,
+                                       start_limit_retry_worker)
         _n = start_fetch_workers()
         if _n:
             log.info("fetch queue workers started: %d", _n)
+        # v1.70.70: чеки, ожидавшие сброса суточного лимита ФНС,
+        # проверяются автоматически после его сброса
+        if start_limit_retry_worker():
+            log.info("fns limit retry worker started")
     except Exception:                                    # noqa: BLE001
         log.exception("fetch queue workers start failed")
+
+    # v1.70.51: мониторинг OpenStack — поток опроса, если включён в настройках
+    try:
+        from .openstack_monitor import worker as os_worker
+        if os_worker.start_worker():
+            log.info("openstack monitor worker auto-started")
+    except Exception:                                    # noqa: BLE001
+        log.exception("openstack monitor worker start failed")
 
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:
@@ -112,8 +134,68 @@ async def lifespan(app: FastAPI):
             except Exception:                            # noqa: BLE001
                 log.exception("mail bot tick failed")
 
+    # v1.70.97 (T-58): напоминания «что нужно от клиента» — тик раз в минуту, отдельно от ботов:
+    # приходят по любому подключённому каналу (Telegram, MAX, почта) у компаний, где их включил бухгалтер
+    _bank_purged = {"day": ""}
+
+    def _doc_requests_once() -> None:
+        from .bank import service as bank
+        from .database import SessionLocal
+        from .docreq import service as docreq
+        db = SessionLocal()
+        try:
+            docreq.tick(db)
+            # v1.70.98 (T-45): срок хранения банковских операций — раз в сутки, даже если выписки больше не грузят
+            today = docreq.now_msk().date().isoformat()
+            if _bank_purged["day"] != today:
+                _bank_purged["day"] = today
+                bank.purge(db)
+        finally:
+            db.close()
+        # v1.70.99 (ADR-29): выписки из банка по API — подключённым компаниям раз в 6 часов (не больше трёх
+        # за тик); отдельная сессия и свой перехват: сбой банка не мешает напоминаниям, и наоборот
+        from .bank import connect as bank_api
+        db = SessionLocal()
+        try:
+            bank_api.sync_due(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("bank api tick failed")
+        finally:
+            db.close()
+        # v1.70.104 (T-63, ADR-34): первичка из почтовых ящиков компаний — раз в 15 минут (не больше трёх ящиков
+        # за тик), распознавание очереди PDF и сканов, раз в сутки — чистка; свой перехват, как у банка
+        from .primary import mailbox as primary_mailbox
+        db = SessionLocal()
+        try:
+            primary_mailbox.check_due(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("primary mailbox tick failed")
+        finally:
+            db.close()
+        # v1.70.112 (T-46, ADR-24): согласование авансовых отчётов — этап без ответа за срок компании (72 ч)
+        # считается согласованным, затем уведомления в Telegram и MAX; свой перехват, как у банка и почты
+        from .approvals import service as approvals
+        db = SessionLocal()
+        try:
+            approvals.tick(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("approvals tick failed")
+        finally:
+            db.close()
+
+    async def _doc_requests_loop() -> None:
+        import asyncio as _aio
+        while True:
+            await _aio.sleep(60)
+            try:      # в отдельном потоке: отправка по сети не должна держать сервер
+                await _aio.to_thread(_doc_requests_once)
+            except Exception:                            # noqa: BLE001
+                log.exception("doc requests tick failed")
+
     import asyncio as _asyncio
     _asyncio.get_running_loop().create_task(_mail_bot_loop())
+    if _os.environ.get("YM_DOCREQ_OFF") != "1":           # тесты вызывают тик сами, с подменёнными каналами
+        _asyncio.get_running_loop().create_task(_doc_requests_loop())
     if secret_is_weak(settings.SECRET_KEY):              # v1.67.1: аудит
         log.warning("SECRET_KEY не задан, дефолтный или короче 32 символов — "
                     "задайте длинный случайный SECRET_KEY в .env (иначе "
@@ -140,7 +222,7 @@ app = FastAPI(
     description=(
         "REST API системы сканирования кассовых чеков и загрузки их в 1С.\n\n"
         "Разработчик и владелец идеи: **ООО «Ямастер»** — [ymaster.ru](https://ymaster.ru), "
-        "info@ymaster.ru\n\n"
+        "chek@ymaster.ru\n\n"
         "Разделы: Аутентификация · Чеки · Аналитика · Настройки · Пользователи · Интеграция 1С"
     ),
     lifespan=lifespan,
@@ -148,6 +230,83 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+
+# --------------------------------------------------------------------------
+#  v1.70.38: честная схема OpenAPI
+#
+#  Фаззинг по схеме (schemathesis, 36 723 тест-кейса) показал 110 расхождений
+#  между документацией и тем, что приложение отдаёт на самом деле. Причины три,
+#  все лечатся в одном месте и НЕ меняют поведение приложения — только описание:
+#   • на 422 FastAPI документирует {"detail": [{loc, msg, type}, …]}, а наш
+#     обработчик (_safe_validation_handler ниже) отдаёт {"detail": "текст"} —
+#     строку человеческим языком, её показывает интерфейс. Сгенерированный
+#     клиент спотыкался бы об это на каждой ошибке валидации;
+#   • ответы 401/403/429 не были объявлены вовсе, хотя приложение их
+#     возвращает: авторизация, права роли и лимит частоты по IP;
+#   • CSV-выгрузки отдают text/csv, а схема обещала application/json.
+#  Проверка «документация = факт» зафиксирована тестами TestOpenApiContract в
+#  tests/test_v17038.py.
+# --------------------------------------------------------------------------
+_API_ERROR_SCHEMA = {
+    "type": "object",
+    "title": "ApiError",
+    "properties": {
+        "detail": {
+            "type": "string",
+            "description": "Причина отказа человеческим языком",
+        },
+    },
+    "required": ["detail"],
+}
+
+
+def _error_response(description: str) -> dict:
+    """Описание ответа-ошибки: у всех отказов приложения одна форма тела."""
+    return {
+        "description": description,
+        "content": {"application/json": {
+            "schema": {"$ref": "#/components/schemas/ApiError"}}},
+    }
+
+
+_default_openapi = app.openapi
+
+
+def custom_openapi() -> dict:
+    """Штатная схема, приведённая к фактическим ответам приложения."""
+    schema = _default_openapi()          # собирает и кэширует штатную схему
+    schema.setdefault("components", {}).setdefault(
+        "schemas", {})["ApiError"] = _API_ERROR_SCHEMA
+    for path, item in (schema.get("paths") or {}).items():
+        for method, op in (item or {}).items():
+            if not isinstance(op, dict) or not isinstance(op.get("responses"), dict):
+                continue
+            responses = op["responses"]
+            if "422" in responses:
+                responses["422"] = _error_response(
+                    "Запрос не прошёл проверку: поле пустое, значение вне "
+                    "диапазона или не того типа")
+            if op.get("security"):
+                responses.setdefault("401", _error_response(
+                    "Нет токена, токен истёк или подделан"))
+                responses.setdefault("403", _error_response(
+                    "Прав недостаточно: роль не та или объект чужой"))
+            if path.startswith(("/api/", "/onec/")):
+                responses.setdefault("429", _error_response(
+                    "Слишком много запросов: повторите позже "
+                    "(интервал — в заголовке Retry-After)"))
+            if path.endswith(("export.csv", "export-csv")) and "200" in responses:
+                ok = responses["200"]
+                if isinstance(ok, dict):
+                    ok["description"] = ("CSV-файл: разделитель «;», "
+                                         "кодировка UTF-8")
+                    ok["content"] = {"text/csv": {
+                        "schema": {"type": "string", "format": "binary"}}}
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 @app.exception_handler(RequestValidationError)
@@ -284,8 +443,13 @@ async def ws_status(ws: WebSocket):
 # --------------------------------------------------------------------------
 #  Служебные эндпоинты
 # --------------------------------------------------------------------------
-@app.api_route("/health", methods=["GET", "HEAD"], tags=["Служебные"],
-               summary="Проверка работоспособности")
+# v1.70.38: было @app.api_route(..., methods=["GET", "HEAD"]) — FastAPI
+# выдавал ОБА operation с одним operationId (health_health_get), схема
+# OpenAPI получалась с дублем: генераторы клиентов и фаззеры на такой схеме
+# спотыкаются. HEAD для GET-маршрута Starlette добавляет сам, поэтому
+# достаточно @app.get — и проверка nginx/systemd (`curl -I /health`) работает.
+@app.get("/health", tags=["Служебные"], summary="Проверка работоспособности")
+@app.head("/health", include_in_schema=False)   # v1.70.103: HEAD явно — раньше отвечал SPA-фолбэк (теперь 404)
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION,
             "vendor": settings.VENDOR, "site": settings.VENDOR_SITE}
@@ -296,10 +460,13 @@ def about():
     from .models import Receipt
     from .database import SessionLocal
     from .services import max_bot as _mx
+    from .services import splash as _splash
     db = SessionLocal()
     try:
         receipts_count = db.query(Receipt).count()
         mx_username = _mx.bot_username(db, refresh=False)  # v1.70.1
+        splash_seconds = _splash.seconds(db)               # v1.70.100: длительность заставки (до входа)
+        splash_guests = _splash.guests(db)                 # v1.70.103: заставка и для гостей (по умолчанию нет)
     finally:
         db.close()
     return {
@@ -310,7 +477,9 @@ def about():
         "email": settings.VENDOR_EMAIL,
         "max_bot_username": mx_username,
         "receipts_total": receipts_count,
-        "fns_provider_default": settings.FNS_PROVIDER,
+        "fns_provider": "fns",
+        "splash_seconds": splash_seconds,
+        "splash_guests": splash_guests,
     }
 
 
@@ -324,6 +493,17 @@ app.include_router(mail_admin.public_router)   # v1.44.0: отписка (пуб
 app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)
+app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
+app.include_router(unified_router.router)  # единый фискальный документ
+# v1.70.104 (T-63): первичка из почты — раньше основного роутера первички, иначе /inbox поймал бы /{doc_id}
+app.include_router(primary_mail_router.router)
+app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
+app.include_router(docreq_router.router)  # v1.70.97: что нужно от клиента (T-58)
+app.include_router(bank_router.router)  # v1.70.98: банковская выписка (T-45)
+app.include_router(clients_router.router)  # v1.70.100: рабочее место аутсорсера (T-50)
+app.include_router(exportpkg_router.router)  # v1.70.100: пакет для других учётных систем (T-68)
+app.include_router(goods_router.router)  # v1.70.101: понимание чеков (T-69)
+app.include_router(approvals_router.router)  # v1.70.112: согласование авансовых отчётов (T-46)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)
@@ -346,12 +526,87 @@ app.include_router(pool_api.router)        # v1.39.0: /api/v1/pool-api/* (агр
 app.include_router(pool_my.router)         # v1.32.0: /api/v1/pool-my/*
 app.include_router(maxapp.router)          # v1.69.0: /api/v1/maxapp/* (мини-приложение MAX)
 
+# v1.70.45: контур B2B — доступ компаний и ИП к платному API. Третий контур
+# (ядро, Чек-Пул, B2B): свой JWT typ=b2b, свои таблицы b2b_*, свои страницы.
+from .b2b import router_admin as b2b_admin  # noqa: E402
+from .b2b import router_public as b2b_public  # noqa: E402
+
+app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
+app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
+
+# v1.70.51: мониторинг OpenStack (docs/Monitor.md). Внутренний контур для
+# администратора: настройки подключения, показатели, история и журнал.
+# Префикс общий для всей программы — /api/v1/openstack/*, поэтому в список
+# исключений SPA-перехвата ниже он уже входит (api/).
+from .openstack_monitor import router as openstack_router  # noqa: E402
+
+app.include_router(openstack_router.router)  # /api/v1/openstack/* (админ)
+
+# v1.70.47: публичная оферта. Страница /oferta должна отдаваться ДО
+# SPA-перехвата ниже, иначе запрос уйдёт в веб-клиент и пользователь,
+# поставивший галочку «согласен с условиями оферты», не увидел бы условий.
+# Без авторизации: документ читается до принятия его условий.
+from .legal import page as legal_page  # noqa: E402
+
+app.include_router(legal_page.router)      # /oferta, /oferta.txt, /api/v1/legal/*
+
+# v1.70.106 (T-75, ADR-36): страницы под кластеры запросов — серверный HTML без скриптов, тоже до SPA-перехвата
+from .services import seo_pages as _seo_pages  # noqa: E402
+
+app.include_router(_seo_pages.router)      # /kak-proverit-chek, /cheki-sotrudnikov-v-1c, /dlya-buhgalterov
+
 
 # --------------------------------------------------------------------------
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static
 # --------------------------------------------------------------------------
 from .config import BASE_DIR  # noqa: E402
+from .services import seo as _seo  # noqa: E402
 STATIC_DIR = BASE_DIR / "app" / "static"
+
+
+# v1.70.103 (T-74, ADR-33): SEO стартовой страницы. Главная отдаётся с подстановкой вместо метки seo:head:
+# canonical при разрешённой индексации, иначе noindex, и коды подтверждения поисковиков. Индексация решается по
+# адресу (Host), а не по роботу: люди и роботы получают одну и ту же страницу (не клоакинг).
+def _scheme(request: Request) -> str:
+    return (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+
+
+def _index_response(request: Request, status_code: int = 200) -> HTMLResponse:
+    from .database import SessionLocal
+    template = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    host = request.headers.get("host")
+    cfg = _seo.load_safely(SessionLocal)          # база недоступна — значения по умолчанию, главная открывается
+    enabled = _seo.indexing_enabled(cfg, host)
+    body = _seo.render_index(template, cfg, host, _scheme(request))
+    headers = {} if enabled and status_code == 200 else {"X-Robots-Tag": "noindex, nofollow"}
+    return HTMLResponse(body, status_code=status_code, headers=headers)
+
+
+@app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
+def robots_txt(request: Request):
+    """Правила для роботов: на рабочем адресе — открыто всё, кроме служебных разделов; иначе — всё закрыто."""
+    from .database import SessionLocal
+    text = _seo.robots_txt(_seo.load_safely(SessionLocal), request.headers.get("host"), _scheme(request))
+    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+
+
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
+def sitemap_xml(request: Request):
+    """Карта сайта — только при разрешённой индексации (иначе 404); дата — последнего обновления главной."""
+    from datetime import date
+
+    from .database import SessionLocal
+    lastmod = date.fromtimestamp((STATIC_DIR / "index.html").stat().st_mtime).isoformat()
+    xml = _seo.sitemap_xml(_seo.load_safely(SessionLocal), request.headers.get("host"), _scheme(request), lastmod)
+    if xml is None:
+        return JSONResponse({"detail": "Not found"}, status_code=404, headers={"X-Robots-Tag": "noindex"})
+    return Response(xml, media_type="application/xml; charset=utf-8")
+
+
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+def favicon():
+    """Значок по адресу по умолчанию (его запрашивают браузеры и роботы) — PNG 64×64."""
+    return FileResponse(STATIC_DIR / "img" / "icon-64.png", media_type="image/png")
 
 # Каталог assets должен существовать (git не хранит пустые папки — страховка)
 (STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
@@ -360,6 +615,7 @@ app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets"
 
 @app.get("/maxapp", include_in_schema=False)
 @app.get("/maxapp/", include_in_schema=False)
+@app.head("/maxapp/", include_in_schema=False)   # v1.70.103: HEAD явно (SPA-фолбэк теперь 404)
 @app.get("/maxapp/{fname}", include_in_schema=False)
 async def maxapp_page(fname: str = ""):
     """Мини-приложение MAX (v1.69.0): статика без авторизации.
@@ -376,17 +632,50 @@ async def maxapp_page(fname: str = ""):
     return FileResponse(static / "index.html")
 
 
+@app.get("/b2b", include_in_schema=False)
+@app.get("/b2b/", include_in_schema=False)
+@app.head("/b2b/", include_in_schema=False)      # v1.70.103: HEAD явно (SPA-фолбэк теперь 404)
+@app.get("/b2b/{fname}", include_in_schema=False)
+async def b2b_page(fname: str = ""):
+    """Кабинет компании для доступа к платному API (v1.70.45).
+
+    Страница отдельная (как /maxapp/) и НЕ связана ссылками с публичным
+    лендингом: раздел «API для бизнеса» виден только компаниям,
+    подтвердившим статус. Содержимое раздела отдаёт /api/v1/b2b/content
+    после проверки статуса — сама статика данных не содержит.
+    """
+    if "/" in fname or ".." in fname or fname.startswith("."):
+        raise HTTPException(status_code=404)
+    static = BASE_DIR / "app" / "static" / "b2b"
+    if fname:
+        f = static / fname
+        return FileResponse(f) if f.is_file() \
+            else JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(static / "index.html")
+
+
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-async def spa(full_path: str):
-    """SPA-fallback: всё, что не API, отдаёт веб-клиент."""
-    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/")):
+async def spa(full_path: str, request: Request = None):
+    """SPA-fallback: всё, что не API, отдаёт веб-клиент.
+
+    v1.70.103: главная — «/» и «/index.html» (200); прочие несуществующие адреса — 404 с той же оболочкой
+    и noindex: раньше любой адрес отвечал 200 копией главной («мягкие 404», дубли в поиске). Программа
+    ходит по разделам через «#/…», поэтому живых адресов без файла у неё нет.
+    """
+    if full_path.startswith(("api/", "onec/", "ws/", "maxapp/", "b2b/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     if ".." in full_path:
         # v1.70.11: страховка от траверсала сверх нормализации сервера
         # (живая проверка v1.70.11: и так не эксплуатируется, но замок важнее)
         return JSONResponse({"detail": "Not found"}, status_code=404)
-    # Прямые файлы (manifest, sw, иконки)
+    # главная и «/index.html» — всегда с подстановкой seo:head (canonical или noindex), а не сырым файлом
+    if full_path in ("", "index.html") and request is not None:
+        return _index_response(request, 200)
+    # Прямые файлы (manifest, sw, иконки, шрифты)
     candidate = STATIC_DIR / full_path
     if full_path and candidate.is_file():
         return FileResponse(candidate)
-    return FileResponse(STATIC_DIR / "index.html")
+    status_code = 200 if full_path in ("", "index.html") else 404
+    if request is None:                                  # прямой вызов функции (тесты) — без подстановки
+        return FileResponse(STATIC_DIR / "index.html", status_code=status_code)
+    return _index_response(request, status_code)

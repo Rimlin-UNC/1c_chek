@@ -5,7 +5,7 @@
 # вёрстке с классом hidden, но showPublicScreen/showPoolScreen заполняли
 # только #public-root/#pool-account-root и НИКТО не снимал hidden —
 # гость видел пустую страницу вместо «Сдать чек» и кабинета.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 

@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Подключение к базе данных (SQLAlchemy).
 """
@@ -30,7 +30,6 @@ def _utcnow() -> "object":
 
 class Base(DeclarativeBase):
     """Базовый класс всех ORM-моделей."""
-    pass
 
 
 _connect_args = {}
@@ -54,6 +53,11 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def _set_sqlite_pragma(dbapi_connection, connection_record):  # pragma: no cover
     """Включаем WAL для SQLite, чтобы параллельные чтения не блокировали запись."""
     if settings.DATABASE_URL.startswith("sqlite"):
+        # SQLite lower() не обрабатывает кириллицу: для поиска по сохранённым
+        # полям используем один и тот же Unicode casefold на каждом соединении.
+        dbapi_connection.create_function("ym_casefold", 1,
+            lambda value: str(value).casefold() if value is not None else None,
+            deterministic=True)
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         # v1.67.1 (аудит/стресс): параллельные записи ждут блокировку до 5 с
@@ -76,7 +80,14 @@ def get_db():
 def init_db() -> None:
     """Создание таблиц при первом запуске + лёгкая миграция новых колонок."""
     from . import models  # noqa: F401 — регистрируем модели
+    from .approvals import models as _approvals_models  # noqa: F401 — v1.70.112: согласование авансовых отчётов (T-46)
+    from .bank import models as _bank_models  # noqa: F401 — v1.70.98: банковская выписка (T-45)
+    from .clients import models as _clients_models  # noqa: F401 — v1.70.100: клиенты бухгалтера (T-50)
+    from .docreq import models as _docreq_models  # noqa: F401 — v1.70.97: что нужно от клиента
+    from .goods import models as _goods_models  # noqa: F401 — v1.70.101: память исправлений (T-69)
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
+    from .primary import models as _primary_models  # noqa: F401 — v1.70.94: первичка (УПД)
+    from .unified import models as _unified_models  # noqa: F401 — единый фискальный документ
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
     try:  # v1.31.0: добавляющая миграция пула (vid у pool_users + pool_consents)
@@ -85,8 +96,24 @@ def init_db() -> None:
     except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
         import traceback
         traceback.print_exc()
+    try:  # v1.70.45: таблицы контура B2B (доступ компаний к платному API)
+        from .b2b import models as _b2b_models  # noqa: F401
+        from .b2b.models import ensure_b2b_schema
+        ensure_b2b_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
+    try:  # v1.70.51: таблицы мониторинга OpenStack (docs/Monitor.md)
+        from .openstack_monitor import models as _os_models  # noqa: F401
+        from .openstack_monitor.models import ensure_openstack_schema
+        ensure_openstack_schema(engine)
+    except Exception:  # noqa: BLE001 — миграция не должна останавливать сервис
+        import traceback
+        traceback.print_exc()
     _backfill_assignee_lc()
     _backfill_full_data()
+    _backfill_marking()
+    _backfill_retail_place()
     _enable_pool_once()               # v1.59.0: приём чеков включён при обновлении
     # v1.12.0/1.12.1: распределение данных по компаниям из «памятки» + ремонт
     # названий. Страховка: сбой миграции НЕ должен останавливать сервис —
@@ -99,6 +126,19 @@ def init_db() -> None:
         except Exception:  # noqa: BLE001
             import traceback
             traceback.print_exc()
+    # v1.70.82: единый реестр чеков — сверка канона с рабочими таблицами.
+    # Нужна после отката на версию без единого реестра и повторного
+    # обновления: старая версия меняла только реестр и пул. Только
+    # однозначные исправления, с журналом; сбой не останавливает сервис.
+    from .unified.reconcile import links_on_startup, reconcile_on_startup
+    reconcile_on_startup()
+    # v1.70.88 (фаза 4а, T-37): фискальные данные копий реестра и пула — к
+    # единой записи (правки старой версии после отката, пропущенная фоновая
+    # синхронизация). Отдельная транзакция; сбой не останавливает сервис.
+    from .unified.copies import copies_on_startup
+    copies_on_startup()
+    # v1.70.85: заявки компаний на чужие чеки — граница истории и сверка связей.
+    links_on_startup()
 
 
 def _enable_pool_once() -> None:
@@ -158,6 +198,32 @@ def _ensure_schema() -> None:
              "ALTER TABLE companies ADD COLUMN limit_per_month FLOAT NULL"),
             ("forbidden_categories",
              "ALTER TABLE companies ADD COLUMN forbidden_categories VARCHAR(1000) DEFAULT ''"),
+            # v1.70.86 («Единая база», фаза 3): показ числа организаций компании.
+            # NOT NULL DEFAULT FALSE — одинаково в SQLite и PostgreSQL (DEFAULT 0
+            # PostgreSQL для BOOLEAN не принимает).
+            ("show_companies_count",
+             "ALTER TABLE companies ADD COLUMN show_companies_count BOOLEAN NOT NULL DEFAULT FALSE"),
+        ],
+        "pool_users": [
+            # v1.70.37: канал регистрации и метка «пришёл через MAX»
+            ("reg_source",
+             "ALTER TABLE pool_users ADD COLUMN reg_source VARCHAR(16) DEFAULT ''"),
+            # v1.70.37: профиль из MAX — заполняется только после согласия
+            ("first_name",
+             "ALTER TABLE pool_users ADD COLUMN first_name VARCHAR(64) DEFAULT ''"),
+            ("last_name",
+             "ALTER TABLE pool_users ADD COLUMN last_name VARCHAR(64) DEFAULT ''"),
+            ("photo_url",
+             "ALTER TABLE pool_users ADD COLUMN photo_url VARCHAR(512) DEFAULT ''"),
+            ("language",
+             "ALTER TABLE pool_users ADD COLUMN language VARCHAR(8) DEFAULT ''"),
+            # v1.70.37: согласие 152-ФЗ на данные из MAX (момент/версия/канал)
+            ("consent_at",
+             "ALTER TABLE pool_users ADD COLUMN consent_at DATETIME NULL"),
+            ("consent_version",
+             "ALTER TABLE pool_users ADD COLUMN consent_version VARCHAR(16) DEFAULT ''"),
+            ("consent_source",
+             "ALTER TABLE pool_users ADD COLUMN consent_source VARCHAR(16) DEFAULT ''"),
         ],
         "audit_log": [
             ("company_id", "ALTER TABLE audit_log ADD COLUMN company_id VARCHAR(36) NULL"),
@@ -174,6 +240,7 @@ def _ensure_schema() -> None:
             # v1.55.0: расширенные поля источника (proverkacheka: место
             # расчётов, касса, смена, налог, свойства заказа и др.)
             ("ext_json", "ALTER TABLE receipts ADD COLUMN ext_json TEXT DEFAULT ''"),
+            ("retail_place_index", "ALTER TABLE receipts ADD COLUMN retail_place_index TEXT NULL"),
             # --- v1.11.0: мультикомпанийность ---
             ("company_id", "ALTER TABLE receipts ADD COLUMN company_id VARCHAR(36) NULL"),
             # --- v1.2.0: полные данные чека + флаг уведомления ---
@@ -193,6 +260,74 @@ def _ensure_schema() -> None:
             # v1.62.0: нарушения политики расходов (мягкая пометка)
             ("policy_flags",
              "ALTER TABLE receipts ADD COLUMN policy_flags VARCHAR(200) DEFAULT ''"),
+            # --- v1.70.72: разбор чека для пула и фильтров ---
+            ("region_code",
+             "ALTER TABLE receipts ADD COLUMN region_code VARCHAR(4) DEFAULT ''"),
+            ("region_name",
+             "ALTER TABLE receipts ADD COLUMN region_name VARCHAR(120) DEFAULT ''"),
+            ("region_city",
+             "ALTER TABLE receipts ADD COLUMN region_city VARCHAR(120) DEFAULT ''"),
+            ("industry",
+             "ALTER TABLE receipts ADD COLUMN industry VARCHAR(100) DEFAULT ''"),
+            ("industry_lc",
+             "ALTER TABLE receipts ADD COLUMN industry_lc VARCHAR(100) DEFAULT ''"),
+            ("product_group",
+             "ALTER TABLE receipts ADD COLUMN product_group VARCHAR(100) DEFAULT ''"),
+            ("taxation",
+             "ALTER TABLE receipts ADD COLUMN taxation VARCHAR(40) DEFAULT ''"),
+            ("taxation_name",
+             "ALTER TABLE receipts ADD COLUMN taxation_name VARCHAR(60) DEFAULT ''"),
+            ("pay_type",
+             "ALTER TABLE receipts ADD COLUMN pay_type VARCHAR(20) DEFAULT ''"),
+        ],
+        # v1.70.72: полные реквизиты позиции (документ ФНС)
+        "receipt_items": [
+            ("product_type",
+             "ALTER TABLE receipt_items ADD COLUMN product_type INTEGER NULL"),
+            ("payment_type",
+             "ALTER TABLE receipt_items ADD COLUMN payment_type INTEGER NULL"),
+            ("unit",
+             "ALTER TABLE receipt_items ADD COLUMN unit VARCHAR(20) DEFAULT ''"),
+            ("product_group",
+             "ALTER TABLE receipt_items ADD COLUMN product_group VARCHAR(100) DEFAULT ''"),
+            ("industry",
+             "ALTER TABLE receipt_items ADD COLUMN industry VARCHAR(100) DEFAULT ''"),
+            ("extra_json",
+             "ALTER TABLE receipt_items ADD COLUMN extra_json TEXT DEFAULT ''"),
+            ("marking_present",
+             "ALTER TABLE receipt_items ADD COLUMN marking_present BOOLEAN NULL"),
+            # v1.70.101 (T-69, ADR-31): категория позиции, источник, уверенность и причина
+            ("goods_category",
+             "ALTER TABLE receipt_items ADD COLUMN goods_category VARCHAR(40) DEFAULT ''"),
+            ("group_source",
+             "ALTER TABLE receipt_items ADD COLUMN group_source VARCHAR(20) DEFAULT ''"),
+            ("group_score",
+             "ALTER TABLE receipt_items ADD COLUMN group_score FLOAT NULL"),
+            ("group_note",
+             "ALTER TABLE receipt_items ADD COLUMN group_note VARCHAR(160) DEFAULT ''"),
+        ],
+        # v1.70.95 (T-61): источник документа первички — xml | pdf | scan | manual
+        "primary_documents": [
+            ("source", "ALTER TABLE primary_documents ADD COLUMN source VARCHAR(10) DEFAULT 'xml'"),
+            # v1.70.104 (T-63): канал документа — пусто (загрузка на экране) | mail (из почтового ящика)
+            ("channel", "ALTER TABLE primary_documents ADD COLUMN channel VARCHAR(10) DEFAULT ''"),
+        ],
+        # v1.70.105 (T-64): канал входящего файла (mail | telegram | max) и сотрудник, приславший фото в бот
+        "primary_mail_items": [
+            ("channel", "ALTER TABLE primary_mail_items ADD COLUMN channel VARCHAR(10) DEFAULT 'mail'"),
+            ("user_id", "ALTER TABLE primary_mail_items ADD COLUMN user_id VARCHAR(36) DEFAULT ''"),
+        ],
+        # v1.70.99 (ADR-29): источник выписки — file | tochka (API банка)
+        "bank_statements": [
+            ("source", "ALTER TABLE bank_statements ADD COLUMN source VARCHAR(10) DEFAULT 'file'"),
+        ],
+        # v1.70.99: эскалация личных запросов руководителю через N дней (0 — выключена)
+        "doc_request_settings": [
+            ("escalate_days", "ALTER TABLE doc_request_settings ADD COLUMN escalate_days INTEGER DEFAULT 3"),
+        ],
+        # v1.70.102 (ADR-32): несколько банков у компании; сертификат клиента для взаимного TLS (Сбер, Альфа)
+        "bank_connections": [
+            ("cert_enc", "ALTER TABLE bank_connections ADD COLUMN cert_enc TEXT DEFAULT ''"),
         ],
     }
     insp = inspect(engine)
@@ -212,6 +347,12 @@ def _ensure_schema() -> None:
                 conn.execute(text(
                     "CREATE INDEX IF NOT EXISTS idx_receipts_company "
                     "ON receipts(company_id)"))
+        if "receipts" in existing_tables:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipts_place_pending "
+                              "ON receipts(id) WHERE retail_place_index IS NULL"))
+        if "receipt_items" in existing_tables:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_receipt_items_marking "
+                              "ON receipt_items(marking_present, receipt_id)"))
         _backfill_companies(conn, existing_tables)
         # v1.4.0: заполнить category_lc для существующих строк (lower() в SQLite
         # не понимает кириллицу — нормализуем в Python)
@@ -224,6 +365,56 @@ def _ensure_schema() -> None:
                 conn.execute(text("UPDATE receipts SET category_lc = :lc WHERE id = :i"),
                              {"lc": (cat or "").casefold(), "i": rid})
 
+
+
+def _backfill_retail_place() -> None:
+    """Пакетно индексировать старые записи без изменения исходных данных."""
+    from sqlalchemy import update
+
+    from .models import Receipt, saved_retail_place
+    db = SessionLocal()
+    try:
+        while True:
+            rows = (db.query(Receipt.id, Receipt.ext_json, Receipt.raw_data)
+                    .filter(Receipt.retail_place_index.is_(None)).limit(500).all())
+            if not rows:
+                break
+            for row in rows:
+                # Условие защищает свежие данные от конкурирующего backfill.
+                db.execute(update(Receipt).where(
+                    Receipt.id == row.id, Receipt.retail_place_index.is_(None)
+                ).values(retail_place_index=saved_retail_place(row.ext_json, row.raw_data)))
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _backfill_marking() -> None:
+    """Пакетно заполнить признак сохранённой маркировки для старых позиций."""
+    from sqlalchemy import update
+
+    from .models import ReceiptItem, has_saved_marking
+    db = SessionLocal()
+    try:
+        while True:
+            rows = (db.query(ReceiptItem.id, ReceiptItem.extra_json)
+                    .filter(ReceiptItem.marking_present.is_(None)).limit(500).all())
+            if not rows:
+                break
+            for row in rows:
+                # Не затирать более свежую правку другой транзакции или воркера.
+                db.execute(update(ReceiptItem).where(
+                    ReceiptItem.id == row.id, ReceiptItem.marking_present.is_(None)
+                ).values(marking_present=has_saved_marking(row.extra_json)))
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _backfill_full_data() -> None:
@@ -299,10 +490,13 @@ def _backfill_companies(conn, existing_tables: set) -> None:
         "SELECT organization FROM users WHERE role = 'admin' "
         "ORDER BY created_at LIMIT 1")).first()
     name = (row[0] if row and row[0] else "ООО «Ямастер»").strip()[:200]
+    # #20: is_active — параметром True, а не литералом 1: PostgreSQL не принимает
+    # целое число в булев столбец (SQLite принимает) — из-за этого чистая
+    # установка на PostgreSQL падала уже на первом init_db().
     conn.execute(text(
         "INSERT INTO companies (id, name, short_name, inn, note, is_active, created_at) "   # v1.22.0: short_name
-        "VALUES (:i, :n, '', '', 'Создана автоматически при обновлении до 1.11.0', 1, :t)"),
-        {"i": uid(), "n": name, "t": _utcnow()})
+        "VALUES (:i, :n, '', '', 'Создана автоматически при обновлении до 1.11.0', :a, :t)"),
+        {"i": uid(), "n": name, "a": True, "t": _utcnow()})
     cid = conn.execute(text("SELECT id FROM companies ORDER BY created_at LIMIT 1")).scalar()
     conn.execute(text("UPDATE users SET company_id = :c WHERE company_id IS NULL "
                       "AND role != 'admin'"), {"c": cid})
@@ -410,6 +604,12 @@ def migrate_companies_from_notes() -> dict:
                     if r.company_id != comp.id:
                         r.company_id = comp.id
                         out["receipts_moved"] += 1
+                        from .unified.models import UnifiedOrigin, UnifiedOwnership
+                        origin = (db.query(UnifiedOrigin)
+                                  .filter(UnifiedOrigin.source_kind == "registry",
+                                          UnifiedOrigin.source_id == r.id).first())
+                        if origin and origin.document.ownership:
+                            origin.document.ownership.company_id = comp.id
 
         row = db.query(AppSetting).filter(AppSetting.key == FLAG).first()
         if row:
@@ -467,6 +667,10 @@ def repair_company_names() -> dict:
                             (db.query(AuditLog), AuditLog.company_id)):
                 for row in q.filter(attr == comp.id).all():
                     setattr(row, attr.key, target.id)
+            from .unified.models import UnifiedOwnership
+            (db.query(UnifiedOwnership)
+             .filter(UnifiedOwnership.company_id == comp.id)
+             .update({UnifiedOwnership.company_id: target.id}, synchronize_session=False))
             db.delete(comp)
             out["merged"] += 1
 

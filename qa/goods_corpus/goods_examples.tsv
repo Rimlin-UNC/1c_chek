@@ -1,0 +1,621 @@
+# Обучающие строки в стиле кассовых чеков (синтетика, написаны вручную; ADR-14). Категория<TAB>название
+build_ppe	ПЕРЧАТКИ ХБ С ПВХ ТОЧКОЙ 5НИТ
+build_ppe	Перчатки рабочие нитриловые облив
+build_ppe	Перчатки трикотажные 7,5 класс
+build_ppe	КРАГИ СВАРЩИКА СПИЛОК
+build_ppe	Рукавицы брезентовые
+build_ppe	Костюм рабочий летний р.52
+build_ppe	Комбинезон малярный одноразовый
+build_ppe	Каска строительная оранжевая
+build_ppe	Респиратор 3М 8112 FFP2
+build_ppe	Очки защитные открытые прозрачные
+build_ppe	Беруши пенные с шнурком
+build_ppe	Наушники противошумные складные
+build_ppe	Жилет сигнальный оранжевый
+build_ppe	Маска сварщика хамелеон
+build_ppe	Сапоги рабочие ПВХ с МБС
+build_ppe	Ботинки рабочие с металлоподноском
+build_ppe	Полумаска фильтрующая
+build_ppe	СПЕЦОДЕЖДА КУРТКА УТЕПЛ
+build_tools	Дрель ударная Makita HP1630
+build_tools	ШУРУПОВЕРТ АКК. 18В BOSCH
+build_tools	Перфоратор SDS-plus Интерскол П-26
+build_tools	УШМ 125мм Зубр 900Вт
+build_tools	Болгарка DeWALT DWE4157
+build_tools	Лобзик электрический Stayer
+build_tools	Пила циркулярная 190мм
+build_tools	Ножовка по дереву 450мм
+build_tools	Молоток слесарный 500г
+build_tools	Отвертка крестовая PH2
+build_tools	Ключ разводной 250 мм
+build_tools	Набор бит 32 предмета
+build_tools	Плоскогубцы комбинированные 180мм
+build_tools	Рулетка 5м х 19мм
+build_tools	Уровень строительный 600 мм
+build_tools	Шпатель фасадный 350мм
+build_tools	Валик малярный велюр 180мм
+build_tools	Кисть плоская 50 мм натур
+build_tools	Мастерок штукатурный
+build_tools	Кельма для кладки
+build_tools	Правило алюминиевое 2м
+build_tools	Тачка строительная 1-колесная
+build_tools	Стремянка алюм 5 ступ
+build_tools	Пистолет для монтажной пены
+build_tools	Миксер строительный Kraftool
+build_tools	Нож строительный 18мм
+build_tools	Ведро строительное 12л
+build_tools	Струбцина F-образная 300мм
+build_tools	Лопата штыковая с черенком
+build_tools	Кувалда 3 кг
+build_tools	Степлер строительный мебельный
+build_tools	Фен строительный 2000Вт
+build_consumables	ДИСК ОТРЕЗНОЙ ПО МЕТАЛЛУ 125Х1,2
+build_consumables	Круг отрезной 230х2,5
+build_consumables	Диск алмазный по бетону 125
+build_consumables	Круг лепестковый торцевой P80
+build_consumables	Шкурка шлифовальная Р120 рулон
+build_consumables	Бумага наждачная водост. Р240
+build_consumables	Сверло по металлу 6мм HSS
+build_consumables	Бур SDS-plus 8х160
+build_consumables	Коронка по бетону 68мм
+build_consumables	Бита PH2 50мм магнитная
+build_consumables	Электроды МР-3 3мм 1кг
+build_consumables	Лента малярная 48мм х 50м
+build_consumables	Скотч малярный 25 мм
+build_consumables	Серпянка самоклеящаяся 50мм
+build_consumables	Пленка полиэтиленовая 150мкм
+build_consumables	Укрывной материал спанбонд
+build_consumables	Мешки строительные 55х95
+build_consumables	Мешок полипропиленовый 50кг
+build_consumables	Стретч-пленка 500мм
+build_consumables	Пилки для лобзика по дереву 5шт
+build_consumables	Леска для триммера 2,4мм
+build_consumables	Лезвия для ножа 18мм 10шт
+build_finish	КРАСКА ВД-АК ФАСАДНАЯ БЕЛАЯ 14КГ
+build_finish	Эмаль ПФ-115 белая 1,9кг
+build_finish	Грунтовка глубокого проникновения 10л
+build_finish	Шпатлевка финишная Ветонит LR+ 20кг
+build_finish	Шпаклевка гипсовая Knauf Фуген
+build_finish	Штукатурка гипсовая Ротбанд 30кг
+build_finish	Обои флизелиновые 1,06х10м
+build_finish	Клей для обоев Quelyd
+build_finish	Плитка керамическая 30х60 белая
+build_finish	Керамогранит 60х60 серый
+build_finish	Ламинат 33 класс 8мм дуб
+build_finish	Линолеум бытовой 3м
+build_finish	Плинтус напольный ПВХ 2,5м
+build_finish	Затирка Ceresit CE40 серая
+build_finish	Клей плиточный Церезит СМ11 25кг
+build_finish	Герметик силиконовый санитарный
+build_finish	Пена монтажная проф 750мл
+build_finish	Жидкие гвозди Момент Монтаж
+build_finish	Лак яхтный глянцевый 0,75л
+build_finish	Морилка дуб 0,5л
+build_finish	Олифа натуральная 1л
+build_finish	Антисептик для древесины Сенеж
+build_finish	Растворитель 646 1л
+build_finish	Уайт-спирит 0,5л
+build_finish	Колер универсальный синий
+build_finish	ТИККУРИЛА ЕВРО 7 2,7Л
+build_finish	Краска Dulux для стен и потолков
+build_fasteners	САМОРЕЗ ПО ДЕРЕВУ 3,5Х35 ЖЕЛТ ЦИНК
+build_fasteners	Саморезы по металлу с буром 4,2х19
+build_fasteners	Шурупы универсальные 4х40
+build_fasteners	Гвозди строительные 100мм 1кг
+build_fasteners	Дюбель-гвоздь 6х40 грибок
+build_fasteners	Анкер клиновой 10х100
+build_fasteners	Болт М10х50 оцинк
+build_fasteners	Гайка М8 DIN934
+build_fasteners	Шайба плоская М6
+build_fasteners	Хомут червячный 16-25мм
+build_fasteners	Хомут нейлоновый 200х3,6 100шт
+build_fasteners	Уголок крепежный 40х40х40
+build_fasteners	Кронштейн для полки 150мм
+build_fasteners	Перфолента монтажная 20мм
+build_fasteners	Шпилька резьбовая М10 1м
+build_fasteners	Петля дверная накладная бабочка
+build_fasteners	Ручка дверная на розетке
+build_fasteners	Замок врезной с цилиндром
+build_fasteners	Цилиндровый механизм 60мм
+build_fasteners	Задвижка дверная
+build_fasteners	Заклепки вытяжные 4х10
+build_fasteners	Скоба для степлера 10мм
+build_electric	КАБЕЛЬ ВВГНГ-LS 3Х2,5 ГОСТ
+build_electric	Провод ПВС 2х0,75 белый
+build_electric	Розетка двойная с заземлением
+build_electric	Выключатель одноклавишный Legrand
+build_electric	Автоматический выключатель 1P C16
+build_electric	Дифавтомат 2P 16А 30мА
+build_electric	УЗО 2P 25А 30мА IEK
+build_electric	Щит распределительный на 12 модулей
+build_electric	Клеммы WAGO 221-413 50шт
+build_electric	Кабель-канал 25х16 белый
+build_electric	Гофротруба ПВХ 20мм с зондом
+build_electric	Изолента ПВХ 19мм синяя
+build_electric	Термоусадка 6мм набор
+build_electric	Удлинитель 5 розеток 3м
+build_electric	Сетевой фильтр 6 гнезд
+build_electric	Коробка распаечная 100х100
+build_electric	Подрозетник для бетона
+build_electric	Лента светодиодная 5м 12В
+build_electric	Счетчик электроэнергии однофазный
+build_electric	Вилка электрическая с заземлением
+build_plumbing	СМЕСИТЕЛЬ Д/КУХНИ ОДНОРЫЧАЖНЫЙ
+build_plumbing	Труба полипропиленовая PN20 20мм
+build_plumbing	Фитинг ППР угол 90 20мм
+build_plumbing	Кран шаровой 1/2 ВР-НР
+build_plumbing	Муфта соединительная 32мм
+build_plumbing	Тройник ПНД 25мм
+build_plumbing	Сифон для раковины с переливом
+build_plumbing	Унитаз-компакт с сиденьем
+build_plumbing	Раковина 50см подвесная
+build_plumbing	Ванна акриловая 170х70
+build_plumbing	Душевая лейка 5 режимов
+build_plumbing	Радиатор биметаллический 8 секций
+build_plumbing	Котел газовый настенный
+build_plumbing	Водонагреватель накопительный 80л
+build_plumbing	Насос циркуляционный 25/60
+build_plumbing	Подводка гибкая 60см ВР-ВР
+build_plumbing	Лен сантехнический 100г
+build_plumbing	Фум-лента 19мм
+build_plumbing	Труба канализационная 110х1000
+build_plumbing	Полотенцесушитель водяной
+build_plumbing	Гидроаккумулятор 24л
+build_plumbing	Терморегулятор для теплого пола
+build_base	ЦЕМЕНТ М500 Д0 50КГ ЕВРОЦЕМЕНТ
+build_base	Цемент ПЦ 400 Д20 25кг
+build_base	Смесь сухая кладочная М150 40кг
+build_base	Пескобетон М300 40кг
+build_base	Наливной пол Основит 20кг
+build_base	Песок строительный 50кг
+build_base	Щебень гранитный фр 20-40 мешок
+build_base	Керамзит фр 10-20 0,05м3
+build_base	Кирпич облицовочный красный
+build_base	Газобетонный блок D500 600х250х300
+build_base	Пеноблок 600х300х200
+build_base	Гипсокартон влагостойкий 12,5мм
+build_base	Профиль ПН 50х40 3м
+build_base	Профиль ПП 60х27 3м Кнауф
+build_base	Профнастил С8 0,45 оцинк
+build_base	Металлочерепица Монтеррей
+build_base	Рубероид РКП-350
+build_base	Гидроизоляция обмазочная 15кг
+build_base	Пароизоляция Изоспан В 70м2
+build_base	Мастика битумная 18кг
+build_base	Утеплитель Rockwool Лайт Баттс 50мм
+build_base	Минвата Изовер Каркас
+build_base	Пеноплэкс Комфорт 50мм
+build_base	Пенополистирол ПСБ-С 25 50мм
+build_base	Фанера ФК 10мм 1525х1525
+build_base	Плита OSB-3 9мм
+build_base	ДСП 16мм 2750х1830
+build_base	Доска обрезная 50х150х6000
+build_base	Брус строганый 100х100
+build_base	Вагонка сосна класс В
+build_base	Арматура А500С 12мм 6м
+build_base	Сетка кладочная 50х50 0,5х2
+build_base	Уголок стальной 50х50
+build_base	Швеллер 10П
+build_base	Лист оцинкованный 0,5мм
+build_base	Проволока вязальная 1,2мм
+build_base	Труба профильная 40х20х2
+build_base	Водосток желоб 3м
+build_base	Септик пластиковый
+build_base	Кольцо колодезное КС 10-9
+build_base	Бордюр садовый
+build_base	Плитка тротуарная брусчатка
+build_base	Соль техническая 50кг
+build_base	Антигололедный реагент 20кг
+pharma	НУРОФЕН ТАБ П/О 200МГ №20
+pharma	Ибупрофен таб. 400мг 20шт
+pharma	Парацетамол 500мг №10
+pharma	Цитрамон П таб №10
+pharma	Но-шпа 40мг 24 таб
+pharma	Терафлю порошок лимон 10 пак
+pharma	Мирамистин р-р 0,01% 150мл
+pharma	Хлоргексидин биглюконат 0,05% 100мл
+pharma	Пластырь бактерицидный 20шт
+pharma	Бинт стерильный 7х14
+pharma	Перекись водорода 3% 100мл
+pharma	Активированный уголь 250мг №10
+pharma	Смекта пак 3г №10
+pharma	Витамины Компливит №60
+pharma	Капли назальные Називин
+pharma	Сироп от кашля Амброксол
+pharma	Мазь Финалгон 20г
+pharma	Маска медицинская трехслойная 50шт
+pharma	Тонометр автоматический Omron
+pharma	Термометр электронный медицинский
+pharma	Аптечка первой помощи автомобильная
+pharma	Шприц 5мл 3-х комп.
+pharma	Лоратадин 10мг №10
+pharma	Омепразол капс 20мг №30
+fuel	АИ-95-К5 ТОПЛИВО
+fuel	Бензин АИ-92 Евро-5
+fuel	ДТ ЕВРО МЕЖСЕЗОННОЕ
+fuel	Дизельное топливо зимнее
+fuel	Топливо дизельное ЭКТО Diesel
+fuel	G-Drive 95
+fuel	ПУЛЬСАР 95
+fuel	Газ пропан СУГ
+fuel	AdBlue 10л
+fuel	ТРК 3 АИ-95
+fuel	Аи-98 Ультимейт
+catering	КАПУЧИНО 0,3Л
+catering	Латте карамельный 400мл
+catering	Американо с молоком
+catering	Эспрессо двойной
+catering	Раф ванильный 0,4
+catering	Комплексный обед
+catering	Бизнес-ланч №2
+catering	Суп дня 250г
+catering	Салат Цезарь с курицей
+catering	Пицца Маргарита 30см
+catering	Шаурма классическая
+catering	Бургер с говядиной
+catering	Картофель фри стандарт
+catering	Круассан с ветчиной
+catering	Хот-дог французский
+catering	Чизкейк Нью-Йорк
+catering	Роллы Филадельфия 8шт
+catering	Пельмени домашние порция
+catering	Котлета по-киевски с гарниром
+catering	Чай черный в чайнике 600мл
+catering	Морс клюквенный 0,3
+catering	Блин с ветчиной и сыром
+alcohol	ПИВО БАЛТИКА 7 0,45 Ж/Б
+alcohol	Пиво Жигулевское светлое 0,5л
+alcohol	Пиво разливное светлое 1л
+alcohol	Вино красное сухое Мерло 0,75
+alcohol	Вино игристое брют 0,75л
+alcohol	Шампанское Абрау-Дюрсо
+alcohol	Водка Русский стандарт 0,5л
+alcohol	Водка Пять озер 0,7
+alcohol	Коньяк 5 лет 0,5л
+alcohol	Виски Jameson 0,7л
+alcohol	Джин Barrister 0,5
+alcohol	Ром Bacardi Carta Blanca
+alcohol	Текила Olmeca Silver
+alcohol	Сидр яблочный 0,5л
+alcohol	Настойка Хреновуха 0,5
+alcohol	Ликер Бейлиз 0,7
+alcohol	Вермут Мартини Бьянко 1л
+alcohol	Портвейн 777 0,7л
+alcohol	Пивной напиток Охота крепкое
+alcohol	Медовуха 0,5л
+tobacco	СИГАРЕТЫ PARLIAMENT AQUA BLUE
+tobacco	Сигареты Winston XStyle Blue
+tobacco	Сигареты Kent Nanotek
+tobacco	Сигареты LD Autograph
+tobacco	Сигареты Ява Золотая
+tobacco	Сигареты Петр I эталон
+tobacco	Сигареты Chesterfield Red
+tobacco	Сигареты Camel Compact
+tobacco	Стики HEETS Amber Selection
+tobacco	Стики Terea Yellow
+tobacco	Стики Fiit Regular
+tobacco	Табак для кальяна Darkside 100г
+tobacco	Вейп одноразовый HQD
+tobacco	Жидкость для вейпа 30мл
+tobacco	Сигариллы Captain Black
+tobacco	Папиросы Беломорканал
+food	ХЛЕБ БОРОДИНСКИЙ 400Г
+food	Батон нарезной в/с 400г
+food	Молоко Простоквашино 3,2% 930мл
+food	Кефир 2,5% 1л
+food	Йогурт питьевой клубника
+food	Сыр Российский 45% 200г
+food	Масло сливочное 82,5% 180г
+food	Творог 9% 200г
+food	Сметана 20% 300г
+food	Яйцо куриное С1 10шт
+food	Колбаса Докторская 400г
+food	Сосиски молочные 450г
+food	Куриное филе охлажденное
+food	Фарш говяжий 400г
+food	Скумбрия холодного копчения
+food	Сельдь в масле
+food	Пельмени Сибирские 800г
+food	Сахар-песок 1кг
+food	Соль поваренная йодир. 1кг
+food	Мука пшеничная в/с 2кг
+food	Крупа гречневая 900г
+food	Рис круглозерный 800г
+food	Макароны спагетти Barilla
+food	Масло подсолнечное раф. 1л
+food	Майонез Провансаль 400мл
+food	Кетчуп томатный 350г
+food	Картофель весовой
+food	Бананы весовые
+food	Яблоки Гала кг
+food	Огурцы короткоплодные
+food	Помидоры черри 250г
+food	Лук репчатый
+food	Шоколад молочный Alpen Gold
+food	Конфеты Белочка вес
+food	Печенье Юбилейное
+food	Вафли Артек
+food	Чай черный Greenfield 25пак
+food	Кофе растворимый Nescafe Gold
+food	Кофе в зернах Jardin 1кг
+food	Сок Добрый яблоко 1л
+food	Вода питьевая Святой Источник 1,5л
+food	Вода мин. Ессентуки 4
+food	Coca-Cola 0,5 пэт
+food	Квас Очаковский 1,5л
+food	Энергетический напиток Adrenaline
+food	Мороженое пломбир стаканчик
+food	Сгущенка Рогачев
+food	Тушенка говяжья ГОСТ
+computers	НОУТБУК LENOVO IDEAPAD 15
+computers	Монитор Samsung 24" IPS
+computers	Клавиатура проводная Logitech
+computers	Мышь беспроводная A4Tech
+computers	Принтер лазерный HP LaserJet
+computers	МФУ Canon i-SENSYS
+computers	Картридж HP 85A
+computers	Тонер для Kyocera
+computers	Флешка 32GB Kingston
+computers	SSD накопитель 512 Гб
+computers	Жесткий диск внешний 1Тб
+computers	Карта памяти microSD 64GB
+computers	Роутер Wi-Fi TP-Link
+computers	Веб-камера Full HD
+computers	Планшет Samsung Galaxy Tab
+gadgets	СМАРТФОН XIAOMI REDMI NOTE 13
+gadgets	Телефон кнопочный Nokia
+gadgets	Наушники беспроводные JBL
+gadgets	Гарнитура Bluetooth
+gadgets	Зарядное устройство 20W USB-C
+gadgets	Кабель USB Type-C 1м
+gadgets	Кабель Lightning 1м
+gadgets	Кабель HDMI 2м
+gadgets	Чехол для телефона силикон
+gadgets	Защитное стекло для смартфона
+gadgets	Внешний аккумулятор 10000 мАч
+gadgets	Портативная колонка
+gadgets	Держатель для телефона в авто
+gadgets	Умные часы Amazfit
+gadgets	Сим-карта
+appliances	ТЕЛЕВИЗОР LG 43"
+appliances	Холодильник Атлант двухкамерный
+appliances	Стиральная машина Indesit 6кг
+appliances	Пылесос с контейнером
+appliances	Микроволновая печь 20л
+appliances	Чайник электрический 1,7л
+appliances	Кофемашина Delonghi
+appliances	Блендер погружной
+appliances	Утюг Philips
+appliances	Обогреватель масляный 9 секций
+appliances	Вентилятор напольный
+appliances	Электроплитка 1 конфорка
+appliances	Мультиварка Redmond
+appliances	Тепловентилятор 2кВт
+electro_small	БАТАРЕЙКИ DURACELL AA 4ШТ
+electro_small	Батарейка алкалиновая ААА
+electro_small	Элемент питания CR2032
+electro_small	Лампа светодиодная E27 10Вт
+electro_small	Лампочка LED 7W E14 свеча
+electro_small	Фонарь налобный светодиодный
+electro_small	Фонарик аккумуляторный
+clothes	ФУТБОЛКА МУЖСКАЯ ХЛОПОК
+clothes	Джинсы мужские прямые
+clothes	Куртка зимняя мужская
+clothes	Брюки утепленные
+clothes	Носки мужские 5 пар
+clothes	Шапка вязаная
+clothes	Перчатки зимние кожаные
+clothes	Ботинки зимние мужские
+clothes	Кроссовки беговые
+clothes	Термобелье комплект
+clothes	Рюкзак городской 25л
+clothes	Ремень кожаный
+clothes	Толстовка с капюшоном
+clothes	Трусы боксеры 3шт
+hygiene	ШАМПУНЬ HEAD&SHOULDERS 400МЛ
+hygiene	Гель для душа Nivea Men
+hygiene	Мыло туалетное Dove
+hygiene	Мыло жидкое 500мл
+hygiene	Зубная паста Colgate
+hygiene	Зубная щетка средней жесткости
+hygiene	Дезодорант Rexona спрей
+hygiene	Крем для рук Невская косметика
+hygiene	Туалетная бумага Zewa 4 рул
+hygiene	Салфетки влажные 100шт
+hygiene	Бумажные платочки
+hygiene	Станок для бритья Gillette
+hygiene	Пена для бритья Arko
+hygiene	Ватные диски 120шт
+hygiene	Прокладки Always
+hygiene	Подгузники Pampers 4
+chemicals	ПОРОШОК СТИРАЛЬНЫЙ TIDE АВТОМАТ 3КГ
+chemicals	Средство для мытья посуды Fairy 900мл
+chemicals	Средство чистящее Domestos 1л
+chemicals	Гель для стирки Persil
+chemicals	Капсулы для стирки Ariel 15шт
+chemicals	Отбеливатель Белизна 1л
+chemicals	Кондиционер для белья Lenor
+chemicals	Средство для стекол Mr Muscle
+chemicals	Освежитель воздуха Glade
+chemicals	Таблетки для посудомоечной машины Finish
+chemicals	Антижир Cillit Bang
+chemicals	Средство от засоров Крот
+chemicals	Фумигатор + пластины
+chemicals	Дихлофос Нео
+household	ПАКЕТЫ ДЛЯ МУСОРА 60Л 20ШТ
+household	Пакет-майка 30х60
+household	Мешки для мусора 120л
+household	Губки для посуды 5шт
+household	Тряпка для пола
+household	Перчатки резиновые хозяйственные
+household	Веник сорго
+household	Швабра с отжимом
+household	Ведро пластиковое 10л
+household	Тарелка одноразовая 10шт
+household	Стаканы одноразовые 200мл 100шт
+household	Кружка керамическая
+household	Ложки одноразовые
+household	Полотенца бумажные 2 рулона
+household	Контейнер пищевой 1л
+household	Фольга алюминиевая 10м
+household	Пленка пищевая 30м
+household	Спички хозяйственные
+household	Зажигалка газовая
+household	Термос 1л
+furniture	СТОЛ ПИСЬМЕННЫЙ 120Х60
+furniture	Стул офисный
+furniture	Кресло компьютерное
+furniture	Шкаф для одежды
+furniture	Стеллаж металлический 5 полок
+furniture	Полка навесная
+furniture	Тумба прикроватная
+furniture	Зеркало настенное
+furniture	Шторы блэкаут
+furniture	Жалюзи вертикальные
+furniture	Ковер 160х230
+furniture	Светильник настольный
+furniture	Люстра потолочная
+furniture	Табурет деревянный
+auto	МАСЛО МОТОРНОЕ CASTROL 5W-30 4Л
+auto	Масло Лукойл Генезис 5W-40
+auto	Антифриз G12 красный 5кг
+auto	Незамерзайка -30 5л
+auto	Омыватель стекла летний
+auto	Щетка стеклоочистителя 550мм
+auto	Шины зимние 205/55 R16
+auto	Колодки тормозные передние
+auto	Фильтр масляный
+auto	Фильтр воздушный
+auto	Фильтр салонный угольный
+auto	Свеча зажигания NGK
+auto	Аккумулятор автомобильный 60Ач
+auto	Лампа H7 12В 55Вт
+auto	Автошампунь 1л
+auto	Коврики в салон резиновые
+auto	Трос буксировочный 5т
+auto	Провода прикуривания
+auto	Огнетушитель порошковый ОП-2
+auto	Знак аварийной остановки
+auto	Домкрат гидравлический
+auto	Щетка для снега со скребком
+auto	Видеорегистратор
+office	РУЧКА ШАРИКОВАЯ СИНЯЯ
+office	Ручка гелевая черная
+office	Карандаш чернографитный HB
+office	Тетрадь 48л клетка
+office	Блокнот А5 на спирали
+office	Бумага А4 SvetoCopy 500л
+office	Бумага офисная Снегурочка
+office	Папка-скоросшиватель
+office	Файлы А4 100шт
+office	Степлер №24/6
+office	Скрепки 28мм 100шт
+office	Клей-карандаш 21г
+office	Корректирующая лента
+office	Маркер перманентный черный
+office	Конверт С4
+office	Калькулятор настольный
+office	Скотч прозрачный 48мм
+office	Стикеры 76х76
+office	Ежедневник недатированный
+office	Дырокол на 20 листов
+office	Регистратор А4 75мм
+office	Этикетки самоклеящиеся
+books	КНИГА
+books	Журнал учета инструктажа
+books	Журнал регистрации
+books	Учебник
+books	Газета
+books	Открытка
+books	Печать фото 10х15
+books	Распечатка А4 ч/б
+books	Ксерокопия
+books	Ламинирование А4
+pets	КОРМ ДЛЯ КОШЕК WHISKAS
+pets	Корм сухой для собак Pedigree 2,2кг
+pets	Наполнитель для кошачьего туалета
+pets	Пауч для кошек Felix
+pets	Лакомство для собак
+pets	Поводок рулетка
+pets	Ошейник от блох
+pets	Когтеточка
+kids	ИГРУШКА МЯГКАЯ МИШКА
+kids	Конструктор LEGO City
+kids	Кукла Барби
+kids	Машинка радиоуправляемая
+kids	Пазл 500 элементов
+kids	Настольная игра
+kids	Соска-пустышка
+kids	Бутылочка для кормления
+kids	Детский крем
+sport	МЯЧ ФУТБОЛЬНЫЙ
+sport	Гантели 2х5кг
+sport	Коврик для йоги
+sport	Скакалка
+sport	Палатка туристическая 3-местная
+sport	Спальный мешок
+sport	Велосипед горный
+sport	Удочка телескопическая
+sport	Протеин сывороточный
+sport	Ракетка для настольного тенниса
+jewelry	КОЛЬЦО ЗОЛОТОЕ 585
+jewelry	Серьги серебряные
+jewelry	Цепочка золотая
+jewelry	Браслет серебро 925
+jewelry	Подвеска золото
+jewelry	Бижутерия
+telecom	ОПЛАТА УСЛУГ СВЯЗИ
+telecom	Пополнение счета МТС
+telecom	Мобильная связь
+telecom	Интернет 100 Мбит месяц
+telecom	Абонентская плата
+telecom	Тариф Безлимит
+telecom	Хостинг сайта
+transport	ПРОЕЗД ПО ПЛАТНОЙ ДОРОГЕ М-11
+transport	Парковка 2 часа
+transport	Стоянка автомобиля сутки
+transport	Такси поездка
+transport	Билет на поезд
+transport	Билет автобус
+transport	Авиабилет
+transport	Каршеринг поминутно
+transport	Провоз багажа
+delivery	ДОСТАВКА
+delivery	Доставка до двери
+delivery	Курьерская доставка
+delivery	Почтовое отправление
+delivery	Отправление СДЭК
+delivery	Пересылка письма
+repair	ШИНОМОНТАЖ R16
+repair	Ремонт обуви
+repair	Мойка автомобиля
+repair	Автомойка комплекс
+repair	Техобслуживание ТО-1
+repair	Диагностика ходовой
+repair	Замена масла в двигателе
+repair	Балансировка колес
+repair	Химчистка куртки
+repair	Заточка цепи
+repair	Изготовление ключа
+lodging	ПРОЖИВАНИЕ 2 СУТОК
+lodging	Проживание в гостинице
+lodging	Номер стандарт
+lodging	Хостел койко-место
+lodging	Размещение в отеле
+rent	АРЕНДА ИНСТРУМЕНТА
+rent	Аренда перфоратора сутки
+rent	Прокат строительных лесов
+rent	Аренда помещения
+rent	Аренда автомобиля
+services_other	УСЛУГИ ПО ДОГОВОРУ
+services_other	Консультация
+services_other	Обучение по охране труда
+services_other	Курсы повышения квалификации
+services_other	Семинар
+services_other	Комиссия за перевод
+services_other	Стрижка мужская
+services_other	Госпошлина
+services_other	Медосмотр
+services_other	Страхование ОСАГО
+services_other	Подписка
+services_other	Фото на документы

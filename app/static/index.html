@@ -4,24 +4,83 @@
 <!--
   Ямастер Чек — веб-клиент системы сканирования кассовых чеков и интеграции с 1С
   Разработчик и владелец идеи: ООО «Ямастер»
-  Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+  Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 -->
 <meta charset="UTF-8">
 <!-- v1.25.0: тема одна — светлая («Ямастер»), переключатель и предустановка
      до отрисовки больше не нужны: цвет meta theme-color статичный -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f5">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
-<meta name="description" content="Ямастер Чек — сканирование кассовых чеков и загрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)">
-<title>Ямастер Чек — сканирование чеков и загрузка в 1С</title>
+<meta name="color-scheme" content="light">
+<!-- v1.70.103 (T-74, ADR-33): SEO стартовой страницы. Заголовок и описание — под запрос «проверка чека», каждый
+     ключ один раз (docs/kb/12_seo.md). Вместо метки seo:head сервер подставляет canonical (индексация разрешена)
+     или noindex (копии программы не на рабочем адресе) и коды подтверждения поисковиков (app/services/seo.py) -->
+<title>Проверка чека по QR-коду онлайн — Ямастер Чек</title>
+<meta name="description" content="Бесплатная проверка кассового чека по QR-коду: сверка с данными ФНС, баллы и кэшбэк за чеки. Бухгалтеру — авансовые чеки, выписки банков и выгрузка в 1С.">
+<!-- seo:head -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ямастер Чек">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:title" content="Проверка чека по QR-коду онлайн — Ямастер Чек">
+<meta property="og:description" content="Сверка кассового чека с данными ФНС, баллы и кэшбэк за чеки, выгрузка авансовых чеков и выписок банков в 1С.">
+<meta property="og:url" content="https://chek.ymaster.ru/">
+<meta property="og:image" content="https://chek.ymaster.ru/img/manual/hero.jpg">
+<meta property="og:image:width" content="1100">
+<meta property="og:image:height" content="613">
+<meta property="og:image:alt" content="Бухгалтер разбирает кассовые чеки за ноутбуком">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
 <link rel="apple-touch-icon" href="/img/icon-192.png">
-<link rel="stylesheet" href="/css/app.css?v=1.70.15">
+<!-- v1.70.103: шрифты — со своего сервера (шрифты Google запрещала политика CSP); основной — заранее -->
+<link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<!-- v1.70.103: решения до первой отрисовки — гостю стартовая страница без заставки, у вошедших она не мелькает -->
+<script src="/js/boot.js"></script>
+<!-- v1.70.98: заставка загрузки — стили до app.css (оформлена с первого кадра), контроллер с defer
+     выполняется после разбора страницы и до app.js -->
+<link rel="stylesheet" href="/css/splash.css">
+<script src="/js/splash.js" defer></script>
+<link rel="stylesheet" href="/css/app.css?v=1.70.113">
 </head>
 <body>
+  <!-- v1.70.98: заставка загрузки «chek.ymaster.ru» — видна с первого кадра, таймлайн около 3 с (js/splash.js) -->
+  <div id="ym-splash" class="ym-splash">
+    <div class="ym-splash__stage">
+      <div class="ym-splash__card">
+        <div class="ym-splash__sheen" aria-hidden="true"></div>
+        <div class="ym-splash__hero" aria-hidden="true">
+          <div class="ym-splash__aura"></div>
+          <svg class="ym-splash__circuit" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="ymLine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="currentColor" stop-opacity="0"/><stop offset=".5" stop-color="currentColor" stop-opacity=".9"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs><path d="M318 176H250L222 148H118" pathLength="100"/><path d="M318 210H170" pathLength="100"/><path d="M318 244H262L236 270H132" pathLength="100"/><path d="M318 278H226L200 304H96" pathLength="100"/><path d="M482 176H550L578 148H682" pathLength="100"/><path d="M482 210H630" pathLength="100"/><path d="M482 244H538L564 270H668" pathLength="100"/><path d="M482 278H574L600 304H704" pathLength="100"/><path d="M370 128V92L350 72V48" pathLength="100"/><path d="M430 128V86L450 66V44" pathLength="100"/><path d="M370 322V358L350 378V404" pathLength="100"/><path d="M430 322V364L452 386V410" pathLength="100"/><circle cx="118" cy="148" r="3.4"/><circle cx="170" cy="210" r="3.4"/><circle cx="132" cy="270" r="3.4"/><circle cx="96" cy="304" r="3.4"/><circle cx="682" cy="148" r="3.4"/><circle cx="630" cy="210" r="3.4"/><circle cx="668" cy="270" r="3.4"/><circle cx="704" cy="304" r="3.4"/><circle cx="350" cy="48" r="3.4"/><circle cx="450" cy="44" r="3.4"/><circle cx="350" cy="404" r="3.4"/><circle cx="452" cy="410" r="3.4"/></svg>
+          <div class="ym-splash__particles"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="ym-splash__object">
+            <div class="ym-splash__tile">
+              <svg class="ym-splash__receipt" viewBox="0 0 100 116" aria-hidden="true"><defs><linearGradient id="ymRcpt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef3fb"/></linearGradient></defs><path d="M0 10Q0 0 10 0H90Q100 0 100 10V104L95.0 112L90.0 104L85.0 112L80.0 104L75.0 112L70.0 104L65.0 112L60.0 104L55.0 112L50.0 104L45.0 112L40.0 104L35.0 112L30.0 104L25.0 112L20.0 104L15.0 112L10.0 104L5.0 112L0.0 104Z" fill="url(#ymRcpt)"/><path class="ym-splash__qr" transform="translate(18 18) scale(2.5600)" d="M0 0h7v1h-7zM8 0h3v1h-3zM12 0h2v1h-2zM18 0h7v1h-7zM0 1h1v1h-1zM6 1h1v1h-1zM8 1h1v1h-1zM10 1h2v1h-2zM13 1h1v1h-1zM16 1h1v1h-1zM18 1h1v1h-1zM24 1h1v1h-1zM0 2h1v1h-1zM2 2h3v1h-3zM6 2h1v1h-1zM8 2h1v1h-1zM10 2h4v1h-4zM16 2h1v1h-1zM18 2h1v1h-1zM20 2h3v1h-3zM24 2h1v1h-1zM0 3h1v1h-1zM2 3h3v1h-3zM6 3h1v1h-1zM9 3h5v1h-5zM18 3h1v1h-1zM20 3h3v1h-3zM24 3h1v1h-1zM0 4h1v1h-1zM2 4h3v1h-3zM6 4h1v1h-1zM8 4h2v1h-2zM14 4h1v1h-1zM16 4h1v1h-1zM18 4h1v1h-1zM20 4h3v1h-3zM24 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM10 5h1v1h-1zM14 5h1v1h-1zM18 5h1v1h-1zM24 5h1v1h-1zM0 6h7v1h-7zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h7v1h-7zM9 7h3v1h-3zM13 7h1v1h-1zM0 8h1v1h-1zM3 8h6v1h-6zM10 8h1v1h-1zM14 8h4v1h-4zM20 8h1v1h-1zM22 8h3v1h-3zM0 9h3v1h-3zM4 9h1v1h-1zM9 9h1v1h-1zM11 9h1v1h-1zM15 9h1v1h-1zM19 9h5v1h-5zM0 10h2v1h-2zM3 10h1v1h-1zM5 10h2v1h-2zM10 10h1v1h-1zM12 10h6v1h-6zM19 10h1v1h-1zM21 10h1v1h-1zM24 10h1v1h-1zM2 11h2v1h-2zM5 11h1v1h-1zM7 11h1v1h-1zM10 11h3v1h-3zM17 11h2v1h-2zM21 11h4v1h-4zM1 12h9v1h-9zM11 12h2v1h-2zM14 12h1v1h-1zM16 12h1v1h-1zM18 12h2v1h-2zM24 12h1v1h-1zM0 13h1v1h-1zM4 13h2v1h-2zM14 13h3v1h-3zM20 13h1v1h-1zM23 13h1v1h-1zM0 14h2v1h-2zM3 14h1v1h-1zM6 14h1v1h-1zM9 14h4v1h-4zM14 14h2v1h-2zM17 14h2v1h-2zM20 14h5v1h-5zM0 15h1v1h-1zM2 15h1v1h-1zM5 15h1v1h-1zM8 15h1v1h-1zM11 15h1v1h-1zM14 15h1v1h-1zM16 15h4v1h-4zM21 15h2v1h-2zM24 15h1v1h-1zM0 16h1v1h-1zM2 16h1v1h-1zM4 16h1v1h-1zM6 16h1v1h-1zM8 16h1v1h-1zM13 16h1v1h-1zM16 16h5v1h-5zM22 16h2v1h-2zM8 17h1v1h-1zM10 17h3v1h-3zM14 17h3v1h-3zM20 17h1v1h-1zM22 17h2v1h-2zM0 18h7v1h-7zM8 18h1v1h-1zM10 18h2v1h-2zM14 18h1v1h-1zM16 18h1v1h-1zM18 18h1v1h-1zM20 18h1v1h-1zM24 18h1v1h-1zM0 19h1v1h-1zM6 19h1v1h-1zM8 19h3v1h-3zM12 19h5v1h-5zM20 19h1v1h-1zM23 19h1v1h-1zM0 20h1v1h-1zM2 20h3v1h-3zM6 20h1v1h-1zM8 20h3v1h-3zM12 20h1v1h-1zM14 20h7v1h-7zM23 20h2v1h-2zM0 21h1v1h-1zM2 21h3v1h-3zM6 21h1v1h-1zM8 21h2v1h-2zM17 21h2v1h-2zM23 21h2v1h-2zM0 22h1v1h-1zM2 22h3v1h-3zM6 22h1v1h-1zM12 22h1v1h-1zM16 22h2v1h-2zM20 22h5v1h-5zM0 23h1v1h-1zM6 23h1v1h-1zM9 23h1v1h-1zM14 23h1v1h-1zM17 23h1v1h-1zM19 23h2v1h-2zM22 23h3v1h-3zM0 24h7v1h-7zM8 24h1v1h-1zM10 24h1v1h-1zM12 24h5v1h-5zM21 24h1v1h-1zM24 24h1v1h-1z"/><rect x="18" y="88" width="40" height="3" rx="1.5" fill="#cfd9ea"/><rect x="18" y="94" width="26" height="3" rx="1.5" fill="#dde5f1"/></svg>
+              <span class="ym-splash__badge ym-splash__badge--check"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="ymOr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb04a"/><stop offset="1" stop-color="#f0600c"/></linearGradient></defs><circle cx="12" cy="12" r="11" fill="url(#ymOr)"/><circle cx="12" cy="12" r="10.2" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width="1"/><path d="M7 12.4l3.1 3.1L17 8.6" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="ym-splash__badge ym-splash__badge--gear"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="ymBr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9b08a"/><stop offset="1" stop-color="#6f4528"/></linearGradient></defs><path d="M10.41 2.13L13.59 2.13L13.71 4.80L15.88 5.70L17.85 3.89L20.11 6.15L18.30 8.12L19.20 10.29L21.87 10.41L21.87 13.59L19.20 13.71L18.30 15.88L20.11 17.85L17.85 20.11L15.88 18.30L13.71 19.20L13.59 21.87L10.41 21.87L10.29 19.20L8.12 18.30L6.15 20.11L3.89 17.85L5.70 15.88L4.80 13.71L2.13 13.59L2.13 10.41L4.80 10.29L5.70 8.12L3.89 6.15L6.15 3.89L8.12 5.70L10.29 4.80Z" fill="url(#ymBr)"/><circle cx="12" cy="12" r="5.6" fill="#8a5c38"/><path d="M9.4 12.2l1.8 1.8 3.6-3.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="ym-splash__floor"></div>
+          </div>
+        </div>
+        <div class="ym-splash__brand"><span>chek.</span>ymaster.ru</div>
+        <div class="ym-splash__status" id="ym-splash-status" role="status" aria-live="polite">Подготовка…</div>
+        <div class="ym-splash__progress">
+          <progress class="ym-splash__native" id="ym-splash-progress" max="100" value="0" aria-label="Загрузка приложения">0 %</progress>
+          <div class="ym-splash__bar" aria-hidden="true"><i></i></div><b id="ym-splash-pct" aria-hidden="true">0 %</b>
+        </div>
+        <ol class="ym-splash__steps">
+          <li data-step="1"><span class="ym-splash__ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l8.2 4.6L12 12 3.8 7.4z" fill="#9fd0ff"/><path d="M3.8 7.4v9.2L12 21.2V12z" fill="#4c98f5"/><path d="M20.2 7.4v9.2L12 21.2V12z" fill="#2364d6"/></svg></span><span class="ym-splash__num">1</span><span class="ym-splash__lbl">Инициализация</span></li>
+          <li data-step="2"><span class="ym-splash__ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4l4 2.2L8 8.4 4 6.2z" fill="#a9d5ff"/><path d="M4 6.2v4.4L8 12.8V8.4z" fill="#5aa2f7"/><path d="M12 6.2v4.4L8 12.8V8.4z" fill="#2a6ddc"/><path d="M16.5 9.5l3.5 1.9-3.5 1.9-3.5-1.9z" fill="#a9d5ff"/><path d="M13 11.4v3.8l3.5 1.9v-3.8z" fill="#5aa2f7"/><path d="M20 11.4v3.8l-3.5 1.9v-3.8z" fill="#2a6ddc"/><path d="M9 14.5l3 1.6-3 1.6-3-1.6z" fill="#a9d5ff"/><path d="M6 16.1v3.2l3 1.6v-3.2z" fill="#5aa2f7"/><path d="M12 16.1v3.2l-3 1.6v-3.2z" fill="#2a6ddc"/><circle cx="18.6" cy="5.4" r="1.3" fill="#7fbcff"/><circle cx="3.6" cy="15.6" r="1" fill="#7fbcff"/><circle cx="20.6" cy="19.4" r=".9" fill="#7fbcff"/></svg></span><span class="ym-splash__num">2</span><span class="ym-splash__lbl">Подключение модулей</span></li>
+          <li data-step="3"><span class="ym-splash__ico ym-splash__ico--check"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path class="ym-splash__tick" d="M7.6 12.3l3 3 5.8-6.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ym-splash__num">3</span><span class="ym-splash__lbl">Готово к запуску</span></li>
+        </ol>
+        <div class="ym-splash__tip" id="ym-splash-tip" hidden></div>
+        <div class="ym-splash__meta">Версия <span id="ym-splash-version">…</span><i>•</i>Выпуск 2026<i>•</i>ООО «Ямастер»</div>
+        <div class="ym-splash__slow" id="ym-splash-slow" hidden>Сеть отвечает медленно — подождите или <button type="button" id="ym-splash-reload">обновите страницу</button></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Анимированный фон -->
   <div class="bg-aurora" aria-hidden="true">
     <div class="blob blob-1"></div>
@@ -29,14 +88,21 @@
     <div class="blob blob-3"></div>
   </div>
 
-  <!-- Экран входа -->
-  <div id="login-screen" class="login-screen hidden">
+  <!-- Экран входа (стартовая страница).
+       v1.70.103 (T-74): виден с первого кадра, без класса hidden — содержимое читают поисковики и человек видит его
+       сразу; у вошедших и на особых адресах его прячет класс ym-hold до решения программы (js/boot.js). Один
+       заголовок H1 — у стартовой страницы; микроразметка schema.org (WebSite и Organization) — только на видимом
+       тексте: Яндекс читает микроданные, JSON-LD не поддерживает (docs/kb/12_seo.md) -->
+  <div id="login-screen" class="login-screen">
     <div class="land-wrap">
-    <div class="land-left">
+    <div class="land-left" itemscope itemtype="https://schema.org/WebSite">
+      <meta itemprop="name" content="Ямастер Чек">
+      <meta itemprop="alternateName" content="chek.ymaster.ru">
+      <link itemprop="url" href="https://chek.ymaster.ru/">
       <span class="land-badge" id="land-badge">Чек-Пул уже работает</span>
-      <h1 class="land-h1">Сканируйте чеки —<br>получайте <span class="land-accent">баллы и кэшбэк</span></h1>
-      <p class="land-lead">Каждый кассовый чек — баллы в открытой базе «Чек-Пул»
-      и кэшбэк у партнёров. Для первого чека регистрация не нужна:
+      <h1 class="land-h1">Проверка чека по QR-коду —<br><span class="land-accent">баллы и кэшбэк</span> за каждый чек</h1>
+      <p class="land-lead" itemprop="description">Сканируйте чеки камерой телефона: сверим кассовый чек с данными ФНС
+      и начислим балл в открытой базе «Чек-Пул», а у партнёров — кэшбэк. Для первого чека регистрация не нужна:
       навели камеру — балл засчитан.</p>
       <div class="land-stats" id="land-stats">
         <span class="land-stat"><b>—</b><small>чеков в базе</small></span>
@@ -52,21 +118,30 @@
           <div><b>1. Отсканируйте QR-код чека</b><span>Камерой телефона или фотографией — код распознаётся автоматически.</span></div></li>
         <li><img src="/img/manual/report.jpg" alt="Данные чека" loading="lazy">
           <div><b>2. Мы проверяем чек по официальным источникам</b><span>данные приходят из официальной базы ФНС; реквизиты, магазин и сумма берутся из чека.</span></div></li>
-        <li><div class="land-step-noimg"><b>3. Получайте баллы</b><span>Баллы копятся в кабинете, кэшбэк — у партнёров. Укажите e-mail ниже — пришлём разбор чека.</span></div></li>
+        <li><img src="/img/manual/points.jpg" alt="Баллы и кэшбэк: монеты и подарок в кабинете" loading="lazy">
+          <div><b>3. Получайте баллы</b><span>Баллы копятся в кабинете, кэшбэк — у партнёров. Укажите e-mail ниже — пришлём разбор чека.</span></div></li>
       </ol>
       <form id="land-lead" class="land-lead-form" novalidate>
         <label class="field"><span>E-mail для разбора чека и писем пула</span>
           <input type="email" id="land-email" placeholder="you@mail.ru" autocomplete="email"></label>
-        <input type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off"
-               style="position:absolute;left:-9999px;top:-9999px;height:1px;width:1px">
-        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px">
-          <input type="checkbox" id="land-consent" style="width:auto;margin-top:2px">
+        <input class="visually-hidden" type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off">
+        <label class="consent-label">
+          <input class="consent-box" type="checkbox" id="land-consent">
           <span>Согласен на обработку e-mail для разбора чека и писем пула
           (152-ФЗ; отписаться можно в любом письме)</span></label>
         <button class="btn btn-primary btn-block" id="land-lead-btn" type="submit">Прислать разбор чека</button>
-        <div id="land-lead-msg" class="form-hint" style="margin-top:6px"></div>
+        <div id="land-lead-msg" class="form-hint mt-6"></div>
       </form>
       <div class="land-faq">
+        <details><summary>Как проверить чек по QR-коду?</summary>
+          <p>Нажмите «Сканировать чек» и наведите камеру на QR-код или загрузите фото чека — дата,
+          сумма, ФН, ФД и ФП распознаются сами, и чек сверяется с данными ФНС. Если QR-код стёрся,
+          реквизиты можно ввести вручную. <a href="/kak-proverit-chek">Подробная инструкция и что делать, если чек
+          не найден в ФНС</a>.</p></details>
+        <details><summary>Как понять, что чек настоящий?</summary>
+          <p>Онлайн-касса передаёт каждый чек в ФНС через оператора фискальных данных. Чек, который
+          нашёлся в данных ФНС, получает статус «Принят в пул»; остальные уходят на ручную проверку
+          или не принимаются — статус виден в кабинете.</p></details>
         <details><summary>Это законно и безопасно?</summary>
           <p>Мы принимаем только фискальные реквизиты чека (ФН, ФД, ФП) — они напечатаны
           на самом чеке. Из персональных данных — только e-mail и только по вашему
@@ -79,53 +154,92 @@
           в сутки с одного устройства.</p></details>
         <details><summary>А для компаний?</summary>
           <p>Сотрудники сканируют авансовые и командировочные чеки телефоном,
-          бухгалтер видит их в базе и выгружает в 1С одной кнопкой.</p></details>
+          бухгалтер видит их в базе и выгружает в 1С одной кнопкой. Бухгалтерам и аутсорсингу —
+          несколько компаний в одном окне, выписки банков по API и УПД из ЭДО. Подробнее:
+          <a href="/cheki-sotrudnikov-v-1c">чеки сотрудников в 1С</a>, <a href="/dlya-buhgalterov">для бухгалтеров и
+          аутсорсинга</a>.</p></details>
       </div>
-      <p class="land-note">ООО «Ямастер» · ymaster.ru · info@ymaster.ru</p>
+      <!-- v1.70.106 (T-75): страницы под кластеры запросов — видимые ссылки, у каждой страницы своя польза.
+           Абзац, а не nav: второй ориентир «навигация» без имени html-validate не пропускает (unique-landmark) -->
+      <p class="land-more"><span>Полезное:</span>
+        <a href="/kak-proverit-chek">Как проверить чек</a>
+        <a href="/cheki-sotrudnikov-v-1c">Чеки сотрудников в 1С</a>
+        <a href="/dlya-buhgalterov">Для бухгалтеров</a></p>
+      <p class="land-note" itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
+        <link itemprop="logo" href="https://chek.ymaster.ru/img/icon-512.png">
+        <span itemprop="name">ООО «Ямастер»</span> ·
+        <a itemprop="url" href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+        <a href="mailto:chek@ymaster.ru"><span itemprop="email">chek@ymaster.ru</span></a></p>
     </div>
     <div class="land-right">
     <div class="login-card glass">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64">
-        <h1>Ямастер <span class="grad-text">Чек</span></h1>
+        <p class="login-name">Ямастер <span class="grad-text">Чек</span></p>
         <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
+      </div>
+      <!-- v1.70.37: первый визит — два способа сделать всё в MAX.
+           Показывается один раз (отметка в localStorage), закрывается
+           крестиком, сам никуда не ведёт и ничего не отправляет: кнопки
+           открывают MAX по нажатию человека. -->
+      <div class="max-intro hidden" id="max-intro" role="note"
+           aria-labelledby="max-intro-title">
+        <div class="max-intro-head">
+          <span class="max-intro-title" id="max-intro-title">Первый раз здесь? Проще всего в MAX</span>
+          <button type="button" class="max-intro-close" id="max-intro-close"
+                  title="Скрыть подсказку" aria-label="Скрыть подсказку">✕</button>
+        </div>
+        <p>Регистрация в один нажим — без пароля и письма с подтверждением.
+        Чек сдаёте камерой MAX или фотографией QR-кода. Имя и фото из MAX
+        попадут в карточку участника только после вашего согласия (152-ФЗ).</p>
+        <div class="max-intro-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="max-intro-reg">
+            🛡 Регистрация через MAX</button>
+          <button type="button" class="btn btn-sm" id="max-intro-scan">
+            📷 Сдать чек в MAX</button>
+          <button type="button" class="btn btn-sm" id="max-intro-doc">
+            📖 Инструкция</button>
+        </div>
       </div>
       <form id="login-form" autocomplete="on">
         <label class="field">
           <span>Логин</span>
-          <input type="text" id="login-username" required minlength="2" placeholder="admin">
+          <input type="text" id="login-username" required minlength="2" placeholder="admin"
+               autocomplete="username webauthn">
         </label>
         <label class="field">
           <span>Пароль</span>
-          <input type="password" id="login-password" required minlength="4" placeholder="••••••••">
+          <input type="password" id="login-password" required minlength="4" autocomplete="current-password" placeholder="••••••••">
         </label>
         <div id="login-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-block" id="login-submit">
           Войти в систему
         </button>
-        <div id="login-passkey-wrap" class="hidden" style="margin-top:10px">
-          <div style="display:flex;align-items:center;gap:10px;margin:2px 0 6px">
-            <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
-            <span class="form-hint" style="white-space:nowrap">или</span>
-            <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+        <div id="login-passkey-wrap" class="hidden mt-10">
+          <div class="alt-row">
+            <span class="alt-line"></span>
+            <span class="form-hint nowrap">или</span>
+            <span class="alt-line"></span>
           </div>
           <button type="button" class="btn btn-block" id="login-passkey">
             🔑 Войти по отпечатку пальца / Face ID
           </button>
-          <div class="form-hint" style="margin-top:6px;text-align:center">
+          <div class="form-hint hint-center">
             устройство само подтвердит вас — пароль не вводится</div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 10px">
-          <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
-          <span class="form-hint" style="white-space:nowrap">или</span>
-          <span style="flex:1;height:1px;background:var(--line,#e5e7eb)"></span>
+        <div class="alt-row-lg">
+          <span class="alt-line"></span>
+          <span class="form-hint nowrap">или</span>
+          <span class="alt-line"></span>
         </div>
         <button type="button" class="btn btn-block" id="login-max">🛡 Войти или зарегистрироваться через MAX</button>
-        <div class="form-hint" style="margin-top:6px;text-align:center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
+        <div class="form-hint hint-center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
+        <button type="button" class="btn btn-block" id="login-telegram">✈️ Войти или зарегистрироваться через Telegram</button>
+        <div class="form-hint hint-center">подтвердите вход у бота в Telegram — пароль не нужен</div>
       </form>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a><br>
+        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a><br>
         <a href="#/public">🧾 Сдать чек в Чек-Пул</a> — без входа в систему
       </div>
     </div>
@@ -138,29 +252,30 @@
     <div class="login-card glass">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 style="font-size:24px">Приглашение в <span class="grad-text">Ямастер Чек</span></h1>
-        <div id="reg-invite-badge" class="chip new" style="margin:10px auto 0;display:inline-flex"><span class="dot"></span>—</div>
+        <h2 class="screen-title">Приглашение в <span class="grad-text">Ямастер Чек</span></h2>
+        <div id="reg-invite-badge" class="chip new badge-center"><span class="dot"></span>—</div>
       </div>
       <form id="register-form" autocomplete="on">
         <label class="field">
           <span>Ваше имя (ФИО)</span>
-          <input type="text" id="reg-fullname" placeholder="Иванова Анна Петровна">
+          <input type="text" id="reg-fullname" placeholder="Иванова Анна Петровна" autocomplete="name">
         </label>
         <label class="field">
           <span>Логин</span>
-          <input type="text" id="reg-username" required minlength="2" placeholder="ivanova">
+          <input type="text" id="reg-username" required minlength="2" placeholder="ivanova"
+               autocomplete="username">
         </label>
         <label class="field">
           <span>Придумайте пароль (мин. 6 символов)</span>
-          <input type="password" id="reg-password" required minlength="6" placeholder="••••••••">
+          <input type="password" id="reg-password" required minlength="6" autocomplete="new-password" placeholder="••••••••">
         </label>
         <div id="register-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-block" id="register-submit">
           Создать аккаунт
         </button>
       </form>
-      <div style="text-align:center;margin-top:14px">
-        <a href="#" id="reg-back-to-login" style="font-size:13.5px">← У меня уже есть аккаунт — войти</a>
+      <div class="form-foot">
+        <a class="form-link" href="#" id="reg-back-to-login">← У меня уже есть аккаунт — войти</a>
       </div>
       <div class="login-footer">
         Регистрация возможна только по приглашению администратора · ООО «Ямастер» ·
@@ -171,40 +286,40 @@
 
   <!-- v1.31.0: публичная страница «Сдать чек в Чек-Пул» (гость, без входа) -->
   <div id="public-screen" class="login-screen hidden">
-    <div class="login-card glass" style="max-width:660px;width:100%">
+    <div class="login-card glass login-card-wide">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 style="font-size:24px">Сдать чек в <span class="grad-text">Чек-Пул</span></h1>
-        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Проверяем чек по официальным источникам и начисляем
+        <h2 class="screen-title">Сдать чек в <span class="grad-text">Чек-Пул</span></h2>
+        <p class="screen-sub">Проверяем чек по официальным источникам и начисляем
         баллы. Регистрация не нужна.</p>
       </div>
       <div id="public-root"></div>
-      <div style="text-align:center;margin-top:14px">
-        <a href="#" id="public-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      <div class="form-foot">
+        <a class="form-link" href="#" id="public-to-login">Войти в Ямастер Чек →</a>
       </div>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a>
+        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a>
       </div>
     </div>
   </div>
 
   <!-- v1.32.0: кабинет участника «Чек-Пула» (доступен без входа в программу) -->
   <div id="pool-account-screen" class="login-screen hidden">
-    <div class="login-card glass" style="max-width:660px;width:100%">
+    <div class="login-card glass login-card-wide">
       <div class="login-logo">
         <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h1 style="font-size:24px">Кабинет <span class="grad-text">Чек-Пула</span></h1>
-        <p style="font-size:13.5px;color:#5c5c5c;margin:6px 0 0">Баллы, мои чеки и профиль участника открытой базы.</p>
+        <h2 class="screen-title">Кабинет <span class="grad-text">Чек-Пула</span></h2>
+        <p class="screen-sub">Баллы, мои чеки и профиль участника открытой базы.</p>
       </div>
       <div id="pool-account-root"></div>
-      <div style="text-align:center;margin-top:14px">
-        <a href="#" id="pool-to-public" style="font-size:13.5px;margin-right:18px">🧾 Сдать чек</a>
-        <a href="#" id="pool-to-login" style="font-size:13.5px">Войти в Ямастер Чек →</a>
+      <div class="form-foot">
+        <a class="form-link form-link-gap" href="#" id="pool-to-public">🧾 Сдать чек</a>
+        <a class="form-link" href="#" id="pool-to-login">Войти в Ямастер Чек →</a>
       </div>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a>
+        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a>
       </div>
     </div>
   </div>
@@ -248,10 +363,34 @@
         <a href="#/poolpeople" data-view="poolpeople" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Чек-Пул: участники
         </a>
+        <!-- Модерация контура B2B (доступ компаний к платному API).
+             Пункт виден только администратору; каждый блок раздела помечен
+             «Это не видит никто» — пометка приходит с сервера (поле marker). -->
+        <a href="#/b2badmin" data-view="b2badmin" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="audit"></span>API для бизнеса: модерация
+        </a>
         <div class="nav-group">Чеки и учёт</div>
+        <!-- v1.70.100 (T-50): рабочее место аутсорсера — все клиенты в одном окне -->
+        <a href="#/clients" data-view="clients" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="list"></span>Клиенты
+        </a>
         <a href="#/receipts" data-view="receipts" class="nav-item">
           <span class="nav-icon" data-icon="list"></span>Чеки
           <span class="nav-badge" id="nav-receipts-badge">0</span>
+        </a>
+        <!-- v1.70.112 (T-46): согласование авансовых отчётов — где включено в компании; администратору всегда -->
+        <a href="#/approvals" data-view="approvals" class="nav-item approvals-only hidden">
+          <span class="nav-icon" data-icon="audit"></span>Согласования
+          <span class="nav-badge hidden" id="nav-approvals-badge">0</span>
+        </a>
+        <a href="#/primary" data-view="primary" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="list"></span>Первичка (УПД)
+        </a>
+        <a href="#/docreq" data-view="docreq" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="audit"></span>Что нужно от клиента
+        </a>
+        <a href="#/bank" data-view="bank" class="nav-item accountant-only">
+          <span class="nav-icon" data-icon="export"></span>Банк: выписка
         </a>
         <a href="#/export" data-view="export" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="export"></span>Выгрузка в 1С
@@ -261,6 +400,9 @@
         </a>
         <a href="#/poolpick" data-view="poolpick" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="list"></span>Подбор из пула
+        </a>
+        <a href="#/supabase" data-view="supabase" class="nav-item accountant-only supabase-only hidden">
+          <span class="nav-icon" data-icon="list"></span>Supabase демо
         </a>
         <a href="#/boss" data-view="boss" class="nav-item boss-only hidden">
           <span class="nav-icon" data-icon="boss"></span>Отчёт руководителя
@@ -275,16 +417,21 @@
         <a href="#/audit" data-view="audit" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="audit"></span>Журнал
         </a>
+        <!-- v1.70.83: разбор конфликтов единого реестра — спорные чеки, решение о владельце -->
+        <a href="#/conflicts" data-view="conflicts" class="nav-item admin-only hidden">
+          <span class="nav-icon" data-icon="audit"></span>Разбор конфликтов
+          <span class="nav-badge hidden" id="nav-conflicts-badge">0</span>
+        </a>
         <a href="#/settings" data-view="settings" class="nav-item">
           <span class="nav-icon" data-icon="settings"></span>Настройки
         </a>
       </nav>
       <div class="sidebar-footer">
-        <button class="btn btn-sm btn-block" id="btn-manual" title="Инструкция по приложению">
+        <button type="button" class="btn btn-sm btn-block" id="btn-manual" title="Инструкция по приложению">
           📖 Инструкция</button>
-        <button class="btn btn-sm btn-block pwa-install" id="pwa-install-btn" title="Установить на устройство">
+        <button type="button" class="btn btn-sm btn-block pwa-install" id="pwa-install-btn" title="Установить на устройство">
           📲 Установить приложение</button>
-        <div class="live-status" id="ws-status" style="margin-top:10px">
+        <div class="live-status mt-10" id="ws-status">
           <span class="live-dot"></span> <span id="ws-status-text">Подключение…</span>
         </div>
         <div class="vendor-line">© ООО «Ямастер» · ymaster.ru</div>
@@ -294,24 +441,34 @@
 
     <div class="main-area">
       <header class="topbar">
-        <button class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <button type="button" class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
         <h2 class="page-title" id="page-title">Дашборд</h2>
         <div class="topbar-right">
           <select id="company-filter" class="company-select admin-only hidden"
                   title="Пространство: все компании или одна (администратор)"></select>
+          <!-- v1.70.100 (T-50): бухгалтер-аутсорсер — переключатель клиента (виден при двух и более компаниях) -->
+          <select id="client-switch" class="company-select hidden" aria-label="Компания-клиент"
+                  title="Компания-клиент: данные и действия — в выбранной компании"></select>
           <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
             ⚡ Офлайн
           </div>
-          <div class="user-chip" id="user-chip" role="button" tabindex="0"
-               title="Профиль и переключение просмотра (v1.18.0)" aria-haspopup="true" aria-expanded="false">
-            <div class="avatar" id="user-avatar">A</div>
-            <div class="user-meta">
-              <div class="user-name" id="user-name">—</div>
-              <div class="user-role" id="user-role">—</div>
-            </div>
-            <!-- v1.18.0: режим просмотра — меню переключения профилей -->
-            <span class="chip-caret" id="chip-caret" aria-hidden="true">▾</span>
-            <button class="btn-icon" id="btn-logout" title="Выйти">⎋</button>
+          <div class="user-area">
+            <button type="button" class="user-chip" id="user-chip"
+                    title="Профиль и переключение просмотра (v1.18.0)"
+                    aria-haspopup="true" aria-expanded="false">
+              <span class="avatar" id="user-avatar">A</span>
+              <span class="user-meta">
+                <span class="user-name" id="user-name">—</span>
+                <span class="user-role" id="user-role">—</span>
+              </span>
+              <!-- v1.18.0: режим просмотра — меню переключения профилей -->
+              <span class="chip-caret" id="chip-caret" aria-hidden="true">▾</span>
+            </button>
+            <!-- v1.70.33: «Выйти» вынесена ИЗ переключателя профиля. Раньше она
+                 лежала внутри псевдокнопки (div с ролью button) — вложенные
+                 интерактивные элементы невалидны и недоступны, а заменить тот div
+                 на нативную кнопку было нельзя: вышла бы кнопка внутри кнопки. -->
+            <button type="button" class="btn-icon" id="btn-logout" title="Выйти">⎋</button>
           </div>
           <div class="persona-menu glass hidden" id="persona-menu" role="menu"
                aria-label="Переключение профиля"></div>
@@ -321,23 +478,27 @@
       <div class="viewas-bar hidden" id="viewas-bar">
         <span class="viewas-eye" aria-hidden="true">👁</span>
         <div class="viewas-text" id="viewas-text"></div>
-        <button class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
+        <button type="button" class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
       </div>
       <main class="content" id="view-container"></main>
       <footer class="app-footer">
         Ямастер Чек <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
         <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:info@ymaster.ru">info@ymaster.ru</a> ·
+        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a> ·
+        <a href="/oferta" target="_blank" rel="noopener">Публичная оферта</a> ·
         <a href="/api/docs" target="_blank" rel="noopener">API-документация</a>
       </footer>
     </div>
   </div>
 
   <!-- Контейнеры уведомлений и модалок -->
-  <div class="toast-container" id="toast-container"></div>
+  <div class="toast-container" id="toast-container" role="status" aria-live="polite"></div>
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.70.15"></script>
+  <!-- v1.70.51: Chart.js — графики истории в блоке «Мониторинг OpenStack».
+       Вендорен, как и jsQR: без обращения к внешним сетям при загрузке. -->
+  <script src="/js/vendor/chart.umd.js"></script>
+  <script type="module" src="/js/app.js?v=1.70.113"></script>
 </body>
 </html>

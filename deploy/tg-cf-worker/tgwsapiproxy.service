@@ -1,0 +1,37 @@
+# Ямастер Чек v1.70.68 — локальный прокси Telegram Bot API через
+# Cloudflare Worker (пакет tgwsapiproxy, https://github.com/winchanii/TgWsApiProxy).
+#
+# Служба поднимает два входа ТОЛЬКО на локальном интерфейсе:
+#   127.0.0.1:1080 — SOCKS5
+#   127.0.0.1:8080 — HTTP CONNECT (его использует «Ямастер Чек»)
+#
+# Установщик install.sh подставляет вместо __WORKER_HOST__ домен вашего
+# Worker вида имя-abc123.ваш-аккаунт.workers.dev.
+#
+# Отказоустойчивость (ТЗ §6): Restart=always — при падении прокси systemd
+# поднимает его заново через 3 секунды.
+
+[Unit]
+Description=Локальный прокси Telegram Bot API через Cloudflare Worker (tgwsapiproxy)
+Documentation=https://github.com/winchanii/TgWsApiProxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgproxy
+Group=tgproxy
+ExecStart=/opt/tgwsapiproxy/venv/bin/tgwsapiproxy --worker-host __WORKER_HOST__ --listen-host 127.0.0.1 --listen-port 1080 --http-port 8080
+Restart=always
+RestartSec=3
+
+# Безопасность: прокси слушает только 127.0.0.1 (флаг --listen-host выше),
+# служба без новых привилегий, без записи в системные каталоги, без доступа
+# к домашним каталогам и с изолированным /tmp.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

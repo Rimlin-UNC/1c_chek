@@ -15,42 +15,79 @@
 """
 from __future__ import annotations
 
+from typing import Annotated, Literal
 import csv
 import datetime as dt
 import io
 import json
 import logging
+import math
 import os
 import queue
 import threading
 import time
 
-from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
-                     Query, UploadFile, status)
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, lazyload
 
-from ..auth import (ROLE_ACCOUNTANT, ROLE_ADMIN, ROLE_USER, get_current_user,
-                    require_accountant, require_admin)
-from ..services.scoping import (can_edit_receipt, can_view_receipt,
-                                scope_receipts, target_company_id)   # v1.11.0
-
+from ..auth import (
+    ROLE_ACCOUNTANT,
+    ROLE_ADMIN,
+    ROLE_USER,
+    get_current_user,
+    require_accountant,
+    require_admin,
+)
 from ..config import settings
 from ..database import get_db
-from ..models import (Company, FnsLog, MappingSetting, MerchantRule,
-                      Receipt, ReceiptItem, User)
-from ..schemas import (AssignBulk, ExportRequest, FetchDetailsRequest,
-                       ManualReceipt, ReceiptMoveBody, ReceiptPatch,
-                       RememberMerchantBody, AdvanceReportBody, ScanRequest,
-                       VerifyRequest)
+from ..models import Company, FnsLog, MappingSetting, MerchantRule, Receipt, ReceiptItem, User
+from ..schemas import (
+    AdvanceReportBody,
+    AdvanceReportNumberBody,
+    AssignBulk,
+    EnrichRequest,
+    ExportRequest,
+    FetchDetailsRequest,
+    ManualReceipt,
+    ReceiptMoveBody,
+    ReceiptPatch,
+    RememberMerchantBody,
+    ScanRequest,
+    VerifyRequest,
+)
 from ..services import appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
+from ..services.external import ExternalResult
+from ..services.external import engine as external_engine
 from ..services.fns import check_receipt
-from ..services.external import engine as external_engine, ExternalResult
-from ..services.qr import (MultipleReceiptsError, ParsedQR, QRParseError,
-                           build_qr_string, parse_qr, receipts_json)
+from ..services.qr import (
+    MultipleReceiptsError,
+    ParsedQR,
+    QRParseError,
+    build_qr_string,
+    parse_qr,
+    receipts_json,
+)
+from ..services.scoping import (
+    can_edit_receipt,
+    can_view_receipt,
+    scope_receipts,  # v1.11.0
+    target_company_id,
+)
 
 router = APIRouter(prefix="/api/v1/receipts", tags=["Чеки"])
 
@@ -62,11 +99,68 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
                     user: User | None,
                     company_id: str | None = None) -> tuple[Receipt, bool]:
     """Создание чека с дедупликацией по ФН+ФД+ФП."""
+    from ..services.receipt_identity import lock_identity
+    lock_identity(db, parsed.fn, parsed.fd, parsed.fp)
     existing = db.query(Receipt).filter(
         Receipt.fn == parsed.fn, Receipt.fd == parsed.fd, Receipt.fp == parsed.fp
     ).first()
     if existing:
+        db.commit()  # отпустить замок до аудита в отдельной сессии
         return existing, False  # уже есть — дубликат
+
+    # Чек из пула не дублируется и переносится без сетевого запроса.
+    from ..pool.models import PoolReceipt
+    pool = db.query(PoolReceipt).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
+    if pool:
+        from ..pool import ingest as pool_ingest
+        from ..pool.router_company import month_used, pick_limit
+        from ..pool.transfer import copy_to_registry
+        # Авторизация могла измениться, пока запрос ожидал замок тройки.
+        # Порядок блокировок совпадает с пакетным подбором: чек, компания,
+        # пользователь. Повторно читаем и сам чек после получения замков.
+        actor_id = user.id if user is not None else None
+        actor_role = user.role if user is not None else None
+        if not company_id or not actor_id:
+            raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
+        company = (db.query(Company).populate_existing().filter(Company.id == company_id)
+                   .with_for_update().first())
+        actor = (db.query(User).populate_existing().filter(User.id == actor_id)
+                 .with_for_update().first())
+        if (not company or not company.is_active or not actor or not actor.is_active
+                or actor.role != actor_role
+                or (actor.role != ROLE_ADMIN and actor.company_id != company_id)):
+            raise HTTPException(403, "Права или состояние компании изменились — обновите страницу")
+        user = actor
+        pool = (db.query(PoolReceipt).populate_existing()
+                .filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first())
+        if not pool:
+            raise HTTPException(409, "Чек изменён или удалён — обновите страницу")
+        if pool.assigned_company_id and pool.assigned_company_id != company_id:
+            from ..unified.links import ForeignOwnerConflict
+            raise ForeignOwnerConflict("Чек уже зарегистрирован за другой организацией",
+                                       parsed.fn, parsed.fd, parsed.fp, company_id)
+        if not company_id or pool.status != "verified":
+            raise HTTPException(409, "Чек уже зарегистрирован и недоступен для переноса")
+        if (pool.total_sum is None or not math.isfinite(pool.total_sum)
+                or not math.isfinite(parsed.total_sum) or pool.total_sum != parsed.total_sum
+                or pool.operation != parsed.operation or not pool.receipt_date or not parsed.date_time or
+                pool.receipt_date.replace(second=0, microsecond=0) !=
+                parsed.date_time.replace(second=0, microsecond=0)):
+            raise HTTPException(409, "Данные QR не совпадают с сохранённым чеком; требуется проверка")
+        if not pool.assigned_company_id:
+            if not user or user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
+                raise HTTPException(403, "Чек найден в пуле: попросите бухгалтера подобрать его")
+            if not pool_ingest.pool_enabled(db):
+                raise HTTPException(409, "Чек найден в пуле, но подбор выключен")
+            limit = pick_limit(db)
+            if not limit or month_used(db, company_id) >= limit:
+                raise HTTPException(409, "Квота подбора из пула исчерпана или выключена")
+            from ..unified import service as unified
+            unified.claim_pool(db, pool, company, user, event_type="scan_claim")
+        receipt, created = copy_to_registry(db, pool, company_id, user)
+        db.commit()
+        db.refresh(receipt)
+        return receipt, created
 
     # v1.2.0: чек, присланный сотрудником, сразу помечается «от кого» —
     # бухгалтеру не нужно назначать вручную; меняют только бухгалтер/админ.
@@ -91,7 +185,7 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
     db.add(receipt)
     db.flush()                                     # v1.62.0: id до политики
     try:                                           # v1.62.0: пометка нарушений
-        from ..services import policy as _pol      # политики (мягко)
+        from ..services import policy as _pol  # политики (мягко)
         _pol.refresh_receipt(db, receipt)
     except Exception:                              # noqa: BLE001
         pass                                       # политика не ломает приём
@@ -100,9 +194,49 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         _mr.apply_rules(db, receipt)
     except Exception:                              # noqa: BLE001
         pass                                       # правила не ломают приём
+    from ..unified import service as unified
+    unified.register_source(db, unified.REGISTRY, receipt, user,
+                            strict=True, event_type="create")
     db.commit()
     db.refresh(receipt)
     return receipt, True
+
+
+def _foreign_duplicate(user: User, receipt: Receipt, company_id: str | None) -> bool:
+    """Проверка принадлежности отдельно от расширенных прав администратора."""
+    return ((company_id is not None and receipt.company_id != company_id)
+            or not can_view_receipt(user, receipt))
+
+
+def _upsert_or_claim(db: Session, parsed: ParsedQR, source: str, user: User | None,
+                     company_id: str | None, claim_source: str) -> tuple[Receipt, bool]:
+    """_upsert_receipt; отказ «чек у другой организации» — заявка администратору.
+
+    v1.70.85 («Единая база», T-34): приём откатывается как раньше, заявка
+    пишется отдельной транзакцией, к отказу добавляется «Заявка передана
+    администратору.» (Q-22). Число организаций сотрудник не видит.
+    """
+    from ..unified import links
+    try:
+        return _upsert_receipt(db, parsed, source, user, company_id)
+    except links.ForeignOwnerConflict as exc:
+        db.rollback()
+        raise links.claim_rejected(db, exc, company_id=company_id, user=user,
+                                   source=claim_source) from None
+
+
+def _claim_foreign(db: Session, user: User | None, receipt: Receipt,
+                   company_id: str | None, claim_source: str) -> bool:
+    """Чек учтён в другой организации — заявка администратору (Q-22).
+
+    Коллега из своей компании заявку не создаёт. True — заявка записана;
+    сбой записи не меняет ответ сотруднику.
+    """
+    if not company_id or receipt.company_id == company_id:
+        return False
+    from ..unified import links
+    return links.note_attempt(db, receipt.fn, receipt.fd, receipt.fp, company_id=company_id,
+                              user=user, source=claim_source)
 
 
 def _company_names(db: Session, ids) -> dict:
@@ -137,7 +271,8 @@ def _notify_receipt_created(user, receipt) -> None:
     try:
         from ..services import telegram_bot as tg
         st_map = {"valid": "действителен", "invalid": "НЕ действителен",
-                  "not_found": "не найден в ФНС"}
+                  "not_found": "не найден в ФНС",
+                  "pending": "ожидает проверки (лимит ФНС)"}
         status = st_map.get(receipt.fns_status, "проверяется…")
         tg.notify_user(user.id, (
             f"✅ Чек принят: {(receipt.total_sum or 0):.2f} ₽"
@@ -157,7 +292,7 @@ def scan(body: ScanRequest, background: BackgroundTasks,
 
     # v1.11.0: чек попадает в пространство компании (админ может выбрать)
     company_id = target_company_id(db, user, body.company_id)
-    receipt, created = _upsert_receipt(db, parsed, body.source, user, company_id)
+    receipt, created = _upsert_or_claim(db, parsed, body.source, user, company_id, "scan_qr")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "sum": receipt.total_sum})
@@ -168,14 +303,20 @@ def scan(body: ScanRequest, background: BackgroundTasks,
     else:
         log_action(user, "receipt_duplicate", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd})
-        broadcast("receipt_duplicate", receipt.to_dict())
         auto = False
         # v1.11.0: дубликат из ЧУЖОЙ компании — данные не раскрываем
-        if not can_view_receipt(user, receipt):
+        if _foreign_duplicate(user, receipt, company_id):
+            # v1.70.85: заявка администратору вместо совета «попросите переместить»
+            if _claim_foreign(db, user, receipt, company_id, "scan_qr"):
+                from ..unified.links import with_note
+                message = with_note("Этот чек уже учтён в другой организации.")
+            else:
+                message = ("Этот чек уже учтён в другой организации. "
+                           "Если он должен относиться к вашей — попросите "
+                           "администратора переместить его.")
             return {"receipt": None, "duplicate": True, "auto_verify": False,
-                    "message": "Этот чек уже учтён в другой организации. "
-                               "Если он должен относиться к вашей — попросите "
-                               "администратора переместить его."}
+                    "message": message}
+        broadcast("receipt_duplicate", receipt.to_dict())
 
     return {
         "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
@@ -193,7 +334,8 @@ def scan(body: ScanRequest, background: BackgroundTasks,
 @router.post("/scan/image", summary="Приём изображения чека: сервер находит QR")
 async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
                      user: User = Depends(get_current_user),
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_db),
+                     company_id: Annotated[str | None, Form()] = None):
     raw = await file.read()
     if len(raw) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -209,8 +351,8 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
     except (QRParseError, ValueError) as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, result.parsed, "image", user,
-                                       target_company_id(db, user, None))
+    company_id = target_company_id(db, user, company_id)
+    receipt, created = _upsert_or_claim(db, result.parsed, "image", user, company_id, "scan_image")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd, "source": "image"})
@@ -220,6 +362,13 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
     else:
         auto = False
+        if _foreign_duplicate(user, receipt, company_id):
+            message = "Чек уже зарегистрирован в другой организации"
+            if _claim_foreign(db, user, receipt, company_id, "scan_image"):
+                from ..unified.links import with_note
+                message = with_note(message)
+            return {"receipt": None, "duplicate": True, "auto_verify": False,
+                    "message": message, "codes_found": result.total_codes}
     return {
         "receipt": _attach_company(db, receipt.to_dict(with_items=True)),
         "duplicate": not created,
@@ -239,7 +388,8 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
 @router.post("/scan/pdf", summary="Приём PDF-чека: QR из текстового слоя (почта/банк)")
 async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
                    user: User = Depends(get_current_user),
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_db),
+                   company_id: Annotated[str | None, Form()] = None):
     raw = await file.read()
     if len(raw) > settings.PDF_MAX_MB * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -251,15 +401,19 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    created, duplicate = False, False
+    created, duplicate, foreign_duplicate, claimed = False, False, False, False
+    company_id = target_company_id(db, user, company_id)
     last = None
     for qr_text in qr_texts:                 # нескольких чеков в файле — по одному
         try:
             parsed = parse_qr(qr_text)
         except QRParseError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
-        receipt, created_i = _upsert_receipt(db, parsed, "pdf", user,
-                                             target_company_id(db, user, None))
+        receipt, created_i = _upsert_or_claim(db, parsed, "pdf", user, company_id, "scan_pdf")
+        if not created_i and _foreign_duplicate(user, receipt, company_id):
+            duplicate = foreign_duplicate = True
+            claimed = _claim_foreign(db, user, receipt, company_id, "scan_pdf") or claimed
+            continue
         duplicate = duplicate or not created_i
         created = created or created_i
         if created_i:
@@ -270,13 +424,22 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
             _maybe_auto_verify(background, db, receipt)
             _maybe_auto_fetch(background, db, receipt)
         last = receipt
+    message = ("Некоторые чеки из PDF приняты; другие уже зарегистрированы за другой организацией"
+               if foreign_duplicate and created else
+               "Чек уже зарегистрирован за другой организацией"
+               if foreign_duplicate else
+               "Чек из PDF принят"
+               if created else
+               "Чек из PDF уже был в системе"
+               if duplicate else "Чек принят")
+    if claimed:                                  # v1.70.85: заявка администратору
+        from ..unified.links import with_note
+        message = with_note(message)
     return {
         "receipt": _attach_company(db, last.to_dict(with_items=True)) if last else None,
         "duplicate": duplicate,
-        "message": ("Чек из PDF принят"
-                    if created else
-                    "Чек из PDF уже был в системе"
-                    if duplicate else "Чек принят"),
+        "created": created,
+        "message": message,
         "codes_found": len(qr_texts),
     }
 
@@ -306,14 +469,20 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
     except QRParseError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    receipt, created = _upsert_receipt(db, parsed, "manual", user,
-                                       target_company_id(db, user, getattr(body, "company_id", None)))
+    company_id = target_company_id(db, user, getattr(body, "company_id", None))
+    receipt, created = _upsert_or_claim(db, parsed, "manual", user, company_id, "manual")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
         _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         _maybe_auto_verify(background, db, receipt)
         _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
+    if not created and _foreign_duplicate(user, receipt, company_id):
+        message = "Чек уже зарегистрирован в другой организации"
+        if _claim_foreign(db, user, receipt, company_id, "manual"):   # v1.70.85
+            from ..unified.links import with_note
+            message = with_note(message)
+        return {"receipt": None, "duplicate": True, "message": message}
     return {"receipt": _attach_company(db, receipt.to_dict(with_items=True)),
             "duplicate": not created,
             "message": "Чек принят" if created else "Чек уже есть в системе"}
@@ -342,7 +511,44 @@ def list_receipts(
     date_to: str | None = Query(None, description="ГГГГ-ММ-ДД"),
     company_id: str | None = Query(None, max_length=36,
                                    description="v1.11.0: компания (только админ)"),
-    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    # --- v1.70.72: фильтры для работы с пулом ---
+    region: str | None = Query(None, max_length=4,
+                               description="Код региона продавца (74, 77, …)"),
+    region_name: str | None = Query(None, max_length=120, description="Название региона продавца"),
+    city: str | None = Query(None, max_length=120, description="Город продавца"),
+    item_name: str | None = Query(None, max_length=200, description="Название позиции чека"),
+    operation: int | None = Query(None, ge=1, le=4, description="Признак расчёта"),
+    vat_rate: str | None = Query(None, max_length=10, description="Сохранённое значение НДС позиции"),
+    retail_place: str | None = Query(None, max_length=300, description="Название места расчёта, сохранённое в чеке"),
+    item_total_min: float | None = Query(None, ge=0, description="Сумма позиции от"),
+    item_total_max: float | None = Query(None, ge=0, description="Сумма позиции до"),
+    item_price_min: float | None = Query(None, ge=0, description="Цена позиции от"),
+    item_price_max: float | None = Query(None, ge=0, description="Цена позиции до"),
+    item_quantity_min: float | None = Query(None, ge=0, description="Количество позиции от"),
+    item_quantity_max: float | None = Query(None, ge=0, description="Количество позиции до"),
+    payment_component: Literal["cash", "ecash"] | None = Query(None, description="Есть сумма оплаты наличными или безналичными"),
+    marking: Literal["present", "not_saved"] | None = Query(None, description="Сохранённые реквизиты маркировки"),
+    missing: Literal["any", "seller_name", "seller_inn", "address", "fiscal", "items"] | None = Query(None, description="Отсутствующие реквизиты"),
+    industry: str | None = Query(None, max_length=100,
+                                 description="Отрасль покупки (Аптека, АЗС, …)"),
+    product_group: str | None = Query(None, max_length=100,
+                                      description="Группа товаров в позициях"),
+    merchant_inn: str | None = Query(None, max_length=20,
+                                     description="ИНН продавца"),
+    merchant: str | None = Query(None, max_length=200,
+                                 description="Наименование или адрес продавца"),
+    taxation: str | None = Query(None, max_length=40,
+                                 description="Код системы налогообложения"),
+    pay_type: str | None = Query(None, max_length=20,
+                                 description="наличные|безналичные|смешанная"),
+    sum_min: float | None = Query(None, ge=0, description="Сумма чека от"),
+    sum_max: float | None = Query(None, ge=0, description="Сумма чека до"),
+    # v1.70.86 («Единая база», фаза 3): только для администратора
+    multi_company: bool | None = Query(
+        None, description="Только чеки, которые учитывают две и больше организации (администратор)"),
+    has_items: bool | None = Query(None,
+                                   description="Есть ли позиции (полный документ)"),
+    page: int = Query(1, ge=1, le=settings.PAGE_MAX), page_size: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
     query = db.query(Receipt)
@@ -377,6 +583,91 @@ def list_receipts(
         query = query.filter(Receipt.category_lc.like(f"%{category.strip().casefold()}%"))
     if notified is not None:
         query = query.filter(Receipt.notified == notified)
+    # --- v1.70.72: регион, отрасль, продавец, налоги, суммы ---
+    if region:
+        query = query.filter(Receipt.region_code == region.strip()[:4])
+    # Фасеты выбирают сохранённые значения без потери кириллического регистра.
+    def folded(column):
+        return (func.ym_casefold(column) if db.get_bind().dialect.name == "sqlite"
+                else func.lower(column))
+
+    def contains(column, value):
+        term = value.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return folded(column).like(f"%{term}%", escape="\\")
+
+    if region_name and region_name.strip():
+        query = query.filter(folded(Receipt.region_name) == region_name.strip().casefold())
+    if city and city.strip():
+        query = query.filter(folded(Receipt.region_city) == city.strip().casefold())
+    if industry and industry.strip():
+        key = industry.strip().casefold()
+        query = query.filter(or_(folded(Receipt.industry) == key,
+                                 Receipt.items.any(folded(ReceiptItem.industry) == key)))
+    if product_group and product_group.strip():
+        key = product_group.strip().casefold()
+        query = query.filter(or_(folded(Receipt.product_group) == key,
+                                 Receipt.items.any(folded(ReceiptItem.product_group) == key)))
+    # Все заданные параметры позиции относятся к одной и той же позиции.
+    item_conditions = []
+    if item_name and item_name.strip():
+        item_conditions.append(contains(ReceiptItem.name, item_name))
+    if vat_rate is not None and vat_rate != "":
+        item_conditions.append(ReceiptItem.vat_rate == vat_rate)
+    if item_total_min is not None:
+        item_conditions.append(ReceiptItem.total >= item_total_min)
+    if item_total_max is not None:
+        item_conditions.append(ReceiptItem.total <= item_total_max)
+    if item_price_min is not None:
+        item_conditions.append(ReceiptItem.price >= item_price_min)
+    if item_price_max is not None:
+        item_conditions.append(ReceiptItem.price <= item_price_max)
+    if item_quantity_min is not None:
+        item_conditions.append(ReceiptItem.quantity >= item_quantity_min)
+    if item_quantity_max is not None:
+        item_conditions.append(ReceiptItem.quantity <= item_quantity_max)
+    if item_conditions:
+        query = query.filter(Receipt.items.any(and_(*item_conditions)))
+    if operation is not None:
+        query = query.filter(Receipt.operation == operation)
+    if payment_component == "cash":
+        query = query.filter(Receipt.cash_sum > 0)
+    elif payment_component == "ecash":
+        query = query.filter(Receipt.ecash_sum > 0)
+    if marking == "present":
+        query = query.filter(Receipt.items.any(ReceiptItem.marking_present.is_(True)))
+    elif marking == "not_saved":
+        query = query.filter(Receipt.items.any(),
+                             ~Receipt.items.any(ReceiptItem.marking_present.is_(True)))
+    if missing:
+        def empty(column):
+            return func.trim(func.coalesce(column, ""), " \t\r\n") == ""
+        fields = {
+            "seller_name": empty(Receipt.merchant_name),
+            "seller_inn": empty(Receipt.merchant_inn),
+            "address": empty(Receipt.merchant_address),
+            "fiscal": or_(empty(Receipt.fn), empty(Receipt.fd), empty(Receipt.fp)),
+            "items": ~Receipt.items.any(),
+        }
+        query = query.filter(or_(*fields.values()) if missing == "any" else fields[missing])
+    if retail_place and retail_place.strip():
+        query = query.filter(contains(Receipt.retail_place_index, retail_place))
+    if merchant_inn:
+        query = query.filter(Receipt.merchant_inn == merchant_inn.strip()[:20])
+    if merchant:
+        if merchant.strip():
+            query = query.filter(or_(contains(Receipt.merchant_name, merchant),
+                                     contains(Receipt.merchant_address, merchant),
+                                     contains(Receipt.merchant_inn, merchant)))
+    if taxation:
+        query = query.filter(Receipt.taxation == taxation.strip()[:40])
+    if pay_type:
+        query = query.filter(Receipt.pay_type == pay_type.strip()[:20])
+    if sum_min is not None:
+        query = query.filter(Receipt.total_sum >= float(sum_min))
+    if sum_max is not None:
+        query = query.filter(Receipt.total_sum <= float(sum_max))
+    if has_items is not None:
+        query = query.filter(Receipt.items.any() if has_items else ~Receipt.items.any())
     if attention:
         cutoff = dt.datetime.utcnow() - dt.timedelta(days=3)
         query = query.filter(Receipt.status.in_(["new", "verifying"]),
@@ -396,11 +687,16 @@ def list_receipts(
             pass
     if date_to:
         try:
-            d = dt.datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59,
-                                                                  second=59)
-            query = query.filter(Receipt.receipt_date <= d)
+            d = dt.datetime.strptime(date_to, "%Y-%m-%d") + dt.timedelta(days=1)
+            query = query.filter(Receipt.receipt_date < d)
         except ValueError:
             pass
+
+    from ..unified import links as unified_links
+    from ..unified import visibility as unified_visibility
+    if multi_company and user.role == ROLE_ADMIN:
+        # v1.70.86: чеки двух и более организаций — фильтр администратора
+        query = query.filter(Receipt.id.in_(unified_links.multi_company_receipts()))
 
     total = query.count()
     total_sum = query.with_entities(func.coalesce(func.sum(Receipt.total_sum), 0)).scalar()
@@ -408,10 +704,22 @@ def list_receipts(
             .offset((page - 1) * page_size).limit(page_size).all())
     # v1.12.3: название компании для каждой строки (карта одним запросом)
     cname = _company_names(db, (r.company_id for r in rows))
+    # v1.70.86 («Единая база», фаза 3): число организаций — администратору
+    # всегда, компании — только с его разрешения; один запрос на страницу
+    counts = (unified_links.companies_counts(db, [r.id for r in rows])
+              if rows and unified_visibility.can_see_count(db, user) else None)
+    # v1.70.91 (шаг 4в): данные единой записи, которых нет в копии, — одним
+    # пакетом на страницу; позиции — только при выборке с позициями
+    from ..unified import read as unified_read
+    fills = unified_read.fills_for_receipts(db, rows, with_items=with_items) if rows else {}
     items = []
     for r in rows:
         d = r.to_dict(with_items=with_items)
         d["company_name"] = cname.get(r.company_id)
+        if counts is not None:
+            d["companies_count"] = counts.get(r.id, 1)
+        if r.id in fills:
+            d["unified_fill"] = fills[r.id]
         items.append(d)
     return {
         "total": total,
@@ -423,8 +731,145 @@ def list_receipts(
 
 
 # --------------------------------------------------------------------------
-#  Карточка / изменение / удаление
+#  v1.70.72: полная карточка чека, справочники фильтров, разбор данных
 # --------------------------------------------------------------------------
+@router.get("/facets", summary="Значения фильтров пула: регионы, отрасли, продавцы")
+def receipt_facets(user: Annotated[User, Depends(get_current_user)],
+                   db: Annotated[Session, Depends(get_db)],
+                   company_id: str | None = Query(None, max_length=36)):
+    """Что есть в пуле — для выпадающих фильтров (без обращения к ФНС)."""
+    from ..services import goods as _goods
+    q = scope_receipts(db.query(Receipt), user, company_id)
+
+    def folded(column):
+        return (func.ym_casefold(column) if db.get_bind().dialect.name == "sqlite"
+                else func.lower(column))
+
+    def top(column, limit: int = 60) -> list[dict]:
+        rows = (q.with_entities(column, func.count(Receipt.id))
+                .filter(column.isnot(None), column != "")
+                .group_by(column).order_by(func.count(Receipt.id).desc())
+                .limit(limit).all())
+        return [{"value": val, "count": cnt} for val, cnt in rows]
+
+    def locations(column):
+        rows = (q.with_entities(func.min(column), func.count(Receipt.id))
+                .filter(column.isnot(None), column != "")
+                .group_by(folded(column)).order_by(func.min(column)).all())
+        return [{"value": value, "count": count} for value, count in rows]
+
+    region_rows = (q.with_entities(Receipt.region_code, Receipt.region_name,
+                                   func.count(Receipt.id))
+                   .filter(Receipt.region_code.isnot(None),
+                           Receipt.region_code != "")
+                   .group_by(Receipt.region_code, Receipt.region_name)
+                   .order_by(func.count(Receipt.id).desc()).limit(100).all())
+    def classifications(receipt_column, item_column):
+        # UNION удаляет повтор одной группы в нескольких позициях одного чека.
+        from sqlalchemy import select, union
+        scoped = q.with_entities(Receipt.id).subquery()
+        a = select(Receipt.id.label("rid"), receipt_column.label("value")).where(
+            Receipt.id.in_(select(scoped.c.id)))
+        b = select(ReceiptItem.receipt_id.label("rid"), item_column.label("value")).where(
+            ReceiptItem.receipt_id.in_(select(scoped.c.id)))
+        values = union(a, b).subquery()
+        rows = (db.query(func.min(values.c.value), func.count(func.distinct(values.c.rid)))
+                .filter(values.c.value.isnot(None), values.c.value != "")
+                .group_by(folded(values.c.value)).order_by(func.min(values.c.value)).all())
+        return [{"value": value, "count": count} for value, count in rows]
+
+    scoped_ids = q.with_entities(Receipt.id).subquery()
+    vat_rows = (db.query(ReceiptItem.vat_rate, func.count(func.distinct(ReceiptItem.receipt_id)))
+                .join(scoped_ids, ReceiptItem.receipt_id == scoped_ids.c.id)
+                .filter(ReceiptItem.vat_rate.isnot(None), ReceiptItem.vat_rate != "")
+                .group_by(ReceiptItem.vat_rate).order_by(ReceiptItem.vat_rate).all())
+    place_total = q.count()
+    place_saved = q.filter(Receipt.retail_place_index.isnot(None),
+                           func.trim(Receipt.retail_place_index, " \t\r\n") != "").count()
+    return {
+        "retail_place_coverage": {"saved": place_saved, "total": place_total},
+        "vat_rates": [{"value": value, "count": count} for value, count in vat_rows],
+        "region_names": locations(Receipt.region_name),
+        "cities": locations(Receipt.region_city),
+        "regions": [{"code": code, "name": name or code, "count": cnt}
+                    for code, name, cnt in region_rows],
+        "industries": classifications(Receipt.industry, ReceiptItem.industry),
+        "product_groups": classifications(Receipt.product_group, ReceiptItem.product_group),
+        "sellers": top(Receipt.merchant_inn, limit=100),
+        "taxations": top(Receipt.taxation_name),
+        "pay_types": top(Receipt.pay_type),
+        # Полный справочник отраслей — чтобы фильтр не «худел»
+        "industry_catalog": _goods.industries(),
+        "group_catalog": _goods.groups(),
+        "pending_limit": int(q.filter(Receipt.fns_status == "pending").count()),
+    }
+
+
+@router.post("/enrich", summary="Разобрать сохранённые данные чеков: регион, "
+                                "отрасль, группы товаров (бухгалтер+)")
+def enrich_receipts(body: EnrichRequest,
+                    user: Annotated[User, Depends(require_accountant)],
+                    db: Annotated[Session, Depends(get_db)]):
+    """Достроить разбор БЕЗ запросов в ФНС (лимит не расходуется).
+
+    Берёт сохранённый ответ ФНС (raw_data), адрес и ИНН продавца, а также
+    наименования позиций. Полезно для чеков, проверенных до v1.70.72.
+    """
+    from ..services import receipt_card as _card
+    ids = [i for i in (body.receipt_ids or []) if i][:500]
+    q = scope_receipts(db.query(Receipt), user, body.company_id)
+    if ids:
+        q = q.filter(Receipt.id.in_(ids))
+    elif body.only_empty:
+        q = q.filter(or_(Receipt.region_code.is_(None),
+                         Receipt.region_code == "",
+                         Receipt.region_city.is_(None), Receipt.region_city == "",
+                         Receipt.industry.is_(None), Receipt.industry == "",
+                         Receipt.items.any(or_(ReceiptItem.product_group.is_(None),
+                                               ReceiptItem.product_group == ""))))
+    rows = q.limit(2000).all()
+    stats = {"receipts": len(rows), "with_ticket": 0, "regions": 0,
+             "industries": 0, "items": 0}
+    for r in rows:
+        before_region = r.region_code or ""
+        before_ind = r.industry or ""
+        res = _card.enrich_receipt(db, r)
+        stats["items"] += int(res.get("items") or 0)
+        if res.get("ticket"):
+            stats["with_ticket"] += 1
+            # v1.70.88 (фаза 4а, T-37): сохранённый ответ ФНС мог уточнить
+            # продавца, кассира и позиции — единая запись и копия Чек-Пула
+            # следуют за реестром, как после загрузки данных чека.
+            from ..unified import service as unified
+            unified.sync_registry_safely(db, r)
+        if (r.region_code or "") and not before_region:
+            stats["regions"] += 1
+        if (r.industry or "") and not before_ind:
+            stats["industries"] += 1
+    db.commit()
+    log_action(user, "receipts_enrich", details=stats)
+    return {"ok": True, **stats,
+            "message": (f"Разобрано чеков: {stats['receipts']} — регион "
+                        f"определён у {stats['regions']}, отрасль у "
+                        f"{stats['industries']} (запросов в ФНС не было)")}
+
+
+@router.get("/{receipt_id}/card",
+            summary="Полная информация по чеку: все реквизиты, как в магазине")
+def receipt_full_card(receipt_id: str,
+                      user: Annotated[User, Depends(get_current_user)],
+                      db: Annotated[Session, Depends(get_db)]):
+    """Всё, что есть по чеку: реквизиты ФНС, продавец, регион, отрасль,
+    позиции со всеми полями, налоги, оплата, служебные данные."""
+    from ..services import receipt_card as _card
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt or not can_view_receipt(user, receipt):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+    card = _card.build_card(receipt)
+    card["receipt"] = receipt.to_dict(with_items=True)
+    return card
+
+
 @router.get("/creators", summary="Кто добавлял чеки (для выпадающего списка, бухгалтер+)")
 def list_creators(company_id: str | None = Query(None, max_length=36),
                   user: User = Depends(get_current_user),
@@ -437,7 +882,7 @@ def list_creators(company_id: str | None = Query(None, max_length=36),
             .filter(Receipt.created_by.isnot(None))
             .group_by(Receipt.created_by).all())
     ids = [uid for uid, _n in rows]
-    cnt = {uid: n for uid, n in rows}
+    cnt = dict(rows)   # v1.70.38: без лишнего прохода по тем же парам
     users = db.query(User).filter(User.id.in_(ids)).all() if ids else []
     by_id = {u.id: u for u in users}
     # редкий случай: пользователь удалён — показываем «(удалён)»
@@ -482,6 +927,11 @@ def list_categories(company_id: str | None = Query(None, max_length=36),
 #  удаление правил. Доступ — бухгалтер+.
 # --------------------------------------------------------------------------
 _MERCHANT_FIELDS = ("category", "assignee", "comment")
+
+# Поля, которые явная очистка в карточке передаёт в единую запись (фаза 4б):
+# текст продавца (``unified.service.MERGE_TEXT``) и метки, которые правит PATCH.
+_CLEARABLE_FIELDS = ("merchant_name", "merchant_inn", "merchant_address", "cashier",
+                     "industry", "region_code")
 
 
 @router.get("/merchant-rules", summary="Правила поставщиков (бухгалтер+)")
@@ -605,6 +1055,25 @@ def get_receipt(receipt_id: str,
     d = receipt.to_dict(with_items=True)
     d["raw_data"] = receipt.raw_data
     _attach_company(db, d)                     # v1.12.3: название компании
+    from ..unified import links as unified_links
+    from ..unified import visibility as unified_visibility
+    if unified_visibility.can_see_count(db, user):   # v1.70.86: только число, без названий
+        d["companies_count"] = unified_links.companies_counts(db, [receipt.id]).get(receipt.id, 1)
+    # v1.70.91 («Единая база», шаг 4в, Q-28 — вариант «в»): чего нет в копии
+    # компании, а единая запись знает, — отдельным блоком с пометкой; поля копии
+    # и выгрузки в 1С не меняются
+    from ..unified import read as unified_read
+    fill = unified_read.fills_for_receipts(db, [receipt]).get(receipt.id)
+    if fill:
+        d["unified_fill"] = fill
+    # v1.70.93 (T-43): какие позиции нарушают политику по товарам
+    if "forbidden_goods" in (receipt.policy_flags or ""):
+        from ..services import policy as _pol
+        d["policy_goods"] = _pol.goods_hits(receipt, _pol.forbidden_goods(db, receipt.company_id))
+    # v1.70.101 (T-69): позиции по категориям с иконками и подсказка статьи расходов
+    if receipt.items:
+        from ..goods import service as goods_service
+        d["goods"] = goods_service.summary(db, receipt)
     return d
 
 
@@ -646,6 +1115,10 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
                             "Сотрудник работает только со своими чеками")
 
     changed = {"fields": []}
+    # v1.70.90: значения копии до правки. Явная очистка (фаза 4б) — только там,
+    # где значение было и пользователь его стёр. Форма правки шлёт все поля
+    # продавца, и пустое поле, которого копия не знала, ничего не очищает.
+    before = {f: (getattr(receipt, f) or "").strip() for f in _CLEARABLE_FIELDS}
 
     if not is_staff:
         # Сотрудник: только галочка «Уведомляю бухгалтерию» и комментарий
@@ -653,6 +1126,7 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
                                  "total_sum", "personal_sum", "operation",
                                  "merchant_name", "merchant_inn",
                                  "merchant_address", "cashier",
+                                 "industry", "region_code", "region_name",
                                  "items") if getattr(body, f) is not None]
         if forbidden:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -678,15 +1152,32 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
             new_fn = (body.fn or receipt.fn).strip()
             new_fd = (body.fd or receipt.fd).strip()
             new_fp = (body.fp or receipt.fp).strip()
-            dup = (db.query(Receipt)
-                   .filter(Receipt.fn == new_fn, Receipt.fd == new_fd,
-                           Receipt.fp == new_fp, Receipt.id != receipt.id)
-                   .first())
-            if dup:
-                raise HTTPException(status.HTTP_409_CONFLICT,
-                                    "Чек с такими ФН/ФД/ФП уже существует")
-            receipt.fn, receipt.fd, receipt.fp = new_fn, new_fd, new_fp
-            changed["fields"] += ["fn", "fd", "fp"]
+            old_identity = (receipt.fn, receipt.fd, receipt.fp)
+            new_identity = (new_fn, new_fd, new_fp)
+            if new_identity != old_identity:
+                # Серия операций во всех контурах блокирует фискальную тройку.
+                # Обе тройки берём в одном порядке, чтобы встречные правки не
+                # взаимно заблокировались. После ожидания перечитываем чек.
+                from ..pool.models import PoolReceipt
+                from ..services.receipt_identity import lock_identity
+
+                for identity in sorted((old_identity, new_identity)):
+                    lock_identity(db, *identity)
+                db.refresh(receipt)
+                if (receipt.fn, receipt.fd, receipt.fp) != old_identity:
+                    raise HTTPException(409, "Чек был изменён одновременно — обновите страницу")
+                linked = db.query(PoolReceipt.id).filter_by(
+                    fn=old_identity[0], fd=old_identity[1], fp=old_identity[2]).first()
+                if linked:
+                    raise HTTPException(409, "Чек связан с историей Чек-Пула: изменить фискальные реквизиты нельзя")
+                dup = (db.query(Receipt.id)
+                       .filter(Receipt.fn == new_fn, Receipt.fd == new_fd,
+                               Receipt.fp == new_fp, Receipt.id != receipt.id).first())
+                pool_dup = db.query(PoolReceipt.id).filter_by(fn=new_fn, fd=new_fd, fp=new_fp).first()
+                if dup or pool_dup:
+                    raise HTTPException(409, "Чек с такими ФН/ФД/ФП уже существует")
+                receipt.fn, receipt.fd, receipt.fp = new_identity
+                changed["fields"] += ["fn", "fd", "fp"]
 
         if body.receipt_date is not None:
             receipt.receipt_date = body.receipt_date
@@ -715,20 +1206,39 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
         if body.notified is not None:
             receipt.notified = body.notified
             changed["fields"].append("notified")
+        # v1.70.72: уточнение отраслевого признака и региона вручную
+        if body.industry is not None:
+            ind = body.industry.strip()[:100]
+            receipt.industry = ind
+            receipt.industry_lc = ind.casefold()[:100]
+            changed["fields"].append("industry")
+        if body.region_code is not None:
+            receipt.region_code = body.region_code.strip()[:4]
+            changed["fields"].append("region_code")
+        if body.region_name is not None:
+            receipt.region_name = body.region_name.strip()[:120]
+            changed["fields"].append("region_name")
         if body.category is not None:
             cat = body.category.strip()[:100]
             receipt.category = cat
             receipt.category_lc = cat.casefold()      # для регистронезависимого фильтра (кириллица)
             changed["fields"].append("category")
         if body.items is not None:
+            # v1.70.93: после правки чек читается как ручной — код тега 1199 из
+            # фискальных данных сразу переводится в ставку («1» → «20», «11» → «22»)
+            from ..services import fns_refs
+            coded = bool(receipt.details_source) and receipt.details_source != "manual_edit"
             receipt.items.clear()
             for pos, it in enumerate(body.items):
                 receipt.items.append(ReceiptItem(
                     name=it.name.strip()[:1000],
                     quantity=it.quantity, price=it.price, total=it.total,
-                    vat_rate=(it.vat_rate or "none")[:10],
+                    vat_rate=fns_refs.vat_canonical(it.vat_rate or "none", coded)[:10],
                     vat_sum=it.vat_sum or 0.0, position=pos))
             changed["fields"].append(f"items({len(body.items)})")
+            # v1.70.101 (T-69): категории новых позиций — каскадом понимания чеков
+            from ..goods import service as goods_service
+            goods_service.classify_receipt(db, receipt)
         if changed["fields"]:
             # Ручная правка — последний и главный источник данных о чеке
             receipt.details_source = "manual_edit"
@@ -749,6 +1259,17 @@ def patch_receipt(receipt_id: str, body: ReceiptPatch,
     except Exception:                              # noqa: BLE001
         pass
 
+    if is_staff and changed["fields"]:
+        from ..unified import service as unified
+        # v1.70.89 (фаза 4б): пустое поле единой записи стирает только явная
+        # очистка в карточке; поле, которого копия просто не знает, не стирает.
+        # v1.70.90: очистка — это «было значение, стало пусто». До 1.70.90 очисткой
+        # считалось любое пустое поле тела, и сохранение формы правки у чека по QR
+        # стирало продавца, адрес и кассира в единой записи и в Чек-Пуле.
+        cleared = frozenset(f for f in _CLEARABLE_FIELDS
+                            if before[f] and getattr(body, f) is not None
+                            and not getattr(body, f).strip())
+        unified.sync_registry(db, receipt, user, cleared=cleared)
     db.commit()
     log_action(user, "receipt_updated", "receipt", receipt.id,
                {"fields": changed["fields"], "role": user.role})
@@ -796,35 +1317,39 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
     if not comp.is_active:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Компания заархивирована — перемещение недоступно")
-    rows = db.query(Receipt).filter(Receipt.id.in_(body.receipt_ids)).all()
+    # Позиции чеков переносу не нужны: без заранее загруженных позиций
+    # (lazy="selectin") выборка 1000 чеков не тянет тысячи строк позиций.
+    rows = (db.query(Receipt).options(lazyload(Receipt.items))
+            .filter(Receipt.id.in_(body.receipt_ids)).all())
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чеки не найдены")
-    moved_ids, moved, same = [], 0, 0
-    for r in rows:
-        if r.company_id == comp.id:
-            same += 1
-            continue
-        r.company_id = comp.id
-        # выгрузка относилась к прежней компании — сбрасываем, чтобы выгрузку
-        # новой компании бухгалтер проконтролировал сам
-        r.exported = False
-        r.exported_at = None
-        if body.assignee is not None:
-            r.assignee = body.assignee.strip()[:200]
-            r.assignee_lc = r.assignee.casefold()[:200]   # v1.25.1
-        moved_ids.append(r.id)
-        moved += 1
+    from ..unified import service as unified
+    # Пакетный перенос (T-33): тот же результат, что прежний цикл по чекам,
+    # но тройки блокируются одной вставкой, а записи выбираются и
+    # обновляются пачками — 1000 чеков за доли секунды вместо ~5 с.
+    # v1.70.86 (Q-24): чек на разборе по умолчанию отменяет всю пачку — 409 со
+    # списком таких чеков; skip_blocked — переместить остальные, явным шагом.
+    moved_rows, same, skipped = unified.move_registry_receipts(
+        db, rows, comp.id, user, skip_blocked=body.skip_blocked)
+    moved_ids = [r.id for r in moved_rows]
+    moved = len(moved_ids)
+    if body.assignee is not None:
+        assignee = body.assignee.strip()[:200]
+        for r in moved_rows:
+            r.assignee = assignee
+            r.assignee_lc = assignee.casefold()[:200]   # v1.25.1
+    # Сессия без autoflush: новое подотчётное лицо должно попасть в базу до
+    # подсчёта месячных сумм (раньше его не видел расчёт для последнего чека).
+    db.flush()
     # v1.62.0: компания/сотрудник изменились — пересчёт политики
     try:
         from ..services import policy as _pol
-        for r in rows:
-            _pol.refresh_receipt(db, r)
+        _pol.refresh_receipts(db, rows)
     except Exception:                              # noqa: BLE001
         pass
     try:                                           # v1.63.0: правила компании
-        from ..services import merchant_rules as _mr   # назначения
-        for r in rows:
-            _mr.apply_rules(db, r)
+        from ..services import merchant_rules as _mr  # назначения
+        _mr.apply_rules_many(db, rows)
     except Exception:                              # noqa: BLE001
         pass
     db.commit()
@@ -834,10 +1359,14 @@ def move_receipts(body: ReceiptMoveBody, user: User = Depends(require_admin),
         broadcast("receipts_moved", {"ids": moved_ids, "company_id": comp.id,
                                      "company_name": comp.name})
     msg = (f"Перемещено чеков: {moved} → {comp.name}" if moved
+           else "Ни один чек не перемещён: отмеченные ждут разбора" if skipped and not same
            else "Все выбранные чеки уже в этой компании")
     if moved:
         msg += "; флаг выгрузки в 1С сброшен"
-    return {"ok": True, "moved": moved, "already_there": same,
+    if skipped:
+        msg += (f"; пропущено (ждут разбора): {len(skipped)} — они остались у прежней компании, "
+                "решение — в «Разборе конфликтов»")
+    return {"ok": True, "moved": moved, "already_there": same, "skipped": skipped,
             "company": {"id": comp.id, "name": comp.name}, "message": msg}
 
 
@@ -903,9 +1432,22 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
                     price=it.price, total=it.total,
                     vat_rate=it.vat_rate[:10], vat_sum=it.vat_sum,
                     position=pos))
+            # v1.70.101 (T-69): категории позиций — каскадом понимания чеков
+            from ..goods import service as goods_service
+            goods_service.classify_receipt(db, receipt)
     if not human_edited:
         receipt.details_source = res.source or receipt.details_source
     receipt.details_fetched_at = dt.datetime.utcnow()
+    # v1.70.72: полный документ ФНС → регион, отрасль, реквизиты позиций
+    try:
+        from ..services import receipt_card as _card
+        _ticket = (res.raw.get("ticket") if isinstance(res.raw, dict) else None)
+        if isinstance(_ticket, dict) and _ticket:
+            _card.apply_to_receipt(db, receipt, _ticket,
+                                   force_items=bool(receipt.details_source != "manual_edit"))
+    except Exception:                                  # noqa: BLE001
+        logging.getLogger("ymaster").debug("receipt card apply",
+                                           exc_info=True)
     # v1.61.0: «понимающий» конвейер правил — если машинные данные
     # противоречивы (суммы позиций ≠ итог и т.п.), чек уходит на ручную
     # проверку с понятной причиной. Ручные правки (manual_edit) не
@@ -940,6 +1482,9 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
     raw["external"] = {"source": res.source, "message": res.message,
                        "fetched_at": dt.datetime.utcnow().isoformat() + "Z"}
     receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+    # v1.70.82: сбой единого реестра не отменяет полученные данные чека
+    from ..unified import service as unified
+    unified.sync_registry_safely(db, receipt)
     db.commit()
 
 
@@ -1047,10 +1592,77 @@ def fetch_queue_stats() -> dict:
     return {"queued": _FETCHQ.qsize()}
 
 
+# --------------------------------------------------------------------------
+#  v1.70.70: автоматическая достройка чеков, ожидающих сброса лимита ФНС
+# --------------------------------------------------------------------------
+_LIMIT_WORKER: threading.Thread | None = None
+LIMIT_RETRY_INTERVAL_S = 15 * 60      # проверяем очередь раз в 15 минут
+
+
+def _limit_retry_tick() -> int:
+    """Проверить чеки со статусом «ожидает проверки» → сколько поставлено."""
+    from ..database import SessionLocal
+    from ..services import fns_quota
+    if fns_quota.used_today() >= fns_quota.limit_value():
+        return 0                     # лимит ещё не сбросился — ждём
+    db = SessionLocal()
+    try:
+        rows = db.query(Receipt).filter(
+            Receipt.fns_status == "pending").order_by(
+            Receipt.created_at.asc()).limit(50).all()
+        ids = [r.id for r in rows]
+    finally:
+        db.close()
+    for rid in ids:
+        threading.Thread(target=_verify_one_sync, args=(rid,),
+                         daemon=True).start()
+    if ids:
+        logging.getLogger("ymaster").info(
+            "♻️ лимит ФНС сброшен — поставлено на проверку чеков: %d",
+            len(ids))
+    return len(ids)
+
+
+def _limit_retry_worker() -> None:
+    while True:
+        try:
+            if fns_quota_exhausted():
+                _limit_retry_tick()
+        except Exception:                                # noqa: BLE001
+            logging.getLogger("ymaster").debug(
+                "limit retry worker", exc_info=True)
+        time.sleep(LIMIT_RETRY_INTERVAL_S)
+
+
+def fns_quota_exhausted() -> bool:
+    """Есть ли чеки, ожидающие сброса лимита ФНС."""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        return db.query(Receipt).filter(
+            Receipt.fns_status == "pending").first() is not None
+    except Exception:                                    # noqa: BLE001
+        return False
+    finally:
+        db.close()
+
+
+def start_limit_retry_worker() -> bool:
+    """Запустить фоновую достройку очереди (идемпотентно)."""
+    global _LIMIT_WORKER
+    if os.environ.get("YM_FETCHQ_OFF") == "1":      # тесты: детерминизм
+        return False
+    if _LIMIT_WORKER is not None and _LIMIT_WORKER.is_alive():
+        return False
+    _LIMIT_WORKER = threading.Thread(target=_limit_retry_worker, daemon=True,
+                                     name="ymaster-fns-limit-retry")
+    _LIMIT_WORKER.start()
+    return True
+
+
 def _maybe_auto_fetch(background: BackgroundTasks, db: Session, receipt: Receipt) -> bool:
-    """Автозагрузка деталей после скана (настройка external_auto, по умолч. вкл)."""
-    if (appsettings.get_setting(db, "external_auto", "1") == "1"
-            and receipt.status == "new" and not receipt.full_data):   # v1.25.2
+    """Автозагрузка деталей после скана (v1.70.70: всегда включена)."""
+    if receipt.status == "new" and not receipt.full_data:      # v1.25.2
         _enqueue_fetch(receipt.id)           # v1.68.0: очередь вместо потока
         return True
     return False
@@ -1101,17 +1713,17 @@ def fetch_details_bulk(body: FetchDetailsRequest, background: BackgroundTasks,
             summary="Состояние источников данных (бухгалтер+)")
 def external_status(user: User = Depends(require_accountant),
                     db: Session = Depends(get_db)):
+    from ..services import fns_quota
     cfg = external_engine._settings(db)
     return {
+        # v1.70.70: источник единственный — Открытые API ФНС
         "chain": external_engine.provider_chain(db),
         "engine": external_engine.status(),
         "configured": {
-            # v1.57.0: рабочий источник один — proverkacheka; fns_api — на
-            # перспективу (мастер-токен в карточке «Проверка чеков»)
-            "fns_api": bool(cfg.get("fns_master_token") or settings.FNS_MASTER_TOKEN),
-            "proverkacheka": bool(cfg.get("proverkacheka_token")),
+            "fns": bool(cfg.get("fns_master_token")
+                        or settings.FNS_MASTER_TOKEN),
         },
-        "auto_fetch": appsettings.get_setting(db, "external_auto", "1") == "1",
+        "quota": fns_quota.stats(db),
     }
 
 
@@ -1136,6 +1748,8 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Чек уже выгружен в 1С; удалять может только администратор")
     info = {"fn": receipt.fn, "fd": receipt.fd, "fp": receipt.fp}
+    from ..unified import service as unified
+    unified.detach_registry(db, receipt, user)
     db.delete(receipt)
     db.commit()
     log_action(user, "receipt_deleted", "receipt", receipt_id, info)
@@ -1147,8 +1761,12 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
 # --------------------------------------------------------------------------
 #  Проверка в ФНС (фоновая задача)
 # --------------------------------------------------------------------------
-def _verify_one_sync(receipt_id: str) -> None:
-    """Синхронное выполнение проверки (для фонового потока)."""
+def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
+    """Синхронное выполнение проверки (для фонового потока).
+
+    v1.70.72: job_id — задание пакетной проверки, чтобы человек увидел итог
+    «проверено N из M: подтверждено …, не найдено …».
+    """
     from ..database import SessionLocal
     _VERIFY_SEM.acquire()                    # v1.67.1: ждём БЕЗ сессии
     db = SessionLocal()
@@ -1165,6 +1783,24 @@ def _verify_one_sync(receipt_id: str) -> None:
                                receipt.total_sum, receipt.receipt_date,
                                receipt.fns_status, receipt.fns_checked_at)
         duration = int((time.monotonic() - t0) * 1000)
+
+        if result.status == "quota":
+            # v1.70.70: исчерпан суточный лимит ФНС — чек НЕ теряется:
+            # остаётся «ожидает проверки» и проверяется автоматически
+            # после сброса лимита (см. _limit_retry_worker).
+            receipt.status = "new"
+            receipt.fns_status = "pending"
+            receipt.fns_message = result.message
+            db.commit()
+            logging.getLogger("ymaster").warning(
+                "⏸ ЧЕК ОЖИДАЕТ ПРОВЕРКИ [%s]: лимит запросов к ФНС",
+                receipt.id)
+            broadcast("receipt_verified", receipt.to_dict())
+            from ..services.webhooks import enqueue_receipt_verified
+            enqueue_receipt_verified(db, receipt.id)
+            from ..services import verify_jobs as _jobs
+            _jobs.note(job_id, "quota")
+            return
 
         receipt.fns_status = result.status
         receipt.fns_message = result.message
@@ -1194,28 +1830,68 @@ def _verify_one_sync(receipt_id: str) -> None:
         if result.status == "valid" and (items or receipt.items):
             receipt.full_data = True
 
+        # v1.70.72: полный документ ФНС — регион, отрасль, налоги, реквизиты
         raw = json.loads(receipt.raw_data or "{}")
-        raw["fns"] = result.raw
+        old_fns = raw.get("fns") if isinstance(raw.get("fns"), dict) else {}
+        _ticket = (result.raw.get("ticket")
+                   if isinstance(result.raw, dict) else None)
+        # Ответ из кэша приходит без документа: берём сохранённый ранее,
+        # иначе повторная проверка «обнуляла» полные данные чека.
+        if not _ticket and isinstance(old_fns.get("ticket"), dict):
+            _ticket = old_fns["ticket"]
+        if result.status == "valid" and isinstance(_ticket, dict) and _ticket:
+            try:
+                from ..services import receipt_card as _card
+                _card.apply_to_receipt(db, receipt, _ticket)
+            except Exception:                          # noqa: BLE001
+                logging.getLogger("ymaster").debug("receipt card apply",
+                                                   exc_info=True)
+        merged = dict(old_fns)
+        if isinstance(result.raw, dict):
+            merged.update(result.raw)
+        if _ticket and not merged.get("ticket"):
+            merged["ticket"] = _ticket
+        raw["fns"] = merged
         receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+        # v1.70.82: ответ ФНС оплачен квотой — сбой единого реестра его не
+        # отменяет (откатывается только точка сохранения синхронизации)
+        from ..unified import service as unified
+        unified.sync_registry_safely(db, receipt)
         db.commit()
 
         # v1.18.0: id задаём явно (max+1) — на таблицах старой схемы SQLite
-        # не автоинкрементировал BigInteger PK и журнал ФНС молча не вёлся
-        _nid = (db.query(func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1
-        db.add(FnsLog(id=_nid,
-                      receipt_id=receipt.id,
-                      request_data=json.dumps({"fn": receipt.fn, "fd": receipt.fd,
-                                               "fp": receipt.fp}, ensure_ascii=False),
-                      response_data=json.dumps(result.raw, ensure_ascii=False)[:4000],
-                      provider=(result.raw.get("provider", "mock")
-                                if isinstance(result.raw, dict) else "mock"),
-                      ok=result.ok, duration_ms=duration))
-        db.commit()
+        # не автоинкрементировал BigInteger PK и журнал ФНС молча не вёлся.
+        # v1.70.38: max+1 без повторов — это гонка (два одновременных чека
+        # получают один id, второй коммит падает, строка журнала теряется),
+        # поэтому при IntegrityError номер перечитывается и вставка идёт заново.
+        _req = json.dumps({"fn": receipt.fn, "fd": receipt.fd,
+                           "fp": receipt.fp}, ensure_ascii=False)
+        _resp = json.dumps(result.raw, ensure_ascii=False)[:4000]
+        _prov = (result.raw.get("provider", "fns")
+                 if isinstance(result.raw, dict) else "fns")
+        for _try in range(5):
+            _nid = (db.query(
+                func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1
+            db.add(FnsLog(id=_nid,
+                          receipt_id=receipt.id,
+                          request_data=_req,
+                          response_data=_resp,
+                          provider=_prov,
+                          ok=result.ok, duration_ms=duration))
+            try:
+                db.commit()
+                break
+            except IntegrityError:
+                db.rollback()      # чек к этому моменту уже сохранён выше
         broadcast("receipt_verified", receipt.to_dict())
+        from ..services import verify_jobs as _jobs
+        _jobs.note(job_id, result.status)
         # v1.67.0: событие наружу — исходящий webhook (очередь + повторы)
         from ..services.webhooks import enqueue_receipt_verified
         enqueue_receipt_verified(db, receipt.id)
     except Exception as e:  # не роняем воркер
+        from ..services import verify_jobs as _jobs
+        _jobs.note(job_id, "error")
         try:
             db.rollback()
             r = db.get(Receipt, receipt_id)
@@ -1230,11 +1906,13 @@ def _verify_one_sync(receipt_id: str) -> None:
         _VERIFY_SEM.release()                # v1.67.1
 
 
-def _run_verification(receipt_ids: list[str]) -> None:
-    """Фоновое пакетное выполнение проверок."""
+def _run_verification(receipt_ids: list[str],
+                      job_id: str | None = None) -> None:
+    """Фоновое пакетное выполнение проверок (v1.70.72: с учётом задания)."""
     threads = []
     for rid in receipt_ids:
-        t = threading.Thread(target=_verify_one_sync, args=(rid,), daemon=True)
+        t = threading.Thread(target=_verify_one_sync, args=(rid, job_id),
+                             daemon=True)
         t.start()
         threads.append(t)
     for t in threads:
@@ -1255,10 +1933,34 @@ def verify(body: VerifyRequest, background: BackgroundTasks,
             user).all()
         ids = [r.id for r in found]
     if not ids:
-        return {"queued": 0, "message": "Нет чеков для проверки"}
-    background.add_task(_run_verification, ids)
-    log_action(user, "verify_queued", details={"count": len(ids)})
-    return {"queued": len(ids), "message": f"Отправлено на проверку: {len(ids)} чеков"}
+        return {"queued": 0, "job_id": "", "message": "Нет чеков для проверки"}
+    # v1.70.72: задание — чтобы после пакетной проверки показать итог
+    from ..services import verify_jobs as _jobs
+    job = _jobs.create(len(ids), user.id)
+    background.add_task(_run_verification, ids, job["job_id"])
+    log_action(user, "verify_queued", details={"count": len(ids),
+                                               "job_id": job["job_id"]})
+    return {"queued": len(ids), "job_id": job["job_id"],
+            "message": f"Отправлено на проверку: {len(ids)} чеков"}
+
+
+@router.get("/verify/latest", summary="Последняя пакетная проверка ФНС (итог)")
+def verify_latest(user: Annotated[User, Depends(require_accountant)]):
+    from ..services import verify_jobs as _jobs
+    snap = _jobs.latest(user.id)
+    if not snap:
+        return {"job": None, "message": "Пакетных проверок ещё не было"}
+    return {"job": snap, "message": _jobs.summary_text(snap)}
+
+
+@router.get("/verify/{job_id}", summary="Ход и итог пакетной проверки ФНС")
+def verify_job(job_id: str,
+              user: Annotated[User, Depends(require_accountant)]):
+    from ..services import verify_jobs as _jobs
+    snap = _jobs.get(job_id)
+    if not snap:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+    return {"job": snap, "message": _jobs.summary_text(snap)}
 
 
 @router.post("/{receipt_id}/verify", summary="Проверить один чек в ФНС (бухгалтер+)")
@@ -1309,6 +2011,41 @@ def export_receipts(body: ExportRequest, user: User = Depends(require_accountant
     filename = f"ymaster-check-export-{now.strftime('%Y%m%d-%H%M')}.{ext}"
     return Response(content=content, media_type=f"{media}; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/advance-report/number", summary="Зарезервировать номер авансового отчёта")
+def reserve_advance_number(body: AdvanceReportNumberBody,
+                           user: Annotated[User, Depends(require_accountant)],
+                           db: Annotated[Session, Depends(get_db)]):
+    """Атомарная помесячная нумерация по компании; повторы запроса безопасны."""
+    from uuid import UUID
+
+    try:
+        date = dt.date.fromisoformat(body.report_date)
+        if date.isoformat() != body.report_date:
+            raise ValueError
+        request_id = str(UUID(body.request_id))
+    except ValueError as exc:
+        raise HTTPException(422, "Некорректная дата отчёта или идентификатор запроса") from exc
+    if user.role != ROLE_ADMIN and user.company_id != body.company_id:
+        raise HTTPException(403, "Нет доступа к компании")
+    if not db.get(Company, body.company_id):
+        raise HTTPException(404, "Компания не найдена")
+    period = date.strftime("%Y-%m")
+
+    def result(record):
+        if record.company_id != body.company_id or record.report_date != body.report_date:
+            raise HTTPException(409, "Идентификатор запроса уже использован для другого отчёта")
+        return {"number": f"АО-{period}-{record.number:02d}", "sequence": record.number,
+                "company_id": record.company_id, "report_date": record.report_date}
+
+    # v1.70.112 (T-46): ядро нумерации — общее с согласованием авансовых отчётов (один счётчик на компанию)
+    from ..services import ao_numbers
+    try:
+        record = ao_numbers.reserve(db, body.company_id, body.report_date, request_id, body.start_after)
+    except ao_numbers.NumberError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    return result(record)
 
 
 @router.post("/advance-report", summary="Собрать авансовый отчёт за период (бухгалтер+)")
@@ -1408,12 +2145,12 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
             invalid_cnt += 1
         items.append({
             "id": d["id"], "receipt_date": d["receipt_date"],
-            "assignee": pname, "merchant_name": d.get("merchant_name") or "",
+            "company_id": d.get("company_id"), "assignee": pname, "merchant_name": d.get("merchant_name") or "",
             "merchant_inn": d.get("merchant_inn") or "",
             "fn": d.get("fn") or "", "fd": d.get("fd") or "", "fp": d.get("fp") or "",
             "operation": d.get("operation"), "category": d.get("category") or "",
-            "total_sum": s, "fns_status": d.get("fns_status"),
-            "exported": d.get("exported"),
+            "total_sum": s, "personal_sum": d.get("personal_sum") or 0,
+            "fns_status": d.get("fns_status"), "exported": d.get("exported"),
         })
     return {
         "period": {"from": body.date_from, "to": body.date_to},

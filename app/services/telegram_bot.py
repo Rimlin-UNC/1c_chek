@@ -10,7 +10,7 @@
 #     secretbox), в логи не пишется, ошибки обезличены;
 #   • напоминания: раз в день в заданное время сотрудникам, у которых
 #     НЕСКОЛЬКО нет чеков за сегодня (собираемость чеков 60% → 90%+).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -208,6 +208,10 @@ def handle_update(db: Session, upd: dict) -> None:
     chat = msg.get("chat") or {}
     chat_id = str(chat.get("id") or "")
     text = (msg.get("text") or "").strip()
+    if chat_id and not text and (msg.get("photo") or msg.get("document")) \
+            and chat.get("type", "private") == "private":
+        _document_message(db, msg, chat_id)                 # v1.70.105 (T-64): фото документа от сотрудника
+        return
     if not chat_id or not text:
         return
     token = get_token(db)
@@ -230,19 +234,29 @@ def handle_update(db: Session, upd: dict) -> None:
         if reply:
             _send(reply)
         return
-    if msg.get("photo") and not text:
-        # QR с фото на Этапе 1 не расшифровываем — честная подсказка
-        from ..pool import ingest as _pool
-        if _pool.pool_enabled(db):
-            _send("📸 Фото пока не разбираю — пришлите QR строкой текстом: "
-                  "в приложении ФНС откройте чек → «Поделиться» → скопируйте "
-                  "строку и отправьте сюда.")
-        return
     if text_low.startswith("/balance"):
         frm = msg.get("from") or {}
         bal = _pool_balance_text(db, str(frm.get("id") or "") or None, chat_id)
         if bal:
             _send(bal)
+        return
+    # --- v1.70.69: вход/регистрация на сайте — код «tglogin_…» ---
+    # Deep-link https://t.me/БОТ?start=tglogin_… приходит текстом
+    # «/start tglogin_…» — перехватываем раньше привязки, чтобы длинный
+    # код входа не спутать с коротким 6-значным кодом привязки.
+    m_tgl = re.search(r"tglogin_[A-Za-z0-9_-]{16,120}", text)
+    if m_tgl:
+        from . import telegram_login
+        frm = msg.get("from") or {}
+        display = " ".join(str(x) for x in (frm.get("first_name"),
+                                            frm.get("last_name")) if x)
+        ok = telegram_login.confirm(db, m_tgl.group(0), chat_id,
+                                    username=str(frm.get("username") or ""),
+                                    display=display)
+        _send("✅ Вход на сайт подтверждён — вернитесь в браузер, вход "
+              "выполнится автоматически." if ok else
+              "⚠️ Код входа не найден или устарел — на сайте нажмите "
+              "«Войти через Telegram» ещё раз.")
         return
     if text_low.startswith("/start"):
         code = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
@@ -254,7 +268,7 @@ def handle_update(db: Session, upd: dict) -> None:
                     "👋 Это бот «Ямастер Чек».\n\n"
                     "🎁 Пришлите строку QR чека (текстом) — проверим по "
                     "официальным источникам и начислим балл.\n"
-                    f"📜 {ingest_offerta()}\n\n"
+                    f"📜 {ingest_offerta(db)}\n\n"
                     "Сотрудники компаний: код привязки — в Настройках "
                     "приложения (Настройки → Telegram → «Получить код»), "
                     "затем /start КОД.")
@@ -271,7 +285,8 @@ def handle_update(db: Session, upd: dict) -> None:
         db.commit()
         _send(
                      f"✅ Привязано: {user.full_name or user.username}. "
-                     "Присылаю напоминания о чеках. Команды: /status, /help, /unbind")
+                     "Присылаю напоминания о чеках. Фото УПД или накладной присылайте сюда — "
+                     "бухгалтер получит черновик. Команды: /status, /help, /unbind")
         log.info("telegram bind: user=%s", user.username)
         return
     user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
@@ -295,17 +310,110 @@ def handle_update(db: Session, upd: dict) -> None:
                  "/status — мои чеки за сегодня\n"
                  "/balance — баллы «Чек-Пула»\n"
                  "Чек в пул: пришлите строку QR текстом.\n"
+                 "Фото УПД или накладной — черновик бухгалтеру вашей компании.\n"
                  "/unbind — отвязать уведомления\n"
                  "Привязка: Настройки → Telegram → код → /start КОД")
 
 
 # --------------------------------------------------------------------------
+#  v1.70.105 (T-64): фото и PDF документов от сотрудников → «Первичка»
+# --------------------------------------------------------------------------
+DOC_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/tiff")
+
+
+def _pick_file(msg: dict) -> tuple[str, str, int]:
+    """file_id, имя и размер: самое крупное фото (Telegram присылает размеры по возрастанию) или файл."""
+    photos = msg.get("photo") or []
+    if photos:
+        best = photos[-1]
+        return str(best.get("file_id") or ""), "", int(best.get("file_size") or 0)
+    doc = msg.get("document") or {}
+    return str(doc.get("file_id") or ""), str(doc.get("file_name") or ""), int(doc.get("file_size") or 0)
+
+
+def download_file(token: str, file_id: str, proxy: str = "", base: str = "",
+                  limit: int = 20 * 1024 * 1024) -> bytes:
+    """Скачать файл из Telegram: getFile → /file/bot…/путь (тот же прокси и мост, что у остальных вызовов)."""
+    info = api(token, "getFile", {"file_id": file_id}, proxy=proxy, base=base)
+    path = str(info.get("file_path") or "")
+    if not path:
+        raise TelegramError("Telegram не отдал файл")
+    if int(info.get("file_size") or 0) > limit:
+        raise TelegramError("Файл больше 20 МБ")
+    origin = (base or "").rstrip("/") or API_BASE.rsplit("/bot", 1)[0]
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        with httpx.stream("GET", origin + "/file/bot" + token + "/" + path, timeout=60.0,
+                          proxy=proxy or None) as resp:
+            if resp.status_code != 200:
+                raise TelegramError(f"Telegram: файл не скачан (HTTP {resp.status_code})")
+            for chunk in resp.iter_bytes():
+                total += len(chunk)
+                if total > limit:
+                    raise TelegramError("Файл больше 20 МБ")
+                chunks.append(chunk)
+    except httpx.HTTPError as exc:
+        raise TelegramError("Telegram недоступен с сервера") from exc
+    return b"".join(chunks)
+
+
+def _document_message(db: Session, msg: dict, chat_id: str) -> None:
+    """Фото или PDF в личном чате: привязанный сотрудник → очередь распознавания его компании (ADR-35)."""
+    from ..models import User
+    from ..primary import bots
+    token, proxy, base = get_token(db), get_proxy(db), get_api_base(db)
+
+    def _send(txt: str) -> None:
+        try:
+            send_message(token, chat_id, txt, proxy=proxy, base=base)
+        except TelegramError as exc:
+            log.warning("telegram: ответ на фото не отправлен: %s", exc)
+
+    user = db.query(User).filter(User.telegram_chat_id == chat_id, User.is_active.is_(True)).first()
+    if user is None:
+        from ..pool import ingest as _pool
+        if _pool.pool_enabled(db) and msg.get("photo"):
+            # QR с фото не расшифровываем — честная подсказка участнику «Чек-Пула»
+            _send("📸 Фото чеков пока не разбираю — пришлите QR строкой текстом: в приложении ФНС откройте "
+                  "чек → «Поделиться» → скопируйте строку и отправьте сюда.")
+        else:
+            _send(bots.not_linked_text("telegram"))
+        return
+    file_id, name, size = _pick_file(msg)
+    mime = str((msg.get("document") or {}).get("mime_type") or "")
+    if not file_id or (msg.get("document") and mime and mime not in DOC_TYPES):
+        _send("🤔 Принимаются фото документа (JPG, PNG, TIFF) и PDF. Снимите УПД или накладную целиком "
+              "и пришлите сюда.")
+        return
+    if size > bots.MAX_BYTES:
+        _send("📦 Файл больше 20 МБ — пришлите фото или PDF поменьше.")
+        return
+    try:
+        data = download_file(token, file_id, proxy=proxy, base=base, limit=bots.MAX_BYTES)
+    except TelegramError as exc:
+        log.warning("telegram: файл документа не скачан: %s", exc)
+        _send("⚠️ Не удалось получить файл — пришлите ещё раз.")
+        return
+    res = bots.accept(db, user, data, bots.file_name_for("telegram", name, data), str(msg.get("caption") or ""),
+                      "telegram", ref=f"telegram:{chat_id}:{msg.get('message_id') or ''}")
+    _send(res["message"])
+
+
+# --------------------------------------------------------------------------
 #  v1.30.0: «Чек-Пул» — приём чеков через бота
 # --------------------------------------------------------------------------
-def ingest_offerta() -> str:
-    """Краткая оферта пула для приветствия бота (v1.30.0)."""
-    from ..pool import ingest as pool
-    return pool.OFFERTA_SHORT
+def ingest_offerta(db: Session) -> str:
+    """Краткая оферта пула для приветствия бота (v1.30.0).
+
+    v1.70.47: сообщение читают в мессенджере, где относительный адрес
+    страницы не откроется, поэтому в краткий текст подставляется полный
+    адрес документа. Адрес берётся из настройки, из которой собираются
+    ссылки в письмах (`pool.mailer.base_url`), — второй источник адреса
+    сайта разъехался бы с первым при переезде домена.
+    """
+    from ..legal import offerta
+    return offerta.short_terms_absolute(db)
 
 
 def process_pool_message(db: Session, chat_id: str, from_id: str | None,
@@ -321,6 +429,11 @@ def process_pool_message(db: Session, chat_id: str, from_id: str | None,
         return "ℹ Приём чеков в «Чек-Пул» сейчас выключен. Попробуйте позже."
     user = pool.get_or_create_user(db, tg_user_id=from_id or chat_id,
                                    tg_username=from_username)
+    # v1.70.37: канал регистрации участника — администратор видит, откуда он
+    # пришёл (Telegram-бот, а не мини-приложение MAX).
+    if not (user.reg_source or ""):
+        user.reg_source = "tg"
+        db.commit()
     if user.is_blocked:
         return "⛔ Приём чеков от этого аккаунта остановлен."
     res = pool.ingest_receipt(db, text.strip(), "telegram_bot", user)
@@ -378,7 +491,6 @@ def _pool_balance_text(db: Session, from_id: str | None, chat_id: str) -> str | 
 # --------------------------------------------------------------------------
 _worker: threading.Thread | None = None
 _stop = threading.Event()
-_wake = threading.Event()
 _bot_username: str = ""
 
 
@@ -523,11 +635,18 @@ def ping_proxy(db: Session, samples: int = 3,
                scheduled: bool = False) -> dict:
     """v1.70.14: средний пинг настроенного пути до Telegram (3 запроса).
 
-    Замеряем фактический путь бота: через прокси (AdGuard VPN
-    socks5://127.0.0.1:1080 и т.п.) или напрямую. Любой HTTP-ответ
-    считается успехом (важна латентность, не статус). Результат хранится
-    в настройках и показывается в карточке Telegram. Экономно: 3
-    коротких запроса; scheduled=True — суточный автозамер 15:00 МСК.
+    Замеряем фактический путь бота: через прокси, если он задан в настройках,
+    иначе напрямую. Любой HTTP-ответ считается успехом (важна латентность, не
+    статус). Результат хранится в настройках и показывается в карточке
+    Telegram. Экономно: 3 коротких запроса; scheduled=True — суточный
+    автозамер 15:00 МСК.
+
+    v1.70.24: при схеме AdGuard VPN «TUN + selective» поле прокси пусто, и
+    «напрямую» — это НЕ обход VPN: трафик до api.telegram.org уводится в
+    туннель прозрачно по доменному исключению, а DNS уходит в туннель. То
+    есть замер при пустом прокси измеряет ровно тот путь, которым реально
+    ходит бот. Прежняя схема SOCKS5 (прокси socks5://127.0.0.1:1080) тоже
+    продолжает замеряться корректно — просто через прокси.
     """
     proxy = get_proxy(db)
     origin = get_api_base(db).rstrip("/")
@@ -590,11 +709,12 @@ def _send_digest(db: Session) -> None:
         lines.append(f"🪝 Вебхуки: {_stuck} недоставлено (исчерпаны "
                      "повторы) — проверьте приёмник в «Настройках»")
     text = "\n".join(lines)
-    staff = [u for u in db.query(User).filter(
+    # v1.70.38: .all() и так возвращает список — копия в генераторе лишняя
+    staff = db.query(User).filter(
         User.is_active.is_(True),
         User.telegram_chat_id.isnot(None),
         User.telegram_chat_id != "",
-        User.role.in_(("admin", "accountant"))).all()]
+        User.role.in_(("admin", "accountant"))).all()
     proxy = get_proxy(db)
     base = get_api_base(db)                              # v1.70.12
     sent = 0
@@ -746,11 +866,6 @@ def diagnose(db: Session) -> dict:
             "verdict": v[0], "message": v[1]}
 
 
-def wake() -> None:
-    """Разбудить цикл после изменений настроек."""
-    _wake.set()
-
-
 # --------------------------------------------------------------------------
 #  Уведомления из бизнес-логики (fire-and-forget)
 # --------------------------------------------------------------------------
@@ -789,10 +904,17 @@ def notify_user(user_id: str, text: str) -> None:
 
 
 def refresh_username(db: Session) -> str:
-    """Обновить кэш username бота (для настроек)."""
+    """Обновить кэш username бота (для настроек и ссылок t.me).
+
+    v1.70.69 (исправление): запрос шёл на официальный адрес, игнорируя
+    настройку «Адрес API» (v1.70.12). В условиях блокировки это значило,
+    что имя бота не обновлялось и ссылка https://t.me/… в окне входа через
+    Telegram не появлялась — вход оставался только «кодом текстом».
+    """
     global _bot_username
     try:
-        me = get_me(get_token(db), proxy=get_proxy(db))  # v1.29.0
+        me = get_me(get_token(db), proxy=get_proxy(db),   # v1.29.0
+                    base=get_api_base(db))                # v1.70.12/69
         _bot_username = me.get("username") or ""
     except Exception:                                    # noqa: BLE001
         _bot_username = ""

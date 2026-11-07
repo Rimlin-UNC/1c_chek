@@ -1,0 +1,138 @@
+# Ямастер Чек — непрерывная проверка (CI).
+#
+# Что делает: на каждом push в main и arena/** (и вручную) ставит всю
+# цепочку тестов проекта и прогоняет ./test.sh full на Python 3.11 и 3.12
+# с настоящим PostgreSQL 17. Затем ворота qa/junit_gate.py требуют, чтобы
+# не было ни одного упавшего ИЛИ пропущенного теста: пропуск означает, что
+# инструмент не установлен и проверка фактически не выполнялась.
+#
+# Секретов не использует: база — одноразовый контейнер без пароля (trust),
+# доступный только этому заданию. Рабочий сервер, проект Supabase и Vercel
+# не затрагиваются. Описание — docs/RUNBOOK.md, раздел «CI».
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    # Без `name`: GitHub сам назовёт задания «tests (3.11)» и «tests (3.12)»,
+    # а пропущенный прогон pull_request — просто «tests» (с `name` из матрицы
+    # в списке проверок PR оставалось нераскрытое выражение).
+    # Ветки этого репозитория уже проверяются по push; pull_request нужен
+    # только для веток из форков — без двойных прогонов.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_DB: ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Включает opt-in тесты PostgreSQL (единый слой, миграции Supabase).
+      UNIFIED_POSTGRES_TEST_URL: postgresql+psycopg://ci@localhost:5432/ci
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Тесты апдейтера клонируют этот checkout и ждут ветку в HEAD; при
+      # pull_request checkout оставляет HEAD отсоединённым.
+      - name: Local branch for updater tests
+        run: git symbolic-ref -q HEAD || git checkout -q -B "ci/run-${GITHUB_RUN_ID}"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Python environment (.venv, как qa/setup_dev.sh --with-postgres)
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements-dev.txt 'psycopg[binary]>=3.1,<4'
+          .venv/bin/python -m pip check
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Node tools (ESLint, Vitest, Playwright, Newman, stylelint, html-validate)
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --prefix /tmp/csslint --no-audit --no-fund stylelint@17.16.0
+          npm install --prefix /tmp/htmlval --no-audit --no-fund html-validate@11.18.0
+          npx playwright install --with-deps chromium
+
+      - name: Tool versions
+        run: |
+          python3 --version
+          ruff --version
+          node --version
+          npx playwright --version
+          psql --version || true
+          python3 -c 'import psycopg; print("psycopg", psycopg.__version__)'
+
+      - name: Ruff (gate из ruff.toml, плюс qa/)
+        run: ruff check app tests qa
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Full test suite (./test.sh full -j4)
+        id: tests
+        env:
+          YM_JUNIT_DIR: ${{ runner.temp }}/junit
+        run: ./test.sh full -j4
+
+      - name: Gate — no failed and no skipped tests
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: python3 qa/junit_gate.py --title "Тесты (Python ${{ matrix.python }})" "$RUNNER_TEMP"/junit/*.xml
+
+      - name: Upload JUnit reports
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-python-${{ matrix.python }}
+          path: ${{ runner.temp }}/junit/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Playwright traces (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces-python-${{ matrix.python }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -154,9 +154,17 @@ class TestVersions1703:
         # v1.70.4: строгий замок версии переехал в test_v1704
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 3)
         idx = open("app/static/index.html", encoding="utf-8").read()
-        assert f"app.js?v={ver}" in idx and "?v=1.70.2" not in idx
+        # v1.70.20: проверка СТАЛА СТРУКТУРНОЙ. Прежняя «"?v=1.70.2" not in idx»
+        # ложно срабатывала на версии 1.70.20 — строка «?v=1.70.2» является
+        # префиксом «?v=1.70.20». Теперь сверяем множество ВСЕХ ?v= с текущей
+        # версией: ни префиксов, ни забытых при бампе ссылок не пропустит.
+        assert f"app.js?v={ver}" in idx
+        assert set(re.findall(r"\?v=([0-9.]+)", idx)) == {ver}, \
+            "в index.html есть ?v= не текущей версии"
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "1.70.2" not in sw
+        assert f"ymaster-check-v{ver}" in sw
+        assert set(re.findall(r"\?v=([0-9.]+)", sw)) <= {ver}, \
+            "в sw.js есть ?v= не текущей версии"
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

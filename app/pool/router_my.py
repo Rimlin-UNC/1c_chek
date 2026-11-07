@@ -5,7 +5,7 @@
 # экспорт CSV («сдал чек — забрал чек»), смена пароля/e-mail, удаление
 # аккаунта (152-ФЗ: ПДн стираются, баллы сгорают, чеки остаются
 # обезличенными по оферте). Доступ — только по JWT кабинета (typ=pool).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..models import iso_z          # v1.60.0: инстанты — UTC+«Z»
+from ..config import settings   # v1.70.38: PAGE_MAX
 
 from ..database import get_db
 from . import accounts, engage, ingest, mailer, referral
@@ -55,6 +56,12 @@ def summary(db: Session = Depends(get_db),
     from ..models import utcnow
     day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     q = db.query(PoolReceipt).filter(PoolReceipt.pool_user_id == user.id)
+    # v1.70.37: профиль из MAX виден и самому участнику (и администратору в
+    # режиме просмотра кабинета). До согласия 152-ФЗ поля пустые.
+    from ..services import consent as consent_svc
+    prof = consent_svc.profile_dict(user)
+    cs = consent_svc.consent_state(user)
+    display = " ".join(x for x in (prof["first_name"], prof["last_name"]) if x)
     return {
         "email": user.email, "email_verified": bool(user.email_verified),
         "points": user.points or 0, "receipts_total": q.count(),
@@ -64,12 +71,18 @@ def summary(db: Session = Depends(get_db),
         "daily_limit": ingest.DAILY_LIMIT,
         "points_per_receipt": ingest.POINTS_PER_RECEIPT,
         "created_at": iso_z(user.created_at),
+        "reg_source": user.reg_source or "",
+        "first_name": prof["first_name"], "last_name": prof["last_name"],
+        "photo_url": prof["photo_url"],
+        "display_name": display,
+        "consent_given": cs["given"], "consent_version": cs["version"],
+        "consent_at": cs["at"], "consent_stale": cs["stale"],
     }
 
 
 @router.get("/receipts", summary="Чек-Пул: мои чеки (пагинация)")
 def receipts(status: str = Query("", max_length=16),
-             page: int = Query(1, ge=1),
+             page: int = Query(1, ge=1, le=settings.PAGE_MAX),
              page_size: int = Query(20, ge=1, le=100),
              db: Session = Depends(get_db),
              user=Depends(accounts.require_pool_user)):

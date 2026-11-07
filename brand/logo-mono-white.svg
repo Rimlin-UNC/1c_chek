@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- Ямастер Чек — белая версия для тёмных фонов. ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+  <!-- Ямастер Чек — белая версия для тёмных фонов. ООО «Ямастер», https://ymaster.ru, chek@ymaster.ru -->
   <rect x="7" y="7" width="498" height="498" rx="108" fill="none" stroke="#FFFFFF" stroke-width="14"/>
   <!-- чек: только контур -->
   <path d="M170 118h172a14 14 0 0 1 14 14v198l-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22-20 22-20-22V132a14 14 0 0 1 14-14z"

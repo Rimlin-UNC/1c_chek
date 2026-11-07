@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.14.0: «Собрать авансовый отчёт»
 # (POST /api/v1/receipts/advance-report: период, сотрудники, CSV-данные,
 # изоляция пространства, контроль качества выборки).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import itertools
 import shutil
@@ -75,6 +75,17 @@ class TestAdvanceReport:
         assert rep["company"]["id"] == comp["id"]
         # строки отсортированы по сотрудникам
         assert rep["rows"][0]["assignee"] == "Иван Отчётный"
+
+    def test_personal_amount_returned_for_safe_print(self, client):
+        hdr = login(client, "admin", "admin123")
+        comp, _, ids = self._prepare(client, hdr)
+        patch = client.patch(f"/api/v1/receipts/{ids[0]}",
+                             json={"personal_sum": 35}, headers=hdr)
+        assert patch.status_code == 200
+        rep = client.post("/api/v1/receipts/advance-report", headers=hdr,
+                          json={"date_from": "2026-01-01", "date_to": "2026-12-31",
+                                "company_id": comp["id"]}).json()
+        assert next(r for r in rep["rows"] if r["id"] == ids[0])["personal_sum"] == 35
 
     def test_assignee_filter_and_ids_mode(self, client):
         hdr = login(client, "admin", "admin123")

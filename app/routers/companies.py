@@ -8,7 +8,7 @@
 # company_id на уровне КАЖДОГО запроса (см. services/scoping.py) —
 # стандартный подход SaaS для этой связки технологий.
 #
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -382,6 +382,8 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
         if not target.is_active:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 "Компания назначения заархивирована")
+        from ..unified import service as unified
+        unified.retarget_company(db, comp.id, target.id, admin)
         if rc:
             (db.query(Receipt).filter(Receipt.company_id == comp.id)
              .update({Receipt.company_id: target.id, Receipt.exported: False,
@@ -404,6 +406,8 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
                 "target": {"id": target.id, "name": target.name},
                 "message": f"Компания «{name}» удалена; чеков перенесено: {rc}"}
     # mode == "wipe": безвозвратно удалить чеки компании
+    from ..unified import service as unified
+    unified.retarget_company(db, comp.id, None, admin, wipe=True)
     (db.query(Receipt).filter(Receipt.company_id == comp.id)
      .delete(synchronize_session=False))
     (db.query(Invite).filter(Invite.company_id == comp.id)
@@ -433,6 +437,8 @@ def bulk_refresh_cards(body: dict, admin: User = Depends(require_admin),
     клиентов сразу. Лимит за раз — 40 (бесплатный тариф Checko: 100 запросов/день)."""
     import time as _time
     import json as _json
+    from datetime import timedelta as _td
+    from sqlalchemy import case as _case, or_ as _or
     from ..models import utcnow as _utcnow
     from ..services import checko as _checko
     limit = min(int((body or {}).get("limit") or 40), 40)
@@ -440,9 +446,14 @@ def bulk_refresh_cards(body: dict, admin: User = Depends(require_admin),
     if not key:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Ключ Checko не задан — укажите его в настройках")
-    comps = (db.query(Company)
-             .filter(Company.is_active.is_(True), Company.inn.isnot(None),
-                     Company.inn != "").limit(limit).all())
+    base = (db.query(Company)
+            .filter(Company.is_active.is_(True), Company.inn.isnot(None), Company.inn != ""))
+    total = base.count()
+    # v1.70.99 (#50): порядок не задавался, и каждый запуск брал одни и те же 40 компаний —
+    # остальные не обновлялись никогда. Теперь сначала ни разу не обновлённые, затем самые давние.
+    comps = (base.order_by(_case((Company.card_updated_at.is_(None), 0), else_=1),
+                           Company.card_updated_at.asc(), Company.name, Company.id)
+             .limit(limit).all())
     ok_cnt, errors = 0, []
     for c in comps:
         try:
@@ -456,9 +467,15 @@ def bulk_refresh_cards(body: dict, admin: User = Depends(require_admin),
             errors.append(f"{c.name} (ИНН {c.inn}): {e}")
         _time.sleep(0.15)                                # бережём лимит и 32 r/s
     db.commit()
+    stale = _utcnow() - _td(days=30)
+    remaining = base.filter(_or(Company.card_updated_at.is_(None),
+                                Company.card_updated_at < stale)).count()
     log_action(admin, "company_cards_bulk_refreshed",
-               details={"ok": ok_cnt, "errors": len(errors)})
+               details={"ok": ok_cnt, "errors": len(errors), "remaining": remaining})
     return {"ok": True, "updated": ok_cnt, "total_with_inn": len(comps),
+            "total": total, "remaining": remaining,
             "errors": errors[:10],
             "message": f"Обновлено карточек: {ok_cnt} из {len(comps)}"
-                       + (f"; ошибок: {len(errors)}" if errors else "")}
+                       + (f"; ошибок: {len(errors)}" if errors else "")
+                       + (f"; ещё ждут обновления: {remaining} — запустите снова (лимит Checko — "
+                          "100 запросов в день)" if remaining else "")}

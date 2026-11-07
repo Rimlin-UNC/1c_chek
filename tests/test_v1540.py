@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.54.0: главная-лендинг (предложение, скан чека,
 # разбор на e-mail) при полностью сохранённом входе в программу.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import pytest
 import re
@@ -79,7 +79,10 @@ class TestLandingMarkup:
         # приёме — гейт camWanted вместо мгновенного setTimeout)
         assert "/[?&]cam=1/.test(location.hash" in js
         assert "const camWanted = /[?&]cam=1/.test(location.hash" in js
-        assert "if (camWanted) camPick();" in js
+        # v1.70.42: владелец убрал деление на «пачку» и «обычное сканирование»,
+        # поэтому автооткрытие зовёт единый поток сдачи (pbStart) вместо camPick;
+        # сам гейт — камера только при включённом приёме — сохранён дословно
+        assert "if (camWanted) pbStart(false);" in js
 
     def test_landing_bindings(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -151,11 +154,16 @@ class TestReceiptEmailApi:
             db.close()
         yield
 
-    def test_receipt_email_no_smtp_503(self, client):
+    def test_receipt_email_no_smtp_409(self, client):
         r = client.post("/api/v1/public/pool/receipt-email", json={
             "fn": "1234567890123456", "email": "a@mail.ru", "hp": ""})
-        # в тестовой среде SMTP не настроен — честный 503
-        assert r.status_code == 503
+        # в тестовой среде SMTP не настроен. До v1.70.38 здесь был 503
+        # «Service Unavailable», то есть «сервис недоступен, повторите позже»,
+        # хотя повтор не помог бы: письмо не уйдёт, пока владелец не настроит
+        # почту. Любой мониторинг и проверка «нет серверных ошибок» считали это
+        # аварией. Теперь 409 — состояние сервера, а не его отказ (тот же код,
+        # которым программа отвечает на «Обновление уже выполняется»).
+        assert r.status_code == 409
         assert "не настроена" in r.json()["detail"]
 
     def test_receipt_email_bad_address(self, client):

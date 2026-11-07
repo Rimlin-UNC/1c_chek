@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — человекочитаемый журнал действий (v1.19.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 #
 # Превращает технические события аудита (action + details) в понятные
 # фразы: «отсканирован чек на 1 250,00 ₽» + комментарий в кавычках
@@ -98,6 +98,19 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     if action == "receipts_moved":
         return "чеки перемещены в другую компанию", \
             f"чеков: {d.get('count', 0)} → „{d.get('to_company', '—')}“"
+    if action == "unified_claim_transfer":             # v1.70.85, только администратор
+        return "чек передан компании по заявке", ""
+    if action == "unified_claim_decline":
+        return "заявка компании на чек отклонена", ""
+    if action == "unified_claim_void":
+        return "заявка компании на чек не учитывается", ""
+    if action == "unified_visibility_updated":         # v1.70.86, только администратор
+        modes = {"off": "выключено", "all": "всем компаниям", "selected": "выбранным компаниям"}
+        roles = {"accountant": "бухгалтер", "manager": "руководитель"}
+        who = ", ".join(roles.get(r, r) for r in d.get("roles") or []) or "никому"
+        return "изменён показ числа организаций компаниям", \
+            (f"режим: {modes.get(d.get('mode'), d.get('mode') or '—')}; роли: {who}; "
+             f"компаний с разрешением: {d.get('companies', 0)}")
     if action == "receipts_transferred":
         return "чеки переданы другому сотруднику", \
             f"чеков: {d.get('count', 0)} (были у „{d.get('from', '—')}“)"
@@ -149,8 +162,11 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "карточка компании обновлена из ЕГРЮЛ", \
             f"ИНН {d.get('inn', '—')}, „{d.get('name_full', '—')}“"
     if action == "company_cards_bulk_refreshed":
+        # v1.70.99 (#50): роутер пишет ok/errors/remaining, а фраза читала count — всегда «компаний: 0»
+        tail = (f", ошибок: {d['errors']}" if d.get("errors") else "") + \
+            (f", ещё ждут обновления: {d['remaining']}" if d.get("remaining") else "")
         return "массовое обновление карточек из ЕГРЮЛ", \
-            f"компаний: {d.get('count', 0)}"
+            f"компаний: {d.get('ok', d.get('count', 0))}{tail}"
     if action == "impersonate_start":
         return "включён режим просмотра", \
             f"глазами „{d.get('target', '—')}“ (роль: {_role(d.get('target_role'))})"
@@ -204,6 +220,134 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
         return "1С забрала чеки", f"количество: {d.get('count', 0)}"
     if action == "onec_ack":
         return "1С подтвердила загрузку", ""
+    # v1.70.96 (T-60): первичка в 1С
+    if action == "primary_exported":
+        skipped = f", пропущено: {d['skipped']}" if d.get("skipped") else ""
+        what = {"upd": "файлы УПД", "json": "EnterpriseData JSON", "xml": "EnterpriseData XML"}.get(d.get("format"), "")
+        return "первичка выгружена в 1С", f"документов: {d.get('count', 0)}{skipped}" + (f", формат: {what}" if what else "")
+    if action == "onec_primary_pull":
+        return "1С забрала УПД и счета-фактуры", f"количество: {d.get('count', 0)}"
+    if action == "onec_primary_ack":
+        return "1С подтвердила загрузку УПД", f"количество: {d.get('count', 0)}"
+    # v1.70.97 (T-58): что нужно от клиента
+    if action == "docreq_settings_updated":
+        state = "включены" if d.get("enabled") else "выключены"
+        return "изменены срок сдачи и напоминания клиенту", \
+            f"компания: „{d.get('company', '—')}“, срок: {d.get('deadline_day', '—')}-е число {d.get('x_hour', '')}, " \
+            f"напоминания {state}"
+    if action == "docreq_reminded":
+        return "клиенту отправлено напоминание о документах", \
+            f"компания: „{d.get('company', '—')}“, отправлено: {d.get('sent', 0)}, не доставлено: {d.get('failed', 0)}"
+    # v1.70.98 (T-45): банковская выписка
+    if action == "bank_statement_uploaded":
+        return "загружена банковская выписка", \
+            f"компания: „{d.get('company', '—')}“, период: {d.get('period', '—')}, операций: {d.get('operations', 0)}, " \
+            f"нужны документы: {d.get('saved', 0)}, найдено документов: {d.get('matched', 0)}"
+    if action == "bank_statement_deleted":
+        return "удалена банковская выписка", \
+            f"компания: „{d.get('company', '—')}“, удалено операций: {d.get('operations', 0)}"
+    if action == "bank_operation_ignored":
+        return "платёж отмечен: документы не нужны", \
+            f"сумма: {d.get('amount', 0)}, дата: {d.get('date', '—')}, причина: {d.get('note', '—')}"
+    if action == "bank_reimbursement_decided":
+        state = "возмещено" if d.get("status") == "paid" else "не возмещать"
+        return "решение по чеку сотрудника", f"компания: „{d.get('company', '—')}“, {state}" + \
+            (f", причина: {d['note']}" if d.get("note") else "")
+    if action == "bank_settings_updated":
+        return "изменены настройки банковской выписки", \
+            f"компания: „{d.get('company', '—')}“, срок хранения: {d.get('retention_days', '—')} дн., " \
+            f"карт сотрудников: {d.get('cards', 0)}"
+    # v1.70.99 (ADR-29): банк по API — Точка (секреты в журнал не пишутся)
+    if action == "bank_connection_saved":
+        return "сохранено подключение банка по API", \
+            f"компания: „{d.get('company', '—')}“, банк: {d.get('bank', '—')}, способ: {d.get('method', '—')}"
+    if action == "bank_connected":
+        return "банк подключён по API", \
+            f"компания: „{d.get('company', '—')}“, банк: {d.get('bank', '—')}, способ: {d.get('method', '—')}, " \
+            f"счетов: {d.get('accounts', 0)}"
+    # v1.70.101 (T-69, ADR-31): понимание чеков — категория позиции и память товаров
+    if action == "goods_category_set":
+        from . import goods as _goods
+        before = _goods.category(d.get("before") or "").title if d.get("before") else "не разобрана"
+        tail = ""
+        if d.get("remembered"):
+            tail = "; запомнено для компании" + (f", ещё {d.get('applied', 0)} таких же позиций"
+                                                 if d.get("applied") else "")
+        return "изменена категория позиции чека", \
+            f"было: {before}, стало: {_goods.category(d.get('after') or '').title}{tail}"
+    if action == "goods_memory_forget":
+        from . import goods as _goods
+        return "забыто исправление категории товара", \
+            f"товар: „{d.get('name_key', '—')}“, категория: {_goods.category(d.get('category') or '').title}"
+    # v1.70.100: длительность заставки загрузки задаёт администратор
+    if action == "splash_settings_updated":
+        def _sec(v: Any) -> str:
+            return "без заставки" if str(v) == "0" else f"{v} с"
+        return "изменена длительность заставки загрузки", \
+            f"было: {_sec(d.get('before', '—'))}, стало: {_sec(d.get('seconds', '—'))}"
+    # v1.70.100 (T-68): пакет для других учётных систем — JSON, CSV и УПД за месяц
+    if action == "export_package":
+        return "выгружен пакет для других учётных систем", \
+            f"компания: „{d.get('company', '—')}“, месяц: {d.get('period', '—')}, чеков: {d.get('receipts', 0)}, " \
+            f"документов: {d.get('primary_documents', 0)}, файлов УПД: {d.get('upd_files', 0)}, " \
+            f"банковских операций: {d.get('bank_operations', 0)}"
+    # v1.70.100 (T-50, ADR-30): рабочее место аутсорсера — клиентов бухгалтеру назначает администратор
+    if action == "clients_access_set":
+        return "назначены клиенты бухгалтера", \
+            f"бухгалтер: „{d.get('username', '—')}“, клиентов: {d.get('total', 0)} " \
+            f"(добавлено {d.get('added', 0)}, снято {d.get('removed', 0)})"
+    if action == "bank_connection_removed":
+        return "банк отключён", f"компания: „{d.get('company', '—')}“"
+    # v1.70.104 (T-63, ADR-34): первичка из почтового ящика (пароль в журнал не пишется)
+    if action == "primary_mailbox_saved":
+        return "сохранён почтовый ящик для первички", \
+            f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, папка: {d.get('folder', '—')}"
+    if action == "primary_mailbox_connected":
+        return "почтовый ящик для первички подключён", \
+            f"компания: „{d.get('company', '—')}“, сервер: {d.get('host', '—')}, писем в папке: {d.get('messages', 0)}"
+    if action == "primary_mailbox_removed":
+        return "почтовый ящик для первички отключён", f"компания: „{d.get('company', '—')}“"
+    # v1.70.111 (T-78): время чека возвращено по QR — след формы правки до 1.70.110
+    if action == "receipt_time_restored":
+        return "время чека возвращено по QR", \
+            f"было: {d.get('from', '—')}, стало: {d.get('to', '—')}, сдвиг: {d.get('hours', '—')} ч"
+    # v1.70.113 (T-79, ADR-43): закрытие выписки документами — ручная привязка платежа к УПД
+    if action == "bank_closing_linked":
+        side = "поступление" if d.get("side") == "income" else "списание"
+        return "платёж привязан к документам вручную", \
+            f"компания: „{d.get('company', '—')}“, {side}, документов: {d.get('documents', 0)}"
+    if action == "bank_closing_unlinked":
+        return "ручная привязка платежа снята", f"компания: „{d.get('company', '—')}“"
+    # v1.70.112 (T-46, ADR-24): согласование авансовых отчётов — подпись и решения (подробности — в журнале отчёта)
+    if action == "approvals_settings":
+        limits = (f"порог руководителя: {d.get('manager_limit') or 'нет'}, порог бухгалтера: "
+                  f"{d.get('accountant_limit') or 'нет'}")
+        return "изменены настройки согласования авансовых отчётов", \
+            f"{'включено' if d.get('enabled') else 'выключено'}, срок ответа: {d.get('timeout_hours', '—')} ч, {limits}"
+    stages = {"manager": "руководитель", "accountant": "бухгалтер"}
+    if action == "approval_created":
+        return "авансовый отчёт сформирован на согласование", \
+            f"{d.get('number', '—')}: {d.get('employee', '—')}, к учёту {d.get('total', '—')} ₽"
+    if action == "approval_signed":
+        return "авансовый отчёт подписан сотрудником (ПЭП)", f"{d.get('number', '—')}"
+    if action in ("approval_approved", "approval_rejected"):
+        verb = "согласован" if action == "approval_approved" else "отклонён"
+        return f"авансовый отчёт {verb} (ПЭП)", \
+            f"{d.get('number', '—')}, этап: {stages.get(d.get('stage'), d.get('stage') or '—')}"
+    if action == "approval_cancelled":
+        return "авансовый отчёт отменён", f"{d.get('number', '—')}"
+    # v1.70.109 (T-77, ADR-39): режим второго прочтения сканов и фото
+    if action == "primary_ocr_second":
+        modes = {"auto": "по сомнению", "always": "всегда", "off": "выключено"}
+        return "изменён режим второго прочтения сканов", f"режим: {modes.get(d.get('mode'), d.get('mode') or '—')}"
+    if action == "primary_mail_checked":
+        return "первичка загружена из почты", \
+            f"компания: „{d.get('company', '—')}“, писем: {d.get('messages', 0)}, в реестр: {d.get('created', 0)}, " \
+            f"на сверку: {d.get('drafts', 0)}, дублей: {d.get('duplicates', 0)}, не принято: {d.get('rejected', 0)}"
+    if action == "bank_synced":
+        return "выписка загружена из банка", \
+            f"компания: „{d.get('company', '—')}“, операций: {d.get('operations', 0)}, " \
+            f"нужны документы: {d.get('saved', 0)}, найдено документов: {d.get('matched', 0)}"
     if action == "mapping_updated":
         return "обновлены правила сопоставления статей", ""
     if action == "app_settings_updated":

@@ -4,5 +4,5 @@
 # qrcode_pkg — «QR Code» generator (BSD), © Lincoln Loop,
 # https://pypi.org/project/qrcode/ (см. qrcode_pkg/METADATA.txt).
 # Копия без изменений; используется для партнёрских QR (v1.38.0).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================

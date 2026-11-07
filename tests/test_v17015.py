@@ -24,7 +24,9 @@ from tests.test_v1121 import login
 
 class TestVersions17015:
     def test_version(self):
-        assert settings.APP_VERSION == "1.70.15"
+        # v1.70.16: пин ослаблен (точную версию проверяет свой тест)
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) \
+            >= (1, 70, 15)
 
     def test_changelog(self):
         ch = open("CHANGELOG.md", encoding="utf-8").read()
@@ -33,13 +35,15 @@ class TestVersions17015:
 
     def test_whatsnew(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
+        assert "'1.70.15':" in js
         assert js.index("'1.70.15':") < js.index("'1.70.14':")
 
     def test_versions_everywhere(self):
+        # v1.70.16: проверяем синхронность точек с текущей версией из config
         for f in ("app/static/index.html", "app/static/sw.js",
                   "app/static/manifest.webmanifest",
                   "app/static/maxapp/index.html"):
-            assert "1.70.15" in open(f, encoding="utf-8").read(), f
+            assert settings.APP_VERSION in open(f, encoding="utf-8").read(), f
 
 
 class TestLoginUrl:
@@ -50,19 +54,64 @@ class TestLoginUrl:
         assert ag.extract_login_url(line) == \
             "https://auth.adguard.io/device_code?user_code=ABCD-1234"
 
-    def test_foreign_link_rejected(self):
-        # защита от подмены домена (issue #188: CLI мог вернуть чужой домен)
+    def test_rotating_domain_accepted_random_url_rejected(self):
+        """v1.70.30: #188 оказался не подменой домена, а штатным механизмом.
+
+        Разработчик AdGuard (sfionov) в #188 ответил, что в странах, где VPN
+        блокируют, AdGuard НАМЕРЕННО использует сменяемые домены авторизации —
+        «this is expected behaviour». Значит `auctionassociation.space` из того
+        обращения — рабочая ссылка, а прежний отказ по белому списку ломал
+        установку: панель не показывала ссылку вовсе, и мастер ждал
+        подтверждения до таймаута.
+
+        Фильтром осталась ФОРМА ссылки (OAuth device-code): случайные URL из
+        журнала по-прежнему не принимаются за ссылку входа.
+        """
         assert ag.extract_login_url(
             "open https://auctionassociation.space/device_code?user_code=X"
-        ) == ""
+        ) == "https://auctionassociation.space/device_code?user_code=X"
         assert ag.extract_login_url("no link here") == ""
+        assert ag.extract_login_url(
+            "инструкция: https://example.com/README.md") == ""
 
 
 @pytest.fixture()
-def fresh_job():
+def fresh_job(tmp_path, monkeypatch):
+    """Чистое задание И изолированный файл состояния (v1.70.20).
+
+    Без изоляции `_state_path` тесты писали в общий `data/adguard_setup.json`,
+    а `setup_status()` при не-живом задании читает состояние С ДИСКА — отдавал
+    результат чужого теста (падение «плавало» между воркерами xdist).
+    """
+    monkeypatch.setattr(ag, "_state_path",
+                        lambda: str(tmp_path / "adguard_setup.json"))
     ag.job.reset()
     yield ag.job
     ag.job.reset()
+
+
+@pytest.fixture(autouse=True)
+def _restore_proxy_setting():
+    """v1.70.16: прогон мастера пишет telegram_proxy в общую тестовую БД —
+    возвращаем как было (иначе тесты прокси v1.29.0 читают чужое значение)."""
+    from app.database import SessionLocal
+    from app.services import appsettings
+
+    def _current():
+        db = SessionLocal()
+        try:
+            return appsettings.get_setting(db, ag.SETT_PROXY, "")
+        finally:
+            db.close()
+
+    before = _current()
+    yield
+    if _current() != before:
+        db = SessionLocal()
+        try:
+            appsettings.set_setting(db, ag.SETT_PROXY, before)
+        finally:
+            db.close()
 
 
 @pytest.fixture()
@@ -98,6 +147,13 @@ def _patch_happy(monkeypatch, kit_dir, calls, tmp_path=None):
         return 0, "ok"
 
     monkeypatch.setattr(ag, "run_cmd", fake_run)
+    # v1.70.24: шаг режима (TUN + selective) унифицирован — он всегда идёт
+    # через помощника, во всех режимах прав (root — `bash <сценарий> <фаза>`,
+    # nopass/helper — `sudo -n`). Раньше в root/nopass команда `set-mode`
+    # выполнялась напрямую через run_cmd, поэтому фикстура его и не ставила.
+    monkeypatch.setattr(ag, "run_helper",
+                        lambda phase, timeout=ag.CMD_TIMEOUT, stream=False:
+                        (calls.append("helper:" + phase) or (0, "ok\nготово")))
     monkeypatch.setattr(ag, "_login_worker",
                         lambda cli: (0, "Successfully logged in", ""))
     monkeypatch.setattr(tg, "ping_proxy",
@@ -294,34 +350,43 @@ class TestSetupRoutes:
             ag.job.reset()
 
     def test_preflight_endpoint(self, client, monkeypatch):
+        """v1.70.16: пароль не запрашивается никогда — вместо него
+        готовность (ready/mode) и одна команда для терминала."""
         adm = login(client, "admin", "admin123")
         monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
         monkeypatch.setattr(ag.subprocess, "run",
                             lambda *a, **k: type("R", (), {"returncode": 1})())
+        monkeypatch.setattr(ag, "helper_allowed", lambda: False)
         r = client.get("/api/v1/settings/telegram/adguard/setup/preflight",
                        headers=adm)
         assert r.status_code == 200
         body = r.json()
-        assert body["need_password"] is True and "hint" in body
+        assert body["need_password"] is False and "hint" in body
+        assert body["ready"] is False and "install-rule" in body["one_time_cmd"]
         monkeypatch.setattr(ag.os, "geteuid", lambda: 0)
         r = client.get("/api/v1/settings/telegram/adguard/setup/preflight",
                        headers=adm)
-        assert r.json()["need_password"] is False
+        body = r.json()
+        assert body["need_password"] is False
+        assert body["ready"] is True and body["mode"] == "root"
 
-    def test_start_passes_sudo_password(self, client, monkeypatch):
+    def test_start_ignores_sudo_password(self, client, monkeypatch):
+        # v1.70.16: пароля у мастера нет — поле игнорируется (не ошибка)
         ag.job.reset()
         adm = login(client, "admin", "admin123")
         seen = {}
 
-        def fake_start(db, sudo_password=""):
-            seen["pw"] = sudo_password
+        def fake_start(db):
+            seen["called"] = True
 
         monkeypatch.setattr(ag, "start_setup", fake_start)
         r = client.post("/api/v1/settings/telegram/adguard/setup",
                         headers=adm,
                         json={"action": "start", "sudo_password": "pw1"})
         assert r.status_code == 200
-        assert seen["pw"] == "pw1"
+        assert seen.get("called") is True
+        assert r.json()["passwordless"] is True
+        assert "pw1" not in r.text
 
     def test_start_spawns_job(self, client, monkeypatch):
         ag.job.reset()
@@ -340,10 +405,12 @@ class TestSetupRoutes:
 
 
 class TestSudoRights:
-    """Программа не от root: sudo -n, либо sudo -S с паролем из диалога
-    (как в механизме обновления). Пароль — только память, не public()."""
+    """Программа не от root: sudo -n либо помощник (v1.70.16). Режим
+    «pass» (sudo -S с паролем из браузера) в v1.70.16 удалён — подробные
+    проверки беспарольных режимов живут в tests/test_v17016.py."""
 
-    def test_run_cmd_pass_mode_uses_stdin(self, monkeypatch):
+    def test_run_cmd_pass_mode_removed(self, monkeypatch):
+        # v1.70.16: пароля у мастера нет — stdin не используется вовсе
         seen = {}
 
         class R:
@@ -357,13 +424,13 @@ class TestSudoRights:
 
         monkeypatch.setattr(ag.subprocess, "run", fake_run)
         ag.job.reset()
-        ag.job.sudo_mode = "pass"
-        ag.job._sudo_pass = "pw123"
-        rc, out = ag.run_cmd(["systemctl", "daemon-reload"])
+        assert "pass" not in ag.RIGHTS_MODES
+        ag.job.sudo_mode = "nopass"
+        rc, _out = ag.run_cmd(["systemctl", "daemon-reload"])
         assert rc == 0
-        assert seen["full"][:3] == ["sudo", "-S", "-p", ""][:3]
-        assert "daemon-reload" in seen["full"]
-        assert seen["input"] == "pw123\n"          # пароль через stdin
+        assert seen["full"] == ["sudo", "-n", "systemctl", "daemon-reload"]
+        assert seen["input"] is None               # никакого пароля в stdin
+        assert not hasattr(ag.job, "_sudo_pass")
 
     def test_run_cmd_nopass_mode(self, monkeypatch):
         seen = {}
@@ -383,26 +450,30 @@ class TestSudoRights:
         ag.run_cmd(["cp", "a", "b"])
         assert seen["full"] == ["sudo", "-n", "cp", "a", "b"]
 
-    def test_precheck_wrong_password_message(self, monkeypatch):
+    def test_precheck_without_rights_shows_one_command(self, monkeypatch):
+        """v1.70.16: прав нет — не «введите пароль», а одна команда для SSH."""
         class R:
             def __init__(self, rc):
                 self.returncode = rc
-                self.stdout, self.stderr = "", "sorry"
+                self.stdout, self.stderr = "", ""
 
         def fake_run(full, **k):
-            # systemctl есть (0), sudo -n true и sudo -S true — нет (1)
+            # systemctl есть (0), sudo -n true — нет (1)
             lst = list(full) if not isinstance(full, str) else [full]
             return R(0 if lst and lst[0] == "systemctl" else 1)
 
         monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
         monkeypatch.setattr(ag.subprocess, "run", fake_run)
+        monkeypatch.setattr(ag, "helper_allowed", lambda: False)
         ag.job.reset()
-        ag.job._sudo_pass = "bad"
         with pytest.raises(RuntimeError) as ei:
             ag._step_precheck()
-        assert "СЛУЖЕБНОГО" in str(ei.value)
+        msg = str(ei.value)
+        assert "install-rule" in msg and "Скопировать" in msg
+        assert ag.job.one_time_cmd != ""
+        assert "sudo -S" not in msg
 
-    def test_precheck_password_ok(self, monkeypatch):
+    def test_precheck_helper_mode_ok(self, monkeypatch):
         calls = []
 
         class R:
@@ -411,16 +482,19 @@ class TestSudoRights:
                 self.stdout, self.stderr = "ok", ""
 
         def fake_run(full, **k):
-            calls.append((list(full) if not isinstance(full, str) else full,
-                          k.get("input")))
+            calls.append(list(full) if not isinstance(full, str) else full)
             return R(1 if list(full) == ["sudo", "-n", "true"] else 0)
 
         monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
         monkeypatch.setattr(ag.subprocess, "run", fake_run)
+        monkeypatch.setattr(ag, "helper_allowed", lambda: True)
+        monkeypatch.setattr(ag, "run_helper", lambda phase, timeout=0, **k:
+                            (0, "ready"))
         ag.job.reset()
-        ag.job._sudo_pass = "good"
         ag._step_precheck()
-        assert ag.job.sudo_mode == "pass"
+        assert ag.job.sudo_mode == "helper"
+        # пароль через stdin не передавался ни разу
+        assert all("-S" not in c for c in calls)
 
     def test_preflight_modes(self, monkeypatch):
         class R:
@@ -428,29 +502,35 @@ class TestSudoRights:
                 self.returncode = rc
 
         monkeypatch.setattr(ag.os, "geteuid", lambda: 0)
-        assert ag.preflight() == {"root": True, "sudo_nopass": False,
-                                  "need_password": False}
+        pf = ag.preflight()
+        assert pf["root"] is True and pf["sudo_nopass"] is False
+        assert pf["need_password"] is False and pf["ready"] is True
+        assert pf["mode"] == "root" and pf["one_time_cmd"] == ""
         monkeypatch.setattr(ag.os, "geteuid", lambda: 1000)
         monkeypatch.setattr(ag.subprocess, "run", lambda *a, **k: R(1))
+        monkeypatch.setattr(ag, "helper_allowed", lambda: False)
         pf = ag.preflight()
-        assert pf["need_password"] is True
+        assert pf["need_password"] is False      # v1.70.16: пароля нет вовсе
+        assert pf["ready"] is False and pf["one_time_cmd"]
 
-    def test_login_argv_modes(self):
+    def test_login_argv_modes(self, monkeypatch):
         ag.job.reset()
         assert ag._login_argv("cli") == ["cli", "login"]
         ag.job.sudo_mode = "nopass"
         assert ag._login_argv("cli") == ["sudo", "-n", "cli", "login"]
-        ag.job.sudo_mode = "pass"
-        assert ag._login_argv("cli") == ["sudo", "-S", "-p", "", "cli",
+        # v1.70.16: вместо sudo -S — помощник (его фаза login)
+        ag.job.sudo_mode = "helper"
+        monkeypatch.setattr(ag.os.path, "exists", lambda p: True)
+        assert ag._login_argv("cli") == ["sudo", "-n", ag.HELPER_PATH,
                                          "login"]
         ag.job.reset()
 
     def test_password_never_in_public(self):
         ag.job.reset()
-        ag.job._sudo_pass = "secret-pw"
         import json as _json
         blob = _json.dumps(ag.job.public(), ensure_ascii=False)
-        assert "secret-pw" not in blob and "sudo_pass" not in blob
+        assert "sudo_pass" not in blob and "password" not in blob
+        assert not hasattr(ag.job, "_sudo_pass")   # поля пароля больше нет
         ag.job.reset()
 
 
@@ -472,7 +552,10 @@ class TestKitAndUi:
         assert 'id="ag-setup"' in js and 'id="ag-setup-log"' in js
         assert "Подтвердить вход в AdGuard" in js
         assert "action: 'cancel'" in js or 'action: "cancel"' in js
-        assert "ag-sudo-pw" in js and "preflight" in js      # v1.70.15: sudo
+        # v1.70.16: вместо поля пароля — одна команда для терминала
+        assert "preflight" in js
+        assert "ag-cmd" in js and "ag-recheck" in js
+        assert "ag-sudo-pw" not in js
 
     def test_readme_quick_path(self):
         rd = open("deploy/adguard-vpn/README.md", encoding="utf-8").read()

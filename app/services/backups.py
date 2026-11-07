@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — резервное копирование (v1.5.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # Уровни копий (data/backups): daily (7) / preupdate (5) / manual (10) /
 # archive-ГГГГММ — архив месяца (12). Копии вне git и вне git clean.
@@ -66,8 +66,10 @@ def _snapshot_rows(path: str) -> dict:
         for t, label in (("receipts", "receipts"), ("users", "users"),
                          ("companies", "companies")):
             if t in tables:
+                # nosec B608 / noqa: S608: имя таблицы — из закрытого
+                # кортежа выше, пользовательские данные в запрос не попадают
                 rows[label] = con.execute(
-                    f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608
+                    f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # nosec B608 — имя таблицы из закрытого кортежа
         return rows
     finally:
         con.close()

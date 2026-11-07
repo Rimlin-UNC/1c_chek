@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ямастер Чек — фирменный стиль «чек-смайлик» (v1.26.1)</title>
-<!-- Ямастер Чек — ООО «Ямастер», https://ymaster.ru, info@ymaster.ru -->
+<!-- Ямастер Чек — ООО «Ямастер», https://ymaster.ru, chek@ymaster.ru -->
 <style>
   :root{ --orange:#FF7A00; --navy:#0E2A47; --ink:#1f2430; --mut:#5b6472;
          --bg:#f6f7f9; --card:#fff; --line:#e3e6ec; }
@@ -32,6 +32,19 @@
   th,td{padding:9px 14px;border-bottom:1px solid var(--line);text-align:left}
   th{background:#eef1f6;color:var(--navy)}
   footer{margin-top:36px;color:#98a1ad;font-size:13px;text-align:center}
+
+/* v1.70.33: размеры иллюстраций и цвета фирменных свотчей — классами, а не
+   инлайн-стилем. Документ бренда обязан проходить ту же валидацию, что и
+   интерфейс приложения; заодно цвета свотчей теперь ссылаются на токены
+   --orange/--navy/--line из этого же :root, а не дублируют их hex-ом. */
+.logo-h{max-width:100%;width:280px}
+.logo-v{max-width:170px}
+.blank-a4{max-width:420px;width:100%;border:1px solid var(--line);border-radius:8px}
+.card-center{align-items:center}
+.sw-orange{background:var(--orange)}
+.sw-navy{background:var(--navy)}
+.sw-grad{background:linear-gradient(135deg,#6366F1,#8B5CF6,#22D3EE)}
+.sw-white{background:#FFFFFF;border-bottom:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -57,13 +70,13 @@
     <div class="file">icon-3d-master.png (2048) · png/icon3d-512…64</div>
   </div>
   <div class="card">
-    <img src="png/logo-horizontal-whitebg.png" style="max-width:100%;width:280px" alt="Горизонтальный логотип">
+    <img src="png/logo-horizontal-whitebg.png" class="logo-h" alt="Горизонтальный логотип">
     <h3>Горизонтальный</h3>
     <p>Шапка сайта, бланки, документы в строку.</p>
     <div class="file">logo-horizontal.svg</div>
   </div>
   <div class="card">
-    <img src="png/logo-stacked-whitebg.png" style="max-width:170px" alt="Вертикальный логотип">
+    <img src="png/logo-stacked-whitebg.png" class="logo-v" alt="Вертикальный логотип">
     <h3>Вертикальный</h3>
     <p>Центральные дистрибутивы: обложки, презентации, вывеска.</p>
     <div class="file">logo-stacked.svg</div>
@@ -84,31 +97,38 @@
 
 <h2>Фирменные цвета</h2>
 <div class="colors">
-  <div class="sw"><div class="c" style="background:#FF7A00"></div><div class="t"><b>#FF7A00</b>оранжевый «Ямастер» — действие, галочки, акценты</div></div>
-  <div class="sw"><div class="c" style="background:#0E2A47"></div><div class="t"><b>#0E2A47</b>navy — текст логотипа, глаза-QR, доверие</div></div>
-  <div class="sw"><div class="c" style="background:linear-gradient(135deg,#6366F1,#8B5CF6,#22D3EE)"></div><div class="t"><b>#6366F1→#8B5CF6→#22D3EE</b>градиент плитки приложения</div></div>
-  <div class="sw"><div class="c" style="background:#FFFFFF;border-bottom:1px solid #e3e6ec"></div><div class="t"><b>#FFFFFF</b>чек, фон документов</div></div>
+  <div class="sw"><div class="c sw-orange"></div><div class="t"><b>#FF7A00</b>оранжевый «Ямастер» — действие, галочки, акценты</div></div>
+  <div class="sw"><div class="c sw-navy"></div><div class="t"><b>#0E2A47</b>navy — текст логотипа, глаза-QR, доверие</div></div>
+  <div class="sw"><div class="c sw-grad"></div><div class="t"><b>#6366F1→#8B5CF6→#22D3EE</b>градиент плитки приложения</div></div>
+  <div class="sw"><div class="c sw-white"></div><div class="t"><b>#FFFFFF</b>чек, фон документов</div></div>
 </div>
 
 <h2>Фирменный бланк А4</h2>
-<div class="card" style="align-items:center">
-  <img src="png/blank-a4-preview.png" style="max-width:420px;width:100%;border:1px solid var(--line);border-radius:8px" alt="Бланк А4">
+<div class="card card-center">
+  <img src="png/blank-a4-preview.png" class="blank-a4" alt="Бланк А4">
   <p>Шаблон для писем и актов: шапка со знаком и доменом, оранжевая линейка, подвал с реквизитами. Открывается в браузере и печатается из любого редактора SVG/PDF.</p>
   <div class="file">blank-a4.svg · 2100×2970 (A4, 254 dpi)</div>
 </div>
 
 <h2>Правила использования</h2>
 <table>
+  <!-- v1.70.33: <tr> не должен лежать прямо в <table> — браузеры сами вставляют
+       tbody, из-за чего селекторы :nth-child и стили «зебры» съезжают.
+       Строка заголовков — в <thead>, данные — в <tbody>. -->
+  <thead>
   <tr><th>Ситуация</th><th>Версия</th></tr>
+  </thead>
+  <tbody>
   <tr><td>Сайт, интерфейс, PWA-иконка</td><td>интерфейс — logo-mark.svg (смайлик); иконка приложения/PWA — «мягкий 3D» (icon-512/192/64); в шапке — горизонтальный</td></tr>
   <tr><td>Документы, акты, письма</td><td>горизонтальный в шапке бланка А4</td></tr>
   <tr><td>Печати, штампы, факс</td><td>logo-mono (тёмный), без градиентов</td></tr>
   <tr><td>Тёмные фоны, тёмная тема</td><td>logo-mono-white</td></tr>
   <tr><td>Мелкие размеры (16–48 px)</td><td>favicon.svg / png 32–48 — улыбка читается</td></tr>
   <tr><td>Оранжевый</td><td>только акценты и «проверено» — не заливать фон (исключение: промо-материалы)</td></tr>
+  </tbody>
 </table>
 
-<footer>Ямастер Чек v1.26.1 · ООО «Ямастер» · https://ymaster.ru · info@ymaster.ru · файлы: brand/</footer>
+<footer>Ямастер Чек v1.26.1 · ООО «Ямастер» · https://ymaster.ru · chek@ymaster.ru · файлы: brand/</footer>
 </div>
 </body>
 </html>

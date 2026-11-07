@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.32.0: «Чек-Пул» этап 3 — кабинет и регистрация.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки Этапа 3 (docs/dev_plan_checkpool.md):
 #  - гость, сдавший чеки БЕЗ регистрации, после создания кабинета видит
@@ -209,7 +209,16 @@ class TestGuestMerge:
         # гость-пользователь исчез, чеки принадлежат аккаунту
         db = _db()
         assert db.query(PoolUser).filter(PoolUser.email == "guest2acc@test.ru").count() == 1
-        assert db.query(PoolUser).filter(PoolUser.vid.isnot(None)).count() == 0
+        # v1.70.41: «гость исчез» больше нельзя проверять отсутствием строк с
+        # vid. Слияние наследует vid аккаунту: без этого чек, который в момент
+        # регистрации ещё проверяется в фоновом потоке, терялся вместе со
+        # строкой гостя (донору при этом ответили «Чек принят — проверяем»).
+        # Проверяем по сути: отдельной гостевой строки нет, vid ровно один и
+        # он принадлежит аккаунту.
+        with_vid = db.query(PoolUser).filter(PoolUser.vid.isnot(None)).all()
+        assert len(with_vid) == 1, f"гостевая строка не исчезла: {len(with_vid)}"
+        assert with_vid[0].email == "guest2acc@test.ru", \
+            "единственный vid обязан быть у аккаунта, а не у брошенного гостя"
         assert db.query(PoolReceipt).filter(
             PoolReceipt.pool_user_id == r.json()["user"]["id"]).count() == 2
         db.close()
@@ -318,7 +327,7 @@ class TestCabinet:
         assert _wait_row(b["fn"])
         s = c.get("/api/v1/pool-my/summary", headers=H).json()
         assert s["email"] == "cabinet@test.ru" and s["receipts_total"] == 1
-        assert s["today"] == 1 and s["daily_limit"] == 50
+        assert s["today"] == 1 and s["daily_limit"] == pool.DAILY_LIMIT
         lst = c.get("/api/v1/pool-my/receipts", headers=H).json()
         assert lst["total"] == 1 and lst["items"][0]["items_count"] == 1
         # карточка чека с позициями

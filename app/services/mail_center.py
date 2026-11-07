@@ -9,7 +9,7 @@
 # (152-ФЗ/Google-Yahoo-2024 требование для массовых писем), суточный
 # антиспам-лимит на адрес, журнал с чисткой 90 дней, тёмная пауза
 # правила после ошибки SMTP, маскирование адреса в результатах.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ PER_ADDR_HOURS = 24                    # антиспам: не чаще 1 пи�
 DEFAULT_FROM_NAME = "Чек-Пул Ямастер"
 DEFAULT_GREETING = "Здравствуйте, {name}!"
 DEFAULT_SIGNATURE = ("С уважением,\nООО «Ямастер»\nhttps://ymaster.ru · "
-                     "info@ymaster.ru")
+                     "chek@ymaster.ru")
 
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_TITLES = {"daily": "ежедневно", "mon": "понедельник", "tue": "вторник",

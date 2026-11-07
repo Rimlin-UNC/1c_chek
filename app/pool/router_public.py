@@ -9,7 +9,7 @@
 # лимиты, дедуп), проверка источников — в фоновом потоке; страница
 # опрашивает статус (live). Антифрод-минимум: honeypot, тайминг формы,
 # rate-limit на IP, суточный лимит из ядра пула.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -23,17 +23,27 @@ from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from ..config import settings
 from ..database import get_db
-from . import antifraud, engage, ingest, partners, referral
+from . import antifraud, batch, engage, ingest, partners, referral
 
 router = APIRouter(prefix="/api/v1/public/pool", tags=["pool-public"])
 
 VID_COOKIE = "pool_vid"           # анонимная подписанная cookie гостя
 VID_MAX_AGE = 60 * 60 * 24 * 365  # 1 год (152-ФЗ: техданные ≤ 12 мес)
 WEB_IP_HOURLY_LIMIT = 20          # отправок с одного IP в час (nginx дублирует)
+# v1.70.40: сдача пачкой (до 100 чеков за сессию) — штатный сценарий, поэтому
+# для АВТОРИЗОВАННОГО участника кабинета порог согласован с суточным лимитом:
+# 100 принятых + запас на дубликаты и отказы (они тоже считаются отправками).
+# Анонимный трафик остаётся на прежних 20 в час: именно IP-порог сдерживает
+# ротацию vid-куки, когда каждый новый «участник» создаётся одним запросом.
+# Порог повышается только по валидному JWT (typ=pool) — заголовок сам по себе
+# ничего не даёт, токен проверяется подписью и существованием участника.
+WEB_IP_HOURLY_LIMIT_AUTH = ingest.DAILY_LIMIT + 60
 HONEYPOT_MS = 800                 # быстрее — сигнал «быстрая отправка»
 
 # Скользящее окно IP-лимитера (в процессе; в бою дублируется nginx)
@@ -80,15 +90,29 @@ def _client_ip(request: Request) -> str:
 
 
 # --- IP-лимитер ------------------------------------------------------------
-def _ip_allow(ip: str) -> bool:
+def _ip_allow(ip: str, limit: int = WEB_IP_HOURLY_LIMIT) -> bool:
     hits = _IP_HITS.setdefault(ip, deque())
     now = time.monotonic()
     while hits and now - hits[0] > 3600:
         hits.popleft()
-    if len(hits) >= WEB_IP_HOURLY_LIMIT:
+    if len(hits) >= limit:
         return False
     hits.append(now)
     return True
+
+
+def _authed_account(db: Session, request: Request):
+    """Участник кабинета по токену — БЕЗ побочного слияния гостевой истории.
+
+    Нужен, чтобы выбрать порог IP-лимитера до приёма чека: _request_pool_account
+    ещё и приливает историю гостя к аккаунту (v1.32.0), а делать это до отказа
+    429 нельзя — иначе запрос, который мы отвергли, всё равно менял бы данные.
+    """
+    from . import accounts
+    auth = (request.headers.get("authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    return accounts.pool_user_from_token(db, auth[7:].strip())
 
 
 # --- схемы -----------------------------------------------------------------
@@ -192,7 +216,11 @@ def pool_check(body: CheckBody, request: Request, response: Response,
         return {"ok": False, "error": "disabled",
                 "message": "Приём чеков сейчас выключен — загляните позже"}
 
-    if not _ip_allow(ip):
+    # v1.70.40: порог зависит от того, кто отправляет — аноним или участник
+    # кабинета с валидным токеном (сдача пачкой не должна упираться в 429)
+    _lim = (WEB_IP_HOURLY_LIMIT_AUTH if _authed_account(db, request) is not None
+            else WEB_IP_HOURLY_LIMIT)
+    if not _ip_allow(ip, _lim):
         raise HTTPException(429, "Слишком много отправок с этого адреса — попробуйте позже")
 
     qr_raw = (body.qr_text or "").strip()
@@ -250,9 +278,37 @@ def pool_check(body: CheckBody, request: Request, response: Response,
         s = SessionLocal()
         try:
             u = s.get(PoolUser, user_id)
+            if u is None and vid:
+                # v1.70.41 (дефект 23): гостя уже поглотил аккаунт — vid
+                # наследован аккаунтом, поэтому владельца ищем по нему.
+                u = s.query(PoolUser).filter(PoolUser.vid == vid).first()
             if u is not None:
-                res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
-                                           fast=fast)
+                # id фиксируем ДО rollback: после него строка гостя может
+                # отсутствовать, и любое обращение к атрибутам даст
+                # ObjectDeletedError вместо полезного повтора.
+                stale_id = u.id
+                try:
+                    res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
+                                               fast=fast)
+                except (IntegrityError, ObjectDeletedError):
+                    # v1.70.41 (дефект 23): донор зарегистрировался/вошёл, пока
+                    # его чек проверялся у источника (проверка идёт секунды).
+                    # Слияние переносит историю и удаляет строку гостя, поэтому
+                    # захваченный id к моменту записи мертв: FOREIGN KEY
+                    # constraint failed при вставке чека либо ObjectDeletedError
+                    # при перечитывании владельца. Владелец находится по vid
+                    # (он наследован аккаунтом) и приём повторяется один раз —
+                    # донору уже ответили «Чек принят — проверяем», и потеря
+                    # чека оставила бы счётчик навсегда синим.
+                    s.rollback()
+                    fresh = (s.query(PoolUser)
+                             .filter(PoolUser.vid == vid).first() if vid
+                             else None)
+                    if fresh is None or fresh.id == stale_id:
+                        raise
+                    u = fresh
+                    res = ingest.ingest_parsed(s, qr_raw, parsed, "web", u,
+                                               fast=fast)
                 # v1.34.0: сигналы поведения/правил после приёма чека
                 if isinstance(res, dict) and res.get("receipt_id"):
                     antifraud.after_receipt(s, u, res["receipt_id"], None,
@@ -266,7 +322,39 @@ def pool_check(body: CheckBody, request: Request, response: Response,
     threading.Thread(target=_bg, name="pool-web-ingest", daemon=True).start()
     return {"ok": True, "accepted": True, "fn": parsed.fn, "fd": parsed.fd,
             "fp": parsed.fp, "message": "Чек принят — проверяем",
-            "points": 0, "user_points": user.points}
+            "points": 0, "user_points": user.points,
+            # v1.70.40: ключ пачки и прозрачность суточного лимита
+            "session_cap": batch.SESSION_CAP, **ingest.limit_info(db, user)}
+
+
+class BatchKey(BaseModel):
+    """Ключ чека пачки — ФН|ФД|ФП (та же тройка, что в UNIQUE-индексе)."""
+    fn: str = Field(default="", max_length=20)
+    fd: str = Field(default="", max_length=10)
+    fp: str = Field(default="", max_length=20)
+
+
+class BatchStatusBody(BaseModel):
+    keys: list[BatchKey] = Field(default_factory=list,
+                                 max_length=batch.KEYS_MAX)
+
+
+@router.post("/batch-status",
+             summary="Чек-Пул: статусы чеков сданной пачки (гость/кабинет)")
+def pool_batch_status(body: BatchStatusBody, request: Request,
+                      response: Response, db: Session = Depends(get_db)):
+    """Один запрос на всю пачку: verified / pending / rejected по ФН+ФД+ФП.
+
+    Доступ — как у /check: гость определяется по подписанному vid-куки,
+    участник кабинета — по Bearer-токену пула. Чужие чеки не отдаются.
+    """
+    vid = _get_or_issue_vid(request, response)
+    user = _request_pool_account(db, request) or _user_by_vid(db, vid)
+    db.commit()
+    res = batch.statuses(db, user, [k.model_dump() for k in body.keys])
+    res["counts"] = batch.count_by_status(res["items"])
+    res["user_points"] = int(user.points or 0) if user is not None else 0
+    return res
 
 
 @router.get("/receipt/{receipt_id}", summary="Чек-Пул: статус своего чека")
@@ -419,7 +507,11 @@ def receipt_email(body: MailBody, request: Request,
     from .mailer import base_url, send_mail, smtp_configured
     from .models import PoolReceipt
     if not smtp_configured(db):
-        raise HTTPException(503,
+        # v1.70.38: 503 → 409 (см. app/routers/maxapp.py::session).
+        # Несконфигурированная почта — состояние сервера, а не его отказ:
+        # 5xx здесь ложно срабатывал в мониторинге и в проверке «нет
+        # серверных ошибок» при фаззинге API.
+        raise HTTPException(409,
             "Отправка писем пока не настроена — данные чека видны на этой странице")
     fn = (body.fn or "").strip()
     r = (db.query(PoolReceipt).filter(PoolReceipt.fn == fn)
@@ -466,7 +558,7 @@ def receipt_email(body: MailBody, request: Request,
       style="background:#e8890c;color:#fff;padding:9px 16px;border-radius:8px;
       text-decoration:none;font-weight:600">Открыть кабинет</a></div>
   </div>
-  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · info@ymaster.ru<br>
+  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · chek@ymaster.ru<br>
   Письмо отправлено, потому что этот адрес указали при сканировании чека.
   Если это были не вы — просто не обращайте внимания.</div>
 </div>"""
@@ -480,7 +572,7 @@ def receipt_email(body: MailBody, request: Request,
              f"Статус: {status_ru}",
              f"Баллы: {r.points_awarded}", "",
              f"Кабинет участника: {base_url(db)}/#/my", "",
-             "ООО «Ямастер» · ymaster.ru · info@ymaster.ru", "",
+             "ООО «Ямастер» · ymaster.ru · chek@ymaster.ru", "",
              "Письмо отправлено, потому что этот адрес указали при сканировании",
              "чека. Если это были не вы — просто не обращайте внимания."]
     ok, err = send_mail(db, email, f"Электронный чек на {r.total_sum:.2f} руб. — Ямастер Чек-Пул",

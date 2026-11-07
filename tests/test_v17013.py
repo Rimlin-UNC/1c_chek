@@ -36,7 +36,12 @@ class TestAdguardKit:
         # v1.70.14: README — страница скачивания комплекта с GitHub
         # (файлов нет на сервере, пока их не скачали командами отсюда).
         assert "raw.githubusercontent.com/Rimlin-UNC/1c_chek" in rd_txt
-        assert "curl -fsSL -o /usr/local/sbin/tg-health.sh" in rd_txt
+        # v1.70.23: комплект скачивается в /tmp и ставится через `sudo install
+        # -m 0755 -o root -g root`, а не записью curl прямо в
+        # /usr/local/sbin — без root тот zapis всё равно падал, а с root
+        # оставлял файл без нужных владельца/прав.
+        assert "curl -fsSL -o /tmp/tg-health.sh" in rd_txt
+        assert "install -m 0755 -o root -g root" in rd_txt
         assert "ln -sf /opt/adguardvpn_cli/adguardvpn-cli" in rd_txt
 
     def test_unit(self):
@@ -57,10 +62,19 @@ class TestAdguardKit:
 
 class TestUiAndHints:
     def test_preset_button(self):
+        """v1.70.13 ставил в карточку Telegram кнопку-пресет.
+
+        v1.70.28: у AdGuard VPN собственный блок в разделе «Устройство и
+        служебное», из карточки Telegram-бота он удалён — там ему не место.
+        Очистка поля прокси после установки осталась (в TUN локального
+        слушателя 127.0.0.1:1080 нет, и бот не должен уйти в пустой прокси).
+        """
         js = open("app/static/js/app.js", encoding="utf-8").read()
-        assert 'id="tg-adguard"' in js
-        assert "socks5://127.0.0.1:1080" in js
-        assert "#tg-adguard" in js and "prx.value = " in js
+        assert 'id="st-adguard"' in js and 'data-sec="device"' in js
+        assert 'id="ag-switch"' in js
+        assert 'id="tg-adguard"' not in js, "в карточке Telegram следов AdGuard быть не должно"
+        assert "prx.value = " in js
+        assert "prx.value = 'socks5://127.0.0.1:1080'" not in js
 
     def test_hint_mentions_adguard(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

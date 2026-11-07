@@ -1,0 +1,831 @@
+/* v1.70.83: экран разбора конфликтов единого реестра (только администратор).
+   Список спорных чеков, карточка с копиями по компаниям и журналом, решение
+   спора о владельце через resolve-ownership — с обязательной причиной и
+   проверкой версии (два администратора не перепишут решение друг друга).
+   v1.70.85 («Единая база», фазы 1–2): вкладка «Заявки» — компании, которые
+   пытались учесть чужой чек; число организаций и их список в карточке.
+   Решения: передать чек, отклонить, не учитывать — тоже с причиной и версией.
+   v1.70.86 (фаза 3): вкладка «Показ компаниям» — разрешение видеть число
+   организаций (выключено / всем / выбранным, роли); значок «🏢 N» в реестре;
+   разбор отказа пакетного перемещения (Q-24). */
+import { api } from './api.js';
+import { esc, fmtDate, fmtInt, fmtSum, openModal, toast } from './ui.js';
+
+// Биты совпадают с app/unified/models.py — замок в tests/test_unified_review.py.
+export const REVIEW_FLAGS = [
+  { bit: 1, code: 'date', title: 'Дата', blocking: true,
+    hint: 'копии чека расходятся по дате и времени' },
+  { bit: 2, code: 'amount', title: 'Сумма', blocking: true,
+    hint: 'копии чека расходятся по сумме' },
+  { bit: 4, code: 'operation', title: 'Операция', blocking: true,
+    hint: 'в копиях разный тип операции (приход или возврат)' },
+  { bit: 8, code: 'ownership', title: 'Владелец', blocking: true,
+    hint: 'копии чека у разных компаний — чек скрыт от компаний до решения администратора' },
+  { bit: 16, code: 'items', title: 'Позиции', blocking: true,
+    hint: 'списки позиций в копиях различаются' },
+  { bit: 32, code: 'incomplete', title: 'Неполная тройка', blocking: false,
+    hint: 'нет ФН, ФД или ФП — чек не склеивается с другими (пометка, не конфликт)' },
+  { bit: 64, code: 'merchant', title: 'Продавец', blocking: true,
+    hint: 'копии расходятся по продавцу' },
+  { bit: 128, code: 'verification', title: 'Проверка ФНС', blocking: false,
+    hint: 'копии расходятся по подтверждению ФНС (пометка, не конфликт)' },
+];
+export const OWNERSHIP_BIT = 8;
+export const REASON_MIN = 3;
+export const REASON_MAX = 500;
+
+const SOURCE_TITLES = { registry: 'реестр', pool: 'Чек-Пул' };
+const EVENT_TITLES = {
+  register: 'Регистрация копии',
+  backfill: 'Перенос архива',
+  backfill_soft: 'Мягкая регистрация архива',
+  sync: 'Синхронизация правки',
+  claim: 'Закрепление за компанией',
+  release: 'Возврат в Чек-Пул',
+  move: 'Перенос между компаниями',
+  resolve_ownership: 'Решение спора о владельце',
+  detach_registry: 'Удаление копии из реестра',
+  reconcile: 'Сверка после отката',
+  company_wipe: 'Удаление компании',
+  claim_transfer: 'Чек передан по заявке',
+  claim_decline: 'Заявка отклонена',
+  claim_void: 'Заявка не учитывается',
+};
+
+// v1.70.85: заявки компаний (app/unified/links.py — коды совпадают).
+export const CLAIM_STATUSES = [
+  { code: 'open', title: 'Ждёт решения' },
+  { code: 'declined', title: 'Отклонена' },
+  { code: 'void', title: 'Не учитывается' },
+  { code: 'transferred', title: 'Чек передан' },
+];
+const CLAIM_SOURCE_TITLES = {
+  scan_qr: 'скан QR', scan_image: 'фото чека', scan_pdf: 'PDF-чек', manual: 'ручной ввод',
+  pool_transfer: 'перенос из Чек-Пула', archive_twin: 'копия чека в архиве', move: 'перемещение',
+};
+const ROLE_TITLES = { owner: 'Владелец', claimant: 'Претендент', former_owner: 'Прежний владелец' };
+export const CLAIM_ACTIONS = {
+  transfer: { title: 'Передать чек', done: 'Чек передан компании', status: 'transferred' },
+  decline: { title: 'Отклонить', done: 'Заявка отклонена', status: 'declined' },
+  void: { title: 'Не учитывать', done: 'Заявка больше не учитывается', status: 'void' },
+};
+// v1.70.86 (фаза 3): кому показывать число организаций — app/unified/visibility.py.
+export const COUNT_MODES = [
+  { code: 'off', title: 'Выключено', hint: 'компании число не видят — так по умолчанию' },
+  { code: 'all', title: 'Всем компаниям', hint: 'число видят все компании (роли — ниже)' },
+  { code: 'selected', title: 'Выбранным компаниям', hint: 'только компании, отмеченные в списке' },
+];
+export const COUNT_ROLES = [
+  { code: 'accountant', title: 'Бухгалтер' },
+  { code: 'manager', title: 'Руководитель' },
+];
+const REASON_TITLES = Object.fromEntries(REVIEW_FLAGS.map((f) => [f.code, f.title.toLowerCase()]));
+
+/** Пометки документа по битовой маске review_flags. */
+export function decodeFlags(mask) {
+  const m = Number(mask) || 0;
+  return REVIEW_FLAGS.filter((f) => (m & f.bit) !== 0);
+}
+
+/** Спор о владельце можно решить: пометка есть и документ не удалён. */
+export function canResolve(doc) {
+  return !!doc && !doc.deleted && ((Number(doc.review_flags) || 0) & OWNERSHIP_BIT) !== 0;
+}
+
+/** Причина решения обязательна: '' — всё в порядке, иначе текст ошибки. */
+export function validateReason(text) {
+  const t = String(text || '').trim();
+  if (t.length < REASON_MIN) return `Укажите причину решения — не короче ${REASON_MIN} символов`;
+  if (t.length > REASON_MAX) return `Причина длиннее ${REASON_MAX} символов`;
+  return '';
+}
+
+/** Тело POST …/resolve-ownership: пустая компания — «оставить без владельца». */
+export function buildResolveBody(doc, companyId, reason) {
+  return {
+    company_id: companyId || null,
+    expected_version: doc.version,
+    reason: String(reason || '').trim(),
+  };
+}
+
+export function eventTitle(type) {
+  return EVENT_TITLES[type] || type || '—';
+}
+
+export function sourceTitle(kind) {
+  return SOURCE_TITLES[kind] || kind || '—';
+}
+
+export function claimStatusTitle(code) {
+  const found = CLAIM_STATUSES.find((s) => s.code === code);
+  return found ? found.title : (code || '—');
+}
+
+export function claimSourceTitle(code) {
+  return CLAIM_SOURCE_TITLES[code] || code || '—';
+}
+
+export function companyRoleTitle(role) {
+  return ROLE_TITLES[role] || role || '—';
+}
+
+/** Значок в меню: конфликты и заявки, ждущие решения. */
+export function badgeCount(stats) {
+  const s = stats || {};
+  return (Number(s.conflicts) || 0) + (Number(s.claims_open) || 0);
+}
+
+/** Доступные решения: переданную заявку не решают повторно; передать нельзя
+    удалённой компании и чеку, который требует разбора (вкладка «Споры»). */
+export function claimActions(item) {
+  if (!item || item.status === 'transferred') return [];
+  return Object.keys(CLAIM_ACTIONS).filter((action) => (action === 'transfer'
+    ? !item.company_deleted && !item.blocking
+    : item.status !== CLAIM_ACTIONS[action].status));
+}
+
+/** Тело POST …/links/{id}/{действие}: версия чека из строки списка и причина. */
+// v1.70.88 (фаза 4а, T-37): «Готовность единой записи» — только числа
+// (GET /api/v1/unified/readiness). Пустой или неполный ответ — нули, не ошибка.
+function num(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function readinessCards(data) {
+  const d = data || {};
+  const drift = num((d.drift || {}).registry) + num((d.drift || {}).pool);
+  return [
+    { value: `${num(d.ready_percent).toLocaleString('ru-RU')} %`, sub: 'чеков в единой записи' },
+    { value: fmtCount(num((d.registry || {}).pending)), sub: 'чеков реестра ждут регистрации' },
+    { value: fmtCount(num((d.pool || {}).pending)), sub: 'чеков Чек-Пула ждут регистрации' },
+    { value: fmtCount(drift), sub: drift ? 'копий расходятся — сверка сведёт при запуске' : 'копий расходятся' },
+  ];
+}
+
+export function readinessRows(data) {
+  const d = data || {};
+  const reg = d.registry || {};
+  const pool = d.pool || {};
+  const review = d.review || {};
+  return [
+    ['Реестр компаний: всего / в единой записи / ждут', `${fmtCount(num(reg.total))} / ${fmtCount(num(reg.linked))} / ${fmtCount(num(reg.pending))}`],
+    ['Чек-Пул: всего / в единой записи / ждут', `${fmtCount(num(pool.total))} / ${fmtCount(num(pool.linked))} / ${fmtCount(num(pool.pending))}`],
+    ['Документов в единой записи', fmtCount(num(d.documents))],
+    ['На разборе: расхождения данных и споры', fmtCount(num(review.blocking))],
+    ['из них спор о владельце', fmtCount(num(review.ownership))],
+    ['Противоречивый признак проверки ФНС', fmtCount(num(review.verification))],
+    ['Без полной тройки ФН/ФД/ФП (не спор)', fmtCount(num(review.incomplete_identity))],
+  ];
+}
+
+function fmtCount(n) {
+  return Math.round(n).toLocaleString('ru-RU');
+}
+
+// v1.70.111 (T-78): время чеков, сдвинутое формой правки до 1.70.110
+// (GET /api/v1/unified/receipt-time). Время показывается как есть — нарезкой строки, без
+// new Date: пересчёт в часовой пояс браузера и был причиной сдвига.
+export function wallTime(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));
+  return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : '—';
+}
+
+export function fmtShift(hours) {
+  const h = num(hours);
+  return `${h > 0 ? '+' : h < 0 ? '−' : ''}${Math.abs(h)} ч`;
+}
+
+export function timeSummary(data) {
+  const d = data || {};
+  const shifted = num(d.shifted);
+  const shown = (d.items || []).length;
+  if (!shifted) return `Проверено чеков с QR: ${fmtCount(num(d.checked))}. Сдвинутого времени нет.`;
+  return `Проверено чеков с QR: ${fmtCount(num(d.checked))}. Время сдвинуто у ${fmtCount(shifted)}, `
+    + `вернуть по QR можно у ${fmtCount(num(d.fixable))}.`
+    + (shifted > shown ? ` В таблице — первые ${fmtCount(shown)}.` : '');
+}
+
+export function timeRows(data) {
+  return ((data || {}).items || []).map((it) => ({
+    company: it.company || '—',
+    receipt: `${it.fn} / ${it.fd} / ${it.fp}`,
+    stored: wallTime(it.receipt_date),
+    qr: wallTime(it.qr_time),
+    shift: fmtShift(it.hours),
+    action: it.fixable ? 'вернуть по QR' : (it.reason || 'проверьте вручную'),
+  }));
+}
+
+export function timeConfirmText(fixable) {
+  return `Вернуть время из QR у ${fmtCount(num(fixable))} чеков? Перед исправлением будет создана резервная `
+    + 'копия базы, у каждого чека в журнале останется старое время.';
+}
+
+export function timeRestoredText(res) {
+  const r = res || {};
+  return `Время возвращено у ${fmtCount(num(r.restored))} чеков`
+    + (r.backup ? `; резервная копия — ${r.backup}` : '');
+}
+
+export function buildClaimDecisionBody(item, reason) {
+  return { expected_version: item.version, reason: String(reason || '').trim() };
+}
+
+/** Блок «Организации»: сколько компаний учитывают чек и какие (только администратор). */
+export function companiesHtml(data) {
+  if (!data || !Array.isArray(data.companies)) return '';
+  const rows = data.companies.map((c) => {
+    const name = c.company_deleted ? 'компания удалена' : (c.company_name || c.company_id);
+    const parts = [companyRoleTitle(c.role)];
+    if (c.role === 'claimant') parts.push(claimStatusTitle(c.status));
+    if (c.source && c.role !== 'owner') parts.push(claimSourceTitle(c.source));
+    if (c.attempts) parts.push(`попыток: ${fmtInt(c.attempts)}`);
+    return `<li>${esc(name)} — ${esc(parts.join(' · '))}${c.counted ? '' : ' <span class="form-hint">(не в числе)</span>'}</li>`;
+  }).join('');
+  return `<div class="card-title" style="margin-top:8px">Организации</div>
+    <p class="form-hint" id="ur-companies-count">Учитывают чек: <b>${fmtInt(data.count)}</b> — владелец и
+      компании с заявками «ждёт решения» и «отклонена». Сотрудники компаний этого числа не видят.</p>
+    <ul id="ur-companies">${rows || '<li>компаний нет</li>'}</ul>`;
+}
+
+/** Счётчик конфликтов в меню: ноль скрывает значок. */
+export function setConflictsBadge(count, root = document) {
+  const badge = root.getElementById ? root.getElementById('nav-conflicts-badge') : null;
+  if (!badge) return;
+  const n = Number(count) || 0;
+  badge.textContent = fmtInt(n);
+  badge.classList.toggle('hidden', n === 0);
+  badge.classList.toggle('accent', n > 0);
+}
+
+/** «организация / организации / организаций» для числа. */
+export function orgWord(count) {
+  const n = Math.abs(Number(count) || 0);
+  const tail = n % 100;
+  if (tail >= 11 && tail <= 14) return 'организаций';
+  if (n % 10 === 1) return 'организация';
+  if (n % 10 >= 2 && n % 10 <= 4) return 'организации';
+  return 'организаций';
+}
+
+function countValue(count) {
+  const n = Number(count);
+  return count !== null && count !== undefined && count !== '' && Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/** Значок в строке и карточке реестра — только когда организаций две и больше
+ *  (одна — своя, показывать нечего). Поле приходит, только если показ разрешён. */
+export function orgCountChip(count, admin) {
+  const n = countValue(count);
+  if (n === null || n < 2) return '';
+  const title = admin
+    ? `Чек учитывают ${n} ${orgWord(n)} — список и решения в «Разборе конфликтов»`
+    : `Чек учитывают ${n} ${orgWord(n)}, включая вашу. Названия других не показываются.`;
+  return ` <span class="chip unknown org-count" title="${esc(title)}">🏢 ${n}</span>`;
+}
+
+/** Строка «Организаций» в карточке чека — при любом числе, если поле пришло. */
+export function orgCountRow(count, admin) {
+  const n = countValue(count);
+  if (n === null) return '';
+  const hint = admin ? 'список — в «Разборе конфликтов»' : 'включая вашу; названия других не показываются';
+  return `<dt>Организаций</dt><dd id="rd-org-count">${n} <span class="form-hint">${esc(hint)}</span></dd>`;
+}
+
+/** Q-24: ответ 409 пакетного перемещения — какие чеки ждут разбора и сколько
+ *  можно перенести без них. null — ответ другого вида (обычная ошибка). */
+export function blockedMoveSummary(detail) {
+  if (!detail || typeof detail !== 'object' || !Array.isArray(detail.blocked)) return null;
+  const counts = {};
+  detail.blocked.forEach((item) => (Array.isArray(item.reasons) ? item.reasons : []).forEach((code) => {
+    counts[code] = (counts[code] || 0) + 1;
+  }));
+  return {
+    blocked: detail.blocked.length,
+    movable: Math.max(0, Number(detail.movable) || 0),
+    reasons: Object.entries(counts).map(([code, n]) => `${REASON_TITLES[code] || code} — ${fmtInt(n)}`),
+    message: String(detail.message || 'Чек требует разбора перед перемещением'),
+  };
+}
+
+/** Тело PUT /api/v1/unified/visibility: список компаний уходит всегда. */
+export function buildVisibilityBody(mode, roles, companyIds) {
+  const allowed = new Set(COUNT_ROLES.map((r) => r.code));
+  return {
+    mode: COUNT_MODES.some((m) => m.code === mode) ? mode : 'off',
+    roles: [...new Set(roles || [])].filter((r) => allowed.has(r)),
+    company_ids: [...new Set(companyIds || [])],
+  };
+}
+
+/** Предупреждение, если включённый показ на деле никому не виден. */
+export function visibilityWarning(mode, roles, companyIds) {
+  if (mode === 'off') return '';
+  if (!roles || !roles.length) return 'Не отмечена ни одна роль — число не увидит никто.';
+  if (mode === 'selected' && !(companyIds && companyIds.length)) {
+    return 'Не отмечена ни одна компания — число не увидит никто.';
+  }
+  return '';
+}
+
+function flagChips(mask) {
+  return decodeFlags(mask).map((f) => `<span class="chip ${f.blocking ? 'failed' : 'pending'}"
+    title="${esc(f.hint)}">${esc(f.title)}</span>`).join(' ');
+}
+
+function companyMove(e) {
+  if (!e.from_company_id && !e.to_company_id) return '—';
+  const from = e.from_company_id ? (e.from_company_name || 'компания удалена') : 'без владельца';
+  const to = e.to_company_id ? (e.to_company_name || 'компания удалена') : 'без владельца';
+  return `${esc(from)} → ${esc(to)}`;
+}
+
+function eventDetails(e) {
+  const d = e.details || {};
+  if (d.reason) return `Причина: ${esc(d.reason)}`;
+  if (d.source_kind) return `Копия: ${esc(sourceTitle(d.source_kind))}`;
+  return '';
+}
+
+function cardHtml(doc, companies, linked) {
+  const flags = decodeFlags(doc.review_flags);
+  const candidateIds = new Set((doc.candidates || []).map((c) => c.company_id));
+  const others = (companies || []).filter((c) => c && c.is_active !== false && !candidateIds.has(c.id));
+  const copies = (doc.copies || []).map((c) => `<li>${esc(sourceTitle(c.kind))}:
+    ${c.company_id ? esc(c.company_name || 'компания удалена') : 'без компании'}</li>`).join('');
+  const journal = (doc.events || []).map((e) => `<tr><td>${esc(fmtDate(e.created_at))}</td>
+    <td>${esc(eventTitle(e.type))}</td><td>${esc(e.actor_name || (e.actor_id ? 'удалённый сотрудник' : 'система'))}</td>
+    <td>${companyMove(e)}</td><td>${eventDetails(e)}</td></tr>`).join('');
+  let action;
+  if (doc.deleted) {
+    action = '<p class="form-hint">Чек удалён: все копии убраны, разбирать нечего.</p>';
+  } else if (canResolve(doc)) {
+    const candidates = doc.candidates || [];
+    action = `<div class="card-title" style="margin-top:12px">Решение</div>
+      <label class="field"><input type="radio" name="ur-mode" id="ur-mode-company" value="company"
+        ${candidates.length || others.length ? 'checked' : 'disabled'}> Закрепить чек за компанией</label>
+      <label class="field"><span>Компания</span><select id="ur-company">
+        ${candidates.length ? `<optgroup label="Компании с копией чека">${candidates.map((c) =>
+          `<option value="${esc(c.company_id)}">${esc(c.company_name || c.company_id)}</option>`).join('')}</optgroup>` : ''}
+        ${others.length ? `<optgroup label="Другие компании">${others.map((c) =>
+          `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+      </select></label>
+      <label class="field"><input type="radio" name="ur-mode" id="ur-mode-none" value="none"
+        ${candidates.length || others.length ? '' : 'checked'}> Оставить без владельца — чек не получит ни одна компания</label>
+      <label class="field"><span>Причина решения (обязательно, попадёт в журнал)</span>
+        <textarea id="ur-reason" rows="3" maxlength="${REASON_MAX}"
+          placeholder="Например: чек оплачен картой компании по договору № 15"></textarea></label>
+      <div class="form-error" id="ur-form-error" role="alert"></div>
+      <button type="button" class="btn btn-primary" id="ur-resolve">Применить решение</button>`;
+  } else {
+    action = `<p class="form-hint">Здесь расхождение данных между копиями, а не спор о владельце. Действия для
+      такого разбора на этом экране пока нет: чек виден компании-владельцу, но не переносится
+      между компаниями.</p>`;
+  }
+  return `<div class="card-title">Чек от ${esc(fmtDate(doc.receipt_date))} · ${fmtSum(doc.total_sum)}</div>
+    <p class="form-hint">${esc(doc.merchant_name || 'Продавец не указан')}${doc.merchant_inn ? ` · ИНН ${esc(doc.merchant_inn)}` : ''}
+      · ФН ${esc(doc.fn || '—')} · ФД ${esc(doc.fd || '—')} · ФП ${esc(doc.fp || '—')} · позиций: ${fmtInt(doc.items_count)}
+      · версия ${fmtInt(doc.version)}</p>
+    <div class="card-title" style="margin-top:8px">Причины</div>
+    <ul>${flags.map((f) => `<li><b>${esc(f.title)}</b> — ${esc(f.hint)}</li>`).join('') || '<li>пометок нет</li>'}</ul>
+    <div class="card-title" style="margin-top:8px">Копии чека</div>
+    <ul id="ur-copies">${copies || '<li>живых копий нет</li>'}</ul>
+    ${companiesHtml(linked)}
+    <div class="card-title" style="margin-top:8px">Журнал</div>
+    <div class="table-wrap"><table class="data"><thead><tr><th>Когда</th><th>Событие</th><th>Кто</th>
+      <th>Владелец</th><th>Подробности</th></tr></thead><tbody>${journal || '<tr><td colspan="5">Записей нет.</td></tr>'}</tbody></table></div>
+    ${action}`;
+}
+
+export async function viewUnifiedReview(container) {
+  const state = { page: 1, perPage: 20, flag: 0, tab: 'conflicts', claimStatus: 'open', claimPage: 1 };
+  let req = 0;
+  let claimReq = 0;
+  let visReq = 0;
+  container.innerHTML = `
+    <div class="glass card">
+      <div class="card-title">⚖️ Разбор конфликтов единого реестра <span class="spacer"></span>
+        <button type="button" class="btn btn-sm" id="ur-refresh">Обновить</button></div>
+      <p class="form-hint">Конфликт — один фискальный чек, копии которого расходятся. Спор о владельце скрывает чек
+        от компаний, пока администратор не решит, чей он. Расхождения данных (дата, сумма, позиции и другие)
+        запрещают перенос чека между компаниями. Каждое решение записывается в журнал чека.</p>
+      <div class="grid kpi-grid" id="ur-kpi"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0" role="tablist">
+        <button type="button" class="btn btn-sm btn-primary" id="ur-tab-conflicts" role="tab"
+          aria-selected="true">Споры</button>
+        <button type="button" class="btn btn-sm" id="ur-tab-claims" role="tab" aria-selected="false">Заявки
+          <span class="nav-badge hidden" id="ur-claims-badge">0</span></button>
+        <button type="button" class="btn btn-sm" id="ur-tab-visibility" role="tab" aria-selected="false">Показ компаниям</button>
+        <button type="button" class="btn btn-sm" id="ur-tab-readiness" role="tab" aria-selected="false">Готовность</button>
+        <button type="button" class="btn btn-sm" id="ur-tab-time" role="tab" aria-selected="false">Время чеков</button>
+      </div>
+      <div id="ur-pane-conflicts">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0">
+          <label class="field"><span>Причина</span><select id="ur-flag">
+            <option value="0">Все конфликты</option>
+            ${REVIEW_FLAGS.filter((f) => f.blocking).map((f) => `<option value="${f.bit}">${esc(f.title)}</option>`).join('')}
+          </select></label>
+        </div>
+        <div id="ur-out"><div class="skeleton" style="height:120px"></div></div>
+      </div>
+      <div id="ur-pane-claims" class="hidden">
+        <p class="form-hint">Заявка — компания пыталась учесть чек, который уже принадлежит другой: скан, фото,
+          PDF, ручной ввод или перенос из Чек-Пула получили отказ. Сотрудник видит только «Заявка передана
+          администратору»; число организаций и их список — только здесь. «Отклонить» оставляет компанию в числе
+          организаций, «Не учитывать» — убирает (ошибочный скан, тест).</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0">
+          <label class="field"><span>Статус</span><select id="ur-claim-status">
+            ${CLAIM_STATUSES.map((st) => `<option value="${st.code}">${esc(st.title)}</option>`).join('')}
+            <option value="all">Все заявки</option>
+          </select></label>
+        </div>
+        <div id="ur-claims-out"></div>
+      </div>
+      <div id="ur-pane-visibility" class="hidden">
+        <p class="form-hint">Число организаций у чека администратор видит всегда. Компаниям — только с вашего
+          разрешения: бухгалтер и руководитель увидят «🏢 N» у своих чеков и строку «Организаций» в карточке, без
+          названий других организаций. Сотрудник, участник Чек-Пула и платный API числа не получают никогда.</p>
+        <div id="ur-vis-out"></div>
+      </div>
+      <div id="ur-pane-readiness" class="hidden">
+        <p class="form-hint">Единая запись — один фискальный чек вместо копий в реестре и Чек-Пуле. Здесь только числа:
+          сколько чеков уже в единой записи, сколько ждёт регистрации и есть ли копии, которые с ней расходятся.
+          Расхождения после отката на старую версию сверка сводит сама при запуске программы.</p>
+        <div id="ur-ready-out"></div>
+        <p class="form-hint">Регистрацию архива запускает только владелец, на сервере: сначала пробный прогон
+          <code>python -m app.unified.backfill --soft --dry-run</code> (база не меняется), затем
+          <code>python -m app.unified.backfill --soft</code>. В единую запись попадают только чеки без расхождений;
+          спорные остаются как сейчас и видны как раньше.</p>
+      </div>
+      <div id="ur-pane-time" class="hidden">
+        <p class="form-hint">До 1.70.110 сохранение формы правки сдвигало время чека на часовой пояс браузера
+          (Челябинск — на 5 часов, Москва — на 3), и сдвиг уходил в единую запись и Чек-Пул. Исходное время кассы
+          хранится в строке QR. Здесь — чеки, у которых время расходится с QR на целое число часов; список ничего
+          не меняет. Вернуть можно чеки, которые правили формой; ручной ввод и прочие расхождения — только в списке.</p>
+        <div id="ur-time-out"></div>
+      </div>
+    </div>`;
+  const out = container.querySelector('#ur-out');
+  const claimsOut = container.querySelector('#ur-claims-out');
+  const visOut = container.querySelector('#ur-vis-out');
+  const readyOut = container.querySelector('#ur-ready-out');
+  let readyReq = 0;
+  const timeOut = container.querySelector('#ur-time-out');
+  let timeReq = 0;
+
+  async function loadStats() {
+    const box = container.querySelector('#ur-kpi');
+    try {
+      const s = await api.get('/api/v1/unified/stats');
+      if (!container.isConnected) return;
+      box.innerHTML = `
+        <div class="glass kpi"><div class="kpi-value">${fmtInt(s.conflicts)}</div><div class="kpi-sub">конфликтов</div></div>
+        <div class="glass kpi"><div class="kpi-value">${fmtInt(s.ownership_conflicts)}</div><div class="kpi-sub">из них спор о владельце</div></div>
+        <div class="glass kpi"><div class="kpi-value">${fmtInt(s.claims_open)}</div><div class="kpi-sub">заявок ждут решения</div></div>
+        <div class="glass kpi"><div class="kpi-value">${fmtInt(s.documents)}</div><div class="kpi-sub">чеков в едином реестре</div></div>`;
+      setConflictsBadge(badgeCount(s));
+      const claimsBadge = container.querySelector('#ur-claims-badge');
+      const open = Number(s.claims_open) || 0;
+      claimsBadge.textContent = fmtInt(open);
+      claimsBadge.classList.toggle('hidden', open === 0);
+    } catch (e) {
+      box.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  async function loadList() {
+    const current = ++req;
+    out.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    const params = new URLSearchParams({ conflicts: 'true', page: String(state.page), per_page: String(state.perPage) });
+    if (state.flag) params.set('flag', String(state.flag));
+    try {
+      const data = await api.get(`/api/v1/unified/documents?${params}`);
+      if (current !== req || !container.isConnected) return;
+      renderList(data);
+    } catch (e) {
+      if (current !== req || !container.isConnected) return;
+      out.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderList(data) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    const total = Number(data.total) || 0;
+    const pages = Math.max(1, Math.ceil(total / state.perPage));
+    out.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr>
+      <th>Дата</th><th>Продавец</th><th class="num">Сумма</th><th>Причины</th><th>Владелец</th><th></th></tr></thead><tbody>
+      ${items.map((d) => `<tr><td>${esc(fmtDate(d.receipt_date))}</td>
+        <td>${esc(d.merchant_name || '—')}</td><td class="num">${fmtSum(d.total_sum)}</td>
+        <td>${flagChips(d.review_flags)}</td><td>${esc(d.company_name || 'не назначен')}</td>
+        <td><button type="button" class="btn btn-sm ur-open" data-id="${esc(d.id)}">Открыть</button></td></tr>`).join('')
+        || '<tr><td colspan="6">Конфликтов нет — разбирать нечего.</td></tr>'}</tbody></table></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="btn btn-sm" id="ur-prev" ${state.page <= 1 ? 'disabled' : ''}>← Назад</button>
+        <span class="form-hint">Страница ${fmtInt(state.page)} из ${fmtInt(pages)} · всего ${fmtInt(total)}</span>
+        <button type="button" class="btn btn-sm" id="ur-next" ${state.page >= pages ? 'disabled' : ''}>Вперёд →</button>
+      </div>`;
+    out.querySelectorAll('.ur-open').forEach((b) => { b.onclick = () => openCard(b.dataset.id); });
+    out.querySelector('#ur-prev').onclick = () => { state.page -= 1; loadList(); };
+    out.querySelector('#ur-next').onclick = () => { state.page += 1; loadList(); };
+  }
+
+  async function openCard(id) {
+    let doc;
+    try {
+      doc = await api.get(`/api/v1/unified/documents/${encodeURIComponent(id)}/review`);
+    } catch (e) {
+      toast(e.message, 'err');
+      return;
+    }
+    let companies = [];
+    if (canResolve(doc)) {
+      try { companies = await api.get('/api/v1/companies'); } catch { companies = []; }
+    }
+    let linked = null;
+    try {
+      linked = await api.get(`/api/v1/unified/documents/${encodeURIComponent(doc.id)}/companies`);
+    } catch { linked = null; }
+    const modal = openModal(cardHtml(doc, Array.isArray(companies) ? companies : [], linked));
+    const btn = modal.slot.querySelector('#ur-resolve');
+    if (!btn) return;
+    const errBox = modal.slot.querySelector('#ur-form-error');
+    btn.onclick = async () => {
+      errBox.textContent = '';
+      const mode = (modal.slot.querySelector('input[name="ur-mode"]:checked') || {}).value;
+      const companyId = mode === 'company' ? modal.slot.querySelector('#ur-company').value : '';
+      if (mode === 'company' && !companyId) { errBox.textContent = 'Выберите компанию'; return; }
+      const reason = modal.slot.querySelector('#ur-reason').value;
+      const problem = validateReason(reason);
+      if (problem) { errBox.textContent = problem; return; }
+      btn.disabled = true;
+      try {
+        await api.post(`/api/v1/unified/documents/${encodeURIComponent(doc.id)}/resolve-ownership`,
+          buildResolveBody(doc, companyId, reason));
+        modal.close();
+        toast(companyId ? 'Чек закреплён за компанией' : 'Чек оставлен без владельца', 'ok', 'Решение применено. ');
+        await Promise.all([loadStats(), loadList()]);
+      } catch (e) {
+        btn.disabled = false;
+        errBox.textContent = e.message;
+        if (e.status === 409) {
+          const again = document.createElement('button');
+          again.type = 'button';
+          again.className = 'btn btn-sm';
+          again.id = 'ur-reload';
+          again.textContent = 'Открыть карточку заново';
+          again.onclick = () => { modal.close(); openCard(doc.id); };
+          errBox.append(' ', again);
+        }
+      }
+    };
+  }
+
+  async function loadClaims() {
+    const current = ++claimReq;
+    claimsOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    const params = new URLSearchParams({ status: state.claimStatus, page: String(state.claimPage),
+      per_page: String(state.perPage) });
+    try {
+      const data = await api.get(`/api/v1/unified/claims?${params}`);
+      if (current !== claimReq || !container.isConnected) return;
+      renderClaims(data);
+    } catch (e) {
+      if (current !== claimReq || !container.isConnected) return;
+      claimsOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderClaims(data) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    const total = Number(data.total) || 0;
+    const pages = Math.max(1, Math.ceil(total / state.perPage));
+    claimsOut.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr>
+      <th>Дата чека</th><th>Продавец</th><th class="num">Сумма</th><th>Владелец</th><th>Претендент</th>
+      <th>Источник</th><th class="num">Попыток</th><th>Последняя попытка</th><th>Статус</th><th></th></tr></thead><tbody>
+      ${items.map((c, i) => `<tr><td>${esc(fmtDate(c.receipt_date))}</td>
+        <td>${esc(c.merchant_name || '—')}</td><td class="num">${fmtSum(c.total_sum)}</td>
+        <td>${esc(c.owner_company_name || 'не назначен')}</td>
+        <td>${esc(c.company_deleted ? 'компания удалена' : (c.company_name || '—'))}</td>
+        <td>${esc(claimSourceTitle(c.source))}</td><td class="num">${fmtInt(c.attempts)}</td>
+        <td>${esc(fmtDate(c.last_at))}${c.last_user_name ? ` · ${esc(c.last_user_name)}` : ''}</td>
+        <td>${esc(claimStatusTitle(c.status))}</td>
+        <td><button type="button" class="btn btn-sm ur-claim-open" data-i="${i}">Решить</button></td></tr>`).join('')
+        || '<tr><td colspan="10">Заявок нет.</td></tr>'}</tbody></table></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="btn btn-sm" id="ur-claims-prev" ${state.claimPage <= 1 ? 'disabled' : ''}>← Назад</button>
+        <span class="form-hint">Страница ${fmtInt(state.claimPage)} из ${fmtInt(pages)} · всего ${fmtInt(total)}</span>
+        <button type="button" class="btn btn-sm" id="ur-claims-next" ${state.claimPage >= pages ? 'disabled' : ''}>Вперёд →</button>
+      </div>`;
+    claimsOut.querySelectorAll('.ur-claim-open').forEach((b) => {
+      b.onclick = () => openClaim(items[Number(b.dataset.i)]);
+    });
+    claimsOut.querySelector('#ur-claims-prev').onclick = () => { state.claimPage -= 1; loadClaims(); };
+    claimsOut.querySelector('#ur-claims-next').onclick = () => { state.claimPage += 1; loadClaims(); };
+  }
+
+  async function openClaim(item) {
+    let linked = null;
+    try {
+      linked = await api.get(`/api/v1/unified/documents/${encodeURIComponent(item.document_id)}/companies`);
+    } catch { linked = null; }
+    const buttons = claimActions(item).map((action) => `<button type="button"
+      class="btn ${action === 'transfer' ? 'btn-primary' : ''}" id="ur-claim-${action}"
+      data-action="${action}">${esc(CLAIM_ACTIONS[action].title)}</button>`).join(' ');
+    const modal = openModal(`<div class="card-title">Заявка: ${esc(item.company_deleted ? 'компания удалена' : (item.company_name || '—'))}</div>
+      <p class="form-hint">Чек от ${esc(fmtDate(item.receipt_date))} · ${fmtSum(item.total_sum)} ·
+        ${esc(item.merchant_name || 'продавец не указан')} · владелец: ${esc(item.owner_company_name || 'не назначен')}</p>
+      <p class="form-hint">Источник: ${esc(claimSourceTitle(item.source))} · попыток: ${fmtInt(item.attempts)} ·
+        статус: ${esc(claimStatusTitle(item.status))}</p>
+      ${item.blocking ? `<p class="form-hint">Чек требует разбора (вкладка «Споры») — передать его пока нельзя.</p>` : ''}
+      ${companiesHtml(linked)}
+      ${buttons ? `<label class="field"><span>Причина решения (обязательно, попадёт в журнал)</span>
+        <textarea id="ur-claim-reason" rows="3" maxlength="${REASON_MAX}"
+          placeholder="Например: чек оплачен картой этой компании"></textarea></label>
+      <div class="form-error" id="ur-claim-error" role="alert"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${buttons}</div>`
+    : `<p class="form-hint">${item.status === 'transferred' ? 'Чек уже передан по этой заявке.'
+      : 'Решений по заявке нет: компания удалена или чек требует разбора.'}</p>`}`);
+    const errBox = modal.slot.querySelector('#ur-claim-error');
+    modal.slot.querySelectorAll('[data-action]').forEach((btn) => {
+      btn.onclick = async () => {
+        errBox.textContent = '';
+        const reason = modal.slot.querySelector('#ur-claim-reason').value;
+        const problem = validateReason(reason);
+        if (problem) { errBox.textContent = problem; return; }
+        const { action } = btn.dataset;
+        btn.disabled = true;
+        try {
+          await api.post(`/api/v1/unified/links/${encodeURIComponent(item.link_id)}/${action}`,
+            buildClaimDecisionBody(item, reason));
+          modal.close();
+          toast(CLAIM_ACTIONS[action].done, 'ok', 'Решение применено. ');
+          await Promise.all([loadStats(), loadClaims()]);
+        } catch (e) {
+          btn.disabled = false;
+          errBox.textContent = e.message;
+        }
+      };
+    });
+  }
+
+  // v1.70.86: показ числа организаций компаниям (только администратор)
+  async function loadVisibility() {
+    const current = ++visReq;
+    visOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get('/api/v1/unified/visibility');
+      if (current !== visReq || !container.isConnected) return;
+      renderVisibility(data);
+    } catch (e) {
+      if (current !== visReq || !container.isConnected) return;
+      visOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderVisibility(data) {
+    const companies = Array.isArray(data.companies) ? data.companies : [];
+    const roles = new Set(Array.isArray(data.roles) ? data.roles : []);
+    visOut.innerHTML = `
+      <div class="field" role="radiogroup" aria-label="Кому показывать число организаций" style="margin-bottom:10px">
+        ${COUNT_MODES.map((m) => `<label style="display:block;margin:4px 0"><input type="radio" name="ur-vis-mode"
+          id="ur-vis-mode-${m.code}" value="${m.code}" ${data.mode === m.code ? 'checked' : ''} style="width:auto">
+          ${esc(m.title)} <span class="form-hint">— ${esc(m.hint)}</span></label>`).join('')}
+      </div>
+      <div class="field" style="margin-bottom:10px"><span>Роли в компании</span>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">${COUNT_ROLES.map((r) => `<label><input type="checkbox"
+          id="ur-vis-role-${r.code}" value="${r.code}" ${roles.has(r.code) ? 'checked' : ''} style="width:auto">
+          ${esc(r.title)}</label>`).join('')}</div></div>
+      <div class="form-hint" style="margin-bottom:4px">Компании для режима «Выбранным компаниям»:</div>
+      <div id="ur-vis-companies" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 12px;max-height:260px;overflow:auto">
+        ${companies.map((c) => `<label><input type="checkbox" class="ur-vis-company" value="${esc(c.id)}"
+          ${c.enabled ? 'checked' : ''} style="width:auto"> ${esc(c.name)}${c.is_active ? ''
+          : ' <span class="form-hint">(в архиве)</span>'}</label>`).join('') || '<span class="form-hint">Компаний нет.</span>'}
+      </div>
+      <div class="form-error" id="ur-vis-warning" role="status" style="margin:8px 0"></div>
+      <button type="button" class="btn btn-primary" id="ur-vis-save">Сохранить</button>`;
+    const read = () => ({
+      mode: (visOut.querySelector('input[name="ur-vis-mode"]:checked') || {}).value || 'off',
+      roles: COUNT_ROLES.map((r) => r.code).filter((code) => visOut.querySelector(`#ur-vis-role-${code}`).checked),
+      companyIds: [...visOut.querySelectorAll('.ur-vis-company:checked')].map((el) => el.value),
+    });
+    const warning = visOut.querySelector('#ur-vis-warning');
+    const warn = () => {
+      const v = read();
+      warning.textContent = visibilityWarning(v.mode, v.roles, v.companyIds);
+    };
+    visOut.querySelectorAll('input').forEach((el) => { el.onchange = warn; });
+    warn();
+    const save = visOut.querySelector('#ur-vis-save');
+    save.onclick = async () => {
+      const v = read();
+      save.disabled = true;
+      try {
+        const saved = await api.put('/api/v1/unified/visibility', buildVisibilityBody(v.mode, v.roles, v.companyIds));
+        toast('Настройки показа сохранены', 'ok', '🏢 ');
+        if (container.isConnected) renderVisibility(saved);
+      } catch (e) {
+        save.disabled = false;
+        warning.textContent = e.message;
+      }
+    };
+  }
+
+  // v1.70.88 (фаза 4а): готовность единой записи — только чтение
+  async function loadReadiness() {
+    const current = ++readyReq;
+    readyOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get('/api/v1/unified/readiness');
+      if (current !== readyReq || !container.isConnected) return;
+      readyOut.innerHTML = `
+        <div class="grid kpi-grid">${readinessCards(data).map((c) => `<div class="glass kpi">
+          <div class="kpi-value">${esc(c.value)}</div><div class="kpi-sub">${esc(c.sub)}</div></div>`).join('')}</div>
+        <div class="table-wrap" style="margin-top:10px"><table class="data"><tbody>
+          ${readinessRows(data).map(([label, value]) => `<tr><td>${esc(label)}</td><td style="text-align:right">${esc(value)}</td></tr>`).join('')}
+        </tbody></table></div>`;
+    } catch (e) {
+      if (current !== readyReq || !container.isConnected) return;
+      readyOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  // v1.70.111 (T-78): время чеков по QR — отчёт и возврат кнопкой администратора
+  async function loadTime() {
+    const current = ++timeReq;
+    timeOut.innerHTML = '<div class="skeleton" style="height:120px"></div>';
+    try {
+      const data = await api.get('/api/v1/unified/receipt-time');
+      if (current !== timeReq || !container.isConnected) return;
+      renderTime(data);
+    } catch (e) {
+      if (current !== timeReq || !container.isConnected) return;
+      timeOut.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderTime(data) {
+    const rows = timeRows(data);
+    const fixable = num(data.fixable);
+    timeOut.innerHTML = `
+      <p id="ur-time-summary">${esc(timeSummary(data))}</p>
+      ${rows.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Компания</th>
+        <th>Чек (ФН / ФД / ФП)</th><th>В базе</th><th>По QR</th><th>Сдвиг</th><th>Что делать</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td>${esc(r.company)}</td><td>${esc(r.receipt)}</td><td>${esc(r.stored)}</td>
+          <td>${esc(r.qr)}</td><td>${esc(r.shift)}</td><td>${esc(r.action)}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+      ${fixable ? `<button type="button" class="btn btn-primary" id="ur-time-restore" style="margin-top:10px">
+        Вернуть время из QR (${esc(fmtCount(fixable))})</button>` : ''}`;
+    const restore = timeOut.querySelector('#ur-time-restore');
+    if (!restore) return;
+    restore.onclick = async () => {
+      if (!window.confirm(timeConfirmText(fixable))) return;
+      restore.disabled = true;
+      try {
+        const res = await api.post('/api/v1/unified/receipt-time/restore', {});
+        toast(timeRestoredText(res), 'ok', '🕒 ');
+        if (container.isConnected) loadTime();
+      } catch (e) {
+        restore.disabled = false;
+        toast(e.message, 'err');
+      }
+    };
+  }
+
+  const PANES = ['conflicts', 'claims', 'visibility', 'readiness', 'time'];
+  function showTab(tab) {
+    state.tab = tab;
+    PANES.forEach((key) => {
+      container.querySelector(`#ur-pane-${key}`).classList.toggle('hidden', key !== tab);
+      const el = container.querySelector(`#ur-tab-${key}`);
+      el.classList.toggle('btn-primary', key === tab);
+      el.setAttribute('aria-selected', String(key === tab));
+    });
+    if (tab === 'claims') loadClaims();
+    if (tab === 'visibility') loadVisibility();
+    if (tab === 'readiness') loadReadiness();
+    if (tab === 'time') loadTime();
+  }
+
+  PANES.forEach((key) => { container.querySelector(`#ur-tab-${key}`).onclick = () => showTab(key); });
+  container.querySelector('#ur-claim-status').onchange = (e) => {
+    state.claimStatus = e.target.value || 'open';
+    state.claimPage = 1;
+    loadClaims();
+  };
+  container.querySelector('#ur-refresh').onclick = () => {
+    loadStats();
+    if (state.tab === 'claims') loadClaims();
+    else if (state.tab === 'visibility') loadVisibility();
+    else if (state.tab === 'readiness') loadReadiness();
+    else if (state.tab === 'time') loadTime();
+    else loadList();
+  };
+  container.querySelector('#ur-flag').onchange = (e) => {
+    state.flag = Number(e.target.value) || 0;
+    state.page = 1;
+    loadList();
+  };
+  await Promise.all([loadStats(), loadList()]);
+}

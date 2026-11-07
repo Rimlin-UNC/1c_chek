@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — автоматическая установка на Ubuntu 24.04
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # Запуск:  sudo bash install.sh [--with-nginx] [--with-ssl yourdomain.ru]
 #
@@ -103,7 +103,7 @@ if [[ $WITH_NGINX -eq 1 ]]; then
   ok "Nginx настроен"
   if [[ -n "$DOMAIN" && "$DOMAIN" != "pending" ]]; then
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m info@ymaster.ru || \
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m chek@ymaster.ru || \
       echo "  ⚠ certbot не смог выпустить сертификат — запустите вручную"
   fi
 fi
@@ -117,5 +117,5 @@ echo "  Логин: admin / admin123  (смените пароль!)"
 echo "  Статус: systemctl status $SERVICE_NAME"
 echo "  Данные: $APP_DIR/data"
 echo ""
-echo "  Поддержка: ООО «Ямастер» — https://ymaster.ru · info@ymaster.ru"
+echo "  Поддержка: ООО «Ямастер» — https://ymaster.ru · chek@ymaster.ru"
 echo "=============================================================="

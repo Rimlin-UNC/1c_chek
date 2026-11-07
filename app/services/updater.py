@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — механизм самообновления (v1.4.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # Обновление «как в профессиональных программах»:
 #   1. Проверка: сравнение локальной версии (app/config.py) с версией
@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 import httpx
 
 from ..config import settings
+
 
 # v1.60.0: метки журнала хода обновления — UTC ISO с «Z»: приложение
 # открывают из любой страны и города, локальную зону выбирает браузер
@@ -233,6 +234,48 @@ def diff_blocks(old: dict, new: dict) -> list[dict]:
     return out
 
 
+def _branch_refspec(branch: str) -> str:
+    """v1.70.17: явный refspec для fetch — «ветка → наш удалённый ref».
+
+    deploy.sh клонирует `--depth 1 --branch <ветка>`, а такой клон отслеживает
+    ТОЛЬКО свою ветку (в .git/config один refspec). Fetch чужой ветки при этом
+    завершается успешно (rc 0), но обновляет один FETCH_HEAD: ref
+    `origin/<ветка>` не появляется, и следующий шаг
+    `git reset --hard origin/<ветка>` падает на «ambiguous argument …
+    unknown revision». Явный refspec создаёт ref независимо от настроек клона."""
+    return f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+
+
+def _ensure_branch_tracking(branch: str) -> None:
+    """Дописать ветку в настройки origin, чтобы её ref обновлялся и дальше
+    (в т.ч. при следующих обновлениях и в `git fetch` без аргументов).
+    Ошибка не критична: основной механизм — явный refspec в fetch."""
+    _git(["remote", "set-branches", "--add", "origin", branch], timeout=20)
+
+
+def _ref_exists(ref: str) -> bool:
+    rc, _o = _git(["rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                  timeout=20)
+    return rc == 0
+
+
+def _resolve_target_ref(branch: str) -> tuple[str, str]:
+    """Куда делать `reset --hard` после fetch (v1.70.17).
+
+    Порядок: `origin/<ветка>` (норма после fetch с явным refspec) →
+    `FETCH_HEAD` (страховка: старый git/нестандартный клон) → пусто
+    (честная ошибка вместо «ambiguous argument»)."""
+    if _ref_exists(f"origin/{branch}"):
+        return f"origin/{branch}", f"Цель обновления: origin/{branch}"
+    if _ref_exists("FETCH_HEAD"):
+        return "FETCH_HEAD", ("Цель обновления: FETCH_HEAD (ref origin/"
+                              + branch + " не создан — использован запасной)")
+    return "", (f"Ветка «{branch}» не получена из репозитория источника: "
+                "ни origin/" + branch + ", ни FETCH_HEAD не указывают на "
+                "коммит. Проверьте название ветки в «🎛 Источник обновлений» "
+                "и доступность репозитория.")
+
+
 def _parse_fetch_progress(line: str) -> tuple[int | None, int | None]:
     """git fetch --progress: «Receiving objects:  45% (123/273), 55.00 KiB».
     Возвращает (процент|None, байт|None)."""
@@ -252,7 +295,10 @@ def _git_fetch_progress(branch: str) -> tuple[int, str, int]:
     до конца загрузки и выглядело как зависание. Читаем по байтам (select),
     режем по \r и \n, обновляем статус не чаще раза в 0.7 с."""
     import select as _select
-    cmd = ["git", "fetch", "--progress", "origin", branch]
+    # v1.70.17: fetch ЯВНЫМ refspec'ом — иначе в клоне --depth 1 --branch
+    # ref origin/<branch> не создаётся и reset --hard падает (см. _branch_refspec)
+    _ensure_branch_tracking(branch)
+    cmd = ["git", "fetch", "--progress", "origin", _branch_refspec(branch)]
     total = 0
     tail: list[str] = []                # последние строки — для отчёта об ошибке
     last_say = 0.0
@@ -319,11 +365,20 @@ def _needs_restart(changed: list[str]) -> bool:
     return any(not _DOC_FILE.match(f) for f in changed)
 
 
-def _changed_files(old_commit: str, target_ref: str) -> list[str]:
-    """Список файлов между текущим коммитом и целью обновления."""
+def _changed_files(old_commit: str, target_ref: str,
+                   strict: bool = False) -> list[str]:
+    """Список файлов между текущим коммитом и целью обновления.
+
+    v1.70.17: при strict=True ошибка diff — это исключение, а не пустой
+    список. Пустой список выглядел в журнале как «Изменённых файлов: 0»
+    и прятал настоящую причину (отсутствующий ref) до самого reset."""
     rc, out = _git(["diff", "--name-only", f"{old_commit}..{target_ref}"],
                    timeout=60)
     if rc != 0:
+        if strict:
+            raise RuntimeError(
+                f"Не удалось сравнить {old_commit}..{target_ref}: "
+                + (out or "git diff завершился с ошибкой")[:200])
         return []
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
@@ -411,20 +466,28 @@ def _ensure_git_repo(repo: str, branch: str, remote_url: str | None = None) -> t
         if rc != 0 or _normalize_repo(out) != _normalize_repo(url):
             _git(["remote", "remove", "origin"], timeout=15)
             _git(["remote", "add", "origin", url], timeout=15)
+        # v1.70.17: клон --depth 1 --branch отслеживает только свою ветку —
+        # дописываем целевую, иначе её ref не появится и reset упадёт
+        _ensure_branch_tracking(branch)
         return True, "git-репозиторий в порядке"
     url = remote_url or f"https://github.com/{repo}.git"
     _run(["git", "init", "-q"], timeout=30)
     rc, out = _git(["remote", "add", "origin", url], timeout=15)
     if rc != 0:
         _git(["remote", "set-url", "origin", url], timeout=15)
-    fcode, ferr = _git(["fetch", "--depth=1", "origin", branch], timeout=300)
+    _ensure_branch_tracking(branch)
+    fcode, ferr = _git(["fetch", "--depth=1", "origin", _branch_refspec(branch)],
+                       timeout=300)
     if fcode != 0:
         return False, f"git fetch при восстановлении: {ferr[:200]}"
     # reset --hard, а не checkout: в каталоге установки полно незатреканных
     # файлов приложения (rsync-установка) — checkout откажется их перезаписать.
     # reset --hard выравнивает файлы с GitHub; data/.env игнорируются git'ом
-    # и остаются нетронутыми.
-    rc, out = _git(["reset", "--hard", "FETCH_HEAD"], timeout=60)
+    # и остаются нетронутыми. Цель — origin/<branch>, запасной — FETCH_HEAD.
+    target_ref, ref_msg = _resolve_target_ref(branch)
+    if not target_ref:
+        return False, f"git fetch при восстановлении: {ref_msg}"
+    rc, out = _git(["reset", "--hard", target_ref], timeout=60)
     if rc != 0:
         return False, f"git reset при восстановлении: {out[:200]}"
     _git(["checkout", "-q", "-B", branch], timeout=30)
@@ -437,13 +500,22 @@ def _local_commit() -> str:
 
 
 def _pip_cmd() -> list[str]:
-    """pip целевого окружения: venv (прод) или системный python (песочница)."""
-    venv_pip = os.path.join(APP_DIR, "venv", "bin", "pip")
-    if os.path.exists(venv_pip):
-        return [venv_pip, "install", "--quiet", "-r",
-                os.path.join(APP_DIR, "requirements.txt")]
-    return ["python3", "-m", "pip", "install", "--quiet", "-r",
-            os.path.join(APP_DIR, "requirements.txt")]
+    """pip целевого окружения — в порядке надёжности (v1.70.69).
+
+    Порядок: venv/ (так ставит install.sh и deploy.sh), затем .venv/
+    (локальная разработка), затем тот интерпретатор, которым запущено
+    приложение (в проде это venv/bin/python — тот же pip), и только в
+    последнюю очередь системный python3. Раньше при отсутствии venv/
+    сразу брался системный: на Debian/Ubuntu 24.04 с PEP 668 установка
+    зависимостей падала («externally-managed-environment»), обновление
+    откатывалось — при том что рядом был рабочий pip приложения.
+    """
+    req = os.path.join(APP_DIR, "requirements.txt")
+    for name in ("venv", ".venv"):
+        pip_exe = os.path.join(APP_DIR, name, "bin", "pip")
+        if os.path.exists(pip_exe):
+            return [pip_exe, "install", "--quiet", "-r", req]
+    return ["python3", "-m", "pip", "install", "--quiet", "-r", req]
 
 
 def _file_sha256(path: str) -> str:
@@ -661,9 +733,19 @@ def _py_bin() -> str:
     """v1.8.3: python ЦЕЛЕВОГО окружения для проверок обновления.
     На проде зависимости стоят в venv — системный python3 не имеет fastapi,
     и проверка целостности могла ложно провалиться (обновление откатилось бы
-    даже при исправном коде). venv есть → берём его, иначе системный python3."""
-    venv_py = os.path.join(APP_DIR, "venv", "bin", "python3")
-    return venv_py if os.path.exists(venv_py) else "python3"
+    даже при исправном коде).
+
+    v1.70.69: добавлены те же запасные варианты, что у pip (см. _pip_cmd):
+    venv/, затем .venv/, затем интерпретатор, которым запущено приложение.
+    Раньше при имени окружения .venv проверка шла системным python3 и
+    падала с ModuleNotFoundError — обновление откатывалось на исправном
+    коде."""
+    for name in ("venv", ".venv"):
+        for exe in ("python3", "python"):
+            venv_py = os.path.join(APP_DIR, name, "bin", exe)
+            if os.path.exists(venv_py):
+                return venv_py
+    return "python3"
 
 
 def _health_check() -> tuple[bool, str]:
@@ -871,7 +953,15 @@ def _do_apply(target_version: str, repo: str, branch: str,
                                  if nbytes else "Загрузка изменений завершена"))
 
         # v1.53.0: что изменилось — нужен ли перезапуск сервиса
-        changed = _changed_files(old_commit, f"origin/{branch}")
+        # v1.70.17: цель берём из _resolve_target_ref (origin/<branch> мог
+        # не создаться в клоне --depth 1 --branch) и честно падаем, если
+        # сравнить не с чем — вместо «Изменённых файлов: 0» и ошибок в reset
+        target_ref, ref_msg = _resolve_target_ref(branch)
+        if not target_ref:
+            raise RuntimeError(ref_msg)
+        if "FETCH_HEAD" in target_ref:
+            job.say("download", 42, ref_msg)
+        changed = _changed_files(old_commit, target_ref, strict=True)
         job.changed_count = len(changed)
         job.restart_required = _needs_restart(changed)
         job.say("install", 43, f"Изменённых файлов: {job.changed_count} — "
@@ -880,9 +970,20 @@ def _do_apply(target_version: str, repo: str, branch: str,
                    "только документация, перезапуск не потребуется"))
 
         job.say("checkout", 45, f"Обновление файлов до {target_version}…")
-        rc, out = _git(["reset", "--hard", f"origin/{branch}"], timeout=60)
+        rc, out = _git(["reset", "--hard", target_ref], timeout=60)
         if rc != 0:
             raise RuntimeError(f"git reset: {out}")
+        # v1.70.20: выравниваем метку локальной ветки по каналу обновлений.
+        # reset --hard меняет содержимое и указатель ТЕКУЩЕЙ ветки, поэтому при
+        # смене источника HEAD оставался на старой ветке: код новый, а `git pull`
+        # на сервере тянул прежний канал. -B файлы не трогает (коммит тот же),
+        # поэтому шаг необязательный — сбой не должен ронять обновление.
+        _git(["checkout", "-q", "-B", branch], timeout=30)
+        # upstream — на новый канал: без него `git pull` на сервере отвечает
+        # «Already up to date» и ничего не тянет. Работает, потому что
+        # _git_fetch_progress дописал ветку в remote.origin.fetch.
+        _git(["branch", "-q", f"--set-upstream-to=origin/{branch}", branch],
+             timeout=30)
         # Удалённые из проекта файлы не должны оставаться (без -x: БД/.env/venv целы)
         rc, out = _git(["clean", "-fd", "-e", "data", "-e", ".env",
                         "-e", "venv", "-e", "*.db"], timeout=60)

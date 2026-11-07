@@ -1,6 +1,6 @@
 # 🛠 Развёртывание «Ямастер Чек» на сервере Ubuntu 24.04
 
-> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
 
 Варианты установки — выберите свой:
 
@@ -21,8 +21,8 @@
 ```bash
 ssh root@94.183.236.179
 
-# скачать скрипт развёртывания из вашего репозитория (ветка arena/01a0caaa-1c-chek):
-curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/arena/01a0caaa-1c-chek/deploy.sh -o deploy.sh
+# скачать скрипт развёртывания из вашего репозитория (ветка main):
+curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 
 # запустить:
 sudo bash deploy.sh
@@ -36,7 +36,7 @@ sudo bash deploy.sh
 |---|---|
 | 1 | Устанавливает пакеты: `python3-venv, git, nginx, ufw, fail2ban, sqlite3` |
 | 2 | Создаёт системного пользователя `ymaster`, каталог `/opt/ymaster-check` |
-| 3 | **Клонирует ветку `arena/01a0caaa-1c-chek` с GitHub** (для приватного репозитория: `GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh`) |
+| 3 | **Клонирует ветку `main` с GitHub** (для приватного репозитория: `GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh`) |
 | 4 | Разворачивает venv, ставит зависимости из `requirements.txt` |
 | 5 | Генерирует `SECRET_KEY` и токен 1С в `.env` (права 600) |
 | 6 | Инициализирует БД и администратора (`admin` / `admin123`) |
@@ -88,7 +88,7 @@ sqlite3 /opt/ymaster-check/data/ymaster_check.db ".tables"   # БД
 ## 2. Докер (Docker Compose)
 
 ```bash
-git clone --branch arena/01a0caaa-1c-chek https://github.com/Rimlin-UNC/1c_chek.git
+git clone --branch main https://github.com/Rimlin-UNC/1c_chek.git
 cd 1c_chek && cp .env.example .env    # заполните SECRET_KEY
 docker compose up -d --build
 ```
@@ -144,7 +144,7 @@ python3 run.py --port 8000
 1. В панели: «Контейнеры» / Docker → создать из образа:
    сборка из репозитория (Dockerfile в корне), порт 8000.
 2. Либо на самом сервере:
-   `git clone -b arena/01a0caaa-1c-chek https://github.com/Rimlin-UNC/1c_chek.git && cd 1c_chek`
+   `git clone -b main https://github.com/Rimlin-UNC/1c_chek.git && cd 1c_chek`
    `docker compose up -d --build`   (внутри: uvicorn +-healthcheck; Nginx/TLS — вашим прокси)
 3. Переменные окружения — см. `.env.example` (SECRET_KEY обязателен).
 
@@ -167,7 +167,19 @@ python3 run.py --port 8000
 - [ ] приглашения создаются только под конкретных сотрудников (поле «Для кого»);
 - [ ] токен 1С вставлен в модуль 1С и не публикуется;
 - [ ] бэкап: крон `sqlite3 ... ".backup /var/backups/ymaster-$(date +\%F).db"`;
-- [ ] (для реальных проверок) получен Мастер-токен ФНС.
+- [ ] (для реальных проверок) получен Мастер-токен ФНС;
+- [ ] контур B2B (`/b2b/`) по умолчанию **закрыт**: регистрация компаний не
+      работает, пока администратор не включит её в разделе «API для бизнеса:
+      модерация» — это ожидаемое состояние, а не неисправность;
+- [ ] для писем контура настроен SMTP (почтовый центр): без него компания
+      регистрируется, но ссылку подтверждения не получает — администратор
+      подтверждает статус вручную или жмёт «Выслать письмо повторно»;
+- [ ] для автоматической проверки карточки ЕГРЮЛ/ЕГРИП задан ключ Checko
+      (настройка `checko_api_key`); без ключа проверка идёт по формальным
+      признакам ИНН и помечается в карточке компании;
+- [ ] платное API для внешних клиентов включается отдельно
+      (`PUT /api/v1/pool-admin/settings`, поле `api_enabled`) — до включения
+      любой запрос с ключом отвечает `403`.
 
 ---
 
@@ -175,9 +187,14 @@ python3 run.py --port 8000
 
 - `GET /health` — проверка живости (Zabbix/Prometheus blackbox);
 - `/api/v1/dashboard/stats` — метрики по чекам (JWT);
+- `GET /api/v1/b2b/status` — публичный и лёгкий: показывает, включён ли контур
+  B2B (регистрация компаний). Пригоден для внешнего мониторинга «страница
+  компании жива»;
+- `/api/v1/b2b-admin/overview` — очередь заявок и счётчики по статусам
+  (JWT администратора): видно, сколько компаний ждёт решения;
 - логи: systemd + Nginx access/error;
 - масштабирование: `uvicorn app.main:app --workers 4`; для нескольких серверов — PostgreSQL (compose-профиль) за общим Nginx.
 
 ---
 
-© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · info@ymaster.ru
+© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru

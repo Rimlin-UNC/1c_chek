@@ -45,6 +45,11 @@ def apply_rules(db: Session, receipt: Receipt) -> list[str]:
     rules = (db.query(MerchantRule)
              .filter(MerchantRule.company_id == receipt.company_id,
                      MerchantRule.merchant_inn == inn).all())
+    return _apply_loaded(receipt, rules)
+
+
+def _apply_loaded(receipt: Receipt, rules) -> list[str]:
+    """Применить уже загруженные правила поставщика к одному чеку."""
     applied: list[str] = []
     for rule in rules:
         field = rule.field
@@ -55,6 +60,34 @@ def apply_rules(db: Session, receipt: Receipt) -> list[str]:
         setattr(receipt, field, (rule.value or "")[:RULE_FIELDS[field]])
         rule.applied_count = (rule.applied_count or 0) + 1
         applied.append(field)
+    return applied
+
+
+def apply_rules_many(db: Session, receipts) -> int:
+    """Пакетный apply_rules (перенос чеков, T-33): правила ищутся одним
+    запросом на компанию, а не отдельным запросом на каждый чек. Результат
+    тот же: на связку (компания, ИНН, поле) правило одно (UniqueConstraint),
+    поэтому порядок правил не влияет. Возвращает число заполненных полей.
+    """
+    receipts = list(receipts)
+    wanted: dict[str, set[str]] = {}
+    for r in receipts:
+        inn = (getattr(r, "merchant_inn", "") or "").strip()
+        if inn and r.company_id is not None:
+            wanted.setdefault(r.company_id, set()).add(inn)
+    loaded: dict[tuple[str, str], list[MerchantRule]] = {}
+    for company_id, inns in wanted.items():
+        names = sorted(inns)
+        for i in range(0, len(names), 500):
+            for rule in (db.query(MerchantRule)
+                         .filter(MerchantRule.company_id == company_id,
+                                 MerchantRule.merchant_inn.in_(names[i:i + 500]))):
+                loaded.setdefault((company_id, rule.merchant_inn), []).append(rule)
+    applied = 0
+    for r in receipts:
+        inn = (getattr(r, "merchant_inn", "") or "").strip()
+        if inn and r.company_id is not None:
+            applied += len(_apply_loaded(r, loaded.get((r.company_id, inn), [])))
     return applied
 
 

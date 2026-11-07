@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn://x-artefacts-gnivc-ru/ExampleSystem/ExampleSubsystem/ExampleService/types/1.0"
+           elementFormDefault="qualified" targetNamespace="urn://x-artefacts-gnivc-ru/ExampleSystem/ExampleSubsystem/ExampleService/types/1.0"
+           version="1.0">
+
+    <xs:element name="TestServiceFault" type="tns:TestServiceFault"/>
+
+    <xs:complexType name="TestServiceFault">
+        <xs:annotation>
+            <xs:documentation>Пример комплексного типа c описанием ошибки</xs:documentation>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element minOccurs="1" maxOccurs="1" name="Message" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>Текст ошибки</xs:documentation>
+                </xs:annotation>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="TestBusinessData">
+        <xs:annotation>
+            <xs:documentation>Пример комплексного типа бизнес-данных приложения</xs:documentation>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element minOccurs="1" maxOccurs="1" name="Time" type="xs:dateTime">
+                <xs:annotation>
+                    <xs:documentation>Дата и время поступления (актуальности) данных</xs:documentation>
+                </xs:annotation>
+            </xs:element>
+            <xs:element minOccurs="1" maxOccurs="1" name="Message" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>Данные приложения</xs:documentation>
+                </xs:annotation>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:element name="TestRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="TestBusinessData" type="tns:TestBusinessData">
+                    <xs:annotation>
+                        <xs:documentation>Бизнес-данные приложения</xs:documentation>
+                    </xs:annotation>
+                </xs:element>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="TestResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="1" name="Result">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element minOccurs="1" maxOccurs="1" name="Time" type="xs:dateTime">
+                                <xs:annotation>
+                                    <xs:documentation>Дата и время поступления (актуальности) данных</xs:documentation>
+                                </xs:annotation>
+                            </xs:element>
+                            <xs:element minOccurs="1" maxOccurs="1" name="result" type="xs:string">
+                                <xs:annotation>
+                                    <xs:documentation>Бизнес-данные приложения</xs:documentation>
+                                </xs:annotation>
+                            </xs:element>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+                <xs:element minOccurs="0" maxOccurs="1" name="Fault" type="tns:TestServiceFault">
+                </xs:element>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

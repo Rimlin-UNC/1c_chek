@@ -137,7 +137,11 @@ def resolve_max_id(db: Session, login_raw: str) -> str | None:
 def _unique_username(db: Session, max_id: str, username: str) -> str:
     base = _UNSAFE.sub("", (username or "").lower())[:30]
     if len(base) < 3:
-        base = f"max{str(max_id)[-8:]}" or "maxuser"
+        # v1.70.38: было `f"max{...}" or "maxuser"` — f-строка непустая
+        # всегда, значит запасной вариант "maxuser" был МЁРТВЫМ кодом, а при
+        # пустом max_id получался ник «max» без опознавателя пользователя.
+        tail = str(max_id or "").strip()[-8:]
+        base = f"max{tail}" if tail else "maxuser"
     cand = base
     while db.query(User).filter(User.username == cand).first() is not None:
         cand = f"{base}_{secrets.token_hex(2)}"

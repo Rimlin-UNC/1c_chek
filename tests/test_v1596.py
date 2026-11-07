@@ -10,7 +10,7 @@
 #    (работает без systemd-timedated), journald перезапускается.
 # 3) systemd-юнит: Environment=TZ=Europe/Moscow — время процесса
 #    Московское, даже если системный пояс применить не удалось.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 from datetime import datetime, timedelta, timezone

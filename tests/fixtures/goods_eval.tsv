@@ -1,0 +1,346 @@
+# Проверочный набор понимания чеков (T-69): строки в стиле кассовых чеков, написаны вручную, модель их не видит.
+# Только синтетика (ADR-14). Категория<TAB>название
+build_ppe	Перчатки х/б 10 класс белые
+build_ppe	ПЕРЧ. РАБ. С ОБЛИВОМ
+build_ppe	Респиратор Лепесток-200
+build_ppe	Каска защитная белая
+build_ppe	Костюм сварщика брезент
+build_ppe	Очки защитные закрытые
+build_ppe	Жилет сигнальный желтый
+build_ppe	Наушники защитные складные
+build_ppe	Сапоги рабочие утепленные
+build_ppe	Комбинезон рабочий синий
+build_tools	ШУРУПОВЕРТ MAKITA DF333
+build_tools	Перфоратор Bosch GBH 2-26
+build_tools	Дрель-шуруповерт Интерскол
+build_tools	Лобзик Makita 4329
+build_tools	Молоток-гвоздодер 450г
+build_tools	Ключ гаечный рожковый 13х17
+build_tools	Отвертка шлицевая SL5
+build_tools	Рулетка 3м магнит
+build_tools	Уровень пузырьковый 1м
+build_tools	Шпатель нерж 100мм
+build_tools	Кисть малярная 75 мм
+build_tools	Валик для краски 250мм
+build_tools	Стремянка 6 ступеней
+build_tools	Лопата совковая
+build_tools	Пистолет для герметика
+build_tools	Набор инструмента 108 пр
+build_tools	Пила ножовка по металлу
+build_tools	Тиски слесарные 100мм
+build_consumables	Круг отрезной 125х1,0 по металлу
+build_consumables	Диск пильный по дереву 190мм
+build_consumables	Сверло по бетону 8х120
+build_consumables	Бур SDS 10х210
+build_consumables	Бита PZ2 25мм 10шт
+build_consumables	Электроды ОК-46 3мм
+build_consumables	Лента малярная 38мм
+build_consumables	Серпянка 50мм х 20м
+build_consumables	Шкурка шлиф. Р80
+build_consumables	Пленка защитная 3х5м
+build_consumables	Мешки строительные 50шт
+build_finish	Краска водоэмульсионная белая 15кг
+build_finish	Эмаль ПФ-115 серая 0,9кг
+build_finish	Грунтовка Церезит СТ17 10л
+build_finish	Шпатлевка Волма Финиш 20кг
+build_finish	Штукатурка цементная 25кг
+build_finish	Обои виниловые 0,53х10
+build_finish	Плитка настенная 25х40
+build_finish	Ламинат 32 класс 7мм
+build_finish	Плинтус МДФ 2,4м
+build_finish	Затирка для швов белая 2кг
+build_finish	Клей плиточный Юнис Плюс 25кг
+build_finish	Герметик акриловый белый
+build_finish	Пена монтажная Макрофлекс 750мл
+build_finish	Лак по дереву бесцветный
+build_finish	Растворитель Р-4 0,5л
+build_fasteners	Саморез ГКЛ 3,5х25 1000шт
+build_fasteners	Саморезы кровельные 4,8х35
+build_fasteners	Шуруп по дереву 5х60
+build_fasteners	Гвозди финишные 40мм
+build_fasteners	Дюбель распорный 8х40
+build_fasteners	Анкерный болт 12х100
+build_fasteners	Болт с гайкой М8х40
+build_fasteners	Хомут металлический 20-32
+build_fasteners	Уголок монтажный 60х60
+build_fasteners	Петля дверная 100мм
+build_fasteners	Замок навесной
+build_electric	Кабель ВВГнг 3х1,5 100м
+build_electric	Провод ПуГВ 1х2,5
+build_electric	Розетка накладная
+build_electric	Выключатель двухклавишный
+build_electric	Автомат 1P 25А
+build_electric	УЗО 40А 30мА
+build_electric	Клемма соединительная 3-контактная
+build_electric	Кабель-канал 40х25
+build_electric	Изолента черная 15мм
+build_electric	Удлинитель на катушке 30м
+build_electric	Гофра для кабеля 16мм
+build_plumbing	Смеситель для ванны с душем
+build_plumbing	Труба ППР 25мм 2м
+build_plumbing	Кран шаровой 3/4
+build_plumbing	Фитинг латунный переходник
+build_plumbing	Муфта ППР 20мм
+build_plumbing	Сифон для мойки
+build_plumbing	Унитаз подвесной
+build_plumbing	Радиатор алюминиевый 10 секций
+build_plumbing	Насос дренажный
+build_plumbing	Подводка для воды 80см
+build_plumbing	Труба канализационная 50х500
+build_base	Цемент М400 50кг
+build_base	Смесь кладочная 40кг
+build_base	Песок речной мытый 40кг
+build_base	Щебень известняковый
+build_base	Кирпич рядовой полнотелый
+build_base	Газоблок 625х250х200
+build_base	ГКЛ Кнауф 2500х1200х12,5
+build_base	Профиль стоечный 75х50
+build_base	Профнастил НС35 оцинк
+build_base	Утеплитель минеральная вата 100мм
+build_base	Пенопласт 50мм
+build_base	Фанера влагостойкая 12мм
+build_base	ОСП-3 12мм
+build_base	Доска строганая 25х100
+build_base	Брусок 50х50х3000
+build_base	Арматура 10мм А500
+build_base	Сетка рабица 1,5х10
+build_base	Труба профильная 60х40
+build_base	Рубероид кровельный
+build_base	Битум строительный 25кг
+pharma	Аспирин Кардио 100мг №28
+pharma	Парацетамол таб 500мг
+pharma	Нурофен экспресс капс
+pharma	Пенталгин таб №12
+pharma	Валидол таб 60мг
+pharma	Корвалол капли 25мл
+pharma	Мезим форте 20 таб
+pharma	Энтеросгель паста 225г
+pharma	Пластырь рулонный 2х500
+pharma	Бинт эластичный 1,5м
+pharma	Перекись водорода 3% 40мл
+pharma	Маска медицинская 10шт
+pharma	Градусник ртутный
+pharma	Супрастин 25мг 20 таб
+pharma	Регидрон пор 10 пак
+fuel	АИ-92
+fuel	Бензин АИ-95 Евро
+fuel	ДТ зимнее
+fuel	Дизель Евро-5
+fuel	Топливо АИ-95 G-Drive
+fuel	Газ автомобильный пропан
+fuel	АИ-100 Ultimate
+catering	Капучино 0,4
+catering	Латте 300мл
+catering	Американо 0,2
+catering	Бизнес ланч
+catering	Суп харчо
+catering	Салат Оливье порция
+catering	Пицца Пепперони
+catering	Шаурма в лаваше
+catering	Бургер Чизбургер
+catering	Хот-дог
+catering	Круассан
+catering	Обед комплексный
+catering	Роллы Калифорния
+alcohol	Пиво Балтика 3 0,5
+alcohol	Пиво светлое нефильтрованное 0,45
+alcohol	Вино белое полусладкое 0,75
+alcohol	Шампанское полусладкое
+alcohol	Водка Белуга 0,5
+alcohol	Коньяк Арарат 3*
+alcohol	Виски Белая лошадь 0,5
+alcohol	Джин Гордонс 0,7
+alcohol	Сидр грушевый
+alcohol	Настойка рябина на коньяке
+alcohol	Ликер Егермейстер 0,5
+tobacco	Сигареты Parliament Night Blue
+tobacco	Сигареты Marlboro Gold
+tobacco	Сигареты Winston Blue
+tobacco	Сигареты Rothmans деми
+tobacco	Стики Heets Turquoise
+tobacco	Табак для кальяна 50г
+tobacco	Сигареты Sobranie
+tobacco	Электронная сигарета одноразовая
+food	Хлеб белый нарезка
+food	Батон Нарезной
+food	Молоко ультрапастер. 2,5% 1л
+food	Кефир Простоквашино 1%
+food	Сыр Ламбер 50% 230г
+food	Масло сливочное Экомилк
+food	Творожок Чудо
+food	Йогурт Активиа
+food	Яйца С0 10 шт
+food	Колбаса сервелат
+food	Ветчина в оболочке
+food	Курица гриль
+food	Филе индейки
+food	Рыба горбуша с/м
+food	Пельмени Цезарь 900г
+food	Сахар рафинад 500г
+food	Соль Экстра 1кг
+food	Крупа рисовая
+food	Гречка ядрица 800г
+food	Макароны Макфа рожки
+food	Масло оливковое 0,5л
+food	Картошка мытая
+food	Морковь мытая
+food	Яблоки Голден
+food	Бананы
+food	Мандарины Марокко
+food	Шоколад Аленка 100г
+food	Конфеты Коркунов
+food	Печенье овсяное
+food	Чай зеленый Ahmad 25 пак
+food	Кофе молотый Lavazza
+food	Сок яблочный 0,97л
+food	Вода негазированная 5л
+food	Лимонад Буратино 1,5л
+food	Пепси 1,5л
+food	Мороженое эскимо
+build_ppe	Перчатки нитриловые рабочие
+computers	Ноутбук HP 15s
+computers	Монитор 27" Philips
+computers	Мышка USB проводная
+computers	Клавиатура беспроводная
+computers	Принтер струйный Epson
+computers	Картридж Canon 725
+computers	Флешка USB 64Гб
+computers	Карта памяти SD 32Гб
+computers	Роутер Keenetic
+computers	SSD Samsung 1Тб
+gadgets	Смартфон Samsung Galaxy A15
+gadgets	Наушники вкладыши проводные
+gadgets	Зарядка автомобильная USB
+gadgets	Кабель microUSB 1м
+gadgets	Чехол-книжка для смартфона
+gadgets	Повербанк 20000мАч
+gadgets	Колонка портативная JBL
+gadgets	Сим карта Билайн
+appliances	Телевизор Samsung 50"
+appliances	Холодильник однокамерный
+appliances	Пылесос робот
+appliances	Микроволновка Samsung
+appliances	Чайник электрический стеклянный
+appliances	Кофеварка капельная
+appliances	Утюг с паром
+appliances	Обогреватель конвектор
+appliances	Вентилятор настольный
+electro_small	Батарейки Energizer AAA 4шт
+electro_small	Батарейка CR2025
+electro_small	Лампа LED E27 12Вт
+electro_small	Лампочка накаливания 60Вт
+electro_small	Фонарь кемпинговый
+clothes	Футболка поло мужская
+clothes	Джинсы женские скинни
+clothes	Куртка демисезонная
+clothes	Носки хлопковые
+clothes	Шапка зимняя
+clothes	Кроссовки мужские
+clothes	Ботинки кожаные
+clothes	Сумка женская
+clothes	Шарф шерстяной
+clothes	Ремень мужской
+hygiene	Шампунь Clear против перхоти
+hygiene	Гель для душа Palmolive
+hygiene	Мыло хозяйственное 72%
+hygiene	Зубная паста Splat
+hygiene	Щетка зубная Oral-B
+hygiene	Дезодорант Old Spice
+hygiene	Крем для лица Черный жемчуг
+hygiene	Бумага туалетная 8 рулонов
+hygiene	Салфетки бумажные 100шт
+hygiene	Бритва одноразовая 5шт
+hygiene	Ватные палочки 200шт
+chemicals	Стиральный порошок Ariel 4,5кг
+chemicals	Средство для посуды AOS 450мл
+chemicals	Чистящее средство Комет
+chemicals	Гель для стирки Ласка
+chemicals	Отбеливатель Ваниш
+chemicals	Средство для мытья полов Mr Proper
+chemicals	Освежитель воздуха Air Wick
+chemicals	Таблетки для ПММ Somat
+household	Пакеты для мусора 35л 30шт
+household	Мешки мусорные 240л
+household	Губка для посуды
+household	Перчатки латексные
+household	Ведро 12л
+household	Швабра плоская
+household	Тарелки бумажные
+household	Стаканы пластиковые
+household	Полотенца бумажные Lotus
+household	Контейнер для еды
+household	Пакет фасовочный
+furniture	Стол обеденный
+furniture	Стулья 4шт
+furniture	Кресло офисное
+furniture	Шкаф-купе
+furniture	Стеллаж
+furniture	Полка книжная
+furniture	Зеркало в раме
+furniture	Карниз потолочный
+furniture	Светильник потолочный
+auto	Масло моторное Mobil Super 10W-40 4л
+auto	Масло трансмиссионное 75W-90
+auto	Антифриз зеленый 1кг
+auto	Омыватель зимний -25
+auto	Дворники каркасные 500мм
+auto	Шина летняя 185/65 R15
+auto	Колодки дисковые
+auto	Фильтр топливный
+auto	Аккумулятор 75Ач Varta
+auto	Свечи зажигания Bosch 4шт
+auto	Автохимия очиститель дисков
+auto	Тормозная жидкость DOT-4
+office	Ручка шариковая 10 шт
+office	Карандаши цветные 12 цв
+office	Тетрадь общая 96л
+office	Блокнот 80 листов
+office	Бумага А4 500 листов
+office	Папка на кольцах
+office	Файл-вкладыш 100 шт
+office	Степлер канцелярский
+office	Скрепки
+office	Клей ПВА канцелярский
+office	Маркер текстовыделитель
+office	Скотч упаковочный
+books	Книга учета
+books	Журнал вводного инструктажа
+books	Распечатка цветная
+books	Ксерокопия А4
+pets	Корм для кошек Kitekat
+pets	Корм Royal Canin для собак
+pets	Наполнитель древесный
+pets	Поводок для собаки
+kids	Игрушка машинка
+kids	Конструктор Лего
+kids	Кукла
+kids	Пазлы детские
+sport	Мяч волейбольный
+sport	Гантель 3кг
+sport	Коврик для фитнеса
+sport	Удочка
+jewelry	Кольцо серебряное
+jewelry	Серьги золотые
+jewelry	Цепочка серебро
+telecom	Оплата мобильной связи
+telecom	Пополнение баланса Билайн
+telecom	Интернет домашний
+transport	Платная парковка
+transport	Проезд по платной трассе
+transport	Такси Яндекс
+transport	Билет на электричку
+delivery	Доставка товара
+delivery	Курьерская служба
+delivery	Отправление почтой
+repair	Шиномонтаж комплекс
+repair	Ремонт телефона
+repair	Мойка кузова
+repair	Замена масла
+lodging	Проживание 1 сутки
+lodging	Гостиница номер эконом
+rent	Аренда бетономешалки
+rent	Прокат инструмента
+services_other	Консультационные услуги
+services_other	Услуги нотариуса
+services_other	Стрижка
+services_other	Медицинский осмотр

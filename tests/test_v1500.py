@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.50.0: последовательное обновление (фазы, время,
 # килобайты), одно финальное уведомление, версии блоков, состояние на
 # диске, кэш проверки, защита от двойного запуска.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 import threading
@@ -208,9 +208,14 @@ class TestStatusEndpointAndUI:
 
         monkeypatch.setattr(updater, "_remote_version", fake_remote)
         monkeypatch.setattr(updater, "_remote_changelog", lambda r, b: "")
+        # Право на перезапуск — свойство сервера, а не этого теста. Без подмены
+        # результат зависел от systemd машины: для несуществующего юнита
+        # `systemctl is-active` даёт 3 в systemd 252 и 4 в systemd 255
+        # (Ubuntu 24.04, CI) — тогда apply честно отвечает 409.
+        monkeypatch.setattr(updater, "_restart_mode", lambda: (True, "sudoers"))
         adm = login(client, "admin", "admin123")
         r = client.post("/api/v1/admin/update/apply", headers=adm)
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         body = r.json()
         assert body["updated"] is False and "уже последняя" in body["message"]
         # pre_flight + check_update — обе свежие (кэшированный «99.0.0» проигнорирован)

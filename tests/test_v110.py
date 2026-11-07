@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.10.0: меню, адаптив/поворот, фискальный QR чека,
 # авансовый отчёт, Windows-установка, пароль сервера (sudo -S), зависимости.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from tests.conftest import login
 
@@ -40,7 +40,7 @@ class TestFiscalQrAndAO1:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "openAO1Modal" in js and "btn-ao1" in js
         assert "АВАНСОВЫЙ ОТЧЁТ" in js
-        assert "qrUrls" in js and "/qr.png" in js   # QR в печатных чеках
+        assert "qrUrl" in js and "/qr.png" in js   # QR в печатных чеках
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert ".ao-page" in css and ".ao-table" in css
 

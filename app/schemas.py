@@ -3,7 +3,7 @@
 Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: info@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
 
 Pydantic-схемы для валидации запросов и ответов API.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Аутентификация ------------------------------------------------------
@@ -81,6 +81,13 @@ class AdvanceReportBody(BaseModel):
                              description="Только чеки, подтверждённые ФНС")
 
 
+class AdvanceReportNumberBody(BaseModel):
+    company_id: str = Field(min_length=1, max_length=36)
+    report_date: str = Field(min_length=10, max_length=10)
+    request_id: str = Field(min_length=36, max_length=36)
+    start_after: int = Field(default=0, ge=0, le=999999)
+
+
 class ExportRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=1000)
     format: Literal["json", "xml"] = "json"
@@ -105,7 +112,7 @@ class MappingSave(BaseModel):
 
 # --- Настройки ---------------------------------------------------------------
 class FnsSettingsPatch(BaseModel):
-    provider: Literal["mock", "fns"]
+    provider: Literal["fns"] = "fns"
     api_base: Optional[str] = None
     master_token: Optional[str] = None
     client_app_id: Optional[str] = None
@@ -165,7 +172,22 @@ class ReceiptPatch(BaseModel):
     merchant_inn: Optional[str] = Field(default=None, max_length=20)
     merchant_address: Optional[str] = Field(default=None, max_length=500)
     cashier: Optional[str] = Field(default=None, max_length=200)
+    # v1.70.72: отрасль и регион можно поправить вручную (уточнение пула)
+    industry: Optional[str] = Field(default=None, max_length=100)
+    region_code: Optional[str] = Field(default=None, max_length=4)
+    region_name: Optional[str] = Field(default=None, max_length=120)
     items: Optional[list["ReceiptItemPatch"]] = None
+
+    @field_validator("receipt_date")
+    @classmethod
+    def _wall_time(cls, value: Optional[datetime]) -> Optional[datetime]:
+        """v1.70.110: время чека — местное время кассы, как в QR («t=20260922T1556»).
+
+        Часовой пояс отбрасывается без пересчёта: «15:56+05:00» — это 15:56. Прежде форма
+        правки слала время в UTC, и каждое сохранение сдвигало чек на пояс браузера;
+        PostgreSQL к тому же переводит время с поясом по настройке сервера.
+        """
+        return value.replace(tzinfo=None) if value is not None and value.tzinfo else value
 
 
 class ReceiptItemPatch(BaseModel):
@@ -177,6 +199,13 @@ class ReceiptItemPatch(BaseModel):
     vat_sum: Optional[float] = Field(default=None, ge=0)
 
 
+class EnrichRequest(BaseModel):
+    """v1.70.72: разбор сохранённых данных чеков (без запросов в ФНС)."""
+    receipt_ids: list[str] = Field(default_factory=list, max_length=500)
+    company_id: Optional[str] = Field(default=None, max_length=36)
+    only_empty: bool = True          # только там, где регион/отрасль не заданы
+
+
 class FetchDetailsRequest(BaseModel):
     """Массовое получение данных чеков из внешних источников (v1.2.0)."""
     receipt_ids: list[str] = Field(min_length=1, max_length=200)
@@ -186,15 +215,13 @@ class FetchDetailsRequest(BaseModel):
 
 
 class ExternalSettingsPatch(BaseModel):
-    """Настройки источников данных о чеке (только администратор)."""
+    """v1.70.70: настройки единственного источника — Открытых API ФНС."""
     fns_master_token: Optional[str] = Field(default=None, max_length=500)
-    proverkacheka_token: Optional[str] = Field(default=None, max_length=500)
-    external_order: Optional[str] = Field(default=None, max_length=100)
-    external_auto: Optional[bool] = None
+    fns_client_app_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class ExternalTestRequest(BaseModel):
-    provider: str = "chain"  # chain (весь порядок) | fns_api | proverkacheka
+    """Контрольный запрос к ФНС (сторонних провайдеров больше нет)."""
     qrraw: Optional[str] = None
 
 
@@ -211,6 +238,12 @@ class PolicyPatch(BaseModel):
     limit_per_check: Optional[float] = Field(default=None, ge=0, le=10_000_000)
     limit_per_month: Optional[float] = Field(default=None, ge=0, le=1_000_000_000)
     forbidden_categories: Optional[list[str]] = None
+    # v1.70.93 (T-43): запрещённые группы товаров (app/services/goods.py)
+    forbidden_goods: Optional[list[str]] = Field(default=None, max_length=50)
+    # v1.70.101 (T-69): отраслевой профиль компании (app/goods/profiles.py); reset_goods — снова
+    # «по профилю» вместо своей настройки запрещённых групп
+    goods_profile: Optional[str] = Field(default=None, max_length=20)
+    reset_goods: Optional[bool] = None
 
 
 # --- v1.63.0: самообучающийся маппинг «запомнить для поставщика» --------------
@@ -251,6 +284,10 @@ class ReceiptMoveBody(BaseModel):
     company_id: str = Field(max_length=36)
     assignee: Optional[str] = Field(default=None, max_length=200,
                                     description="Переназначить подотчётное лицо")
+    # v1.70.86 (Q-24): чеки на разборе по умолчанию отменяют всю пачку (409 со
+    # списком); True — переместить остальные, а такие чеки оставить на месте.
+    skip_blocked: bool = Field(default=False,
+                               description="Пропустить чеки, которые ждут разбора, и переместить остальные")
 
 
 class CompanyDeleteBody(BaseModel):

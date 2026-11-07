@@ -5,7 +5,7 @@
 # «Пользователи») ломала ВЕСЬ app.js — приложение не открывалось в
 # браузере, хотя node --check ложно проходил. Страж: полный парс бандла
 # всех модулей через node vm (если node недоступен — тест пропускается).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 import shutil
@@ -16,8 +16,13 @@ import pytest
 from tests.conftest import login
 
 JS_DIR = "app/static/js"
-MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js",
-           "printpack.js", "api.js", "app.js"]
+# v1.70.86: unified_review.js — его функции (значок «🏢 N» числа организаций)
+# реестр чеков вызывает при отрисовке строки, поэтому модуль нужен стенду DOM.
+# v1.70.98: bank.js — экран «Банк: выписка» (T-45), его viewBank зовёт маршрутизатор app.js.
+# v1.70.100: clients.js — экран «Клиенты» и пакет выгрузки (T-50, T-68), его зовёт маршрутизатор app.js.
+# v1.70.101: goods.js — позиции чека с категориями и память товаров (T-69), их рисует карточка чека app.js.
+MODULES = ["ui.js", "icons.js", "charts.js", "scanner.js", "printpack.js", "clients.js", "goods.js",
+           "primary_mail.js", "api.js", "bank.js", "primary.js", "docreq.js", "unified_fill.js", "unified_review.js", "app.js"]
 
 
 import os

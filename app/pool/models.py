@@ -4,7 +4,7 @@
 # Только НОВЫЕ таблицы (pool_*); существующие таблицы ядра не изменяются.
 # Миграции — только добавляющие (ensure_pool_schema: новые таблицы +
 # добавление колонок), продакшн-база никогда не требует разрушающих ALTER.
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -12,13 +12,21 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
-from ..models import iso_z          # v1.60.0: инстанты в API — UTC+«Z»
+from ..models import iso_z  # v1.60.0: инстанты в API — UTC+«Z»
 
 
 def _uid() -> str:
@@ -58,6 +66,23 @@ class PoolUser(Base):
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
     quarantined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    # v1.70.37: канал регистрации участника: max | tg | web | "" (гость сайта).
+    # Поле — факт о способе входа, не персональные данные; по нему администратор
+    # видит, что человек пришёл через мини-приложение MAX.
+    reg_source: Mapped[str] = mapped_column(String(16), default="")
+    # v1.70.37: профиль из MAX. Заполняется ТОЛЬКО после явного согласия
+    # (152-ФЗ, ст. 9): пока consent_at NULL, карточка пуста, а сессия и начисление
+    # баллов работают — для них достаточно идентификатора.
+    first_name: Mapped[str] = mapped_column(String(64), default="")
+    last_name: Mapped[str] = mapped_column(String(64), default="")
+    photo_url: Mapped[str] = mapped_column(String(512), default="")
+    language: Mapped[str] = mapped_column(String(8), default="")
+    # v1.70.37: согласие на обработку данных, полученных из MAX: момент дачи,
+    # версия текста согласия и канал. NULL consent_at — согласие не дано либо
+    # отозвано: персональные поля очищены (ст. 21 152-ФЗ).
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consent_version: Mapped[str] = mapped_column(String(16), default="")
+    consent_source: Mapped[str] = mapped_column(String(16), default="")
 
 
 # --------------------------------------------------------------------------
@@ -101,6 +126,9 @@ class PoolReceipt(Base):
     full_data: Mapped[bool] = mapped_column(Boolean, default=False)
     points_awarded: Mapped[int] = mapped_column(Integer, default=0)
     raw: Mapped[str] = mapped_column(Text, default="")
+    extra_json: Mapped[str] = mapped_column(Text, default="", server_default="")
+    fns_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    fns_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # привязка к компании (Этап 5; v1.37.0 — «Подбор из пула» и сценарий C)
     assigned_company_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -187,6 +215,9 @@ def ensure_pool_schema(engine) -> None:
     # v1.37.0: колонки подбора для уже существующей pool_receipts
     rcols = {c["name"] for c in insp.get_columns("pool_receipts")}
     r_add = (
+        ("extra_json", "ALTER TABLE pool_receipts ADD COLUMN extra_json TEXT DEFAULT ''"),
+        ("fns_confirmed", "ALTER TABLE pool_receipts ADD COLUMN fns_confirmed BOOLEAN DEFAULT FALSE"),
+        ("fns_checked_at", "ALTER TABLE pool_receipts ADD COLUMN fns_checked_at TIMESTAMP NULL"),
         ("assigned_at",
          "ALTER TABLE pool_receipts ADD COLUMN assigned_at DATETIME"),
         ("assigned_by",

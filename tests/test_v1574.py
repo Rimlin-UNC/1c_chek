@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.57.4: force-запрос данных — чеки с full_data=1
 # (старые, без ext_json) снова загружаются.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import datetime as dt
 import re
@@ -164,5 +164,5 @@ class TestBlocksRegistry:
         reg = updater.read_blocks("app/services/blocks.py")
         assert tuple(int(x) for x in
                      reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 57, 4)
-        assert reg["Чек-Пул"] == "1.56.1"                 # не задет
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)                 # не задет
         assert tuple(int(x) for x in reg["Обновления"].split(".")) >= (1, 55, 1)              # не задет

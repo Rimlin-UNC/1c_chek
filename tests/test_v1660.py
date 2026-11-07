@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.66.0: Ассистенты (Telegram + MAX).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.6):
 #  - напоминания «сдай чеки за сегодня» (18:00, настройка) и утренний

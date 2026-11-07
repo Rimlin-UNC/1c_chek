@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.31.0: «Чек-Пул» этап 2 — приём чеков на сайте (без Telegram).
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки Этапа 2 (docs/dev_plan_checkpool.md):
 #  - чек с сайта (строка QR) попадает в пул С ПОЗИЦИЯМИ, источник «web»;
@@ -169,7 +169,9 @@ class TestPublicCheck:
             _s.close()
         assert info["enabled"] is want
         assert "offerta" in info and info["offerta_version"]
-        assert info["daily_limit"] == 50
+        # v1.70.40: суточный лимит — из кода (поднят до 100 решением владельца),
+        # а не зашитое число: иначе тест расходился бы с ingest.DAILY_LIMIT
+        assert info["daily_limit"] == pool.DAILY_LIMIT >= 50
         db = _db(); _enable(db, True); db.commit(); db.close()
         info = c.get("/api/v1/public/pool/info").json()
         assert info["enabled"] is True

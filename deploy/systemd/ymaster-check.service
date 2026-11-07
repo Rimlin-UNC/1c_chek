@@ -1,6 +1,6 @@
 # ======================================================================
 # Ямастер Чек — systemd-юнит
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 #
 # Установка:
 #   sudo cp deploy/systemd/ymaster-check.service /etc/systemd/system/

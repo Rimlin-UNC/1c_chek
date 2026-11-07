@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.3.0: единая версия по всей системе,
 # новые источники (OFD-ру «QR Cash», несколько своих источников).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import json
 import re
@@ -108,7 +108,8 @@ class TestMultiCustom:
         finally:
             db.close()
         assert not any(c.startswith("custom") for c in chain)
-        assert chain[-1] == "mock"
+        # v1.70.70: источник единственный — ФНС
+        assert chain == ["fns_api"]
 
     def test_bad_url_rejected(self, client):
         hdr = login(client, "admin", "admin123")
@@ -122,4 +123,6 @@ class TestMultiCustom:
         g = client.get("/api/v1/settings/external", headers=hdr).json()
         assert "external_custom_urls" not in g   # v1.55.0: ключ удалён из ответа
         assert "has_ofd_ru_token" not in g       # v1.57.0: ОФД-ру выведен
-        assert "has_proverkacheka_token" in g
+        # v1.70.70: настройки сторонних сервисов удалены вместе с провайдерами
+        assert "has_proverkacheka_token" not in g
+        assert "has_fns_master_token" in g and "quota" in g

@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.44.0: Почтовый центр (SMTP-ящик, шаблоны,
 # бот рассылок по расписанию/условию, отписка, лимиты, журнал 90 дней).
 # SMTP подменяется фейковым сервером: письма перехватываются, контент
-# и получатели проверяются. ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# и получатели проверяются. ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import datetime as dt
 import re
@@ -33,6 +33,11 @@ class FakeSMTP:
 
     def send_message(self, msg):
         SENT.append(msg)
+
+
+def _sent_by_rule(subject):
+    """Письма одного правила: правила других тестов в общей базе тоже срабатывают на тике (v1.70.96)."""
+    return [m for m in SENT if m["Subject"] == subject]
 
 
 def _install_fake(monkeypatch):
@@ -187,8 +192,16 @@ class TestMailBot:
         # повторный запуск: адрес подавлен → письма нет
         res2 = client.post(f"/api/v1/mail-admin/rules/{rid}/run",
                            headers=adm).json()
-        assert res2["sent"] == 0 and res2["skipped"] == 0  # вне аудитории
-        assert len(SENT) == 1                              # писем не прибавилось
+        # v1.70.39: суть проверки — подавленному адресату письмо НЕ уходит.
+        # Требование «skipped == 0» означало «аудитория пуста», но в общем
+        # прогоне в аудиторию правила попадают пользователи, созданные другими
+        # тестами, и они честно оказываются в skipped: падение зависело от
+        # порядка запуска, а не от поведения рассылки.
+        assert res2["sent"] == 0, res2
+        # писем не прибавилось: в журнале отправки осталось единственное —
+        # то самое, отправленное ДО отписки (SENT накапливается в рамках теста)
+        assert len(SENT) == 1
+        assert SENT[0]["To"] == "inactive@test.ru"
         sup = client.get("/api/v1/mail-admin/suppressed",
                          headers=adm).json()
         assert "inactive@test.ru" in sup["items"]
@@ -224,11 +237,11 @@ class TestMailBot:
         res = mail_center.tick(db, now=_now)
         assert any(x["rule"] == "Подтвердите e-mail" and x["sent"] == 1
                    for x in res["ran"]), res
-        assert len(SENT) == 1
+        assert len(_sent_by_rule("Подтвердите e-mail")) == 1
         # повторный тик в тот же день → не выполняется
         res2 = mail_center.tick(db, now=_now + dt.timedelta(minutes=30))
         assert res2["ran"] == []
-        assert len(SENT) == 1
+        assert len(_sent_by_rule("Подтвердите e-mail")) == 1
         # бот выключен → тик ничего не делает
         from app.services import appsettings as _as
         _as.set_setting(db, mail_center.SET_BOT_ON, "0")

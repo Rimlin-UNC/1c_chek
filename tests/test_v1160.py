@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.16.0: самовосстановление апдейтера (обновление
 # из приложения без .git), Telegram-бот (настройки/привязка/напоминания),
 # светофор контрагента, массовое обновление ЕГРЮЛ.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import itertools
 import os
@@ -59,7 +59,9 @@ class TestUpdaterSelfHeal:
         monkeypatch.setattr(up, "_gh_git", fail_404)
         try:
             up._remote_version("o/r", "main")
-            assert False, "должна быть ошибка"
+            # v1.70.38: `assert False` под `python -O` вырезается — проверка
+            # становилась пустой
+            raise AssertionError("должна быть ошибка")
         except RuntimeError as e:
             assert "нет файла" in str(e) and "main" in str(e)
 
@@ -270,16 +272,38 @@ class TestBulkRefresh:
         _base = f"77{next(_SEQ):07d}"[:9]
         _cs = (sum(a * b for a, b in zip(_d, [int(c) for c in _base])) % 11) % 10
         _inn2 = _base + str(_cs)
-        client.post("/api/v1/companies", json={
+        comp2 = client.post("/api/v1/companies", json={
             "name": f"ООО Массовое {next(_SEQ)}", "inn": _inn2},
-            headers=hdr)
-        r = client.post("/api/v1/companies/bulk-refresh",
-                        json={"limit": 40}, headers=hdr)
+            headers=hdr).json()
+        # v1.70.98: в общей базе воркера бывает больше 40 компаний с ИНН, а обновление за раз берёт 40 —
+        # на время проверки остальные компании с ИНН выключаем, затем возвращаем как было
+        from app.models import Company
+        s = SessionLocal()
+        try:
+            others = (s.query(Company)
+                      .filter(Company.is_active.is_(True), Company.inn.isnot(None), Company.inn != "",
+                              Company.id.notin_([comp["id"], comp2["id"]])).all())
+            other_ids = [c.id for c in others]
+            for c in others:
+                c.is_active = False
+            s.commit()
+        finally:
+            s.close()
+        try:
+            r = client.post("/api/v1/companies/bulk-refresh",
+                            json={"limit": 40}, headers=hdr)
+        finally:
+            s = SessionLocal()
+            try:
+                for c in s.query(Company).filter(Company.id.in_(other_ids)):
+                    c.is_active = True
+                s.commit()
+            finally:
+                s.close()
         assert r.status_code == 200, r.text
         d = r.json()
-        # в общей БД есть компании из других тестов: считаем относительно
-        assert d["total_with_inn"] >= 2
-        assert d["updated"] == d["total_with_inn"] - len(d["errors"])
+        assert d["total_with_inn"] == 2
+        assert d["updated"] == d["total_with_inn"] - len(d["errors"]) == 1
         assert any(_inn2 in e for e in d["errors"])
         # карточка реально записана
         d2 = client.get(f"/api/v1/companies/{comp['id']}/card", headers=hdr).json()

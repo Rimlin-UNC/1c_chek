@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.65.0: PDF-чеки (электронные чеки из почты/банка).
-# ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.5):
 #  - текстовые PDF идут в ТОТ ЖЕ конвейер: QR из текста → обычный приём
@@ -213,7 +213,7 @@ class TestPdfEndpoint:
         """Пайплайн ПЕЧАТИ чеков (printpack, v1.24+) не тронут."""
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert "function whenImagesReady(root)" in js
-        assert "qrList = data.items.slice(0, 300)" in js
+        assert "for (let i = 0; i < ids.length; i++)" in js
         assert "packCut" in js
 
 

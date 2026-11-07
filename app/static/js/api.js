@@ -1,7 +1,7 @@
 // ======================================================================
 // Ямастер Чек — API-клиент
 // Разработчик и владелец идеи: ООО «Ямастер»
-// Сайт: https://ymaster.ru | E-mail: info@ymaster.ru
+// Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 //
 // Надёжность: сетевые сбои (просыпающийся прокси/офлайн) автоматически
 // повторяются с нарастающей паузой; токен НЕ стирается при сбоях сети —
@@ -12,7 +12,27 @@ const TOKEN_KEY = 'ymaster_check_token';
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 export function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
-export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+export function clearToken() { localStorage.removeItem(TOKEN_KEY); setClient(''); }
+
+// v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер — активный клиент. Заголовок X-Ym-Company уходит со
+// всеми запросами; сервер проверяет, что компания назначена бухгалтеру администратором. Доступ отозван
+// (403 «… компании клиента …») — выбор сбрасывается и запрос один раз повторяется в своей компании.
+const CLIENT_KEY = 'ymaster-client';
+export function getClient() {
+  try { return localStorage.getItem(CLIENT_KEY) || ''; } catch { return ''; }
+}
+export function setClient(id) {
+  try {
+    if (id) localStorage.setItem(CLIENT_KEY, id);
+    else localStorage.removeItem(CLIENT_KEY);
+  } catch { /* приватный режим */ }
+}
+function withClient(headers) {
+  const client = getClient();
+  if (client) headers['X-Ym-Company'] = client;
+  return headers;
+}
+const CLIENT_DENIED = /компани[ия] клиента/;
 
 export class ApiError extends Error {
   constructor(status, message, data) {
@@ -25,7 +45,7 @@ export class ApiError extends Error {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function once(method, path, body, options = {}) {
-  const headers = {};
+  const headers = withClient({});
   const token = getToken();
   if (token) headers['Authorization'] = 'Bearer ' + token;
   let payload;
@@ -57,7 +77,13 @@ async function once(method, path, body, options = {}) {
       msg = typeof data.detail === 'string' ? data.detail
         : (data.detail?.message || JSON.stringify(data.detail || data));
     } catch { /* не JSON */ }
-    throw new ApiError(resp.status, msg, data);
+    const err = new ApiError(resp.status, msg, data);
+    if (resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
+      setClient('');                       // клиент отозван или отключён — назад в свою компанию
+      window.dispatchEvent(new CustomEvent('ymaster:client-reset', { detail: { message: msg } }));
+      err.clientReset = true;
+    }
+    throw err;
   }
   window.__ymLastApiOk = Date.now();   // для индикатора «офлайн» (гистерезис)
   const ct = resp.headers.get('content-type') || '';
@@ -73,6 +99,9 @@ async function request(method, path, body, options = {}) {
       return await once(method, path, body, options);
     } catch (e) {
       lastErr = e;
+      if (e.clientReset && !options.clientRetried) {      // v1.70.100: повтор уже без клиента
+        return request(method, path, body, { ...options, clientRetried: true });
+      }
       // Повторяем только сетевые сбои и 502/503/504 (просыпающийся сервер)
       const retryable = e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504;
       if (!retryable || i === attempts - 1) throw e;
@@ -91,7 +120,7 @@ export const api = {
   download: async (p, b) => {
     // v1.8.2: без тела — GET (эндпоинты скачивания — GET: бэкап, QR и т.п.);
     // прежде отправлялся POST и кнопка «Скачать резервную копию БД» падала 405
-    const headers = { 'Authorization': 'Bearer ' + getToken() };
+    const headers = withClient({ 'Authorization': 'Bearer ' + getToken() });
     const opts = b === undefined
       ? { method: 'GET', headers }
       : { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },

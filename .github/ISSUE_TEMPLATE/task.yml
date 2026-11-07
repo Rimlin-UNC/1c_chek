@@ -1,0 +1,67 @@
+name: Задача
+description: Задача для roadmap (docs/kb/02_roadmap.csv)
+title: "[T-XX] "
+labels: ["roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Задача попадает в базу знаний: `docs/kb/02_roadmap.csv` (строка T-XX со ссылкой на этот issue).
+        Не пишите секреты, строки рабочих данных и персональные данные — только имена переменных, схему и агрегаты.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Что нужно сделать и зачем
+      description: Результат, который увидит владелец или пользователь.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Критерии готовности
+      description: Проверяемые условия — тесты, CI, данные, документация.
+      placeholder: |
+        - [ ] ...
+        - [ ] CI зелёный: 0 упавших и 0 пропущенных тестов
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Приоритет
+      options:
+        - P0 — срочно
+        - P1 — высокий
+        - P2 — средний
+        - P3 — низкий
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - Единый реестр / миграция
+        - Релиз и обновление
+        - CI и тесты
+        - Supabase
+        - Vercel
+        - Документация
+        - Другое
+    validations:
+      required: true
+  - type: dropdown
+    id: owner_confirmation
+    attributes:
+      label: Нужно подтверждение владельца?
+      description: «Да» — для действий из стоп-листа (AGENTS.md) — main, рабочий сервер, Supabase, production Vercel.
+      options:
+        - Нет
+        - Да
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Источники
+      description: Файлы, PR, таблицы, деплои, ADR (ADR-NN), вопросы (Q-NN).

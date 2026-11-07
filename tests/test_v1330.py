@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.33.0: «Чек-Пул» этап 4 — гео, отрасли, панель модерации.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки Этапа 4 (docs/dev_plan_checkpool.md):
 #  - адрес места расчёта → регион/город (geo_accuracy="address"); «ул. Тверская»
@@ -253,9 +253,21 @@ class TestPipelineEnrichment:
             res = pool.ingest_receipt(db, _qr(), "test", u)
             assert res["result"] == "verified"
         ov = pool.overview(db)
+        # v1.70.39: покрытие считаем по СВОЕМУ потоку чеков. overview() даёт
+        # долю по всей таблице пула, а в общем прогоне там лежат чеки других
+        # тестов — часто без региона, поэтому глобальный процент зависел от
+        # порядка запуска: 4 своих из 6 общих давали 67 % вместо 80 %.
+        # Критерий этапа по-прежнему проверяется, но на своём потоке.
+        mine = db.query(PoolReceipt).filter_by(pool_user_id=u.id).all()
         db.close()
-        assert ov["geo_coverage"] >= 70, ov
-        assert ov["industry_coverage"] >= 60, ov
+        assert len(mine) == 5, [r.id for r in mine]
+        region = sum(1 for r in mine if r.region_code)
+        industry = sum(1 for r in mine if r.industry)
+        assert 100 * region / len(mine) >= 70, (region, industry)
+        assert 100 * industry / len(mine) >= 60, (region, industry)
+        # сводка работает и наш поток в ней учтён
+        assert ov["receipts_total"] >= 5, ov
+        assert 0 <= ov["geo_coverage"] <= 100 and 0 <= ov["industry_coverage"] <= 100
 
 
 class TestModeration:

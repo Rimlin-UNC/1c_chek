@@ -3,7 +3,7 @@
 # Все фильтры работают вместе (status/fns/exported/assignee/creator/
 # full_data/category/notified/даты/q/ids), поиск без учёта регистра,
 # фильтры не конфликтуют со scope компании.
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import re
 
@@ -109,9 +109,16 @@ class TestReceiptFiltersFull:
             if False else None
         # (creator фильтруется по id пользователя — берём из /creators)
         cr = client.get("/api/v1/receipts/creators", headers=H).json()
-        # матч по уникальному username (в общем прогоне есть «Ивановы» других тестов)
-        ivan = next(x["id"] for x in cr if x["username"].startswith("flt_ivan"))
-        petr = next(x["id"] for x in cr if x["username"].startswith("flt_petr"))
+        # v1.70.39: id создателей берём у самих пользователей. Поиск по
+        # префиксу имени в общем списке давал чужого «flt_ivan_*», когда
+        # _setup вызывался несколько раз за прогон (у класса два теста):
+        # запрос creator=<чужой id>&company_id=<своя> возвращал пустой список,
+        # и падение зависело только от порядка запуска.
+        ivan = client.get("/api/v1/auth/me", headers=U1).json()["id"]
+        petr = client.get("/api/v1/auth/me", headers=U2).json()["id"]
+        # эндпоинт «кто добавлял» при этом обязан содержать обоих
+        cr_ids = {x["id"] for x in cr}
+        assert ivan in cr_ids and petr in cr_ids, "создатели видны в /creators"
         got_ivan = _ids(client.get(
             f"/api/v1/receipts?creator={ivan}&company_id={comp['id']}", headers=H).json())
         got_petr = _ids(client.get(

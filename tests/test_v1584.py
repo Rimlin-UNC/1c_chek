@@ -3,7 +3,7 @@
 # Ямастер Чек — тесты v1.58.4: Почтовый центр предзаполнен реквизитами
 # mail_timeweb.md (smtp.timeweb.ru:465 SSL, chek@ymaster.ru) — админ
 # вводит только пароль.
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import pytest
 import re
@@ -39,9 +39,10 @@ class TestVersion1584:
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
         assert reg["Почтовый центр"] == "1.58.4"
-        assert reg["Адаптивный интерфейс"] == "1.58.3"   # не задет
+        # 1.58.4 блок не задела; с 1.70.87 (#25) он снова менялся — версия только растёт
+        assert tuple(int(x) for x in reg["Адаптивный интерфейс"].split(".")) >= (1, 58, 3)
         assert tuple(int(x) for x in reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 58, 0)
-        assert reg["Чек-Пул"] == "1.56.1"
+        assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)
 
 
 class TestMailDefaults:

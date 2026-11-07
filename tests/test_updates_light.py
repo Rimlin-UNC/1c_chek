@@ -2,7 +2,7 @@
 # ======================================================================
 # Ямастер Чек — тесты v1.6.0: мультиканальная проверка обновлений,
 # семвер «только вперёд», источник репозитория, лёгкий клиент (gzip/кэш).
-# ООО «Ямастер» | ymaster.ru | info@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 import app.services.updater as updater
 from app.config import settings
@@ -61,7 +61,9 @@ class TestMultiSource:
         monkeypatch.setattr(updater, "_run_full", lambda *a, **kw: (1, "TLS EOF"))
         try:
             updater._fetch_remote_file("o/r", "b", "app/config.py")
-            assert False, "должна быть ошибка"
+            # v1.70.38: `assert False` под `python -O` ВЫРЕЗАЕТСЯ — тест
+            # молча зеленел бы, даже если ошибка перестала бросаться
+            raise AssertionError("должна быть ошибка")
         except RuntimeError as e:
             assert "deploy.sh --update" in str(e)
             assert "api.github.com" in str(e)

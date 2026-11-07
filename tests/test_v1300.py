@@ -1,5 +1,5 @@
 # Ямастер Чек — тесты v1.30.0: «Чек-Пул» этап 1 (приём чеков через бота).
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | info@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
 #
 # Критерии приёмки Этапа 1 (docs/dev_plan_checkpool.md):
 #  - чек из Telegram попадает в pool_receipts С ПОЗИЦИЯМИ;
