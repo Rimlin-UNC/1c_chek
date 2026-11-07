@@ -154,8 +154,25 @@ Projects токен интеграции создать не может (403).
   старта для #13. Превью `6444b58` — `dpl_DMuqvtGwAj1WyhhSxpXXH5YBc85A`, READY
   через ~30 с после создания.
 - Работоспособность приложения на Vercel проверить нельзя: деплои закрыты
-  Vercel Authentication, а песочница не открывает `vercel.app`. Роль проекта —
-  требует уточнения ([#13](https://github.com/Rimlin-UNC/1c_chek/issues/13)).
+  Vercel Authentication, а песочница не открывает `vercel.app`. Владелец решил
+  07.11.2026: Vercel — **демо-контур**, не рабочее окружение (ADR-13, T-10).
+- **Потолок размера сборки.** Сборка падала на `LAMBDA_SIZE_EXCEEDED` (506,08 МБ
+  при потолке 500 МБ на функцию). Размер держит `.vercelignore`: в архив
+  попадают код приложения, статика и `requirements.txt`, а документация, тесты,
+  инструменты разработки, `package.json` с `node_modules` и данные приложения —
+  нет. Если проверка снова покраснеет, смотреть `get_deployment_events`:
+  сообщение `LAMBDA_SIZE_EXCEEDED` означает, что в сборку вернулось что-то
+  тяжёлое; следующий шаг — отдельный `requirements-vercel.txt` без
+  `opencv-python-headless`, `onnxruntime`, `rapidocr`, `tesserocr` и
+  `openstacksdk` (демо тогда работает без распознавания сканов).
+- **Проверено 07.11.2026** (ветка `arena/7724a622-1c-chek`, коммит `acb5f3d`): «Found
+  .vercelignore», отсечено 493 файла, сборка 9 с, пакет **496,17 МБ** вместо 506,08,
+  деплой `dpl_8huZqPCbF3Aq4PwQune9y11r8rwm` — `READY` за 26 с. Важная оговорка:
+  шаблон `/data/` привязан к корню (так же, как в `.gitignore`), иначе из сборки
+  пропадают справочники `app/pool/geo/data/`.
+- **Проверка новой сборки:** коннектором `list_deployments` (проект `1c-chek`) —
+  последний деплой ветки в `READY`, затем `get_deployment_events` — в журнале
+  «Bundle size (…MB)» и нет `LAMBDA_SIZE_EXCEEDED`.
 
 ## Стандарт выпуска
 
@@ -224,7 +241,14 @@ Projects токен интеграции создать не может (403).
 
   База при откате не меняется (ADR-03).
 - **Единая запись (с 1.70.88).** Только владелец, на сервере, из каталога
-  программы с её окружением:
+  программы с её окружением — каталог `/opt/ymaster-check`, окружение `venv`
+  (не `.venv`), запуск от пользователя `ymaster`:
+  ```bash
+  cd /opt/ymaster-check
+  sudo -u ymaster venv/bin/python -m app.unified.backfill --soft --dry-run
+  ```
+  Дальше в этом разделе команды записаны как `python -m …` — это то же самое
+  окружение из каталога программы.
   - `python -m app.unified.readiness` — готовность единой записи, только числа,
     база не меняется (то же — вкладка «Готовность» в «Разборе конфликтов»);
   - `python -m app.unified.backfill --soft --dry-run` — пробная мягкая
@@ -244,7 +268,7 @@ Projects токен интеграции создать не может (403).
 | Локально / песочница | разработка, тесты, предпросмотр | README, development_environment.md |
 | GitHub Actions | CI на каждый push: полный набор тестов, PostgreSQL 17 | `.github/workflows/ci.yml`, прогоны с 02.11.2026 |
 | Supabase `chek.base` | read-only демо с синтетикой | supabase/README.md, проверка 2026-11-02 |
-| Vercel `1c-chek` | превью-сборки на push; production из `main`; переменных нет; работоспособность не проверена | дашборд Vercel 2026-11-02; роль — требует уточнения (T-10) |
+| Vercel `1c-chek` | демо-контур: превью-сборки на push; production из `main`; переменных нет; работоспособность из песочницы не проверена (Vercel Authentication) | дашборд Vercel 2026-11-02; решение 07.11.2026 — ADR-13, T-10 |
 
 ## Переменные окружения (только имена и назначение)
 

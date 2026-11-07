@@ -208,7 +208,8 @@ class TestDocsAndKb:
         assert ledger[-2]["Версия"] == "1.70.113" and ledger[-2]["Откат на неё"] == "можно"
         kb = read("docs/kb/README.md")
         assert f"| Последний выпуск | **v{VERSION}** — печатная форма УПД (T-62; ADR-45)" in kb
-        assert "#3 — v1.70.82–v1.70.114 |" in kb and "issues #4–#66" in kb
+        # PR #3 и #67 слиты 07.11.2026 — строка «открытые PR» меняется, важна запись о слиянии
+        assert "PR #67" in kb and "88d9d36" in kb and "issues #4–#66" in kb
         seo = read("docs/kb/12_seo.md")
         assert "## 8. Запрос владельца 07.11.2026: блог, 25 ключей и картинки (T-82)" in seo
         assert "проверка чеков на сайте налоговой" in seo

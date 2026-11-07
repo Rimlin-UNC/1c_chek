@@ -4,7 +4,7 @@
 # Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # Вопрос: разместить систему на существующем сервере (Ubuntu 24.04,
-# 94.183.236.179), на «хостинге с базой данных» или другим способом?
+# текущий сервер владельца), на «хостинге с базой данных» или другим способом?
 # Документ — развёрнутое сравнение и рекомендация.
 # ======================================================================
 
@@ -30,7 +30,7 @@ Python-процесс с WebSocket и root-доступом для защиты.
 
 # Сравнение вариантов
 
-## A. Текущий сервер 94.183.236.179 (Ubuntu 24.04) — деплой туда
+## A. Текущий сервер владельца (Ubuntu 24.04) — деплой туда
 Стоимость: 0 ₽/мес.
 + Ubuntu 24.04 — точное совпадение с deploy.sh; DNS chek.ymaster.ru уже
   указывает сюда — вообще ничего не переключать.
@@ -109,9 +109,9 @@ Beget — месяц бесплатного теста; reg.ru/SpaceWeb — со
        sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru
      (если репозиторий приватный: GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh ...)
   5. Войти admin/admin123, сменить пароль, создать приглашения.
-Откат: вернуть A-запись на 94.183.236.179 — прежнее состояние.
+Откат: вернуть A-запись на адрес сервера владельца — прежнее состояние.
 
 Если будет выбран вариант A (текущий сервер) — сначала аудит одной командой
 (результат прислать для анализа):
-  ssh root@94.183.236.179 'ss -tlnp; echo ---; nginx -t 2>&1; echo ---; ufw status; echo ---; systemctl list-units --type=service --state=running | grep -Ei "nginx|apache|php|mysql|postgres|caddy"'
+  ssh root@<адрес сервера> 'ss -tlnp; echo ---; nginx -t 2>&1; echo ---; ufw status; echo ---; systemctl list-units --type=service --state=running | grep -Ei "nginx|apache|php|mysql|postgres|caddy"'
 и затем установка в бережном режиме (--no-nginx с ручным включением сайта).

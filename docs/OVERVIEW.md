@@ -60,7 +60,7 @@ Python 3.11+.
 | Репозиторий | публичный; ветки `main`, `arena/01a0caaa-1c-chek` (PR #1), `arena/071f4163-1c-chek` (PR #2), `arena/c7f9d34a-1c-chek` (PR #3) | [GitHub](https://github.com/Rimlin-UNC/1c_chek) |
 | Рабочий сервер | VPS: `/opt/ymaster-check`, systemd-сервис `ymaster-check`, установка `deploy.sh`, обновление из программы. Домен, IP и ветку-источник агент проверить не может — **требует уточнения** | [docs/DEPLOYMENT.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/DEPLOYMENT.md) |
 | Supabase | проект `chek.base` (`putddctwdskfdzichigx`, eu-west-1, PostgreSQL 17), только демо-контур | [Dashboard](https://supabase.com/dashboard/project/putddctwdskfdzichigx) |
-| Vercel | проект `1c-chek` (команда chek5, тариф Hobby): превью на каждый push, production из `main`, домен `1c-chek.vercel.app` (за Vercel Authentication) | [Dashboard](https://vercel.com/chek5/1c-chek) |
+| Vercel | **демо-контур** (ADR-13): проект `1c-chek` (команда chek5, тариф Hobby), превью на каждый push и production из `main`, домен `1c-chek.vercel.app` за Vercel Authentication; рабочее окружение — сервер владельца, не Vercel; размер сборки держит `.vercelignore` | [Dashboard](https://vercel.com/chek5/1c-chek) |
 | GitHub Actions | CI на каждый push в `main` и `arena/**`: Python 3.11 и 3.12, PostgreSQL 17 (ADR-17) | [Actions](https://github.com/Rimlin-UNC/1c_chek/actions/workflows/ci.yml) |
 | Notion | не используется (ADR-16): база знаний — в `docs/kb`, для владельца — [презентация](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) | [issue #17](https://github.com/Rimlin-UNC/1c_chek/issues/17) |
 
@@ -76,4 +76,4 @@ GitHub — единственный источник истины (ADR-19). Ос
 | [Google Docs](https://docs.google.com/document/d/1l-7ndekun1QeBWv4UF4dEcrK0lvcIsBY4mcbcS1X4Xk/edit) | отчёт о состоянии и готовности миграции | отчёт по фактам репозитория |
 | [Google Slides](https://docs.google.com/presentation/d/1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc) | презентация для владельца | срез для владельца |
 | Supabase `chek.base` | синтетический демо-контур | не рабочая БД (ADR-10) |
-| Vercel `1c-chek` | превью-сборки | сигнал сборки, роль — требует уточнения (#13) |
+| Vercel `1c-chek` | демо-контур: превью-сборки | сигнал сборки, решение 07.11.2026 — ADR-13 (#13) |
