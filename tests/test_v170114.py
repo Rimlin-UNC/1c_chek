@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.70.114"
+CURRENT = "1.71.0"
 ISSUE = "https://github.com/Rimlin-UNC/1c_chek/issues/47"
 
 
@@ -22,78 +23,76 @@ def read(rel: str) -> str:
 class TestRelease:
     def test_sync_points(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
+        assert settings.APP_VERSION == CURRENT
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",
                     "app/static/b2b/index.html"):
-            assert VERSION in read(rel), rel
+            assert CURRENT in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 3
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 3
-        assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-        assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
+        assert f"ymaster-check-v{CURRENT}" in sw and sw.count(f"?v={CURRENT}") == 4
+        assert read("app/static/index.html").count(f"?v={CURRENT}") == 3
+        assert read("app/static/b2b/index.html").count(f"?v={CURRENT}") == 2
+        assert f'"version": "{CURRENT}"' in read("app/static/manifest.webmanifest")
 
     def test_updater_order(self):
         from app.services import updater
-        for older in ("1.70.113", "1.70.106"):           # на рабочем сервере — 1.70.106 (владелец, 06.11.2026)
-            assert updater._is_newer(VERSION, older) is True
-            assert updater._is_newer(older, VERSION) is False
+        for older in ("1.70.114", "1.70.113", "1.70.106"):
+            assert updater._is_newer(CURRENT, older) is True
+            assert updater._is_newer(older, CURRENT) is False
 
     def test_changelog_first_entry_fits_update_window(self):
         md = read("CHANGELOG.md")
-        assert md.split("\n", 1)[0] == f"## [{VERSION}] - 2026-11-07"
-        entry = md.split("\n## [1.70.113]", 1)[0]
+        assert md.split("\n", 1)[0] == f"## [{CURRENT}] - 2026-11-08"
+        entry = md.split("\n## [1.70.114]", 1)[0]
         assert len(entry) <= 4000, len(entry)
-        for needle in ("резервная копия", "поверх 1.70.109–1.70.113 не меняются — шаг pip пропускается",
-                       "откатится само", "новых таблиц нет", "колонка `print_json`",
-                       "прежняя версия новую колонку просто не видит", "48 из 48", "1.70.82–1.70.113",
-                       "T-62, #47, ADR-45", "«🖨 Печатная форма»", "постановлению № 1137",
-                       "графами А–9", "Всего к оплате (9)", "Заполняемые поля", "Сохранить как PDF",
-                       "альбомная ориентация", "экранируются", "SQLite и PostgreSQL", "T-80", "1.71.0"):
+        for needle in ("резервная копия", "три новые таблицы", "counterparties", "T-80, #65, ADR-48",
+                       "«Контрагенты»", "по ИНН", "«Реквизиты стороны»", "«Преамбула договора»",
+                       "«Для платёжного поручения»", "SQLite и PostgreSQL", "только синтетика",
+                       "1.70.114", "1.71.0"):
             assert needle in entry, needle
 
     def test_whats_new_first(self):
         js = read("app/static/js/app.js")
         m = re.search(r"WHATS_NEW\s*=\s*\{[\s\S]{0,400}?'([\d.]+)'", js)
-        assert m and m.group(1) == VERSION
-        block = js.split(f"'{VERSION}': [", 1)[1].split("\n  ],", 1)[0]
+        assert m and m.group(1) == CURRENT
+        block = js.split(f"'{CURRENT}': [", 1)[1].split("\n  ],", 1)[0]
         assert block.count("{ icon:") == 2
-        for needle in ("УПД печатается как оригинал", "«🖨 Печатная форма»", "постановлению № 1137",
-                       "графами А–9", "Печать в PDF и правка полей", "Сохранить как PDF", "запоминаются"):
+        for needle in ("Контрагенты", "УПД", "выписки", "ИНН", "Реквизиты", "преамбула", "проверить"):
             assert needle in block, needle
-        assert "'1.70.113': [" in js                         # история выпусков на месте
+        assert "'1.70.114': [" in js                         # история выпусков на месте
 
     def test_journal_entry_first(self):
         journal = read("docs/ui_journal.md")
-        assert journal.startswith(f"## v{VERSION} — «Первичка»: печатная форма УПД и печать в PDF")
-        entry = journal.split("\n## v1.70.113", 1)[0]
-        for needle in ("«🖨 Печатная форма»", "16 полей", "«↩ Значения из документа»", "«Сохранить поля»",
-                       "«👁 Предпросмотр»", "«🖨 Печать / PDF»", "A4 альбомная", "«Всего к оплате (9)»",
-                       "«Документ составлен на N листах»", "ADR-45", "две карточки"):
+        assert journal.startswith(f"## v{CURRENT} — «Контрагенты»")
+        entry = journal.split("\n## v1.70.114", 1)[0]
+        for needle in ("«Контрагенты»", "ИНН", "УПД", "выписки", "«Реквизиты стороны»",
+                       "«Преамбула договора»", "«Для платёжного поручения»", "ADR-48",
+                       "две карточки"):
             assert needle in entry, needle
 
     def test_changed_blocks(self):
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert sorted(n for n, v in reg.items() if v == VERSION) == ["Первичка (электронные УПД)"]
+        assert sorted(n for n, v in reg.items() if v == CURRENT) == ["Контрагенты"]
+        assert reg["Первичка (электронные УПД)"] == VERSION
         assert reg["Банковская выписка"] == "1.70.113"
 
     def test_readme_latest_release(self):
         readme = read("README.md")
-        assert f"## 🆕 Последний выпуск — v{VERSION} (07.11.2026)" in readme
-        assert "Последний выпуск — v1.70.113" not in readme
-        assert f"**Ставьте {VERSION} вместо 1.70.113.**" in readme
-        section = readme.split(f"## 🆕 Последний выпуск — v{VERSION}", 1)[1].split("\n## ", 1)[0]
-        assert "Новых таблиц нет" in section and "**Печатная форма УПД:**" in section
-        assert "**Правка заполняемых полей и PDF:**" in section and "**Из 1.70.113:**" in section
+        assert f"## 🆕 Последний выпуск — v{CURRENT} (08.11.2026)" in readme
+        assert "Последний выпуск — v1.70.114" not in readme
+        assert f"**Ставьте {CURRENT} вместо 1.70.114.**" in readme
+        section = readme.split(f"## 🆕 Последний выпуск — v{CURRENT}", 1)[1].split("\n## ", 1)[0]
+        assert "Три новые таблицы" in section and "**Контрагенты:**" in section
+        assert "**Проверка и блоки:**" in section and "**Из 1.70.114:**" in section
 
     def test_manual(self):
         from app.services.manual_content import SECTIONS, build_manual
-        assert build_manual()["updated"] == "2026-11-07"
+        assert build_manual()["updated"] == "2026-11-08"
         by_id = {s["id"]: s for s in SECTIONS}
-        html = by_id["primary"]["html"]
-        assert "<b>С версии 1.70.114 — печатная форма УПД.</b>" in html
-        assert "«🖨 Печатная форма»" in html and "Сохранить как PDF" in html
+        html = by_id["counterparties"]["html"]
+        assert "<b>С версии 1.71.0 — контрагенты.</b>" in html
+        assert "«Контрагенты»" in html and "«Реквизиты стороны»" in html
         assert all(s.get("image") for s in SECTIONS)
 
 
@@ -127,7 +126,7 @@ class TestCode:
         assert '"tests/test_primary_printupd.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 70                                    # новых таблиц выпуск не добавляет
+        assert declared == 73                                    # 1.71.0 добавил три таблицы контрагентов
 
     def test_form_rules(self):
         from app.primary import printupd
@@ -170,7 +169,7 @@ class TestDocsAndKb:
 
     def test_database_doc_and_counts(self):
         db = read("docs/DATABASE.md")
-        assert "70 объявлений `__tablename__`" in db and "все 70 таблиц приложения" in db
+        assert "73 объявлений `__tablename__`" in db and "все 73 таблиц приложения" in db
         assert "с v1.70.114 (T-62, ADR-45) колонка `print_json`" in db
 
     def test_design_and_counterparties(self):
@@ -188,26 +187,26 @@ class TestDocsAndKb:
         assert t62["Статус"] == "done" and t62["Задача"].endswith(f"выпущено в {VERSION}")
         assert t62["Issue/PR"] == ISSUE and t62["Связанные ADR"] == "ADR-25, ADR-45"
         assert t62["Обновлено"] == "2026-11-07"
-        for tid, prio, state in (("T-80", "P1", "todo"), ("T-81", "P2", "todo"), ("T-82", "P1", "done")):
+        for tid, prio, state in (("T-80", "P1", "done"), ("T-81", "P2", "todo"), ("T-82", "P1", "done")):
             assert tasks[tid]["Статус"] == state and tasks[tid]["Приоритет"] == prio, tid
         assert tasks["T-80"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/65"
         assert tasks["T-81"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/66"
         assert tasks["T-82"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/59"
         assert "1.71.0" in tasks["T-80"]["Задача"] and "1.72.0" in tasks["T-81"]["Задача"]
         t01 = tasks["T-01"]["Блокер"]
-        assert f"Ставить сразу v{VERSION} — включает 1.70.82–1.70.113 без замороженного «Моего дела»" in t01
-        assert "с каждой из 1.70.82–1.70.113 — 48 из 48 проверок" in t01
+        assert f"Ставить сразу v{CURRENT} — включает 1.70.82–1.70.114 без замороженного «Моего дела»" in t01
+        assert "с каждой из 1.70.82–1.70.114 — 48 из 48 проверок" in t01
         roadmap = read("docs/kb/02_roadmap.md")
         assert f"**Готово 07.11.2026 (выпуск v{VERSION}):** [#47]({ISSUE}) T-62" in roadmap
         assert "## Новые запросы владельца 07.11.2026 — разбивка на задачи" in roadmap
         assert "T-80" in roadmap and "T-82" in roadmap and "ADR-44" in roadmap
         ledger = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert ledger[-1]["Версия"] == VERSION and ledger[-1]["Опора репетиции"] == "да"
+        assert ledger[-1]["Версия"] == CURRENT and ledger[-1]["Опора репетиции"] == "да"
         assert all("," not in v for v in ledger[-1].values()), "в полях реестра нет запятых"
         assert ledger[-1]["Коммит"] == "после публикации" or re.fullmatch(r"[0-9a-f]{40}", ledger[-1]["Коммит"])
-        assert ledger[-2]["Версия"] == "1.70.113" and ledger[-2]["Откат на неё"] == "можно"
+        assert ledger[-2]["Версия"] == "1.70.114" and ledger[-2]["Откат на неё"] == "можно"
         kb = read("docs/kb/README.md")
-        assert f"| Последний выпуск | **v{VERSION}** — печатная форма УПД (T-62; ADR-45)" in kb
+        assert f"| Последний выпуск | **v{CURRENT}** — контрагенты (T-80; ADR-48)" in kb
         # PR #3 и #67 слиты 07.11.2026 — строка «открытые PR» меняется, важна запись о слиянии
         assert "PR #67" in kb and "88d9d36" in kb and "issues #4–#66" in kb
         seo = read("docs/kb/12_seo.md")

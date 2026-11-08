@@ -23,6 +23,7 @@ import { viewPrimary } from './primary.js'; // v1.70.94: первичка — э
 import { viewDocRequests } from './docreq.js'; // v1.70.97: что нужно от клиента (T-58)
 import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } from './clients.js';   // v1.70.100: рабочее место аутсорсера (T-50), пакет (T-68)
 import { viewApprovals } from './approvals.js';   // v1.70.112: согласование авансовых отчётов (T-46)
+import { counterpartyCardHtml, counterpartyCreateBody, counterpartyAccountBody, counterpartyPatchBody, loadCounterparties, loadCandidates, createCounterparty, openCounterparty, patchCounterparty, verifyCounterparty, addCounterpartyAccount, mergeCounterparty } from './counterparties.js'; // v1.71.0: T-80
 import { viewBank, bankConnectPanel, bankReturnNotice } from './bank.js';
 import { mailConnectPanel } from './primary_mail.js';
 import { goodsItemsHTML, goodsBindItems, goodsArticleHintHTML, goodsSummaryHTML, goodsMemoryHTML, goodsBindMemory, goodsProfileHTML, goodsBindProfile } from './goods.js';   // v1.70.101: понимание чеков (T-69)   // v1.70.98: банковская выписка (T-45);
@@ -77,6 +78,7 @@ const VIEW_TITLES = {
   bank: 'Банк: выписка',               // v1.70.98: платежи без документов и чеки к возмещению (T-45)
   clients: 'Клиенты',                  // v1.70.100: все компании бухгалтера в одном окне (T-50)
   approvals: 'Согласования',           // v1.70.112: авансовые отчёты — сотрудник → руководитель → бухгалтер
+  counterparties: 'Контрагенты',        // v1.71.0: карточки из УПД, выписки и по ИНН (T-80)
   b2badmin: 'API для бизнеса: модерация',  // v1.70.45: контур B2B
 };
 
@@ -121,10 +123,10 @@ const ROLE_SPACE = {
   admin:      { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'boss', 'users', 'audit', 'companies',
                         'pooladmin', 'poolpeople', 'fraud', 'b2badmin', 'conflicts', 'approvals',
-                        'primary', 'docreq', 'bank', 'clients', 'settings'],
+                        'primary', 'docreq', 'bank', 'clients', 'counterparties', 'settings'],
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
-                        'poolpick', 'supabase', 'approvals', 'primary', 'docreq', 'bank', 'clients', 'settings'],
+                        'poolpick', 'supabase', 'approvals', 'primary', 'docreq', 'bank', 'clients', 'counterparties', 'settings'],
                 secs: ['checks', 'personal'] },
   manager:    { views: ['dashboard', 'receipts', 'boss', 'approvals', 'settings'],
                 secs: ['personal'] },
@@ -3980,6 +3982,141 @@ function route(silent = false) {
     return;
   }
 
+// ==========================================================================
+//  ЭКРАН: Контрагенты (T-80, v1.71.0, ADR-48)
+// ==========================================================================
+async function viewCounterparties(container, opts = {}) {
+  const alive = opts.alive || (() => true);
+  const admin = isAdmin();
+  const companyId = admin && state.companyFilter !== 'all' ? state.companyFilter : '';
+  container.innerHTML = `<section class="cp-view">
+    <div class="cp-layout">
+      <div class="cp-left">
+        <div class="card">
+          <h2>Найти или завести</h2>
+          <label>Поиск по названию или ИНН<input id="cp-search" type="search" placeholder="ООО или 10 цифр"></label>
+          <label>ИНН<input id="cp-inn" inputmode="numeric" maxlength="12"></label>
+          <label>Наименование<input id="cp-name"></label>
+          <label>КПП<input id="cp-kpp" maxlength="9"></label>
+          <div class="cp-actions">
+            <button type="button" class="btn btn-primary" id="cp-create">＋ Завести карточку</button>
+            <button type="button" class="btn" id="cp-candidates">Из УПД и выписки</button>
+          </div>
+        </div>
+        <div class="card"><h2>Карточки компании</h2><div id="cp-list"></div></div>
+        <div class="card"><h2>Найдено в документах</h2><div id="cp-candidates"></div></div>
+      </div>
+      <div class="cp-right"><div id="cp-card" class="card"><p class="cp-empty">Выберите карточку слева.</p></div></div>
+    </div>
+  </section>`;
+
+  const listBox = container.querySelector('#cp-list');
+  const cardBox = container.querySelector('#cp-card');
+  const candidatesBox = container.querySelector('#cp-candidates');
+  let selected = null;
+
+  const renderCard = (card) => {
+    selected = card;
+    cardBox.innerHTML = counterpartyCardHtml(card) + `
+      <div class="cp-edit">
+        <label>Должность подписанта<input id="cp-post" value="${esc(card.signatory_post || '')}"></label>
+        <label>ФИО подписанта<input id="cp-signatory" value="${esc(card.signatory_name || '')}"></label>
+        <label>Основание<input id="cp-basis" value="${esc(card.signatory_basis || '')}"></label>
+        <label>В родительном падеже<input id="cp-genitive" value="${esc(card.genitive || '')}"></label>
+        <button type="button" class="btn" id="cp-save">Сохранить правку</button>
+        <button type="button" class="btn" id="cp-verify">🔄 Проверить по ИНН</button>
+      </div>
+      <div class="cp-accounts">
+        <h3>Банковский счёт</h3>
+        <label>Счёт<input id="cp-account" inputmode="numeric" maxlength="20"></label>
+        <label>БИК<input id="cp-bik" inputmode="numeric" maxlength="9"></label>
+        <button type="button" class="btn" id="cp-add-account">Добавить счёт</button>
+      </div>
+      <div class="cp-merge">
+        <label>Объединить с дублем (ИНН)<input id="cp-merge-inn"></label>
+        <button type="button" class="btn" id="cp-merge">Объединить</button>
+      </div>`;
+    cardBox.querySelectorAll('[data-copy]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.copy;
+        const text = (card.blocks || {})[name] || '';
+        try { await navigator.clipboard.writeText(text); toast('Блок скопирован — проверьте перед вставкой'); }
+        catch { toast('Скопируйте текст вручную'); }
+      });
+    });
+    cardBox.querySelector('#cp-save')?.addEventListener('click', async () => {
+      const body = counterpartyPatchBody({
+        signatoryPost: cardBox.querySelector('#cp-post').value,
+        signatoryName: cardBox.querySelector('#cp-signatory').value,
+        signatoryBasis: cardBox.querySelector('#cp-basis').value,
+        genitive: cardBox.querySelector('#cp-genitive').value,
+        companyId,
+      });
+      try { await patchCounterparty(card.id, body); toast('Правка сохранена'); await refresh(); }
+      catch { toast('Проверьте ИНН или название'); }
+    });
+    cardBox.querySelector('#cp-verify')?.addEventListener('click', async () => {
+      try { await verifyCounterparty(card.id, { company_id: companyId || undefined }); toast('Проверка выполнена'); await refresh(); }
+      catch { toast('Проверка недоступна — нужен ключ Checko в настройках'); }
+    });
+    cardBox.querySelector('#cp-add-account')?.addEventListener('click', async () => {
+      const body = counterpartyAccountBody({
+        account: cardBox.querySelector('#cp-account').value,
+        bik: cardBox.querySelector('#cp-bik').value,
+        companyId,
+      });
+      try { await addCounterpartyAccount(card.id, body); toast('Счёт добавлен'); await refresh(); }
+      catch { toast('Проверьте номер счёта и БИК'); }
+    });
+    cardBox.querySelector('#cp-merge')?.addEventListener('click', async () => {
+      const inn = cardBox.querySelector('#cp-merge-inn').value.trim();
+      const duplicate = (await loadCounterparties(companyId, inn)).find(x => x.inn === inn && x.id !== card.id);
+      if (!duplicate) { toast('Дубль с таким ИНН не найден'); return; }
+      try { await mergeCounterparty(card.id, { duplicate_id: duplicate.id, company_id: companyId || undefined }); toast('Дубли объединены'); await refresh(); }
+      catch { toast('Объединение недоступно'); }
+    });
+  };
+
+  const refresh = async () => {
+    if (!alive()) return;
+    let cards = [];
+    try { cards = await loadCounterparties(companyId, container.querySelector('#cp-search').value); }
+    catch { toast('Список контрагентов недоступен'); }
+    listBox.innerHTML = cards.length ? cards.map(x => `<button type="button" class="cp-row" data-id="${esc(x.id)}">
+      <b>${esc(x.name_full || x.name_short || x.inn)}</b><span>ИНН ${esc(x.inn || '—')} · ${esc(x.source || '')}</span>
+    </button>`).join('') : '<p class="cp-empty">Карточек пока нет.</p>';
+    listBox.querySelectorAll('.cp-row').forEach(btn => btn.addEventListener('click', async () => {
+      try { renderCard(await openCounterparty(btn.dataset.id, companyId)); }
+      catch { toast('Карточка недоступна'); }
+    }));
+    if (selected) {
+      const same = cards.find(x => x.id === selected.id);
+      if (same) renderCard(same);
+    }
+  };
+
+  container.querySelector('#cp-search').addEventListener('input', () => { void refresh(); });
+  container.querySelector('#cp-create').addEventListener('click', async () => {
+    const body = counterpartyCreateBody({
+      inn: container.querySelector('#cp-inn').value,
+      name: container.querySelector('#cp-name').value,
+      kpp: container.querySelector('#cp-kpp').value,
+      companyId,
+    });
+    try { const card = await createCounterparty(body); renderCard(card); toast('Карточка заведена'); await refresh(); }
+    catch { toast('Укажите корректный ИНН или название'); }
+  });
+  container.querySelector('#cp-candidates').addEventListener('click', async () => {
+    let found = [];
+    try { found = await loadCandidates(companyId); }
+    catch { toast('Источники недоступны'); }
+    candidatesBox.innerHTML = found.length ? found.map(x => `<div class="cp-candidate">
+      <b>${esc(x.name)}</b><span>ИНН ${esc(x.inn)} · ${esc(x.source === 'upd' ? 'УПД' : 'выписка')}</span>
+    </div>`).join('') : '<p class="cp-empty">В УПД и выписке контрагентов пока нет.</p>';
+  });
+  await refresh();
+}
+
   const renderers = {
     dashboard: viewDashboard, scan: viewScan, receipts: viewReceipts,
     export: viewExport, mapping: viewMapping, users: viewUsers,
@@ -4009,6 +4146,7 @@ function route(silent = false) {
     // v1.70.100 (T-50): все клиенты в одном окне; цифра открывает экран уже в этой компании
     clients: (c, alive) => viewClients(c, { alive, open: openClientCompany }),
     // v1.70.112 (T-46): согласование авансовых отчётов; администратору — выбор компании, как в «Первичке»
+    counterparties: viewCounterparties,     // v1.71.0: контрагенты (T-80)
     approvals: async (c, alive) => {
       const companies = isAdmin() ? await adminCompanies() : [];
       if (alive()) return viewApprovals(c, { alive, me: state.me, companies, companyFilter: state.companyFilter });
@@ -6522,6 +6660,17 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.71.0': [
+    { icon: '🏢', title: 'Контрагенты из УПД, выписки и по ИНН',
+      text: 'Новый раздел «Контрагенты»: программа находит продавца и покупателя в УПД, '
+        + 'получателя и плательщика в выписке, а карточку по ИНН можно завести вручную. '
+        + 'Проверьте предложение и реквизиты до подписания — машина только предлагает; ещё раз проверьте ИНН и БИК. '
+        + 'Перед вставкой нужно проверить блоки, ИНН и БИК ещё раз.' },
+    { icon: '📋', title: 'Реквизиты, преамбула и платёжка одним кликом',
+      text: 'Три блока «Реквизиты стороны», «Преамбула договора» и «Для платёжного поручения» '
+        + 'собираются из карточки: ИНН, КПП, адрес, БИК, счёт и подписант. '
+        + 'Родительный падеж склоняется правилами, незнакомые формы правятся вручную.' },
+  ],
   '1.70.114': [
     { icon: '🖨', title: 'УПД печатается как оригинал',
       text: '«Первичка» → документ → «🖨 Печатная форма»: бланк по постановлению № 1137 со строками (1)–(8), '
@@ -10781,6 +10930,8 @@ const AUDIT_KIND = {
   fns_settings_updated: ['info', '⚙️'], onec_token_updated: ['info', '🔗'],
   onec_pull: ['ok', '🔗'], onec_ack: ['ok', '🔗'],
   primary_exported: ['ok', '📤'], onec_primary_pull: ['ok', '🔗'], onec_primary_ack: ['ok', '🔗'],   // v1.70.96 (T-60)
+  counterparty_created: ['ok', '🏢'], counterparty_updated: ['info', '✏️'], counterparty_verified: ['info', '🛡'],
+  counterparty_account_added: ['info', '🏦'], counterparty_merged: ['warn', '🔗'],   // v1.71.0 (T-80)
   docreq_settings_updated: ['info', '⚙️'], docreq_reminded: ['ok', '📣'],   // v1.70.97 (T-58)
   bank_statement_uploaded: ['ok', '🏦'], bank_statement_deleted: ['warn', '🏦'],   // v1.70.98 (T-45)
   bank_operation_ignored: ['info', '🏦'], bank_reimbursement_decided: ['ok', '💸'],

@@ -23,8 +23,8 @@
 | БД-модели (`app/models.py`) | миграции, прямые фикстуры тестов (UNIQUE fn+fd+fp!) | Интегрити-ошибки, падения фикстур |
 
 **Железные правила:**
-- Версия поднимается **синхронно в 7 местах**: `config.py`, `index.html` ×3
-  (`app.css`, `home.css`, `app.js`), `sw.js` ×4 (имя кэша + три `?v=`),
+- Версия поднимается **синхронно в 8 местах**: `config.py`, `index.html` ×3
+  (`app.css`, `home.css`, `app.js`), `sw.js` ×5 (имя кэша + четыре `?v=`),
   `manifest.webmanifest`, `blocks.py`
   (пин затронутого блока), `CHANGELOG.md`, `WHATS_NEW` в `app.js`.
 - Блок «Проверка чеков (ФНС и источники)» (`/settings/fns`, `#fns-token`,

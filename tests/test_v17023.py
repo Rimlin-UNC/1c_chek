@@ -391,7 +391,7 @@ class TestVersions17023:
         assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 3
         sw = _read("app/static/sw.js")
         assert f"ymaster-check-v{ver}" in sw
-        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 3
+        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 4
         assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
         assert f"?v={ver}" in _read("app/static/maxapp/index.html")
 

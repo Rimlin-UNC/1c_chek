@@ -85,8 +85,19 @@ def team(client, store):
         db.add(ApprovalSettings(company_id=a["id"], enabled=True))
         db.commit()
     out["emp_id"], out["emp_name"], out["boss_id"] = out["A"]["emp_id"], out["A"]["emp_name"], out["A"]["boss_id"]
+    company_ids = [out["A"]["id"], out["B"]["id"]]
     yield out
     client.cookies.clear()
+    # v1.71.0: чеки согласования оставались в общей тестовой базе и мешали
+    # фильтрам выпуска 1.70.72 (диапазон 5000–6000). Фикстура убирает только
+    # свои компании, пользователей, настройки, отчёты и чеки — чужие тесты не трогает.
+    with store.session() as db:
+        for model in (AdvanceApprovalEvent, AdvanceApproval, ApprovalSettings, Receipt, User):
+            db.query(model).filter(model.company_id.in_(company_ids)).delete(
+                synchronize_session=False)
+        db.query(Company).filter(Company.id.in_(company_ids)).delete(
+            synchronize_session=False)
+        db.commit()
 
 
 def _create(client, hdr, **kw):

@@ -39,7 +39,7 @@ class TestRelease:
             assert current in read(rel), rel
         sw = read("app/static/sw.js")
         assert f"ymaster-check-v{current}" in sw
-        assert sw.count(f"?v={current}") == 3
+        assert sw.count(f"?v={current}") == 4
         assert read("app/static/index.html").count(f"?v={current}") == 3
 
     def test_changelog_entry_fits_update_window(self):
