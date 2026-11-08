@@ -159,7 +159,9 @@ class TestUpdatePipelineE2E:
         monkeypatch.setattr(up, "_append_history", lambda *a, **k: None)
         monkeypatch.setattr(up, "_pip_cmd", lambda: ["true"])   # зависимости не ставим
         monkeypatch.setattr(up, "_py_bin", lambda: sys.executable)
-        branch = "arena/01a0caaa-1c-chek"
+        # Ветка arena/01a0caaa-1c-chek удалена 07.11.2026 по «да» владельца:
+        # конвейер обновления проверяем на существующем канале main.
+        branch = "main"
         up._do_apply("1.8.0", "Rimlin-UNC/1c_chek", branch)
         assert up.job.success, getattr(up.job, "log", None) or getattr(up.job, "error", None)
         # локальный дрейф перезатёрт кодом с origin: версия снова та, что в

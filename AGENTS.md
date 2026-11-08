@@ -34,7 +34,7 @@
 | Что | Где |
 |---|---|
 | Обзор проекта, роли, компоненты, окружения | [`docs/OVERVIEW.md`](docs/OVERVIEW.md) |
-| Архитектурные решения ADR-01…19 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Архитектурные решения ADR-01…47 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Запуск, тесты, CI, выпуск, деплой, QA-панель | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
 | База данных, миграции, Supabase, `qa_lock_…`, проверки RLS/FK | [`docs/DATABASE.md`](docs/DATABASE.md) |
 | Живые базы: задачи, вопросы, журнал сессий (CSV) | [`docs/kb/`](docs/kb/README.md) |
@@ -223,7 +223,7 @@ Chromium для Playwright, опоры репетиции, вход в GitHub, �
 | Google Docs | работает: чтение и правка | отчёт `1l-7ndekun1QeBWv4UF4dEcrK0lvcIsBY4mcbcS1X4Xk` | Пакетные правки (`batch_update_document`) проверены; после правки — прочитать обратно (`get_document_text`). |
 | Google Slides | работает: чтение и правка | презентация `1Y6xLDOvQKaBcpTJLjsGLS5KjpN4N4kOxbYA3H6egdoc` — слайды `p`, `slide02`…`slide08`; тексты `s0N_title`, `s0N_body` | Нумерованный список — `NUMBERED_DIGIT_ALPHA_ROMAN`; индексы текста — в UTF-16; миниатюры слайдов из песочницы не скачать. |
 | Google Drive | работает: три файла выше доступны для правки | те же файлы | `upload_file` с `target_mime_type` превращает CSV в таблицу (так в Sheets попала полная матрица тестов); файл для загрузки — в рабочей папке (`/home/user/…`), не в `/tmp`. Временные файлы — в корзину (`trash_file`), не удалять навсегда. |
-| Supabase | работает: 8 служб `ACTIVE_HEALTHY`; 3 миграции = файлам `supabase/migrations`; аудит RLS/FK — 0 ошибок | проект `chek.base` — `putddctwdskfdzichigx` (eu-west-1, PostgreSQL 17); его основная ветка связана с git-веткой `arena/c7f9d34a-1c-chek` (владелец, 02.11.2026, [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21)) | **Ветка сессии — production-ветка интеграции:** push в неё разворачивает `supabase/` в рабочий проект (проверено 02.11.2026: после push `03c8fb8` — `RUNNING_MIGRATIONS` → `FUNCTIONS_DEPLOYED`, проверка «Supabase Preview» в PR — success), поэтому новые или изменённые файлы `supabase/migrations`, `supabase/functions`, `supabase/config.toml` — только после «да» владельца (стоп-лист); подробности — [DATABASE.md](docs/DATABASE.md#интеграция-supabase--github). `execute_query` возвращает только результат последнего оператора. Прямого подключения к PostgreSQL нет — тесты на одноразовой базе (`qa/pg_local.py`, CI). DDL, DML и права — стоп-лист. |
+| Supabase | работает: 8 служб `ACTIVE_HEALTHY`; 3 миграции = файлам `supabase/migrations`; аудит RLS/FK — 0 ошибок | проект `chek.base` — `putddctwdskfdzichigx` (eu-west-1, PostgreSQL 17); `git_branch = main` подтверждено `list_branches` 07.11.2026 (T-25, [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21)); имя объекта ветки Supabase пока старое `arena/c7f9d34a-1c-chek` — косметика, `persistent=false` | **Интеграция следует за `main`:** push в текущую ветку сессии сам по себе не разворачивает `supabase/`, но после слияния в `main` новые или изменённые файлы `supabase/migrations`, `supabase/functions`, `supabase/config.toml` применяются к рабочему проекту, поэтому остаются стоп-листом до явного «да» владельца; подробности — [DATABASE.md](docs/DATABASE.md#интеграция-supabase--github). `execute_query` возвращает только результат последнего оператора. Прямого подключения к PostgreSQL нет — тесты на одноразовой базе (`qa/pg_local.py`, CI). DDL, DML и права — стоп-лист. |
 | Vercel | работает | проект `1c-chek` — `prj_ibfAOqky6FyAQIbsV07RaostFw0o`; команда `chek5` — `team_MtNKfmY0KOOuTQXeRM2uPeY4` | Превью каждого push собирается само (Git-интеграция, ~30 с); статус — `list_deployments`. Ручной `create_deployment` не нужен: он дублирует превью. Приложение закрыто Vercel Authentication, а `vercel.app` из песочницы недоступен — работоспособность не проверить. Переменных окружения нет; production из `main` — стоп-лист. |
 | Notion | подключён, но выключен | — | Не используется ([ADR-16](docs/ARCHITECTURE.md#adr-16)): база знаний — `docs/kb`, для владельца — Google Slides. |
 
@@ -240,13 +240,13 @@ Chromium для Playwright, опоры репетиции, вход в GitHub, �
 
 ## Стоп-лист: только после явного «да» владельца
 
-- Слияние в `main`, закрытие или слияние PR, push в чужие ветки.
+- Слияние в `main`, закрытие или слияние PR, push в чужие ветки, удаление веток без явного «да» владельца.
 - Любые DDL, DML и изменения прав в Supabase: история миграций, настройки Auth и
   интеграции с GitHub (#21), ключи API. Схема `qa_lock_…` удалена 07.11.2026 по
   «да» владельца (#7) — правило про DDL остаётся: без явного «да» ничего не менять.
 - Новые или изменённые файлы `supabase/migrations`, `supabase/functions`,
-  `supabase/config.toml`: ветка сессии — production-ветка интеграции Supabase,
-  и push применяет их к рабочему проекту (#21).
+  `supabase/config.toml`: интеграция Supabase привязана к `main` (T-25),
+  поэтому после слияния в `main` они применяются к рабочему проекту (#21).
 - Настройки, переменные, домены и production-деплой Vercel; promote или rollback.
 - Перенос архива (backfill) и любые действия на рабочем сервере.
 - Изменения блока ФНС, паузы антибана, квоты.

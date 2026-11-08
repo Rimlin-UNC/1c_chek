@@ -60,13 +60,14 @@ def get(client, path: str, host: str = PROD, scheme: str = "https"):
 
 def test_registry_matches_sitemap_and_robots():
     assert tuple(p.path for p in seo_pages.PAGES) == PATHS == seo.CONTENT_PAGES
-    assert seo.PAGES == ("/", "/oferta", *PATHS)
-    xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-05")
-    assert xml.count("<url>") == 5
-    for path in PATHS:
+    assert seo.BLOG_INDEX == "/blog" and len(seo.BLOG_PAGES) == 10
+    assert seo.PAGES == ("/", "/oferta", *PATHS, seo.BLOG_INDEX, *seo.BLOG_PAGES)
+    xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-08")
+    assert xml.count("<url>") == 16
+    for path in (*PATHS, seo.BLOG_INDEX, *seo.BLOG_PAGES):
         assert f"<loc>https://chek.ymaster.ru{path}</loc>" in xml
         assert not any(path.startswith(d) for d in seo.DISALLOW)
-    assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-05") is None
+    assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-08") is None
 
 
 @pytest.mark.parametrize("path", PATHS)
@@ -129,11 +130,12 @@ def test_pages_are_distinct_and_substantial(client):
 def test_links_between_pages_and_from_start_page(client):
     for path in PATHS:
         links = set(parse(get(client, path).text).links)
-        assert "/" in links and "/oferta" in links
+        assert "/" in links and "/oferta" in links and "/blog" in links, path
         assert set(PATHS) - {path} <= links, path
     index = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     for path in PATHS:
         assert f'href="{path}"' in index, path
+    assert 'href="/blog"' in index
     land = index.split('<div class="land-faq">', 1)[1].split('<div class="land-right">', 1)[0]
     assert '<p class="land-more"><span>Полезное:</span>' in land          # ссылки видны, а не только в ответах
 

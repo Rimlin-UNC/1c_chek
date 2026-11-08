@@ -5,7 +5,7 @@
 (robots.txt «Disallow: /», тег и заголовок noindex) — иначе они попадали бы в выдачу дублями главной.
 Администратор может разрешить или запретить индексацию явно («Настройки» → «Поисковики»). Роботы и люди
 получают одну и ту же страницу — это не клоакинг (правила Яндекса и Google, docs/kb/12_seo.md).
-С 1.70.106 те же правила действуют и для трёх страниц под кластеры запросов (services/seo_pages.py, ADR-36).
+С 1.70.106 те же правила действуют и для трёх страниц под кластеры запросов (services/seo_pages.py, ADR-36), а с T-82 — для индекса блога и десяти статей (services/blog_pages.py, ADR-47).
 
 Коды подтверждения прав (Яндекс Вебмастер, Google Search Console) — не секреты: их и так видно в коде
 главной. Хранятся в настройках и подставляются на главную тегами meta. Администратор может вставить тег
@@ -39,8 +39,16 @@ DISALLOW = ("/api/", "/onec/", "/ws/", "/b2b/", "/maxapp/")
 CLEAN_PARAMS = ("maxlogin", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
 # v1.70.106 (T-75, ADR-36): страницы под кластеры запросов — по одной на кластер, серверный HTML (services/seo_pages.py)
 CONTENT_PAGES = ("/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov")
+# T-82 (issue #72, ADR-47): индекс блога и десять статей-спутников — тоже серверный HTML (services/blog_pages.py)
+BLOG_INDEX = "/blog"
+BLOG_PAGES = (
+    "/blog/proverka-cheka-onlajn", "/blog/proverka-cheka-po-qr-kodu", "/blog/proverka-cheka-po-kodu",
+    "/blog/proverka-cheka-na-sajte-nalogovoj", "/blog/proverka-cheka-fns-rossii", "/blog/ofd-i-proverka-chekov",
+    "/blog/chek-ne-prohodit-proverku-v-fns", "/blog/proverka-kassovyh-chekov-dlya-biznesa",
+    "/blog/proverka-chekov-dlya-buhgaltera", "/blog/qr-kod-ili-ruchnoj-kod",
+)
 # страницы карты сайта
-PAGES = ("/", "/oferta", *CONTENT_PAGES)
+PAGES = ("/", "/oferta", *CONTENT_PAGES, BLOG_INDEX, *BLOG_PAGES)
 _HOST = re.compile(r"^(?:[a-z0-9-]{1,63}\.)*[a-z0-9-]{1,63}(?::\d{1,5})?$")
 _CODE = re.compile(r"^[A-Za-z0-9_-]{6,100}$")
 _CONTENT = re.compile(r"""content\s*=\s*["']([^"']*)["']""", re.I)

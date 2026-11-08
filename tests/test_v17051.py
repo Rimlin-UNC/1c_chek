@@ -5,7 +5,7 @@
 # Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
 #
 # Требование владельца: «Выполни ТЗ docs/Monitor.md
-# https://github.com/Rimlin-UNC/1c_chek/blob/arena/071f4163-1c-chek/docs/Monitor.md
+# https://github.com/Rimlin-UNC/1c_chek/blob/main/docs/Monitor.md
 # внедри аккуратно чтоб не сломать нашу программу».
 #
 # Файл проверяет пятнадцать задач ТЗ (раздел 13) и двенадцать критериев

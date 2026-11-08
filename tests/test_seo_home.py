@@ -149,7 +149,9 @@ def test_commercial_hub_links_are_visible_and_crawlable():
     links = audit().links
     for path in seo.CONTENT_PAGES:
         assert links.count(path) == 2, (path, links.count(path))
-    assert "/oferta" in links
+    assert "/oferta" in links and "/blog" in links
+    for path in seo.BLOG_PAGES[:3]:
+        assert path in links, path
     assert "#/public?cam=1" in links
     for anchor in ("#land-how", "#land-business", "#land-faq", "#land-login"):
         assert anchor in links, anchor

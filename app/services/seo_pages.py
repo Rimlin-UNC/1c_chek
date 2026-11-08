@@ -273,7 +273,8 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
               else '<meta name="robots" content="noindex, nofollow">')
     more = "".join(f'<li><a href="{p.path}">{_e(p.crumb)}</a> — {_e(p.teaser)}</li>'
                    for p in PAGES if p.path != page.path)
-    nav = " · ".join(f'<a href="{p.path}">{_e(p.crumb)}</a>' for p in PAGES)
+    more += '<li><a href="/blog">Блог о проверке чеков</a> — десять статей с разбором спорных ситуаций</li>'
+    nav = " · ".join(f'<a href="{p.path}">{_e(p.crumb)}</a>' for p in PAGES) + ' · <a href="/blog">Блог</a>'
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
