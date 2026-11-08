@@ -3360,7 +3360,7 @@ openrc.sh и командой активации окружения.
 ## v1.70.51 — мониторинг OpenStack: четыре вкладки, графики истории и журнал
 
 Выпуск по требованию владельца: «Выполни ТЗ docs/Monitor.md
-https://github.com/Rimlin-UNC/1c_chek/blob/arena/071f4163-1c-chek/docs/Monitor.md
+https://github.com/Rimlin-UNC/1c_chek/blob/main/docs/Monitor.md
 внедри аккуратно чтоб не сломать нашу программу».
 
 Уточнения владельца по интерфейсу: `tabs = card_tabs` — одна карточка в разделе

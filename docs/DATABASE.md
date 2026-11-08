@@ -162,7 +162,7 @@ T-22, [issue #18](https://github.com/Rimlin-UNC/1c_chek/issues/18).
 
 ## Проверки RLS и внешних ключей
 
-[`supabase/checks/rls_fk_audit.sql`](https://github.com/Rimlin-UNC/1c_chek/blob/arena/c7f9d34a-1c-chek/supabase/checks/rls_fk_audit.sql) —
+[`supabase/checks/rls_fk_audit.sql`](https://github.com/Rimlin-UNC/1c_chek/blob/main/supabase/checks/rls_fk_audit.sql) —
 один SELECT только для чтения; строка на проверку и объект, результат `OK`,
 `ВНИМАНИЕ` (известно и задокументировано) или `ОШИБКА`.
 
@@ -256,24 +256,26 @@ python3 qa/pg_local.py pytest tests/test_migration_e2e.py   # оба бэкен�
 
 ## Интеграция Supabase ↔ GitHub
 
-Основная (production) ветка проекта `chek.base` связана с git-веткой
-**`arena/c7f9d34a-1c-chek`** (ветка PR #3): владелец переключил её 2026-11-02 в
-10:17 UTC (`list_branches`). До этого была ветка PR #2 `arena/071f4163-1c-chek`
-со старыми файлами миграций `2026110101–03`.
+Основная (production) ветка проекта `chek.base` в Supabase по-прежнему называется
+`arena/c7f9d34a-1c-chek` — это старое имя объекта ветки, `persistent=false`.
+**Git-ветка интеграции — `main`**: переключение выполнено 07.11.2026 через
+`update_branch` (T-25, [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21))
+и повторно подтверждено 07.11.2026 чтением `list_branches`: `git_branch = main`,
+статус `FUNCTIONS_DEPLOYED`. До этого интеграция смотрела на ветку PR #2
+`arena/071f4163-1c-chek`, затем на ветку PR #3 `arena/c7f9d34a-1c-chek`.
 
-- Сразу после переключения Supabase развернул ветку (статус ветки
-  `FUNCTIONS_DEPLOYED`). История миграций и аудит RLS/FK не изменились: файлы
-  ветки совпадают с применённой историей, аудит — 22 строки (15 OK,
-  7 ВНИМАНИЕ, 0 ОШИБКА).
-- **Push разворачивает ветку в рабочий проект** (проверено 02.11.2026): после
-  push `03c8fb8` ветка Supabase прошла `RUNNING_MIGRATIONS` → `FUNCTIONS_DEPLOYED`,
-  проверка «Supabase Preview» в PR — success, история миграций не изменилась.
-- **Следствие для работы:** новые файлы `supabase/migrations` и `supabase/functions`
-  применятся к рабочему проекту при первом же push. Такие файлы — только после
-  «да» владельца (стоп-лист в [AGENTS.md](../AGENTS.md)).
-- После слияния PR #3 production-ветку переключить на `main` —
-  [#21](https://github.com/Rimlin-UNC/1c_chek/issues/21), T-25. Агент настройки
-  интеграции не меняет.
+- Автоприменение миграций проверено 02.11.2026: после push `03c8fb8` ветка
+  Supabase прошла `RUNNING_MIGRATIONS` → `FUNCTIONS_DEPLOYED`, проверка
+  «Supabase Preview» в PR была success, история миграций и аудит RLS/FK не
+  изменились (22 строки: 15 OK, 7 ВНИМАНИЕ, 0 ОШИБКА).
+- **Следствие для работы:** push в текущую ветку сессии больше не разворачивает
+  `supabase/` сам по себе — интеграция смотрит на `main`. Но после слияния в
+  `main` новые файлы `supabase/migrations`, `supabase/functions` и
+  `supabase/config.toml` применятся к рабочему проекту. Такие файлы остаются
+  стоп-листом до явного «да» владельца ([AGENTS.md](../AGENTS.md)).
+- Переименование самого объекта ветки Supabase и правка панели интеграции не
+  выполнялись: для логики приложения важен `git_branch = main`. Любые новые
+  изменения интеграции — только после отдельного «да» владельца.
 
 ## Удалённая временная схема `qa_lock_965266689e1c4867b98ef79644d72d2c`
 
