@@ -206,9 +206,10 @@ class TestDocsAndKb:
         assert ledger[-1]["Коммит"] == "после публикации" or re.fullmatch(r"[0-9a-f]{40}", ledger[-1]["Коммит"])
         assert ledger[-2]["Версия"] == "1.70.114" and ledger[-2]["Откат на неё"] == "можно"
         kb = read("docs/kb/README.md")
-        assert f"| Последний выпуск | **v{CURRENT}** — контрагенты (T-80; ADR-48)" in kb
-        # PR #3 и #67 слиты 07.11.2026 — строка «открытые PR» меняется, важна запись о слиянии
-        assert "PR #67" in kb and "88d9d36" in kb and "issues #4–#66" in kb
+        assert f"| Последний выпуск | **v{CURRENT}**" in kb
+        assert "контрагенты (T-80; ADR-48)" in kb
+        # PR #73 и #74 уже слиты: в живой сводке указан фактический main
+        assert "PR #74" in kb and "10a84c4" in kb and "issues #4–#66" in kb
         seo = read("docs/kb/12_seo.md")
         assert "## 8. Запрос владельца 07.11.2026: блог, 25 ключей и картинки (T-82)" in seo
         assert "проверка чеков на сайте налоговой" in seo
