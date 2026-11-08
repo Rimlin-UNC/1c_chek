@@ -3,7 +3,7 @@
    API подменён, данные синтетические. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const calls = { get: [], put: [], download: [] };
+const calls = { get: [], put: [], post: [], download: [] };
 let clientState = '';
 const overview = {
   period: '2026-10', period_title: 'Октябрь 2026',
@@ -32,6 +32,12 @@ vi.mock('../../app/static/js/api.js', () => ({
       return overview;
     }),
     put: vi.fn(async (path, body) => { calls.put.push({ path, body }); return { company_ids: body.company_ids, added: 1, removed: 0 }; }),
+    post: vi.fn(async (path, body) => {
+      calls.post.push({ path, body });
+      if (path === '/api/v1/companies') return { id: 'c-new', name: body.name, inn: body.inn || '', is_active: true };
+      if (path === '/api/v1/companies/lookup-checko') return { name_full: 'ООО «РОМАШКА»', status: 'Действующая' };
+      return {};
+    }),
     download: vi.fn(async (path) => { calls.download.push(path); return { blob: new Blob(['zip']), filename: 'ymaster-package-7701000001-2026-10.zip' }; }),
   },
   setClient: vi.fn((id) => { clientState = id; }),
@@ -40,7 +46,7 @@ vi.mock('../../app/static/js/api.js', () => ({
 const mod = await import('../../app/static/js/clients.js');
 
 beforeEach(() => {
-  calls.get = []; calls.put = []; calls.download = [];
+  calls.get = []; calls.put = []; calls.post = []; calls.download = [];
   clientState = '';
   document.body.innerHTML = '<div id="toast-container"></div><div id="modal-root" class="modal-root hidden"><div class="modal-backdrop"></div><div class="modal-slot"></div></div><div id="app"></div>';
   URL.createObjectURL = vi.fn(() => 'blob:x');
@@ -163,5 +169,79 @@ describe('«Клиенты»: сценарии', () => {
     const html = mod.clientsPackageHtml({ isAdmin: false });
     expect(html).toContain('📦 Пакет для других учётных систем');
     expect(html).not.toContain('disabled');
+  });
+});
+
+// v1.71.1 (T-84): бухгалтер заводит клиента сам — кнопка на экране и окно создания
+describe('«Клиенты»: создание клиента (T-84)', () => {
+  it('сообщения об отказе — словами и с подсказкой', () => {
+    expect(mod.clientsCreateError(409, 'Похожая компания уже есть: «ООО Альфа» — это дубли'))
+      .toBe('Похожая компания уже есть: «ООО Альфа» — это дубли. Откройте её из списка — дубль заводить не нужно.');
+    expect(mod.clientsCreateError(409, 'У бухгалтера уже 500 клиентов — предел 500. Снимите лишних.'))
+      .toContain('предел 500');
+    expect(mod.clientsCreateError(403, 'Недостаточно прав')).toContain('бухгалтер и администратор');
+    expect(mod.clientsCreateError(0, '')).toBe('Не удалось создать клиента');
+    expect(mod.clientsCreateButtonHtml()).toContain('id="cl-new"');
+    expect(mod.CLIENTS_MAX).toBe(500);
+  });
+
+  it('окно создания: ИНН → ЕГРЮЛ заполняет название, сохранение уходит в POST и обновляет список', async () => {
+    const done = vi.fn();
+    mod.clientsCreateDialog({ onCreated: done });
+    const slot = document.querySelector('.modal-slot');
+    expect(slot.textContent).toContain('Новый клиент');
+    expect(slot.querySelector('#clc-inn')).toBeTruthy();
+
+    slot.querySelector('#clc-inn').value = '7707083893';
+    slot.querySelector('#clc-checko').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.post[0]).toEqual({ path: '/api/v1/companies/lookup-checko', body: { inn: '7707083893' } });
+    expect(slot.querySelector('#clc-name').value).toBe('ООО «РОМАШКА»');
+
+    slot.querySelector('#clc-note').value = 'договор № 12';
+    slot.querySelector('#clc-save').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.post[1]).toEqual({
+      path: '/api/v1/companies',
+      body: { name: 'ООО «РОМАШКА»', inn: '7707083893', note: 'договор № 12' },
+    });
+    expect(done).toHaveBeenCalledWith({ id: 'c-new', name: 'ООО «РОМАШКА»', inn: '7707083893', is_active: true });
+  });
+
+  it('окно создания: без названия запрос не уходит', async () => {
+    mod.clientsCreateDialog();
+    const slot = document.querySelector('.modal-slot');
+    slot.querySelector('#clc-save').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.post).toEqual([]);
+  });
+
+  it('экран: кнопка «＋ Новый клиент» есть в шапке и открывает окно', async () => {
+    const box = document.getElementById('app');
+    await mod.viewClients(box);
+    const btn = box.querySelector('#cl-new');
+    expect(btn).toBeTruthy();
+    expect(btn.textContent).toContain('Новый клиент');
+    btn.click();
+    expect(document.querySelector('.modal-slot').textContent).toContain('Новый клиент');
+  });
+
+  it('после создания клиента экран сообщает наружу — шапка перерисовывает переключатель', async () => {
+    const box = document.getElementById('app');
+    box.innerHTML = '';
+    const onCreated = vi.fn();
+    await mod.viewClients(box, { onCreated });
+    box.querySelector('#cl-new').click();
+    const slot = document.querySelector('.modal-slot');
+    slot.querySelector('#clc-name').value = 'ООО «Новая волна»';
+    slot.querySelector('#clc-save').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onCreated).toHaveBeenCalledWith({ id: 'c-new', name: 'ООО «Новая волна»', inn: '', is_active: true });
+  });
+
+  it('пустой список приглашает завести клиента, а не только идти к администратору', () => {
+    const html = mod.clientsListHtml([], 'all');
+    expect(html).toContain('＋ Новый клиент');
+    expect(html).toContain('«Пользователи» → бухгалтер → «🏢 Клиенты»');
   });
 });

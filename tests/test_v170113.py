@@ -205,4 +205,7 @@ class TestDocsAndKb:
         row = next(r for r in ledger if r["Версия"] == VERSION)
         assert row["Опора репетиции"] == "да" and row["Откат на неё"] == "можно"
         kb = read("docs/kb/README.md")
-        assert f"v{VERSION}" in kb and "issues #4–" in kb
+        # v1.71.1: сводка несёт только последний выпуск; историю держат реестр и CHANGELOG
+        m = re.search(r"\| Последний выпуск \| \*\*v([\d.]+)\*\*", kb)
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
+        assert "issues #4–" in kb

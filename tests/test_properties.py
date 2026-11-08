@@ -148,11 +148,16 @@ def _with_check(prefix: str, weights) -> str:
     return prefix + str(_inn_checksum(prefix, weights))
 
 
+def _non_zero_prefix(prefix: str) -> str:
+    """ИНН из одних нулей невалиден с v1.71.1 — для проверок годного ИНН нужна ненулевая цифра."""
+    return prefix if set(prefix) - {"0"} else prefix[:-1] + "1"
+
+
 @FAST
 @given(prefix=st.text(alphabet=string.digits, min_size=9, max_size=9))
 def test_inn10_valid_by_construction(prefix):
     """ИНН юрлица, собранный по алгоритму контрольного числа, принимается."""
-    inn = _with_check(prefix, _INN10_WEIGHTS)
+    inn = _with_check(_non_zero_prefix(prefix), _INN10_WEIGHTS)
     assert inn_is_valid(inn)
     assert inn_kind(inn) == "legal"
 
@@ -161,7 +166,7 @@ def test_inn10_valid_by_construction(prefix):
 @given(prefix=st.text(alphabet=string.digits, min_size=10, max_size=10))
 def test_inn12_valid_by_construction(prefix):
     """ИНН ИП: 11-я цифра считается по весам W1, 12-я — по весам W2."""
-    eleven = _with_check(prefix, _INN12_W1)      # 10 цифр + контрольная
+    eleven = _with_check(_non_zero_prefix(prefix), _INN12_W1)      # 10 цифр + контрольная
     assert len(eleven) == 11
     twelve = _with_check(eleven, _INN12_W2)      # 11 цифр + контрольная
     assert inn_is_valid(twelve)
@@ -193,7 +198,7 @@ def test_normalize_inn_is_digits_only_and_idempotent(value):
        noise=st.text(alphabet=" -_./()", min_size=0, max_size=6))
 def test_inn_tolerates_formatting(prefix, noise):
     """Разделители и пробелы в середине ИНН не мешают проверке (так вставляют из 1С)."""
-    inn = _with_check(prefix, _INN10_WEIGHTS)
+    inn = _with_check(_non_zero_prefix(prefix), _INN10_WEIGHTS)
     messy = inn[:4] + noise + inn[4:]
     assert inn_is_valid(messy)
 

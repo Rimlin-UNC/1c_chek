@@ -4144,7 +4144,8 @@ async function viewCounterparties(container, opts = {}) {
       if (alive()) return viewBank(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter });
     },
     // v1.70.100 (T-50): все клиенты в одном окне; цифра открывает экран уже в этой компании
-    clients: (c, alive) => viewClients(c, { alive, open: openClientCompany }),
+    clients: (c, alive) => viewClients(c, { alive, open: openClientCompany,
+      onCreated: () => { if (state.me && state.me.role === 'accountant') initClientSwitch(); } }),
     // v1.70.112 (T-46): согласование авансовых отчётов; администратору — выбор компании, как в «Первичке»
     counterparties: viewCounterparties,     // v1.71.0: контрагенты (T-80)
     approvals: async (c, alive) => {
@@ -6660,6 +6661,14 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.71.1': [
+    { icon: '➕', title: 'Клиента заводит сам бухгалтер',
+      text: '«Клиенты» → «＋ Новый клиент»: ИНН (можно оставить пустым), название и памятка. '
+        + 'Компания сразу появляется в списке и в переключателе клиента в шапке — перевхода нет.' },
+    { icon: '🔍', title: 'Проверка по ЕГРЮЛ и подсказка о дубле',
+      text: 'Кнопка «🔍 ЕГРЮЛ» заполняет название по ИНН, а похожие названия программа замечает заранее: '
+        + 'дубль клиента не появится. ИНН из одних нулей больше не принимается.' },
+  ],
   '1.71.0': [
     { icon: '🏢', title: 'Контрагенты из УПД, выписки и по ИНН',
       text: 'Новый раздел «Контрагенты»: программа находит продавца и покупателя в УПД, '

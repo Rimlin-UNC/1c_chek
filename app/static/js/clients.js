@@ -133,7 +133,8 @@ export function clientsListHtml(companies, filter = 'all', query = '') {
   if (!rows.length) {
     return `<div class="glass card cl-empty">${(companies || []).length
       ? 'Под фильтр не попала ни одна компания.'
-      : 'Компаний пока нет. Администратор назначает бухгалтеру клиентов: «Пользователи» → бухгалтер → «🏢 Клиенты».'}</div>`;
+      : 'Клиентов пока нет. Нажмите «＋ Новый клиент» — компания появится в списке сразу. '
+        + 'Ещё клиентов назначает администратор: «Пользователи» → бухгалтер → «🏢 Клиенты».'}</div>`;
   }
   return rows.map(clientsCardHtml).join('');
 }
@@ -174,9 +175,12 @@ export async function viewClients(container, opts = {}) {
             <p class="form-hint">Отчётный месяц — ${esc(data.period_title || data.period)}. Сначала — компании, где
               нужны действия; любая цифра открывает экран уже в этой компании.</p>
           </div>
-          <label class="field cl-period"><span>Месяц</span>
-            <select id="cl-period">${periods.map((p) => `<option value="${esc(p.period)}"${p.period === data.period
-              ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
+          <div class="cl-head-actions">
+            <label class="field cl-period"><span>Месяц</span>
+              <select id="cl-period">${periods.map((p) => `<option value="${esc(p.period)}"${p.period === data.period
+                ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
+            ${clientsCreateButtonHtml()}
+          </div>
         </div>
         ${clientsTotalsHtml(data.totals)}
         <div class="cl-tools">
@@ -188,6 +192,15 @@ export async function viewClients(container, opts = {}) {
       <div class="cl-list" id="cl-list"></div>`;
     paintList();
     container.querySelector('#cl-period').onchange = (e) => { period = e.target.value; load(); };
+    const newBtn = container.querySelector('#cl-new');
+    if (newBtn) newBtn.onclick = () => clientsCreateDialog({
+      onCreated: (company) => {
+        load();
+        // v1.71.1: компания сразу в переключателе в шапке — иначе бухгалтер видит
+        // «Клиент добавлен», а в шапке его ещё нет (нашёл e2e в CI).
+        if (typeof opts.onCreated === 'function') opts.onCreated(company);
+      },
+    });
     container.querySelectorAll('.cl-filter button').forEach((btn) => {
       btn.onclick = () => {
         filter = btn.dataset.filter;
@@ -298,6 +311,110 @@ export function clientsSwitcher(sel, me, onSwitch) {
     setClient(pick && !pick.home ? pick.id : '');
     if (typeof onSwitch === 'function') onSwitch(sel.value);
   };
+}
+
+/** Кнопка «＋ Новый клиент» на экране «Клиенты» (T-84, v1.71.1). */
+export function clientsCreateButtonHtml() {
+  return `<button type="button" class="btn btn-primary btn-sm" id="cl-new"
+    title="Завести компанию-клиента: сразу появится в списке и в переключателе">＋ Новый клиент</button>`;
+}
+
+/** Максимум клиентов у бухгалтера — зеркало app/clients/service.py: MAX_CLIENTS. */
+export const CLIENTS_MAX = 500;
+
+/** Сообщение об отказе создания — словами, с подсказкой, что делать. */
+export function clientsCreateError(status, message) {
+  const text = String(message || '');
+  if (status === 409 && /Похожая компания/.test(text)) {
+    return `${text}. Откройте её из списка — дубль заводить не нужно.`;
+  }
+  if (status === 409 && /предел/.test(text)) return text;
+  if (status === 403) return 'Заводить клиентов может бухгалтер и администратор.';
+  return text || 'Не удалось создать клиента';
+}
+
+/** Окно «Новый клиент». opts.onCreated(company) — после успеха (перерисовать список). */
+export function clientsCreateDialog(opts = {}) {
+  const { slot, close } = openModal(`
+    <h3>＋ Новый клиент</h3>
+    <p class="form-hint">Компания сразу появится в списке и в переключателе клиента в шапке —
+      перевходить не нужно. ИНН можно оставить пустым и заполнить позже.</p>
+    <div class="form-grid">
+      <label class="field full"><span>ИНН (10 цифр ООО / 12 цифр ИП)</span>
+        <div style="display:flex;gap:8px">
+          <input id="clc-inn" inputmode="numeric" maxlength="12" placeholder="7707083893" style="flex:1;min-width:0">
+          <button type="button" class="btn btn-sm" id="clc-checko" title="Заполнить название из ЕГРЮЛ/ЕГРИП (Checko)">🔍 ЕГРЮЛ</button>
+        </div></label>
+      <label class="field full"><span>Название (ООО «…», ИП …)</span>
+        <input id="clc-name" placeholder="ООО «Ромашка»"></label>
+      <label class="field full"><span>Памятка (договор, контакт — необязательно)</span>
+        <input id="clc-note" placeholder="договор № 12 от 01.10.2026"></label>
+      <div class="full hidden" id="clc-similar"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="clc-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="clc-save">Создать клиента</button>
+    </div>`);
+  const innInput = slot.querySelector('#clc-inn');
+  const nameInput = slot.querySelector('#clc-name');
+  const noteInput = slot.querySelector('#clc-note');
+  const simBox = slot.querySelector('#clc-similar');
+  const saveBtn = slot.querySelector('#clc-save');
+  let timer = null;
+
+  const digits = () => innInput.value.replace(/\D/g, '');
+
+  async function checkSimilar() {
+    const name = nameInput.value.trim();
+    if (name.length < 3) { simBox.classList.add('hidden'); return; }
+    try {
+      const sims = await api.get('/api/v1/companies/similar?name=' + encodeURIComponent(name));
+      if (!sims.length) { simBox.classList.add('hidden'); return; }
+      simBox.innerHTML = `<div class="info-callout" style="margin:0">⚠ Похожая компания уже есть:
+        <b>${esc(sims[0].name)}</b>${sims[0].inn ? ' (ИНН ' + esc(sims[0].inn) + ')' : ''}.
+        Если это она — не заводите дубль, выберите её в списке.</div>`;
+      simBox.classList.remove('hidden');
+    } catch { simBox.classList.add('hidden'); }
+  }
+
+  nameInput.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(checkSimilar, 500);
+  });
+
+  slot.querySelector('#clc-checko').onclick = async () => {
+    const inn = digits();
+    if (inn.length !== 10 && inn.length !== 12) return toast('ИНН: 10 цифр (ООО) или 12 (ИП)', 'warn');
+    const btn = slot.querySelector('#clc-checko');
+    btn.disabled = true; btn.textContent = '…ищу';
+    try {
+      const card = await api.post('/api/v1/companies/lookup-checko', { inn });
+      if (!nameInput.value.trim()) nameInput.value = card.name_full || '';
+      toast(`Найдено: ${card.name_full}${card.status ? ' · ' + card.status : ''}`, 'ok', '🗂 ЕГРЮЛ');
+    } catch (e) {
+      toast(e.message, 'err');
+    }
+    btn.disabled = false; btn.textContent = '🔍 ЕГРЮЛ';
+  };
+
+  slot.querySelector('#clc-cancel').onclick = close;
+  saveBtn.onclick = async () => {
+    const name = nameInput.value.trim();
+    if (name.length < 2) return toast('Укажите название компании', 'err');
+    saveBtn.disabled = true;
+    try {
+      const company = await api.post('/api/v1/companies', {
+        name, inn: digits(), note: noteInput.value.trim(),
+      });
+      toast(`Клиент «${company.name}» добавлен — он уже в списке и в шапке`, 'ok', '🏢');
+      close();
+      if (typeof opts.onCreated === 'function') opts.onCreated(company);
+    } catch (e) {
+      toast(clientsCreateError(e.status, e.message), 'err', 6000);
+    }
+    saveBtn.disabled = false;
+  };
+  return { slot, close };
 }
 
 /** Администратор: какие компании ведёт бухгалтер. user — { id, name }, companies — все компании. */

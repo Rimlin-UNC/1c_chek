@@ -545,6 +545,47 @@ test('рабочее место аутсорсера: назначение кл�
   expect(reset.ok()).toBeTruthy();
 });
 
+// v1.71.1 (T-84): бухгалтер заводит клиента сам с экрана «Клиенты» — компания сразу в списке и в шапке,
+// без действий администратора и без перевхода
+test('создание клиента бухгалтером: кнопка «＋ Новый клиент» и работа в нём сразу', async ({ page, request }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('#btn-logout').click();
+  const reloaded = page.waitForEvent('load');
+  await page.locator('#lo-exit').click();
+  await reloaded;
+  await page.fill('#login-username', 'e2e_acc_alpha');
+  await page.fill('#login-password', 'e2e-accountant-password');
+  await page.click('#login-submit');
+  await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  const name = `E2E Новый клиент ${Date.now()}`;
+  await page.locator('#cl-new').click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Новый клиент');
+  await modal.locator('#clc-name').fill(name);
+  await modal.locator('#clc-note').fill('договор № 1');
+  await modal.locator('#clc-save').click();
+  await expect(page.locator('#toast-container')).toContainText('добавлен', { timeout: 15000 });
+  // компания сразу в списке и в переключателе — перевхода не было
+  await expect(page.locator('.cl-card', { hasText: name })).toHaveCount(1, { timeout: 15000 });
+  const sw = page.locator('#client-switch');
+  await expect(sw.locator('option', { hasText: name })).toHaveCount(1, { timeout: 15000 });
+  await page.locator('.cl-card', { hasText: name }).locator('[data-open="docreq"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента', { timeout: 15000 });
+  await expect(sw.locator('option:checked')).toHaveText(name);
+  // уборка: компании, заведённые сценарием, в архив (данные синтетические — ADR-14)
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const companies = await (await request.get('/api/v1/companies', { headers: { Authorization: `Bearer ${token}` } })).json();
+  const mine = companies.find((c) => c.name === name);
+  expect(mine).toBeTruthy();
+  const arch = await request.patch(`/api/v1/companies/${mine.id}`,
+    { headers: { Authorization: `Bearer ${token}` }, data: { is_active: false } });
+  expect(arch.ok()).toBeTruthy();
+});
+
 // v1.70.101 (T-69, ADR-31): понимание чеков — читаемая позиция и категория с причиной; бухгалтер меняет категорию,
 // выбор запоминается для компании и виден в «Настройках» → «Память товаров». Чек — синтетика через API.
 test('понимание чеков: категория позиции, выбор бухгалтера и «Память товаров»', async ({ page, request }) => {

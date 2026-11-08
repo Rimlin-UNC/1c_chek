@@ -171,7 +171,9 @@ class TestScreen:
         assert ("import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } "
                 "from './clients.js';") in app_js
         assert "'primary', 'docreq', 'bank', 'clients', 'counterparties', 'settings'],\n                secs: ['data'" in app_js
-        assert "clients: (c, alive) => viewClients(c, { alive, open: openClientCompany })," in app_js
+        # v1.71.1: экран сообщает наверх о созданном клиенте — шапка перерисовывает переключатель
+        assert "clients: (c, alive) => viewClients(c, { alive, open: openClientCompany," in app_js
+        assert "onCreated: () => { if (state.me && state.me.role === 'accountant') initClientSwitch(); }" in app_js
         assert "if (state.me && state.me.role === 'accountant') initClientSwitch();" in app_js
         assert "window.addEventListener('ymaster:client-reset', (e) => {" in app_js
         assert "class=\"btn btn-sm u-clients\"" in app_js

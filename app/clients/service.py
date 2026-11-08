@@ -114,6 +114,29 @@ def access_of(db: Session, accountant: User) -> list[str]:
     return client_ids(db, accountant.id)
 
 
+def check_client_limit(db: Session, user: User, extra: int = 1) -> None:
+    """Предел клиентов бухгалтера (T-84): лишний клиент не создаётся и не назначается."""
+    have = len(client_ids(db, user.id))
+    if have + extra > MAX_CLIENTS:
+        raise ClientsError(f"У бухгалтера уже {have} клиентов — предел {MAX_CLIENTS}. "
+                           "Снимите лишних в «Пользователи» → «🏢 Клиенты».")
+
+
+def adopt_client(db: Session, user: User, company_id: str) -> None:
+    """Бухгалтер завёл клиента сам (T-84): связь появляется в той же транзакции.
+
+    Иначе бухгалтер создал бы компанию, которую сам же не видит: доступ к клиенту
+    выдаётся только строкой accountant_clients (ADR-30). Свою компанию не добавляем.
+    """
+    if user.role != ROLE_ACCOUNTANT or not company_id or company_id == user.company_id:
+        return
+    exists = (db.query(AccountantClient)
+              .filter(AccountantClient.user_id == user.id,
+                      AccountantClient.company_id == company_id).first())
+    if exists is None:
+        db.add(AccountantClient(user_id=user.id, company_id=company_id, granted_by=user.id))
+
+
 def set_access(db: Session, admin: User, accountant: User, company_ids: list[str]) -> dict:
     """Заменить список клиентов бухгалтера (только администратор). Своя компания в список не входит."""
     if accountant.role != ROLE_ACCOUNTANT:
