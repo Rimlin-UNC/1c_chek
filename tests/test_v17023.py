@@ -388,10 +388,10 @@ class TestVersions17023:
     def test_static_pins_follow_current_version(self):
         ver = settings.APP_VERSION
         idx = _read("app/static/index.html")
-        assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 2
+        assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 3
         sw = _read("app/static/sw.js")
         assert f"ymaster-check-v{ver}" in sw
-        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 2
+        assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 3
         assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
         assert f"?v={ver}" in _read("app/static/maxapp/index.html")
 

@@ -4,7 +4,8 @@
      класс ym-guest: заставки нет, стартовая страница видна с первого кадра. Полноэкранная заставка перед
      содержимым — «навязчивое окно» по правилам Google, а стартовую страницу читают поисковики.
    • Есть токен или особый адрес (#/…, ?maxlogin=) — класс ym-hold: стартовая страница не мелькает, пока
-     программа решает, какой экран показать; снимает класс app.js (showScreen). */
+     программа решает, какой экран показать; снимает класс app.js (showScreen). Якоря #main и #land-…
+     ведут внутри главной и маршрутом не считаются. */
 (function () {
   'use strict';
   var root = document.documentElement, token = '', guests = '';
@@ -13,7 +14,8 @@
     guests = window.localStorage.getItem('ym-splash-guests') || '';
   } catch (e) { void e; /* хранилище недоступно — считаем гостем */ }
   var hash = window.location.hash || '';
-  var route = (hash.length > 1 && hash.indexOf('#land-') !== 0) || /[?&]maxlogin=/.test(window.location.search);
+  var inPage = hash.length > 1 && (hash.indexOf('#land-') === 0 || hash === '#main');
+  var route = (hash.length > 1 && !inPage) || /[?&]maxlogin=/.test(window.location.search);
   if (token || route) root.classList.add('ym-hold');
   if (!token && guests !== '1') root.classList.add('ym-guest');
 })();

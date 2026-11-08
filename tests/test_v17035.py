@@ -66,6 +66,7 @@ from tests.test_v17034 import (APP_CSS, APP_JS, INDEX, MAXAPP, conflicts,
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 JS_DIR = ROOT / "app/static/js"
 BRANDBOOK = ROOT / "brand/brandbook.html"
+HOME_CSS = ROOT / "app/static/css/home.css"
 CONFIG = ROOT / ".stylelintrc.json"
 
 # Реальные поверхности темы, на которых лежит текст. Худшая из них и задаёт
@@ -622,9 +623,9 @@ class TestCssIsValid:
         assert "no-duplicate-selectors" not in rules
 
     @pytest.mark.skipif(_stylelint() is None, reason="stylelint не установлен")
-    @pytest.mark.parametrize("source", ["app.css", "maxapp", "brandbook"])
+    @pytest.mark.parametrize("source", ["app.css", "home.css", "maxapp", "brandbook"])
     def test_zero_findings(self, source, tmp_path):
-        """0 замечаний валидатора по всем трём источникам CSS.
+        """0 замечаний валидатора по всем четырём источникам CSS.
 
         До правки app.css давал 21: 17 дублей селекторов, 2 дубля свойств
         внутри блока, пустой блок .rcpt .r-name { } и сокращение overflow,
@@ -632,6 +633,8 @@ class TestCssIsValid:
         """
         if source == "app.css":
             target = APP_CSS
+        elif source == "home.css":
+            target = HOME_CSS
         elif source == "maxapp":
             target = _extract_inline_style(MAXAPP, tmp_path / "maxapp.css")
         else:
@@ -743,6 +746,9 @@ class TestNoDeadCss:
         # v1.70.98: у index.html второй файл стилей — заставка загрузки (css/splash.css)
         splash = re.sub(r"/\*.*?\*/", "", read(ROOT / "app/static/css/splash.css"), flags=re.S)
         defined |= set(re.findall(r"\.([A-Za-z][\w-]*)", splash))
+        # T-83: отдельный файл стилей публичной главной (issue #72)
+        home = re.sub(r"/\*.*?\*/", "", read(HOME_CSS), flags=re.S)
+        defined |= set(re.findall(r"\.([A-Za-z][\w-]*)", home))
         unstyled = sorted(c for c in used if c not in defined and c not in JS_HOOK_CLASSES)
         assert not unstyled, f"классы разметки без стиля и не хуки: {unstyled}"
 

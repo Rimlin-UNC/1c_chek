@@ -92,3 +92,26 @@
 2. Строка `T-NN` в [`02_roadmap.csv`](02_roadmap.csv) и issue на GitHub.
 3. Если нужно решение владельца — вопрос `Q-NN` с вариантами и рекомендацией.
 4. Реализация — по [чек-листу задачи](../../AGENTS.md#чек-лист-задачи-от-идеи-до-отчёта).
+
+## SEO главной: официальные практики Google, Яндекса и web.dev (срез 07.11.2026, T-83, #72)
+
+**Вопрос.** Как сделать главную коммерческим хабом под «проверка чека онлайн» / «сайт проверки чеков» и не получить дорвеи, переспам или страницу, которую робот видит хуже человека.
+
+**Источники (первичные):**
+- Google Search Central, SEO Starter Guide: https://developers.google.com/search/docs/fundamentals/seo-starter-guide
+- Google, Creating helpful, reliable, people-first content: https://developers.google.com/search/docs/fundamentals/creating-helpful-content
+- Google, Search Essentials / технические требования: https://developers.google.com/search/docs/fundamentals/get-started
+- Google, Consolidate duplicate URLs: https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls
+- Google, JavaScript SEO basics: https://developers.google.com/search/docs/crawling-indexing/javascript/javascript-seo-basics
+- Google, структурированные данные и политики: https://developers.google.com/search/docs/appearance/structured-data/search-gallery , https://developers.google.com/search/docs/appearance/structured-data/sd-policies
+- Google, FAQPage: https://developers.google.com/search/docs/appearance/structured-data/faqpage (в 2026 документ удалён, rich result больше не показывается)
+- Яндекс Вебмастер, как робот видит страницу: https://yandex.ru/support/webmaster/ru/robot-workings/vision
+- Яндекс Вебмастер, диагностика и рекомендации: https://yandex.ru/support/webmaster/ru/diagnosis/possible.html
+- Яндекс Вебмастер, заголовок title: https://yandex.ru/support/webmaster/en/search-results/title
+- web.dev, Core Web Vitals: https://web.dev/articles/vitals , https://web.dev/articles/optimize-lcp , https://web.dev/articles/optimize-cls
+
+**Выводы.** Уникальные и осмысленные title/description, один descriptive H1 и иерархия H2/H3, смысловое ядро текстом на первом экране, crawlable `<a href>`, описательные `alt`, self-referential canonical, robots.txt и sitemap, мобильная вёрстка и лёгкая страница важнее «магии» микроразметки. Контент пишется для людей (Who / How / Why), а не для количества слов; keyword stuffing, скрытый текст, клоакинг, почти одинаковые страницы под каждый ключ и навязчивые interstitials вредят. Размечать можно только видимый читателю контент; несуществующие цены, рейтинги и отзывы недопустимы. FAQ как видимый блок полезен пользователю, но в 2026 не даёт гарантированного rich result в Google. Яндекс читает страницу и без микроразметки; для сниппета важен meta description. Для Core Web Vitals цель — LCP ≤ 2,5 с, INP ≤ 200 мс, CLS ≤ 0,1 на 75-м перцентиле.
+
+**Решение для #72.** `/` — одна сильная коммерческая страница и точка конверсии, а не 25 дорвеев. Ключи распределены по смыслу: главная продаёт, `/kak-proverit-chek` объясняет, `/cheki-sotrudnikov-v-1c` и `/dlya-buhgalterov` принимают B2B-интент, блог забирает информационный трафик. H1, лид, шаги, FAQ, факты о данных и CTA отдаются видимым серверным HTML без JS-зависимости. JSON-LD и FAQPage не добавляем: в репозитории уже есть микроданные `WebSite` / `Organization` на видимом тексте. Изображения — только локальные, с `alt`, `width`, `height`, `loading` и `decoding`; стили `home.css` подключены после базовой темы. Скрытый каркас приложения больше не содержит второго `<main>`: на документе один `main`, есть skip-link и поименованные ориентиры. `boot.js` не считает `#main` и `#land-…` маршрутом SPA.Canonical и noindex по хосту, robots/sitemap и уникальные metadata кластерных страниц сохраняются.
+
+**Ограничение.** «Первые места» не гарантируются ни кодом, ни этим исследованием: позиции зависят от конкурентов, ссылок, возраста домена и поведения пользователей. Нужны замеры в Google Search Console, Яндекс Вебмастере, PageSpeed / CrUX и уточнение частотности в Вордстате владельцем.

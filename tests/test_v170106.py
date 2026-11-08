@@ -30,8 +30,8 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
-        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
+        assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
     def test_updater_order(self):

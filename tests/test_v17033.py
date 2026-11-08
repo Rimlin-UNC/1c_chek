@@ -44,6 +44,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 APP_CSS = ROOT / "app/static/css/app.css"
+HOME_CSS = ROOT / "app/static/css/home.css"
 INDEX = ROOT / "app/static/index.html"
 MAXAPP = ROOT / "app/static/maxapp/index.html"
 BRANDBOOK = ROOT / "brand/brandbook.html"
@@ -194,8 +195,8 @@ class TestNoInlineStyles:
         элемент оформления — браузер не сообщит об ошибке."""
         html = no_comments(read(path))
         css = read(APP_CSS)
-        if path is INDEX:                       # v1.70.98: второй файл стилей — заставка загрузки
-            css = css + "\n" + read(ROOT / "app/static/css/splash.css")
+        if path is INDEX:                       # T-83: splash.css и home.css — стили публичной главной
+            css = css + "\n" + read(ROOT / "app/static/css/splash.css") + "\n" + read(HOME_CSS)
         if path is MAXAPP:                      # у MAX-приложения свой <style>
             css = css + "\n" + re.search(r"<style>([\s\S]*?)</style>", html).group(1)
         css_body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)

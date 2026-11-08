@@ -14,7 +14,7 @@
 
 | Блок (файл) | От него зависит | Что сломается, если забыть |
 |---|---|---|
-| `app/config.py` → `APP_VERSION` | `index.html` (?v= ×2), `sw.js` (CACHE + ?v= ×2), `manifest.webmanifest`, `blocks.py`, все `TestVersion*` | Браузер отдаст старый кэш; тесты версий упадут |
+| `app/config.py` → `APP_VERSION` | `index.html` (?v= ×3: `app.css`, `home.css`, `app.js`), `sw.js` (CACHE + ?v= ×3), `manifest.webmanifest`, `blocks.py`, все `TestVersion*` | Браузер отдаст старый кэш; тесты версий упадут |
 | `app/services/blocks.py` (реестр блоков) | карточка «Обновления» в UI, `TestBlocksRegistry` | Пин блока не совпадёт с версией |
 | `app/routers/receipts.py` (эндпоинты, воркер) | `app/schemas.py`, `app.js` (URL и тела запросов), тесты v2520/v1573/v1574/v1575 | Кнопки в UI зовут старый контракт — «кнопка есть, а не работает» |
 | `app/services/external.py` (цепочка источников, форматы запроса) | настройки в БД (`proverkacheka_token`, `fns_master_token`), карточка «Источники» в `app.js`, тесты v1270/v1550/v1570/v1571/v1576–v1580 | Смена порядка форматов/очереди тишино ломает загрузку чеков |
@@ -23,8 +23,9 @@
 | БД-модели (`app/models.py`) | миграции, прямые фикстуры тестов (UNIQUE fn+fd+fp!) | Интегрити-ошибки, падения фикстур |
 
 **Железные правила:**
-- Версия поднимается **синхронно в 7 местах**: `config.py`, `index.html` ×2,
-  `sw.js` ×3 (имя кэша + два `?v=`), `manifest.webmanifest`, `blocks.py`
+- Версия поднимается **синхронно в 7 местах**: `config.py`, `index.html` ×3
+  (`app.css`, `home.css`, `app.js`), `sw.js` ×4 (имя кэша + три `?v=`),
+  `manifest.webmanifest`, `blocks.py`
   (пин затронутого блока), `CHANGELOG.md`, `WHATS_NEW` в `app.js`.
 - Блок «Проверка чеков (ФНС и источники)» (`/settings/fns`, `#fns-token`,
   мастер-токен) — **не трогать** без прямого указания владельца.

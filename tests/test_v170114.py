@@ -28,8 +28,8 @@ class TestRelease:
                     "app/static/b2b/index.html"):
             assert VERSION in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 2
-        assert read("app/static/index.html").count(f"?v={VERSION}") == 2
+        assert f"ymaster-check-v{VERSION}" in sw and sw.count(f"?v={VERSION}") == 3
+        assert read("app/static/index.html").count(f"?v={VERSION}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
         assert f'"version": "{VERSION}"' in read("app/static/manifest.webmanifest")
 

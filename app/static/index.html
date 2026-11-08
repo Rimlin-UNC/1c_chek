@@ -12,17 +12,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f5">
 <meta name="color-scheme" content="light">
-<!-- v1.70.103 (T-74, ADR-33): SEO стартовой страницы. Заголовок и описание — под запрос «проверка чека», каждый
-     ключ один раз (docs/kb/12_seo.md). Вместо метки seo:head сервер подставляет canonical (индексация разрешена)
-     или noindex (копии программы не на рабочем адресе) и коды подтверждения поисковиков (app/services/seo.py) -->
-<title>Проверка чека по QR-коду онлайн — Ямастер Чек</title>
-<meta name="description" content="Бесплатная проверка кассового чека по QR-коду: сверка с данными ФНС, баллы и кэшбэк за чеки. Бухгалтеру — авансовые чеки, выписки банков и выгрузка в 1С.">
+<!-- T-83 (issue #72): главная — коммерческий хаб под интент «проверка чека онлайн» и «сайт проверки чеков».
+     Ключи распределены по кластерам: главная продаёт, три страницы объясняют и принимают B2B-трафик.
+     Вместо метки seo:head сервер подставляет canonical или noindex и коды подтверждения (app/services/seo.py). -->
+<title>Проверка чека онлайн по QR-коду — Ямастер Чек</title>
+<meta name="description" content="Сайт проверки чеков: отсканируйте QR-код, сверим кассовый чек с данными ФНС и покажем результат. Баллы за чеки, авансовые отчёты и выгрузка в 1С.">
 <!-- seo:head -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Ямастер Чек">
 <meta property="og:locale" content="ru_RU">
-<meta property="og:title" content="Проверка чека по QR-коду онлайн — Ямастер Чек">
-<meta property="og:description" content="Сверка кассового чека с данными ФНС, баллы и кэшбэк за чеки, выгрузка авансовых чеков и выписок банков в 1С.">
+<meta property="og:title" content="Проверка чека онлайн — от QR-кода до 1С | Ямастер Чек">
+<meta property="og:description" content="Сайт проверки чеков: QR-код, сверка с данными ФНС, баллы за чеки и выгрузка в 1С для компаний.">
 <meta property="og:url" content="https://chek.ymaster.ru/">
 <meta property="og:image" content="https://chek.ymaster.ru/img/manual/hero.jpg">
 <meta property="og:image:width" content="1100">
@@ -43,8 +43,11 @@
 <link rel="stylesheet" href="/css/splash.css">
 <script src="/js/splash.js" defer></script>
 <link rel="stylesheet" href="/css/app.css?v=1.70.114">
+<!-- T-83: стили публичной главной, после базовой темы приложения -->
+<link rel="stylesheet" href="/css/home.css?v=1.70.114">
 </head>
 <body>
+  <a class="skip" href="#main">К содержимому</a>
   <!-- v1.70.98: заставка загрузки «chek.ymaster.ru» — видна с первого кадра, таймлайн около 3 с (js/splash.js) -->
   <div id="ym-splash" class="ym-splash">
     <div class="ym-splash__stage">
@@ -94,87 +97,166 @@
        заголовок H1 — у стартовой страницы; микроразметка schema.org (WebSite и Organization) — только на видимом
        тексте: Яндекс читает микроданные, JSON-LD не поддерживает (docs/kb/12_seo.md) -->
   <div id="login-screen" class="login-screen">
-    <div class="land-wrap">
-    <div class="land-left" itemscope itemtype="https://schema.org/WebSite">
-      <meta itemprop="name" content="Ямастер Чек">
-      <meta itemprop="alternateName" content="chek.ymaster.ru">
-      <link itemprop="url" href="https://chek.ymaster.ru/">
-      <span class="land-badge" id="land-badge">Чек-Пул уже работает</span>
-      <h1 class="land-h1">Проверка чека по QR-коду —<br><span class="land-accent">баллы и кэшбэк</span> за каждый чек</h1>
-      <p class="land-lead" itemprop="description">Сканируйте чеки камерой телефона: сверим кассовый чек с данными ФНС
-      и начислим балл в открытой базе «Чек-Пул», а у партнёров — кэшбэк. Для первого чека регистрация не нужна:
-      навели камеру — балл засчитан.</p>
-      <div class="land-stats" id="land-stats">
-        <span class="land-stat"><b>—</b><small>чеков в базе</small></span>
-        <span class="land-stat"><b>—</b><small>проверено</small></span>
-        <span class="land-stat"><b>+1</b><small>балл за чек</small></span>
-      </div>
-      <div class="land-cta">
-        <a class="btn btn-primary" href="#/public?cam=1">📸 Сканировать чек</a>
-        <a class="btn" href="#land-how" id="land-how-link">Как это работает</a>
-      </div>
-      <ol class="land-steps" id="land-how">
-        <li><img src="/img/manual/scan.jpg" alt="Сканирование QR-кода чека" loading="lazy">
-          <div><b>1. Отсканируйте QR-код чека</b><span>Камерой телефона или фотографией — код распознаётся автоматически.</span></div></li>
-        <li><img src="/img/manual/report.jpg" alt="Данные чека" loading="lazy">
-          <div><b>2. Мы проверяем чек по официальным источникам</b><span>данные приходят из официальной базы ФНС; реквизиты, магазин и сумма берутся из чека.</span></div></li>
-        <li><img src="/img/manual/points.jpg" alt="Баллы и кэшбэк: монеты и подарок в кабинете" loading="lazy">
-          <div><b>3. Получайте баллы</b><span>Баллы копятся в кабинете, кэшбэк — у партнёров. Укажите e-mail ниже — пришлём разбор чека.</span></div></li>
-      </ol>
-      <form id="land-lead" class="land-lead-form" novalidate>
-        <label class="field"><span>E-mail для разбора чека и писем пула</span>
-          <input type="email" id="land-email" placeholder="you@mail.ru" autocomplete="email"></label>
-        <input class="visually-hidden" type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off">
-        <label class="consent-label">
-          <input class="consent-box" type="checkbox" id="land-consent">
-          <span>Согласен на обработку e-mail для разбора чека и писем пула
-          (152-ФЗ; отписаться можно в любом письме)</span></label>
-        <button class="btn btn-primary btn-block" id="land-lead-btn" type="submit">Прислать разбор чека</button>
-        <div id="land-lead-msg" class="form-hint mt-6"></div>
-      </form>
-      <div class="land-faq">
-        <details><summary>Как проверить чек по QR-коду?</summary>
-          <p>Нажмите «Сканировать чек» и наведите камеру на QR-код или загрузите фото чека — дата,
-          сумма, ФН, ФД и ФП распознаются сами, и чек сверяется с данными ФНС. Если QR-код стёрся,
-          реквизиты можно ввести вручную. <a href="/kak-proverit-chek">Подробная инструкция и что делать, если чек
-          не найден в ФНС</a>.</p></details>
-        <details><summary>Как понять, что чек настоящий?</summary>
-          <p>Онлайн-касса передаёт каждый чек в ФНС через оператора фискальных данных. Чек, который
-          нашёлся в данных ФНС, получает статус «Принят в пул»; остальные уходят на ручную проверку
-          или не принимаются — статус виден в кабинете.</p></details>
-        <details><summary>Это законно и безопасно?</summary>
-          <p>Мы принимаем только фискальные реквизиты чека (ФН, ФД, ФП) — они напечатаны
-          на самом чеке. Из персональных данных — только e-mail и только по вашему
-          согласию (152-ФЗ). В публичных списках имя скрыто: видны город и число чеков.</p></details>
-        <details><summary>Нужна ли регистрация?</summary>
-          <p>Для первого чека — нет. Баллы сохранятся в этом браузере, а при регистрации
-          в кабинете присоединятся к аккаунту.</p></details>
-        <details><summary>Сколько можно получить?</summary>
-          <p>1 чек — 1 балл, чеки партнёров — до 100 баллов кэшбэка. Лимит — 50 чеков
-          в сутки с одного устройства.</p></details>
-        <details><summary>А для компаний?</summary>
-          <p>Сотрудники сканируют авансовые и командировочные чеки телефоном,
-          бухгалтер видит их в базе и выгружает в 1С одной кнопкой. Бухгалтерам и аутсорсингу —
-          несколько компаний в одном окне, выписки банков по API и УПД из ЭДО. Подробнее:
-          <a href="/cheki-sotrudnikov-v-1c">чеки сотрудников в 1С</a>, <a href="/dlya-buhgalterov">для бухгалтеров и
-          аутсорсинга</a>.</p></details>
-      </div>
-      <!-- v1.70.106 (T-75): страницы под кластеры запросов — видимые ссылки, у каждой страницы своя польза.
-           Абзац, а не nav: второй ориентир «навигация» без имени html-validate не пропускает (unique-landmark) -->
-      <p class="land-more"><span>Полезное:</span>
-        <a href="/kak-proverit-chek">Как проверить чек</a>
-        <a href="/cheki-sotrudnikov-v-1c">Чеки сотрудников в 1С</a>
-        <a href="/dlya-buhgalterov">Для бухгалтеров</a></p>
-      <p class="land-note" itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
-        <link itemprop="logo" href="https://chek.ymaster.ru/img/icon-512.png">
-        <span itemprop="name">ООО «Ямастер»</span> ·
-        <a itemprop="url" href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:chek@ymaster.ru"><span itemprop="email">chek@ymaster.ru</span></a></p>
-    </div>
-    <div class="land-right">
+    <div class="home-shell">
+      <header class="home-header" aria-label="Шапка главной страницы">
+        <a class="home-brand" href="/" aria-label="Ямастер Чек — главная">
+          <img src="/img/logo.svg" alt="Ямастер Чек" width="36" height="36" loading="eager">
+          <span>Ямастер <b>Чек</b></span>
+        </a>
+        <nav class="home-nav" aria-label="Основная навигация">
+          <a href="#land-how">Как это работает</a>
+          <a href="#land-business">Для бизнеса</a>
+          <a href="#land-facts">Данные</a>
+          <a href="#land-faq">Вопросы</a>
+          <a href="/oferta">Оферта</a>
+        </nav>
+        <a class="home-header__login" href="#land-login">Войти</a>
+      </header>
+
+      <div class="land-wrap">
+        <div class="land-left" itemscope itemtype="https://schema.org/WebSite">
+          <meta itemprop="name" content="Ямастер Чек">
+          <meta itemprop="alternateName" content="chek.ymaster.ru">
+          <link itemprop="url" href="https://chek.ymaster.ru/">
+          <main id="main" class="home-main">
+            <section class="home-hero" aria-labelledby="home-title">
+              <span class="land-badge" id="land-badge">Чек-Пул уже работает</span>
+              <h1 id="home-title" class="land-h1">Проверка чека онлайн —<br><span class="land-accent">от QR-кода до 1С</span></h1>
+              <p class="land-lead" itemprop="description">Сканируйте чеки камерой телефона: сайт проверки чеков сверит QR-код кассового чека с данными ФНС и покажет результат. За чеки начисляются баллы и кэшбэк у партнёров; компания может выгрузить проверенные чеки в 1С.</p>
+              <div class="land-cta home-cta">
+                <a class="btn btn-primary" href="#/public?cam=1">📸 Сканировать чек</a>
+                <a class="btn" href="#land-how" id="land-how-link">Как это работает</a>
+                <a class="home-hero__login" href="#land-login">Уже есть аккаунт — войти</a>
+              </div>
+              <p class="home-flow">
+                <span>QR-код</span><span class="home-flow__arrow" aria-hidden="true">→</span>
+                <span>реквизиты</span><span class="home-flow__arrow" aria-hidden="true">→</span>
+                <span>ФНС</span><span class="home-flow__arrow" aria-hidden="true">→</span>
+                <span>результат</span><span class="home-flow__arrow" aria-hidden="true">→</span>
+                <span>1С</span>
+              </p>
+              <div class="land-stats" id="land-stats" aria-live="polite">
+                <span class="land-stat"><b>—</b><small>чеков в базе</small></span>
+                <span class="land-stat"><b>—</b><small>проверено</small></span>
+                <span class="land-stat"><b>+1</b><small>балл за чек</small></span>
+              </div>
+              <ul class="home-trust" aria-label="Что важно о сервисе">
+                <li><span class="home-trust__mark" aria-hidden="true">✓</span><b>Первый чек без аккаунта</b><span>Камера телефона или фото — регистрация не нужна.</span></li>
+                <li><span class="home-trust__mark" aria-hidden="true">✓</span><b>Сверка с ФНС через ОФД</b><span>Онлайн-касса передаёт чек оператору фискальных данных; мы сравниваем реквизиты.</span></li>
+                <li><span class="home-trust__mark" aria-hidden="true">✓</span><b>Доступ по ролям</b><span>Сотрудник видит свои чеки, бухгалтер — свою компанию.</span></li>
+              </ul>
+            </section>
+
+            <section class="home-section home-steps" id="land-how" aria-labelledby="home-steps-title">
+              <h2 id="home-steps-title">Проверка чека за три шага</h2>
+              <p class="home-section-intro">От QR-кода до понятного результата без ручного перебора реквизитов. Спорные случаи и расшифровка строки QR вынесены в отдельную инструкцию.</p>
+              <ol class="land-steps" id="land-how-list">
+                <li><img class="home-step-img" src="/img/manual/scan.jpg" alt="Телефон сканирует QR-код кассового чека" title="Сканирование QR-кода чека" width="1100" height="613" loading="lazy" decoding="async">
+                  <div><b>1. Отсканируйте QR-код чека</b><span>Камерой телефона или фотографией — реквизиты распознаются сами. Если код стёрся, их можно ввести вручную.</span></div></li>
+                <li><img class="home-step-img" src="/img/manual/report.jpg" alt="Данные кассового чека после проверки" title="Данные чека" width="1100" height="613" loading="lazy" decoding="async">
+                  <div><b>2. Мы проверяем чек по официальным источникам</b><span>Сверяем дату, сумму, ФН, ФД и ФП с данными ФНС; касса передаёт чек через ОФД.</span></div></li>
+                <li><img class="home-step-img" src="/img/manual/points.jpg" alt="Баллы и кэшбэк за чеки в кабинете" title="Баллы за чеки" width="1376" height="768" loading="lazy" decoding="async">
+                  <div><b>3. Получайте баллы</b><span>Подтверждённый чек принимается в «Чек-Пул», а компания может отправить его в авансовый отчёт и 1С.</span></div></li>
+              </ol>
+              <p class="home-section__link"><a href="/kak-proverit-chek">Подробная инструкция: что зашифровано в QR-коде и что делать, если чек не найден в ФНС</a></p>
+            </section>
+
+            <section class="home-section" aria-labelledby="home-lead-title">
+              <h2 id="home-lead-title">Разбор чека на e-mail</h2>
+              <p class="home-section-intro">Оставьте адрес, если хотите получить разбор первого чека и письма «Чек-Пула». E-mail используется только с вашего согласия.</p>
+              <form id="land-lead" class="land-lead-form home-lead-form" novalidate>
+                <label class="field"><span>E-mail для разбора чека и писем пула</span>
+                  <input type="email" id="land-email" placeholder="you@mail.ru" autocomplete="email"></label>
+                <input class="visually-hidden" type="text" id="land-hp" tabindex="-1" aria-hidden="true" autocomplete="off">
+                <label class="consent-label">
+                  <input class="consent-box" type="checkbox" id="land-consent">
+                  <span>Согласен на обработку e-mail для разбора чека и писем пула (152-ФЗ; отписаться можно в любом письме)</span></label>
+                <button class="btn btn-primary btn-block" id="land-lead-btn" type="submit">Прислать разбор чека</button>
+                <div id="land-lead-msg" class="form-hint mt-6"></div>
+              </form>
+            </section>
+
+            <section class="home-section" id="land-business" aria-labelledby="home-business-title">
+              <h2 id="home-business-title">Проверка кассовых чеков для компании</h2>
+              <p class="home-section-intro">Частному пользователю важен результат, бухгалтеру — чтобы чек дошёл до учёта. Ниже два самостоятельных пути, а не копии одной страницы.</p>
+              <div class="home-business-grid">
+                <div class="home-business-card">
+                  <h3>Сотрудники и авансовые отчёты</h3>
+                  <p>Сканы с телефона, проверка ФНС, защита от дублей по ФН + ФД + ФП и выгрузка в 1С.</p>
+                  <ul>
+                    <li>Статусы «Действителен», «Не найден», «Недействителен».</li>
+                    <li>Политика расходов и напоминания сотрудникам.</li>
+                    <li>Файл EnterpriseData или обмен по расписанию.</li>
+                  </ul>
+                  <a class="home-card-link" href="/cheki-sotrudnikov-v-1c">Чеки сотрудников в 1С →</a>
+                </div>
+                <div class="home-business-card">
+                  <h3>Бухгалтерия и аутсорсинг</h3>
+                  <p>Все компании в одном окне: сроки, запросы клиенту, выписки банков, первичка и готовый пакет за месяц.</p>
+                  <ul>
+                    <li>Экран «Клиенты» и переключение без повторного входа.</li>
+                    <li>УПД из ЭДО, почты и фото с объектов.</li>
+                    <li>Пакет JSON, CSV и файлов УПД 5.03 для других систем.</li>
+                  </ul>
+                  <a class="home-card-link" href="/dlya-buhgalterov">Для бухгалтеров и аутсорсинга →</a>
+                </div>
+              </div>
+              <p class="home-business-cta">Нужно подключить компанию? <a href="mailto:chek@ymaster.ru">Напишите на chek@ymaster.ru</a> — обсудим доступ, роли и выгрузку.</p>
+            </section>
+
+            <section class="home-section" id="land-facts" aria-labelledby="home-facts-title">
+              <h2 id="home-facts-title">Что важно знать о данных и проверке</h2>
+              <dl class="home-facts">
+                <div class="home-fact">
+                  <dt>Что попадает в проверку</dt>
+                  <dd>Фискальные реквизиты чека — ФН, ФД, ФП, дата и сумма. Они напечатаны на самом чеке и не содержат персональных данных покупателя.</dd>
+                </div>
+                <div class="home-fact">
+                  <dt>Кто видит результат</dt>
+                  <dd>Гость видит свой чек, сотрудник — свои чеки, бухгалтер — данные своей компании. Программа работает в облаке или на сервере компании.</dd>
+                </div>
+                <div class="home-fact">
+                  <dt>Как устроено обновление</dt>
+                  <dd>Обновление ставится из программы с резервной копией базы и возможностью отката. Условия использования — в <a href="/oferta">публичной оферте</a>.</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="home-section home-faq-section" id="land-faq" aria-labelledby="home-faq-title">
+              <h2 id="home-faq-title">Частые вопросы</h2>
+              <div class="land-faq">
+                <details><summary>Как проверить чек по QR-коду?</summary>
+                  <p>Нажмите «Сканировать чек», наведите камеру на QR-код или загрузите фото. Дата, сумма, ФН, ФД и ФП распознаются сами и сверяются с данными ФНС. Если код стёрся, реквизиты вводят вручную. Подробная инструкция и разбор спорных случаев — в разделе «Полезное» ниже.</p></details>
+                <details><summary>Как понять, что чек настоящий?</summary>
+                  <p>Онлайн-касса передаёт каждый чек в ФНС через оператора фискальных данных (ОФД). У настоящего чека есть запись в данных ФНС, фискальный признак совпадает, а дата и сумма не расходятся с напечатанными.</p></details>
+                <details><summary>Это законно и безопасно?</summary>
+                  <p>Мы принимаем фискальные реквизиты, которые уже напечатаны на чеке. Из персональных данных — только e-mail и только по вашему согласию (152-ФЗ). В публичных списках имя скрыто: видны город и число чеков.</p></details>
+                <details><summary>Нужна ли регистрация?</summary>
+                  <p>Для первого чека — нет. Баллы сохранятся в этом браузере, а при регистрации в кабинете присоединятся к аккаунту. Для работы компании администратор отправляет приглашение.</p></details>
+                <details><summary>Сколько можно получить?</summary>
+                  <p>1 чек — 1 балл, чеки партнёров — до 100 баллов кэшбэка. Лимит — 50 чеков в сутки с одного устройства.</p></details>
+                <details><summary>А для компаний?</summary>
+                  <p>Сотрудники сканируют авансовые и командировочные чеки телефоном, бухгалтер видит их в базе и выгружает в 1С. Бухгалтерам и аутсорсингу доступны несколько компаний в одном окне, выписки банков по API и УПД из ЭДО. См. раздел «Для бизнеса» выше.</p></details>
+              </div>
+              <p class="land-more"><span>Полезное:</span>
+                <a href="/kak-proverit-chek">Как проверить чек</a>
+                <a href="/cheki-sotrudnikov-v-1c">Чеки сотрудников в 1С</a>
+                <a href="/dlya-buhgalterov">Для бухгалтеров</a></p>
+              <p class="land-note" itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
+                <link itemprop="logo" href="https://chek.ymaster.ru/img/icon-512.png">
+                <span itemprop="name">ООО «Ямастер»</span> ·
+                <a itemprop="url" href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
+                <a href="mailto:chek@ymaster.ru"><span itemprop="email">chek@ymaster.ru</span></a></p>
+            </section>
+          </main>
+        </div>
+
+        <aside class="home-login-aside" id="land-login" aria-labelledby="land-login-title">
+          <h2 class="home-login-title" id="land-login-title">Вход для компании</h2>
+          <div class="land-right">
     <div class="login-card glass">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64">
+        <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64" loading="eager">
         <p class="login-name">Ямастер <span class="grad-text">Чек</span></p>
         <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
       </div>
@@ -243,7 +325,14 @@
         <a href="#/public">🧾 Сдать чек в Чек-Пул</a> — без входа в систему
       </div>
     </div>
-    </div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="home-footer" aria-label="Подвал главной страницы">
+        <p>© ООО «Ямастер» · <a href="/oferta">Публичная оферта</a> · <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a></p>
+        <p><a href="/">Ямастер Чек</a> — проверка кассовых чеков, авансовые отчёты и выгрузка в 1С.</p>
+      </footer>
     </div>
   </div>
 
@@ -326,7 +415,7 @@
 
   <!-- Основная оболочка -->
   <div id="app-shell" class="app-shell hidden">
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Меню приложения">
       <div class="sidebar-brand">
         <button class="btn-icon sb-close" id="sb-close" aria-label="Закрыть меню" type="button">✕</button>
         <img src="/img/logo.svg" alt="" width="36" height="36">
@@ -335,7 +424,7 @@
           <div class="brand-sub"><span id="brand-version">v—</span> · ООО «Ямастер»</div>
         </div>
       </div>
-      <nav class="sidebar-nav" id="main-nav">
+      <nav class="sidebar-nav" id="main-nav" aria-label="Навигация приложения">
         <div class="nav-group">Основное</div>
         <a href="#/dashboard" data-view="dashboard" class="nav-item">
           <span class="nav-icon" data-icon="dashboard"></span>Дашборд
@@ -440,7 +529,7 @@
     <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 
     <div class="main-area">
-      <header class="topbar">
+      <header class="topbar" aria-label="Шапка рабочего пространства">
         <button type="button" class="btn-icon hamburger" id="btn-sidebar" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">☰</button>
         <h2 class="page-title" id="page-title">Дашборд</h2>
         <div class="topbar-right">
@@ -480,8 +569,8 @@
         <div class="viewas-text" id="viewas-text"></div>
         <button type="button" class="btn btn-sm viewas-back" id="btn-viewas-back">↩ Вернуться в администратора</button>
       </div>
-      <main class="content" id="view-container"></main>
-      <footer class="app-footer">
+      <section class="content" id="view-container" aria-label="Рабочая область"></section>
+      <footer class="app-footer" aria-label="Подвал рабочего пространства">
         Ямастер Чек <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
         <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
         <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a> ·

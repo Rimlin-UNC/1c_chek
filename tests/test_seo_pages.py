@@ -99,7 +99,7 @@ def test_page_on_copy_is_noindex(client, path):
 
 
 def test_titles_descriptions_and_keys_without_spam():
-    titles = [p.title for p in seo_pages.PAGES] + ["Проверка чека по QR-коду онлайн — Ямастер Чек"]
+    titles = [p.title for p in seo_pages.PAGES] + ["Проверка чека онлайн по QR-коду — Ямастер Чек"]
     assert len(set(titles)) == len(titles)
     assert len({p.description for p in seo_pages.PAGES}) == 3 and len({p.h1 for p in seo_pages.PAGES}) == 3
     for page in seo_pages.PAGES:

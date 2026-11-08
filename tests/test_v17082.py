@@ -428,7 +428,7 @@ class TestRelease:
             assert current in read(rel), rel
         sw = read("app/static/sw.js")
         assert f"ymaster-check-v{current}" in sw
-        assert sw.count(f"?v={current}") == 2
+        assert sw.count(f"?v={current}") == 3
 
     def test_changelog_entry_is_stable(self):
         md = read("CHANGELOG.md")
