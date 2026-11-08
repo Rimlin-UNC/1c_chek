@@ -34,7 +34,7 @@
 
 ## 3. Правила без риска санкций
 
-Собраны из статей Хабра и справок поисковиков (раздел 6); соблюдаются в 1.70.103 и обязательны для T-75.
+Собраны из статей Хабра и справок поисковиков (раздел 10); соблюдаются в 1.70.103 и обязательны для T-75.
 
 1. **Без переспама.** Каждый ключ — не больше одного раза в title, description и H1; без выделения ключей
    жирным, без списков ключей в подвале (фильтр «Баден-Баден» Яндекса, политики спама Google).
@@ -148,7 +148,15 @@
 накопления данных в Яндекс Вебмастере тексты уточняются; цены и позиционирование для компаний — за
 владельцем.
 
-## 6. Источники
+## 9. Реализация T-83: главная как коммерческий хаб (issue #72, 07.11.2026)
+
+Главная не втискивает все 25 ключей раздела 8 на один экран. Она отвечает на главный коммерческий интент: «проверка чека онлайн» / «сайт проверки чеков». Title — «Проверка чека онлайн по QR-коду — Ямастер Чек»; H1 — «Проверка чека онлайн — от QR-кода до 1С»; description начинается с «Сайт проверки чеков:». Каждый ключ встречается один раз в metadata и H1, уточняющие запросы («ФНС», «ОФД», «по коду», «на сайте налоговой») естественно раскрыты в тексте и уходят на `/kak-proverit-chek`.
+
+Структура страницы: шапка с поименованной навигацией и ссылкой на `/oferta`, skip-link, один `<main>`, hero с лидером и двумя CTA (скан без регистрации и вход для компании), три шага с локальными иллюстрациями, форма разбора чека, два самостоятельных B2B-пути, facts-блок о данных и обновлениях, видимый FAQ, «Полезное» с тремя кластерными ссылками, microdata `Organization` на видимом тексте и подвал с контактами. Ссылки на `/kak-proverit-chek`, `/cheki-sotrudnikov-v-1c`, `/dlya-buhgalterov` встречаются по две: одна в смысловом блоке, одна в «Полезном» — без дублей-дорвеев. Нет цен, рейтингов, отзывов, «№ 1», «гарантируем», «бесплатно навсегда», скрытого текста, inline `style=`, встроенных `<script>` без `src` и JSON-LD на публичной главной.
+
+Техническая часть: `app/static/css/home.css` — третий версионированный ресурс в `index.html` и `sw.js`; `boot.js` различает якоря `#main` / `#land-…` и маршруты `#/…`; скрытый `#view-container` стал `<section aria-label>`, чтобы в документе остался один `<main>`. Канонический адрес, noindex для копий, `robots.txt`, `sitemap.xml`, локальные шрифты и уникальные metadata трёх серверных страниц не изменены. Контракт закреплён `tests/test_seo_home.py` и обновлёнными историческими пинами; ворота не ослаблены.
+
+## 10. Источники
 
 - Хабр, 2025: Яндекс индексирует одностраничные приложения на Vue —
   [habr.com/ru/articles/778236](https://habr.com/ru/articles/778236/),
@@ -168,3 +176,15 @@
 - Шрифты: пакеты `@fontsource-variable/inter`, `@fontsource-variable/jetbrains-mono`,
   `@fontsource-variable/caveat` 5.3.0 ([npm](https://www.npmjs.com/package/@fontsource-variable/inter)),
   лицензия SIL OFL 1.1 — `app/static/fonts/LICENSE-*.txt`.
+
+**Официальные источники T-83 (дополнение к разделу 10):**
+- Google SEO Starter Guide: https://developers.google.com/search/docs/fundamentals/seo-starter-guide
+- Google, people-first content: https://developers.google.com/search/docs/fundamentals/creating-helpful-content
+- Google, duplicate URLs и canonical: https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls
+- Google, JavaScript SEO: https://developers.google.com/search/docs/crawling-indexing/javascript/javascript-seo-basics
+- Google, structured data policies: https://developers.google.com/search/docs/appearance/structured-data/sd-policies
+- Google, FAQPage (rich result удалён в 2026): https://developers.google.com/search/docs/appearance/structured-data/faqpage
+- Яндекс Вебмастер, видение страницы роботом: https://yandex.ru/support/webmaster/ru/robot-workings/vision
+- Яндекс Вебмастер, диагностика: https://yandex.ru/support/webmaster/ru/diagnosis/possible.html
+- Яндекс Вебмастер, title: https://yandex.ru/support/webmaster/en/search-results/title
+- web.dev, Core Web Vitals: https://web.dev/articles/vitals

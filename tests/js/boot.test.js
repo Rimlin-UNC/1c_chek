@@ -1,7 +1,7 @@
 /* v1.70.103 (T-74): js/boot.js — решения до первой отрисовки (Vitest, jsdom).
    Гость без флага «заставка гостям» — класс ym-guest (заставки нет, стартовая страница видна сразу); есть токен или
    особый адрес (#/…, ?maxlogin=) — класс ym-hold (стартовая страница не мелькает до решения app.js); якорь
-   стартовой страницы (#land-how) особым адресом не считается; недоступное хранилище — как гость. */
+   стартовой страницы (#main, #land-how) особым адресом не считаются; недоступное хранилище — как гость. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -46,6 +46,12 @@ describe('boot.js — до первой отрисовки', () => {
     const anchor = run({ url: '/#land-how' });
     expect(anchor.contains('ym-hold')).toBe(false);
     expect(anchor.contains('ym-guest')).toBe(true);
+  });
+
+  it('якорь доступности #main остаётся на главной, а не уходит в маршрут', () => {
+    const cls = run({ url: '/#main' });
+    expect(cls.contains('ym-hold')).toBe(false);
+    expect(cls.contains('ym-guest')).toBe(true);
   });
 
   it('хранилище недоступно — считаем гостем, без ошибок', () => {

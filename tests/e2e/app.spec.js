@@ -384,7 +384,7 @@ test('заставка загрузки: версия с сервера, «Го�
   const about = await (await request.get('/api/v1/about')).json();
   expect(about.splash_guests).toBe(false);
   await page.goto('/');
-  await expect(page.locator('h1.land-h1')).toContainText('Проверка чека по QR-коду');
+  await expect(page.locator('h1.land-h1')).toContainText('Проверка чека онлайн');
   await expect(page.locator('#ym-splash')).toBeHidden();                         // гость: без заставки
   await page.evaluate(() => localStorage.setItem('ym-splash-guests', '1'));     // как после флажка администратора
   await page.reload();

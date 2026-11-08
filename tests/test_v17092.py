@@ -37,7 +37,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
 
     def test_changelog_entry_fits_update_window(self):
         md = read("CHANGELOG.md")

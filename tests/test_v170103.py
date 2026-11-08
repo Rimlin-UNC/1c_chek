@@ -38,9 +38,9 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
         assert "'/js/boot.js'," in sw and "'/fonts/inter-cyrillic-wght-normal.woff2'" in sw
-        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
     def test_updater_order(self):
@@ -251,9 +251,9 @@ class TestLanding:
         html = read("app/static/index.html")
         head = html.split("</head>", 1)[0]
         title = re.search(r"<title>(.*?)</title>", head).group(1)
-        assert title == "Проверка чека по QR-коду онлайн — Ямастер Чек" and len(title) <= 70
+        assert title == "Проверка чека онлайн по QR-коду — Ямастер Чек" and len(title) <= 70
         desc = re.search(r'<meta name="description" content="([^"]+)">', head).group(1)
-        assert desc.startswith("Бесплатная проверка кассового чека по QR-коду") and len(desc) <= 160
+        assert desc.startswith("Сайт проверки чеков:") and len(desc) <= 160
         assert head.count(seo.MARKER) == 1 and "fonts.googleapis.com" not in html and "fonts.gstatic.com" not in html
         for needle in ('<meta property="og:url" content="https://chek.ymaster.ru/">',
                        '<meta property="og:image" content="https://chek.ymaster.ru/img/manual/hero.jpg">',
@@ -269,7 +269,7 @@ class TestLanding:
         html = read("app/static/index.html")
         assert html.count("<h1") == 1
         h1 = re.search(r"<h1[^>]*>(.*?)</h1>", html, re.S).group(1)
-        assert re.sub(r"<[^>]+>", "", h1) == "Проверка чека по QR-коду —баллы и кэшбэк за каждый чек"
+        assert re.sub(r"<[^>]+>", "", h1) == "Проверка чека онлайн —от QR-кода до 1С"
         assert '<p class="login-name">Ямастер <span class="grad-text">Чек</span></p>' in html
         assert html.count('<h2 class="screen-title">') == 3
         assert 'id="login-screen" class="login-screen">' in html                    # виден с первого кадра

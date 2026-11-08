@@ -36,8 +36,8 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 2
-        assert read("app/static/index.html").count(f"?v={current}") == 2
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
+        assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
     def test_changelog_entry_fits_update_window(self):
@@ -176,7 +176,8 @@ class TestSplash:
         head, body = html.split("</head>", 1)
         assert head.index('<link rel="stylesheet" href="/css/splash.css">') < head.index('href="/css/app.css?v=')
         assert '<script src="/js/splash.js" defer></script>' in head
-        assert body.lstrip().startswith("<body>\n  <!-- v1.70.98: заставка загрузки «chek.ymaster.ru»")
+        # T-83: skip-link — первый фокусируемый элемент; splash сохраняет прежнюю разметку.
+        assert body.lstrip().startswith("<body>\n  <a class=\"skip\" href=\"#main\">К содержимому</a>\n  <!-- v1.70.98: заставка загрузки «chek.ymaster.ru»")
         assert '<div id="ym-splash" class="ym-splash">' in body
         assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "встроенный скрипт — CSP его запретит"
         for needle in ('id="ym-splash-status" role="status" aria-live="polite"',

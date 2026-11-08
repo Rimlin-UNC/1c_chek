@@ -11,7 +11,7 @@ const CACHE = 'ymaster-check-v1.70.114';
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.70.114', '/js/app.js?v=1.70.114',   // v1.12.2: как в index.html
+  '/css/app.css?v=1.70.114', '/css/home.css?v=1.70.114', '/js/app.js?v=1.70.114',   // T-83: главная и приложение
   '/js/api.js', '/js/ui.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
   '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
