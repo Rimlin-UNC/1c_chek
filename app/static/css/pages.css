@@ -136,3 +136,33 @@ li::marker { color: var(--accent-text); font-weight: 700; }
   .foot { padding: 0 14px 28px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+
+
+/* T-82: блог-кластер — общие классы для индекса и десяти статей */
+.blog-article { min-width: 0; }
+.blog-figure { margin: 18px 0 24px; }
+.blog-figure img {
+  width: 100%;
+  aspect-ratio: 1376 / 768;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+.blog-figure figcaption { margin-top: 8px; color: var(--dim); font-size: .8125rem; line-height: 1.5; }
+.blog-how, .blog-trust, .blog-tool, .blog-extra, .blog-faq, .blog-cta, .blog-links { margin-top: 30px; }
+.blog-tool ul, .blog-links ul { padding-left: 1.4em; }
+.blog-tool li, .blog-links li { margin-bottom: 10px; }
+.blog-faq h3 { color: var(--accent-text); font-size: 1.0625rem; margin: 22px 0 6px; }
+.blog-cta {
+  background: #fffaf4;
+  border: 1px solid #ffe2c4;
+  border-radius: 18px;
+  padding: 22px 24px;
+}
+.blog-cta h2 { margin-top: 0; }
+.blog-cta__text { font-weight: 700; color: var(--accent-text); }
+.blog-cta .btn { margin: 4px 8px 4px 0; }
+.blog-links { border-top: 1px solid var(--line); padding-top: 20px; }
+.blog-index { padding-left: 1.4em; }
+.blog-index li { margin-bottom: 12px; }

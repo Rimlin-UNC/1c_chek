@@ -34,7 +34,7 @@
 - [AGENTS.md](../../AGENTS.md) — задание агента, алгоритм сессии, чек-лист задачи,
   политика коннекторов, история и откат;
 - [OVERVIEW.md](../OVERVIEW.md) — обзор проекта;
-- [ARCHITECTURE.md](../ARCHITECTURE.md) — архитектурные решения ADR-01…46;
+- [ARCHITECTURE.md](../ARCHITECTURE.md) — архитектурные решения ADR-01…47;
 - [RUNBOOK.md](../RUNBOOK.md) — запуск, тесты, CI, выпуск, деплой, QA-панель;
 - [DATABASE.md](../DATABASE.md) — база данных, миграции, Supabase, `qa_lock_…`.
 

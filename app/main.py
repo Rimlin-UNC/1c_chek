@@ -555,6 +555,11 @@ from .services import seo_pages as _seo_pages  # noqa: E402
 
 app.include_router(_seo_pages.router)      # /kak-proverit-chek, /cheki-sotrudnikov-v-1c, /dlya-buhgalterov
 
+# T-82 (issue #72, ADR-47): /blog и десять статей-спутников — серверный HTML, тоже до SPA-перехвата
+from .services import blog_pages as _blog_pages  # noqa: E402
+
+app.include_router(_blog_pages.router)      # /blog и /blog/<slug>
+
 
 # --------------------------------------------------------------------------
 #  Раздача веб-клиента (SPA) — все статические файлы из app/static

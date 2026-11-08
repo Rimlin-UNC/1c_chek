@@ -84,10 +84,13 @@ class TestWiring:
     def test_router_before_spa_and_sitemap(self):
         main = read("app/main.py")
         assert "app.include_router(_seo_pages.router)" in main
+        assert "app.include_router(_blog_pages.router)" in main
         assert main.index("app.include_router(_seo_pages.router)") < main.index('@app.api_route("/{full_path:path}"')
+        assert main.index("app.include_router(_blog_pages.router)") < main.index('@app.api_route("/{full_path:path}"')
         from app.services import seo, seo_pages
         assert seo.CONTENT_PAGES == ("/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov")
-        assert seo.PAGES == ("/", "/oferta", *seo.CONTENT_PAGES)
+        assert seo.BLOG_INDEX == "/blog" and len(seo.BLOG_PAGES) == 10
+        assert seo.PAGES == ("/", "/oferta", *seo.CONTENT_PAGES, seo.BLOG_INDEX, *seo.BLOG_PAGES)
         assert tuple(p.path for p in seo_pages.PAGES) == seo.CONTENT_PAGES
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
@@ -116,7 +119,8 @@ class TestDocsAndKb:
         assert "https://developers.google.com/search/docs/essentials/spam-policies" in arch.split("## ADR-36", 1)[1]
         guide = read("docs/USER_GUIDE.md")
         assert "- **Страницы для поисковиков (с 1.70.106).**" in guide
-        assert "(карта: главная, оферта и три страницы для\n  поисковиков)" in guide
+        assert "- **Блог (с T-82, без повышения версии).**" in guide
+        assert "(карта: главная, оферта, три страницы для\n  поисковиков, индекс блога и десять статей)" in guide
         seo_md = read("docs/kb/12_seo.md")
         assert "## 7. Страницы под кластеры запросов (T-75, 1.70.106)" in seo_md
         assert "общий\n  словарь любой пары страниц — меньше 45 %" in seo_md

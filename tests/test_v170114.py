@@ -188,8 +188,8 @@ class TestDocsAndKb:
         assert t62["Статус"] == "done" and t62["Задача"].endswith(f"выпущено в {VERSION}")
         assert t62["Issue/PR"] == ISSUE and t62["Связанные ADR"] == "ADR-25, ADR-45"
         assert t62["Обновлено"] == "2026-11-07"
-        for tid, prio in (("T-80", "P1"), ("T-81", "P2"), ("T-82", "P1")):
-            assert tasks[tid]["Статус"] == "todo" and tasks[tid]["Приоритет"] == prio, tid
+        for tid, prio, state in (("T-80", "P1", "todo"), ("T-81", "P2", "todo"), ("T-82", "P1", "done")):
+            assert tasks[tid]["Статус"] == state and tasks[tid]["Приоритет"] == prio, tid
         assert tasks["T-80"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/65"
         assert tasks["T-81"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/66"
         assert tasks["T-82"]["Issue/PR"] == "https://github.com/Rimlin-UNC/1c_chek/issues/59"
