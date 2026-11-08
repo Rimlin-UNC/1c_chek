@@ -423,19 +423,29 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
         if body.move_users and uc:
             (db.query(User).filter(User.company_id == comp.id)
              .update({User.company_id: target.id}, synchronize_session=False))
+        elif uc:
+            # v1.71.2: «сотрудники не переходят» — их нужно открепить, иначе внешний ключ
+            # users.company_id → companies.id не даёт удалить компанию (падало с 500).
+            (db.query(User).filter(User.company_id == comp.id)
+             .update({User.company_id: None}, synchronize_session=False))
         (db.query(Invite).filter(Invite.company_id == comp.id)
          .update({Invite.company_id: target.id}, synchronize_session=False))
+        # v1.71.2 (T-85, ADR-50): настройки, контрагенты, память товаров и доступ
+        # бухгалтеров — тоже к компании назначения, иначе после удаления остаются «сироты».
+        from ..accounts import cleanup
+        summary = cleanup.detach_company(db, comp.id, target_company_id=target.id)
         name = comp.name
         db.delete(comp)
         db.commit()
         log_action(admin, "company_deleted", details={
             "company": name, "mode": "move", "receipts_moved": rc,
             "users_moved": (uc if body.move_users else 0),
-            "target": target.name})
+            "target": target.name, "moved": summary["moved"], "deleted": summary["deleted"]})
         broadcast_company_change()
         return {"ok": True, "mode": "move", "receipts_moved": rc,
                 "users_moved": (uc if body.move_users else 0),
                 "target": {"id": target.id, "name": target.name},
+                "moved": summary["moved"], "deleted": summary["deleted"],
                 "message": f"Компания «{name}» удалена; чеков перенесено: {rc}"}
     # mode == "wipe": безвозвратно удалить чеки компании
     from ..unified import service as unified
@@ -447,13 +457,19 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
     if body.move_users and uc:
         (db.query(User).filter(User.company_id == comp.id)
          .update({User.company_id: None}, synchronize_session=False))
+    # v1.71.2 (T-85, ADR-50): безвозвратная очистка — не остаётся ни настроек,
+    # ни контрагентов, ни банковских связей, ни «призрачного» доступа бухгалтера.
+    from ..accounts import cleanup
+    summary = cleanup.detach_company(db, comp.id)
     name = comp.name
     db.delete(comp)
     db.commit()
     log_action(admin, "company_deleted", details={
-        "company": name, "mode": "wipe", "receipts_deleted": rc})
+        "company": name, "mode": "wipe", "receipts_deleted": rc,
+        "deleted": summary["deleted"]})
     broadcast_company_change()
     return {"ok": True, "mode": "wipe", "receipts_deleted": rc,
+            "deleted": summary["deleted"],
             "message": f"Компания «{name}» и её чеки ({rc}) удалены безвозвратно"}
 
 

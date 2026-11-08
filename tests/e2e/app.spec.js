@@ -586,6 +586,41 @@ test('создание клиента бухгалтером: кнопка «＋
   expect(arch.ok()).toBeTruthy();
 });
 
+// v1.71.2 (T-85, ADR-50): удаление компании-клиента не оставляет «сирот» — в окне удаления сказано,
+// что уйдёт вместе с компанией; после удаления компания пропадает из списка и из базы
+test('удаление клиента: пояснение в окне и чистое удаление', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const H = { Authorization: `Bearer ${token}` };
+  const name = `E2E Удаляемый клиент ${Date.now()}`;
+  const created = await request.post('/api/v1/companies', { headers: H, data: { name } });
+  expect(created.ok()).toBeTruthy();
+  const company = await created.json();
+
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/companies"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Компании');
+  await page.locator('.cp-card', { hasText: name }).first().click();
+  await page.locator('#cc-delete').click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Удаление компании');
+  // пояснение: что уходит вместе с компанией и что остаётся
+  await expect(modal).toContainText('банковские выписки');
+  await expect(modal).toContainText('история решений');
+  await modal.locator('input[name="dl-mode"][value="wipe"]').check();
+  page.once('dialog', (d) => d.accept());
+  await modal.locator('#dl-go').click();
+  await expect(page.locator('#toast-container')).toContainText('удалена', { timeout: 15000 });
+  await expect(page.locator('.cp-card', { hasText: name })).toHaveCount(0, { timeout: 15000 });
+
+  // в базе компании больше нет, и запрос к ней — 404
+  const companies = await (await request.get('/api/v1/companies', { headers: H })).json();
+  expect(companies.find((c) => c.id === company.id)).toBeFalsy();
+  const again = await request.get(`/api/v1/companies/${company.id}/card`, { headers: H });
+  expect(again.status()).toBe(404);
+});
+
 // v1.70.101 (T-69, ADR-31): понимание чеков — читаемая позиция и категория с причиной; бухгалтер меняет категорию,
 // выбор запоминается для компании и виден в «Настройках» → «Память товаров». Чек — синтетика через API.
 test('понимание чеков: категория позиции, выбор бухгалтера и «Память товаров»', async ({ page, request }) => {
