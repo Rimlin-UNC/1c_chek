@@ -34,7 +34,7 @@
 | Что | Где |
 |---|---|
 | Обзор проекта, роли, компоненты, окружения | [`docs/OVERVIEW.md`](docs/OVERVIEW.md) |
-| Архитектурные решения ADR-01…47 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Архитектурные решения ADR-01…48 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Запуск, тесты, CI, выпуск, деплой, QA-панель | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
 | База данных, миграции, Supabase, `qa_lock_…`, проверки RLS/FK | [`docs/DATABASE.md`](docs/DATABASE.md) |
 | Живые базы: задачи, вопросы, журнал сессий (CSV) | [`docs/kb/`](docs/kb/README.md) |

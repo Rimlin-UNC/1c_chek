@@ -210,6 +210,8 @@ res = {"version": app_version(),
        "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
        "goods_tables": sorted(t for t in inspect(engine).get_table_names() if t == "goods_memory"),
        # v1.70.112 (T-46): согласование авансовых отчётов — настройки, отчёты и журнал решений
+       "counterparty_tables": sorted(t for t in inspect(engine).get_table_names()
+                                     if t.startswith("counterpart")),
        "approvals_tables": sorted(t for t in inspect(engine).get_table_names()
                                   if t in ("approval_settings", "advance_approvals", "advance_approval_events")),
        "goods_columns": sorted(c["name"] for c in inspect(engine).get_columns("receipt_items")
@@ -719,6 +721,8 @@ def main() -> int:
               and up.get("bank_columns") == ["cert_enc"]
               and up.get("goods_tables") == ["goods_memory"]
               and up.get("approvals_tables") == ["advance_approval_events", "advance_approvals", "approval_settings"]
+              and up.get("counterparty_tables") == ["counterparties", "counterparty_aliases",
+                                                   "counterparty_bank_accounts"]
               and up.get("goods_columns") == ["goods_category", "group_note", "group_score", "group_source"],
               "созданы 6 таблиц unified_* (с v1.70.85 — заявки компаний unified_company_links), "
               "2 таблицы первички (с v1.70.94), 3 таблицы «что нужно от клиента» (с v1.70.97) и 5 таблиц "
@@ -728,7 +732,8 @@ def main() -> int:
               "(с v1.70.102), почта для первички: 3 таблицы primary_mail* и колонка channel в primary_documents "
               "(с v1.70.104), согласование авансовых отчётов: 3 таблицы approval_settings, advance_approvals и "
               "advance_approval_events (с v1.70.112), поступления bank_incomes и ручные привязки bank_links для "
-              "закрытия выписки документами (с v1.70.113)")
+              "закрытия выписки документами (с v1.70.113), три таблицы контрагентов "
+              "counterparties/counterparty_bank_accounts/counterparty_aliases (с v1.71.0)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

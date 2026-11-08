@@ -37,7 +37,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -170,7 +170,7 @@ class TestScreen:
         app_js = read("app/static/js/app.js")
         assert ("import { viewClients, clientsSwitcher, clientsAccessDialog, clientsPackageHtml, clientsPackageBind } "
                 "from './clients.js';") in app_js
-        assert "'primary', 'docreq', 'bank', 'clients', 'settings'],\n                secs: ['data'" in app_js
+        assert "'primary', 'docreq', 'bank', 'clients', 'counterparties', 'settings'],\n                secs: ['data'" in app_js
         assert "clients: (c, alive) => viewClients(c, { alive, open: openClientCompany })," in app_js
         assert "if (state.me && state.me.role === 'accountant') initClientSwitch();" in app_js
         assert "window.addEventListener('ymaster:client-reset', (e) => {" in app_js

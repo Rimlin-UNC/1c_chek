@@ -35,7 +35,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -118,7 +118,7 @@ class TestWiring:
         assert "viewPrimary(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter })" in js
         # пространства admin и accountant (v1.70.97: между ними — «что нужно от клиента»)
         # v1.70.98: и «банк: выписка» — между ними может стоять 'bank'
-        assert len(re.findall(r"'primary', (?:'docreq', )?(?:'bank', )?(?:'clients', )?'settings'\]", js)) == 2
+        assert len(re.findall(r"'primary', (?:'docreq', )?(?:'bank', )?(?:'clients', )?(?:'counterparties', )?'settings'\]", js)) == 2
         html = read("app/static/index.html")
         assert '<a href="#/primary" data-view="primary" class="nav-item accountant-only">' in html
         screen = read("app/static/js/primary.js")

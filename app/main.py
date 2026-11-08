@@ -26,6 +26,7 @@ from .database import init_db
 from .approvals import router as approvals_router
 from .bank import router as bank_router
 from .clients import router as clients_router
+from .counterparties.router import router as counterparties_router  # v1.71.0: контрагенты (T-80)
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
 from .docreq import router as docreq_router
@@ -504,6 +505,7 @@ app.include_router(clients_router.router)  # v1.70.100: рабочее мест�
 app.include_router(exportpkg_router.router)  # v1.70.100: пакет для других учётных систем (T-68)
 app.include_router(goods_router.router)  # v1.70.101: понимание чеков (T-69)
 app.include_router(approvals_router.router)  # v1.70.112: согласование авансовых отчётов (T-46)
+app.include_router(counterparties_router)  # v1.71.0: контрагенты (T-80)
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)

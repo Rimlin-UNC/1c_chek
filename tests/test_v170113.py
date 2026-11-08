@@ -32,7 +32,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 3
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -96,7 +96,7 @@ class TestRelease:
 
     def test_manual(self):
         from app.services.manual_content import SECTIONS, build_manual
-        assert build_manual()["updated"] == "2026-11-07"
+        assert build_manual()["updated"] == "2026-11-08"
         by_id = {s["id"]: s for s in SECTIONS}
         assert "<b>С версии 1.70.113 — «📁 Папка с УПД».</b>" in by_id["primary"]["html"]
         assert "<b>С версии 1.70.113 — вкладка «Закрытие документами».</b>" in by_id["bank"]["html"]
@@ -131,7 +131,7 @@ class TestCode:
         assert '"tests/test_bank_closing.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 70
+        assert declared == 73
 
     def test_settlement_rules(self):
         from app.bank import closing
@@ -182,7 +182,7 @@ class TestDocsAndKb:
 
     def test_database_doc_and_research(self):
         db = read("docs/DATABASE.md")
-        assert "70 объявлений `__tablename__`" in db and "все 70 таблиц приложения" in db
+        assert "73 объявлений `__tablename__`" in db and "все 73 таблиц приложения" in db
         assert "| Закрытие выписки документами (v1.70.113) | `bank_incomes`" in db
         design = read("docs/primary_docs_design.md")
         assert "### Комментарии владельца в #61 (06.11.2026): Indra OCR основным движком? — разбор 07.11.2026" in design

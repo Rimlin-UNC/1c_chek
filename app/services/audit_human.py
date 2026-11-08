@@ -59,6 +59,21 @@ def humanize_audit(action: str, details: Any = None) -> tuple[str, str]:
     fd = _fd(d)
     src = _SOURCE_RU.get(d.get("source"), "")
 
+    # --- контрагенты (T-80, v1.71.0) --------------------------------------
+    if action == "counterparty_created":
+        return "заведена карточка контрагента", f"ИНН {d.get('inn', '—')}"
+    if action == "counterparty_updated":
+        return "исправлена карточка контрагента", \
+            ("поля: " + ", ".join(d["fields"]) if d.get("fields") else "")
+    if action == "counterparty_verified":
+        return "контрагент проверен по ИНН", \
+            f"ИНН {d.get('inn', '—')}, светофор: {d.get('risk', '—')}"
+    if action == "counterparty_account_added":
+        return "добавлен банковский счёт контрагента", f"БИК {d.get('bik', '—')}"
+    if action == "counterparty_merged":
+        return "объединены дубли контрагентов", \
+            f"перенесена карточка {d.get('duplicate_id', '—')}"
+
     if action == "login":
         return "вход в систему", (f"IP {d['ip']}" if d.get("ip") else "")
     if action == "login_failed":

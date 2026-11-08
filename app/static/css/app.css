@@ -2498,3 +2498,33 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
   .ap-route { grid-template-columns: 1fr; }
   .ap-event { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* ======================================================================
+   v1.71.0 (T-80, ADR-48): «Контрагенты» — предложение слева, карточка справа
+   ====================================================================== */
+.cp-view { display: block; }
+.cp-layout { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; }
+.cp-left, .cp-right { display: flex; flex-direction: column; gap: 16px; }
+.cp-view label { display: block; margin: 8px 0; font-size: 13px; color: var(--text); }
+.cp-view input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 8px; font: inherit; }
+.cp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cp-row { display: flex; flex-direction: column; width: 100%; margin-bottom: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); text-align: left; cursor: pointer; }
+.cp-row:hover { border-color: var(--accent); }
+.cp-row span, .cp-candidate span, .cp-risk span { display: block; margin-top: 3px; font-size: 12px; color: var(--text-dim); }
+.cp-candidate { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.cp-empty { padding: 12px; color: var(--text-dim); font-size: 13px; }
+.cp-risk { padding: 12px; border-radius: 10px; background: var(--bg-soft); border: 1px solid var(--border); }
+.cp-risk-green { border-left: 4px solid var(--ok); }
+.cp-risk-yellow { border-left: 4px solid var(--warn); }
+.cp-risk-red { border-left: 4px solid var(--bad); }
+.cp-risk ul { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-dim); }
+.cp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 12px 0; }
+.cp-block { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.cp-block pre { white-space: pre-wrap; font: inherit; margin: 8px 0; }
+.cp-accounts, .cp-merge, .cp-edit { margin: 10px 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.cp-note { margin: 8px 0; font-size: 12px; color: var(--text-dim); }
+.cp-aliases { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+@media (max-width: 760px) {
+  .cp-layout { grid-template-columns: 1fr; }
+  .cp-grid { grid-template-columns: 1fr; }
+}
