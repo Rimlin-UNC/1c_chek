@@ -155,7 +155,8 @@ class TestPlaywrightGate:
             pytest.skip("браузеры Playwright не загружены: "
                         "npx playwright install chromium")
         proc = subprocess.run([str(PLAYWRIGHT_BIN), "test"], cwd=ROOT,
-                              capture_output=True, text=True, timeout=900,
+                              capture_output=True, text=True,
+                              timeout=2400 if os.environ.get("YM_PLAYWRIGHT_CHROMIUM") else 900,
                               check=False)
         assert proc.returncode == 0, proc.stdout[-2000:]
 

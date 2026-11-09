@@ -8,7 +8,7 @@
 // Регистрация — только по приглашению администратора, роль в приглашении.
 // ======================================================================
 
-import { api, getToken, setToken, clearToken, setClient } from './api.js';
+import { api, getClient, getToken, setToken, clearToken, setClient } from './api.js';
 import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, openModal, animateNumber } from './ui.js';
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
@@ -3755,13 +3755,21 @@ function connectWS() {
   if (document.hidden) { scheduleReconnect(5); return; }  // в фоне не дёргаемся
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   let ws;
-  try { ws = new WebSocket(`${proto}://${location.host}/ws/status`); }
+  // v1.72.1 (T-91): подписка — на активного клиента бухгалтера, а не на его собственную компанию:
+  // иначе события компании клиента не приходят вживую (ADR-30). Своя компания — без параметра.
+  const active = (typeof getClient === 'function' && state.me && state.me.role === 'accountant') ? getClient() : '';
+  const qs = active ? `?company=${encodeURIComponent(active)}` : '';
+  try { ws = new WebSocket(`${proto}://${location.host}/ws/status${qs}`); }
   catch (e) { scheduleReconnect(10); return; }
   state.ws = ws;
 
   ws.onopen = () => {
     state.wsAttempts = 0;
     setWsStatus(true);
+    // Пока сокет открывался, пользователь мог выбрать другого клиента.
+    if (state.me && state.me.role === 'accountant' && (getClient() || '') !== active) {
+      wsSwitchClient(getClient());
+    }
     // heartbeat клиента: не даём прокси считать соединение пустым
     clearInterval(state.wsPing);
     state.wsPing = setInterval(() => {
@@ -3781,9 +3789,25 @@ function connectWS() {
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'ping') return;             // серверный heartbeat
+      if (msg.type === 'connected' && msg.payload && msg.payload.warning) {
+        toast(msg.payload.warning, 'err', 'Живые обновления');
+      }
+      if (msg.type === 'client_ok' || msg.type === 'client_error') {
+        state.wsClientSent = msg.payload && msg.payload.company !== undefined ? msg.payload.company : '';
+        if (msg.type === 'client_error') toast(msg.payload.detail, 'err', 'Живые обновления');
+        return;
+      }
       handleWsEvent(msg.type, msg.payload);
     } catch { /* ignore */ }
   };
+}
+
+/** v1.72.1 (T-91): переключить живые обновления на активного клиента без переподключения сокета. */
+function wsSwitchClient(company) {
+  const ws = state.ws;
+  if (!ws || ws.readyState !== 1) return false;
+  try { ws.send(JSON.stringify({ type: 'client', company: company || '' })); } catch { return false; }
+  return true;
 }
 
 function scheduleReconnect(seconds) {
@@ -4215,6 +4239,8 @@ async function initClientSwitch() {
   const me = await refreshMe();
   clientsSwitcher($('#client-switch'), me, async () => {
     await refreshMe();
+    // v1.72.1 (T-91): живые обновления переезжают вместе с клиентом — без перезагрузки страницы
+    wsSwitchClient(getClient());
     route();
   });
 }
@@ -4231,7 +4257,12 @@ async function openClientCompany(companyId, view) {
     const home = state.me && state.me.home_company_id;
     setClient(companyId === home ? '' : companyId);
     await refreshMe();
-    clientsSwitcher($('#client-switch'), state.me, async () => { await refreshMe(); route(); });
+    wsSwitchClient(companyId === home ? '' : companyId);      // v1.72.1 (T-91): подписка — на новый клиент
+    clientsSwitcher($('#client-switch'), state.me, async () => {
+      await refreshMe();
+      wsSwitchClient(getClient());
+      route();
+    });
   }
   const target = '#/' + view;
   if (location.hash === target) route();
@@ -6664,6 +6695,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.1': [
+    { icon: '🔔', title: 'Живые обновления — по вашему клиенту',
+      text: 'Если вы ведёте несколько компаний, новые чеки и статусы приходят по той, что выбрана сейчас, '
+        + 'и сразу. Раньше живые обновления шли только по своей компании — по клиентам приходилось '
+        + 'обновлять страницу.' },
+    { icon: '🔀', title: 'Переключили клиента — обновления переехали следом',
+      text: 'Смена компании в списке сверху не рвёт соединение: страница сама подписывается на нового '
+        + 'клиента. Если доступ к компании отозвали, придёт понятное сообщение — работать можно дальше '
+        + 'в своей.' },
+  ],
   '1.72.0': [
     { icon: '✅', title: 'Массовые действия по клиентам',
       text: 'Отметьте несколько компаний на экране «Клиенты» — и одним нажатием напомните всем '

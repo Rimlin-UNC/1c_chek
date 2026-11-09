@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,6 +27,7 @@ from .database import init_db
 from .approvals import router as approvals_router
 from .bank import router as bank_router
 from .clients import router as clients_router
+from .clients import service as clients_service
 from .counterparties.router import router as counterparties_router  # v1.71.0: контрагенты (T-80)
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
@@ -34,7 +36,7 @@ from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
-from .services.events import broadcast, register_loop, subscribe, unsubscribe
+from .services.events import broadcast, register_loop, resubscribe, subscribe, unsubscribe
 from .unified import router as unified_router
 
 import datetime as _dt
@@ -382,7 +384,7 @@ async def ws_status(ws: WebSocket):
     по ?token= или HttpOnly-cookie); без токена — только платформенные."""
     await ws.accept()
     # --- аутентификация подписчика (v1.11.0) ---
-    company_id, authed = None, False
+    company_id, authed, ws_error, ws_user_id = None, False, "", ""
     try:
         from .auth import ROLE_ADMIN, decode_token
         from .database import SessionLocal
@@ -394,8 +396,17 @@ async def ws_status(ws: WebSocket):
             try:
                 u = db.get(User, payload.get("sub", ""))
                 if u is not None and u.is_active:
-                    authed = True
-                    company_id = u.company_id if u.role != ROLE_ADMIN else None
+                    authed, ws_user_id = True, u.id
+                    company_id = (u.company_id or "") if u.role != ROLE_ADMIN else None
+                    # v1.72.1 (T-91): активный клиент бухгалтера (?company=…) — те же права, что у HTTP (ADR-30);
+                    # отказ не рвёт соединение: подписчик остаётся на своей компании, а причину получает сообщением
+                    requested = (ws.query_params.get("company") or "").strip()
+                    if requested:
+                        from .clients import service as clients
+                        try:
+                            company_id = clients.ws_company(db, u, requested) or company_id
+                        except clients.ClientsError as exc:
+                            ws_error = str(exc)
             finally:
                 db.close()
     except Exception:
@@ -404,10 +415,39 @@ async def ws_status(ws: WebSocket):
     connected = {"ok": True}
 
     async def _pump_incoming():
-        """Следим за разрывом соединения со стороны клиента."""
+        """Следим за разрывом соединения; v1.72.1 — переключение клиента без переподключения сокета.
+
+        Сообщение `{"type": "client", "company": "…"}` переводит подписку на активного клиента: интерфейс
+        переключает компанию чаще, чем нужно рвать соединение. Право проверяется тем же ws_company.
+        """
+        nonlocal company_id
         try:
             while True:
-                await ws.receive_text()
+                raw = await ws.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue                                   # ping и прочие строки
+                if not isinstance(msg, dict) or msg.get("type") != "client":
+                    continue
+                with SessionLocal() as db:
+                    target, error = company_id, ""
+                    u = db.get(User, ws_user_id) if ws_user_id else None
+                    if u is None or not u.is_active:
+                        error = "Клиент сменить нельзя — войдите заново"
+                    else:
+                        try:
+                            target = clients_service.ws_company(db, u, msg.get("company"))
+                            if target is None and u.role != ROLE_ADMIN:
+                                target = u.company_id or ""
+                        except clients_service.ClientsError as exc:
+                            error = str(exc)
+                if error:
+                    await ws.send_json({"type": "client_error", "payload": {"detail": error}})
+                    continue
+                resubscribe(queue, target)
+                company_id = target
+                await ws.send_json({"type": "client_ok", "payload": {"company": target or ""}})
         except WebSocketDisconnect:
             connected["ok"] = False
 
@@ -420,7 +460,8 @@ async def ws_status(ws: WebSocket):
     try:
         await ws.send_json({"type": "connected",
                             "payload": {"app": settings.APP_NAME,
-                                        "vendor": settings.VENDOR}})
+                                        "vendor": settings.VENDOR,
+                                        **({"warning": ws_error} if ws_error else {})}})
         # v1.2.0: ping каждые ~20 с — прокси/NAT не рвут «пустое» соединение,
         # телефон перестаёт циклично переподключаться («офлайн/мерцание»).
         idle_ticks = 0
@@ -433,6 +474,30 @@ async def ws_status(ws: WebSocket):
                 if idle_ticks % 4 == 0:
                     await ws.send_json({"type": "ping", "payload": {"demo": False}})
                 continue
+            # Очередь может содержать событие предыдущего клиента, а доступ к текущему
+            # могли отозвать уже после подключения. Проверяем право перед отправкой.
+            event_company = json.loads(message).get("payload", {}).get("company_id")
+            if event_company is not None and ws_user_id:
+                if company_id is not None and event_company != company_id:
+                    continue
+                with SessionLocal() as db:
+                    u = db.get(User, ws_user_id)
+                    error = ""
+                    if u is None or not u.is_active:
+                        error = "Клиент сменить нельзя — войдите заново"
+                        fallback = ""
+                    else:
+                        fallback = (u.company_id or "") if u.role != ROLE_ADMIN else None
+                        try:
+                            clients_service.ws_company(db, u, event_company)
+                        except clients_service.ClientsError as exc:
+                            error = str(exc)
+                    if error:
+                        company_id = fallback
+                        resubscribe(queue, fallback)
+                if error:
+                    await ws.send_json({"type": "client_error", "payload": {"detail": error}})
+                    continue
             await ws.send_text(message)
     except (WebSocketDisconnect, RuntimeError):
         pass                        # клиент отключился — это не ошибка сервера

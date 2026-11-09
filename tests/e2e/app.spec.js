@@ -601,7 +601,7 @@ test('удаление клиента: пояснение в окне и чис�
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();
   await page.locator('a[href="#/companies"]').click();
   await expect(page.locator('#page-title')).toHaveText('Компании');
-  await page.locator('.cp-card', { hasText: name }).first().click();
+  await page.locator('#cp-table tr', { hasText: name }).locator('.cp-card').click();
   await page.locator('#cc-delete').click();
   const modal = page.locator('.modal-slot');
   await expect(modal).toContainText('Удаление компании');
@@ -611,8 +611,8 @@ test('удаление клиента: пояснение в окне и чис�
   await modal.locator('input[name="dl-mode"][value="wipe"]').check();
   page.once('dialog', (d) => d.accept());
   await modal.locator('#dl-go').click();
-  await expect(page.locator('#toast-container')).toContainText('удалена', { timeout: 15000 });
-  await expect(page.locator('.cp-card', { hasText: name })).toHaveCount(0, { timeout: 15000 });
+  await expect(page.locator('#toast-container')).toContainText('удалены безвозвратно', { timeout: 15000 });
+  await expect(page.locator('#cp-table tr', { hasText: name })).toHaveCount(0, { timeout: 15000 });
 
   // в базе компании больше нет, и запрос к ней — 404
   const companies = await (await request.get('/api/v1/companies', { headers: H })).json();
@@ -727,8 +727,11 @@ test('согласование авансового отчёта: сотрудн
   await page.locator('a[href="#/approvals"]').click();
   await expect(page.locator('#page-title')).toHaveText('Согласования');
   await page.locator('#ap-company').selectOption({ label: 'E2E Согласование' });
+  const settings = page.locator('details.ap-conf');
+  await expect(settings).toBeVisible();
+  if (!(await settings.evaluate((el) => el.open))) await settings.locator('summary').click();
   await page.locator('#ap-enabled').check();
-  await page.getByRole('button', { name: 'Сохранить' }).click();
+  await page.locator('#ap-settings').getByRole('button', { name: 'Сохранить' }).click();
   await expect(page.locator('#toast-container')).toContainText('Согласование включено', { timeout: 15000 });
 
   await approvalsRelogin(page, 'e2e_emp_appr');

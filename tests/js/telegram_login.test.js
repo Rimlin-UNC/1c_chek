@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ui from '../../app/static/js/ui.js';
-import { api, getToken, setToken, clearToken } from '../../app/static/js/api.js';
+import { api, getClient, getToken, setToken, clearToken } from '../../app/static/js/api.js';
 
 const root = path.resolve(__dirname, '../..');
 const appJs = fs.readFileSync(path.join(root, 'app/static/js/app.js'), 'utf8');
@@ -19,7 +19,7 @@ const indexHtml = fs.readFileSync(path.join(root, 'app/static/index.html'),
 
 const stub = () => () => {};
 Object.assign(globalThis, {
-  api, getToken, setToken, clearToken,
+  api, getClient, getToken, setToken, clearToken,
   toast: ui.toast, esc: ui.esc, fmtSum: ui.fmtSum, fmtInt: ui.fmtInt,
   fmtDate: ui.fmtDate, statusLabel: ui.statusLabel, roleLabel: ui.roleLabel,
   chip: ui.chip, openModal: ui.openModal, animateNumber: ui.animateNumber,

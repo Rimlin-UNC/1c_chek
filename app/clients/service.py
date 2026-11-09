@@ -94,6 +94,33 @@ def activate(db: Session, user: User, requested: str | None) -> bool:
     return True
 
 
+def ws_company(db: Session, user: User, requested: str | None) -> str | None:
+    """v1.72.1 (T-91): компания для живых обновлений по выбору бухгалтера.
+
+    Пусто — прежнее поведение (своя компания у бухгалтера, все — у администратора). Выбрана компания —
+    право проверяется теми же правилами, что у HTTP-запросов (ADR-30): администратору — любая активная,
+    бухгалтеру — своя или назначенная администратором и активная. Компания не найдена или отключена —
+    отказ с понятной причиной; молча подписать на другую значило бы «обновлений нет, а почему — неизвестно».
+    """
+    if requested is not None and not isinstance(requested, str):
+        raise ClientsError("Неверный выбор компании — выберите клиента заново", 422)
+    cid = (requested or "").strip()
+    if not cid:
+        return None
+    if len(cid) > 36:
+        raise ClientsError("Нет доступа к компании клиента — выберите клиента заново", 403)
+    if user.role != ROLE_ADMIN:
+        allowed = allowed_company_ids(db, user) or []
+        if cid not in allowed:
+            raise ClientsError("Компания не назначена этому бухгалтеру — выберите клиента заново", 403)
+    company = db.get(Company, cid)
+    if company is None:
+        raise ClientsError("Компания не найдена — выберите клиента заново", 404)
+    if not company.is_active:
+        raise ClientsError("Компания отключена — выберите клиента заново", 403)
+    return cid
+
+
 def company_title(company: Company) -> str:
     return company.short_name or company.name
 
