@@ -43,7 +43,8 @@ def test_release_kb():
     assert tasks["T-91"]["Статус"] == "done"
     assert VERSION in tasks["T-91"]["Задача"]
     releases = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
-    assert releases[VERSION]["Коммит"] == "после публикации"
+    commit = releases[VERSION]["Коммит"]
+    assert commit == "после публикации" or (len(commit) == 40 and all(c in "0123456789abcdef" for c in commit))
     assert len(releases["1.72.0"]["Коммит"]) == 40
     assert "| Последний выпуск | **v1.72.1**" in read("docs/kb/README.md")
     journal = list(csv.reader(read("docs/kb/08_session_journal.csv").splitlines()))
