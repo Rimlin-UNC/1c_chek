@@ -19,6 +19,7 @@ from ..database import get_db
 from ..models import User
 from ..services.audit import log_action
 from . import service
+from .contract import ContractIn
 
 router = APIRouter(prefix="/api/v1/clients", tags=["Рабочее место аутсорсера"])
 
@@ -142,3 +143,26 @@ def bulk(body: BulkIn, user: Accountant, db: Db) -> dict:
 def company_ids_csv(ids: list[str]) -> str:
     """Компании пачки одной строкой — для журнала действий (колонка entity_id короткая)."""
     return ",".join(dict.fromkeys(ids))[:64]
+
+
+@router.get('/{company_id}/contract', summary='Договор и тариф клиента')
+def get_contract(company_id: str, user: Accountant, db: Db) -> dict:
+    from . import contract
+    try:
+        company = contract.company_for(db, user, company_id)
+    except service.ClientsError as exc:
+        raise _fail(exc) from exc
+    return {'contract': contract.as_dict(company)}
+
+
+@router.put('/{company_id}/contract', summary='Сохранить договор и тариф клиента')
+def put_contract(company_id: str, body: ContractIn, user: Accountant, db: Db) -> dict:
+    from . import contract
+    try:
+        company = contract.company_for(db, user, company_id)
+    except service.ClientsError as exc:
+        raise _fail(exc) from exc
+    contract.save(company, body)
+    db.commit()
+    log_action(user, 'client_contract_updated', 'company', company_id, {})
+    return {'contract': contract.as_dict(company)}

@@ -414,8 +414,25 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
         if not target.is_active:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 "Компания назначения заархивирована")
+        # Стабильный порядок блокировок защищает проверку и перенос от одновременных правок.
+        locked = (db.query(Company).populate_existing().filter(Company.id.in_([comp.id, target.id]))
+                  .order_by(Company.id).with_for_update().all())
+        by_id = {company.id: company for company in locked}
+        if comp.id not in by_id or target.id not in by_id or not by_id[target.id].is_active:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Компания назначения не найдена или отключена")
+        comp, target = by_id[comp.id], by_id[target.id]
+        # T-88: договоры не объединяются молча и не перезаписывают друг друга.
+        if comp.contract_no:
+            if target.contract_no:
+                raise HTTPException(status.HTTP_409_CONFLICT,
+                                    "У обеих компаний есть договоры — перенос остановлен, чтобы не потерять данные")
         from ..unified import service as unified
         unified.retarget_company(db, comp.id, target.id, admin)
+        # retarget_company перечитывает компанию назначения; переносим после этого.
+        if comp.contract_no:
+            for field in ("contract_no", "contract_date", "service_since", "service_until", "service_fee",
+                          "service_frequency", "service_currency", "service_manager"):
+                setattr(target, field, getattr(comp, field))
         if rc:
             (db.query(Receipt).filter(Receipt.company_id == comp.id)
              .update({Receipt.company_id: target.id, Receipt.exported: False,

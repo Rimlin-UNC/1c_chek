@@ -250,6 +250,16 @@ def overview(db: Session, user: User, period: str | None = None, now: datetime |
     companies = sorted(db.execute(stmt).scalars(), key=lambda c: company_title(c).lower())
     home = home_company_id(user)
     rows = {c.id: _blank(c, home) for c in companies}
+    # Договор доступен только в уже отфильтрованном списке компаний.
+    from .contract import as_dict, reminder
+    today = now.astimezone(docreq.MSK).date()
+    for company in companies:
+        item = as_dict(company)
+        if item:
+            from datetime import date
+            item["reminder"] = reminder(date.fromisoformat(item["service_until"]) if item["service_until"] else None,
+                                        today)
+        rows[company.id]["contract"] = item
     cids = list(rows)
     result = {"period": period, "period_title": month_title(period), "companies": [], "totals": {},
               "generated_at": now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")}
@@ -261,8 +271,14 @@ def overview(db: Session, user: User, period: str | None = None, now: datetime |
         parts = {"overdue": d["overdue"], "fns_bad": r["fns_bad"], "upd_errors": p["errors"],
                  "approvals_overdue": ap["overdue"], "bank_open": b["open"], "attention": r["attention"],
                  "policy": r["policy"], "escalated": d["escalated"], "open": d["open"]}
+        alert = (row["contract"] or {}).get("reminder")
+        # В приоритете видны 30 дней, 7 дней и прошедшая дата; это сигнал на проверку,
+        # а не автоматический вывод о прекращении или продлении договора.
+        contract_score = {"soon": 1, "urgent": 3, "expired": 5}.get((alert or {}).get("level"), 0)
         row["score"] = sum(WEIGHTS[k] * v for k, v in parts.items()) + (3 if b["status"] in BAD_CONN else 0)
-        bad = d["overdue"] or r["fns_bad"] or p["errors"] or ap["overdue"] or b["status"] in BAD_CONN
+        row["score"] += contract_score
+        bad = (d["overdue"] or r["fns_bad"] or p["errors"] or ap["overdue"] or b["status"] in BAD_CONN
+               or (alert and alert["level"] in ("urgent", "expired")))
         row["level"] = "bad" if bad else ("warn" if row["score"] else "ok")
     ordered = sorted(rows.values(), key=lambda x: (-x["score"], x["name"].lower()))
     result["companies"] = ordered

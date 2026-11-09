@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.70.114"
-CURRENT = "1.72.1"
+CURRENT = "1.72.2"
 ISSUE = "https://github.com/Rimlin-UNC/1c_chek/issues/47"
 
 
@@ -90,7 +90,7 @@ class TestRelease:
 
     def test_readme_latest_release_not_older(self):
         m = re.search(r"## 🆕 Последний выпуск — v([\d.]+) ", read("README.md"))
-        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(CURRENT)
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver("1.72.1")  # 1.72.2 пока кандидат, не предписываем установку
         section = read("README.md").split("## 🆕 Последний выпуск", 1)[1].split("\n## ", 1)[0]
         assert "**Контрагенты:**" in section or "контрагенты" in section.lower()
 
@@ -203,7 +203,7 @@ class TestDocsAndKb:
         assert "1.71.0" in tasks["T-80"]["Задача"] and "1.72.0" in tasks["T-81"]["Задача"]
         t01 = tasks["T-01"]["Блокер"]
         m = re.search(r"Ставить сразу v([\d.]+)", t01)          # v1.71.1: не старше
-        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(CURRENT)
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver("1.72.1")  # 1.72.2 пока кандидат, не предписываем установку
         assert "без замороженного «Моего дела»" in t01 and "1.70.82" in t01
         assert "с каждой из 1.70.82–1.70.114 — 48 из 48 проверок" in t01
         roadmap = read("docs/kb/02_roadmap.md")
@@ -217,7 +217,7 @@ class TestDocsAndKb:
         assert ledger["1.70.113"]["Откат на неё"] == "можно"
         kb = read("docs/kb/README.md")
         m = re.search(r"\| Последний выпуск \| \*\*v([\d.]+)\*\*", kb)   # v1.71.1: не старше
-        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(CURRENT)
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver("1.72.1")  # 1.72.2 пока кандидат, не предписываем установку
         assert "контрагенты (T-80; ADR-48)" in kb
         # PR #73 и #74 уже слиты: в живой сводке указан фактический main
         assert "PR #74" in kb and "10a84c4" in kb and "issues #4–#66" in kb

@@ -147,9 +147,9 @@ class TestCode:
         assert t84["Статус"] == "done" and t84["Приоритет"] == "P1"
         assert "1.71.1" in t84["Задача"] and t84["Связанные ADR"] == "ADR-49"
         assert t84["Обновлено"] == "2026-11-08"
-        # этапы 3…9 идут по плану: закрытые отмечаются своим выпуском, остальные остаются в очереди
+        # этапы 3…9 идут по плану: задача может быть в очереди, в работе или завершена
         for tid in ("T-86", "T-87", "T-88", "T-89", "T-90", "T-91"):
-            assert tasks[tid]["Статус"] in ("todo", "done"), tid
+            assert tasks[tid]["Статус"] in ("todo", "in-progress", "done"), tid
             assert tasks[tid]["Источник"].endswith("clients_status_report.md"), tid
         assert tasks["T-85"]["Статус"] in ("todo", "done")
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])

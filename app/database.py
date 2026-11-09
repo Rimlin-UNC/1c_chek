@@ -176,7 +176,7 @@ def _ensure_schema() -> None:
     migrations = {
         "users": [
             ("must_change_password",
-             "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"),
+             "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE"),
             # --- v1.11.0: мультикомпанийность ---
             ("company_id", "ALTER TABLE users ADD COLUMN company_id VARCHAR(36) NULL"),
             # --- v1.16.0: Telegram-уведомления ---
@@ -188,8 +188,17 @@ def _ensure_schema() -> None:
             ("company_id", "ALTER TABLE invites ADD COLUMN company_id VARCHAR(36) NULL"),
         ],
         "companies": [
+            # T-88: только добавление, отсутствие договора остаётся NULL.
+            ("contract_no", "ALTER TABLE companies ADD COLUMN contract_no VARCHAR(200) NULL"),
+            ("contract_date", "ALTER TABLE companies ADD COLUMN contract_date VARCHAR(10) NULL"),
+            ("service_since", "ALTER TABLE companies ADD COLUMN service_since VARCHAR(10) NULL"),
+            ("service_until", "ALTER TABLE companies ADD COLUMN service_until VARCHAR(10) NULL"),
+            ("service_fee", "ALTER TABLE companies ADD COLUMN service_fee VARCHAR(30) NULL"),
+            ("service_frequency", "ALTER TABLE companies ADD COLUMN service_frequency VARCHAR(20) NULL"),
+            ("service_currency", "ALTER TABLE companies ADD COLUMN service_currency VARCHAR(3) NULL"),
+            ("service_manager", "ALTER TABLE companies ADD COLUMN service_manager VARCHAR(200) NULL"),
             ("card_json", "ALTER TABLE companies ADD COLUMN card_json TEXT DEFAULT '{}'"),
-            ("card_updated_at", "ALTER TABLE companies ADD COLUMN card_updated_at DATETIME NULL"),
+            ("card_updated_at", "ALTER TABLE companies ADD COLUMN card_updated_at TIMESTAMP NULL"),
             # v1.22.0: сокращённое наименование из ЕГРЮЛ/ЕГРИП
             ("short_name", "ALTER TABLE companies ADD COLUMN short_name VARCHAR(200) DEFAULT ''"),
             # v1.62.0: политика расходов (лимиты и комплаенс)
@@ -220,7 +229,7 @@ def _ensure_schema() -> None:
              "ALTER TABLE pool_users ADD COLUMN language VARCHAR(8) DEFAULT ''"),
             # v1.70.37: согласие 152-ФЗ на данные из MAX (момент/версия/канал)
             ("consent_at",
-             "ALTER TABLE pool_users ADD COLUMN consent_at DATETIME NULL"),
+             "ALTER TABLE pool_users ADD COLUMN consent_at TIMESTAMP NULL"),
             ("consent_version",
              "ALTER TABLE pool_users ADD COLUMN consent_version VARCHAR(16) DEFAULT ''"),
             ("consent_source",
@@ -231,7 +240,7 @@ def _ensure_schema() -> None:
         ],
         "receipts": [
             # v1.23.0: полные данные чека получены из сервиса проверки
-            ("full_data", "ALTER TABLE receipts ADD COLUMN full_data BOOLEAN DEFAULT 0"),
+            ("full_data", "ALTER TABLE receipts ADD COLUMN full_data BOOLEAN DEFAULT FALSE"),
             # v1.25.1: сотрудник в нижнем регистре (кириллица в фильтрах/поиске)
             ("assignee_lc", "ALTER TABLE receipts ADD COLUMN assignee_lc VARCHAR(200) DEFAULT ''"),
             ("assignee",
@@ -252,8 +261,8 @@ def _ensure_schema() -> None:
             ("cash_sum", "ALTER TABLE receipts ADD COLUMN cash_sum FLOAT DEFAULT 0"),
             ("ecash_sum", "ALTER TABLE receipts ADD COLUMN ecash_sum FLOAT DEFAULT 0"),
             ("details_source", "ALTER TABLE receipts ADD COLUMN details_source VARCHAR(30) DEFAULT ''"),
-            ("details_fetched_at", "ALTER TABLE receipts ADD COLUMN details_fetched_at DATETIME NULL"),
-            ("notified", "ALTER TABLE receipts ADD COLUMN notified BOOLEAN DEFAULT 0"),
+            ("details_fetched_at", "ALTER TABLE receipts ADD COLUMN details_fetched_at TIMESTAMP NULL"),
+            ("notified", "ALTER TABLE receipts ADD COLUMN notified BOOLEAN DEFAULT FALSE"),
             ("category", "ALTER TABLE receipts ADD COLUMN category VARCHAR(100) DEFAULT ''"),
             ("category_lc", "ALTER TABLE receipts ADD COLUMN category_lc VARCHAR(100) DEFAULT ''"),
             # --- v1.8.0: личные суммы в чеке ---

@@ -65,7 +65,7 @@ class TestSchema:
         block = src.split('"pool_users": [', 1)[1].split("\n        ],", 1)[0]
         # текстовые поля — с пустым значением по умолчанию, дата — NULL:
         # существующие участники не получают «согласие задним числом»
-        assert "consent_at DATETIME NULL" in block
+        assert "consent_at TIMESTAMP NULL" in block
         for name in ("reg_source", "first_name", "last_name", "photo_url",
                      "language", "consent_version", "consent_source"):
             assert re.search(rf"ADD COLUMN {name} VARCHAR\(\d+\) DEFAULT ''",
@@ -932,7 +932,7 @@ class TestVersion17037Sync:
 class TestRelease:
     """Требование «своя запись первая» живёт в файле текущего выпуска."""
 
-    VERSION = "1.72.1"
+    VERSION = "1.72.2"
 
     def test_whats_new_is_first(self):
         js = read(APP_JS)

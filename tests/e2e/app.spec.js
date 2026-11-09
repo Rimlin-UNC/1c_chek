@@ -822,3 +822,34 @@ test('папка с УПД: документы по ИНН компании и �
   await expect(row).toContainText('УПД № E-101 от 05.10.2026');
   await expect(row).toContainText('сумма нескольких документов');
 });
+
+// T-88: старый клиент работает без договора; сохранение и предупреждение в карточке.
+test('клиенты: договор и тариф сохраняются, срок виден на экране', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const H = { Authorization: `Bearer ${token}` };
+  const name = `E2E Договор ${Date.now()}`;
+  const created = await request.post('/api/v1/companies', { headers: H, data: { name } });
+  expect(created.ok()).toBeTruthy();
+  const company = await created.json();
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/clients"]').click();
+  const card = page.locator('.cl-card', { hasText: name });
+  await expect(card).toContainText('Договор не заполнен', { timeout: 15000 });
+  await card.locator('[data-contract]').click();
+  await page.locator('#contract-number').fill('E2E-1');
+  await page.locator('#contract-date').fill('2025-01-01');
+  await page.locator('#contract-since').fill('2025-01-01');
+  await page.locator('#contract-until').fill('2025-12-31');
+  await page.locator('#contract-fee').fill('12500,50');
+  await page.locator('#contract-frequency').selectOption('month');
+  await page.locator('#contract-form button[type="submit"]').click();
+  await expect(card).toContainText('E2E-1', { timeout: 15000 });
+  await expect(card).toContainText('Дата окончания по данным карточки прошла');
+  const stored = await (await request.get(`/api/v1/clients/${company.id}/contract`, { headers: H })).json();
+  expect(stored.contract.fee).toBe('12500.50');
+  await card.locator('[data-contract]').click();
+  await expect(page.locator('#contract-number')).toHaveValue('E2E-1');
+  await page.locator('#contract-cancel').click();
+});

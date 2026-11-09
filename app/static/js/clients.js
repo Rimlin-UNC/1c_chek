@@ -91,6 +91,7 @@ export function clientsCardHtml(row) {
           title="JSON, CSV и УПД за месяц — для других учётных систем">📦 Пакет за месяц</button>
       </div>
     </header>
+    ${clientsContractSummary(row)}
     <div class="cl-deadline ${dl.cls}">Срок сдачи: ${esc(dl.when || '—')}${dl.text ? ` — <b>${esc(dl.text)}</b>` : ''}</div>
     <div class="cl-tiles">
       ${clientsTile(row, 'docreq', 'Что нужно от клиента', docreqMain,
@@ -107,6 +108,72 @@ export function clientsCardHtml(row) {
       ${clientsApprovalsTile(row)}
     </div>
   </article>`;
+}
+
+/** T-88: договор показывается в сводке; деньги форматируются как строка, без округления float. */
+export function clientsContractSummary(row) {
+  const c = row.contract;
+  const warning = c && c.reminder;
+  let msg = '';
+  if (warning) {
+    const days = Number(warning.days);
+    msg = days < 0 ? `Дата окончания по данным карточки прошла ${-days} ${clientsDays(days)} назад — проверьте договор`
+      : `Дата окончания по данным карточки через ${days} ${clientsDays(days)} — проверьте договор`;
+  }
+  const detail = c ? `Договор № ${esc(c.number)} · ${esc(c.fee)} ${esc(c.currency)} / ${esc(CLIENTS_FREQUENCIES[c.frequency] || c.frequency)}`
+    : 'Договор не заполнен';
+  return `<div class="cl-contract"><span>${detail}</span>${msg ? ` <strong>${esc(msg)}</strong>` : ''}
+    <button type="button" class="btn btn-sm" data-contract="${esc(row.id)}">Договор и тариф</button></div>`;
+}
+
+const CLIENTS_FREQUENCIES = { month: 'месяц', quarter: 'квартал', year: 'год', once: 'разово' };
+
+export function clientsContractFormHtml(contract) {
+  const c = contract || {};
+  const value = (key) => esc(c[key] || '');
+  return `<form id="contract-form">
+    <div class="modal-title">Договор и тариф клиента</div>
+    <p class="form-hint">Обязательные поля отмечены звёздочкой. Напоминание видно только при входе на экран
+      «Клиенты»; клиенту и во внешние каналы оно не отправляется. Проверьте пролонгацию и дополнительные соглашения:
+      дата в карточке сама по себе не подтверждает прекращение договора.</p>
+    <label class="field"><span>Номер договора *</span><input id="contract-number" maxlength="200" required value="${value('number')}"></label>
+    <label class="field"><span>Дата договора *</span><input id="contract-date" type="date" required value="${value('date')}"></label>
+    <label class="field"><span>Начало обслуживания *</span><input id="contract-since" type="date" required value="${value('service_since')}"></label>
+    <label class="field"><span>Окончание обслуживания</span><input id="contract-until" type="date" value="${value('service_until')}"></label>
+    <label class="field"><span>Стоимость *</span><input id="contract-fee" type="text" inputmode="decimal" required value="${value('fee')}" placeholder="Например 12500.50"></label>
+    <label class="field"><span>Периодичность оплаты *</span><select id="contract-frequency" required>
+      <option value="">— выберите —</option>${Object.entries(CLIENTS_FREQUENCIES).map(([key, label]) =>
+    `<option value="${key}"${c.frequency === key ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+    <label class="field"><span>Валюта *</span><input id="contract-currency" maxlength="3" pattern="[A-Za-z]{3}" required value="${esc(c.currency || 'RUB')}"></label>
+    <label class="field"><span>Ответственный менеджер</span><input id="contract-manager" maxlength="200" value="${value('manager')}"></label>
+    <p id="contract-error" class="form-error" role="alert"></p>
+    <div class="modal-actions"><button type="button" class="btn" id="contract-cancel">Отмена</button>
+      <button type="submit" class="btn btn-primary">Сохранить</button></div>
+  </form>`;
+}
+
+export function clientsContractDialog(row, onSaved) {
+  const { slot, close } = openModal(clientsContractFormHtml(row.contract));
+  const form = slot.querySelector('#contract-form');
+  slot.querySelector('#contract-cancel').onclick = close;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const field = (id) => slot.querySelector('#contract-' + id).value.trim();
+    const body = { number: field('number'), date: field('date'), service_since: field('since'),
+      service_until: field('until') || null, fee: field('fee').replace(',', '.'), frequency: field('frequency'),
+      currency: field('currency').toUpperCase(), manager: field('manager') };
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api.put(`/api/v1/clients/${encodeURIComponent(row.id)}/contract`, body);
+      close();
+      toast('Договор и тариф сохранены', 'ok');
+      if (typeof onSaved === 'function') onSaved();
+    } catch (error) {
+      slot.querySelector('#contract-error').textContent = error.message || 'Не удалось сохранить договор';
+      submit.disabled = false;
+    }
+  };
 }
 
 /** Состояние банка одной фразой — как на экране «Банк». */
@@ -303,6 +370,12 @@ export async function viewClients(container, opts = {}) {
       paintBulk();
     };
     container.querySelector('#cl-list').onclick = (e) => {
+      const contract = e.target.closest('[data-contract]');
+      if (contract) {
+        const row = data.companies.find((company) => company.id === contract.dataset.contract);
+        if (row) clientsContractDialog(row, () => load());
+        return;
+      }
       const pack = e.target.closest('[data-pack]');
       if (pack) {
         clientsDownloadPackage(period, pack.dataset.pack, pack);

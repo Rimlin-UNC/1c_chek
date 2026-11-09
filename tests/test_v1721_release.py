@@ -16,26 +16,27 @@ def read(path: str) -> str:
 
 
 def test_release_versions_and_cache():
-    assert settings.APP_VERSION == VERSION
+    current = settings.APP_VERSION
+    assert tuple(map(int, current.split("."))) >= tuple(map(int, VERSION.split(".")))
     for path in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                  "app/static/manifest.webmanifest", "app/static/maxapp/index.html", "app/static/b2b/index.html"):
-        assert VERSION in read(path), path
-    assert read("app/static/index.html").count(f"?v={VERSION}") == 3
-    assert read("app/static/sw.js").count(f"?v={VERSION}") == 4
-    assert read("app/static/b2b/index.html").count(f"?v={VERSION}") == 2
-    assert f"ymaster-check-v{VERSION}" in read("app/static/sw.js")
-    assert updater.read_blocks(str(ROOT / "app/services/blocks.py"))["Рабочее место аутсорсера"] == VERSION
+        assert current in read(path), path
+    assert read("app/static/index.html").count(f"?v={current}") == 3
+    assert read("app/static/sw.js").count(f"?v={current}") == 4
+    assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
+    assert f"ymaster-check-v{current}" in read("app/static/sw.js")
+    assert updater.read_blocks(str(ROOT / "app/services/blocks.py"))["Рабочее место аутсорсера"] == current
 
 
 def test_release_texts_and_guide():
-    assert read("CHANGELOG.md").startswith(f"## [{VERSION}] - 2026-11-08")
+    assert f"## [{VERSION}] - 2026-11-08" in read("CHANGELOG.md")
     js = read("app/static/js/app.js")
-    assert js.split("const WHATS_NEW = {", 1)[1].lstrip().startswith(f"'{VERSION}': [")
+    assert f"'{VERSION}': [" in js
     assert "### 7.7.5. Живые обновления" in read("docs/USER_GUIDE.md")
     assert "С версии 1.72.1 — живые обновления" in read("app/services/manual_content.py")
     assert "## ADR-54" in read("docs/ARCHITECTURE.md")
-    assert read("docs/ui_journal.md").startswith("## v1.72.1")
-    assert "Последний выпуск — v1.72.1" in read("README.md")
+    assert "## v1.72.1" in read("docs/ui_journal.md")
+    assert "Последний выпуск — v1.72.2" in read("README.md")
 
 
 def test_release_kb():
@@ -46,7 +47,7 @@ def test_release_kb():
     commit = releases[VERSION]["Коммит"]
     assert commit == "после публикации" or (len(commit) == 40 and all(c in "0123456789abcdef" for c in commit))
     assert len(releases["1.72.0"]["Коммит"]) == 40
-    assert "| Последний выпуск | **v1.72.1**" in read("docs/kb/README.md")
+    assert "| Последний выпуск | **v1.72.2**" in read("docs/kb/README.md")
     journal = list(csv.reader(read("docs/kb/08_session_journal.csv").splitlines()))
     assert all(len(row) == 7 for row in journal)
     assert any("T-91" in row[2] for row in journal)
