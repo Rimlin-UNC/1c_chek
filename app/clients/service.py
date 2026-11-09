@@ -37,6 +37,7 @@ HEADER = "X-Ym-Company"
 HOME_ATTR = "_ym_home_company"      # своя компания бухгалтера на время подмены (атрибут объекта, не колонка)
 ATTENTION_DAYS = 3                  # как на дашборде: чек «висит» в проверке дольше 3 дней
 MAX_CLIENTS = 500
+MAX_BULK = 200                      # v1.72.0 (T-89): сколько компаний можно отметить за один раз
 BAD_CONN = ("reauth", "error")
 # вес признака в очереди внимания: просрочка и ошибки — выше, «к выгрузке» — только сведение
 WEIGHTS = {"overdue": 5, "fns_bad": 3, "upd_errors": 3, "approvals_overdue": 3, "bank_open": 2,
@@ -372,6 +373,33 @@ def _approvals(db: Session, rows: dict[str, dict], cids: list[str], user: User, 
         info = rows[cid]["approvals"]
         info["todo"], info["overdue"] = todo.get(cid, 0), overdue.get(cid, 0)
         info["work"], info["month"] = work.get(cid, 0), month.get(cid, 0)
+
+
+# ------------------------------------------------------------------ массовые действия (T-89, v1.72.0)
+BULK_ACTIONS = ("remind", "archive", "restore", "assign")
+BULK_TITLES = {"remind": "напомнили о документах", "archive": "отправили в архив",
+               "restore": "вернули из архива", "assign": "назначили сотрудника"}
+
+
+def bulk_targets(db: Session, user: User, company_ids: list[str]) -> tuple[list[Company], list[dict]]:
+    """Компании пачки, которые пользователю можно менять, и отказы по остальным (причина — для окна).
+
+    Права те же, что у одиночных действий: администратор — любая компания, бухгалтер — только назначенная
+    ему администратором и активная (ADR-30). Чужую компанию не «пропускаем молча»: она попадает в отказы
+    с причиной, иначе бухгалтер считает, что напомнил клиенту, а напоминания не было.
+    """
+    allowed = allowed_company_ids(db, user)
+    found = {c.id: c for c in db.execute(select(Company).where(Company.id.in_(company_ids or [""]))).scalars()}
+    ok, refused = [], []
+    for cid in dict.fromkeys(company_ids):
+        company = found.get(cid)
+        if company is None:
+            refused.append({"company_id": cid, "ok": False, "error": "компания не найдена"})
+        elif allowed is not None and cid not in allowed:
+            refused.append({"company_id": cid, "ok": False, "error": "компания не назначена этому бухгалтеру"})
+        else:
+            ok.append(company)
+    return ok, refused
 
 
 def _totals(rows: list[dict]) -> dict:

@@ -630,6 +630,11 @@ test('клиенты: согласования ждут бухгалтера и 
   const companies = await (await request.get('/api/v1/companies', { headers: H })).json();
   const company = companies.find((c) => c.name === 'E2E Согласование');
   expect(company).toBeTruthy();
+  // плитка есть только там, где согласование включено: включаем через API, не заходя в настройки
+  const settings = await request.put('/api/v1/approvals/settings', {
+    headers: H, data: { company_id: company.id, enabled: true, timeout_hours: 72, manager_limit: 0,
+      accountant_limit: 0, channels: [] } });
+  expect(settings.ok()).toBeTruthy();
 
   await login(page);
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();

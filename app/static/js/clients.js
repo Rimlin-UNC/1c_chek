@@ -80,6 +80,9 @@ export function clientsCardHtml(row) {
   const bankMain = b.open ? `<b>${b.open}</b> без документов` : 'всё с документами';
   return `<article class="glass cl-card cl-${esc(row.level)}" data-company="${esc(row.id)}">
     <header class="cl-head">
+      <label class="cl-pick" title="Отметить для массового действия">
+        <input type="checkbox" data-pick="${esc(row.id)}"${row.picked ? ' checked' : ''} aria-label="Отметить «${esc(row.name)}»">
+      </label>
       <div class="cl-title"><b>${esc(row.name)}</b>${row.home ? ' <span class="chip">своя</span>' : ''}
         <span class="form-hint">ИНН ${esc(row.inn || '—')}</span></div>
       <div class="cl-head-actions">
@@ -164,7 +167,29 @@ export function clientsTotalsHtml(t) {
   </div>`;
 }
 
-/** Список карточек с фильтром по статусу и поиском по названию или ИНН. */
+/** v1.72.0 (T-89): панель массовых действий — появляется, когда отмечен хотя бы один клиент. */
+export function clientsBulkHtml(count, opts = {}) {
+  const n = Number(count) || 0;
+  if (!n) return '';
+  return `<div class="glass cl-bulk" id="cl-bulk" role="region" aria-label="Массовые действия">
+    <b>Отмечено клиентов: <span id="cl-bulk-count">${n}</span></b>
+    <div class="cl-bulk-actions">
+      <button type="button" class="btn btn-sm" data-bulk="remind"
+        title="Запрос документов у всех отмеченных компаний — по тем же каналам, что и обычное напоминание">📣 Напомнить всем</button>
+      <button type="button" class="btn btn-sm" data-bulk="pack"
+        title="Архив за месяц по каждому отмеченному клиенту — скачивается по одному">📦 Пакет по всем</button>
+      ${opts.isAdmin ? `<button type="button" class="btn btn-sm" data-bulk="assign"
+        title="Сотрудник переедет в отмеченные компании; окно выбора — следующим шагом">👤 Назначить сотрудника</button>` : ''}
+      <button type="button" class="btn btn-sm" data-bulk="archive"
+        title="Компании уйдут в архив: данные и история остаются, в сводке их не будет">🗄 В архив</button>
+      <button type="button" class="btn btn-sm" data-bulk="restore"
+        title="Вернуть отмеченные компании из архива в работу">↩ Из архива</button>
+      <button type="button" class="btn btn-sm btn-ghost" data-bulk="clear">Снять отметки</button>
+    </div>
+  </div>`;
+}
+
+/** Список карточек с фильтром по статусу и поиску по названию или ИНН. */
 export function clientsListHtml(companies, filter = 'all', query = '') {
   const q = String(query || '').trim().toLowerCase();
   const rows = (companies || []).filter((c) => (filter === 'all' || c.level === filter)
@@ -185,6 +210,7 @@ export async function viewClients(container, opts = {}) {
   let filter = 'all';
   let query = '';
   let data = null;
+  const picked = new Set();          // v1.72.0 (T-89): отмеченные клиенты — переживают фильтр и поиск
   container.innerHTML = `<div class="glass card"><div class="skeleton"></div><div class="skeleton"></div></div>`;
 
   async function load() {
@@ -201,7 +227,28 @@ export async function viewClients(container, opts = {}) {
 
   function paintList() {
     const list = container.querySelector('#cl-list');
-    if (list) list.innerHTML = clientsListHtml(data.companies, filter, query);
+    if (list) {
+      // отметка — часть данных карточки: так чекбокс не «слетает» при смене фильтра
+      const rows = data.companies.map((c) => ({ ...c, picked: picked.has(c.id) }));
+      list.innerHTML = clientsListHtml(rows, filter, query);
+    }
+    paintBulk();
+  }
+
+  function paintBulk() {
+    const host = container.querySelector('#cl-bulk-host');
+    if (!host) return;
+    host.innerHTML = clientsBulkHtml(picked.size, { isAdmin: opts.isAdmin });
+    if (!picked.size) return;
+    host.querySelectorAll('[data-bulk]').forEach((btn) => {
+      btn.onclick = () => clientsBulkRun(btn.dataset.bulk, [...picked], period, {
+        isAdmin: opts.isAdmin, btn, onDone: (action) => {
+          if (action === 'archive' || action === 'restore') picked.clear();
+          load();
+        }, onDownload: (companyId) => clientsDownloadPackage(period, companyId, null),
+        onAssign: () => clientsBulkAssign([...picked], () => load()),
+      });
+    });
   }
 
   function render() {
@@ -228,6 +275,7 @@ export async function viewClients(container, opts = {}) {
           <input type="search" class="cl-search" id="cl-search" placeholder="Поиск по названию или ИНН" value="${esc(query)}">
         </div>
       </div>
+      <div id="cl-bulk-host"></div>
       <div class="cl-list" id="cl-list"></div>`;
     paintList();
     container.querySelector('#cl-period').onchange = (e) => { period = e.target.value; load(); };
@@ -248,6 +296,12 @@ export async function viewClients(container, opts = {}) {
       };
     });
     container.querySelector('#cl-search').oninput = (e) => { query = e.target.value; paintList(); };
+    container.querySelector('#cl-list').onchange = (e) => {
+      const box = e.target.closest('[data-pick]');
+      if (!box) return;
+      if (box.checked) picked.add(box.dataset.pick); else picked.delete(box.dataset.pick);
+      paintBulk();
+    };
     container.querySelector('#cl-list').onclick = (e) => {
       const pack = e.target.closest('[data-pack]');
       if (pack) {
@@ -261,6 +315,84 @@ export async function viewClients(container, opts = {}) {
   }
 
   await load();
+}
+
+// ------------------------------------------------------------------ массовые действия (T-89, v1.72.0)
+/** Итог пачки одной фразой: «готово 3 из 4», плюс причина первого отказа. */
+export function clientsBulkResult(data) {
+  const done = Number(data.done || 0), failed = Number(data.failed || 0);
+  const first = (data.items || []).find((i) => !i.ok);
+  const tail = first ? ` Первая причина: ${first.name ? first.name + ' — ' : ''}${first.error}` : '';
+  return `Готово: ${done}${failed ? `, не получилось: ${failed}.` + tail : ' из ' + (done + failed) + '.'}`;
+}
+
+/** Выполнить действие пачкой. pack — «Пакет по всем»: скачиваем архив по каждой компании отдельно. */
+export async function clientsBulkRun(action, companyIds, period, opts = {}) {
+  if (!companyIds || !companyIds.length) return null;
+  const btn = opts.btn;
+  if (btn) btn.disabled = true;
+  try {
+    if (action === 'pack') {
+      for (const cid of companyIds) {
+        if (typeof opts.onDownload === 'function') await opts.onDownload(cid);
+      }
+      toast(`Архив за месяц: ${companyIds.length} файлов — по одному на компанию`, 'ok', 'Пакет по всем');
+      if (typeof opts.onDone === 'function') opts.onDone(action);
+      return { done: companyIds.length, failed: 0, items: [] };
+    }
+    if (action === 'assign') {
+      if (typeof opts.onAssign === 'function') return opts.onAssign();
+      return null;
+    }
+    if (action === 'clear') {
+      if (typeof opts.onDone === 'function') opts.onDone(action);
+      return null;
+    }
+    const body = { company_ids: companyIds, action, period };
+    const data = await api.post('/api/v1/clients/bulk', body);
+    const failed = Number(data.failed || 0);
+    toast(clientsBulkResult(data), failed ? 'warn' : 'ok', data.title || 'Готово');
+    if (typeof opts.onDone === 'function') opts.onDone(action, data);
+    return data;
+  } catch (e) {
+    toast(e.message, 'err', 'Массовое действие');
+    return null;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** «Назначить сотрудника»: окно выбора и отправка пачкой (администратор). */
+export async function clientsBulkAssign(companyIds, onDone) {
+  let people = [];
+  try {
+    people = (await api.get('/api/v1/users')).items || [];
+  } catch (e) {
+    toast(e.message, 'err', 'Сотрудники');
+    return null;
+  }
+  const staff = people.filter((u) => u.is_active !== false && u.role !== 'admin');
+  openModal(`<div class="card-title">👤 Назначить сотрудника</div>
+    <p class="form-hint">Отмечено клиентов: ${companyIds.length}. Сотрудник переедет в эти компании — '
+      + 'в сводке он появится как их сотрудник.</p>
+    <label class="field"><span>Сотрудник</span><select id="cb-user">
+      ${staff.map((u) => `<option value="${esc(u.id)}">${esc(u.full_name || u.username)} — ${esc(u.role)}</option>`).join('')}
+    </select></label>
+    <div class="modal-actions"><button type="button" class="btn" id="cb-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="cb-go">Назначить</button></div>`);
+  const root = document.querySelector('.modal-slot');
+  root.querySelector('#cb-cancel').onclick = () => root.closest('.modal-root').classList.add('hidden');
+  root.querySelector('#cb-go').onclick = async () => {
+    const userId = root.querySelector('#cb-user').value;
+    try {
+      const data = await api.post('/api/v1/clients/bulk', { company_ids: companyIds, action: 'assign', user_id: userId });
+      root.closest('.modal-root').classList.add('hidden');
+      toast(clientsBulkResult(data), data.failed ? 'warn' : 'ok', 'Назначено');
+      if (typeof onDone === 'function') onDone(data);
+    } catch (e) {
+      toast(e.message, 'err', 'Назначение');
+    }
+  };
 }
 
 // ------------------------------------------------------------------ пакет для других учётных систем (T-68)

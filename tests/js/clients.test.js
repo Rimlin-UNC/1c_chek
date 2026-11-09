@@ -3,7 +3,7 @@
    API подменён, данные синтетические. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const calls = { get: [], put: [], post: [], download: [] };
+const calls = { get: [], put: [], post: [], download: [], bulk: [] };
 let clientState = '';
 const overview = {
   period: '2026-10', period_title: 'Октябрь 2026',
@@ -41,6 +41,12 @@ vi.mock('../../app/static/js/api.js', () => ({
     post: vi.fn(async (path, body) => {
       calls.post.push({ path, body });
       if (path === '/api/v1/companies') return { id: 'c-new', name: body.name, inn: body.inn || '', is_active: true };
+      if (path === '/api/v1/clients/bulk') {
+        calls.bulk.push(body);
+        return { action: body.action, title: 'готово', done: (body.company_ids || []).length, failed: 0,
+          items: (body.company_ids || []).map((id) => ({ company_id: id, ok: true })) };
+      }
+      if (path === '/api/v1/users') return { items: [{ id: 'u-1', username: 'buh', full_name: 'Бухгалтер', role: 'accountant', is_active: true }] };
       if (path === '/api/v1/companies/lookup-checko') return { name_full: 'ООО «РОМАШКА»', status: 'Действующая' };
       return {};
     }),
@@ -52,7 +58,7 @@ vi.mock('../../app/static/js/api.js', () => ({
 const mod = await import('../../app/static/js/clients.js');
 
 beforeEach(() => {
-  calls.get = []; calls.put = []; calls.post = []; calls.download = [];
+  calls.get = []; calls.put = []; calls.post = []; calls.download = []; calls.bulk = [];
   clientState = '';
   document.body.innerHTML = '<div id="toast-container"></div><div id="modal-root" class="modal-root hidden"><div class="modal-backdrop"></div><div class="modal-slot"></div></div><div id="app"></div>';
   URL.createObjectURL = vi.fn(() => 'blob:x');
@@ -145,6 +151,27 @@ describe('«Клиенты»: сценарии', () => {
     select.dispatchEvent(new Event('change'));
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.get.at(-1)).toBe('/api/v1/clients?period=2026-11');
+  });
+
+  it('массовые действия: отметка клиентов, панель и пачка одним запросом', async () => {
+    const box = document.getElementById('app');
+    await mod.viewClients(box, { open: vi.fn(), isAdmin: true });
+    expect(box.querySelector('#cl-bulk')).toBeNull();                    // ничего не отмечено — панели нет
+    const pick = box.querySelector('[data-pick="c-a"]');
+    pick.checked = true;
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+    const panel = box.locator ? null : box.querySelector('#cl-bulk');
+    expect(panel).toBeTruthy();
+    expect(panel.textContent).toContain('Отмечено клиентов: 1');
+    panel.querySelector('[data-bulk="archive"]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.bulk).toEqual([{ company_ids: ['c-a'], action: 'archive', period: '2026-10' }]);
+    // «Пакет по всем» — архив по каждому отмеченному клиенту, запросов пачки нет
+    expect(mod.clientsBulkHtml(0)).toBe('');
+    expect(mod.clientsBulkHtml(2, { isAdmin: false })).not.toContain('data-bulk="assign"');
+    expect(mod.clientsBulkHtml(2, { isAdmin: true })).toContain('data-bulk="assign"');
+    expect(mod.clientsBulkResult({ done: 1, failed: 1, items: [{ ok: false, name: 'Бета', error: 'нет доступа' }] }))
+      .toContain('Готово: 1, не получилось: 1. Первая причина: Бета — нет доступа');
   });
 
   it('переключатель клиента: виден при двух компаниях, своя — без заголовка', () => {

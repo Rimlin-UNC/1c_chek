@@ -2389,6 +2389,16 @@ label.field[hidden] { display: none; }
 .cl-line.cl-warn { color: var(--warn-text); }
 /* v1.71.4 (T-87): ошибка банка — мелким шрифтом под его состоянием, чужие ошибки не подменяются */
 .cl-bank-error { display: block; color: var(--bad-text); font-size: 11.5px; line-height: 1.3; }
+
+/* v1.72.0 (T-89): массовые действия — отметка клиента и панель над списком */
+.cl-pick { display: flex; align-items: center; margin-right: 2px; }
+.cl-pick input { width: 18px; height: 18px; cursor: pointer; }
+.cl-bulk {
+  position: sticky; top: 8px; z-index: 3; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  justify-content: space-between; padding: 10px 14px; margin-bottom: 10px;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.cl-bulk-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .cl-empty { color: var(--text-dim); }
 .cl-access-list { max-height: 46vh; overflow: auto; margin: 8px 0; padding-right: 4px; }
 
