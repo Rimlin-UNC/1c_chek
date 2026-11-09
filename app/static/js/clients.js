@@ -99,11 +99,47 @@ export function clientsCardHtml(row) {
         r.fns_bad ? 'cl-bad' : (r.attention || r.policy ? 'cl-warn' : ''))}
       ${clientsTile(row, 'primary', 'Первичка (УПД)', primaryMain, [clientsLine(p.to_export, 'к выгрузке в 1С')],
         p.errors ? 'cl-bad' : '')}
-      ${clientsTile(row, 'bank', 'Банк', bankMain,
-        [`<span class="cl-line${b.status === 'reauth' || b.status === 'error' ? ' cl-bad' : ''}">${esc(conn)}${synced}</span>`],
+      ${clientsTile(row, 'bank', 'Банк', bankMain, clientsBankLines(b, conn, synced),
         b.status === 'reauth' || b.status === 'error' ? 'cl-bad' : (b.open ? 'cl-warn' : ''))}
+      ${clientsApprovalsTile(row)}
     </div>
   </article>`;
+}
+
+/** Состояние банка одной фразой — как на экране «Банк». */
+export const CLIENTS_BANK_STATE = {
+  active: 'работает', awaiting: 'ждём подтверждения', new: 'ждём настройки', reauth: 'нужно подключить заново',
+  error: 'ошибка подключения',
+};
+
+/** v1.71.4 (T-87): банки в плитке. Один банк — по-прежнему одна строка «состояние, загрузка». Несколько —
+    каждый со своим состоянием и своей ошибкой (худший уже первым, порядок задаёт сервер): видно, какой
+    банк сломался и что именно случилось, а не только «банк: ошибка подключения». */
+export function clientsBankLines(b, conn, synced) {
+  const banks = (b && Array.isArray(b.banks)) ? b.banks : [];
+  if (banks.length <= 1) {
+    return [`<span class="cl-line${b.status === 'reauth' || b.status === 'error' ? ' cl-bad' : ''}">${esc(conn)}${synced}</span>`];
+  }
+  return banks.map((x) => {
+    const bad = x.status === 'reauth' || x.status === 'error';
+    const state = CLIENTS_BANK_STATE[x.status] || x.status;
+    const when = x.last_sync_at ? `, ${esc(clientsWhen(x.last_sync_at))}` : '';
+    const err = bad && x.error ? `<span class="cl-bank-error">${esc(x.error)}</span>` : '';
+    return `<span class="cl-line${bad ? ' cl-bad' : ''}" title="${esc(x.title)}: ${esc(state)}">`
+      + `<b>${esc(x.title)}</b> — ${esc(state)}${when}${err}</span>`;
+  });
+}
+
+/** v1.71.3 (T-86): согласования авансовых отчётов — плитка карточки. Согласование выключено в компании —
+    плитки нет вовсе: нули на экране не рисуем, иначе бухгалтер ищет несуществующую работу. */
+export function clientsApprovalsTile(row) {
+  const a = (row && row.approvals) || {};
+  if (!a.enabled) return '';
+  const main = a.todo ? `<b>${a.todo}</b> ждут меня` : (a.work ? `<b>${a.work}</b> в работе` : 'ждут не меня');
+  return clientsTile(row, 'approvals', 'Согласования', main,
+    [clientsLine(a.overdue, 'просрочено', 'cl-bad'), clientsLine(a.work, 'в работе'),
+      clientsLine(a.month, 'заведено за месяц')],
+    a.overdue ? 'cl-bad' : (a.todo ? 'cl-warn' : ''));
 }
 
 /** Итоги по всем клиентам — плитки над списком. */
@@ -119,6 +155,9 @@ export function clientsTotalsHtml(t) {
       x.overdue ? 'cl-bad' : '')}
     ${kpi('Ошибки ФНС и УПД', Number(x.fns_bad || 0) + Number(x.upd_errors || 0),
       `чеки: ${x.fns_bad || 0} · УПД: ${x.upd_errors || 0}`, (x.fns_bad || x.upd_errors) ? 'cl-bad' : '')}
+    ${kpi('Согласования', Number(x.approvals_todo || 0),
+      `ждут моего хода · просрочено: ${x.approvals_overdue || 0}`,
+      x.approvals_overdue ? 'cl-bad' : (x.approvals_todo ? 'cl-warn' : ''))}
     ${kpi('Платежи без документов', Number(x.bank_open || 0), 'по выпискам за месяц', x.bank_open ? 'cl-warn' : '')}
     ${kpi('К выгрузке', Number(x.to_export || 0) + Number(x.upd_to_export || 0),
       `чеки: ${x.to_export || 0} · УПД: ${x.upd_to_export || 0}`)}

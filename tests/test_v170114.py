@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.70.114"
-CURRENT = "1.71.2"
+CURRENT = "1.71.3"
 ISSUE = "https://github.com/Rimlin-UNC/1c_chek/issues/47"
 
 
@@ -27,6 +27,7 @@ class TestRelease:
 
     def test_sync_points(self):
         from app.config import settings
+        # точки синхронизации не отстают от версии выпуска (равенство — у своего выпуска, test_v1713)
         assert settings.APP_VERSION == CURRENT
         for rel in ("app/config.py", "app/static/index.html", "app/static/sw.js",
                     "app/static/manifest.webmanifest", "app/static/maxapp/index.html",

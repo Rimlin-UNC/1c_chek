@@ -621,6 +621,28 @@ test('удаление клиента: пояснение в окне и чис�
   expect(again.status()).toBe(404);
 });
 
+// v1.71.3 (T-86): согласования авансовых отчётов видны в сводке клиентов — плитка «Согласования»
+// показывает, сколько отчётов ждут бухгалтера, и открывает экран «Согласования» уже в этой компании
+test('клиенты: согласования ждут бухгалтера и открываются одной кнопкой', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const H = { Authorization: `Bearer ${token}` };
+  const companies = await (await request.get('/api/v1/companies', { headers: H })).json();
+  const company = companies.find((c) => c.name === 'E2E Согласование');
+  expect(company).toBeTruthy();
+
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  const card = page.locator('.cl-card', { hasText: 'E2E Согласование' });
+  await expect(card).toBeVisible({ timeout: 15000 });
+  // согласование в этой компании включено (сценарий согласования идёт выше) — плитка есть и переход работает
+  await expect(card.locator('[data-open="approvals"]')).toBeVisible({ timeout: 15000 });
+  await card.locator('[data-open="approvals"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Согласования', { timeout: 15000 });
+});
+
 // v1.70.101 (T-69, ADR-31): понимание чеков — читаемая позиция и категория с причиной; бухгалтер меняет категорию,
 // выбор запоминается для компании и виден в «Настройках» → «Память товаров». Чек — синтетика через API.
 test('понимание чеков: категория позиции, выбор бухгалтера и «Память товаров»', async ({ page, request }) => {

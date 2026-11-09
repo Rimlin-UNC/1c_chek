@@ -9,18 +9,24 @@ const overview = {
   period: '2026-10', period_title: 'Октябрь 2026',
   periods: [{ period: '2026-10', title: 'Октябрь 2026' }, { period: '2026-11', title: 'Ноябрь 2026' }],
   totals: { companies: 2, bad: 1, warn: 0, ok: 1, overdue: 3, open: 3, escalated: 1, fns_bad: 1, upd_errors: 1,
-    bank_open: 2, to_export: 4, upd_to_export: 1 },
+    bank_open: 2, to_export: 4, upd_to_export: 1, approvals_todo: 2, approvals_overdue: 1 },
   companies: [
     { id: 'c-a', name: 'ООО «Альфа»', inn: '7701000001', home: false, level: 'bad', score: 21,
       receipts: { count: 12, sum: 45000, attention: 2, fns_bad: 1, policy: 0, to_export: 4 },
       primary: { errors: 1, to_export: 1 },
       docreq: { open: 3, overdue: 3, escalated: 1, deadline: '2026-11-05T18:00:00+03:00', days_left: -2 },
-      bank: { open: 2, status: 'active', last_sync_at: '2026-11-04T07:05:00Z', last_error: '' } },
+      bank: { open: 2, status: 'error', last_sync_at: '2026-11-04T07:05:00Z', last_error: 'Т-Банк: 401',
+        banks: [{ bank: 'tbank', title: 'Т-Банк', status: 'error', error: '401: ключ API отозван',
+          last_sync_at: '', method: 'jwt', accounts: 1 },
+        { bank: 'tochka', title: 'Точка', status: 'active', error: '', last_sync_at: '2026-11-04T07:05:00Z',
+          method: 'oauth', accounts: 2 }] },
+      approvals: { enabled: true, todo: 2, overdue: 1, work: 3, month: 5 } },
     { id: 'c-b', name: 'ООО «Бета»', inn: '7701000002', home: true, level: 'ok', score: 0,
       receipts: { count: 0, sum: 0, attention: 0, fns_bad: 0, policy: 0, to_export: 0 },
       primary: { errors: 0, to_export: 0 },
       docreq: { open: 0, overdue: 0, escalated: 0, deadline: '2026-11-05T18:00:00+03:00', days_left: 4 },
-      bank: { open: 0, status: 'none', last_sync_at: '', last_error: '' } },
+      bank: { open: 0, status: 'none', last_sync_at: '', last_error: '', banks: [] },
+      approvals: { enabled: false, todo: 0, overdue: 0, work: 0, month: 0 } },
   ],
 };
 
@@ -73,22 +79,38 @@ describe('«Клиенты»: подписи и карточки', () => {
     expect(html).toContain('ООО «Альфа»');
     expect(html).toContain('<span class="chip failed">Нужны действия</span>');
     expect(html).toContain('просрочено на 2 дня');
-    for (const view of ['docreq', 'receipts', 'primary', 'bank']) expect(html).toContain(`data-open="${view}"`);
+    for (const view of ['docreq', 'receipts', 'primary', 'bank', 'approvals']) expect(html).toContain(`data-open="${view}"`);
     expect(html).toContain('<b>3</b> просрочено');
     expect(html).toContain('<b>1</b> ошибки ФНС');
-    expect(html).toContain('банк подключён, загрузка');
+    // v1.71.4 (T-87): несколько банков — каждый со своим состоянием и своей ошибкой
+    expect(html).toContain('<b>Т-Банк</b> — ошибка подключения');
+    expect(html).toContain('401: ключ API отозван');
+    expect(html).toContain('<b>Точка</b> — работает,');
+    expect(html.indexOf('Т-Банк')).toBeLessThan(html.indexOf('Точка'));      // худший — первым
     expect(html).toContain('data-pack="c-a"');
+    // v1.71.3 (T-86): согласования — «ждут меня», просрочка красным и работа за месяц
+    expect(html).toContain('<b>2</b> ждут меня');
+    expect(html).toContain('<b>1</b> просрочено');
+    expect(html).toContain('<b>5</b> заведено за месяц');
+    expect(html).toContain('cl-tile cl-bad" data-company="c-a" data-open="approvals"');
     const calm = mod.clientsCardHtml(overview.companies[1]);
     expect(calm).toContain('<span class="chip">своя</span>');
     expect(calm).toContain('всё есть');
     expect(calm).toContain('банк по API не подключён');
+    expect(mod.clientsBankLines({ status: 'active', banks: [] }, 'банк подключён', ', загрузка 5 ноября'))
+      .toEqual(['<span class="cl-line">банк подключён, загрузка 5 ноября</span>']);
     expect(calm).not.toContain('cl-tile cl-bad');
+    // согласование в компании выключено — плитки нет, а не «0 ждут меня»
+    expect(calm).not.toContain('data-open="approvals"');
+    expect(mod.clientsApprovalsTile({ id: 'x', approvals: { enabled: true, todo: 0, overdue: 0, work: 2, month: 3 } }))
+      .toContain('<b>2</b> в работе');
   });
 
   it('итоги и фильтр списка по статусу и поиску', () => {
     const totals = mod.clientsTotalsHtml(overview.totals);
     expect(totals).toContain('Просрочено запросов');
     expect(totals).toContain('нужны действия: 1 · вопросы: 0 · в порядке: 1');
+    expect(totals).toContain('ждут моего хода · просрочено: 1');
     expect(mod.clientsListHtml(overview.companies, 'bad')).toContain('ООО «Альфа»');
     expect(mod.clientsListHtml(overview.companies, 'bad')).not.toContain('ООО «Бета»');
     expect(mod.clientsListHtml(overview.companies, 'all', '7701000002')).toContain('ООО «Бета»');
