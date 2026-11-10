@@ -903,7 +903,11 @@ test('живые обновления: чек выбранного клиент�
     await page.goto('/');
     await page.fill('#login-username', 'e2e_acc_alpha');
     await page.fill('#login-password', 'e2e-accountant-password');
+    const loginResult = page.waitForResponse((response) => response.url().includes('/api/v1/auth/login')
+      && response.request().method() === 'POST');
     await page.click('#login-submit');
+    const loginResponse = await loginResult;
+    expect(loginResponse.ok(), `Вход бухгалтера: HTTP ${loginResponse.status()} ${await loginResponse.text()}`).toBeTruthy();
     await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
     await page.getByRole('button', { name: 'Понятно, работаем' }).click();
     await expect.poll(() => frames.some((f) => f.type === 'connected'), { timeout: 15000 }).toBe(true);

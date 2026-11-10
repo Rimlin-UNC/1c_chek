@@ -38,8 +38,9 @@ export default defineConfig({
     command: '.venv/bin/python -m qa.playwright_seed && .venv/bin/python run.py --host 127.0.0.1 --port 8123',
     // v1.70.95: все сценарии ходят с одного адреса 127.0.0.1, а в CI 11 сценариев проходят за минуту —
     // это больше 240 запросов к API в минуту, и последний сценарий получал 429 «Слишком много запросов».
-    // Сценарии проверяют пути пользователя; сам ограничитель частоты покрыт своими тестами.
-    env: { YM_FETCHQ_OFF: '1', YM_DOCREQ_OFF: '1', DATABASE_URL: `sqlite:///${join(dbDir, 'test.db')}`, YM_OSMON_OFF: '1', SUPABASE_DEMO_ENABLED: '1', SUPABASE_URL: 'https://example.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_e2e', RATE_LIMIT_API: '100000' },
+    // Сценарии проверяют пути пользователя; ограничители API и входа покрыты отдельными тестами.
+    // Ускоренный CI выполняет больше 25 входов с одного тестового IP за минуту.
+    env: { YM_FETCHQ_OFF: '1', YM_DOCREQ_OFF: '1', DATABASE_URL: `sqlite:///${join(dbDir, 'test.db')}`, YM_OSMON_OFF: '1', SUPABASE_DEMO_ENABLED: '1', SUPABASE_URL: 'https://example.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_e2e', RATE_LIMIT_API: '100000', RATE_LIMIT_LOGIN: '100000' },
     url: 'http://127.0.0.1:8123/',
     reuseExistingServer: false,
     timeout: 60_000,
