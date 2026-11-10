@@ -36,7 +36,7 @@ def test_release_texts_and_guide():
     assert "С версии 1.72.1 — живые обновления" in read("app/services/manual_content.py")
     assert "## ADR-54" in read("docs/ARCHITECTURE.md")
     assert "## v1.72.1" in read("docs/ui_journal.md")
-    assert "Последний выпуск — v1.72.2" in read("README.md")
+    assert "Последний выпуск — v" + settings.APP_VERSION in read("README.md")
 
 
 def test_release_kb():
@@ -47,7 +47,7 @@ def test_release_kb():
     commit = releases[VERSION]["Коммит"]
     assert commit == "после публикации" or (len(commit) == 40 and all(c in "0123456789abcdef" for c in commit))
     assert len(releases["1.72.0"]["Коммит"]) == 40
-    assert "| Последний выпуск | **v1.72.2**" in read("docs/kb/README.md")
+    assert "| Последний выпуск | **v" + settings.APP_VERSION + "**" in read("docs/kb/README.md")
     journal = list(csv.reader(read("docs/kb/08_session_journal.csv").splitlines()))
     assert all(len(row) == 7 for row in journal)
     assert any("T-91" in row[2] for row in journal)

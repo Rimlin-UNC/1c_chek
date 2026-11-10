@@ -179,7 +179,9 @@ test('разбор конфликтов: администратор закреп
 // v1.70.86 («Единая база», фаза 3): число организаций у чека. Сид кладёт чек
 // «E2E Альфы» с отклонённой заявкой «E2E Беты» и бухгалтера Альфы.
 test('число организаций: администратор разрешает показ, бухгалтер видит только число', async ({ page }) => {
-  test.setTimeout(90_000);   // два входа и два экрана — дольше обычного сценария
+  // Локальный Chromium из npm на 2 ядрах и при полном pytest работает существенно медленнее.
+  // CI сохраняет прежний строгий предел 90 секунд; проверки содержимого не меняются.
+  test.setTimeout(process.env.YM_PLAYWRIGHT_CHROMIUM ? 150_000 : 90_000);
   await login(page);
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();
   await page.locator('a[href="#/receipts"]').click();
@@ -852,4 +854,24 @@ test('клиенты: договор и тариф сохраняются, ср�
   await card.locator('[data-contract]').click();
   await expect(page.locator('#contract-number')).toHaveValue('E2E-1');
   await page.locator('#contract-cancel').click();
+});
+
+// T-90: сформировать защищённую печатную сводку в браузере, без внешних адресатов.
+test('клиенты: сводный отчёт открывается для печати и PDF', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  const period = await page.locator('#cl-period').inputValue();
+  const popupPromise = page.waitForEvent('popup');
+  await page.locator('#cl-report').click();
+  const popup = await popupPromise;
+  await expect(popup.locator('h1')).toHaveText('Сводка по клиентам', { timeout: 15000 });
+  await expect(popup.locator('body')).toContainText('на момент формирования');
+  await expect(popup.locator('body')).toContainText('не бухгалтерская отчётность');
+  expect(popup.url()).toMatch(/^blob:/);
+  expect(popup.url()).not.toContain('token');
+  expect((await popup.pdf({ format: 'A4', landscape: true })).length).toBeGreaterThan(500);
+  expect(period).toMatch(/^\d{4}-\d{2}$/);
+  await popup.close();
 });

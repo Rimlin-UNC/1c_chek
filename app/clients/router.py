@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -53,6 +54,27 @@ def overview(user: Accountant, db: Db, period: Annotated[str | None, Query(max_l
         raise _fail(exc) from exc
     data["periods"] = service.period_choices()
     return data
+
+
+@router.get("/report", summary="Печатная сводка клиентов", response_class=HTMLResponse)
+def clients_report(user: Accountant, db: Db, period: Annotated[str | None, Query(max_length=7)] = None) -> HTMLResponse:
+    from . import report
+    if period:
+        from ..docreq import service as docreq
+        try:
+            docreq.period_start(period)
+            docreq.period_end(period)
+        except (docreq.DocRequestError, ValueError, OverflowError) as exc:
+            raise HTTPException(422, "Период — допустимый месяц в виде ГГГГ-ММ") from exc
+    try:
+        data = service.overview(db, user, period)
+    except service.ClientsError as exc:
+        raise _fail(exc) from exc
+    return HTMLResponse(report.render(data), headers={
+        "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        "Referrer-Policy": "no-referrer",
+    })
 
 
 @router.get("/mine", summary="Компании для переключателя клиента (своя — первой)")

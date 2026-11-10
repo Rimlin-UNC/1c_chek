@@ -270,6 +270,25 @@ export function clientsListHtml(companies, filter = 'all', query = '') {
   return rows.map(clientsCardHtml).join('');
 }
 
+/** Печатная сводка: токен остаётся в API-заголовке, а не попадает в адрес окна. */
+export async function clientsOpenReport(period) {
+  const win = window.open('', '_blank');
+  if (!win) {
+    toast('Разрешите всплывающее окно для печатного отчёта', 'err');
+    return;
+  }
+  win.opener = null;
+  try {
+    const html = await api.get(`/api/v1/clients/report?period=${encodeURIComponent(period)}`);
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+    win.location.href = url;
+  } catch (error) {
+    win.close();
+    toast(error.message || 'Не удалось открыть отчёт', 'err');
+  }
+}
+
 /** Экран «Клиенты». opts.open(companyId, view) — переключить компанию и открыть экран (из app.js). */
 export async function viewClients(container, opts = {}) {
   const alive = opts.alive || (() => true);
@@ -332,6 +351,7 @@ export async function viewClients(container, opts = {}) {
             <label class="field cl-period"><span>Месяц</span>
               <select id="cl-period">${periods.map((p) => `<option value="${esc(p.period)}"${p.period === data.period
                 ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
+            <button type="button" class="btn btn-sm" id="cl-report" title="Все доступные компании; печать или сохранение в PDF">🖨 Сводный отчёт</button>
             ${clientsCreateButtonHtml()}
           </div>
         </div>
@@ -346,6 +366,7 @@ export async function viewClients(container, opts = {}) {
       <div class="cl-list" id="cl-list"></div>`;
     paintList();
     container.querySelector('#cl-period').onchange = (e) => { period = e.target.value; load(); };
+    container.querySelector('#cl-report').onclick = () => clientsOpenReport(period);
     const newBtn = container.querySelector('#cl-new');
     if (newBtn) newBtn.onclick = () => clientsCreateDialog({
       onCreated: (company) => {

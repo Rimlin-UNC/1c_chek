@@ -932,7 +932,7 @@ class TestVersion17037Sync:
 class TestRelease:
     """Требование «своя запись первая» живёт в файле текущего выпуска."""
 
-    VERSION = "1.72.2"
+    VERSION = "1.72.3"
 
     def test_whats_new_is_first(self):
         js = read(APP_JS)
