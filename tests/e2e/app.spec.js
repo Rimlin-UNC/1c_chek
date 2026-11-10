@@ -388,7 +388,11 @@ test('заставка загрузки: версия с сервера, «Го�
   await page.goto('/');
   await expect(page.locator('h1.land-h1')).toContainText('Проверка чека онлайн');
   await expect(page.locator('#ym-splash')).toBeHidden();                         // гость: без заставки
-  await page.evaluate(() => localStorage.setItem('ym-splash-guests', '1'));     // как после флажка администратора
+  // Прежняя страница ещё может завершить запрос /about и вернуть флаг в false.
+  // Для следующей загрузки фиксируем и сохранённое значение, и ответ сервера:
+  // это воспроизводит реально включённый администратором режим без гонки.
+  await page.route('**/api/v1/about', (route) => route.fulfill({ json: { ...about, splash_guests: true } }));
+  await page.addInitScript(() => localStorage.setItem('ym-splash-guests', '1'));
   await page.reload();
   const splash = page.locator('#ym-splash');
   await expect(splash).toHaveClass(/is-ready/, { timeout: 15000 });
