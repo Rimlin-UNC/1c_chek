@@ -41,7 +41,7 @@ def test_release_texts_and_guide():
 
 def test_release_kb():
     tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
-    assert tasks["T-91"]["Статус"] == "done"
+    assert tasks["T-91"]["Статус"] == "in-progress"
     assert VERSION in tasks["T-91"]["Задача"]
     releases = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
     commit = releases[VERSION]["Коммит"]

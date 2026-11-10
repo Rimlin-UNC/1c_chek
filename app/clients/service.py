@@ -240,9 +240,10 @@ def overview(db: Session, user: User, period: str | None = None, now: datetime |
     now = now or datetime.now(timezone.utc)
     period = period or docreq.default_period(now)
     try:
-        docreq.parse_period(period)
-    except docreq.DocRequestError as exc:
-        raise ClientsError(str(exc)) from exc
+        docreq.period_start(period)
+        docreq.period_end(period)
+    except (docreq.DocRequestError, ValueError, OverflowError) as exc:
+        raise ClientsError("Период — допустимый месяц в виде ГГГГ-ММ") from exc
     ids = allowed_company_ids(db, user)
     stmt = select(Company).where(Company.is_active.is_(True))
     if ids is not None:

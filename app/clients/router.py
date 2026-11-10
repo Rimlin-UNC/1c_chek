@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..auth import require_accountant, require_admin
+from ..auth import ROLE_ADMIN, require_accountant, require_admin
 from ..database import get_db
 from ..models import User
 from ..services.audit import log_action
@@ -115,44 +115,51 @@ def put_access(user_id: str, body: AccessIn, admin: Admin, db: Db) -> dict:
 def bulk(body: BulkIn, user: Accountant, db: Db) -> dict:
     """v1.72.0 (T-89): одно действие сразу по нескольким клиентам.
 
-    Каждая компания обрабатывается отдельно: ошибка по одной не отменяет остальные, а в ответе видно, что
-    получилось по каждой (`ok`, `error`). Права — как у одиночных действий (ADR-30); чужую компанию не
-    пропускаем молча, а показываем причину отказа. Действия: `remind` (напомнить о документах),
-    `archive`/`restore` (архив компании), `assign` (сотрудник переезжает в отмеченные компании).
+    Напоминания доступны бухгалтеру в его компаниях; архив и перевод сотрудника — только администратору.
+    Сотрудник может принадлежать одной компании. Ошибка одной компании не отменяет остальные.
     """
-    if body.action == "assign" and not body.user_id:
-        raise HTTPException(422, "Выберите сотрудника для назначения")
+    if body.action in ("assign", "archive", "restore") and user.role != ROLE_ADMIN:
+        raise HTTPException(403, "Действие доступно только администратору")
+    if body.action == "assign":
+        if not body.user_id:
+            raise HTTPException(422, "Выберите сотрудника для назначения")
+        if len(set(body.company_ids)) != 1:
+            raise HTTPException(422, "Сотрудник может принадлежать только одной компании — выберите одну")
     companies, items = service.bulk_targets(db, user, body.company_ids)
     if not companies and not items:
         raise HTTPException(422, "Не выбрано ни одного клиента")
     employee = db.get(User, body.user_id) if body.user_id else None
     if body.action == "assign" and employee is None:
         raise HTTPException(404, "Сотрудник не найден")
+    if body.action == "assign" and employee.role == ROLE_ADMIN:
+        raise HTTPException(409, "Администратор не привязан к компаниям")
+    if body.action == "assign" and not employee.is_active:
+        raise HTTPException(409, "Сотрудник отключён")
     for company in companies:
+        cid, name = company.id, company.short_name or company.name
         try:
+            item = {"company_id": cid, "name": name, "ok": True}
             if body.action == "remind":
                 from ..docreq import service as docreq
                 if body.period:
-                    docreq.parse_period(body.period)          # проверка формата ГГГГ-ММ (возвращает части, не строку)
+                    docreq.parse_period(body.period)
                 period = body.period or docreq.default_period()
-                report = docreq.send_reminders(db, company.id, period, "manual", actor_id=user.id)
-                items.append({"company_id": company.id, "name": company.short_name or company.name, "ok": True,
-                              "note": report.get("note") or f"отправлено: {report.get('sent', 0)}"})
+                report = docreq.send_reminders(db, cid, period, "manual", actor_id=user.id)
+                item["note"] = report.get("note") or f"отправлено: {report.get('sent', 0)}"
             elif body.action == "archive":
-                company.is_active = False
-                items.append({"company_id": company.id, "name": company.short_name or company.name, "ok": True})
+                from ..services.company_archive import archive_company
+                archive_company(db, company)
             elif body.action == "restore":
                 company.is_active = True
-                items.append({"company_id": company.id, "name": company.short_name or company.name, "ok": True})
             else:
-                employee.company_id = company.id
-                items.append({"company_id": company.id, "name": company.short_name or company.name, "ok": True})
+                if not company.is_active:
+                    raise ValueError("Компания отключена")
+                employee.company_id = cid
+            db.commit()
+            items.append(item)
         except Exception as exc:                                  # noqa: BLE001 — одна компания не держит пачку
             db.rollback()
-            items.append({"company_id": company.id, "name": company.short_name or company.name, "ok": False,
-                          "error": str(exc)[:200]})
-        else:
-            db.commit()
+            items.append({"company_id": cid, "name": name, "ok": False, "error": str(exc)[:200]})
     done = sum(1 for i in items if i.get("ok"))
     failed = len(items) - done
     log_action(user, "clients_bulk", "company", company_ids_csv(body.company_ids),

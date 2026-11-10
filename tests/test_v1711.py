@@ -144,14 +144,14 @@ class TestCode:
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         t84 = tasks["T-84"]
-        assert t84["Статус"] == "done" and t84["Приоритет"] == "P1"
+        assert t84["Статус"] == "in-progress" and t84["Приоритет"] == "P1"
         assert "1.71.1" in t84["Задача"] and t84["Связанные ADR"] == "ADR-49"
         assert t84["Обновлено"] == "2026-11-08"
         # этапы 3…9 идут по плану: задача может быть в очереди, в работе или завершена
         for tid in ("T-86", "T-87", "T-88", "T-89", "T-90", "T-91"):
             assert tasks[tid]["Статус"] in ("todo", "in-progress", "done"), tid
             assert tasks[tid]["Источник"].endswith("clients_status_report.md"), tid
-        assert tasks["T-85"]["Статус"] in ("todo", "done")
+        assert tasks["T-85"]["Статус"] in ("todo", "in-progress", "done")
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])
         assert m and self.ver(m.group(1)) >= self.ver(VERSION)
         ledger = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}

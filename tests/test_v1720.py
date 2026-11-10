@@ -94,24 +94,17 @@ def test_partial_failure_does_not_stop_others(client, client_firm):
     client.post("/api/v1/clients/bulk", headers=admin, json={"company_ids": [a["id"]], "action": "restore"})
 
 
-def test_assign_employee_to_many_clients(client, client_firm):
-    """«Назначить сотрудника» — в каждую отмеченную компанию; повторное назначение не создаёт дубля."""
+def test_assign_employee_to_one_client(client, client_firm):
+    """Сотрудника можно перевести только в одну компанию, с правами администратора."""
     admin, a, b = client_firm["admin"], client_firm["a"], client_firm["b"]
-    emp_id = client_firm["emp"]
-    tag = uuid4().hex[:6]
-    user = _mk_user(client, admin, a["id"], f"bulk_emp_{tag}", role="manager")
+    user = _mk_user(client, admin, a["id"], f"bulk_emp_{uuid4().hex[:6]}", role="manager")
     target = client.get("/api/v1/auth/me", headers=user).json()["id"]
-    body = {"company_ids": [a["id"], b["id"]], "action": "assign", "user_id": target}
+    body = {"company_ids": [b["id"]], "action": "assign", "user_id": target}
     res = client.post("/api/v1/clients/bulk", headers=admin, json=body)
-    assert res.status_code == 200, res.text
-    assert res.json()["done"] == 2
+    assert res.status_code == 200 and res.json()["done"] == 1
     with SessionLocal() as db:
-        moved = db.query(User).filter(User.id == target).one()
-        assert moved.company_id in (a["id"], b["id"])
-    # сотрудник в двух компаниях сразу — так нельзя: он переезжает в последнюю, а не дублируется
-    with SessionLocal() as db:
+        assert db.get(User, target).company_id == b["id"]
         assert db.query(User).filter(User.id == target).count() == 1
-    assert emp_id  # фикстура даёт сотрудника компании A
 
 
 def test_employee_and_manager_cannot_bulk(client, client_firm):

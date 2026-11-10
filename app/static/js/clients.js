@@ -245,14 +245,13 @@ export function clientsBulkHtml(count, opts = {}) {
         title="Запрос документов у всех отмеченных компаний — по тем же каналам, что и обычное напоминание">📣 Напомнить всем</button>
       <button type="button" class="btn btn-sm" data-bulk="pack"
         title="Архив за месяц по каждому отмеченному клиенту — скачивается по одному">📦 Пакет по всем</button>
-      ${opts.isAdmin ? `<button type="button" class="btn btn-sm" data-bulk="assign"
-        title="Сотрудник переедет в отмеченные компании; окно выбора — следующим шагом">👤 Назначить сотрудника</button>` : ''}
-      <button type="button" class="btn btn-sm" data-bulk="archive"
-        title="Компании уйдут в архив: данные и история остаются, в сводке их не будет">🗄 В архив</button>
-      <button type="button" class="btn btn-sm" data-bulk="restore"
-        title="Вернуть отмеченные компании из архива в работу">↩ Из архива</button>
+      ${opts.isAdmin && n === 1 ? `<button type="button" class="btn btn-sm" data-bulk="assign"
+        title="Сотрудник переедет в выбранную компанию">👤 Перевести сотрудника</button>` : ''}
+      ${opts.isAdmin ? `<button type="button" class="btn btn-sm" data-bulk="archive"
+        title="Компании уйдут в архив; восстановление — в разделе Компании">🗄 В архив</button>` : ''}
       <button type="button" class="btn btn-sm btn-ghost" data-bulk="clear">Снять отметки</button>
     </div>
+    ${opts.isAdmin ? '<small>Восстановление из архива — в разделе «Компании».</small>' : ''}
   </div>`;
 }
 
@@ -427,12 +426,22 @@ export async function clientsBulkRun(action, companyIds, period, opts = {}) {
   if (btn) btn.disabled = true;
   try {
     if (action === 'pack') {
+      const items = [];
       for (const cid of companyIds) {
-        if (typeof opts.onDownload === 'function') await opts.onDownload(cid);
+        try {
+          if (typeof opts.onDownload !== 'function') throw new Error('Загрузка недоступна');
+          const downloaded = await opts.onDownload(cid);
+          if (downloaded === false) throw new Error('Не удалось скачать пакет');
+          items.push({ company_id: cid, ok: true });
+        } catch (error) {
+          items.push({ company_id: cid, ok: false, error: error.message || 'Ошибка загрузки' });
+        }
       }
-      toast(`Архив за месяц: ${companyIds.length} файлов — по одному на компанию`, 'ok', 'Пакет по всем');
-      if (typeof opts.onDone === 'function') opts.onDone(action);
-      return { done: companyIds.length, failed: 0, items: [] };
+      const done = items.filter((item) => item.ok).length;
+      const result = { done, failed: items.length - done, items };
+      toast(clientsBulkResult(result), result.failed ? 'warn' : 'ok', 'Пакет по всем');
+      if (typeof opts.onDone === 'function') opts.onDone(action, result);
+      return result;
     }
     if (action === 'assign') {
       if (typeof opts.onAssign === 'function') return opts.onAssign();
@@ -467,8 +476,7 @@ export async function clientsBulkAssign(companyIds, onDone) {
   }
   const staff = people.filter((u) => u.is_active !== false && u.role !== 'admin');
   openModal(`<div class="card-title">👤 Назначить сотрудника</div>
-    <p class="form-hint">Отмечено клиентов: ${companyIds.length}. Сотрудник переедет в эти компании — '
-      + 'в сводке он появится как их сотрудник.</p>
+    <p class="form-hint">Сотрудник будет переведён в выбранную компанию и больше не будет принадлежать прежней.</p>
     <label class="field"><span>Сотрудник</span><select id="cb-user">
       ${staff.map((u) => `<option value="${esc(u.id)}">${esc(u.full_name || u.username)} — ${esc(u.role)}</option>`).join('')}
     </select></label>
@@ -527,8 +535,10 @@ export async function clientsDownloadPackage(period, companyId, btn) {
     const { blob, filename } = await api.download('/api/v1/export/package?' + qs.toString());
     clientsSave(blob, filename);
     toast(`${filename} — чеки, первичка, банк и возмещения в JSON и CSV, файлы УПД 5.03`, 'ok', 'Пакет готов');
+    return true;
   } catch (e) {
     toast(e.message, 'err');
+    return false;
   } finally {
     if (btn) btn.disabled = false;
   }

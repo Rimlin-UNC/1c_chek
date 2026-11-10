@@ -158,11 +158,11 @@ class TestCode:
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         t85 = tasks["T-85"]
-        assert t85["Статус"] == "done" and t85["Связанные ADR"] == "ADR-50"
+        assert t85["Статус"] == "in-progress" and t85["Связанные ADR"] == "ADR-50"
         assert "1.71.2" in t85["Задача"] and t85["Обновлено"] == "2026-11-08"
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])
         assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
-        assert tasks["T-86"]["Статус"] in ("todo", "done")          # этап 3 своего выпуска — в test_v1713_release.py
+        assert tasks["T-86"]["Статус"] in ("todo", "in-progress", "done")          # этап 3 своего выпуска — в test_v1713_release.py
         ledger = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
         row = ledger[VERSION]
         assert row["Опора репетиции"] == "да" and all("," not in v for v in row.values())

@@ -879,3 +879,55 @@ test('клиенты: сводный отчёт открывается для п
   expect(period).toMatch(/^\d{4}-\d{2}$/);
   await popup.close();
 });
+
+// T-91: настоящий браузер и настоящий WebSocket, без моков; база Playwright временная и синтетическая.
+test('живые обновления: чек выбранного клиента появляется без перезагрузки', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const headers = { Authorization: `Bearer ${token}` };
+  const users = await (await request.get('/api/v1/users', { headers })).json();
+  const acc = users.find((u) => u.username === 'e2e_acc_alpha');
+  const previous = await (await request.get(`/api/v1/clients/access/${acc.id}`, { headers })).json();
+  const created = await request.post('/api/v1/companies', { headers, data: { name: `E2E живой клиент ${Date.now()}` } });
+  expect(created.ok()).toBeTruthy();
+  const company = await created.json();
+  const granted = await request.put(`/api/v1/clients/access/${acc.id}`, {
+    headers, data: { company_ids: [...previous.company_ids, company.id] },
+  });
+  expect(granted.ok()).toBeTruthy();
+  const frames = [];
+  page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => {
+    try { frames.push(JSON.parse(String(payload))); } catch { /* heartbeat */ }
+  }));
+  try {
+    await page.goto('/');
+    await page.fill('#login-username', 'e2e_acc_alpha');
+    await page.fill('#login-password', 'e2e-accountant-password');
+    await page.click('#login-submit');
+    await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+    await expect.poll(() => frames.some((f) => f.type === 'connected'), { timeout: 15000 }).toBe(true);
+    const sw = page.locator('#client-switch');
+    await expect(sw.locator('option', { hasText: company.name })).toHaveCount(1, { timeout: 15000 });
+    await sw.selectOption(company.id);
+    await expect.poll(() => frames.some((f) => f.type === 'client_ok' && f.payload.company === company.id),
+      { timeout: 15000 }).toBe(true);
+    await page.locator('a[href="#/receipts"]').click();
+    await expect(page.locator('#page-title')).toHaveText('База чеков');
+    await page.locator('#rc-view-list').click();
+    await expect(page.locator('#receipts-table')).toBeVisible();
+    const fn = `99${String(Date.now()).slice(-14).padStart(14, '0')}`;
+    const result = await request.post('/api/v1/receipts/manual', { headers, data: {
+      date_time: '04.11.2026 12:10', total_sum: 101.25, fn, fd: '99831', fp: '9983101', company_id: company.id,
+    } });
+    expect(result.ok()).toBeTruthy();
+    const receipt = (await result.json()).receipt;
+    expect(receipt.company_id).toBe(company.id);
+    await expect.poll(() => frames.some((f) => f.type === 'receipt_created' && f.payload.id === receipt.id),
+      { timeout: 15000 }).toBe(true);
+    await expect(page.locator('#receipts-table tbody tr', { hasText: fn })).toHaveCount(1, { timeout: 20000 });
+  } finally {
+    await request.put(`/api/v1/clients/access/${acc.id}`, { headers, data: { company_ids: previous.company_ids } });
+    await request.patch(`/api/v1/companies/${company.id}`, { headers, data: { is_active: false } });
+  }
+});

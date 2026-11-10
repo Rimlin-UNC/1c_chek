@@ -202,14 +202,11 @@ def patch_company(company_id: str, body: CompanyPatch,
         comp.note = body.note.strip()
     if body.is_active is not None:
         if body.is_active is False:
-            # Архивировать можно; последняя активная — нет (система остаётся
-            # хотя бы с одной рабочей компанией)
-            active = db.query(func.count(Company.id)).filter(
-                Company.is_active == True, Company.id != comp.id).scalar()  # noqa: E712
-            if not active:
-                raise HTTPException(status.HTTP_409_CONFLICT,
-                                    "Нельзя архивировать последнюю активную компанию")
-            comp.is_active = False
+            from ..services.company_archive import LastActiveCompany, archive_company
+            try:
+                archive_company(db, comp)
+            except LastActiveCompany as exc:
+                raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         else:
             comp.is_active = True
     db.commit()

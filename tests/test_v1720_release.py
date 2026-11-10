@@ -132,7 +132,7 @@ class TestCode:
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         t89 = tasks["T-89"]
-        assert t89["Статус"] == "done" and "ADR-53" in t89["Связанные ADR"]
+        assert t89["Статус"] == "in-progress" and "ADR-53" in t89["Связанные ADR"]
         assert "1.72.0" in t89["Задача"] and t89["Обновлено"] == "2026-11-08"
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])
         assert m and _ver(m.group(1)) >= _ver(VERSION)

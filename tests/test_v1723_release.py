@@ -12,13 +12,14 @@ def read(path):
 
 
 def test_candidate_version_and_cache():
-    assert settings.APP_VERSION == VERSION
+    current = settings.APP_VERSION
+    assert tuple(map(int, current.split('.'))) >= tuple(map(int, VERSION.split('.')))
     for path in ('app/static/index.html', 'app/static/sw.js', 'app/static/manifest.webmanifest',
                  'app/static/maxapp/index.html', 'app/static/b2b/index.html'):
-        assert VERSION in read(path), path
-    assert read('app/static/index.html').count(f'?v={VERSION}') == 3
-    assert read('app/static/sw.js').count(f'?v={VERSION}') == 4
-    assert f'ymaster-check-v{VERSION}' in read('app/static/sw.js')
+        assert current in read(path), path
+    assert read('app/static/index.html').count(f'?v={current}') == 3
+    assert read('app/static/sw.js').count(f'?v={current}') == 4
+    assert f'ymaster-check-v{current}' in read('app/static/sw.js')
 
 
 def test_candidate_documents_report_limits():

@@ -169,7 +169,7 @@ describe('«Клиенты»: сценарии', () => {
     // «Пакет по всем» — архив по каждому отмеченному клиенту, запросов пачки нет
     expect(mod.clientsBulkHtml(0)).toBe('');
     expect(mod.clientsBulkHtml(2, { isAdmin: false })).not.toContain('data-bulk="assign"');
-    expect(mod.clientsBulkHtml(2, { isAdmin: true })).toContain('data-bulk="assign"');
+    expect(mod.clientsBulkHtml(1, { isAdmin: true })).toContain('data-bulk="assign"');
     expect(mod.clientsBulkResult({ done: 1, failed: 1, items: [{ ok: false, name: 'Бета', error: 'нет доступа' }] }))
       .toContain('Готово: 1, не получилось: 1. Первая причина: Бета — нет доступа');
   });
@@ -293,4 +293,32 @@ describe('«Клиенты»: создание клиента (T-84)', () => {
     expect(html).toContain('＋ Новый клиент');
     expect(html).toContain('«Пользователи» → бухгалтер → «🏢 Клиенты»');
   });
+});
+
+describe('Безопасный результат массовой загрузки', () => {
+  it('отчитывается отдельно об ошибке и продолжает загрузку', async () => {
+    const onDownload = vi.fn(async (id) => { if (id === 'c-a') throw new Error('Ошибка сети'); });
+    const result = await mod.clientsBulkRun('pack', ['c-a', 'c-b'], '2026-10', { onDownload });
+    expect(onDownload).toHaveBeenCalledTimes(2);
+    expect(result.done).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.items.find((i) => i.company_id === 'c-a').error).toContain('Ошибка сети');
+  });
+
+  it('не предлагает сотрудника для нескольких компаний и архив бухгалтеру', () => {
+    expect(mod.clientsBulkHtml(2, { isAdmin: true })).not.toContain('data-bulk="assign"');
+    expect(mod.clientsBulkHtml(1, { isAdmin: true })).toContain('data-bulk="assign"');
+    expect(mod.clientsBulkHtml(1, { isAdmin: false })).not.toContain('data-bulk="archive"');
+  });
+});
+
+it('реальный обработчик скачивания возвращает отказ, а пачка не считает его успехом', async () => {
+  const { api } = await import('../../app/static/js/api.js');
+  api.download.mockRejectedValueOnce(new Error('Нет доступа'));
+  const result = await mod.clientsBulkRun('pack', ['c-a', 'c-b'], '2026-10', {
+    onDownload: (id) => mod.clientsDownloadPackage('2026-10', id, null),
+  });
+  expect(result.done).toBe(1);
+  expect(result.failed).toBe(1);
+  expect(result.items.map((i) => i.ok)).toEqual([false, true]);
 });

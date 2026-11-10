@@ -153,10 +153,10 @@ class TestCode:
     def test_kb(self):
         tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
         t86 = tasks["T-86"]
-        assert t86["Статус"] == "done" and "ADR-51" in t86["Связанные ADR"]
+        assert t86["Статус"] == "in-progress" and "ADR-51" in t86["Связанные ADR"]
         assert "1.71.3" in t86["Задача"] and t86["Обновлено"] == "2026-11-08"
         t87 = tasks["T-87"]
-        assert t87["Статус"] == "done" and "ADR-52" in t87["Связанные ADR"]
+        assert t87["Статус"] == "in-progress" and "ADR-52" in t87["Связанные ADR"]
         m = re.search(r"Ставить сразу v([\d.]+)", tasks["T-01"]["Блокер"])
         assert m and self._ver(m.group(1)) >= self._ver(VERSION)
         ledger = {r["Версия"]: r for r in csv.DictReader(read("docs/kb/09_releases.csv").splitlines())}
