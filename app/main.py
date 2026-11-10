@@ -382,16 +382,28 @@ async def ws_status(ws: WebSocket):
     receipt_duplicate, receipt_verifying, receipt_verified, receipt_deleted.
     v1.11.0: подписчик видит события СВОЕЙ компании (аутентификация —
     по ?token= или HttpOnly-cookie); без токена — только платформенные."""
-    await ws.accept()
-    # --- аутентификация подписчика (v1.11.0) ---
+    from .services.ws_security import origin_allowed
+    import math
+    import time
+
+    origin_ok = origin_allowed(ws, settings.WS_TRUSTED_ORIGINS)
+    if origin_ok is False:
+        await ws.close(code=1008)
+        return
+    # Проверка до принятия: без Origin разрешены только проверенные токены.
     company_id, authed, ws_error, ws_user_id = None, False, "", ""
+    expires = None
+    token = ws.query_params.get("token") or ws.cookies.get("ymaster_token")
     try:
         from .auth import ROLE_ADMIN, decode_token
         from .database import SessionLocal
         from .models import User
-        token = ws.query_params.get("token") or ws.cookies.get("ymaster_token")
         if token:
             payload = decode_token(token)
+            exp = payload.get("exp")
+            if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp):
+                raise ValueError("Токен без корректного срока")
+            expires = float(exp)
             db = SessionLocal()
             try:
                 u = db.get(User, payload.get("sub", ""))
@@ -411,6 +423,10 @@ async def ws_status(ws: WebSocket):
                 db.close()
     except Exception:
         authed = False                            # анонимный подписчик
+    if (token and not authed) or (origin_ok is None and not authed) or (expires is not None and expires <= time.time()):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
     queue = await subscribe(company_id, authed)
     connected = {"ok": True}
 
@@ -424,6 +440,8 @@ async def ws_status(ws: WebSocket):
         try:
             while True:
                 raw = await ws.receive_text()
+                if expires is not None and time.time() >= expires:
+                    return
                 try:
                     msg = json.loads(raw)
                 except (TypeError, ValueError):
@@ -442,6 +460,8 @@ async def ws_status(ws: WebSocket):
                                 target = u.company_id or ""
                         except clients_service.ClientsError as exc:
                             error = str(exc)
+                if expires is not None and time.time() >= expires:
+                    return
                 if error:
                     await ws.send_json({"type": "client_error", "payload": {"detail": error}})
                     continue
@@ -466,14 +486,24 @@ async def ws_status(ws: WebSocket):
         # телефон перестаёт циклично переподключаться («офлайн/мерцание»).
         idle_ticks = 0
         while connected["ok"]:
+            remaining = expires - time.time() if expires is not None else None
+            if remaining is not None and remaining <= 0:
+                await ws.close(code=1008)
+                break
             try:
-                message = await asyncio.wait_for(queue.get(), timeout=5.0)
+                message = await asyncio.wait_for(queue.get(), timeout=min(5.0, remaining) if remaining is not None else 5.0)
                 idle_ticks = 0
             except asyncio.TimeoutError:
+                if expires is not None and time.time() >= expires:
+                    await ws.close(code=1008)
+                    break
                 idle_ticks += 1
                 if idle_ticks % 4 == 0:
                     await ws.send_json({"type": "ping", "payload": {"demo": False}})
                 continue
+            if expires is not None and time.time() >= expires:
+                await ws.close(code=1008)
+                break
             # Очередь может содержать событие предыдущего клиента, а доступ к текущему
             # могли отозвать уже после подключения. Проверяем право перед отправкой.
             event_company = json.loads(message).get("payload", {}).get("company_id")
@@ -495,9 +525,15 @@ async def ws_status(ws: WebSocket):
                     if error:
                         company_id = fallback
                         resubscribe(queue, fallback)
+                if expires is not None and time.time() >= expires:
+                    await ws.close(code=1008)
+                    break
                 if error:
                     await ws.send_json({"type": "client_error", "payload": {"detail": error}})
                     continue
+            if expires is not None and time.time() >= expires:
+                await ws.close(code=1008)
+                break
             await ws.send_text(message)
     except (WebSocketDisconnect, RuntimeError):
         pass                        # клиент отключился — это не ошибка сервера

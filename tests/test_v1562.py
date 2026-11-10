@@ -44,7 +44,7 @@ class TestWsQuietDisconnect:
     def test_ws_connect_receive_close(self, client):
         """Функционально: подключение → connected → чистое закрытие без
         исключения на стороне приложения; сервис продолжает отвечать."""
-        with client.websocket_connect("/ws/status") as ws:
+        with client.websocket_connect("/ws/status", headers={"origin": "http://testserver"}) as ws:
             data = ws.receive_json()
             assert data["type"] == "connected"
             assert data["payload"]["app"]
