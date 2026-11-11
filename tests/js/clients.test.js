@@ -322,3 +322,19 @@ it('реальный обработчик скачивания возвраща�
   expect(result.failed).toBe(1);
   expect(result.items.map((i) => i.ok)).toEqual([false, true]);
 });
+
+describe('Проверка скачанного пакета', () => {
+  it('показывает ограничения и отправляет выбранный архив без записи в базу', async () => {
+    const root = document.querySelector('#app');
+    root.innerHTML = mod.clientsPackageHtml({ isAdmin: false });
+    mod.clientsPackageBind(root, {});
+    expect(root.textContent).toContain('не является резервной копией');
+    const input = root.querySelector('#pkg-check-file');
+    const file = new File(['PK'], 'synthetic.zip', { type: 'application/zip' });
+    Object.defineProperty(input, 'files', { value: [file] });
+    root.querySelector('#pkg-check').click();
+    await vi.waitFor(() => expect(calls.post.some(c => c.path === '/api/v1/export/package/check')).toBe(true));
+    const req = calls.post.find(c => c.path === '/api/v1/export/package/check');
+    expect(req.body.get('file')).toBe(file);
+  });
+});

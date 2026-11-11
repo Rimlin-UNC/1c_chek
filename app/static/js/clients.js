@@ -560,6 +560,14 @@ export function clientsPackageHtml(opts = {}) {
       <button type="button" class="btn btn-primary" id="pkg-download"${needCompany ? ' disabled' : ''}>⬇ Скачать пакет</button>
     </div>
     ${needCompany ? '<p class="form-hint">Выберите компанию в шапке — пакет собирается по одной компании.</p>' : ''}
+    <p class="form-hint">Проверка скачанного файла сверяет состав, контрольные суммы и число записей. Пакет за месяц
+      не является резервной копией; восстановление, авторство и полнота данных этой проверкой не подтверждаются.
+      Выбранный файл передаётся на этот сервер для проверки; размер архива — до 20 МБ.</p>
+    <div class="dreq-tools">
+      <label class="field"><span>Скачанный ZIP</span><input id="pkg-check-file" type="file" accept=".zip,application/zip"></label>
+      <button type="button" class="btn" id="pkg-check">Проверить пакет</button>
+    </div>
+    <p class="form-hint" id="pkg-check-result" role="status" aria-live="polite"></p>
   </div>`;
 }
 
@@ -567,6 +575,24 @@ export function clientsPackageBind(root, opts = {}) {
   const btn = root.querySelector('#pkg-download');
   if (!btn) return;
   btn.onclick = () => clientsDownloadPackage(root.querySelector('#pkg-period').value, opts.companyId || '', btn);
+  const checkButton = root.querySelector('#pkg-check');
+  const result = root.querySelector('#pkg-check-result');
+  if (!checkButton || !result) return;
+  checkButton.onclick = async () => {
+    const file = root.querySelector('#pkg-check-file').files[0];
+    if (!file) { result.textContent = 'Выберите скачанный ZIP-файл.'; return; }
+    if (file.size > 20 * 1024 * 1024) { result.textContent = 'Архив больше 20 МБ.'; return; }
+    const data = new FormData();
+    data.append('file', file);
+    checkButton.disabled = true;
+    result.textContent = 'Проверяем файл…';
+    try {
+      const report = await api.post('/api/v1/export/package/check', data);
+      if (report.ok !== true) throw new Error('Не удалось подтвердить состав пакета');
+      result.textContent = `Проверка состава и сумм пройдена. Пропущено УПД: ${report.skipped_upd}. ${report.notice}`;
+    } catch (e) { result.textContent = `Проверка не пройдена: ${e.message}`; }
+    finally { checkButton.disabled = false; }
+  };
 }
 
 /** Переключатель клиента в шапке — бухгалтеру, который ведёт больше одной компании. */

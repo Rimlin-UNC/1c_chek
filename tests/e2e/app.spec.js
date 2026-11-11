@@ -964,3 +964,20 @@ test.describe('переход к форме входа с главной', () =>
     await expect(page.locator('#app-shell')).toBeVisible({ timeout: 15000 });
   });
 });
+
+test('проверка скачанного пакета не обещает восстановление', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  const token = await page.evaluate(() => localStorage.getItem('ymaster_check_token'));
+  const headers = { Authorization: `Bearer ${token}` };
+  const companies = await (await page.request.get('/api/v1/companies', { headers })).json();
+  const company = companies.find(c => c.name.includes('Ямастер'));
+  expect(company).toBeTruthy();
+  const res = await page.request.get(`/api/v1/export/package?company_id=${company.id}&period=2026-10`, { headers });
+  expect(res.ok()).toBeTruthy();
+  await page.locator('a[href="#/export"]').click();
+  await page.locator('#pkg-check-file').setInputFiles({ name: 'synthetic.zip', mimeType: 'application/zip', buffer: await res.body() });
+  await page.locator('#pkg-check').click();
+  await expect(page.locator('#pkg-check-result')).toContainText('Проверка состава и сумм пройдена');
+  await expect(page.locator('#pkg-check-result')).toContainText('восстановление не проверено');
+});
