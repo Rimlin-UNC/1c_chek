@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
@@ -61,16 +61,17 @@ def package(user: Accountant, db: Db, period: Annotated[str | None, Query(max_le
 
 
 @router.post("/package/check", summary="Проверить состав и контрольные суммы скачанного месячного пакета")
-async def check_package(_user: Accountant, file: Annotated[UploadFile, File()]) -> Response:
-    """Не записывает содержимое в БД; не проверяет восстановление и подлинность архива."""
-    try:
-        data = await file.read(check.MAX_UPLOAD + 1)
-        if len(data) > check.MAX_UPLOAD:
+async def check_package(_user: Accountant, request: Request) -> Response:
+    """Тело читается потоком с пределом, без multipart и временных файлов."""
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/zip":
+        raise HTTPException(415, "Для проверки нужен ZIP-файл")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > check.MAX_UPLOAD:
             raise HTTPException(413, "Архив больше 20 МБ")
-        try:
-            result = check.inspect_package(data)
-        except check.CheckError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        return JSONResponse(result, headers={"Cache-Control": "no-store"})
-    finally:
-        await file.close()
+        data.extend(chunk)
+    try:
+        result = check.inspect_package(bytes(data))
+    except check.CheckError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})

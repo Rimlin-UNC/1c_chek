@@ -51,6 +51,9 @@ async function once(method, path, body, options = {}) {
   let payload;
   if (body instanceof FormData) {
     payload = body;
+  } else if (body instanceof Blob) {
+    headers['Content-Type'] = body.type || 'application/octet-stream';
+    payload = body;
   } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
     payload = JSON.stringify(body);

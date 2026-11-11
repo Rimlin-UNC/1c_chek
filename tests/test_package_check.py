@@ -21,7 +21,7 @@ def _package(client, client_firm):
 
 
 def _post(client, headers, data):
-    return client.post(CHECK, headers=headers, files={'file': ('package.zip', data, 'application/zip')})
+    return client.post(CHECK, headers={**headers, 'Content-Type': 'application/zip'}, content=data)
 
 
 def _rewrite(data, change):
@@ -97,3 +97,14 @@ def test_oversize_and_unpacked_limits(client, client_firm, monkeypatch):
     monkeypatch.setattr(check, 'MAX_UPLOAD', len(data) + 1)
     monkeypatch.setattr(check, 'MAX_UNPACKED', 1)
     assert _post(client, client_firm['admin'], data).status_code == 422
+
+
+def test_stream_limit_without_content_length_and_content_type(client, client_firm, monkeypatch):
+    from app.exportpkg import check
+
+    monkeypatch.setattr(check, 'MAX_UPLOAD', 5)
+    headers = {**client_firm['admin'], 'Content-Type': 'application/zip'}
+    result = client.post(CHECK, headers=headers, content=iter([b'abc', b'def']))
+    assert result.status_code == 413
+    result = client.post(CHECK, headers={**headers, 'Content-Type': 'application/json'}, content=b'{}')
+    assert result.status_code == 415

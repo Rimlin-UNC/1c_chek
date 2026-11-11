@@ -582,12 +582,10 @@ export function clientsPackageBind(root, opts = {}) {
     const file = root.querySelector('#pkg-check-file').files[0];
     if (!file) { result.textContent = 'Выберите скачанный ZIP-файл.'; return; }
     if (file.size > 20 * 1024 * 1024) { result.textContent = 'Архив больше 20 МБ.'; return; }
-    const data = new FormData();
-    data.append('file', file);
     checkButton.disabled = true;
     result.textContent = 'Проверяем файл…';
     try {
-      const report = await api.post('/api/v1/export/package/check', data);
+      const report = await api.post('/api/v1/export/package/check', new Blob([file], { type: 'application/zip' }));
       if (report.ok !== true) throw new Error('Не удалось подтвердить состав пакета');
       result.textContent = `Проверка состава и сумм пройдена. Пропущено УПД: ${report.skipped_upd}. ${report.notice}`;
     } catch (e) { result.textContent = `Проверка не пройдена: ${e.message}`; }

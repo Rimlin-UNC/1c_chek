@@ -335,6 +335,8 @@ describe('Проверка скачанного пакета', () => {
     root.querySelector('#pkg-check').click();
     await vi.waitFor(() => expect(calls.post.some(c => c.path === '/api/v1/export/package/check')).toBe(true));
     const req = calls.post.find(c => c.path === '/api/v1/export/package/check');
-    expect(req.body.get('file')).toBe(file);
+    expect(req.body).toBeInstanceOf(Blob);
+    expect(req.body.type).toBe('application/zip');
+    expect(req.body.size).toBe(file.size);
   });
 });
