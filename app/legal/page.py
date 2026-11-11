@@ -21,14 +21,15 @@ from __future__ import annotations
 import html
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from . import offerta
+from . import business_draft, offerta
 
 router = APIRouter(tags=["Юридические документы"])
+NOINDEX = {"X-Robots-Tag": "noindex, nofollow"}
 
 
 def _e(text: str) -> str:
@@ -107,6 +108,7 @@ def render_html(db: Session | None = None) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <meta name="description" content="{_e(d['title'])}: {_e(d['subtitle'])}. Редакция {_e(d['edition'])} от {_e(d['edition_date'])}. Правообладатель — {_e(d['operator'])}.">
 <title>{_e(d['title'])} · {_e(offerta.PRODUCT)}</title>
 <link rel="stylesheet" href="/legal/oferta.css?v={settings.APP_VERSION}">
@@ -154,13 +156,13 @@ def render_html(db: Session | None = None) -> str:
 @router.api_route("/oferta", methods=["GET", "HEAD"], include_in_schema=False)   # и HEAD: SPA-фолбэк его больше не ловит
 def offerta_page(db: Session = Depends(get_db)):
     """Страница публичной оферты — без авторизации, целиком с сервера."""
-    return HTMLResponse(render_html(db))
+    return HTMLResponse(render_html(db), headers=NOINDEX)
 
 
 @router.get("/oferta.txt", include_in_schema=False)
 def offerta_plain(db: Session = Depends(get_db)):
     """Плоский текст оферты: печать, архив, сверка редакций."""
-    return PlainTextResponse(offerta.full_text(db), media_type="text/plain; charset=utf-8")
+    return PlainTextResponse(offerta.full_text(db), media_type="text/plain; charset=utf-8", headers=NOINDEX)
 
 
 @router.get("/api/v1/legal/offerta",
@@ -171,4 +173,39 @@ def offerta_json(db: Session = Depends(get_db)):
     Отдаётся без авторизации: оферту должен иметь возможность прочитать
     любой пользователь до того, как примет её условия.
     """
-    return offerta.payload(db)
+    return JSONResponse(offerta.payload(db), headers=NOINDEX)
+
+
+def _simple_page(title: str, body: str) -> HTMLResponse:
+    """Каталог и проект читаются без скриптов; обе страницы исключены из поиска."""
+    page = f'''<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{_e(title)} · Ямастер Чек</title>
+<link rel="stylesheet" href="/legal/oferta.css?v={settings.APP_VERSION}">
+</head><body><a class="skip" href="#doc">К тексту</a>
+<header class="head"><p class="product">Ямастер Чек</p><h1>{_e(title)}</h1>
+<p><a href="/">На главную</a> · <a href="/oferty">Раздел оферт</a></p></header>
+<main id="doc" class="doc">{body}</main></body></html>'''
+    return HTMLResponse(page, headers=NOINDEX)
+
+
+@router.api_route("/oferty", methods=["GET", "HEAD"], include_in_schema=False)
+def offers_catalog():
+    body = ('<section class="sec"><h2>Действующая публичная оферта</h2>'
+            '<p><a href="/oferta">Открыть действующую редакцию</a> · '
+            '<a href="/oferta.txt">Текст для печати</a></p></section>'
+            '<section class="sec"><h2>Проект для бухгалтеров и компаний</h2>'
+            '<p>Документ для обсуждения: не является офертой и не меняет действующие условия.</p>'
+            '<p><a href="/oferta-proekt">Читать проект</a></p></section>')
+    return _simple_page("Оферты и документы", body)
+
+
+@router.api_route("/oferta-proekt", methods=["GET", "HEAD"], include_in_schema=False)
+def business_offer_draft():
+    parts = [f'<p class="banner">{_e(business_draft.NOTICE)}</p>']
+    for title, paragraphs in business_draft.SECTIONS:
+        parts.append('<section class="sec"><h2>' + _e(title) + '</h2>'
+                     + "".join(f"<p>{_e(p)}</p>" for p in paragraphs) + "</section>")
+    return _simple_page(business_draft.TITLE, "".join(parts))

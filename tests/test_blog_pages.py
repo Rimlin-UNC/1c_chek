@@ -127,9 +127,9 @@ def test_registry_and_sitemap():
     paths = tuple(a.path for a in blog_pages.PAGES)
     assert paths == BLOG_PATHS == seo.BLOG_PAGES
     assert seo.CONTENT_PAGES == ("/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov")
-    assert seo.PAGES == ("/", "/oferta", *seo.CONTENT_PAGES, BLOG_INDEX, *BLOG_PATHS)
+    assert seo.PAGES == ("/", *seo.CONTENT_PAGES, BLOG_INDEX, *BLOG_PATHS)
     xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-08")
-    assert xml.count("<url>") == 16
+    assert xml.count("<url>") == 15
     for path in (BLOG_INDEX, *BLOG_PATHS):
         assert f"<loc>https://chek.ymaster.ru{path}</loc>" in xml
         assert not any(path.startswith(d) for d in seo.DISALLOW)

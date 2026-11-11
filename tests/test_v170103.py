@@ -139,7 +139,7 @@ class TestSeoService:
         assert closed.endswith("User-agent: *\nDisallow: /\n") and "Sitemap" not in closed
         xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-05")
         assert "<loc>https://chek.ymaster.ru/</loc><lastmod>2026-11-05</lastmod>" in xml
-        assert "<loc>https://chek.ymaster.ru/oferta</loc>" in xml and xml.count("<url>") >= 2     # v1.70.106: + страницы
+        assert "<loc>https://chek.ymaster.ru/oferta</loc>" not in xml and xml.count("<url>") >= 2
         assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-05") is None
 
     def test_verification_codes(self):

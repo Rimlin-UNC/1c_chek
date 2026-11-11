@@ -935,3 +935,32 @@ test('живые обновления: чек выбранного клиент�
     await request.patch(`/api/v1/companies/${company.id}`, { headers, data: { is_active: false } });
   }
 });
+
+test.describe('переход к форме входа с главной', () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 700 }]) {
+    test(`ссылка входа и история, экран ${viewport.width}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+      await page.locator('.home-header__login').click();
+      await expect(page).toHaveURL(/#land-login$/);
+      await expect(page.locator('#login-username')).toBeInViewport();
+      await expect(page.locator('#public-screen')).toBeHidden();
+      await page.goBack();
+      await expect(page.locator('#login-screen')).toBeVisible();
+      await page.goForward();
+      await expect(page.locator('#login-username')).toBeInViewport();
+    });
+  }
+  test('прямая ссылка с информационной страницы', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto('/dlya-buhgalterov');
+    await page.getByRole('link', { name: 'Войти', exact: true }).click();
+    await expect(page).toHaveURL(/#land-login$/);
+    await expect(page.locator('#login-username')).toBeInViewport();
+  });
+  test('действующая сессия не выбрасывается при открытии ссылки входа', async ({ page }) => {
+    await login(page);
+    await page.goto('/#land-login');
+    await expect(page.locator('#app-shell')).toBeVisible({ timeout: 15000 });
+  });
+});

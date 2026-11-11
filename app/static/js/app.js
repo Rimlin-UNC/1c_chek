@@ -507,6 +507,10 @@ function maxBackDialog() {
 function showLogin() {
   showScreen('login-screen');             // v1.59.1: единый переключатель
   bindLanding();                            // v1.54.0: лендинг на главной
+  // При прямой ссылке цель могла быть скрыта до завершения запуска.
+  if (location.hash === '#land-login') {
+    requestAnimationFrame(() => document.getElementById('land-login')?.scrollIntoView());
+  }
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   // v1.70.0: кнопка входа/регистрации через MAX на форме входа
   // v1.70.37: подсказка при первом визите — «регистрация через MAX» и
@@ -4979,6 +4983,11 @@ function bindShell() {
     _sbTouchX = null;
   }, { passive: true });
   window.addEventListener('hashchange', () => {
+    // Якоря лендинга — не маршруты приложения (как и в boot.js).
+    if (location.hash.startsWith('#land-') || location.hash === '#main' || (!location.hash && !getToken())) {
+      if (!getToken() && $('#login-screen').classList.contains('hidden')) showLogin();
+      return;
+    }
     if (location.hash.startsWith('#/register')) return;
     // v1.32.0/v1.35.0: служебные ссылки обрабатываются при загрузке страницы
     if (location.hash.startsWith('#/pool-magic/')
@@ -6696,6 +6705,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.7': [
+    { icon: '📄', title: 'Оферты и вход',
+      text: 'На главной появился раздел документов; проект для бухгалтеров не является действующей офертой. Исправлен переход к форме входа.' },
+  ],
   '1.72.6': [
     { icon: '📅', title: 'Корректная проверка периода',
       text: 'Пакеты и запросы документов проверяют границы месяца до создания записей и напоминаний.' },
