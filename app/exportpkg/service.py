@@ -218,7 +218,7 @@ def file_name(company: Company, period: str) -> str:
 def build(db: Session, company: Company, period: str, user: User, now: datetime | None = None) -> tuple[str, bytes, dict]:
     """Архив пакета за отчётный месяц: (имя файла, байты ZIP, manifest)."""
     try:
-        docreq.parse_period(period)
+        docreq.validate_operational_period(period)
     except docreq.DocRequestError as exc:
         raise PackageError(str(exc)) from exc
     now = now or datetime.now(timezone.utc)

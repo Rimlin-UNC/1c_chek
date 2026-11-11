@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.70.114"
-CURRENT = "1.72.5"
+CURRENT = "1.72.6"
 ISSUE = "https://github.com/Rimlin-UNC/1c_chek/issues/47"
 
 

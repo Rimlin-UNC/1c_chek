@@ -141,9 +141,8 @@ def bulk(body: BulkIn, user: Accountant, db: Db) -> dict:
             item = {"company_id": cid, "name": name, "ok": True}
             if body.action == "remind":
                 from ..docreq import service as docreq
-                if body.period:
-                    docreq.parse_period(body.period)
                 period = body.period or docreq.default_period()
+                docreq.validate_operational_period(period)
                 report = docreq.send_reminders(db, cid, period, "manual", actor_id=user.id)
                 item["note"] = report.get("note") or f"отправлено: {report.get('sent', 0)}"
             elif body.action == "archive":

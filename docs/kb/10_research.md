@@ -146,3 +146,8 @@
 
 - [OWASP WebSocket Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/WebSocket_Security_Cheat_Sheet.md): WebSocket не защищён обычной CORS-политикой; нужны точный список доверенных Origin и ограничение жизни долгих подключений. Вывод: same-origin либо точный `WS_TRUSTED_ORIGINS`, без wildcard; аутентифицированные каналы закрываются по `exp`.
 - [Uvicorn ProxyHeadersMiddleware](https://github.com/encode/uvicorn/blob/master/uvicorn/middleware/proxy_headers.py): преобразует схему WebSocket по `X-Forwarded-Proto` только от настроенного доверенного соседа. Вывод: приложение берёт схему из ASGI scope, а не из сырого заголовка; оператор должен настроить доверенный прокси и внешний Host с портом. Существующий конфиг nginx автоматически не заменяется.
+
+
+### Пределы календаря Python (#81, кандидат 1.72.6)
+
+- [Документация datetime в CPython](https://github.com/python/cpython/blob/3.12/Doc/library/datetime.rst): MINYEAR = 1, MAXYEAR = 9999; арифметика за пределами допустимых дат может вызывать OverflowError. Вывод: проверять обе границы полуоткрытого периода до побочных действий, не подменять отсутствующие даты и не стирать исторические записи.

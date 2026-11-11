@@ -470,7 +470,16 @@ def _totals(rows: list[dict]) -> dict:
 
 def period_choices(now: datetime | None = None, count: int = 6) -> list[dict]:
     """Последние месяцы для выбора периода: отчётный (прошлый) — первым, затем текущий и ранние."""
-    current = docreq.default_period(now)
-    months = [docreq.shift_period(current, 1), current] + [docreq.shift_period(current, -k) for k in range(1, count)]
-    return [{"period": p, "title": month_title(p)} for p in months]
+    actual = (now or docreq.now_msk()).astimezone(docreq.MSK)
+    current = docreq.default_period(actual)
+    months = ([current] if actual.year == 1 and actual.month == 1 else [docreq.shift_period(current, 1), current])
+    months += [docreq.shift_period(current, -k) for k in range(1, count)]
+    choices = []
+    for period in months:
+        try:
+            docreq.validate_operational_period(period)
+        except docreq.DocRequestError:
+            continue
+        choices.append({"period": period, "title": month_title(period)})
+    return choices
 
