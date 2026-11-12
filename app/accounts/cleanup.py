@@ -49,6 +49,7 @@ from ..docreq.models import DocRequest, DocRequestEvent, DocRequestSettings
 from ..goods.models import GoodsMemory
 from ..models import AdvanceReportCounter, AdvanceReportReservation, MerchantRule, WebhookLog
 from ..primary.models import PrimaryDocument, PrimaryMailbox, PrimaryMailItem
+from ..usage.models import UsageEvent
 
 # --------------------------------------------------------------------------
 #  политики
@@ -83,12 +84,13 @@ TABLES_REASSIGN: tuple[Table, ...] = (
     Counterparty.__table__,              # перенос с объединением по ИНН, см. move_reassignables
 )
 
-# История: не удаляется никогда (у company_id таких таблиц нет, но политика объявлена явно).
+# История: не удаляется и не переносится при удалении компании; срок хранения требует отдельной политики.
 TABLES_KEEP: tuple[Table, ...] = (
     WebhookLog.__table__,
     B2bEvent.__table__,
     B2bApplication.__table__,
     B2bCheck.__table__,
+    UsageEvent.__table__,                 # не переносить учёт в другую компанию
 )
 
 # Журнал действий: остаётся всегда, даже при удалении компании.

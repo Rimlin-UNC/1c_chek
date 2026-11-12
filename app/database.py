@@ -90,6 +90,7 @@ def init_db() -> None:
     from .pool import models as _pool_models  # noqa: F401 — v1.30.0: Чек-Пул
     from .primary import models as _primary_models  # noqa: F401 — v1.70.94: первичка (УПД)
     from .unified import models as _unified_models  # noqa: F401 — единый фискальный документ
+    from .usage import models as _usage_models  # noqa: F401 — технический журнал событий
     Base.metadata.create_all(bind=engine)
     _ensure_schema()
     try:  # v1.31.0: добавляющая миграция пула (vid у pool_users + pool_consents)

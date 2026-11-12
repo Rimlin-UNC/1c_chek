@@ -97,6 +97,7 @@ def _app_metadata():
     from app.pool import models as _pool  # noqa: F401
     from app.primary import models as _primary  # noqa: F401 — v1.70.94: первичка (УПД)
     from app.unified import models as _unified  # noqa: F401
+    from app.usage import models as _usage  # noqa: F401 — технический журнал счётчика
     return Base.metadata
 
 
@@ -156,7 +157,7 @@ def test_app_schema_fits_next_to_supabase_contour():
             with engine.begin() as conn:
                 metadata.create_all(bind=conn)
             app_tables = sorted(metadata.tables)
-            assert "legal_offer_acceptances" in app_tables
+            assert {"legal_offer_acceptances", "usage_events"} <= set(app_tables)
             assert len(app_tables) >= 40, f"подозрительно мало таблиц приложения: {len(app_tables)}"
             assert _verify(engine) == EXPECTED, "схема приложения задела демо-контур chek_demo"
 

@@ -111,6 +111,8 @@ def _fill_company(company_id: str) -> dict[str, str]:
         add("b2b_applications", B2bApplication(company_id=company_id, tariff="start", task="проверка"))
         add("b2b_checks", B2bCheck(company_id=company_id, kind="inn", ok=True))
         add("b2b_events", B2bEvent(company_id=company_id, action="check", details="{}"))
+        from app.usage.ledger import record
+        assert record(db, company_id, 'synthetic', 'period', 'synthetic-event')
         # unified_company_links требует настоящей записи единого реестра — её
         # создаёт существующий retarget_company, отдельная строка здесь ничего не проверяет.
         from app.accounts.cleanup import TABLES_KEEP
@@ -180,6 +182,9 @@ def test_wipe_leaves_no_rows_with_company_id(client, firms):
     assert leftovers == {}, f"после удаления остались строки: {leftovers}"
     with SessionLocal() as db:
         assert db.get(Company, b["id"]) is None
+        from app.usage.ledger import summary
+        assert summary(db, b["id"], 'synthetic', 'period')['used'] == 1
+        assert summary(db, a["id"], 'synthetic', 'period')['used'] == 0
         # данные действительно были — проверка не пустая
         assert db.execute(select(func.count()).select_from(AuditLog)).scalar() >= 1
     assert made, "наполнение компании не сработало"
@@ -201,6 +206,9 @@ def test_move_leaves_no_rows_and_carries_settings(client, firms):
     from app.docreq.models import DocRequestSettings
     from app.goods.models import GoodsMemory
     with SessionLocal() as db:
+        from app.usage.ledger import summary
+        assert summary(db, b["id"], 'synthetic', 'period')['used'] == 1
+        assert summary(db, a["id"], 'synthetic', 'period')['used'] == 0
         assert db.execute(select(func.count()).select_from(
             Counterparty).where(Counterparty.company_id == a["id"])).scalar() >= 1
         assert db.execute(select(func.count()).select_from(
