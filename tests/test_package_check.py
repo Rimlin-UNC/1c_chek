@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import struct
 import zipfile
 
 from tests import test_docreq as _dr
@@ -108,3 +109,14 @@ def test_stream_limit_without_content_length_and_content_type(client, client_fir
     assert result.status_code == 413
     result = client.post(CHECK, headers={**headers, 'Content-Type': 'application/json'}, content=b'{}')
     assert result.status_code == 415
+
+
+def test_invalid_deflate_stream_is_rejected(client, client_firm):
+    archive = bytearray(_package(client, client_firm))
+    with zipfile.ZipFile(io.BytesIO(archive)) as source:
+        entry = source.getinfo('manifest.json')
+        name_len, extra_len = struct.unpack_from('<HH', archive, entry.header_offset + 26)
+        start = entry.header_offset + 30 + name_len + extra_len
+        assert entry.compress_type == zipfile.ZIP_DEFLATED and entry.compress_size > 0
+        archive[start] = (archive[start] & 0xf8) | 0x07
+    assert _post(client, client_firm['admin'], bytes(archive)).status_code == 422

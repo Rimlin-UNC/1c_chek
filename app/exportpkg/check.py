@@ -8,8 +8,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import lzma
 import re
 import zipfile
+import zlib
 
 from .service import FORMAT, FORMAT_VERSION
 
@@ -110,5 +112,5 @@ def inspect_package(data: bytes) -> dict:
                 'restore_tested': False,
                 'notice': 'Проверены состав, суммы файлов и числа записей. Пакет за месяц не является резервной копией; восстановление не проверено, авторство и полнота не подтверждены.',
             }
-    except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, OSError, KeyError) as exc:
+    except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, OSError, KeyError, zlib.error, lzma.LZMAError) as exc:
         raise CheckError('Повреждённый или неподдерживаемый ZIP-архив') from exc
