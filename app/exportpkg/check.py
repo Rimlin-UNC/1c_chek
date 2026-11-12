@@ -47,6 +47,44 @@ def _json(data: bytes):
         raise CheckError('Некорректный JSON в архиве') from exc
 
 
+def _relationships(contents: dict, names: list[str], skipped: list) -> None:
+    """Проверить ссылки внутри пакета, не сравнивая его с исходной базой."""
+    def identities(rows: list) -> set[str]:
+        ids = [row.get('id') for row in rows]
+        if any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
+            _bad('Отсутствуют или повторяются идентификаторы записей')
+        return set(ids)
+
+    receipts = identities(contents['receipts.json'])
+    documents = identities(contents['primary_documents.json'])
+    for filename, field, parents in (('receipt_items.json', 'receipt_id', receipts),
+                                      ('primary_lines.json', 'document_id', documents)):
+        for row in contents[filename]:
+            value = row.get(field)
+            if not isinstance(value, str) or value not in parents:
+                _bad('Строка ссылается на отсутствующую запись')
+
+    skipped_ids = []
+    for row in skipped:
+        if not isinstance(row, dict) or not isinstance(row.get('document_id'), str):
+            _bad('Некорректный список пропущенных УПД')
+        skipped_ids.append(row['document_id'])
+    if len(set(skipped_ids)) != len(skipped_ids) or not set(skipped_ids) <= documents:
+        _bad('Пропущенный УПД ссылается на отсутствующий или повторный документ')
+    skipped_set = set(skipped_ids)
+    links = []
+    for row in contents['primary_documents.json']:
+        link = row.get('upd_file')
+        if not isinstance(link, str):
+            _bad('Некорректная ссылка на УПД')
+        if bool(link) == (row['id'] in skipped_set):
+            _bad('Документ должен иметь файл УПД или причину пропуска')
+        if link:
+            links.append(link)
+    if len(set(links)) != len(links) or set(links) != {name for name in names if name.startswith('upd/')}:
+        _bad('Ссылки на файлы УПД не совпадают с составом архива')
+
+
 def inspect_package(data: bytes) -> dict:
     """Проверить ZIP, манифест и структуру основных JSON; данные наружу не возвращать."""
     if len(data) > MAX_UPLOAD:
@@ -105,12 +143,14 @@ def inspect_package(data: bytes) -> dict:
             skipped = manifest.get('skipped_upd')
             if not isinstance(skipped, list):
                 _bad('Некорректный список пропущенных УПД')
+            _relationships(contents, names, skipped)
             return {
                 'ok': True,
+                'relationships_checked': True,
                 'counts': {key: counts[key] for key in (*DATASETS, 'upd_files')},
                 'skipped_upd': len(skipped),
                 'restore_tested': False,
-                'notice': 'Проверены состав, суммы файлов и числа записей. Пакет за месяц не является резервной копией; восстановление не проверено, авторство и полнота не подтверждены.',
+                'notice': 'Проверены состав, суммы файлов, числа записей и отдельные связи JSON. Содержимое CSV и УПД со строками JSON не сверялось. Пакет за месяц не является резервной копией; восстановление не проверено, авторство и полнота не подтверждены.',
             }
     except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, OSError, KeyError, zlib.error, lzma.LZMAError) as exc:
         raise CheckError('Повреждённый или неподдерживаемый ZIP-архив') from exc

@@ -120,3 +120,83 @@ def test_invalid_deflate_stream_is_rejected(client, client_firm):
         assert entry.compress_type == zipfile.ZIP_DEFLATED and entry.compress_size > 0
         archive[start] = (archive[start] & 0xf8) | 0x07
     assert _post(client, client_firm['admin'], bytes(archive)).status_code == 422
+
+
+def _forge_json(data, name, change):
+    """Изменить JSON и пересчитать манифест: проверяем связи отдельно от хэша."""
+    import hashlib
+
+    def edit(files):
+        values = dict(files)
+        rows = json.loads(values[name])
+        change(rows)
+        values[name] = json.dumps(rows, ensure_ascii=False).encode()
+        manifest = json.loads(values['manifest.json'])
+        for entry in manifest['files']:
+            if entry['name'] == name:
+                entry['bytes'] = len(values[name])
+                entry['sha256'] = hashlib.sha256(values[name]).hexdigest()
+        manifest['counts'][name.removesuffix('.json')] = len(rows)
+        values['manifest.json'] = json.dumps(manifest, ensure_ascii=False).encode()
+        return list(values.items())
+    return _rewrite(data, edit)
+
+
+def test_checks_relationships_despite_valid_hashes(client, client_firm):
+    data = _package(client, client_firm)
+    headers = client_firm['admin']
+    report = _post(client, headers, data)
+    assert report.status_code == 200
+    assert report.json()['relationships_checked'] is True
+
+    # Файлы и счётчики согласованы с манифестом, но содержание повреждено.
+    orphan_item = _forge_json(data, 'receipt_items.json', lambda rows: rows.append({'receipt_id': 'missing'}))
+    duplicate_receipt = _forge_json(data, 'receipts.json', lambda rows: rows.append(dict(rows[0])))
+    missing_receipt_id = _forge_json(data, 'receipts.json', lambda rows: rows[0].pop('id'))
+    orphan_line = _forge_json(data, 'primary_lines.json', lambda rows: rows.append({'document_id': 'missing'}))
+    duplicate_document = _forge_json(data, 'primary_documents.json', lambda rows: rows.append(dict(rows[0])))
+    for archive in (orphan_item, duplicate_receipt, missing_receipt_id, orphan_line, duplicate_document):
+        response = _post(client, headers, archive)
+        assert response.status_code == 422, response.text
+
+
+def test_upd_link_and_skip_list_must_match_documents(client, client_firm):
+    data = _package(client, client_firm)
+    headers = client_firm['admin']
+    # Пропуск УПД описывает несуществующий документ; суммы не меняются.
+    def alter_skip(files):
+        result = []
+        for name, raw in files:
+            if name == 'manifest.json':
+                manifest = json.loads(raw)
+                manifest['skipped_upd'][0]['document_id'] = 'missing'
+                raw = json.dumps(manifest, ensure_ascii=False).encode()
+            result.append((name, raw))
+        return result
+    assert _post(client, headers, _rewrite(data, alter_skip)).status_code == 422
+    # В карточке указан отсутствующий файл при прежнем списке файлов.
+    broken_link = _forge_json(data, 'primary_documents.json', lambda rows: rows[0].update(upd_file='upd/missing.xml'))
+    assert _post(client, headers, broken_link).status_code == 422
+
+
+def test_unreferenced_upd_is_not_reported_as_valid(client, firms):
+    from tests import test_primary_upd as upd
+
+    admin, company, _ = firms
+    assert upd._upload(client, company['hdr'], ('upd.xml', upd._for(company, number='CHECK-LINK', day='14.10.2026'))).status_code == 200
+    archive = client.get('/api/v1/export/package', params={'period': PERIOD}, headers=company['hdr']).content
+    assert _post(client, admin, archive).status_code == 200
+    broken = _forge_json(archive, 'primary_documents.json', lambda rows: rows[0].update(upd_file=''))
+    assert _post(client, admin, broken).status_code == 422
+
+
+def test_invalid_reference_types_fail_cleanly(client, client_firm):
+    data = _package(client, client_firm)
+    for filename, mutate in (
+        ('receipts.json', lambda rows: rows[0].update(id=[])),
+        ('receipt_items.json', lambda rows: rows.append({'receipt_id': []})),
+        ('primary_lines.json', lambda rows: rows.append({'document_id': {}})),
+        ('primary_documents.json', lambda rows: rows[0].update(upd_file=[])),
+    ):
+        result = _post(client, client_firm['admin'], _forge_json(data, filename, mutate))
+        assert result.status_code == 422, result.text

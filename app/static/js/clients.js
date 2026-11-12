@@ -560,8 +560,9 @@ export function clientsPackageHtml(opts = {}) {
       <button type="button" class="btn btn-primary" id="pkg-download"${needCompany ? ' disabled' : ''}>⬇ Скачать пакет</button>
     </div>
     ${needCompany ? '<p class="form-hint">Выберите компанию в шапке — пакет собирается по одной компании.</p>' : ''}
-    <p class="form-hint">Проверка скачанного файла сверяет состав, контрольные суммы и число записей. Пакет за месяц
-      не является резервной копией; восстановление, авторство и полнота данных этой проверкой не подтверждаются.
+    <p class="form-hint">Проверка скачанного файла сверяет состав, контрольные суммы, число записей и отдельные
+      связи JSON. Содержимое CSV и УПД с JSON не сверяется. Пакет за месяц не является резервной копией;
+      восстановление, авторство и полнота данных этой проверкой не подтверждаются.
       Выбранный файл передаётся на этот сервер для проверки; размер архива — до 20 МБ.</p>
     <div class="dreq-tools">
       <label class="field"><span>Скачанный ZIP</span><input id="pkg-check-file" type="file" accept=".zip,application/zip"></label>
@@ -587,7 +588,7 @@ export function clientsPackageBind(root, opts = {}) {
     try {
       const report = await api.post('/api/v1/export/package/check', new Blob([file], { type: 'application/zip' }));
       if (report.ok !== true) throw new Error('Не удалось подтвердить состав пакета');
-      result.textContent = `Проверка состава и сумм пройдена. Пропущено УПД: ${report.skipped_upd}. ${report.notice}`;
+      result.textContent = `Проверка пакета пройдена. Пропущено УПД: ${report.skipped_upd}. ${report.notice}`;
     } catch (e) { result.textContent = `Проверка не пройдена: ${e.message}`; }
     finally { checkButton.disabled = false; }
   };

@@ -978,7 +978,7 @@ test('проверка скачанного пакета не обещает в�
   await page.locator('a[href="#/export"]').click();
   await page.locator('#pkg-check-file').setInputFiles({ name: 'synthetic.zip', mimeType: 'application/zip', buffer: await res.body() });
   await page.locator('#pkg-check').click();
-  await expect(page.locator('#pkg-check-result')).toContainText('Проверка состава и сумм пройдена');
+  await expect(page.locator('#pkg-check-result')).toContainText('Проверка пакета пройдена');
   await expect(page.locator('#pkg-check-result')).toContainText('восстановление не проверено');
 });
 
