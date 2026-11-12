@@ -131,7 +131,7 @@ class TestCode:
         assert '"tests/test_bank_closing.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 73
+        assert declared == 74
 
     def test_settlement_rules(self):
         from app.bank import closing
@@ -182,7 +182,7 @@ class TestDocsAndKb:
 
     def test_database_doc_and_research(self):
         db = read("docs/DATABASE.md")
-        assert "73 объявлений `__tablename__`" in db and "все 73 таблиц приложения" in db
+        assert "74 объявлений `__tablename__`" in db and "все 74 таблицы приложения" in db
         assert "| Закрытие выписки документами (v1.70.113) | `bank_incomes`" in db
         design = read("docs/primary_docs_design.md")
         assert "### Комментарии владельца в #61 (06.11.2026): Indra OCR основным движком? — разбор 07.11.2026" in design

@@ -131,9 +131,9 @@ class TestCode:
         """Схема не менялась: 73 таблицы, новая колонка не появилась."""
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 73
+        assert declared == 74
         db = read("docs/DATABASE.md")
-        assert "73 объявлений `__tablename__`" in db
+        assert "74 объявлений `__tablename__`" in db
 
     def test_report_and_plan_kept(self):
         report = read(REPORT)

@@ -136,7 +136,7 @@ class TestCode:
         assert '"tests/test_primary_printupd.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 73                                    # 1.71.0 добавил три таблицы контрагентов
+        assert declared == 74                                    # 1.71.0 добавил три таблицы контрагентов
 
     def test_form_rules(self):
         from app.primary import printupd
@@ -179,7 +179,7 @@ class TestDocsAndKb:
 
     def test_database_doc_and_counts(self):
         db = read("docs/DATABASE.md")
-        assert "73 объявлений `__tablename__`" in db and "все 73 таблиц приложения" in db
+        assert "74 объявлений `__tablename__`" in db and "все 74 таблицы приложения" in db
         assert "с v1.70.114 (T-62, ADR-45) колонка `print_json`" in db
 
     def test_design_and_counterparties(self):

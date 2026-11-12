@@ -123,7 +123,7 @@ class TestSchema:
         assert 'PRIMARY_MAIL_TABLES = ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]' \
             in read("qa/migration_e2e.py")
         db = read("docs/DATABASE.md")
-        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц приложения", db)
+        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц(?:ы)? приложения", db)
         assert "| Первичка из почты (v1.70.104) |" in db and "`password_enc` (secretbox)" in db
 
 

@@ -222,7 +222,7 @@ class TestDocsAndKb:
     def test_database_and_guide(self):
         db = read("docs/DATABASE.md")
         # v1.70.112: таблиц только прибавляется (+3 таблицы согласования T-46) — число не меньше 65
-        m, n = re.search(r"(\d+) объявлений `__tablename__`", db), re.search(r"все (\d+) таблиц приложения", db)
+        m, n = re.search(r"(\d+) объявлений `__tablename__`", db), re.search(r"все (\d+) таблиц(?:ы)? приложения", db)
         assert m and n and int(m.group(1)) >= 65 and int(n.group(1)) >= 65
         assert "| «Моё дело» по API (v1.70.107) |" not in db
         assert "- **Таблицы только выпуска 1.70.107.**" in db and "программа эти таблицы не\n  создаёт и не читает" in db

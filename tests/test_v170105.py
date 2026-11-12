@@ -104,7 +104,7 @@ class TestSchema:
             in rehearsal
         assert 'and up.get("primary_mail_columns") == ["channel", "user_id"]' in rehearsal
         db = read("docs/DATABASE.md")
-        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц приложения", db)
+        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц(?:ы)? приложения", db)
         assert "С 1.70.105 — фото от сотрудников через ботов (ADR-35): в `primary_mail_items` колонки `channel`" in db
 
 

@@ -981,3 +981,19 @@ test('проверка скачанного пакета не обещает в�
   await expect(page.locator('#pkg-check-result')).toContainText('Проверка состава и сумм пройдена');
   await expect(page.locator('#pkg-check-result')).toContainText('восстановление не проверено');
 });
+
+test('добровольное подтверждение показывает текст и сохраняет его в личном архиве', async ({ page }) => {
+  await login(page);
+  await page.goto('/oferty');
+  await page.getByRole('link', { name: 'ознакомиться и подтвердить' }).click();
+  const shown = await page.locator('#offer-text').innerText();
+  expect(shown).toContain('лицензионного договора');
+  await expect(page.getByRole('button', { name: 'Подтвердить' })).toBeVisible();
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Подтвердить' }).click();
+  await expect(page).toHaveURL(/\/api\/v1\/legal\/acceptance\/history\/[0-9a-f]{64}$/);
+  await expect(page.locator('pre')).toHaveText(shown);
+  await expect(page.locator('body')).toContainText('не доказывает прочтение');
+  await page.getByRole('link', { name: 'Мои подтверждения' }).click();
+  await expect(page.getByRole('link', { name: /2026-10/ })).toHaveCount(1);
+});

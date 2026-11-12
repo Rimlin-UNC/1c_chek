@@ -195,7 +195,10 @@ def _simple_page(title: str, body: str) -> HTMLResponse:
 def offers_catalog():
     body = ('<section class="sec"><h2>Действующая публичная оферта</h2>'
             '<p><a href="/oferta">Открыть действующую редакцию</a> · '
-            '<a href="/oferta.txt">Текст для печати</a></p></section>'
+            '<a href="/oferta.txt">Текст для печати</a></p>'
+            '<p>Для вошедших пользователей: <a href="/api/v1/legal/acceptance/form">'
+            'ознакомиться и подтвердить</a> · <a href="/api/v1/legal/acceptance/history">'
+            'мои подтверждения</a>. Подтверждение добровольно.</p></section>'
             '<section class="sec"><h2>Проект для бухгалтеров и компаний</h2>'
             '<p>Документ для обсуждения: не является офертой и не меняет действующие условия.</p>'
             '<p><a href="/oferta-proekt">Читать проект</a></p></section>')
