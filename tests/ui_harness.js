@@ -993,6 +993,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     // route() останавливает автообновление мониторинга OpenStack и знает раздел
     // Supabase-демо — модули osm.js и supabase_demo.js в бандл стенда не входят,
     // вместо них заглушки
+    if (typeof sandbox.localServerStop !== 'function') sandbox.localServerStop = () => {};
     if (typeof sandbox.osmStop !== 'function') sandbox.osmStop = () => {};
     if (typeof sandbox.viewSupabaseDemo !== 'function') sandbox.viewSupabaseDemo = async () => {};
     const vc = document.querySelector('#view-container');

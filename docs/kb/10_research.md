@@ -191,3 +191,13 @@
 ## Ограниченные права OpenStack (08.11.2026)
 
 [Nova API](https://docs.openstack.org/api-ref/compute/) и [Nova policy](https://docs.openstack.org/nova/latest/configuration/policy) указывают: доступ к деталям всех гипервизоров по умолчанию административный, но провайдер может настроить policy. Не просить широкую роль без необходимости. [Zabbix](https://www.zabbix.com/integrations/openstack) разделяет квоты проекта и показатели гипервизоров; квоты не измеряют загрузку гостевой ОС. [Red Hat — Gnocchi](https://docs.redhat.com/en/documentation/red_hat_openstack_platform/15/html/logging_monitoring_and_troubleshooting_guide/monitoring_using_the_telemetry_service) показывает метрики конкретной ВМ; наличие сервиса в каталоге не доказывает права, наличие данных или способ их расчёта. В существующем сборщике Gnocchi не подключён; новый сбор без проверки провайдера не утверждён.
+
+
+## Показатели конкретной ВМ и окружения (08.11.2026)
+
+[Ceilometer](https://docs.openstack.org/ceilometer/rocky/admin/telemetry-measurements.html): `cpu` — накопительные наносекунды, `memory.usage` зависит от гипервизора и драйвера, а disk I/O — не заполненность файловой системы. [Gnocchi и UUID ВМ](https://openmetal.io/docs/manuals/tutorials/getting-started-with-ceilometer-and-gnocchi): доступ и наличие метрик зависят от облака; идентичность ВМ должна быть установлена. Локальное чтение Linux вместо этого показывает окружение приложения, но в контейнере и при иных namespace не гарантирует показатели ВМ; statvfs каталога приложения не показывает обязательно все тома. v1.72.17 не связывает эти источники и не строит историю локальных данных; #100 открыт.
+
+
+### Локальные измерения Linux (08.11.2026)
+
+[Документация ядра Linux](https://docs.kernel.org/filesystems/proc.html) описывает счётчики `/proc/stat` и предупреждает: `iowait` может уменьшаться; `steal` — недобровольное ожидание виртуального CPU. Замер с некорректной дельтой скрывается; выбранная формула считает steal занятым временем и не удваивает guest. [free(1)](https://man7.org/linux/man-pages/man1/free.1.html) определяет использованную память как `MemTotal − MemAvailable`: доступная — оценка с учётом возвращаемого кэша, а не просто `MemFree`. `statvfs` измеряет только файловую систему заданного пути; доступное непривилегированному пользователю пространство может быть меньше свободного из-за резерва. Локальная карточка не требует OpenStack, но не измеряет другие тома, сеть или реальные параметры тарифа и не сохраняет историю.

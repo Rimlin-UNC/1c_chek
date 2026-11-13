@@ -17,7 +17,7 @@ test('OpenStack: частичный доступ не превращается �
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.16');
+    localStorage.setItem('ymaster_seen_version', '1.72.17');
   }, token);
   await page.route('**/api/v1/openstack/test', route => route.fulfill({ json: {
     ok: true, authorized: true, notice: 'Keystone принял учётные данные, но статистика гипервизоров недоступна.',
@@ -44,4 +44,28 @@ test('OpenStack: частичный доступ не превращается �
   await expect(page.locator('#osm-kpi')).toContainText('3 / 20');
   await expect(page.locator('#osm-kpi')).toContainText('Это не фактическая загрузка');
   await expect(page.locator('#osm-kpi')).not.toContainText('0,00 %');
+});
+
+
+test('локальный монитор работает, когда настройки облака недоступны', async ({ page, request }) => {
+  test.setTimeout(120000);
+  const login = await request.post('/api/v1/auth/login', { data: { username: 'admin', password: 'playwright-test-password' } });
+  expect(login.ok()).toBeTruthy();
+  const token = (await login.json()).access_token;
+  await page.addInitScript(token => {
+    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('ymaster_seen_version', '1.72.17');
+  }, token);
+  await page.route('**/api/v1/openstack/**', route => route.fulfill({ status: 503, json: { detail: 'Нет облака' } }));
+  await page.goto('/#/settings');
+  const card = page.locator('#st-server-monitor');
+  await expect(card).toBeAttached({ timeout: 30000 });
+  if (!(await page.locator('#server-monitor-refresh').isVisible())) await card.locator('.card-title').click();
+  const response = page.waitForResponse(r => r.url().endsWith('/api/v1/admin/server-monitor'));
+  await page.locator('#server-monitor-refresh').click();
+  expect((await response).status()).toBe(200);
+  await expect(page.locator('#server-monitor-kpi')).toContainText('CPU сервера');
+  await expect(page.locator('#server-monitor-kpi')).toContainText('Память сервера');
+  await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
+  await expect(page.locator('#st-openstack')).toHaveCount(0);
 });

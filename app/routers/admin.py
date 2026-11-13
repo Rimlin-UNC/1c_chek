@@ -31,7 +31,7 @@ from ..config import settings
 from ..database import get_db
 from ..models import AppSetting, Receipt, User
 from ..schemas import UpdateApplyBody
-from typing import Optional
+from typing import Annotated, Optional
 from ..services import appsettings
 from ..services.audit import log_action
 from ..services.updater import (APP_DIR, check_update, job as update_job,
@@ -340,6 +340,15 @@ def backups_download(name: str, user: User = Depends(require_admin)):
 
 # v1.17.0: мёртвый дубль PUT /update/repo (RepoPatch-версия) удалён —
 # FastAPI использует ПЕРВЫЙ зарегистрированный маршрут (v1.6.0 выше).
+
+
+@router.get("/server-monitor", summary="Локальные показатели сервера (админ)")
+def server_monitor(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Чтение локальной системы, без облака, настроек и сохранения истории."""
+    from ..services import local_monitor
+
+    response.headers["Cache-Control"] = "no-store"
+    return local_monitor.snapshot()
 
 
 @router.get("/system", summary="Системная сводка (админ)")

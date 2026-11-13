@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
+import { osmCardHtml, osmWire, osmStop, localServerCardHtml, localServerWire, localServerStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -4055,6 +4055,7 @@ function routeGuard() {
 function route(silent = false) {
   _routeSeq += 1;   // v1.70.87 (#25): незаконченные отрисовки прежнего перехода устаревают
   if (state.camera) { state.camera.stop(); state.camera = null; }
+  localServerStop();
   osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
   const hash = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
   const parts = hash.split('/');
@@ -6809,6 +6810,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.17': [
+    { icon: '🖥️', title: 'Показатели среды программы',
+      text: 'Отдельная карточка читает CPU, память и файловую систему программы непосредственно из Linux, без OpenStack. Показатели обновляются по кнопке; истории пока нет.' },
+  ],
   '1.72.16': [
     { icon: '☁️', title: 'Мониторинг OpenStack',
       text: 'Квоты проекта читаются через актуальный SDK, а недоступные показатели гипервизоров больше не выглядят как нули. Доступность зависит от прав облака.' },
@@ -11664,6 +11669,8 @@ async function viewSettings(container, alive = routeGuard()) {
         старое согласие отметится как устаревшее.</p>
       </div>` : ''}
 
+      ${isAdmin() ? localServerCardHtml() : ''}
+
       ${isAdmin() && osSet ? osmCardHtml(osSet.settings || {}, osStatus || {}) : ''}
 
       ${isAdmin() && poolSet ? `
@@ -13156,6 +13163,7 @@ async function viewSettings(container, alive = routeGuard()) {
     // v1.70.51: мониторинг OpenStack — вкладки, графики, журнал и опрос
     // облака. Всё поведение живёт в osm.js, здесь только запуск; reload
     // перерисовывает раздел после сохранения настроек.
+    if ($('#st-server-monitor')) localServerWire();
     if ($('#st-openstack')) osmWire(() => route(true));
     // v1.66.0: сохранение настроек MAX
     const mxSave = $('#mx-save');

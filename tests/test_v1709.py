@@ -105,7 +105,9 @@ class TestSettingsMenuStructure:
         # st-webhooks, поэтому раздел выбран integr, а не device или data.
         # v1.70.101: карточек 32 — «Память товаров» st-goods в разделе «Проверка чеков и почта» (T-69).
         # v1.70.103: карточек 33 — «Поисковики» st-seo в разделе «Устройство и служебное» (T-74).
-        assert len(with_sec) == 33, with_sec
+        # v1.72.17: отдельная локальная карточка мониторинга сервера.
+        assert len(with_sec) == 34, with_sec
+        assert ("st-server-monitor", "integr", "38") in with_sec
         assert ("st-seo", "device", "48") in with_sec
         assert ("st-consent", "integr", "38") in with_sec
         assert ("st-adguard", "device", "49") in with_sec
@@ -128,7 +130,7 @@ class TestSettingsMenuStructure:
         # v1.70.100: device 5 -> 6 — «Заставка загрузки» (длительность задаёт администратор).
         # v1.70.101: checks 6 -> 7 — «Память товаров» (исправления категорий, T-69).
         # v1.70.103: device 6 -> 7 — «Поисковики» (индексация и коды подтверждения, T-74).
-        expect = {"data": 6, "checks": 7, "integr": 8, "personal": 6,
+        expect = {"data": 6, "checks": 7, "integr": 9, "personal": 6,
                   "device": 7}
         js_all = self.settings_js()
         for sec, n in expect.items():

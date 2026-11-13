@@ -35,6 +35,7 @@ Object.assign(globalThis, {
   packCut: stub(), splitBlocks: stub(), COL_H: 0, columnX: stub(),
   SCALE: 1, RCPT_W: 0,
   osmCardHtml: stub(), osmWire: stub(), osmStop: stub(),
+  localServerCardHtml: stub(), localServerWire: stub(), localServerStop: stub(),
   viewSupabaseDemo: stub(),
   viewUnifiedReview: stub(), setConflictsBadge: stub(),   // v1.70.83
   applyFill: () => [], fillCallout: () => '', fillFields: () => ({}),   // v1.70.91
