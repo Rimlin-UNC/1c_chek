@@ -23,6 +23,7 @@ Object.assign(globalThis, {
   toast: ui.toast, esc: ui.esc, fmtSum: ui.fmtSum, fmtInt: ui.fmtInt,
   fmtDate: ui.fmtDate, statusLabel: ui.statusLabel, roleLabel: ui.roleLabel,
   chip: ui.chip, openModal: ui.openModal, animateNumber: ui.animateNumber,
+  createNavigationCounts: () => ({ schedule: stub(), reset: stub() }),
   injectIcons: stub(),
   barChart: stub(), donutChart: stub(),
   CameraScanner: class {}, decodeImageFile: stub(),

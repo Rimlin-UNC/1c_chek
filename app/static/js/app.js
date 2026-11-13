@@ -14,6 +14,7 @@ import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
 import * as outbox from './offline_outbox.js';
+import { createNavigationCounts } from './navigation_counts.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
@@ -59,6 +60,17 @@ const state = {
     } catch (e) { return ''; }
   })(),
 };
+
+const navigationCounts = createNavigationCounts({
+  getContext: () => {
+    const me = state.me, token = getToken();
+    if (!me?.id || !token) return null;
+    const client = me.role === 'accountant' ? getClient() : '';
+    const company = me.role === 'admin' && state.companyFilter !== 'all' ? state.companyFilter : '';
+    return { key: JSON.stringify([me.id, me.role, me.company_id, token, client, company]), client, company };
+  },
+  get: (path, options) => api.get(path, options),
+});
 
 const VIEW_TITLES = {
   dashboard: 'Дашборд', scan: 'Сканирование чеков', receipts: 'База чеков',
@@ -3321,8 +3333,6 @@ function enterApp() {
       const counts = (r && r.counts) || {};
       const on = !!(r && r.enabled) || !!(counts.todo || counts.mine);
       $$('.approvals-only').forEach(el => el.classList.toggle('hidden', !on || !spaceHas('view:approvals')));
-      const badge = $('#nav-approvals-badge');
-      if (badge) { badge.textContent = String(counts.todo || 0); badge.classList.toggle('hidden', !counts.todo); }
     }).catch(() => {});
   }
   // v1.70.82: демо-контур Supabase — пункт меню только там, где контур
@@ -3365,6 +3375,7 @@ function enterApp() {
     window.addEventListener('ymaster:logout', () => logout());
     // v1.70.100: доступ к клиенту отозван или компания отключена — назад в свою компанию
     window.addEventListener('ymaster:client-reset', (e) => {
+      navigationCounts.schedule();
       toast((e.detail && e.detail.message) || 'Доступ к компании клиента закрыт', 'warn', 'Вы снова в своей компании');
       initClientSwitch().then(() => route());
     });
@@ -3386,6 +3397,13 @@ function enterApp() {
     pwaBtn.onclick = showInstallDialog;
   }
   refreshBadges();
+  if (!window.__ymNavCountsBound) {
+    window.__ymNavCountsBound = true;
+    setInterval(() => navigationCounts.schedule(), 60000);
+    window.addEventListener('online', () => navigationCounts.schedule());
+    window.addEventListener('ymaster:data-changed', () => navigationCounts.schedule());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) navigationCounts.schedule(); });
+  }
   if (!window.__ymOutboxBound) {
     window.__ymOutboxBound = true;
     window.addEventListener('online', () => flushOfflineQueue());
@@ -3395,6 +3413,7 @@ function enterApp() {
 }
 
 function logout() {
+  navigationCounts.reset();
   clearToken();
   // Очищаем и серверную cookie сессии (fire-and-forget)
   try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch (e) {}
@@ -3942,16 +3961,11 @@ async function refreshBadges() {
     qb.classList.toggle('hidden', q === 0);
     qb.classList.toggle('accent', q > 0);
   } catch { /* ошибка показана на экране очереди */ }
-  try {
-    const s = await api.get('/api/v1/dashboard/stats?days=7');
-    const badge = $('#nav-receipts-badge');
-    badge.textContent = fmtInt(s.total);
-    badge.classList.add('accent');
-    // v1.70.83: администратору — число конфликтов единого реестра в меню
-    if (isAdmin()) {
-      api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(badgeCount(u))).catch(() => {});
-    }
-  } catch { /* тихо */ }
+  navigationCounts.schedule();
+  // Число конфликтов и заявок имеет собственный существующий контракт.
+  if (isAdmin()) {
+    api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(badgeCount(u))).catch(() => {});
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -3982,6 +3996,7 @@ function routeGuard() {
 }
 
 function route(silent = false) {
+  navigationCounts.schedule();
   _routeSeq += 1;   // v1.70.87 (#25): незаконченные отрисовки прежнего перехода устаревают
   if (state.camera) { state.camera.stop(); state.camera = null; }
   osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
@@ -4250,6 +4265,7 @@ async function refreshMe() {
 async function initClientSwitch() {
   const me = await refreshMe();
   clientsSwitcher($('#client-switch'), me, async () => {
+    navigationCounts.schedule();
     await refreshMe();
     // v1.72.1 (T-91): живые обновления переезжают вместе с клиентом — без перезагрузки страницы
     wsSwitchClient(getClient());
@@ -4268,9 +4284,11 @@ async function openClientCompany(companyId, view) {
   } else {
     const home = state.me && state.me.home_company_id;
     setClient(companyId === home ? '' : companyId);
+    navigationCounts.schedule();
     await refreshMe();
     wsSwitchClient(companyId === home ? '' : companyId);      // v1.72.1 (T-91): подписка — на новый клиент
     clientsSwitcher($('#client-switch'), state.me, async () => {
+      navigationCounts.schedule();
       await refreshMe();
       wsSwitchClient(getClient());
       route();
@@ -6732,6 +6750,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.13': [
+    { icon: '🔢', title: 'Счётчики в меню',
+      text: 'В меню показано количество доступных документов и других объектов. Некоторые значки считают ожидающие действия; при отсутствии связи число скрывается.' },
+  ],
   '1.72.12': [
     { icon: '📶', title: 'Загрузка при обрыве связи',
       text: 'QR-сканы активной сессии сначала сохраняются на устройстве, затем отправляются при восстановлении связи. Офлайн-вход и другие виды данных пока не поддерживаются.' },

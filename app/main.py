@@ -34,7 +34,7 @@ from .goods import router as goods_router
 from .docreq import router as docreq_router
 from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
-from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
+from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, navigation, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
 from .services.events import broadcast, register_loop, resubscribe, subscribe, unsubscribe
 from .unified import router as unified_router
@@ -595,6 +595,7 @@ app.include_router(mail_admin.public_router)   # v1.44.0: отписка (пуб
 app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)
+app.include_router(navigation.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(unified_router.router)  # единый фискальный документ
 # v1.70.104 (T-63): первичка из почты — раньше основного роутера первички, иначе /inbox поймал бы /{doc_id}

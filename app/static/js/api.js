@@ -94,6 +94,7 @@ async function once(method, path, body, options = {}) {
     throw err;
   }
   window.__ymLastApiOk = Date.now();   // для индикатора «офлайн» (гистерезис)
+  if (!['GET', 'HEAD'].includes(method)) window.dispatchEvent(new CustomEvent('ymaster:data-changed'));
   const ct = resp.headers.get('content-type') || '';
   return ct.includes('json') ? resp.json() : resp.text();
 }

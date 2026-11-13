@@ -79,7 +79,8 @@ const toasts = [];
 
 const sandbox = {
   crypto: { randomUUID: () => 'abc00000-0000-4000-8000-000000000000' },
-  document, window: { addEventListener: () => {}, print: () => {}, matchMedia: () => ({ matches: false, addEventListener: () => {} }), location: { reload() {}, pathname: '/' } },
+  document, window: { addEventListener: () => {}, dispatchEvent: () => {}, print: () => {}, matchMedia: () => ({ matches: false, addEventListener: () => {} }), location: { reload() {}, pathname: '/' } },
+  CustomEvent: class { constructor(type, init = {}) { this.type = type; this.detail = init.detail; } },
   navigator: { clipboard: { writeText: async () => {} }, userAgent: 'harness' },
   print: () => {},
   localStorage: {
