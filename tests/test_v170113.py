@@ -131,7 +131,7 @@ class TestCode:
         assert '"tests/test_bank_closing.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 75
+        assert declared == 72
 
     def test_settlement_rules(self):
         from app.bank import closing

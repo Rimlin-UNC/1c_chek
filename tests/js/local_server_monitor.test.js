@@ -6,7 +6,7 @@ vi.mock('../../app/static/js/ui.js', () => ({
   fmtInt: value => String(value), toast: vi.fn(),
 }));
 import { api } from '../../app/static/js/api.js';
-import { localServerCardHtml, localServerWire, localServerStop } from '../../app/static/js/osm.js';
+import { localServerCardHtml, localServerWire, localServerStop } from '../../app/static/js/server_monitor.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 

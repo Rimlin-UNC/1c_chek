@@ -541,11 +541,10 @@ import json, sys
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services import backups, telegram_bot, max_bot, webhooks
-from app.openstack_monitor import worker
 from app.routers import receipts
 from app.services import releases
 backups.daily_backup.start = lambda: None
-telegram_bot.start_worker = max_bot.start_worker = webhooks.start_worker = worker.start_worker = lambda: False
+telegram_bot.start_worker = max_bot.start_worker = webhooks.start_worker = lambda: False
 receipts.start_fetch_workers = lambda: 0
 receipts.start_limit_retry_worker = lambda: False
 releases.mark_healthy = lambda *a, **k: None

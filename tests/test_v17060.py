@@ -143,7 +143,7 @@ class TestPlaywrightGate:
                               timeout=600, check=False)
         assert proc.returncode == 0, proc.stderr[-1500:]
         for scenario in ("верные учётные данные", "неверный пароль",
-                         "сворачивание работает", "мониторинга облака"):
+                         "сворачивание работает", "мониторинга сервера"):
             assert scenario in proc.stdout, proc.stdout[-1500:]
 
     def test_scenarios_pass_with_browsers(self):

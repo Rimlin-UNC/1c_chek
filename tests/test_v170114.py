@@ -136,7 +136,7 @@ class TestCode:
         assert '"tests/test_primary_printupd.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 75                                    # 1.71.0 добавил три таблицы контрагентов
+        assert declared == 72  # Три модели удалённого облачного контура больше не регистрируются.
 
     def test_form_rules(self):
         from app.primary import printupd

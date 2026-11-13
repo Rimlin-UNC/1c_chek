@@ -52,14 +52,10 @@ def test_local_sample_survives_missing_sources_and_rate_limits(monkeypatch):
 
 
 def test_separate_endpoint_is_admin_only_and_does_not_call_openstack(client, monkeypatch):
-    from app.openstack_monitor import connection
     from tests.conftest import login
-    from tests.test_v17051 import _mk_user
+    from tests.test_v17050 import _mk_user
 
     monkeypatch.setattr(local_server, 'snapshot', lambda: {'cpu_pct': 12.5, 'logical_cpus': 4})
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError('локальные метрики не должны обращаться в облако')
-    monkeypatch.setattr(connection, 'build_connection', forbidden)
     admin = login(client, 'admin', 'admin123')
     result = client.get('/api/v1/admin/server-monitor', headers=admin)
     assert result.status_code == 200

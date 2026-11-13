@@ -56,7 +56,7 @@ class TestSettingsMenuStructure:
         вынесена из app.js в отдельный модуль osm.js — тот же приём, что
         для графиков в charts.js и печати в printpack.js.
         """
-        return open("app/static/js/osm.js", encoding="utf-8").read()
+        return open("app/static/js/server_monitor.js", encoding="utf-8").read()
 
     def settings_js(self):
         """Вся разметка раздела настроек: app.js и osm.js.
@@ -106,14 +106,14 @@ class TestSettingsMenuStructure:
         # v1.70.101: карточек 32 — «Память товаров» st-goods в разделе «Проверка чеков и почта» (T-69).
         # v1.70.103: карточек 33 — «Поисковики» st-seo в разделе «Устройство и служебное» (T-74).
         # v1.72.17: отдельная локальная карточка мониторинга сервера.
-        assert len(with_sec) == 34, with_sec
+        assert len(with_sec) == 33, with_sec
         assert ("st-server-monitor", "integr", "38") in with_sec
         assert ("st-seo", "device", "48") in with_sec
         assert ("st-consent", "integr", "38") in with_sec
         assert ("st-adguard", "device", "49") in with_sec
         assert ("st-clients", "data", "14") in with_sec
         assert ("st-transfer", "data", "15") in with_sec
-        assert ("st-openstack", "integr", "39") in with_sec
+        assert not any(cid == "st-openstack" for cid, _s, _o in with_sec)
         assert all(cid and cid.startswith(("st-", "wa-", "mail-"))
                    for cid, _s, _o in with_sec)
         secs = {s for _c, s, _o in with_sec}
@@ -130,7 +130,7 @@ class TestSettingsMenuStructure:
         # v1.70.100: device 5 -> 6 — «Заставка загрузки» (длительность задаёт администратор).
         # v1.70.101: checks 6 -> 7 — «Память товаров» (исправления категорий, T-69).
         # v1.70.103: device 6 -> 7 — «Поисковики» (индексация и коды подтверждения, T-74).
-        expect = {"data": 6, "checks": 7, "integr": 9, "personal": 6,
+        expect = {"data": 6, "checks": 7, "integr": 8, "personal": 6,
                   "device": 7}
         js_all = self.settings_js()
         for sec, n in expect.items():

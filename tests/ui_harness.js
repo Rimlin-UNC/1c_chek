@@ -994,7 +994,6 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     // Supabase-демо — модули osm.js и supabase_demo.js в бандл стенда не входят,
     // вместо них заглушки
     if (typeof sandbox.localServerStop !== 'function') sandbox.localServerStop = () => {};
-    if (typeof sandbox.osmStop !== 'function') sandbox.osmStop = () => {};
     if (typeof sandbox.viewSupabaseDemo !== 'function') sandbox.viewSupabaseDemo = async () => {};
     const vc = document.querySelector('#view-container');
     const tick = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));

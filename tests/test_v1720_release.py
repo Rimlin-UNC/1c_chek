@@ -153,7 +153,7 @@ class TestCode:
     def test_schema_unchanged(self):
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 75
+        assert declared == 72
         assert "75 объявлений `__tablename__`" in read("docs/DATABASE.md")
 
     def test_adr_and_guide(self):

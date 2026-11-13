@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { osmCardHtml, osmWire, osmStop, localServerCardHtml, localServerWire, localServerStop } from './osm.js?v=1.72.18';   // v1.70.51: мониторинг OpenStack
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.19';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -4056,7 +4056,6 @@ function route(silent = false) {
   _routeSeq += 1;   // v1.70.87 (#25): незаконченные отрисовки прежнего перехода устаревают
   if (state.camera) { state.camera.stop(); state.camera = null; }
   localServerStop();
-  osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
   const hash = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
   const parts = hash.split('/');
   const view = parts[0].split('?')[0];
@@ -5821,7 +5820,7 @@ async function refreshOutboxPanel() {
   let queue = [], queueError = false;
   try { queue = await outbox.list(ownerId); } catch { queueError = true; }
   if (state.me?.id !== ownerId || panel !== document.getElementById('scan-outbox')) return;
-  panel.innerHTML = `
+  const markup = `
 ${queueError ? `<div class="glass card" role="alert">Локальное хранилище недоступно. Скан не будет сохранён; проверьте настройки и свободное место.</div>` : ''}
         ${queue.length > 0 ? `
         <div class="glass card" style="margin-bottom:16px">
@@ -5831,6 +5830,11 @@ ${queueError ? `<div class="glass card" role="alert">Локальное хран
           ${queue.filter(x => x.state === 'attention').map(x => `<p role="alert">Нужна помощь: ${esc(x.message || 'сервер не принял скан')} (ФД ${esc(parseQrClient(x.qrData)?.fd || '—')}). Запись сохранена.</p>`).join('')}
           <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
         </div>` : ''}`;
+  // Не заменяем кнопку при неизменном содержимом: фоновый опрос не должен
+  // прерывать нажатие или сбрасывать фокус клавиатуры.
+  if (panel._outboxMarkup === markup) return;
+  panel.innerHTML = markup;
+  panel._outboxMarkup = markup;
   const flush = panel.querySelector('#btn-flush');
   if (flush) flush.onclick = () => flushOfflineQueue(true);
 }
@@ -6815,6 +6819,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.19': [
+    { icon: '🖥️', title: 'Мониторинг сервера',
+      text: 'Удалён неиспользуемый облачный мониторинг. Показатели сервера по кнопке остались на месте.' },
+  ],
   '1.72.18': [
     { icon: '🛠️', title: 'Надёжность запуска',
       text: 'Исправлено смешение версий модуля мониторинга после обновления. Если запуск не восстановился, сохраните данные браузера и обратитесь к администратору.' },
@@ -11321,11 +11329,6 @@ async function viewSettings(container, alive = routeGuard()) {
   if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
   // v1.70.50: клиенты приложения и передача данных — один запрос на две карточки
   if (isAdmin()) { try { clientsInfo = await api.get('/api/v1/admin/clients'); } catch {} }
-  // v1.70.51: мониторинг OpenStack — настройки и состояние контура.
-  // Отдельные try/catch: отказ одного запроса не должен снимать всю карточку.
-  let osSet = null, osStatus = null;
-  if (isAdmin()) { try { osSet = await api.get('/api/v1/openstack/settings'); } catch {} }
-  if (isAdmin()) { try { osStatus = await api.get('/api/v1/openstack/status'); } catch {} }
   // v1.62.0: политика расходов — бухгалтер и админ
   if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
   // v1.70.101 (T-69): память исправлений категорий товаров — по компании политики
@@ -11679,8 +11682,6 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>` : ''}
 
       ${isAdmin() ? localServerCardHtml() : ''}
-
-      ${isAdmin() && osSet ? osmCardHtml(osSet.settings || {}, osStatus || {}) : ''}
 
       ${isAdmin() && poolSet ? `
       <div class="glass card" id="st-pool" data-sec="integr" style="order:30">
@@ -13169,11 +13170,7 @@ async function viewSettings(container, alive = routeGuard()) {
         toast(r.message, 'ok', '🪝'); }
       catch (e) { toast(e.message, 'err'); }
     };
-    // v1.70.51: мониторинг OpenStack — вкладки, графики, журнал и опрос
-    // облака. Всё поведение живёт в osm.js, здесь только запуск; reload
-    // перерисовывает раздел после сохранения настроек.
     if ($('#st-server-monitor')) localServerWire();
-    if ($('#st-openstack')) osmWire(() => route(true));
     // v1.66.0: сохранение настроек MAX
     const mxSave = $('#mx-save');
     if (mxSave) mxSave.onclick = async () => {

@@ -72,12 +72,12 @@ test.describe('настройки: оглавления блоков', () => {
     await expect(card).not.toHaveClass(/collapsed/);
   });
 
-  test('оглавление мониторинга облака читается целиком', async ({ page }) => {
+  test('оглавление мониторинга сервера читается целиком', async ({ page }) => {
     await login(page);
     const welcome = page.getByRole('button', { name: 'Понятно, работаем' });
     await welcome.click();
     await page.locator('a[href="#/settings"]').click();
-    const osm = page.locator('#st-openstack .card-title > .ct-text');
+    const osm = page.locator('#st-server-monitor .card-title > .ct-text');
     await expect(osm).toContainText('Мониторинг', { timeout: 15000 });
   });
 });

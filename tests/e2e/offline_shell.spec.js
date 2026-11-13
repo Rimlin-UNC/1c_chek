@@ -18,7 +18,7 @@ test('офлайн после первой установки: скрипты н
   const replies = await page.evaluate(async () => {
     const appUrl = new URL(document.querySelector('script[src*="app.js?v="]').src);
     const urls = ['/js/approvals.js', '/js/clients.js', '/js/counterparties.js',
-      '/js/primary.js', `/js/osm.js?v=${appUrl.searchParams.get('v')}`, '/js/vendor/chart.umd.js'];
+      '/js/primary.js', `/js/server_monitor.js?v=${appUrl.searchParams.get('v')}`];
     return await Promise.all(urls.map(async path => {
       const response = await fetch(path);
       return { path, ok: response.ok, type: response.headers.get('content-type') };
