@@ -177,10 +177,24 @@ const spaceHas = (key) => {
 // --------------------------------------------------------------------------
 //  Точка входа
 // --------------------------------------------------------------------------
+// Общий ограничитель запросов версии: старт и сторож разделяют интервал и in-flight.
+let aboutLastStart = null, aboutInFlight = false;
+async function requestAboutForWatchdog() {
+  const now = Date.now();
+  if (aboutInFlight || (aboutLastStart !== null && now - aboutLastStart < 60000 && now >= aboutLastStart)) return null;
+  aboutLastStart = now;
+  aboutInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try { return await api.get('/api/v1/about', { retries: 1, signal: controller.signal }); }
+  finally { clearTimeout(timeout); aboutInFlight = false; }
+}
+
 // v1.3.0: версия приложения — единый источник /api/v1/about (никаких хардкодов)
 async function loadAppVersion() {
   try {
-    const about = await api.get('/api/v1/about', { retries: 1 });
+    const about = await requestAboutForWatchdog();
+    if (!about) return;
     state.appVersion = about.version;
     window.MXBOT = about.max_bot_username || window.MXBOT || '';  // v1.70.1
     const els = [$('#brand-version'), $('#footer-version')];
@@ -6795,6 +6809,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.15': [
+    { icon: '🔄', title: 'Меньше повторных проверок',
+      text: 'При частом возврате во вкладку проверка версии сервера не повторяется чаще раза в минуту.' },
+  ],
   '1.72.14': [
     { icon: '📶', title: 'Понятное состояние связи',
       text: 'Связь с сервером показывается по реальным ответам; если живые обновления недоступны, это указано отдельно. Лишний опрос при переходах не запускается.' },
@@ -11134,29 +11152,22 @@ async function hardReset(silent = false, autoReload = true) {
   if (autoReload) setTimeout(() => location.reload(), 400);
 }
 
-// v1.17.0: сторож версии — если сервер стал новее, клиент сам сбрасывает кэш
-setInterval(async () => {
+// v1.17.0: сторож версии — WS сообщает об обновлении, HTTP остаётся резервом.
+async function checkServerVersion() {
   if (document.hidden) return;
   try {
-    const r = await api.get('/api/v1/about', { retries: 1 });
-    if (state.appVersion && r.version && r.version !== state.appVersion) {
-      state.appVersion = r.version;
-      hardReset(true, false).catch(() => {});        // кэш — тихо
-      showUpdateBanner(r.version);            // перезагрузка — решает человек
-    }
-  } catch (e) { /* сервер недоступен — молча */ }
-}, 60000);
-document.addEventListener('visibilitychange', async () => {
-  if (document.hidden) return;
-  try {
-    const r = await api.get('/api/v1/about', { retries: 1 });
-    if (state.appVersion && r.version && r.version !== state.appVersion) {
+    const r = await requestAboutForWatchdog();
+    if (r && state.appVersion && r.version && r.version !== state.appVersion) {
       state.appVersion = r.version;
       hardReset(true, false).catch(() => {});
       showUpdateBanner(r.version);
     }
-  } catch (e) {}
-});
+  } catch (e) { /* сервер недоступен — молча */ }
+}
+// Частые локальные тики не создают запросов: ограничитель допускает один за минуту.
+// После возвращения из фона проверяем сразу, если предыдущая попытка устарела.
+setInterval(checkServerVersion, 10000);
+document.addEventListener('visibilitychange', checkServerVersion);
 
 // v1.17.0: копирование команд в буфер (блок «Сервер и команды»)
 async function copyCmd(txt, btn) {

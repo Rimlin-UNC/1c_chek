@@ -8,7 +8,7 @@ test('потерянный ответ: скан сохраняется до от
   const legacy = JSON.stringify([{ qr_data: 'старый скан', source: 'web' }]);
   await page.addInitScript(({ token, legacy }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.14');
+    localStorage.setItem('ymaster_seen_version', '1.72.15');
     localStorage.setItem('ymaster_check_offline_queue', legacy);
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 1000 : ms, ...args);
