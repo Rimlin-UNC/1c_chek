@@ -18,7 +18,7 @@ test('счётчики меню на телефоне обновляются п�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.13');
+    localStorage.setItem('ymaster_seen_version', '1.72.14');
   }, token);
   await page.goto('/#/dashboard');
   await expect(page.locator('#app-shell')).toBeVisible({ timeout: 30000 });
@@ -30,10 +30,8 @@ test('счётчики меню на телефоне обновляются п�
   await expect(primary).toBeVisible();
   await expect(companies).toBeVisible();
   const before = Number((await companies.textContent()).replace(/\s/g, ''));
-  const created = await request.post('/api/v1/companies', {
-    headers: { Authorization: `Bearer ${token}` }, data: { name: 'Тест счётчика меню' },
-  });
-  expect(created.status()).toBe(201);
+  const created = await page.evaluate(async () => (await import('/js/api.js')).api.post('/api/v1/companies', { name: 'Тест счётчика меню' }));
+  expect(created.id).toBeTruthy();
   await page.locator('a[href="#/companies"]').click();
   await page.locator('#btn-sidebar').click();
   await expect(companies).toHaveText(String(before + 1), { timeout: 15000 });

@@ -34,6 +34,8 @@ Object.assign(globalThis, {
   fmtDate: ui.fmtDate, statusLabel: ui.statusLabel, roleLabel: ui.roleLabel,
   chip: ui.chip, openModal: ui.openModal, animateNumber: ui.animateNumber,
   createNavigationCounts: () => ({ schedule: stub(), reset: stub() }),
+  createConnectionStatus: () => ({ apiResult: stub(), reset: stub(), wsOpen: stub(), wsClosed: stub(), update: stub() }),
+  getApiRequestId: () => 0,
   injectIcons: stub(),
   barChart: stub(), donutChart: stub(),
   CameraScanner: class {}, decodeImageFile: stub(), offlineQueue: {},

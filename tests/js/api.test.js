@@ -1,6 +1,6 @@
 /* v1.70.60: юнит-тесты транспортного слоя (Vitest, среда jsdom).
    Хранилище токена и форма ошибки API. */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, clearToken, getToken, setToken } from '../../app/static/js/api.js';
 
 describe('токен сессии', () => {
@@ -68,6 +68,49 @@ describe('фиксированный контекст отложенного з�
       await api.post('/api/v1/receipts/scan/offline', {}, { clientId: null, noClientFallback: true, retries: 1 });
       expect(headers['X-Ym-Company']).toBeUndefined();
     } finally { globalThis.fetch = original; setClient(''); }
+  });
+});
+
+describe('индикатор связи использует уже выполняемые запросы', () => {
+  it('сообщает об успехе и сетевой ошибке без дополнительных запросов', async () => {
+    const { api } = await import('../../app/static/js/api.js');
+    const original = globalThis.fetch;
+    const events = [];
+    const listener = e => events.push(e.detail);
+    window.addEventListener('ymaster:api-connection', listener);
+    try {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
+        .mockRejectedValueOnce(new Error('offline'));
+      await api.get('/api/v1/test', { retries: 1 });
+      await expect(api.get('/api/v1/test', { retries: 1 })).rejects.toMatchObject({ status: 0 });
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(events.map(e => e.ok)).toEqual([true, false]);
+      expect(events[1].id).toBeGreaterThan(events[0].id);
+    } finally { globalThis.fetch = original; window.removeEventListener('ymaster:api-connection', listener); }
+  });
+  it('ошибка внешнего сервиса 502 не означает потерю связи с приложением', async () => {
+    const { api } = await import('../../app/static/js/api.js');
+    const original = globalThis.fetch;
+    const listener = vi.fn();
+    window.addEventListener('ymaster:api-connection', listener);
+    try {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response('{"detail":"Нет связи с GitHub"}', { status: 502, headers: { 'Content-Type': 'application/json' } }));
+      await expect(api.get('/api/v1/test', { retries: 1 })).rejects.toMatchObject({ status: 502 });
+      expect(listener.mock.calls.map(([event]) => event.detail.ok)).not.toContain(false);
+    } finally { globalThis.fetch = original; window.removeEventListener('ymaster:api-connection', listener); }
+  });
+  it('отменённый запрос не означает потерю связи', async () => {
+    const { api } = await import('../../app/static/js/api.js');
+    const original = globalThis.fetch;
+    const listener = vi.fn();
+    window.addEventListener('ymaster:api-connection', listener);
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('abort'));
+      await expect(api.get('/api/v1/test', { retries: 1, signal: controller.signal })).rejects.toMatchObject({ status: 0 });
+      expect(listener).not.toHaveBeenCalled();
+    } finally { globalThis.fetch = original; window.removeEventListener('ymaster:api-connection', listener); }
   });
 });
 

@@ -43,6 +43,12 @@ export class ApiError extends Error {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let connectionRequestId = 0;
+export function getApiRequestId() { return connectionRequestId; }
+function reportConnection(id, token, ok) {
+  // Ответ предыдущей сессии не меняет состояние новой.
+  if (getToken() === token) window.dispatchEvent(new CustomEvent('ymaster:api-connection', { detail: { id, ok } }));
+}
 
 async function once(method, path, body, options = {}) {
   const headers = Object.prototype.hasOwnProperty.call(options, 'clientId')
@@ -102,10 +108,13 @@ async function once(method, path, body, options = {}) {
 /** Запрос с автоматическим повтором при сбоях сети (status 0). */
 async function request(method, path, body, options = {}) {
   const attempts = options.retries !== undefined ? options.retries : 3;
+  const id = ++connectionRequestId, token = getToken();
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await once(method, path, body, options);
+      const result = await once(method, path, body, options);
+      reportConnection(id, token, true);
+      return result;
     } catch (e) {
       lastErr = e;
       if (e.clientReset && !options.clientRetried) {      // v1.70.100: повтор уже без клиента
@@ -113,7 +122,11 @@ async function request(method, path, body, options = {}) {
       }
       // Повторяем только сетевые сбои и 502/503/504 (просыпающийся сервер)
       const retryable = e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504;
-      if (!retryable || i === attempts - 1) throw e;
+      if (!retryable || i === attempts - 1 || options.signal?.aborted) {
+        // 502/503/504 может означать отказ внешнего сервиса, а не сети приложения.
+        if (e.status === 0 && !options.signal?.aborted) reportConnection(id, token, false);
+        throw e;
+      }
       await sleep(350 * (i + 1));
     }
   }
@@ -129,18 +142,22 @@ export const api = {
   download: async (p, b) => {
     // v1.8.2: без тела — GET (эндпоинты скачивания — GET: бэкап, QR и т.п.);
     // прежде отправлялся POST и кнопка «Скачать резервную копию БД» падала 405
-    const headers = withClient({ 'Authorization': 'Bearer ' + getToken() });
+    const token = getToken(), id = ++connectionRequestId;
+    const headers = withClient({ 'Authorization': 'Bearer ' + token });
     const opts = b === undefined
       ? { method: 'GET', headers }
       : { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
           body: JSON.stringify(b) };
-    const resp = await fetch(p, opts);
+    let resp;
+    try { resp = await fetch(p, opts); }
+    catch (e) { reportConnection(id, token, false); throw e; }
     if (!resp.ok) {
       let msg = 'Ошибка ' + resp.status;
       try { const j = await resp.json(); msg = typeof j.detail === 'string' ? j.detail : msg; } catch {}
       throw new ApiError(resp.status, msg);
     }
     window.__ymLastApiOk = Date.now();
+    reportConnection(id, token, true);
     const blob = await resp.blob();
     const cd = resp.headers.get('content-disposition') || '';
     const m = cd.match(/filename="?([^";]+)"?/);

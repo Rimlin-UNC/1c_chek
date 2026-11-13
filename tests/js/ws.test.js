@@ -16,8 +16,8 @@ function pick(start, end) {
 // connectWS + wsSwitchClient + scheduleReconnect собираются вместе: они делят state и reconnect-таймер
 const wsCode = pick('function connectWS()', '\nfunction handleWsEvent(').replace('export function', 'function');
 const build = () => new Function(
-  'WebSocket', 'location', 'state', 'getClient', 'getToken', 'toast', 'handleWsEvent', 'scheduleReconnect',
-  `${wsCode}; return { connectWS, wsSwitchClient };`,
+  'WebSocket', 'location', 'state', 'getClient', 'getToken', 'toast', 'handleWsEvent', 'connectionStatus', 'getApiRequestId',
+  `const WS_BACKOFF = [2, 5, 10, 20, 60, 120, 300], WS_STALE_MS = 70000, WS_CONNECT_MS = 20000; ${wsCode}; return { connectWS, wsSwitchClient, stopWs };`,
 );
 
 function harness({ role = 'accountant', client = '' } = {}) {
@@ -31,7 +31,7 @@ function harness({ role = 'accountant', client = '' } = {}) {
   const toast = vi.fn();
   const factory = build();
   const app = factory(FakeWS, { protocol: 'https:', host: 'check.example' }, state, () => client, () => 'tok',
-    toast, vi.fn(), vi.fn());
+    toast, vi.fn(), { wsOpen: vi.fn(), wsClosed: vi.fn(), online: vi.fn(), offline: vi.fn(), update: vi.fn() }, () => 0);
   return { app, state, sent, toast, setClient: (value) => { client = value; } };
 }
 
@@ -83,6 +83,64 @@ describe('живые обновления по активному клиенту
     app.connectWS();
     state.ws.onmessage({ data: JSON.stringify({ type: 'connected', payload: { warning: 'Нет доступа' } }) });
     expect(toast).toHaveBeenCalledWith('Нет доступа', 'err', 'Живые обновления');
+  });
+
+  it('повторное открытие не создаёт второй сокет и не отправляет клиентские ping', () => {
+    vi.useFakeTimers();
+    try {
+      const { app, state, sent } = harness({ client: '' });
+      app.connectWS();
+      const socket = state.ws;
+      socket.onopen();
+      app.connectWS();
+      expect(state.ws).toBe(socket);
+      vi.advanceTimersByTime(30000);
+      expect(sent).toEqual([]);
+      app.stopWs();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('зависшее подключение закрывается и не накапливает сокеты', () => {
+    vi.useFakeTimers();
+    try {
+      const { app, state } = harness({ client: '' });
+      app.connectWS();
+      const old = state.ws;
+      old.readyState = 0;
+      vi.advanceTimersByTime(20000);
+      expect(old.readyState).toBe(3);
+      expect(state.ws).toBeNull();
+      expect(state.wsAttempts).toBe(1);
+      app.stopWs();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('нет ответов heartbeat: полуоткрытый сокет заменяется с задержкой', () => {
+    vi.useFakeTimers();
+    try {
+      const { app, state } = harness({ client: '' });
+      app.connectWS();
+      const old = state.ws;
+      old.onopen();
+      vi.advanceTimersByTime(70000);
+      expect(old.readyState).toBe(3);
+      expect(state.ws).toBeNull();
+      expect(state.wsAttempts).toBe(1);
+      app.stopWs();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('старый закрывшийся сокет не сбрасывает новый', () => {
+    const { app, state } = harness({ client: '' });
+    app.connectWS();
+    const old = state.ws;
+    app.stopWs();
+    app.connectWS();
+    const current = state.ws;
+    old.onclose();
+    expect(state.ws).toBe(current);
+    expect(state.wsAttempts).toBeUndefined();
+    app.stopWs();
   });
 
   it('без открытого сокета переключение молча не делается', () => {

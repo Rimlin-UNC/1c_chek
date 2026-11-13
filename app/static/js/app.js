@@ -8,13 +8,14 @@
 // Регистрация — только по приглашению администратора, роль в приглашении.
 // ======================================================================
 
-import { api, getClient, getToken, setToken, clearToken, setClient } from './api.js';
+import { api, getApiRequestId, getClient, getToken, setToken, clearToken, setClient } from './api.js';
 import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, openModal, animateNumber } from './ui.js';
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
 import * as outbox from './offline_outbox.js';
 import { createNavigationCounts } from './navigation_counts.js';
+import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
@@ -70,6 +71,25 @@ const navigationCounts = createNavigationCounts({
     return { key: JSON.stringify([me.id, me.role, me.company_id, token, client, company]), client, company };
   },
   get: (path, options) => api.get(path, options),
+});
+
+// Это состояние подтверждается действительными ответами сервера, без опроса.
+const connectionStatus = createConnectionStatus({ render: ({ state: conn, live }) => {
+  const dot = document.querySelector('#ws-status .live-dot');
+  const txt = document.querySelector('#ws-status-text');
+  const box = document.querySelector('#ws-status');
+  const banner = document.querySelector('#offline-indicator');
+  const labels = { connected: 'Подключено', connecting: 'Подключение…',
+    unknown: 'Состояние не проверено', disconnected: 'Нет подключения' };
+  const detail = conn === 'connected' && !live ? 'Подключено · без живых обновлений' : labels[conn];
+  if (dot) { dot.classList.toggle('on', conn === 'connected'); dot.classList.toggle('off', conn === 'disconnected'); }
+  if (txt) txt.textContent = detail;
+  if (box) box.title = conn === 'connected' && !live
+    ? 'Сервер ответил, но автоматические живые обновления недоступны' : labels[conn];
+  if (banner) banner.classList.toggle('hidden', conn !== 'disconnected');
+} });
+window.addEventListener('ymaster:api-connection', (event) => {
+  if (event.detail) connectionStatus.apiResult(event.detail.id, event.detail.ok);
 });
 
 const VIEW_TITLES = {
@@ -3399,10 +3419,8 @@ function enterApp() {
   refreshBadges();
   if (!window.__ymNavCountsBound) {
     window.__ymNavCountsBound = true;
-    setInterval(() => navigationCounts.schedule(), 60000);
     window.addEventListener('online', () => navigationCounts.schedule());
     window.addEventListener('ymaster:data-changed', () => navigationCounts.schedule());
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) navigationCounts.schedule(); });
   }
   if (!window.__ymOutboxBound) {
     window.__ymOutboxBound = true;
@@ -3414,6 +3432,8 @@ function enterApp() {
 
 function logout() {
   navigationCounts.reset();
+  stopWs();
+  connectionStatus.reset(getApiRequestId());
   clearToken();
   // Очищаем и серверную cookie сессии (fire-and-forget)
   try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch (e) {}
@@ -3421,7 +3441,6 @@ function logout() {
   viewAsForget();
   state.me = null;
   state.receiptsSelected.clear();
-  if (state.ws) { try { state.ws.close(); } catch (e) {} state.ws = null; }
   if (state.camera) { state.camera.stop(); state.camera = null; }
   history.replaceState(null, '', location.pathname);
   location.reload();
@@ -3775,13 +3794,15 @@ function forcePasswordChange() {
 // --------------------------------------------------------------------------
 //  WebSocket: живые статусы
 // --------------------------------------------------------------------------
-// v1.2.0: WS без «мерцания» — пауза между попытками растёт до 60 с
-// (с разбросом), статус меняется с гистерезисом, «офлайн» показываем
-// только при реальной недоступности, а не на каждом переподключении.
-const WS_BACKOFF = [2, 5, 10, 20, 30, 60, 60];   // секунды
+// Повторы WebSocket с увеличивающейся задержкой и разбросом; отказ только
+// живого канала не доказывает, что обычный API недоступен.
+const WS_BACKOFF = [2, 5, 10, 20, 60, 120, 300];   // секунды; после длительного отказа — редко
+const WS_STALE_MS = 70000;   // сервер сам присылает heartbeat примерно раз в 20 с
+const WS_CONNECT_MS = 20000; // зависшее рукопожатие не должно висеть бесконечно
 
 function connectWS() {
-  if (document.hidden) { scheduleReconnect(5); return; }  // в фоне не дёргаемся
+  if (!state.me || document.hidden || navigator.onLine === false) return;
+  if (state.ws && state.ws.readyState <= 1) return;  // одно соединение, даже при повторных событиях
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   let ws;
   // v1.72.1 (T-91): подписка — на активного клиента бухгалтера, а не на его собственную компанию:
@@ -3789,32 +3810,38 @@ function connectWS() {
   const active = (typeof getClient === 'function' && state.me && state.me.role === 'accountant') ? getClient() : '';
   const qs = active ? `?company=${encodeURIComponent(active)}` : '';
   try { ws = new WebSocket(`${proto}://${location.host}/ws/status${qs}`); }
-  catch (e) { scheduleReconnect(10); return; }
+  catch (e) { wsFailed(); return; }
   state.ws = ws;
+  state.wsStarted = Date.now();
+  clearTimeout(state.wsWatch);
+  state.wsWatch = setTimeout(() => {
+    if (!document.hidden && state.ws === ws && ws.readyState === 0) {
+      stopWs();
+      wsFailed();
+    }
+  }, WS_CONNECT_MS);
 
   ws.onopen = () => {
+    if (state.ws !== ws) return;
     state.wsAttempts = 0;
+    noteWsActivity(ws);
     setWsStatus(true);
     // Пока сокет открывался, пользователь мог выбрать другого клиента.
     if (state.me && state.me.role === 'accountant' && (getClient() || '') !== active) {
       wsSwitchClient(getClient());
     }
-    // heartbeat клиента: не даём прокси считать соединение пустым
-    clearInterval(state.wsPing);
-    state.wsPing = setInterval(() => {
-      if (document.hidden) return;                 // v1.6.0: в фоне не тратим трафик
-      if (ws.readyState === 1) { try { ws.send('ping'); } catch (e) {} }
-    }, 25000);
+    // Дополнительный клиентский ping не нужен: сервер уже посылает heartbeat.
   };
   ws.onclose = () => {
-    clearInterval(state.wsPing);
-    setWsStatus(false);
-    const delay = WS_BACKOFF[Math.min(state.wsAttempts || 0, WS_BACKOFF.length - 1)];
-    state.wsAttempts = (state.wsAttempts || 0) + 1;
-    scheduleReconnect(delay);
+    if (state.ws !== ws) return;
+    state.ws = null;
+    clearTimeout(state.wsWatch);
+    wsFailed();
   };
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
   ws.onmessage = (ev) => {
+    if (state.ws !== ws) return;
+    noteWsActivity(ws);
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'ping') return;             // серверный heartbeat
@@ -3831,6 +3858,38 @@ function connectWS() {
   };
 }
 
+function noteWsActivity(ws) {
+  state.wsLastActivity = Date.now();
+  armWsWatch(ws);
+}
+function armWsWatch(ws) {
+  clearTimeout(state.wsWatch);
+  state.wsWatch = setTimeout(() => {
+    if (document.hidden || state.ws !== ws) return;
+    if (Date.now() - state.wsLastActivity >= WS_STALE_MS) {
+      // Полуоткрытое соединение после потери сети: закрыть, затем обычный backoff.
+      stopWs();
+      wsFailed();
+    }
+  }, Math.max(1, WS_STALE_MS - (Date.now() - state.wsLastActivity)));
+}
+
+function wsFailed() {
+  const delay = WS_BACKOFF[Math.min(state.wsAttempts || 0, WS_BACKOFF.length - 1)];
+  state.wsAttempts = (state.wsAttempts || 0) + 1;
+  setWsStatus(false);
+  scheduleReconnect(delay);
+}
+
+function stopWs() {
+  clearTimeout(state.wsTimer);
+  clearTimeout(state.wsWatch);
+  const old = state.ws;
+  state.ws = null;
+  if (old) { try { old.close(); } catch {} }
+  setWsStatus(false);
+}
+
 /** v1.72.1 (T-91): переключить живые обновления на активного клиента без переподключения сокета. */
 function wsSwitchClient(company) {
   const ws = state.ws;
@@ -3841,62 +3900,42 @@ function wsSwitchClient(company) {
 
 function scheduleReconnect(seconds) {
   clearTimeout(state.wsTimer);
+  if (!state.me || document.hidden || navigator.onLine === false) return;
   const jitter = seconds * (0.8 + Math.random() * 0.4);   // ±20% — анти-шторм
   state.wsTimer = setTimeout(connectWS, jitter * 1000);
 }
 
-// Возврат в приложение (телефон «проснулся») — одно мягкое переподключение
+// Возврат телефона: проверяем давность серверного heartbeat, без новых проверочных запросов.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    updateConnIndicator(true);
+  if (!document.hidden && state.me) {
+    if (state.ws && ((state.ws.readyState === 1 && Date.now() - state.wsLastActivity >= WS_STALE_MS)
+      || (state.ws.readyState === 0 && Date.now() - state.wsStarted >= WS_CONNECT_MS))) stopWs();
     if (!state.ws || state.ws.readyState > 1) {
-      clearTimeout(state.wsTimer);
-      try { if (state.ws) state.ws.close(); } catch (e) {}
+      stopWs();
       connectWS();
-    }
-    // v1.8.0: не чаще раза в 8 с — телефон «просыпается» часто,
-    // а каждая перерисовка выглядит как мигание сайта
-    if (state.me && Date.now() - (state._lastVisRoute || 0) > 8000) {
+    } else if (state.ws.readyState === 1) armWsWatch(state.ws);
+    connectionStatus.update();
+    // Уже открытый экран иногда устаревает во время сна телефона; не чаще раза в минуту.
+    if (Date.now() - (state._lastVisRoute || 0) > 60000) {
       state._lastVisRoute = Date.now();
       route(true);
     }
   }
 });
-window.addEventListener('online', () => updateConnIndicator(true));
-window.addEventListener('offline', () => updateConnIndicator(false));
-
-function updateConnIndicator(force) {
-  const lastOk = window.__ymLastApiOk || 0;
-  // «Офлайн» только если: браузер считает сеть недоступной ИЛИ и WS не может
-  // подключиться (3+ попыток), и API не отвечал дольше 30 секунд.
-  const apiStale = Date.now() - lastOk > 30000;
-  const reallyOffline = !navigator.onLine ||
-    ((state.wsAttempts || 0) >= 3 && apiStale && !(state.ws && state.ws.readyState === 1));
-  const ind = $('#offline-indicator');
-  if (!ind) return;
-  if (force) ind.dataset.lastFlip = '0';
-  const now = Date.now();
-  const last = Number(ind.dataset.lastFlip || 0);
-  if (now - last < 8000) return;                  // гистерезис: не мигаем
-  const isHidden = ind.classList.contains('hidden');
-  if (reallyOffline && isHidden) { ind.classList.remove('hidden'); ind.dataset.lastFlip = now; }
-  if (!reallyOffline && !isHidden) { ind.classList.add('hidden'); ind.dataset.lastFlip = now; }
-}
+window.addEventListener('online', () => {
+  stopWs();
+  connectionStatus.online(getApiRequestId());
+  if (state.me && !document.hidden) connectWS();
+});
+window.addEventListener('offline', () => {
+  connectionStatus.offline(getApiRequestId());
+  stopWs();
+});
 
 function setWsStatus(ok) {
-  // v1.7.0: трогаем DOM только при РЕАЛЬНОЙ смене состояния — иначе текст
-  // дёргается при каждом переподключении и кажется, что «мерцает сайт»
-  if (state.wsOk === ok) return;
   state.wsOk = ok;
-  const dot = $('#ws-status .live-dot');
-  const txt = $('#ws-status-text');
-  if (dot) { dot.classList.toggle('on', ok); dot.classList.toggle('off', !ok); }
-  if (txt) {
-    // v1.8.0: одиночный разрыв не показываем — статус перестаёт мигать
-    if (ok) txt.textContent = 'Живое подключение';
-    else if ((state.wsAttempts || 0) >= 2) txt.textContent = 'Переподключение…';
-  }
-  updateConnIndicator(false);
+  if (ok) connectionStatus.wsOpen();
+  else connectionStatus.wsClosed();
 }
 
 // v1.6.0: события сливаются в одну перерисовку — при пачке чеков не дёргаем
@@ -3953,7 +3992,7 @@ function handleWsEvent(type, p) {
   }
 }
 
-async function refreshBadges() {
+async function refreshQueueBadge() {
   try {
     const q = state.me?.id ? (await outbox.list(state.me.id)).length : 0;
     const qb = $('#nav-queue-badge');
@@ -3961,6 +4000,9 @@ async function refreshBadges() {
     qb.classList.toggle('hidden', q === 0);
     qb.classList.toggle('accent', q > 0);
   } catch { /* ошибка показана на экране очереди */ }
+}
+async function refreshBadges() {
+  await refreshQueueBadge();
   navigationCounts.schedule();
   // Число конфликтов и заявок имеет собственный существующий контракт.
   if (isAdmin()) {
@@ -3976,6 +4018,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('.c-open');
   if (!b) return;
   state.companyFilter = b.dataset.id;
+  navigationCounts.schedule();
   try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (err) {}
   const sel = $('#company-filter');
   if (sel) sel.value = b.dataset.id;
@@ -3996,7 +4039,6 @@ function routeGuard() {
 }
 
 function route(silent = false) {
-  navigationCounts.schedule();
   _routeSeq += 1;   // v1.70.87 (#25): незаконченные отрисовки прежнего перехода устаревают
   if (state.camera) { state.camera.stop(); state.camera = null; }
   osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
@@ -4250,6 +4292,7 @@ async function initCompanyFilter() {
   sel.classList.remove('hidden');
   sel.onchange = () => {
     state.companyFilter = sel.value;
+    navigationCounts.schedule();
     try { localStorage.setItem('ymaster-company', sel.value); } catch (e) {}
     route();
   };
@@ -4278,6 +4321,7 @@ async function initClientSwitch() {
 async function openClientCompany(companyId, view) {
   if (isAdmin()) {
     state.companyFilter = companyId;
+    navigationCounts.schedule();
     try { localStorage.setItem('ymaster-company', companyId); } catch (e) { /* приватный режим */ }
     const sel = $('#company-filter');
     if (sel) sel.value = companyId;
@@ -4587,6 +4631,7 @@ async function viewCompanies(container, alive = routeGuard()) {
   if (cao) cao.onclick = () => openAO1Modal();
   $$('.cp-open').forEach(b => b.onclick = () => {
     state.companyFilter = b.dataset.id;
+    navigationCounts.schedule();
     try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (e) {}
     if (sel) { sel.value = b.dataset.id; }
     location.hash = '#/dashboard';
@@ -4873,7 +4918,7 @@ function openCompanyDelete(d) {
       const r = await api.post(`/api/v1/companies/${c.id}/delete`, payload);
       $('#modal-root').classList.add('hidden');
       toast(r.message, 'ok', '🗑');
-      if (state.companyFilter === c.id) { state.companyFilter = 'all'; try { localStorage.setItem('ymaster-company', 'all'); } catch (e) {} }
+      if (state.companyFilter === c.id) { state.companyFilter = 'all'; navigationCounts.schedule(); try { localStorage.setItem('ymaster-company', 'all'); } catch (e) {} }
       route(true);
     } catch (e) { toast(e.message, 'err'); }
   };
@@ -6750,6 +6795,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.14': [
+    { icon: '📶', title: 'Понятное состояние связи',
+      text: 'Связь с сервером показывается по реальным ответам; если живые обновления недоступны, это указано отдельно. Лишний опрос при переходах не запускается.' },
+  ],
   '1.72.13': [
     { icon: '🔢', title: 'Счётчики в меню',
       text: 'В меню показано количество доступных документов и других объектов. Некоторые значки считают ожидающие действия; при отсутствии связи число скрывается.' },
@@ -8664,12 +8713,13 @@ async function flushOfflineQueue(manual = false) {
   const ownerId = state.me?.id;
   if (!ownerId || !getToken() || outboxFlushing) return;
   outboxFlushing = true;
-  let sent = 0;
+  let sent = 0, changed = manual;
   try {
     if (manual) await outbox.retry(ownerId);
     while (state.me?.id === ownerId && getToken()) {
       const item = await outbox.claim(ownerId);
       if (!item) break;
+      changed = true;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
       try {
@@ -8706,7 +8756,8 @@ async function flushOfflineQueue(manual = false) {
     toast('Не удалось обработать локальную очередь: ' + e.message, 'err', 'Синхронизация');
   } finally {
     outboxFlushing = false;
-    refreshBadges();
+    // Пустая локальная очередь не должна будить сервер каждые 30 секунд.
+    if (changed) refreshBadges(); else refreshQueueBadge();
     if (state.me?.id === ownerId) refreshOutboxPanel();
   }
 }
