@@ -56,3 +56,23 @@ describe('мониторинг сервера без облака', () => {
     localServerStop();
   });
 });
+
+describe('расширенный локальный снимок', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('показывает load, swap и сетевые интерфейсы без ложного месячного итога', async () => {
+    api.get.mockResolvedValue({ cpu_pct: 20, logical_cpus: 2, load_average: [0.1, 0.2, 0.3], uptime_sec: 7200,
+      cpu_detail: { user_pct: 10, system_pct: 5, iowait_pct: 2, steal_pct: 1 },
+      memory: null, disk: null, swap: { total_bytes: 1024, used_bytes: 512, free_bytes: 512, pct: 50 },
+      network: { ens3: { rx_bytes_per_sec: 1024, tx_bytes_per_sec: 2048, rx_packets_per_sec: 1, tx_packets_per_sec: 2,
+        rx_errors_delta: 0, tx_errors_delta: 0, rx_drops_delta: 0, tx_drops_delta: 0 } } });
+    localServerWire(); document.querySelector('#server-monitor-refresh').click(); await flush();
+    const card = document.querySelector('#st-server-monitor').textContent;
+    expect(card).toMatch(/0,10.*0,20.*0,30/);
+    expect(card).toContain('50,00 %');
+    expect(card).toContain('ens3');
+    expect(card).toContain('1,0 КиБ/с');
+    expect(card).toMatch(/месячн/i);
+    expect(card).toMatch(/не.*собира/i);
+    localServerStop();
+  });
+});

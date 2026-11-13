@@ -7,7 +7,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.19');
+    localStorage.setItem('ymaster_seen_version', '1.72.20');
   }, token);
   const cloudRequests = [];
   page.on('request', req => { if (new URL(req.url()).pathname.startsWith('/api/v1/openstack')) cloudRequests.push(req.url()); });
@@ -20,6 +20,10 @@ test('локальный монитор работает без облачног
   expect((await response).status()).toBe(200);
   await expect(page.locator('#server-monitor-kpi')).toContainText('CPU сервера');
   await expect(page.locator('#server-monitor-kpi')).toContainText('Память сервера');
+  await expect(page.locator('#server-monitor-kpi')).toContainText('Load average');
+  await expect(page.locator('#server-monitor-kpi')).toContainText('Swap');
+  await expect(page.locator('#server-monitor-details')).toContainText('Сеть:');
+  await expect(page.locator('#server-monitor-note')).toContainText('месячный трафик');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
   await expect(page.locator('#st-openstack')).toHaveCount(0);
   expect(cloudRequests).toEqual([]);
