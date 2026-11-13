@@ -17,7 +17,7 @@ test('OpenStack: частичный доступ не превращается �
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.17');
+    localStorage.setItem('ymaster_seen_version', '1.72.18');
   }, token);
   await page.route('**/api/v1/openstack/test', route => route.fulfill({ json: {
     ok: true, authorized: true, notice: 'Keystone принял учётные данные, но статистика гипервизоров недоступна.',
@@ -54,7 +54,7 @@ test('локальный монитор работает, когда настр�
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.17');
+    localStorage.setItem('ymaster_seen_version', '1.72.18');
   }, token);
   await page.route('**/api/v1/openstack/**', route => route.fulfill({ status: 503, json: { detail: 'Нет облака' } }));
   await page.goto('/#/settings');

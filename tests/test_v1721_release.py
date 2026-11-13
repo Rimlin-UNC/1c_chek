@@ -22,7 +22,7 @@ def test_release_versions_and_cache():
                  "app/static/manifest.webmanifest", "app/static/maxapp/index.html", "app/static/b2b/index.html"):
         assert current in read(path), path
     assert read("app/static/index.html").count(f"?v={current}") == 3
-    assert read("app/static/sw.js").count(f"?v={current}") == 4
+    assert read("app/static/sw.js").count(f"?v={current}") == 5
     assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
     assert f"ymaster-check-v{current}" in read("app/static/sw.js")
     block = updater.read_blocks(str(ROOT / "app/services/blocks.py"))["Рабочее место аутсорсера"]

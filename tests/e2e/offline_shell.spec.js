@@ -9,10 +9,16 @@ test('офлайн после первой установки: скрипты н
       await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
     }
   });
+  await page.evaluate(async () => {
+    localStorage.setItem('ymaster_check_offline_queue', 'защищённая-старая-очередь');
+    const box = await import('/js/offline_outbox.js');
+    await box.enqueue({ ownerId: 'offline-test', companyId: null, clientId: null, qrData: 'test-qr', source: 'web' });
+  });
   await context.setOffline(true);
   const replies = await page.evaluate(async () => {
+    const appUrl = new URL(document.querySelector('script[src*="app.js?v="]').src);
     const urls = ['/js/approvals.js', '/js/clients.js', '/js/counterparties.js',
-      '/js/primary.js', '/js/vendor/chart.umd.js'];
+      '/js/primary.js', `/js/osm.js?v=${appUrl.searchParams.get('v')}`, '/js/vendor/chart.umd.js'];
     return await Promise.all(urls.map(async path => {
       const response = await fetch(path);
       return { path, ok: response.ok, type: response.headers.get('content-type') };
@@ -30,6 +36,9 @@ test('офлайн после первой установки: скрипты н
   await page.reload();
   await expect(page.locator('#land-login')).toBeAttached();
   await page.waitForFunction(() => typeof document.querySelector('#login-form').onsubmit === 'function');
+  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe('защищённая-старая-очередь');
+  expect(await page.evaluate(async () => (await import('/js/offline_outbox.js')).list('offline-test')))
+    .toMatchObject([{ qrData: 'test-qr' }]);
 });
 
 test('потеря сети при перезапуске не удаляет токен, а настоящий отказ входа удаляет', async ({ page, context }) => {

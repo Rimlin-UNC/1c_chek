@@ -1310,7 +1310,7 @@ class TestTabs:
     def test_app_js_only_inserts_the_card(self):
         """Разметка и поведение вынесены в osm.js: app.js вырос на минимум."""
         js = _read(APP_JS)
-        assert "from './osm.js'" in js
+        assert re.search(r"from '\./osm\.js\?v=[0-9.]+'", js)
         assert "osmWire(" in js
         assert "osmStop();" in js
 

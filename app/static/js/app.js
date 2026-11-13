@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { osmCardHtml, osmWire, osmStop, localServerCardHtml, localServerWire, localServerStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
+import { osmCardHtml, osmWire, osmStop, localServerCardHtml, localServerWire, localServerStop } from './osm.js?v=1.72.18';   // v1.70.51: мониторинг OpenStack
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -5690,7 +5690,8 @@ async function viewScan(container) {
       </div>
 
       <div>
-        <div id="scan-outbox"></div>
+        <div id="scan-legacy-queue"></div>
+        <div id="scan-outbox"><div class="glass card" role="status">Проверяем локальную очередь. Не очищайте данные браузера.</div></div>
         <div class="glass card" style="margin-bottom:16px">
           <div class="card-title">🧾 Сдача чеков <span class="spacer"></span>
             <span class="batch-prog" id="scan-batch-prog">0 / 100</span></div>
@@ -5809,15 +5810,19 @@ async function viewScan(container) {
 // Обновляем только очередь, не перерисовывая экран и не останавливая камеру.
 async function refreshOutboxPanel() {
   const panel = document.getElementById('scan-outbox');
+  const legacyPanel = document.getElementById('scan-legacy-queue');
   const ownerId = state.me?.id;
-  if (!panel || !ownerId || state.view !== 'scan') return;
+  if (!panel || !legacyPanel || !ownerId || state.view !== 'scan') return;
+  // Старая очередь доступна независимо от IndexedDB: не задерживаем предупреждение
+  // из-за медленного или зависшего открытия новой очереди.
+  const legacyQueueSize = offlineQueue.size();
+  legacyPanel.innerHTML = legacyQueueSize
+    ? `<div class="glass card" role="alert">Старые сканы без подтверждённого владельца: ${legacyQueueSize}. Они сохранены на устройстве, но автоматически не отправляются, чтобы не назначить их неверной компании. Обратитесь к администратору; не очищайте данные браузера.</div>` : '';
   let queue = [], queueError = false;
   try { queue = await outbox.list(ownerId); } catch { queueError = true; }
   if (state.me?.id !== ownerId || panel !== document.getElementById('scan-outbox')) return;
-  const legacyQueueSize = offlineQueue.size();
   panel.innerHTML = `
 ${queueError ? `<div class="glass card" role="alert">Локальное хранилище недоступно. Скан не будет сохранён; проверьте настройки и свободное место.</div>` : ''}
-        ${legacyQueueSize ? `<div class="glass card" role="alert">Старые сканы без подтверждённого владельца: ${legacyQueueSize}. Они сохранены на устройстве, но автоматически не отправляются, чтобы не назначить их неверной компании. Обратитесь к администратору; не очищайте данные браузера.</div>` : ''}
         ${queue.length > 0 ? `
         <div class="glass card" style="margin-bottom:16px">
           <div class="card-title">⚡ На устройстве: ${queue.length}</div>
@@ -6810,6 +6815,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.18': [
+    { icon: '🛠️', title: 'Надёжность запуска',
+      text: 'Исправлено смешение версий модуля мониторинга после обновления. Если запуск не восстановился, сохраните данные браузера и обратитесь к администратору.' },
+  ],
   '1.72.17': [
     { icon: '🖥️', title: 'Показатели среды программы',
       text: 'Отдельная карточка читает CPU, память и файловую систему программы непосредственно из Linux, без OpenStack. Показатели обновляются по кнопке; истории пока нет.' },

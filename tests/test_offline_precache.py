@@ -7,7 +7,9 @@ STATIC = ROOT / 'app/static'
 
 
 def _dependencies():
-    visited = set()
+    from urllib.parse import urlsplit
+
+    visited, urls = set(), set()
     def visit(path):
         path = path.resolve()
         if path in visited:
@@ -15,10 +17,27 @@ def _dependencies():
         assert path.is_file(), path
         visited.add(path)
         text = path.read_text(encoding='utf-8')
-        for spec in re.findall(r'''(?:^\s*import\s+(?:[^'"\n]*?\s+from\s+)?|^\s*export\s+[^'"\n]*?\s+from\s+)["'](\.[^"']+)["']''', text, re.M):
-            visit(path.parent / spec)
+        pattern = r"""(?:^\s*import\s+(?:[^'"\n]*?\s+from\s+)?|^\s*export\s+[^'"\n]*?\s+from\s+)["'](\.[^"']+)["']"""
+        for spec in re.findall(pattern, text, re.M):
+            parsed = urlsplit(spec)
+            dependency = (path.parent / parsed.path).resolve()
+            url = '/' + str(dependency.relative_to(STATIC))
+            if parsed.query:
+                url += '?' + parsed.query
+            urls.add(url)
+            visit(dependency)
     visit(STATIC / 'js/app.js')
-    return {'/' + str(p.relative_to(STATIC)) for p in visited if p.name != 'app.js'}
+    return urls
+
+
+def test_critical_osm_import_is_versioned_and_precached():
+    from app.config import settings
+
+    app = (STATIC / 'js/app.js').read_text(encoding='utf-8')
+    sw = (STATIC / 'sw.js').read_text(encoding='utf-8')
+    expected = f'./osm.js?v={settings.APP_VERSION}'
+    assert f"from '{expected}'" in app
+    assert f"'/js/osm.js?v={settings.APP_VERSION}'" in sw
 
 
 def test_every_static_module_and_chart_is_precached_with_exact_url():

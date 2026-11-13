@@ -18,7 +18,7 @@ def test_candidate_version_and_cache_agree():
                  'app/static/maxapp/index.html', 'app/static/b2b/index.html'):
         assert current in read(path), path
     assert read('app/static/index.html').count(f'?v={current}') == 3
-    assert read('app/static/sw.js').count(f'?v={current}') == 4
+    assert read('app/static/sw.js').count(f'?v={current}') == 5
     assert f'ymaster-check-v{current}' in read('app/static/sw.js')
 
 

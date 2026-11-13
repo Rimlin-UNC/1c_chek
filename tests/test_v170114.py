@@ -36,7 +36,7 @@ class TestRelease:
                     "app/static/b2b/index.html"):
             assert CURRENT in read(rel), rel
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{CURRENT}" in sw and sw.count(f"?v={CURRENT}") == 4
+        assert f"ymaster-check-v{CURRENT}" in sw and sw.count(f"?v={CURRENT}") == 5
         assert read("app/static/index.html").count(f"?v={CURRENT}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={CURRENT}") == 2
         assert f'"version": "{CURRENT}"' in read("app/static/manifest.webmanifest")
