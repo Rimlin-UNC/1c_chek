@@ -88,24 +88,28 @@ function fmtBytes(value) {
 }
 
 function fmtMb(value) {
+  if (value === null || value === undefined || value === '') return '—';
   const n = Number(value) || 0;
   if (n >= 1024) return (n / 1024).toFixed(1) + ' ГБ';
   return fmtInt(n) + ' МБ';
 }
 
 function fmtGb(value) {
+  if (value === null || value === undefined || value === '') return '—';
   const n = Number(value) || 0;
   if (n >= 1024) return (n / 1024).toFixed(2) + ' ТБ';
   return fmtInt(n) + ' ГБ';
 }
 
 function fmtPct(value) {
+  if (value === null || value === undefined || value === '') return '—';
   const n = Number(value) || 0;
   return n.toFixed(2).replace('.', ',') + ' %';
 }
 
 // ТЗ, раздел 9: зелёный — норма, жёлтый от порога, красный от порога + 10 %.
 function levelOf(pctValue, limit) {
+  if (pctValue === null || pctValue === undefined) return '';
   const limitNum = Number(limit) || 0;
   if (limitNum <= 0) return 'osm-ok';
   const value = Number(pctValue) || 0;
@@ -317,7 +321,7 @@ function limitsPanel(set) {
     <label class="field"><span>Порог трафика, ГБ в сутки</span>
       <input id="osm-th-traffic" type="number" min="0" step="0.5"
         value="${esc(th.threshold_traffic_gb_day ?? 0)}">
-      <span class="form-hint">0 — не проверять</span></label>
+      <span class="form-hint">0 — не проверять. Сейчас порог сравнивается с накопительным счётчиком Octavia, а не с расходом за сутки; не используйте его для суточного контроля.</span></label>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
     <button type="button" class="btn btn-primary btn-sm" id="osm-save-limits">💾 Сохранить пороги и опрос</button>
@@ -335,10 +339,10 @@ function metricsPanel() {
     <span class="spacer"></span>
     <button type="button" class="btn btn-sm" id="osm-refresh">🔄 Обновить</button>
   </div>
-  <p class="form-hint" style="margin-top:10px">Загрузка процессора, оперативной
-    памяти и диска, % от ёмкости</p>
+  <p class="form-hint" style="margin-top:10px">Учтённые ресурсы гипервизоров,
+    % от ёмкости; не фактическая загрузка виртуальных машин.</p>
   <div class="osm-chart"><canvas id="osm-chart-util"></canvas></div>
-  <p class="form-hint">Сетевой трафик балансировщиков, байт в секунду периода</p>
+  <p class="form-hint">Накопительные счётчики трафика Octavia, байты; не скорость и не расход за сутки.</p>
   <div class="osm-chart"><canvas id="osm-chart-net"></canvas></div>
   <p class="form-hint" id="osm-metrics-note"></p>`;
 }
@@ -374,11 +378,11 @@ export function osmCardHtml(set, status) {
           <span class="spacer"></span>
           <span class="chip ${chipClass}"><span class="dot"></span>${esc(chipText)}</span>
         </div>
-        <p class="form-hint" style="margin-bottom:10px">Показатели облака
-          OpenStack: загрузка процессоров, оперативной памяти и дисков, квоты
-          проекта и сетевой трафик. Программа подключается к Keystone по
-          штатному openstacksdk, снимок пишется в базу и показывается здесь.
-          Блок доступен администратору.</p>
+        <p class="form-hint" style="margin-bottom:10px">Показатели OpenStack:
+          выделенные ресурсы гипервизоров и квоты проекта, а при наличии Octavia —
+          её счётчики трафика. Это не измерение фактической загрузки процессора
+          или памяти внутри виртуальной машины. Доступность зависит от прав и
+          сервисов провайдера. Блок доступен администратору приложения.</p>
         <div class="osm-tabs" role="tablist" aria-label="Мониторинг OpenStack">
           ${tabsHtml('conn')}
         </div>
@@ -455,8 +459,21 @@ function destroyCharts() {
 function chartFallback(canvasId, text) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
-  const box = canvas.parentElement;
-  box.innerHTML = `<div class="osm-chart-empty">${esc(text)}</div>`;
+  canvas.hidden = true;
+  let message = canvas.parentElement.querySelector('.osm-chart-empty');
+  if (!message) {
+    message = document.createElement('div');
+    message.className = 'osm-chart-empty';
+    canvas.parentElement.appendChild(message);
+  }
+  message.textContent = text;
+}
+
+function restoreChart(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  canvas.hidden = false;
+  canvas.parentElement.querySelector('.osm-chart-empty')?.remove();
 }
 
 function baseOptions(yLabel, yMax, yCallback) {
@@ -482,6 +499,8 @@ function baseOptions(yLabel, yMax, yCallback) {
 
 function renderCharts(points) {
   destroyCharts();
+  restoreChart('osm-chart-util');
+  restoreChart('osm-chart-net');
   if (!window.Chart) {
     chartFallback('osm-chart-util', 'Библиотека графиков не загрузилась: '
       + 'числовые значения доступны в карточках выше.');
@@ -496,9 +515,10 @@ function renderCharts(points) {
 
   const labels = points.map(p => shortTime(p.collected_at));
   const share = (used, total) => points.map((p) => {
-    const t = Number(p[total]) || 0;
-    const u = Number(p[used]) || 0;
-    return t > 0 ? Math.round((u / t) * 10000) / 100 : 0;
+    if (p[total] == null || p[used] == null) return null;
+    const t = Number(p[total]), u = Number(p[used]);
+    return Number.isFinite(t) && Number.isFinite(u) && t > 0
+      ? Math.round((u / t) * 10000) / 100 : null;
   });
   const line = (label, data, color) => ({
     label, data, borderColor: color, backgroundColor: color,
@@ -530,8 +550,8 @@ function renderCharts(points) {
       charts.push(new window.Chart(netCanvas.getContext('2d'), {
         type: 'line',
         data: { labels, datasets: [
-          line('Входящий', points.map(p => Number(p.traffic_in_bytes) || 0), COLOR.netIn),
-          line('Исходящий', points.map(p => Number(p.traffic_out_bytes) || 0), COLOR.netOut),
+          line('Входящий', points.map(p => p.traffic_in_bytes == null ? null : Number(p.traffic_in_bytes)), COLOR.netIn),
+          line('Исходящий', points.map(p => p.traffic_out_bytes == null ? null : Number(p.traffic_out_bytes)), COLOR.netOut),
         ] },
         options: baseOptions('', undefined, v => fmtBytes(v)),
       }));
@@ -552,15 +572,23 @@ function kpi(title, value, sub, cls) {
 function renderWarnings(box, view) {
   if (!box) return;
   const list = view.warnings || [];
-  if (!list.length) {
-    box.innerHTML = view.available === false
-      ? '<div class="osm-alert warn">⚠<div>Снимков пока нет: опрос не выполнялся '
-        + 'или подключение не настроено.</div></div>'
-      : '';
-    return;
-  }
-  box.innerHTML = `<div class="osm-alert bad">⚠<div><b>Превышены пороги</b>`
-    + `<ul>${list.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div></div>`;
+  const notes = view.notes || {};
+  const partial = [];
+  if (notes.hypervisor_error) partial.push('Статистика гипервизоров недоступна; показатели CPU, RAM и диска не получены.');
+  if (notes.quota_error) partial.push('Квоты проекта недоступны.');
+  if (notes.placement_error) partial.push('Инвентарь Placement недоступен.');
+  const noData = view.available === false
+    ? '<div class="osm-alert warn">⚠<div>Снимков пока нет: опрос не выполнялся или подключение не настроено.</div></div>' : '';
+  const detail = partial.length ? `<div class="osm-alert warn">⚠<div>Частичный сбор<ul>${partial.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div></div>` : '';
+  const thresholds = list.length ? `<div class="osm-alert bad">⚠<div><b>Превышены пороги</b>`
+    + `<ul>${list.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div></div>` : '';
+  box.innerHTML = noData + detail + thresholds;
+}
+
+function quotaValue(value, format = fmtInt) {
+  if (value === null || value === undefined) return '—';
+  if (Number(value) === -1) return 'без лимита';
+  return format(value);
 }
 
 function renderKpi(view, thresholds) {
@@ -573,7 +601,7 @@ function renderKpi(view, thresholds) {
 
   const parts = [
     kpi('Процессор', fmtPct(cpu.pct),
-      `${fmtInt(cpu.used)} из ${fmtInt(cpu.total)} vCPU`,
+      `${quotaValue(cpu.used)} из ${quotaValue(cpu.total)} vCPU гипервизоров`,
       levelOf(cpu.pct, th.threshold_cpu_pct)),
     kpi('Оперативная память', fmtPct(ram.pct),
       `занято ${fmtMb(ram.used_mb)} из ${fmtMb(ram.total_mb)}, `
@@ -583,9 +611,9 @@ function renderKpi(view, thresholds) {
       `занято ${fmtGb(disk.used_gb)} из ${fmtGb(disk.total_gb)}, `
         + `свободно ${fmtGb(disk.free_gb)}`,
       levelOf(disk.pct, th.threshold_disk_pct)),
-    kpi('Квоты проекта', `${fmtInt(q.used_cores ?? 0)} / ${fmtInt(q.max_cores ?? 0)}`,
-      `ядер; память ${fmtMb(q.used_ram_mb)} из ${fmtMb(q.max_ram_mb)}; `
-        + `инстансов ${fmtInt(q.used_instances ?? 0)} из ${fmtInt(q.max_instances ?? 0)}`),
+    kpi('Квоты проекта', `${quotaValue(q.used_cores)} / ${quotaValue(q.max_cores)}`,
+      `выделено ядер; память ${quotaValue(q.used_ram_mb, fmtMb)} из ${quotaValue(q.max_ram_mb, fmtMb)}; `
+        + `инстансов ${quotaValue(q.used_instances)} из ${quotaValue(q.max_instances)}. Это не фактическая загрузка.`),
     kpi('Сеть', net.in_bytes === null || net.in_bytes === undefined
       ? '—' : fmtBytes(net.in_bytes),
       net.in_bytes === null || net.in_bytes === undefined
@@ -689,7 +717,8 @@ function renderTestResult(result) {
   const services = Object.entries(result.services || {});
   const chips = services.map(([name, state]) => {
     const chipCls = state === 'доступен' ? 'verified' : 'unknown';
-    return `<span class="chip ${chipCls}"><span class="dot"></span>${esc(name)} — ${esc(state)}</span>`;
+    const label = state === 'доступен' ? 'есть в каталоге' : state;
+    return `<span class="chip ${chipCls}"><span class="dot"></span>${esc(name)} — ${esc(label)}</span>`;
   }).join('');
   // v1.70.53: безликий HTTP 401 от провайдера администратор получил без
   // объяснений. Чек-лист по реальным причинам отказа — прямо под ошибкой.
@@ -739,6 +768,7 @@ function renderTestResult(result) {
     + (result.error ? `<div>${esc(result.error)}</div>` : '')
     + (result.error_code ? `<div>Код: <span class="osm-code">${esc(result.error_code)}</span></div>` : '')
     + (result.notice ? `<div class="form-hint">${esc(result.notice)}</div>` : '')
+    + (result.ok ? '<div class="form-hint">Проверка не сохраняет настройки и не включает опрос. Сервисы в каталоге не обязательно доступны для чтения; сохраните настройки с включённым мониторингом и проверьте показатели.</div>' : '')
     + deniedHint
     + catalogHint
     + (chips ? `<div class="osm-services">${chips}</div>` : '')

@@ -263,22 +263,27 @@ def metrics_current(user=Depends(require_admin), db: Session = Depends(get_db)):
     row = store.get_settings(db)
     last = store.latest_metric(db)
     if last is None:
-        empty = {"collected_at": None, "vcpus_total": 0, "vcpus_used": 0,
-                 "ram_total_mb": 0, "ram_used_mb": 0, "disk_total_gb": 0,
-                 "disk_used_gb": 0, "traffic_in_bytes": None,
+        empty = {"collected_at": None, "vcpus_total": None, "vcpus_used": None,
+                 "ram_total_mb": None, "ram_used_mb": None, "disk_total_gb": None,
+                 "disk_used_gb": None, "traffic_in_bytes": None,
                  "traffic_out_bytes": None, "quotas": {}}
         view = collector.current_view(empty, thresholds_of(row))
         return {"ok": True, "available": False, **view,
                 "message": "снимков пока нет: monitoring не выполнялся"}
 
-    quotas = {}
     try:
         raw = json.loads(last.raw_json or "{}")
-        quotas = raw.get("quotas") or {}
-    except ValueError:
-        quotas = {}
-    snapshot = {**last.public_dict(), "quotas": quotas,
-                "collected_at": last.collected_at}
+        if not isinstance(raw, dict):
+            raw = {}
+    except (TypeError, ValueError):
+        raw = {}
+    raw_notes = raw.get('notes') if isinstance(raw.get('notes'), dict) else {}
+    # Старые ошибки могут содержать секреты; наружу отдаём только факт отказа.
+    notes = {key: 'Недоступно или не получено' if raw_notes.get(key) else ''
+             for key in ('hypervisor_error', 'quota_error', 'placement_error')}
+    snapshot = {**last.public_dict(), "quotas": raw.get('quotas') or {},
+                "placement_inventories": raw.get('placement_inventories'),
+                "notes": notes, "collected_at": last.collected_at}
     view = collector.current_view(snapshot, thresholds_of(row))
     return {"ok": True, "available": True, **view,
             "status": store.status_of(db)}

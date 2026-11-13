@@ -181,7 +181,8 @@ class OpenstackMetric(Base):
     raw_json: Mapped[str] = mapped_column(Text, default="")
 
     def public_dict(self) -> dict:
-        return {
+        import json
+        result = {
             "collected_at": iso_z(self.collected_at),
             "vcpus_total": self.vcpus_total,
             "vcpus_used": self.vcpus_used,
@@ -192,6 +193,21 @@ class OpenstackMetric(Base):
             "traffic_in_bytes": self.traffic_in_bytes,
             "traffic_out_bytes": self.traffic_out_bytes,
         }
+        # Старые NOT NULL колонки хранят ноль даже при отказе. Для новых и
+        # старых частичных снимков признак отсутствия берётся из raw_json.
+        try:
+            raw = json.loads(self.raw_json or '{}')
+            if not isinstance(raw, dict):
+                raw = {}
+        except (TypeError, ValueError):
+            raw = {}
+        notes = raw.get('notes') or {}
+        denied = isinstance(notes, dict) and bool(notes.get('hypervisor_error'))
+        for key in ('vcpus_total', 'vcpus_used', 'ram_total_mb', 'ram_used_mb',
+                    'disk_total_gb', 'disk_used_gb'):
+            if denied or (key in raw and raw[key] is None):
+                result[key] = None
+        return result
 
 
 class OpenstackSyncLog(Base):

@@ -118,6 +118,14 @@ def collect_once(db, row: OpenstackSettings | None = None) -> dict:
     store.write_metric(db, snapshot)
     view = collector.current_view(snapshot, thresholds_of(row))
     store.mark_success(db, row, "сбор выполнен: снимок сохранён")
+    # Отдельный отказ не означает отказ Keystone, но и полным успехом не
+    # является. Не копируем текст облака: он может содержать токен.
+    notes = snapshot.get('notes') or {}
+    for key, label in (('hypervisor_error', 'статистика гипервизоров'),
+                       ('quota_error', 'квоты проекта'),
+                       ('placement_error', 'инвентарь Placement')):
+        if notes.get(key):
+            store.write_log(db, LOG_WARN, f'частичный сбор: {label} недоступны')
 
     # Превышение порогов — отдельная запись журнала уровня WARN, чтобы
     # администратор видел причину в истории, а не только в баннере.

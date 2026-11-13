@@ -10,7 +10,7 @@ test('старый сервер не принимает новую очеред�
   const legacy = JSON.stringify([{ qr_data: 'анонимный старый скан', source: 'web' }]);
   await page.addInitScript(({ token, legacy }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.15');
+    localStorage.setItem('ymaster_seen_version', '1.72.16');
     localStorage.setItem('ymaster_check_offline_queue', legacy);
   }, { token, legacy });
   let oldServer = true;

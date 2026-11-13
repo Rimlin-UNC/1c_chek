@@ -537,7 +537,7 @@ class TestCollector:
         conn.compute = Boom()          # экземплярный атрибут важнее классового
 
         snap = collector.collect_metrics(conn, GOOD_CFG)
-        assert snap["vcpus_total"] == 0
+        assert snap["vcpus_total"] is None
         assert "Nova отказала" in snap["notes"]["hypervisor_error"]
         assert snap["quotas"]["max_cores"] == 100
 
@@ -896,7 +896,7 @@ class TestApi:
         body = client.get(f"{PREFIX}/metrics/current", headers=headers).json()
         assert body["available"] is False
         assert body["collected_at"] is None
-        assert body["cpu"]["pct"] == 0.0
+        assert body["cpu"]["pct"] is None
         assert body["traffic"] is None
         assert isinstance(body["warnings"], list)
 

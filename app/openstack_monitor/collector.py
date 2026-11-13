@@ -28,12 +28,12 @@ MAX_LOAD_BALANCERS = 50
 
 # Имена полей квот в ответе Nova (ТЗ, раздел 6.2).
 QUOTA_FIELDS = {
-    "max_cores": "maxTotalCores",
-    "used_cores": "totalCoresUsed",
-    "max_ram_mb": "maxTotalRAMSize",
-    "used_ram_mb": "totalRAMUsed",
-    "max_instances": "maxTotalInstances",
-    "used_instances": "totalInstancesUsed",
+    "max_cores": ("maxTotalCores", "total_cores", "max_total_cores"),
+    "used_cores": ("totalCoresUsed", "total_cores_used"),
+    "max_ram_mb": ("maxTotalRAMSize", "total_ram", "max_total_ram_size"),
+    "used_ram_mb": ("totalRAMUsed", "total_ram_used"),
+    "max_instances": ("maxTotalInstances", "instances", "max_total_instances"),
+    "used_instances": ("totalInstancesUsed", "instances_used", "total_instances_used"),
 }
 
 def pct(used, total) -> float:
@@ -103,9 +103,18 @@ def quota_limits(conn) -> tuple[dict, str]:
         return {}, connection.exc_summary(exc)
     absolute = _absolute_map(limits)
     out: dict = {}
-    for short, nova_name in QUOTA_FIELDS.items():
-        if nova_name in absolute:
-            out[short] = _as_int(absolute[nova_name], -1)
+    for short, names in QUOTA_FIELDS.items():
+        for name in names:
+            value = absolute.get(name)
+            if value is None:
+                continue
+            try:
+                out[short] = int(value)
+            except (TypeError, ValueError, OverflowError):
+                pass
+            break
+    if not out:
+        return {}, 'Nova не вернула распознанные квоты проекта'
     return out, ""
 
 
@@ -234,12 +243,12 @@ def collect_metrics(conn, cfg: dict) -> dict:
 
     snapshot: dict = {
         "collected_at": _utcnow(),
-        "vcpus_total": stats.get("vcpus", 0),
-        "vcpus_used": stats.get("vcpus_used", 0),
-        "ram_total_mb": stats.get("memory_mb", 0),
-        "ram_used_mb": stats.get("memory_mb_used", 0),
-        "disk_total_gb": stats.get("local_gb", 0),
-        "disk_used_gb": stats.get("local_gb_used", 0),
+        "vcpus_total": stats.get("vcpus"),
+        "vcpus_used": stats.get("vcpus_used"),
+        "ram_total_mb": stats.get("memory_mb"),
+        "ram_used_mb": stats.get("memory_mb_used"),
+        "disk_total_gb": stats.get("local_gb"),
+        "disk_used_gb": stats.get("local_gb_used"),
         "traffic_in_bytes": traffic_in,
         "traffic_out_bytes": traffic_out,
         "quotas": quotas,
@@ -251,9 +260,20 @@ def collect_metrics(conn, cfg: dict) -> dict:
             "traffic_note": traffic_note,
         },
     }
-    snapshot["raw_json"] = json.dumps(
-        {k: v for k, v in snapshot.items() if k != "raw_json"},
-        ensure_ascii=False, default=str)
+    # Ошибки отдельных сервисов тоже могут содержать секрет из настроек.
+    secrets = connection.secrets_of(cfg)
+    snapshot["notes"] = {key: connection.mask_secret(str(value or ''), *secrets)
+                         for key, value in snapshot["notes"].items()}
+    # Ответы SDK могут содержать не только пароль, но и токены. В историю
+    # записываем только факт отказа, а не произвольное сообщение облака.
+    saved = dict(snapshot)
+    saved['notes'] = {
+        key: ('недоступно' if value else '')
+        for key, value in snapshot['notes'].items() if key != 'traffic_note'
+    }
+    saved['notes']['traffic_note'] = ('нет данных' if traffic_in is None and traffic_out is None
+                                      else 'данные получены')
+    snapshot["raw_json"] = json.dumps(saved, ensure_ascii=False, default=str)
     return snapshot
 
 
@@ -262,12 +282,18 @@ def current_view(snapshot: dict, thresholds: dict | None = None) -> dict:
     limits = dict(DEFAULT_THRESHOLDS)
     if thresholds:
         limits.update(thresholds)
-    cpu_total = _as_int(snapshot.get("vcpus_total"))
-    cpu_used = _as_int(snapshot.get("vcpus_used"))
-    ram_total = _as_int(snapshot.get("ram_total_mb"))
-    ram_used = _as_int(snapshot.get("ram_used_mb"))
-    disk_total = _as_int(snapshot.get("disk_total_gb"))
-    disk_used = _as_int(snapshot.get("disk_used_gb"))
+    cpu_total = _as_int(snapshot.get("vcpus_total"), None)
+    cpu_used = _as_int(snapshot.get("vcpus_used"), None)
+    ram_total = _as_int(snapshot.get("ram_total_mb"), None)
+    ram_used = _as_int(snapshot.get("ram_used_mb"), None)
+    disk_total = _as_int(snapshot.get("disk_total_gb"), None)
+    disk_used = _as_int(snapshot.get("disk_used_gb"), None)
+
+    def share(used, total):
+        return None if used is None or total is None or total <= 0 else pct(used, total)
+
+    def free(used, total):
+        return None if used is None or total is None else max(total - used, 0)
     quotas = snapshot.get("quotas") or {}
     collected_at = snapshot.get("collected_at")
     if isinstance(collected_at, datetime):
@@ -282,13 +308,13 @@ def current_view(snapshot: dict, thresholds: dict | None = None) -> dict:
     view = {
         "collected_at": collected_at,
         "cpu": {"total": cpu_total, "used": cpu_used,
-                "pct": pct(cpu_used, cpu_total)},
+                "pct": share(cpu_used, cpu_total)},
         "ram": {"total_mb": ram_total, "used_mb": ram_used,
-                "free_mb": max(ram_total - ram_used, 0),
-                "pct": pct(ram_used, ram_total)},
+                "free_mb": free(ram_used, ram_total),
+                "pct": share(ram_used, ram_total)},
         "disk": {"total_gb": disk_total, "used_gb": disk_used,
-                 "free_gb": max(disk_total - disk_used, 0),
-                 "pct": pct(disk_used, disk_total)},
+                 "free_gb": free(disk_used, disk_total),
+                 "pct": share(disk_used, disk_total)},
         "quotas": {
             "max_cores": quotas.get("max_cores"),
             "used_cores": quotas.get("used_cores"),
@@ -299,6 +325,7 @@ def current_view(snapshot: dict, thresholds: dict | None = None) -> dict:
         },
         "traffic": traffic,
         "placement": snapshot.get("placement_inventories"),
+        "notes": snapshot.get("notes") or {},
     }
     # Предупреждения считаются от уже собранного представления: внутри
     # словаря-литерала имя view ещё не существует (F821).
@@ -322,7 +349,7 @@ def warnings_of(view: dict, thresholds: dict | None = None) -> list[str]:
         ("Диск", view["disk"]["pct"], limits["threshold_disk_pct"]),
     )
     for name, value, limit in pairs:
-        if limit and limit > 0 and value >= limit:
+        if value is not None and limit and limit > 0 and value >= limit:
             out.append(f"{name}: {value} % при пороге {limit} %")
 
     traffic = view.get("traffic") or {}
@@ -331,6 +358,6 @@ def warnings_of(view: dict, thresholds: dict | None = None) -> list[str]:
         total_gb = ((_as_int(traffic.get("in_bytes"))
                      + _as_int(traffic.get("out_bytes"))) / 1_073_741_824)
         if total_gb >= limit_gb:
-            out.append(f"Трафик за сутки: {round(total_gb, 2)} ГБ "
-                       f"при пороге {limit_gb} ГБ")
+            out.append(f"Трафик Octavia: накопительный счётчик {round(total_gb, 2)} ГБ "
+                       f"при пороге {limit_gb} ГБ; расход за сутки не рассчитан")
     return out

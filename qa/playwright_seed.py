@@ -28,6 +28,12 @@ init_db()
 # бухгалтера, поэтому сначала — первый запуск, как у приложения.
 seed_if_needed()
 with SessionLocal() as db:
+    # Все браузерные воркеры используют одну одноразовую БД. Смена пароля
+    # в параллельных сценариях даёт гонку входа, поэтому задаём его здесь.
+    admin = db.query(User).filter(User.username == 'admin').one()
+    admin.password_hash = hash_password('playwright-test-password')
+    admin.must_change_password = False
+    db.commit()
     appsettings.set_setting(db, 'pool_enabled', '1')
     appsettings.set_setting(db, 'pool_pick_monthly_limit', '100')
     for number in (1, 2):

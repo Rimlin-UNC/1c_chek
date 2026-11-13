@@ -187,3 +187,7 @@
 ## Опрос фоновых вкладок (08.11.2026)
 
 [MDN Page Visibility API](https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API): видимость помогает не выполнять необязательный опрос в фоне; браузер может задерживать таймеры. Для восстановления нужна явная проверка при возврате, а для медленных запросов — ограничение параллелизма и защита от зависания; нельзя таким образом отключать доставку сканов или результаты активной операции.
+
+## Ограниченные права OpenStack (08.11.2026)
+
+[Nova API](https://docs.openstack.org/api-ref/compute/) и [Nova policy](https://docs.openstack.org/nova/latest/configuration/policy) указывают: доступ к деталям всех гипервизоров по умолчанию административный, но провайдер может настроить policy. Не просить широкую роль без необходимости. [Zabbix](https://www.zabbix.com/integrations/openstack) разделяет квоты проекта и показатели гипервизоров; квоты не измеряют загрузку гостевой ОС. [Red Hat — Gnocchi](https://docs.redhat.com/en/documentation/red_hat_openstack_platform/15/html/logging_monitoring_and_troubleshooting_guide/monitoring_using_the_telemetry_service) показывает метрики конкретной ВМ; наличие сервиса в каталоге не доказывает права, наличие данных или способ их расчёта. В существующем сборщике Gnocchi не подключён; новый сбор без проверки провайдера не утверждён.

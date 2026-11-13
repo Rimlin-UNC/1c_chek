@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 
-from sqlalchemy import Integer, func
+from sqlalchemy import Integer, case, func, or_
 
 from ..models import iso_z
 from ..services import secretbox
@@ -290,11 +290,23 @@ def _bucket_history(db, since: datetime, until: datetime,
     model = OpenstackMetric
     epoch = func.strftime("%s", model.collected_at).cast(Integer)
     bucket = (epoch / int(step_sec)).cast(Integer)
+    def known_average(name, other):
+        # Оба числа должны быть из одного набора снимков. CASE защищает
+        # json_extract от старого или повреждённого raw_json.
+        missing = case(
+            (func.json_valid(model.raw_json) == 1,
+             or_(func.coalesce(func.json_extract(model.raw_json, '$.notes.hypervisor_error'), '') != '',
+                 func.json_type(model.raw_json, '$.' + name) == 'null',
+                 func.json_type(model.raw_json, '$.' + other) == 'null')),
+            else_=False,
+        )
+        return func.avg(case((missing, None), else_=getattr(model, name)))
+
     rows = (db.query(bucket.label("bucket"),
                      func.min(model.collected_at),
-                     func.avg(model.vcpus_used), func.avg(model.vcpus_total),
-                     func.avg(model.ram_used_mb), func.avg(model.ram_total_mb),
-                     func.avg(model.disk_used_gb), func.avg(model.disk_total_gb),
+                     known_average('vcpus_used', 'vcpus_total'), known_average('vcpus_total', 'vcpus_used'),
+                     known_average('ram_used_mb', 'ram_total_mb'), known_average('ram_total_mb', 'ram_used_mb'),
+                     known_average('disk_used_gb', 'disk_total_gb'), known_average('disk_total_gb', 'disk_used_gb'),
                      func.avg(model.traffic_in_bytes),
                      func.avg(model.traffic_out_bytes))
             .filter(model.collected_at >= since, model.collected_at <= until)
@@ -305,12 +317,12 @@ def _bucket_history(db, since: datetime, until: datetime,
          disk_used, disk_total, t_in, t_out) in rows:
         out.append({
             "collected_at": iso_z(first_at),
-            "vcpus_used": int(cpu_used or 0),
-            "vcpus_total": int(cpu_total or 0),
-            "ram_used_mb": int(ram_used or 0),
-            "ram_total_mb": int(ram_total or 0),
-            "disk_used_gb": int(disk_used or 0),
-            "disk_total_gb": int(disk_total or 0),
+            "vcpus_used": None if cpu_used is None else int(cpu_used),
+            "vcpus_total": None if cpu_total is None else int(cpu_total),
+            "ram_used_mb": None if ram_used is None else int(ram_used),
+            "ram_total_mb": None if ram_total is None else int(ram_total),
+            "disk_used_gb": None if disk_used is None else int(disk_used),
+            "disk_total_gb": None if disk_total is None else int(disk_total),
             "traffic_in_bytes": None if t_in is None else int(t_in),
             "traffic_out_bytes": None if t_out is None else int(t_out),
         })
