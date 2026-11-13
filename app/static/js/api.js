@@ -45,7 +45,9 @@ export class ApiError extends Error {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function once(method, path, body, options = {}) {
-  const headers = withClient({});
+  const headers = Object.prototype.hasOwnProperty.call(options, 'clientId')
+    ? (options.clientId ? { 'X-Ym-Company': options.clientId } : {})
+    : withClient({});
   const token = getToken();
   if (token) headers['Authorization'] = 'Bearer ' + token;
   let payload;
@@ -66,10 +68,13 @@ async function once(method, path, body, options = {}) {
     throw new ApiError(0, 'Нет связи с сервером', null);
   }
   if (resp.status === 401 && !path.includes('/auth/login') && !path.includes('/auth/register')) {
-    clearToken();
-    // best-effort очистка серверной cookie сессии
-    try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch {}
-    window.dispatchEvent(new CustomEvent('ymaster:logout'));
+    // Поздний ответ старой вкладки не должен разлогинить нового пользователя.
+    if (getToken() === token) {
+      clearToken();
+      // best-effort очистка серверной cookie сессии
+      try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch {}
+      window.dispatchEvent(new CustomEvent('ymaster:logout'));
+    }
     throw new ApiError(401, 'Сессия истекла, войдите заново');
   }
   if (!resp.ok) {
@@ -81,7 +86,7 @@ async function once(method, path, body, options = {}) {
         : (data.detail?.message || JSON.stringify(data.detail || data));
     } catch { /* не JSON */ }
     const err = new ApiError(resp.status, msg, data);
-    if (resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
+    if (!options.noClientFallback && resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
       setClient('');                       // клиент отозван или отключён — назад в свою компанию
       window.dispatchEvent(new CustomEvent('ymaster:client-reset', { detail: { message: msg } }));
       err.clientReset = true;

@@ -5,14 +5,19 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.72.11';
+const CACHE = 'ymaster-check-v1.72.12';
 // v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
 // SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.72.11', '/css/home.css?v=1.72.11', '/js/app.js?v=1.72.11', '/js/counterparties.js?v=1.72.11',   // T-83: главная и приложение
-  '/js/api.js', '/js/ui.js',
+  '/css/app.css?v=1.72.12', '/css/home.css?v=1.72.12', '/js/app.js?v=1.72.12', '/js/counterparties.js?v=1.72.12',   // T-83: главная и приложение
+  '/js/api.js', '/js/ui.js', '/js/offline_outbox.js',
+  '/js/approvals.js', '/js/bank.js', '/js/card.js', '/js/clients.js',
+  '/js/counterparties.js', '/js/docreq.js', '/js/goods.js', '/js/osm.js',
+  '/js/primary.js', '/js/primary_folder.js', '/js/primary_mail.js',
+  '/js/supabase_demo.js', '/js/unified_fill.js', '/js/unified_review.js',
+  '/js/vendor/chart.umd.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
   '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
   '/css/splash.css', '/js/splash.js',                 // v1.70.98: заставка загрузки
@@ -36,6 +41,16 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Только заранее известная публичная статика не зависит от Origin: заголовок
+// Vary: Origin у серверного ответа иначе не даёт офлайн-загрузку модулей.
+function cachedResponse(request) {
+  const url = new URL(request.url);
+  const pinned = url.origin === self.location.origin
+    && /^\/(js|css|fonts|img)\//.test(url.pathname)
+    && ASSETS.includes(url.pathname + url.search);
+  return pinned ? caches.open(CACHE).then(c => c.match(request, { ignoreVary: true })) : caches.match(request);
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/onec/') || url.pathname.startsWith('/ws/')) {
@@ -53,28 +68,39 @@ self.addEventListener('fetch', (e) => {
     url.pathname.endsWith('.webmanifest');
 
   if (isAppCode) {
-    e.respondWith(
-      fetch(e.request).then(resp => {
+    e.respondWith((async () => {
+      const fallback = async () => {
+        const hit = await cachedResponse(e.request);
+        if (hit) return hit;
+        // HTML-оболочка пригодна только для навигации, не для JS/CSS.
+        if (e.request.mode === 'navigate') return caches.match('/index.html');
+        return null;
+      };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      try {
+        const resp = await fetch(e.request, { signal: controller.signal });
+        if ([502, 503, 504].includes(resp.status)) return (await fallback()) || resp;
         if (resp.ok && url.origin === location.origin) {
           const copy = resp.clone();
           caches.open(CACHE).then(c => c.put(e.request, copy));
         }
         return resp;
-      }).catch(() =>
-        caches.match(e.request).then(hit => hit || caches.match('/index.html'))
-      )
-    );
+      } catch {
+        return (await fallback()) || Response.error();
+      } finally { clearTimeout(timer); }
+    })());
     return;
   }
 
   // Картинки и прочая статика — cache-first
   e.respondWith(
-    caches.match(e.request).then(hit => hit || fetch(e.request).then(resp => {
+    cachedResponse(e.request).then(hit => hit || fetch(e.request).then(resp => {
       if (resp.ok && url.origin === location.origin) {
         const copy = resp.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
       }
       return resp;
-    }).catch(() => caches.match('/index.html')))
+    }).catch(() => Response.error()))
   );
 });

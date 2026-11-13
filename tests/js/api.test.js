@@ -33,3 +33,57 @@ describe('ApiError', () => {
     expect(new ApiError(0, 'сеть').status).toBe(0);
   });
 });
+
+describe('фиксированный контекст отложенного запроса', () => {
+  it('403 клиента не сбрасывает выбор и не повторяет запись в собственной компании', async () => {
+    const { api, setClient, getClient } = await import('../../app/static/js/api.js');
+    setClient('current-client');
+    const original = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (path, init) => {
+      calls.push({ path, headers: init.headers });
+      return new Response(JSON.stringify({ detail: 'Нет доступа к компании клиента' }), {
+        status: 403, headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    try {
+      await expect(api.post('/api/v1/receipts/scan/offline', {}, {
+        clientId: 'original-client', noClientFallback: true, retries: 1,
+      })).rejects.toMatchObject({ status: 403 });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].headers['X-Ym-Company']).toBe('original-client');
+      expect(getClient()).toBe('current-client');
+    } finally { globalThis.fetch = original; setClient(''); }
+  });
+  it('пустой зафиксированный клиент не заменяется текущим', async () => {
+    const { api, setClient } = await import('../../app/static/js/api.js');
+    setClient('current-client');
+    const original = globalThis.fetch;
+    let headers;
+    globalThis.fetch = async (_path, init) => {
+      headers = init.headers;
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    try {
+      await api.post('/api/v1/receipts/scan/offline', {}, { clientId: null, noClientFallback: true, retries: 1 });
+      expect(headers['X-Ym-Company']).toBeUndefined();
+    } finally { globalThis.fetch = original; setClient(''); }
+  });
+});
+
+describe('конкурирующие сеансы', () => {
+  it('поздний 401 старого токена не удаляет токен нового пользователя', async () => {
+    const { api } = await import('../../app/static/js/api.js');
+    setToken('old-token');
+    const original = globalThis.fetch;
+    let resolveFetch;
+    globalThis.fetch = () => new Promise(resolve => { resolveFetch = resolve; });
+    try {
+      const pending = api.get('/api/v1/auth/me', { retries: 1 });
+      setToken('new-token');
+      resolveFetch(new Response('{}', { status: 401 }));
+      await expect(pending).rejects.toMatchObject({ status: 401 });
+      expect(getToken()).toBe('new-token');
+    } finally { globalThis.fetch = original; clearToken(); }
+  });
+});

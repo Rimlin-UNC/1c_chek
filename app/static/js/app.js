@@ -13,6 +13,7 @@ import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, open
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
+import * as outbox from './offline_outbox.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
 import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
@@ -200,7 +201,8 @@ async function boot() {
         await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
       }
     }
-    clearToken();
+    // Сетевой сбой не равен отказу авторизации: токен сохраняем до настоящего 401.
+    // Без подтверждения сервером приложение не открываем и права не выдаём.
   }
   showSplash(false);
   // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
@@ -3384,7 +3386,11 @@ function enterApp() {
     pwaBtn.onclick = showInstallDialog;
   }
   refreshBadges();
-  window.addEventListener('online', flushOfflineQueue);
+  if (!window.__ymOutboxBound) {
+    window.__ymOutboxBound = true;
+    window.addEventListener('online', () => flushOfflineQueue());
+    setInterval(() => flushOfflineQueue(), 30000);
+  }
   flushOfflineQueue();
 }
 
@@ -3930,15 +3936,17 @@ function handleWsEvent(type, p) {
 
 async function refreshBadges() {
   try {
-    const s = await api.get('/api/v1/dashboard/stats?days=7');
-    const badge = $('#nav-receipts-badge');
-    badge.textContent = fmtInt(s.total);
-    badge.classList.add('accent');
-    const q = offlineQueue.size();
+    const q = state.me?.id ? (await outbox.list(state.me.id)).length : 0;
     const qb = $('#nav-queue-badge');
     qb.textContent = q;
     qb.classList.toggle('hidden', q === 0);
     qb.classList.toggle('accent', q > 0);
+  } catch { /* ошибка показана на экране очереди */ }
+  try {
+    const s = await api.get('/api/v1/dashboard/stats?days=7');
+    const badge = $('#nav-receipts-badge');
+    badge.textContent = fmtInt(s.total);
+    badge.classList.add('accent');
     // v1.70.83: администратору — число конфликтов единого реестра в меню
     if (isAdmin()) {
       api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(badgeCount(u))).catch(() => {});
@@ -5567,7 +5575,6 @@ function feedActionText(f) {
 //  ЭКРАН: Сканирование
 // ==========================================================================
 async function viewScan(container) {
-  const queueSize = offlineQueue.size();
   // v1.11.0: подсказка — в какую компанию попадут новые чеки (админ меняет в шапке)
   container.innerHTML = `
     <div class="scan-layout">
@@ -5599,24 +5606,19 @@ async function viewScan(container) {
           Перетащите сюда фотографии или PDF-чеки — можно несколько сразу
         </div>
         <div class="torch-note">Совет: чеки с экрана телефона тоже распознаются. Держите QR в рамке при хорошем свете.
-        После скана чек автоматически уходит на проверку в ФНС.</div>
+        Скан сначала сохраняется на устройстве; проверка ФНС зависит от настроек сервера и наличия связи.
+        До синхронизации не очищайте данные браузера: сканы могут быть удалены. На общем устройстве они доступны через хранилище браузера.</div>
         ${isAdmin() ? `<div class="torch-note" id="scan-space-hint">🏢</div>` : ''}
       </div>
 
       <div>
-        ${queueSize > 0 ? `
-        <div class="glass card" style="margin-bottom:16px">
-          <div class="card-title">⚡ Офлайн-очередь: ${queueSize}</div>
-          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
-            Эти сканы были сделаны без связи с сервером и ждут синхронизации.</p>
-          <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
-        </div>` : ''}
+        <div id="scan-outbox"></div>
         <div class="glass card" style="margin-bottom:16px">
           <div class="card-title">🧾 Сдача чеков <span class="spacer"></span>
             <span class="batch-prog" id="scan-batch-prog">0 / 100</span></div>
           <div class="batch-counts" role="status" aria-live="polite">
             <span class="bcount b-ok" id="scan-bc-ok"><b>0</b><i>принято</i></span>
-            <span class="bcount b-pend" id="scan-bc-pend"><b>0</b><i>на проверке</i></span>
+            <span class="bcount b-pend" id="scan-bc-pend"><b>0</b><i>без подтверждения</i></span>
             <span class="bcount b-bad" id="scan-bc-bad"><b>0</b><i>не принято</i></span>
           </div>
           <div class="batch-day" id="scan-batch-day">Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи</div>
@@ -5626,9 +5628,9 @@ async function viewScan(container) {
             <button type="button" class="btn btn-sm" id="btn-scan-sess-reset"
                     title="Обнулить счётчики и начать новую сдачу">🔄 Новая сессия</button>
           </div>
-          <div class="form-hint" style="margin-top:8px">Каждый чек проверяется сразу:
-          дубликат в базу не попадает и идёт в красный счётчик, новый — в синий «на проверке»,
-          а после подтверждения официальным источником становится оранжевым «принят».
+          <div class="form-hint" style="margin-top:8px">После связи сервер принимает или отклоняет скан;
+          проверка ФНС зависит от настроек сервера. Локальная очередь не означает проверку.
+          Подтверждённые официальным источником чеки отмечаются в счётчике.
           На рубеже 100 чеков спросим, продолжать или закончить.</div>
         </div>
         <div class="glass card">
@@ -5640,7 +5642,7 @@ async function viewScan(container) {
           <div class="steps">
             <div class="step"><span class="step-num"></span><div>Отсканируйте QR-код камерой, загрузите фото или введите реквизиты вручную.</div></div>
             <div class="step"><span class="step-num"></span><div>Система разбирает реквизиты 54-ФЗ: <b>ФН, ФД, ФП</b>, сумму и дату, отсекает дубликаты по ФН+ФД+ФП.</div></div>
-            <div class="step"><span class="step-num"></span><div>Чек автоматически проверяется в API ФНС.</div></div>
+            <div class="step"><span class="step-num"></span><div>Проверка ФНС выполняется на сервере, если она включена в настройках; статус виден в карточке чека.</div></div>
             <div class="step"><span class="step-num"></span><div>Бухгалтер назначает сотрудника и выгружает чеки в 1С — без ручного ввода.</div></div>
           </div>
         </div>
@@ -5648,13 +5650,16 @@ async function viewScan(container) {
     </div>`;
 
   renderRecents();
+  refreshOutboxPanel();
 
   const _hint = $('#scan-space-hint');
   if (_hint) {
-    const c = companyIdParam() ? state.companies.find(x => x.id === companyIdParam()) : null;
+    const id = companyIdParam();
+    const c = id ? state.companies.find(x => x.id === id) : null;
     _hint.innerHTML = c
       ? `Новые чеки попадут в компанию: <b>${esc(c.name)}</b> (меняется селектором в шапке)`
-      : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
+      : id ? `Выбрана компания ${esc(id)}; название пока недоступно. Проверьте выбор в шапке.`
+        : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
   }
   // v1.70.40: сессия сдачи — счётчики живут, пока сотрудник на этом экране
   if (!scanSess.t0) scanSessReset();
@@ -5721,7 +5726,29 @@ async function viewScan(container) {
 
   $('#btn-paste').onclick = () => pasteDialog();
   $('#btn-manual').onclick = () => manualDialog();
-  const flush = $('#btn-flush');
+}
+
+// Обновляем только очередь, не перерисовывая экран и не останавливая камеру.
+async function refreshOutboxPanel() {
+  const panel = document.getElementById('scan-outbox');
+  const ownerId = state.me?.id;
+  if (!panel || !ownerId || state.view !== 'scan') return;
+  let queue = [], queueError = false;
+  try { queue = await outbox.list(ownerId); } catch { queueError = true; }
+  if (state.me?.id !== ownerId || panel !== document.getElementById('scan-outbox')) return;
+  const legacyQueueSize = offlineQueue.size();
+  panel.innerHTML = `
+${queueError ? `<div class="glass card" role="alert">Локальное хранилище недоступно. Скан не будет сохранён; проверьте настройки и свободное место.</div>` : ''}
+        ${legacyQueueSize ? `<div class="glass card" role="alert">Старые сканы без подтверждённого владельца: ${legacyQueueSize}. Они сохранены на устройстве, но автоматически не отправляются, чтобы не назначить их неверной компании. Обратитесь к администратору; не очищайте данные браузера.</div>` : ''}
+        ${queue.length > 0 ? `
+        <div class="glass card" style="margin-bottom:16px">
+          <div class="card-title">⚡ На устройстве: ${queue.length}</div>
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
+            Сканы ещё не подтверждены сервером и не считаются проверенными ФНС. Удаление данных браузера может их уничтожить.</p>
+          ${queue.filter(x => x.state === 'attention').map(x => `<p role="alert">Нужна помощь: ${esc(x.message || 'сервер не принял скан')} (ФД ${esc(parseQrClient(x.qrData)?.fd || '—')}). Запись сохранена.</p>`).join('')}
+          <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
+        </div>` : ''}`;
+  const flush = panel.querySelector('#btn-flush');
   if (flush) flush.onclick = () => flushOfflineQueue(true);
 }
 
@@ -5769,11 +5796,11 @@ function scanSessStateOf(r) {
     return (r && r.fns_status && r.fns_status !== 'valid') ? 'bad' : 'ok';
   }
   if (st === 'failed') return 'bad';
-  return 'pend';               // new / verifying — проверка ещё идёт
+  return 'pend';               // new / verifying — результат ещё не подтверждён
 }
 
 function scanSessLabel(state) {
-  return state === 'ok' ? 'принят' : (state === 'pend' ? 'на проверке' : 'не принят');
+  return state === 'ok' ? 'принят' : (state === 'pend' ? 'без подтверждения' : 'не принят');
 }
 
 function scanSessCount(items) {
@@ -5798,7 +5825,7 @@ function scanSessSummaryText(items, ms) {
   const secs = Math.max(1, Math.round((ms || 0) / 1000));
   const mins = Math.floor(secs / 60);
   const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
-  return `Итог сессии: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`
+  return `Итог сессии: принято ${c.ok}, без подтверждения ${c.pend}, не принято ${c.bad}`
     + ` · сумма ${fmtSum(c.sum)} · время ${dur}`;
 }
 
@@ -5818,7 +5845,7 @@ function scanSessRender() {
   const hint = document.getElementById('scan-batch-day');
   if (hint) {
     hint.textContent = scanSess.items.length
-      ? 'Дубликат отсеян и в базу не попал: он учтён в красном счётчике'
+      ? 'Показаны статусы полученных сервером чеков; локальная очередь учитывается отдельно'
       : 'Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи';
   }
   const list = document.getElementById('scan-batch-list');
@@ -5889,7 +5916,7 @@ async function scanSessPoll() {
   if (changed) {
     scanSessRender();
     const c = scanSessCount(scanSess.items);
-    toast(`Проверка прошла: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`,
+    toast(`Обновлены статусы: принято ${c.ok}, без подтверждения ${c.pend}, не принято ${c.bad}`,
       c.bad ? 'warn' : 'ok', '🧾 Статусы');
   }
   scanSessPollSoon();
@@ -6705,6 +6732,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.12': [
+    { icon: '📶', title: 'Загрузка при обрыве связи',
+      text: 'QR-сканы активной сессии сначала сохраняются на устройстве, затем отправляются при восстановлении связи. Офлайн-вход и другие виды данных пока не поддерживаются.' },
+  ],
   '1.72.11': [
     { icon: '📦', title: 'Проверка связей в пакете',
       text: 'Проверка ZIP дополнительно сверяет отдельные связи записей и файлов. Полнота и восстановление по-прежнему не подтверждаются.' },
@@ -8559,39 +8590,37 @@ function showWhatsNew() {
   slot.querySelector('#wn-ok').onclick = close;
 }
 
-// Отправка отсканированной строки на сервер (+ офлайн-режим)
+// Нельзя угадывать клиента, если переключатель изменился, а профиль не обновился.
+function scanOutboxContext() {
+  const me = state.me;
+  if (!me?.id) throw new Error('Не определён пользователь скана');
+  const clientId = me.role === 'accountant' ? (getClient() || null) : null;
+  if (clientId && me.company_id !== clientId) {
+    throw new Error('Компания клиента ещё не подтверждена: восстановите связь и проверьте выбор');
+  }
+  return { ownerId: me.id, clientId, companyId: isAdmin() ? scanCompanyId()
+    : (clientId || me.home_company_id || me.company_id || null) };
+}
+
+// Сначала фиксация в IndexedDB, только затем сетевой запрос.
 async function handleScannedText(text, source) {
   const parsed = parseQrClient(text);
   if (!parsed) {
     toast('QR-код прочитан, но это не чек (нет реквизитов ФН/ФД/ФП)', 'warn');
-    return;
+    return false;
   }
-  if (navigator.onLine && state.wsOk) {
-    try {
-      // v1.70.40: повтор внутри сессии отсекаем до запроса к серверу
-      const key = scanSessKey(parsed.fn, parsed.fd, parsed.fp);
-      if (scanSess.seen[key]) {
-        scanSessAdd({
-          state: 'bad', kind: 'duplicate', who: `ФД ${parsed.fd}`,
-          fn: parsed.fn, fd: parsed.fd, fp: parsed.fp, sum: 0,
-        });
-        toast('Этот чек уже отсканирован в текущей сессии — повторно не сохраняем',
-          'warn', '🧾 Дубликат');
-        return;
-      }
-      const r = await api.post('/api/v1/receipts/scan',
-                               { qr_data: text, source, company_id: scanCompanyId() });
-      scanSess.seen[key] = true;
-      scanSessNoteServer(r, `ФД ${parsed.fd}`);   // счётчики, дубликат, анимация
-      return;
-    } catch (e) {
-      if (e.status !== 0) { toast(e.message, 'err', 'Сервер отклонил скан'); return; }
-    }
+  try {
+    const context = scanOutboxContext();
+    await outbox.enqueue({ ...context, qrData: text, source });
+  } catch (e) {
+    toast('Скан НЕ сохранён на устройстве. Проверьте свободное место и повторите: ' + e.message, 'err', 'Ошибка хранения');
+    return false;
   }
-  // Офлайн: в очередь
-  const n = offlineQueue.push({ qr_data: text, source, company_id: scanCompanyId() });
-  toast(`Нет связи — скан сохранён локально (в очереди: ${n})`, 'warn', 'Офлайн-режим');
+  toast('Скан сохранён на устройстве; сервер и ФНС ещё не подтвердили его', 'warn', 'Ожидает отправки');
   refreshBadges();
+  refreshOutboxPanel();
+  flushOfflineQueue();
+  return true;
 }
 
 function beep() {
@@ -8608,26 +8637,56 @@ function beep() {
   } catch { /* без звука */ }
 }
 
+let outboxFlushing = false;
 async function flushOfflineQueue(manual = false) {
-  let n = offlineQueue.size();
-  if (!n) { if (manual) toast('Очередь пуста — всё синхронизировано', 'info'); return; }
+  const ownerId = state.me?.id;
+  if (!ownerId || !getToken() || outboxFlushing) return;
+  outboxFlushing = true;
   let sent = 0;
-  while (offlineQueue.size() > 0) {
-    const item = offlineQueue.all()[0];
-    try {
-      const result = await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
-                                                source: item.source || 'web', company_id: Object.prototype.hasOwnProperty.call(item, 'company_id') ? item.company_id : scanCompanyId() });
-      offlineQueue.shift();
-      if (result.duplicate) toast(result.message || 'Чек уже зарегистрирован', 'warn', 'Офлайн-очередь');
-      else sent++;
-    } catch (e) {
-      if (e.status === 422) { offlineQueue.shift(); continue; }
-      break;
+  try {
+    if (manual) await outbox.retry(ownerId);
+    while (state.me?.id === ownerId && getToken()) {
+      const item = await outbox.claim(ownerId);
+      if (!item) break;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const result = await api.post('/api/v1/receipts/scan/offline', {
+          qr_data: item.qrData, source: item.source, company_id: item.companyId,
+          expected_user_id: item.ownerId, expected_company_id: item.companyId,
+        }, { clientId: item.clientId, noClientFallback: true, retries: 1, signal: controller.signal });
+        if (!result?.receipt?.id || (result.receipt.company_id || null) !== item.companyId) {
+          await outbox.fail(item.id, item.leaseId, { attention: true,
+            message: result?.message || 'Сервер не подтвердил чек в исходной компании' });
+          continue;
+        }
+        if (await outbox.complete(item.id, item.leaseId)) {
+          sent += 1;
+          try {
+            const current = scanOutboxContext();
+            if (!result.duplicate && state.view === 'scan' && current.ownerId === item.ownerId
+                && current.companyId === item.companyId && current.clientId === item.clientId) {
+              scanSessNoteServer(result, `ФД ${parseQrClient(item.qrData)?.fd || ''}`);
+            }
+          } catch { /* переключили пользователя или компанию; чек уже подтверждён */ }
+        }
+      } catch (e) {
+        const transient = e.status === 0 || e.status === 429 || e.status >= 500;
+        const delay = Math.min(300000, 5000 * 2 ** Math.min(item.attempts - 1, 6));
+        await outbox.fail(item.id, item.leaseId, { attention: !transient,
+          retryAt: Date.now() + delay, message: e.message || 'Нет ответа сервера' });
+        if (transient || e.status === 401) break;
+      } finally { clearTimeout(timeout); }
     }
+    if (sent) toast(`Сервер подтвердил сканов: ${sent}. Статус ФНС смотрите в карточке.`, 'ok', 'Синхронизация');
+    else if (manual && !(await outbox.list(ownerId)).length) toast('Очередь этого пользователя пуста', 'info');
+  } catch (e) {
+    toast('Не удалось обработать локальную очередь: ' + e.message, 'err', 'Синхронизация');
+  } finally {
+    outboxFlushing = false;
+    refreshBadges();
+    if (state.me?.id === ownerId) refreshOutboxPanel();
   }
-  if (sent) toast(`Синхронизировано сканов: ${sent}`, 'ok', 'Офлайн-очередь');
-  refreshBadges();
-  if (state.view === 'scan') route(true);
 }
 
 async function handleFiles(files) {
@@ -8785,8 +8844,7 @@ function pasteDialog() {
   slot.querySelector('#btn-paste-send').onclick = async () => {
     const text = slot.querySelector('#paste-text').value.trim();
     if (!text) return;
-    $('#modal-root').classList.add('hidden');
-    await handleScannedText(text, 'web');
+    if (await handleScannedText(text, 'web')) $('#modal-root').classList.add('hidden');
   };
   setTimeout(() => slot.querySelector('#paste-text').focus(), 50);
 }

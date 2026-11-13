@@ -87,6 +87,9 @@ with SessionLocal() as db:
                                   attempts=1, first_at=when, last_at=when)], None)
     db.add(User(username='e2e_acc_alpha', full_name='E2E Бухгалтер Альфы', role='accountant',
                 company_id=alpha.id, password_hash=hash_password('e2e-accountant-password')))
+    # Отдельный пользователь изолирует офлайн-тест от пароля администратора и других сценариев.
+    db.add(User(username='e2e_offline', full_name='E2E Офлайн', role='user',
+                company_id=None, password_hash=hash_password('e2e-offline-password')))
     # v1.70.112 (T-46): согласование авансового отчёта — своя компания, чтобы не менять числа других сценариев;
     # сотрудник с двумя чеками за октябрь, руководитель и бухгалтер. Включает согласование администратор в сценарии.
     # v1.70.113 (T-79): папка с УПД и закрытие выписки — компания с ИНН (документы и выписку загружает сценарий)
