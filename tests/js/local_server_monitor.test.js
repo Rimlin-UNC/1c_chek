@@ -437,3 +437,62 @@ describe('ограничение повторных запросов истор�
     localServerStop();
   });
 });
+
+describe('готовый сборщик node_exporter', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('по запросу показывает источник и его показатели без фоновых обращений', async () => {
+    api.get.mockResolvedValue({ status: 'available', memory: { pct: 60 }, load: [1.25, .75, .5], uptime_seconds: 2000 });
+    localServerWire(); expect(api.get).not.toHaveBeenCalled();
+    document.querySelector('#server-exporter-refresh').click(); await flush();
+    const panel = document.querySelector('#server-exporter');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/node-exporter');
+    expect(panel.textContent).toMatch(/node_exporter/);
+    expect(panel.textContent).toMatch(/60,00 %/);
+    expect(panel.textContent).toMatch(/1,25/);
+    api.get.mockResolvedValue({ status: 'not_configured' });
+    document.querySelector('#server-exporter-refresh').click(); await flush();
+    expect(panel.textContent).toMatch(/не настроен/);
+    expect(panel.querySelector('progress')).toBeNull();
+    localServerStop();
+  });
+});
+
+describe('история node_exporter', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('выбирает источник и не выдаёт его ряд за локальный', async () => {
+    api.get.mockResolvedValue({ status: 'available', source: 'node_exporter', buckets: [], current_timestamp: 0 });
+    localServerWire();
+    document.querySelector('#server-history-source').value = 'node_exporter';
+    document.querySelector('#server-history-refresh').click(); await flush();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/history?period=1h&source=node_exporter');
+    expect(document.querySelector('#server-history').textContent).toMatch(/node_exporter/);
+    localServerStop();
+  });
+});
+
+describe('сетевые данные node_exporter', () => {
+  it('показывает скорости раздельно и не вставляет имена как HTML', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockResolvedValue({ status: 'available', cpu_pct: 25, memory: { pct: 60 }, swap: null,
+      load: [1, 2, 3], network: { '<img src=x>': {rx_bytes_per_sec: 1024, tx_bytes_per_sec: null} } });
+    localServerWire(); document.querySelector('#server-exporter-refresh').click(); await flush();
+    const panel = document.querySelector('#server-exporter');
+    expect(panel.textContent).toContain('1,0 КиБ/с');
+    expect(panel.textContent).toContain('—');
+    expect(panel.querySelector('img')).toBeNull();
+    localServerStop();
+  });
+});
+
+describe('история устройства node_exporter', () => {
+  it('не утверждает что выбранный вручную диск соответствует файловой системе приложения', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockResolvedValue({status:'available', source:'node_exporter', extra_status:'available', buckets: [], current_timestamp: 0});
+    localServerWire(); document.querySelector('#server-history-source').value = 'node_exporter';
+    document.querySelector('#server-history-refresh').click(); await flush();
+    const text = document.querySelector('#server-history').textContent;
+    expect(text).toMatch(/устройство выбрано администратором/i);
+    expect(text).not.toMatch(/только при точном сопоставлении устройства файловой системы приложения/i);
+    localServerStop();
+  });
+});

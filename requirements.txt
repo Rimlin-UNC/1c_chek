@@ -73,3 +73,6 @@ rapidocr>=3.10,<3.11; sys_platform == "linux" and (platform_machine == "x86_64" 
 # Для production-варианта с PostgreSQL (раскомментируйте):
 # psycopg2-binary>=2.9
 webauthn>=2.6,<4
+
+# Парсер стандартного формата метрик node_exporter
+prometheus-client>=0.20,<1

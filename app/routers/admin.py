@@ -351,6 +351,15 @@ def server_monitor(response: Response, _user: Annotated[User, Depends(require_ad
     return local_monitor.snapshot()
 
 
+@router.get("/server-monitor/node-exporter", summary="Показатели node_exporter (админ)")
+def server_monitor_node_exporter(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Только явно включённый источник на loopback; без фонового сбора."""
+    from ..services import node_exporter_monitor
+
+    response.headers["Cache-Control"] = "no-store"
+    return node_exporter_monitor.snapshot()
+
+
 @router.get("/server-monitor/traffic", summary="Наблюдённая статистика интерфейса (админ)")
 def server_monitor_traffic(response: Response, _user: Annotated[User, Depends(require_admin)]):
     """Необязательная история vnStat; не счёт провайдера и не сбор внутри приложения."""
@@ -370,12 +379,12 @@ def server_monitor_processes(response: Response, _user: Annotated[User, Depends(
 
 
 @router.get("/server-monitor/history", summary="История локальных показателей (админ)")
-def server_monitor_history(response: Response, _user: Annotated[User, Depends(require_admin)], period: str = '1h'):
+def server_monitor_history(response: Response, _user: Annotated[User, Depends(require_admin)], period: str = '1h', source: str = 'local'):
     """Только чтение отдельно настроенной базы, без запуска сбора."""
     from ..services import server_history
 
     response.headers["Cache-Control"] = "no-store"
-    return server_history.snapshot(period)
+    return server_history.snapshot(period) if source == 'local' else server_history.snapshot(period, source=source)
 
 
 @router.get("/server-monitor/mounts", summary="Локальные монтирования (админ)")

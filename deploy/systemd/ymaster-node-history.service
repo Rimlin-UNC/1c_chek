@@ -1,0 +1,15 @@
+# ОБРАЗЕЦ: не включается автоматически; проверьте пользователя и пути.
+[Unit]
+Description=Ямастер Чек — разовый сбор истории node_exporter
+
+[Service]
+Type=oneshot
+User=ymaster
+Group=ymaster
+WorkingDirectory=/opt/ymaster-check
+ExecStart=/opt/ymaster-check/venv/bin/python -m app.services.node_exporter_monitor collect
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ymaster-check/data
+PrivateTmp=true

@@ -55,6 +55,12 @@ export function localServerCardHtml() {
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
         <div id="server-monitor-details"></div>
         <details style="margin-top:16px">
+          <summary>Готовый сборщик node_exporter (необязательно)</summary>
+          <p class="form-hint">CPU, RAM, swap, сеть и load: короткий замер. Для графиков нужно отдельно включить историю node_exporter; сборщик настраивается администратором.</p>
+          <button type="button" class="btn btn-sm" id="server-exporter-refresh">Показать показатели node_exporter</button>
+          <div id="server-exporter" role="status"><p class="form-hint">Нажмите кнопку для чтения.</p></div>
+        </details>
+        <details style="margin-top:16px">
           <summary>Монтирования (по запросу)</summary>
           <p class="form-hint">Ограниченный список из mountinfo. Сетевые, автоматические и прочие неподдерживаемые типы не опрашиваются.</p>
           <button type="button" class="btn btn-sm" id="server-mounts-refresh">Показать монтирования</button>
@@ -63,6 +69,9 @@ export function localServerCardHtml() {
         <details style="margin-top:16px">
           <summary>История производительности (необязательно)</summary>
           <p class="form-hint">История доступна только при отдельно настроенном сборе; сама программа его не запускает.</p>
+          <label class="field"><span>Источник истории</span><select id="server-history-source">
+            <option value="local">Локальный сбор</option><option value="node_exporter">node_exporter</option>
+          </select></label>
           <label class="field"><span>Интервал</span><select id="server-history-period">
             <option value="1h">1 час</option><option value="24h">24 часа</option>
             <option value="7d">7 дней</option><option value="30d">30 дней</option>
@@ -232,7 +241,7 @@ function extraHistoryHtml(result, rows) {
     <td>${esc(fmtPct(row.io_busy_pct))} (${esc(row.io_busy_samples)}/${esc(row.expected)})</td></tr>`).join('');
   return `<details><summary>История нагрузки и дискового I/O</summary>
     ${result.extra_full ? '<p role="alert">Достигнут предел дополнительной истории; новые значения могут не записываться. Проверьте сбор и инструкцию.</p>' : ''}
-    <p class="form-hint">Load — среднее за минуту, не процент CPU. Дисковый I/O доступен только при точном сопоставлении устройства файловой системы приложения; имя устройства не гарантирует неизменности физического диска. Смена устройств внутри интервала скрывает I/O; между устройствами график не соединяется. Значения — средние коротких замеров, не непрерывное измерение; await усредняется по замерам, а не по количеству операций. В таблице показано число значений из ожидаемого. При отсутствии операций await недоступен.</p>
+    <p class="form-hint">Load — среднее за минуту, не процент CPU. ${result.source === 'node_exporter' ? 'Устройство выбрано администратором и не обязательно соответствует файловой системе приложения.' : 'Дисковый I/O доступен только при точном сопоставлении устройства файловой системы приложения.'} Имя устройства не гарантирует неизменности физического диска. Смена устройств внутри интервала скрывает I/O; между устройствами график не соединяется. Значения — средние коротких замеров, не непрерывное измерение; await усредняется по замерам, а не по количеству операций. В таблице показано число значений из ожидаемого. При отсутствии операций await недоступен.</p>
     <p>Load average, шкала до ${esc(decimal(maxFor(['load_1'])))}</p>${load}
     <p>IOPS: чтение (синий), запись (зелёный), шкала до ${esc(decimal(maxFor(['read_iops', 'write_iops'])))} операций/с</p>${iops}
     <p>Ожидание await: чтение (синий), запись (зелёный), шкала до ${esc(decimal(maxFor(['read_await_ms', 'write_await_ms'])))} мс</p>${awaitGraph}
@@ -265,7 +274,7 @@ function historyHtml(result) {
   const table = rows.map(row => `<tr><td>${esc(historyTime(row.timestamp))}</td><td>${esc(fmtPct(row.cpu_pct))} (${esc(row.cpu_samples)}/${esc(row.expected)})</td>
     <td>${esc(fmtPct(row.memory_pct))} (${esc(row.memory_samples)}/${esc(row.expected)})</td><td>${esc(fmtPct(row.swap_pct))}</td>
     <td>${row.rx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.rx_bytes_per_sec)) + '/с'}</td><td>${row.tx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.tx_bytes_per_sec)) + '/с'}</td></tr>`).join('');
-  return `${notice}${clock}${stale}<p>Последний снимок: ${last == null ? '—' : esc(historyTime(last))} (время устройства). Интерфейс: ${esc(result.interface || 'не выбран')}.</p>
+  return `${result.source === 'node_exporter' ? '<p>Источник истории: node_exporter.</p>' : '<p>Источник истории: локальный сбор.</p>'}${notice}${clock}${stale}<p>Последний снимок: ${last == null ? '—' : esc(historyTime(last))} (время устройства). Интерфейс: ${esc(result.interface || 'не выбран')}.</p>
     <p class="form-hint">Ответ истории может использовать кэш до 10 секунд на процесс. Точки — средние наблюдённых значений за интервал. Пропуски и неполные интервалы не соединяются; CPU и RAM подписаны в таблице числом наблюдений. График сети — скорость, не биллинг.</p>
     <p>CPU (синий) · RAM (зелёный)</p>${charts}
     <p>Swap — процент занятого от размера swap, отдельно от RAM</p>${swap}
@@ -294,7 +303,36 @@ export function localServerWire() {
   const processButton = document.getElementById('server-processes-refresh');
   const historyButton = document.getElementById('server-history-refresh');
   const mountsButton = document.getElementById('server-mounts-refresh');
-  if (!button || !trafficButton || !processButton || !historyButton || !mountsButton) return;
+  const exporterButton = document.getElementById('server-exporter-refresh');
+  if (!button || !trafficButton || !processButton || !historyButton || !mountsButton || !exporterButton) return;
+  exporterButton.onclick = async () => {
+    const generation = localGeneration;
+    const panel = document.getElementById('server-exporter');
+    exporterButton.disabled = true;
+    panel.textContent = 'Чтение node_exporter…';
+    try {
+      const result = await api.get('/api/v1/admin/server-monitor/node-exporter');
+      if (generation !== localGeneration || !exporterButton.isConnected) return;
+      if (result.status !== 'available') {
+        panel.textContent = result.status === 'not_configured' ? 'node_exporter не настроен.' :
+          result.status === 'busy' ? 'Чтение node_exporter уже выполняется; попробуйте ещё раз.' : 'node_exporter недоступен.';
+      } else {
+        const load = Array.isArray(result.load) ? result.load : [];
+        const network = result.network && typeof result.network === 'object' ? Object.entries(result.network).map(([name, item]) =>
+          `<li>${esc(name)}: вход ${item?.rx_bytes_per_sec == null ? '—' : esc(fmtBytes(item.rx_bytes_per_sec)) + '/с'}, выход ${item?.tx_bytes_per_sec == null ? '—' : esc(fmtBytes(item.tx_bytes_per_sec)) + '/с'}</li>`).join('') : '';
+        panel.innerHTML = `<p>Источник: node_exporter (короткий замер; кэш до 10 секунд).</p>
+          ${usageGauge('CPU node_exporter', result.cpu_pct)}${usageGauge('RAM node_exporter', result.memory?.pct)}${usageGauge('Swap node_exporter', result.swap?.pct)}
+          <p>RAM: ${esc(fmtPct(result.memory?.pct))}; load 1 / 5 / 15 минут: ${esc(load.map(fmtDecimal).join(' / '))}; uptime: ${esc(fmtDecimal(result.uptime_seconds))} с.</p>
+          <p>Скорости интерфейсов, не месячный трафик и не биллинг:</p><ul>${network || '<li>Нет доступных данных сети.</li>'}</ul>
+          <p>I/O выбранного администратором устройства: ${result.disk_io ? `${esc(result.disk_io.device)}; чтение ${esc(fmtDecimal(result.disk_io.read_iops))} / запись ${esc(fmtDecimal(result.disk_io.write_iops))} операций/с; await ${esc(fmtDecimal(result.disk_io.read_await_ms))} / ${esc(fmtDecimal(result.disk_io.write_await_ms))} мс` : 'недоступно'}. Это не обязательно устройство приложения.</p>`;
+      }
+    } catch (e) {
+      if (generation !== localGeneration || !exporterButton.isConnected) return;
+      panel.textContent = 'Не удалось прочитать node_exporter: ' + (e.message || e);
+    } finally {
+      if (generation === localGeneration && exporterButton.isConnected) exporterButton.disabled = false;
+    }
+  };
   mountsButton.onclick = async () => {
     const generation = localGeneration;
     const panel = document.getElementById('server-mounts');
@@ -315,10 +353,12 @@ export function localServerWire() {
     const generation = localGeneration;
     const panel = document.getElementById('server-history');
     const period = document.getElementById('server-history-period').value;
+    const source = document.getElementById('server-history-source').value;
     historyButton.disabled = true;
     panel.textContent = 'Чтение истории…';
     try {
-      const result = await api.get('/api/v1/admin/server-monitor/history?period=' + encodeURIComponent(period));
+      const result = await api.get('/api/v1/admin/server-monitor/history?period=' + encodeURIComponent(period)
+        + (source === 'node_exporter' ? '&source=node_exporter' : ''));
       if (generation !== localGeneration || !historyButton.isConnected) return;
       panel.innerHTML = historyHtml(result);
     } catch (e) {
