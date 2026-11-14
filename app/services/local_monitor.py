@@ -19,6 +19,9 @@ _CACHE_SEC = 5.0
 _lock = threading.Lock()
 _cached = None
 _cached_at = 0.0
+_FS_TIMEOUT = 0.5
+_fs_lock = threading.Lock()
+_fs_inflight = None
 
 
 def parse_cpu(text: str) -> tuple[int, int] | None:
@@ -276,9 +279,59 @@ def disk_rates(first: dict | None, last: dict | None, seconds: float) -> dict | 
             'busy_pct': round(busy_pct, 2)}
 
 
+def _stat_path():
+    return os.stat(BASE_DIR)
+
+
+def _statvfs_path():
+    return os.statvfs(BASE_DIR)
+
+
+def _filesystem_call(key: str, function):
+    """Не более одной незавершённой операции для каталога приложения на процесс.
+
+    Системный вызов нельзя принудительно прервать; поток daemon остаётся до его
+    завершения, а новые запросы при занятости возвращают отсутствие данных.
+    """
+    global _fs_inflight
+    with _fs_lock:
+        entry = _fs_inflight
+        if entry is not None and entry['key'] != key:
+            return None
+        if entry is None:
+            entry = {'key': key, 'done': threading.Event(), 'result': None}
+            _fs_inflight = entry
+
+            def worker():
+                global _fs_inflight
+                try:
+                    entry['result'] = function()
+                except Exception:
+                    entry['result'] = None
+                finally:
+                    with _fs_lock:
+                        if _fs_inflight is entry:
+                            _fs_inflight = None
+                        entry['done'].set()
+
+            try:
+                thread = threading.Thread(target=worker, daemon=True, name='app-filesystem-probe')
+                entry['thread'] = thread
+                thread.start()
+            except (OSError, RuntimeError):
+                _fs_inflight = None
+                return None
+    if not entry['done'].wait(_FS_TIMEOUT):
+        return None
+    return entry['result']
+
+
 def _block_device() -> tuple[int, int] | None:
     try:
-        dev = os.stat(BASE_DIR).st_dev
+        info = _filesystem_call('stat', _stat_path)
+        if info is None:
+            return None
+        dev = info.st_dev
         return os.major(dev), os.minor(dev)
     except (OSError, AttributeError, ValueError):
         return None
@@ -320,7 +373,9 @@ def _memory():
 
 def _disk():
     try:
-        stat = os.statvfs(BASE_DIR)
+        stat = _filesystem_call('statvfs', _statvfs_path)
+        if stat is None:
+            return None
         disk = disk_view(stat)
         return {**disk, 'inodes': inode_view(stat)} if disk else None
     except (OSError, AttributeError):

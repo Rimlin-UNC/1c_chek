@@ -132,3 +132,78 @@ def test_context_switch_and_swap_io_rates_reject_bad_or_reset_counters():
     assert monitor.swap_io_rates(b, a, 2) is None
     assert monitor.parse_swap_io('pswpin -1\npswpout 4') is None
     assert monitor.parse_swap_io('pswpin 1') is None
+
+
+def test_application_filesystem_timeout_is_bounded_and_never_duplicates(monkeypatch):
+    import threading
+    import time
+
+    gate = threading.Event()
+    entered = []
+    def stuck():
+        entered.append('stat')
+        gate.wait(3)
+        raise OSError('недоступно')
+    monkeypatch.setattr(monitor, '_stat_path', stuck)
+    monkeypatch.setattr(monitor, '_FS_TIMEOUT', .05)
+    try:
+        start = time.monotonic()
+        assert monitor._block_device() is None
+        assert monitor._disk() is None
+        assert monitor._block_device() is None
+        assert time.monotonic() - start < .5
+        assert entered == ['stat']
+    finally:
+        with monitor._fs_lock:
+            worker = monitor._fs_inflight['thread'] if monitor._fs_inflight else None
+        gate.set()
+        if worker:
+            worker.join(2)
+
+
+def test_application_filesystem_recovers_after_timeout(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    gate = threading.Event()
+    def stuck():
+        gate.wait(3)
+        return SimpleNamespace(st_dev=0)
+    monkeypatch.setattr(monitor, '_stat_path', stuck)
+    monkeypatch.setattr(monitor, '_FS_TIMEOUT', .05)
+    assert monitor._block_device() is None
+    with monitor._fs_lock:
+        worker = monitor._fs_inflight['thread']
+    gate.set(); worker.join(2)
+    monkeypatch.setattr(monitor, '_stat_path', lambda: SimpleNamespace(st_dev=0))
+    assert monitor._block_device() == (0, 0)
+
+
+def test_snapshot_remains_usable_when_application_statvfs_hangs(monkeypatch):
+    import threading
+    import time
+
+    gate = threading.Event()
+    entered = []
+    def stuck():
+        entered.append('statvfs')
+        gate.wait(3)
+        raise OSError('недоступно')
+    monkeypatch.setattr(monitor, '_statvfs_path', stuck)
+    monkeypatch.setattr(monitor, '_FS_TIMEOUT', .05)
+    monitor.reset_cache()
+    try:
+        start = time.monotonic()
+        data = monitor.snapshot()
+        assert time.monotonic() - start < 2
+        assert data['disk'] is None and data['collected_at']
+        monitor.reset_cache()
+        assert monitor.snapshot()['disk'] is None
+        assert entered == ['statvfs']
+    finally:
+        with monitor._fs_lock:
+            worker = monitor._fs_inflight['thread'] if monitor._fs_inflight else None
+        gate.set()
+        if worker:
+            worker.join(2)
+        monitor.reset_cache()
