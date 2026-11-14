@@ -369,3 +369,36 @@ def test_extra_unexpected_trigger_is_not_executed_and_base_continues(tmp_path):
     with sqlite3.connect(db) as con:
         assert con.execute('select count(*) from untouched').fetchone()[0] == 0
         assert con.execute('select count(*) from samples').fetchone()[0] == 1
+
+
+def test_real_separate_collector_restart_and_admin_api_read_only(tmp_path, monkeypatch, client):
+    import hashlib
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from tests.conftest import login
+
+    db = tmp_path / 'history.sqlite3'
+    monkeypatch.setenv('YM_MONITOR_HISTORY_FILE', str(db))
+    monkeypatch.setenv('YM_MONITOR_TRAFFIC_INTERFACE', 'lo')  # Явно отключает историю сети.
+    cwd = Path(__file__).resolve().parents[1]
+    for action in ('init', 'collect', 'collect'):
+        proc = subprocess.run([sys.executable, '-m', 'app.services.server_history', action],
+                              cwd=cwd, env=os.environ.copy(), capture_output=True, text=True, timeout=30, check=False)
+        assert proc.returncode == 0, proc.stderr + proc.stdout
+    with sqlite3.connect(db) as con:
+        count = con.execute('select count(*) from samples').fetchone()[0]
+        extra_count = con.execute('select count(*) from extra_samples').fetchone()[0]
+    # Два отдельных процесса могут закончить работу в одну или в разные минуты.
+    assert count in (1, 2) and extra_count == count
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    admin = login(client, 'admin', 'admin123')
+    response = client.get('/api/v1/admin/server-monitor/history?period=1h', headers=admin)
+    assert response.status_code == 200 and 'no-store' in response.headers['cache-control']
+    data = response.json()
+    assert data['status'] == 'available' and data['extra_status'] == 'available'
+    assert data['interface'] is None and data['last_sample_at'] is not None
+    assert sum(row['samples'] for row in data['buckets']) == count
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
