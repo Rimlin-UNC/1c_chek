@@ -18,7 +18,7 @@ test('счётчики меню на телефоне обновляются п�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.21');
+    localStorage.setItem('ymaster_seen_version', '1.72.22');
   }, token);
   await page.goto('/#/dashboard');
   await expect(page.locator('#app-shell')).toBeVisible({ timeout: 30000 });

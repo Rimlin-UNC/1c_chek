@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.21';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.22';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -3955,11 +3955,18 @@ function setWsStatus(ok) {
 // v1.6.0: события сливаются в одну перерисовку — при пачке чеков не дёргаем
 // сервер N полными запросами, а обновляемся один раз через 1.2 с
 let _routeRefreshTimer = null;
+let _routeRefreshAlive = null;
 function scheduleRouteRefresh(ms = 1200) {
-  if (_routeRefreshTimer) return;
+  // Событие относится к текущему переходу, а не к экрану, открытому позже.
+  // После перехода новый таймер не должен подавляться устаревшим.
+  if (_routeRefreshTimer && _routeRefreshAlive()) return;
+  if (_routeRefreshTimer) clearTimeout(_routeRefreshTimer);
+  const alive = routeGuard();
+  _routeRefreshAlive = alive;
   _routeRefreshTimer = setTimeout(() => {
     _routeRefreshTimer = null;
-    if (!document.hidden && state.me) {
+    _routeRefreshAlive = null;
+    if (alive() && !document.hidden && state.me) {
       // v1.25.1: «Чеки» обновляем НА МЕСТЕ (viewReceipts._refresh) — перестроение
       // вида route() затирало применённые фильтры и оставляло скелетон вместо
       // списка, если данные не изменились (список «пропадал» до F5)
@@ -6819,6 +6826,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.22': [
+    { icon: '🛡️', title: 'Защита открытого раздела',
+      text: 'Отложенное обновление дашборда больше не перерисовывает другой раздел после перехода.' },
+  ],
   '1.72.21': [
     { icon: '📊', title: 'История сетевого трафика',
       text: 'При отдельно настроенном vnStat можно просмотреть данные выбранного интерфейса. Это оценка, не счёт провайдера.' },
