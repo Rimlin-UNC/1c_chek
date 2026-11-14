@@ -7,17 +7,19 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.28');
+    localStorage.setItem('ymaster_seen_version', '1.72.29');
   }, token);
   const cloudRequests = [];
   let performanceRequests = 0;
   await page.route('**/api/v1/admin/server-monitor/history?**', async route => {
     performanceRequests++;
     await route.fulfill({ status: 200, json: { status: 'available', period: '1h', interface: null,
-      current_timestamp: 120, last_sample_at: 120, retention_paused: false, buckets: [
-        { timestamp: 0, expected: 1, samples: 1, cpu_pct: 30, memory_pct: 50, cpu_samples: 1, memory_samples: 1 },
+      current_timestamp: 120, last_sample_at: 120, retention_paused: false, extra_status: 'available', buckets: [
+        { timestamp: 0, expected: 1, samples: 1, cpu_pct: 30, memory_pct: 50, cpu_samples: 1, memory_samples: 1,
+          load_1: 1.25, load_samples: 1, io_device: 'sda1', read_iops: 5, read_iops_samples: 1 },
         { timestamp: 60, expected: 1, samples: 0, cpu_pct: null, memory_pct: null, cpu_samples: 0, memory_samples: 0 },
-        { timestamp: 120, expected: 1, samples: 1, cpu_pct: 60, memory_pct: 70, cpu_samples: 1, memory_samples: 1 },
+        { timestamp: 120, expected: 1, samples: 1, cpu_pct: 60, memory_pct: 70, cpu_samples: 1, memory_samples: 1,
+          load_1: 2, load_samples: 1, io_device: 'sdb1', read_iops: 6, read_iops_samples: 1 },
       ] } });
   });
   let mountRequests = 0;
@@ -78,6 +80,9 @@ test('локальный монитор работает без облачног
   await expect(card.locator('#server-history svg[aria-label*="CPU"]')).toHaveCount(1);
   await expect(card.locator('#server-history svg line')).toHaveCount(0);
   await expect(card.locator('#server-history')).toContainText('Пропуски');
+  await card.locator('#server-history summary').filter({ hasText: 'История нагрузки и дискового I/O' }).click();
+  await expect(card.locator('#server-history svg[aria-label*="IOPS"]')).toBeVisible();
+  await expect(card.locator('#server-history svg[aria-label*="IOPS"] line')).toHaveCount(0);
   expect(performanceRequests).toBe(1);
   expect(processRequests).toBe(0);
   await card.locator('summary').filter({ hasText: 'Процессы' }).click();

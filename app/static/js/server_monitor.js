@@ -157,14 +157,44 @@ function historyGraph(rows, series, maximum, label) {
       const value = row[item.field];
       const n = Number(value);
       if (value == null || !Number.isFinite(n) || n < 0 || n > maximum) { previous = null; return; }
-      const point = { x: x(i), y: height - n * height / maximum,
+      const point = { x: x(i), y: height - n * height / maximum, key: item.deviceBound ? row.io_device : null,
         full: row.expected > 0 && row.samples >= row.expected && row[item.count] >= row.expected };
-      if (previous && previous.full && point.full) elements += `<line class="${item.className}" x1="${previous.x.toFixed(2)}" y1="${previous.y.toFixed(2)}" x2="${point.x.toFixed(2)}" y2="${point.y.toFixed(2)}"></line>`;
+      if (previous && previous.full && point.full && (!item.deviceBound || (point.key && point.key === previous.key))) elements += `<line class="${item.className}" x1="${previous.x.toFixed(2)}" y1="${previous.y.toFixed(2)}" x2="${point.x.toFixed(2)}" y2="${point.y.toFixed(2)}"></line>`;
       elements += `<circle class="${item.className}${point.full ? '' : ' partial'}" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2"><title>${esc(item.label)}: ${esc(item.format(n))}; ${esc(historyTime(row.timestamp))}; наблюдений ${esc(row[item.count])} из ${esc(row.expected)}</title></circle>`;
       previous = point;
     });
   }
   return `<svg class="server-history-chart" viewBox="-3 -3 486 116" role="img" aria-label="${esc(label)}">${elements}</svg>`;
+}
+
+function extraHistoryHtml(result, rows) {
+  if (result.extra_status === 'not_enabled') return '<p>Дополнительная история нагрузки и дискового I/O не включена в этой базе; см. инструкцию администратора.</p>';
+  if (result.extra_status !== 'available') return '<p>Дополнительная история нагрузки и дискового I/O недоступна.</p>';
+  const maxFor = fields => Math.max(1, ...rows.flatMap(row => fields.map(field => row[field]))
+    .filter(v => v != null && Number.isFinite(Number(v)) && Number(v) >= 0).map(Number));
+  const decimal = n => fmtDecimal(n);
+  const load = historyGraph(rows, [{ field: 'load_1', count: 'load_samples', className: 'cpu', label: 'Load за минуту', format: decimal }], maxFor(['load_1']), 'Load average за минуту');
+  const iops = historyGraph(rows, [
+    { field: 'read_iops', count: 'read_iops_samples', className: 'cpu', label: 'Чтение', format: n => decimal(n) + ' операций/с', deviceBound: true },
+    { field: 'write_iops', count: 'write_iops_samples', className: 'memory', label: 'Запись', format: n => decimal(n) + ' операций/с', deviceBound: true },
+  ], maxFor(['read_iops', 'write_iops']), 'IOPS выбранного устройства');
+  const awaitGraph = historyGraph(rows, [
+    { field: 'read_await_ms', count: 'read_await_samples', className: 'cpu', label: 'Чтение', format: n => decimal(n) + ' мс', deviceBound: true },
+    { field: 'write_await_ms', count: 'write_await_samples', className: 'memory', label: 'Запись', format: n => decimal(n) + ' мс', deviceBound: true },
+  ], maxFor(['read_await_ms', 'write_await_ms']), 'Ожидание await устройства');
+  const table = rows.map(row => `<tr><td>${esc(historyTime(row.timestamp))}</td>
+    <td>${esc(decimal(row.load_1))} (${esc(row.load_samples)}/${esc(row.expected)})</td>
+    <td>${row.io_mixed ? 'смена устройств' : esc(row.io_device || '—')}</td>
+    <td>${esc(decimal(row.read_iops))} (${esc(row.read_iops_samples)}/${esc(row.expected)}) / ${esc(decimal(row.write_iops))} (${esc(row.write_iops_samples)}/${esc(row.expected)})</td>
+    <td>${esc(decimal(row.read_await_ms))} (${esc(row.read_await_samples)}/${esc(row.expected)}) / ${esc(decimal(row.write_await_ms))} (${esc(row.write_await_samples)}/${esc(row.expected)})</td>
+    <td>${esc(fmtPct(row.io_busy_pct))} (${esc(row.io_busy_samples)}/${esc(row.expected)})</td></tr>`).join('');
+  return `<details><summary>История нагрузки и дискового I/O</summary>
+    ${result.extra_full ? '<p role="alert">Достигнут предел дополнительной истории; новые значения могут не записываться. Проверьте сбор и инструкцию.</p>' : ''}
+    <p class="form-hint">Load — среднее за минуту, не процент CPU. Дисковый I/O доступен только при точном сопоставлении устройства файловой системы приложения; имя устройства не гарантирует неизменности физического диска. Смена устройств внутри интервала скрывает I/O; между устройствами график не соединяется. Значения — средние коротких замеров, не непрерывное измерение; await усредняется по замерам, а не по количеству операций. В таблице показано число значений из ожидаемого. При отсутствии операций await недоступен.</p>
+    <p>Load average, шкала до ${esc(decimal(maxFor(['load_1'])))}</p>${load}
+    <p>IOPS: чтение (синий), запись (зелёный), шкала до ${esc(decimal(maxFor(['read_iops', 'write_iops'])))} операций/с</p>${iops}
+    <p>Ожидание await: чтение (синий), запись (зелёный), шкала до ${esc(decimal(maxFor(['read_await_ms', 'write_await_ms'])))} мс</p>${awaitGraph}
+    <div class="table-wrap"><table class="data"><thead><tr><th>Время</th><th>Load 1 мин</th><th>Устройство</th><th>IOPS чт./зап.</th><th>Await чт./зап., мс</th><th>Занятость I/O</th></tr></thead><tbody>${table}</tbody></table></div></details>`;
 }
 
 function historyHtml(result) {
@@ -181,6 +211,8 @@ function historyHtml(result) {
     { field: 'cpu_pct', count: 'cpu_samples', className: 'cpu', label: 'CPU', format: pct },
     { field: 'memory_pct', count: 'memory_samples', className: 'memory', label: 'RAM', format: pct },
   ], 100, 'CPU и RAM; пропуски не соединяются');
+  const swap = historyGraph(rows, [{ field: 'swap_pct', count: 'swap_samples', className: 'cpu', label: 'Swap', format: pct }],
+    100, 'Swap; пропуски не соединяются');
   const maxNetwork = Math.max(1, ...rows.flatMap(row => [row.rx_bytes_per_sec, row.tx_bytes_per_sec])
     .filter(v => v != null && Number.isFinite(Number(v)) && Number(v) >= 0).map(Number));
   const net = result.interface ? historyGraph(rows, [
@@ -193,8 +225,10 @@ function historyHtml(result) {
   return `${notice}${clock}${stale}<p>Последний снимок: ${last == null ? '—' : esc(historyTime(last))} (время устройства). Интерфейс: ${esc(result.interface || 'не выбран')}.</p>
     <p class="form-hint">Точки — средние наблюдённых значений за интервал. Пропуски и неполные интервалы не соединяются; CPU и RAM подписаны в таблице числом наблюдений. График сети — скорость, не биллинг.</p>
     <p>CPU (синий) · RAM (зелёный)</p>${charts}
+    <p>Swap — процент занятого от размера swap, отдельно от RAM</p>${swap}
     ${net ? `<p>Вход (синий) · выход (зелёный), шкала до ${esc(fmtBytes(maxNetwork))}/с</p>${net}` : '<p>История сети недоступна без выбранного интерфейса.</p>'}
-    <details><summary>Таблица интервалов</summary><div class="table-wrap"><table class="data"><thead><tr><th>Время</th><th>CPU</th><th>RAM</th><th>Swap</th><th>Вход</th><th>Выход</th></tr></thead><tbody>${table}</tbody></table></div></details>`;
+    <details><summary>Таблица интервалов</summary><div class="table-wrap"><table class="data"><thead><tr><th>Время</th><th>CPU</th><th>RAM</th><th>Swap</th><th>Вход</th><th>Выход</th></tr></thead><tbody>${table}</tbody></table></div></details>
+    ${extraHistoryHtml(result, rows)}`;
 }
 
 function processHtml(result) {

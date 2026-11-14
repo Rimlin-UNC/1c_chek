@@ -269,3 +269,55 @@ describe('условный сценарий месячного трафика', 
     localServerStop();
   });
 });
+
+describe('расширенная история нагрузки и I/O', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('показывает load и I/O с разрывом при смене устройства, без выдуманных значений', async () => {
+    const base = { expected: 1, samples: 1, cpu_samples: 1, memory_samples: 1, load_samples: 1,
+      read_iops_samples: 1, write_iops_samples: 1, read_await_samples: 1, write_await_samples: 1,
+      cpu_pct: 20, memory_pct: 30, load_1: 1.25, read_iops: 5, write_iops: 6,
+      read_await_ms: 2, write_await_ms: 3, io_samples: 1 };
+    api.get.mockResolvedValue({ status: 'available', extra_status: 'available', current_timestamp: 120,
+      last_sample_at: 120, interface: null, buckets: [
+        { ...base, timestamp: 0, io_device: 'sda1' },
+        { ...base, timestamp: 60, io_device: 'sdb1' },
+        { ...base, timestamp: 120, io_device: null, io_mixed: true, read_iops: null, write_iops: null,
+          read_await_ms: null, write_await_ms: null, read_iops_samples: 0, write_iops_samples: 0,
+          read_await_samples: 0, write_await_samples: 0 },
+      ] });
+    localServerWire(); document.querySelector('#server-history-refresh').click(); await flush();
+    const panel = document.querySelector('#server-history');
+    expect(panel.querySelector('svg[aria-label*="Load"]')).not.toBeNull();
+    expect(panel.querySelector('svg[aria-label*="IOPS"]')).not.toBeNull();
+    expect(panel.querySelector('svg[aria-label*="IOPS"]').querySelectorAll('line')).toHaveLength(0);
+    expect(panel.textContent).toMatch(/1,25/); expect(panel.textContent).toMatch(/смен.*устройств/i);
+    expect(panel.textContent).toMatch(/await/i);
+    localServerStop();
+  });
+  it('объясняет старую историю без дополнительных метрик', async () => {
+    api.get.mockResolvedValue({ status: 'available', extra_status: 'not_enabled', buckets: [], last_sample_at: null });
+    localServerWire(); document.querySelector('#server-history-refresh').click(); await flush();
+    expect(document.querySelector('#server-history').textContent).toMatch(/дополнительн.*не включ/i);
+    localServerStop();
+  });
+});
+
+describe('история swap', () => {
+  it('показывает отдельный процент swap без смешивания с размером RAM', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockResolvedValue({ status: 'available', extra_status: 'not_enabled', current_timestamp: 120,
+      last_sample_at: 120, interface: null, buckets: [
+        { timestamp: 0, expected: 1, samples: 1, cpu_pct: 10, cpu_samples: 1,
+          memory_pct: 50, memory_samples: 1, swap_pct: 25, swap_samples: 1 },
+        { timestamp: 60, expected: 1, samples: 0, cpu_pct: null, cpu_samples: 0,
+          memory_pct: null, memory_samples: 0, swap_pct: null, swap_samples: 0 },
+        { timestamp: 120, expected: 1, samples: 1, cpu_pct: 20, cpu_samples: 1,
+          memory_pct: 60, memory_samples: 1, swap_pct: 40, swap_samples: 1 },
+      ] });
+    localServerWire(); document.querySelector('#server-history-refresh').click(); await flush();
+    const chart = document.querySelector('#server-history svg[aria-label*="Swap"]');
+    expect(chart).not.toBeNull(); expect(chart.querySelectorAll('line')).toHaveLength(0);
+    expect(chart.querySelectorAll('circle')).toHaveLength(2);
+    localServerStop();
+  });
+});

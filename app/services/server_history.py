@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import re
 import sqlite3
 import stat
 import time
@@ -21,6 +22,7 @@ from .server_traffic import _INTERFACE
 _APP_ID = 0x594D4831
 _RETENTION = 30 * 86400
 _MAX_ROWS = 50000
+_MAX_EXTRA_ROWS = 50000
 _MAX_GAP = 600
 _RANGES = {'1h': (3600, 60), '24h': (86400, 600), '7d': (7 * 86400, 3600), '30d': (_RETENTION, 21600)}
 
@@ -70,6 +72,43 @@ def _connection(path: Path, *, write: bool) -> sqlite3.Connection:
         raise
 
 
+_EXTRA_CREATE = """CREATE TABLE extra_samples (
+        timestamp INTEGER PRIMARY KEY, load_1 REAL, io_device TEXT, read_iops REAL, write_iops REAL,
+        read_await_ms REAL, write_await_ms REAL, io_busy_pct REAL)"""
+_EXTRA_COLUMNS = [('timestamp', 'INTEGER'), ('load_1', 'REAL'), ('io_device', 'TEXT'),
+                  ('read_iops', 'REAL'), ('write_iops', 'REAL'), ('read_await_ms', 'REAL'),
+                  ('write_await_ms', 'REAL'), ('io_busy_pct', 'REAL')]
+
+
+def _extra_state(con: sqlite3.Connection) -> str:
+    row = con.execute("SELECT type, sql FROM sqlite_master WHERE name='extra_samples'").fetchone()
+    if not row:
+        return 'not_enabled'
+    if row[0] != 'table' or row[1] != _EXTRA_CREATE:
+        return 'unavailable'
+    if con.execute("SELECT 1 FROM sqlite_master WHERE tbl_name='extra_samples' AND type IN ('trigger', 'index') LIMIT 1").fetchone():
+        return 'unavailable'
+    columns = con.execute('PRAGMA table_info(extra_samples)').fetchall()
+    if [(row[1], row[2].upper()) for row in columns] != _EXTRA_COLUMNS or not columns[0][5]:
+        return 'unavailable'
+    return 'available'
+
+
+def _create_extra(con: sqlite3.Connection) -> None:
+    con.execute(_EXTRA_CREATE)
+
+
+def enable_extra(path: Path) -> None:
+    """Явное добавление таблицы в существующую историю; старую схему не меняем."""
+    with closing(_connection(path, write=True)) as con, con:
+        con.execute('BEGIN IMMEDIATE')
+        state = _extra_state(con)
+        if state == 'unavailable':
+            raise ValueError('таблица дополнительных показателей имеет неизвестный формат')
+        if state == 'not_enabled':
+            _create_extra(con)
+
+
 def initialize(path: Path) -> None:
     """Явно создать только новый файл, никогда не перезаписывать существующий."""
     if not path.is_absolute():
@@ -87,6 +126,7 @@ def initialize(path: Path) -> None:
             interface TEXT, rx_bytes_per_sec REAL, tx_bytes_per_sec REAL)''')
         con.execute('CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), retention_paused INTEGER NOT NULL, resume_at INTEGER)')
         con.execute('INSERT INTO state VALUES (1, 0, NULL)')
+        _create_extra(con)
 
 
 def _number(value, maximum: float) -> float | None:
@@ -97,6 +137,21 @@ def _number(value, maximum: float) -> float | None:
     except (OverflowError, ValueError):
         return None
     return number if math.isfinite(number) and 0 <= number <= maximum else None
+
+
+def _extra_values(timestamp: int, data: dict) -> tuple:
+    loads = data.get('load_average')
+    load = _number(loads[0], 2**53 - 1) if isinstance(loads, list) and loads else None
+    io = data.get('disk_io')
+    if not isinstance(io, dict):
+        io = {}
+    device = io.get('device')
+    if not isinstance(device, str) or not re.fullmatch(r'[A-Za-z0-9_.!-]{1,64}', device):
+        device = None
+        io = {}
+    return (timestamp, load, device, _number(io.get('read_iops'), 2**53 - 1),
+            _number(io.get('write_iops'), 2**53 - 1), _number(io.get('read_await_ms'), 2**53 - 1),
+            _number(io.get('write_await_ms'), 2**53 - 1), _number(io.get('busy_pct'), 100))
 
 
 def record(path: Path, data: dict, interface: str, *, now: int | None = None) -> None:
@@ -130,11 +185,18 @@ def record(path: Path, data: dict, interface: str, *, now: int | None = None) ->
         if paused and count >= _MAX_ROWS and timestamp != latest:
             full = True
         else:
-            con.execute('INSERT OR IGNORE INTO samples VALUES (?, ?, ?, ?, ?, ?, ?)', values)
+            inserted = con.execute('INSERT OR IGNORE INTO samples VALUES (?, ?, ?, ?, ?, ?, ?)', values).rowcount
+            extra_state = _extra_state(con)
+            if inserted and extra_state == 'available':
+                extra_count = con.execute('SELECT count(*) FROM extra_samples').fetchone()[0]
+                if extra_count < _MAX_EXTRA_ROWS:
+                    con.execute('INSERT INTO extra_samples VALUES (?, ?, ?, ?, ?, ?, ?, ?)', _extra_values(timestamp, data))
             con.execute('UPDATE state SET resume_at=NULL WHERE id=1')
             if not paused:
                 # Только отдельная база; после заметного перерыва автоочистка приостанавливается.
                 con.execute('DELETE FROM samples WHERE timestamp < ?', (timestamp - _RETENTION,))
+                if extra_state == 'available':
+                    con.execute('DELETE FROM extra_samples WHERE timestamp < ?', (timestamp - _RETENTION,))
         con.commit()
     if full:
         raise ValueError('достигнут предел истории; очистка приостановлена после перерыва')
@@ -169,9 +231,23 @@ def read(path: Path, period: str, *, interface: str, now: int | None = None) -> 
             count(CASE WHEN interface = ? THEN tx_bytes_per_sec END)
             FROM samples WHERE timestamp >= ? AND timestamp <= ? GROUP BY bucket ORDER BY bucket''',
             (width, width, interface, interface, interface, interface, start, timestamp)).fetchall()
+        extra_state = _extra_state(con)
+        extra_rows = []
+        extra_full = False
+        if extra_state == 'available':
+            extra_full = con.execute('SELECT count(*) FROM extra_samples').fetchone()[0] >= _MAX_EXTRA_ROWS
+            extra_rows = con.execute("""SELECT CAST(e.timestamp / ? AS INTEGER) * ? AS bucket,
+                avg(e.load_1), count(e.load_1), count(e.io_device), count(DISTINCT e.io_device),
+                min(e.io_device), avg(e.read_iops), count(e.read_iops), avg(e.write_iops), count(e.write_iops),
+                avg(e.read_await_ms), count(e.read_await_ms), avg(e.write_await_ms), count(e.write_await_ms),
+                avg(e.io_busy_pct), count(e.io_busy_pct)
+                FROM extra_samples e JOIN samples s ON e.timestamp=s.timestamp
+                WHERE e.timestamp >= ? AND e.timestamp <= ? GROUP BY bucket ORDER BY bucket""",
+                (width, width, start, timestamp)).fetchall()
         last = con.execute('SELECT max(timestamp) FROM samples').fetchone()[0]
         paused = bool(con.execute('SELECT retention_paused FROM state WHERE id=1').fetchone()[0])
     by_time = {row[0]: row for row in rows}
+    extras_by_time = {row[0]: row for row in extra_rows}
     first_bucket = start // width * width
     last_bucket = timestamp // width * width
     inferred_pause = last is not None and timestamp - last > _MAX_GAP
@@ -187,9 +263,21 @@ def read(path: Path, period: str, *, interface: str, now: int | None = None) -> 
                         'cpu_samples': row[7] if row else 0, 'memory_samples': row[8] if row else 0,
                         'swap_samples': row[9] if row else 0, 'rx_samples': row[10] if row else 0,
                         'tx_samples': row[11] if row else 0})
+        extra = extras_by_time.get(bucket)
+        mixed = bool(extra and extra[4] > 1)
+        valid_io = extra is not None and extra[4] == 1
+        buckets[-1].update({'load_1': extra[1] if extra else None, 'load_samples': extra[2] if extra else 0,
+                            'io_device': extra[5] if valid_io else None, 'io_mixed': mixed,
+                            'io_samples': extra[3] if valid_io else 0,
+                            'read_iops': extra[6] if valid_io else None, 'read_iops_samples': extra[7] if valid_io else 0,
+                            'write_iops': extra[8] if valid_io else None, 'write_iops_samples': extra[9] if valid_io else 0,
+                            'read_await_ms': extra[10] if valid_io else None, 'read_await_samples': extra[11] if valid_io else 0,
+                            'write_await_ms': extra[12] if valid_io else None, 'write_await_samples': extra[13] if valid_io else 0,
+                            'io_busy_pct': extra[14] if valid_io else None, 'io_busy_samples': extra[15] if valid_io else 0})
     return {'status': 'available', 'period': period, 'bucket_seconds': width, 'interface': interface or None,
             'last_sample_at': last, 'current_timestamp': timestamp, 'retention_paused': paused,
-            'collection_gap': inferred_pause, 'clock_backwards': clock_backwards, 'buckets': buckets}
+            'collection_gap': inferred_pause, 'clock_backwards': clock_backwards,
+            'extra_status': extra_state, 'extra_full': extra_full, 'buckets': buckets}
 
 
 def snapshot(period: str) -> dict:
@@ -209,7 +297,7 @@ def snapshot(period: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Выделенная история локальных метрик; запускается только администратором')
-    parser.add_argument('action', choices=('init', 'collect', 'resume'))
+    parser.add_argument('action', choices=('init', 'collect', 'resume', 'enable-extra'))
     args = parser.parse_args()
     try:
         path = _configured_path()
@@ -219,6 +307,8 @@ def main() -> int:
             initialize(path)
         elif args.action == 'resume':
             resume_retention(path)
+        elif args.action == 'enable-extra':
+            enable_extra(path)
         else:
             interface = _env('YM_MONITOR_TRAFFIC_INTERFACE', '').strip()
             record(path, local_monitor.snapshot(), interface)

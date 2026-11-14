@@ -8,7 +8,7 @@ test('отложенное обновление дашборда не затир
   const { access_token: token } = await login.json();
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.28');
+    localStorage.setItem('ymaster_seen_version', '1.72.29');
     const OriginalWebSocket = window.WebSocket;
     window.WebSocket = class extends OriginalWebSocket {
       constructor(...args) { super(...args); window.__testSocket = this; }
