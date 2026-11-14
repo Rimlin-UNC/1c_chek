@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../app/static/js/api.js', () => ({ api: { get: vi.fn(), post: vi.fn() } }));
-vi.mock('../../app/static/js/ui.js', () => ({
-  esc: value => String(value ?? ''), fmtDate: value => String(value || ''),
+vi.mock('../../app/static/js/ui.js', async (importOriginal) => ({
+  esc: (await importOriginal()).esc, fmtDate: value => String(value || ''),
   fmtInt: value => String(value), toast: vi.fn(),
 }));
 import { api } from '../../app/static/js/api.js';
@@ -148,6 +148,29 @@ describe('пороговые индикаторы снимка', () => {
     api.get.mockResolvedValue({ memory: null, disk: null });
     document.querySelector('#server-monitor-refresh').click(); await flush();
     expect(document.querySelectorAll('#server-monitor-details progress')).toHaveLength(0);
+    localServerStop();
+  });
+});
+
+describe('список процессов только по требованию', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('показывает отдельно CPU и память с оговоркой неполноты без опасных имён', async () => {
+    api.get.mockResolvedValue({ status: 'available', visible: 2, zombies: 1, partial: true,
+      top_cpu: [{ pid: 12, name: '<img src=x onerror=alert(1)>', state: 'R', cpu_pct: 120, rss_bytes: 1048576, memory_pct: 1 }],
+      top_memory: [{ pid: 22, name: 'worker', state: 'Z', rss_bytes: 2097152, memory_pct: 2 }] });
+    localServerWire(); expect(api.get).not.toHaveBeenCalled();
+    document.querySelector('#server-processes-refresh').click(); await flush();
+    const panel = document.querySelector('#server-processes');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/processes');
+    expect(panel.textContent).toMatch(/неполный/i); expect(panel.textContent).toMatch(/зомби.*1/i);
+    expect(panel.textContent).toContain('120,00 %'); expect(panel.textContent).toContain('worker');
+    expect(panel.querySelector('img')).toBeNull();
+    localServerStop();
+  });
+  it('объясняет недоступность вместо пустого списка процессов', async () => {
+    api.get.mockResolvedValue({ status: 'unavailable' });
+    localServerWire(); document.querySelector('#server-processes-refresh').click(); await flush();
+    expect(document.querySelector('#server-processes').textContent).toMatch(/недоступ/i);
     localServerStop();
   });
 });

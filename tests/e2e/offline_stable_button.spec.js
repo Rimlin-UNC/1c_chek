@@ -12,7 +12,7 @@ test('фоновая проверка неизменной очереди не �
   }, user.id);
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.23');
+    localStorage.setItem('ymaster_seen_version', '1.72.24');
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 500 : ms, ...args);
   }, token);

@@ -55,6 +55,12 @@ export function localServerCardHtml() {
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
         <div id="server-monitor-details"></div>
         <details style="margin-top:16px">
+          <summary>Процессы (по запросу)</summary>
+          <p class="form-hint">Видимость зависит от procfs и изоляции; командные строки не читаются.</p>
+          <button type="button" class="btn btn-sm" id="server-processes-refresh">Показать процессы</button>
+          <div id="server-processes" role="status"><p class="form-hint">Нажмите кнопку для короткого замера.</p></div>
+        </details>
+        <details style="margin-top:16px">
           <summary>Трафик интерфейса за месяц (оценка)</summary>
           <p class="form-hint">История доступна только при отдельно настроенном vnStat. Счётчики интерфейса могут отличаться от счёта провайдера.</p>
           <button type="button" class="btn btn-sm" id="server-traffic-refresh">Показать историю трафика</button>
@@ -95,10 +101,41 @@ function trafficHtml(result) {
     <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;
 }
 
+function processHtml(result) {
+  if (result.status !== 'available' || !Array.isArray(result.top_cpu) || !Array.isArray(result.top_memory)) {
+    return '<p>Снимок процессов недоступен.</p>';
+  }
+  const list = (rows, cpu) => rows.map(row => `<li>PID ${esc(row.pid)} · ${esc(row.name || '—')} · ${esc(row.state)}: ${cpu
+    ? `CPU ${esc(fmtPct(row.cpu_pct))}` : `RAM ${esc(fmtBytes(row.rss_bytes))} (${esc(fmtPct(row.memory_pct))})`}</li>`).join('');
+  const partial = result.partial ? 'Список неполный: часть процессов изменилась, недоступна или превышен предел 256.'
+    : 'Показаны только процессы, видимые приложению; procfs может скрывать другие.';
+  return `<p>${esc(partial)} Видимо: ${esc(fmtInt(result.visible))}; зомби среди видимых: ${esc(fmtInt(result.zombies))}.</p>
+    <p class="form-hint">CPU за короткий интервал: 100 % — одно логическое ядро, больше 100 % возможно при нескольких потоках. Недавно появившиеся или завершившиеся процессы могут отсутствовать. RSS включает общую память; её нельзя суммировать как уникальную.</p>
+    <p><strong>По CPU (до 5)</strong></p><ul>${list(result.top_cpu, true) || '<li>Нет достаточно данных.</li>'}</ul>
+    <p><strong>По памяти (до 5)</strong></p><ul>${list(result.top_memory, false) || '<li>Нет данных.</li>'}</ul>`;
+}
+
 export function localServerWire() {
   const button = document.getElementById('server-monitor-refresh');
   const trafficButton = document.getElementById('server-traffic-refresh');
-  if (!button || !trafficButton) return;
+  const processButton = document.getElementById('server-processes-refresh');
+  if (!button || !trafficButton || !processButton) return;
+  processButton.onclick = async () => {
+    const generation = localGeneration;
+    const panel = document.getElementById('server-processes');
+    processButton.disabled = true;
+    panel.textContent = 'Замер процессов…';
+    try {
+      const result = await api.get('/api/v1/admin/server-monitor/processes');
+      if (generation !== localGeneration || !processButton.isConnected) return;
+      panel.innerHTML = processHtml(result);
+    } catch (e) {
+      if (generation !== localGeneration || !processButton.isConnected) return;
+      panel.textContent = 'Не удалось получить процессы: ' + (e.message || e);
+    } finally {
+      if (generation === localGeneration && processButton.isConnected) processButton.disabled = false;
+    }
+  };
   trafficButton.onclick = async () => {
     const generation = localGeneration;
     const panel = document.getElementById('server-traffic');

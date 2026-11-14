@@ -7,9 +7,16 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.23');
+    localStorage.setItem('ymaster_seen_version', '1.72.24');
   }, token);
   const cloudRequests = [];
+  let processRequests = 0;
+  await page.route('**/api/v1/admin/server-monitor/processes', async route => {
+    processRequests++;
+    await route.fulfill({ status: 200, json: { status: 'available', visible: 1, zombies: 0, partial: false,
+      top_cpu: [{ pid: 101, name: 'worker', state: 'R', cpu_pct: 12.5 }],
+      top_memory: [{ pid: 101, name: 'worker', state: 'R', rss_bytes: 1024, memory_pct: 0.1 }] } });
+  });
   let historyRequests = 0;
   await page.route('**/api/v1/admin/server-monitor/traffic', async route => {
     historyRequests++;
@@ -36,6 +43,12 @@ test('локальный монитор работает без облачног
   await expect(page.locator('#server-monitor-details')).toContainText('включая потоки');
   await expect(page.locator('#server-monitor-note')).toContainText('История производительности');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
+  expect(processRequests).toBe(0);
+  await card.locator('summary').filter({ hasText: 'Процессы' }).click();
+  await card.locator('#server-processes-refresh').click();
+  await expect(card.locator('#server-processes')).toContainText('worker');
+  await expect(card.locator('#server-processes')).toContainText('12,50 %');
+  expect(processRequests).toBe(1);
   expect(historyRequests).toBe(0);
   await card.locator('summary').filter({ hasText: 'Трафик интерфейса' }).click();
   await card.locator('#server-traffic-refresh').click();

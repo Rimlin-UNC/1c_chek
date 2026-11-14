@@ -360,6 +360,15 @@ def server_monitor_traffic(response: Response, _user: Annotated[User, Depends(re
     return server_traffic.snapshot()
 
 
+@router.get("/server-monitor/processes", summary="Локальные процессы (админ)")
+def server_monitor_processes(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Ограниченное чтение procfs по требованию, без аргументов процессов и истории."""
+    from ..services import server_processes
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_processes.snapshot()
+
+
 @router.get("/system", summary="Системная сводка (админ)")
 def system_info(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     import sys
