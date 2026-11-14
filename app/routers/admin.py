@@ -369,6 +369,15 @@ def server_monitor_processes(response: Response, _user: Annotated[User, Depends(
     return server_processes.snapshot()
 
 
+@router.get("/server-monitor/history", summary="История локальных показателей (админ)")
+def server_monitor_history(response: Response, _user: Annotated[User, Depends(require_admin)], period: str = '1h'):
+    """Только чтение отдельно настроенной базы, без запуска сбора."""
+    from ..services import server_history
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_history.snapshot(period)
+
+
 @router.get("/system", summary="Системная сводка (админ)")
 def system_info(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     import sys

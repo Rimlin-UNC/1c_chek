@@ -7,9 +7,19 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.24');
+    localStorage.setItem('ymaster_seen_version', '1.72.25');
   }, token);
   const cloudRequests = [];
+  let performanceRequests = 0;
+  await page.route('**/api/v1/admin/server-monitor/history?**', async route => {
+    performanceRequests++;
+    await route.fulfill({ status: 200, json: { status: 'available', period: '1h', interface: null,
+      current_timestamp: 120, last_sample_at: 120, retention_paused: false, buckets: [
+        { timestamp: 0, expected: 1, samples: 1, cpu_pct: 30, memory_pct: 50, cpu_samples: 1, memory_samples: 1 },
+        { timestamp: 60, expected: 1, samples: 0, cpu_pct: null, memory_pct: null, cpu_samples: 0, memory_samples: 0 },
+        { timestamp: 120, expected: 1, samples: 1, cpu_pct: 60, memory_pct: 70, cpu_samples: 1, memory_samples: 1 },
+      ] } });
+  });
   let processRequests = 0;
   await page.route('**/api/v1/admin/server-monitor/processes', async route => {
     processRequests++;
@@ -43,6 +53,13 @@ test('локальный монитор работает без облачног
   await expect(page.locator('#server-monitor-details')).toContainText('включая потоки');
   await expect(page.locator('#server-monitor-note')).toContainText('История производительности');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
+  expect(performanceRequests).toBe(0);
+  await card.locator('summary').filter({ hasText: 'История производительности' }).click();
+  await card.locator('#server-history-refresh').click();
+  await expect(card.locator('#server-history svg[aria-label*="CPU"]')).toHaveCount(1);
+  await expect(card.locator('#server-history svg line')).toHaveCount(0);
+  await expect(card.locator('#server-history')).toContainText('Пропуски');
+  expect(performanceRequests).toBe(1);
   expect(processRequests).toBe(0);
   await card.locator('summary').filter({ hasText: 'Процессы' }).click();
   await card.locator('#server-processes-refresh').click();

@@ -174,3 +174,36 @@ describe('список процессов только по требованию
     localServerStop();
   });
 });
+
+describe('необязательная история производительности', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('по кнопке рисует CPU и RAM и не соединяет точки через пропуски', async () => {
+    const base = { expected: 1, cpu_samples: 1, memory_samples: 1, swap_samples: 0, rx_samples: 0, tx_samples: 0 };
+    api.get.mockResolvedValue({ status: 'available', period: '1h', current_timestamp: 120, last_sample_at: 120,
+      retention_paused: false, buckets: [
+        { ...base, timestamp: 0, samples: 1, cpu_pct: 30, memory_pct: 50 },
+        { ...base, timestamp: 60, samples: 0, cpu_pct: null, memory_pct: null, cpu_samples: 0, memory_samples: 0 },
+        { ...base, timestamp: 120, samples: 1, cpu_pct: 60, memory_pct: 70 },
+      ] });
+    localServerWire(); expect(api.get).not.toHaveBeenCalled();
+    document.querySelector('#server-history-refresh').click(); await flush();
+    const panel = document.querySelector('#server-history');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/history?period=1h');
+    expect(panel.querySelector('svg[aria-label*="CPU"]')).not.toBeNull();
+    expect(panel.querySelectorAll('svg line')).toHaveLength(0);
+    expect(panel.textContent).toMatch(/пропуск/i);
+    expect(panel.textContent).toContain('30,00 %');
+    document.querySelector('#server-history-period').value = '24h';
+    document.querySelector('#server-history-refresh').click(); await flush();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/history?period=24h');
+    localServerStop();
+  });
+  it('отсутствующий сборщик не превращает отсутствие истории в нулевую нагрузку', async () => {
+    api.get.mockResolvedValue({ status: 'not_configured' });
+    localServerWire(); document.querySelector('#server-history-refresh').click(); await flush();
+    const panel = document.querySelector('#server-history');
+    expect(panel.textContent).toMatch(/не настроен/i);
+    expect(panel.querySelector('svg')).toBeNull();
+    localServerStop();
+  });
+});

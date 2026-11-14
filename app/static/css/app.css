@@ -2455,3 +2455,9 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 .server-gauge { width: min(100%, 180px); height: 10px; accent-color: var(--ok); }
 .server-gauge.warning { accent-color: var(--warn); }
 .server-gauge.danger { accent-color: var(--bad); }
+
+.server-history-chart { display: block; width: 100%; max-width: 680px; height: auto; margin: 6px 0 14px; border-bottom: 1px solid var(--border); }
+.server-history-chart line { fill: none; stroke-width: 1.5; }
+.server-history-chart .cpu { stroke: #2973c7; fill: #2973c7; }
+.server-history-chart .memory { stroke: var(--ok); fill: var(--ok); }
+.server-history-chart circle.partial { fill: var(--panel); stroke-width: 1.5; }

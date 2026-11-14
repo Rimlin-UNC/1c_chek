@@ -55,6 +55,16 @@ export function localServerCardHtml() {
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
         <div id="server-monitor-details"></div>
         <details style="margin-top:16px">
+          <summary>История производительности (необязательно)</summary>
+          <p class="form-hint">История доступна только при отдельно настроенном сборе; сама программа его не запускает.</p>
+          <label class="field"><span>Интервал</span><select id="server-history-period">
+            <option value="1h">1 час</option><option value="24h">24 часа</option>
+            <option value="7d">7 дней</option><option value="30d">30 дней</option>
+          </select></label>
+          <button type="button" class="btn btn-sm" id="server-history-refresh">Показать историю</button>
+          <div id="server-history" role="status"><p class="form-hint">Нажмите кнопку для чтения истории.</p></div>
+        </details>
+        <details style="margin-top:16px">
           <summary>Процессы (по запросу)</summary>
           <p class="form-hint">Видимость зависит от procfs и изоляции; командные строки не читаются.</p>
           <button type="button" class="btn btn-sm" id="server-processes-refresh">Показать процессы</button>
@@ -101,6 +111,61 @@ function trafficHtml(result) {
     <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;
 }
 
+function historyTime(value) {
+  const date = new Date(Number(value) * 1000);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('ru-RU') : '—';
+}
+
+function historyGraph(rows, series, maximum, label) {
+  const width = 480, height = 110;
+  const x = i => rows.length < 2 ? 0 : i * width / (rows.length - 1);
+  let elements = '';
+  for (const item of series) {
+    let previous = null;
+    rows.forEach((row, i) => {
+      const value = row[item.field];
+      const n = Number(value);
+      if (value == null || !Number.isFinite(n) || n < 0 || n > maximum) { previous = null; return; }
+      const point = { x: x(i), y: height - n * height / maximum,
+        full: row.expected > 0 && row.samples >= row.expected && row[item.count] >= row.expected };
+      if (previous && previous.full && point.full) elements += `<line class="${item.className}" x1="${previous.x.toFixed(2)}" y1="${previous.y.toFixed(2)}" x2="${point.x.toFixed(2)}" y2="${point.y.toFixed(2)}"></line>`;
+      elements += `<circle class="${item.className}${point.full ? '' : ' partial'}" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2"><title>${esc(item.label)}: ${esc(item.format(n))}; ${esc(historyTime(row.timestamp))}; наблюдений ${esc(row[item.count])} из ${esc(row.expected)}</title></circle>`;
+      previous = point;
+    });
+  }
+  return `<svg class="server-history-chart" viewBox="-3 -3 486 116" role="img" aria-label="${esc(label)}">${elements}</svg>`;
+}
+
+function historyHtml(result) {
+  if (result.status === 'not_configured') return '<p>Сбор истории не настроен; приложение его автоматически не запускает.</p>';
+  if (result.status !== 'available' || !Array.isArray(result.buckets)) return '<p>История недоступна: проверьте отдельную базу и настройки.</p>';
+  const rows = result.buckets;
+  const last = result.last_sample_at;
+  const age = last == null ? null : Number(result.current_timestamp) - Number(last);
+  const notice = result.retention_paused ? '<p role="alert">Автоматическая очистка истории приостановлена после перерыва; проверьте часы и инструкцию.</p>' : result.collection_gap ? '<p role="alert">Обнаружен перерыв: очистка приостановится при следующем сборе; проверьте часы и инструкцию.</p>' : '';
+  const clock = result.clock_backwards ? '<p role="alert">Время сервера раньше сохранённых снимков. Сбор остановлен до исправления часов.</p>' : '';
+  const stale = age == null ? '<p>Снимков пока нет.</p>' : age < -60 || age > 180 ? '<p role="alert">Последний сбор устарел или время сервера изменилось.</p>' : '';
+  const pct = n => fmtPct(n);
+  const charts = historyGraph(rows, [
+    { field: 'cpu_pct', count: 'cpu_samples', className: 'cpu', label: 'CPU', format: pct },
+    { field: 'memory_pct', count: 'memory_samples', className: 'memory', label: 'RAM', format: pct },
+  ], 100, 'CPU и RAM; пропуски не соединяются');
+  const maxNetwork = Math.max(1, ...rows.flatMap(row => [row.rx_bytes_per_sec, row.tx_bytes_per_sec])
+    .filter(v => v != null && Number.isFinite(Number(v)) && Number(v) >= 0).map(Number));
+  const net = result.interface ? historyGraph(rows, [
+    { field: 'rx_bytes_per_sec', count: 'rx_samples', className: 'cpu', label: 'Вход', format: n => fmtBytes(n) + '/с' },
+    { field: 'tx_bytes_per_sec', count: 'tx_samples', className: 'memory', label: 'Выход', format: n => fmtBytes(n) + '/с' },
+  ], maxNetwork, 'Скорости выбранного интерфейса; пропуски не соединяются') : '';
+  const table = rows.map(row => `<tr><td>${esc(historyTime(row.timestamp))}</td><td>${esc(fmtPct(row.cpu_pct))} (${esc(row.cpu_samples)}/${esc(row.expected)})</td>
+    <td>${esc(fmtPct(row.memory_pct))} (${esc(row.memory_samples)}/${esc(row.expected)})</td><td>${esc(fmtPct(row.swap_pct))}</td>
+    <td>${row.rx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.rx_bytes_per_sec)) + '/с'}</td><td>${row.tx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.tx_bytes_per_sec)) + '/с'}</td></tr>`).join('');
+  return `${notice}${clock}${stale}<p>Последний снимок: ${last == null ? '—' : esc(historyTime(last))} (время устройства). Интерфейс: ${esc(result.interface || 'не выбран')}.</p>
+    <p class="form-hint">Точки — средние наблюдённых значений за интервал. Пропуски и неполные интервалы не соединяются; CPU и RAM подписаны в таблице числом наблюдений. График сети — скорость, не биллинг.</p>
+    <p>CPU (синий) · RAM (зелёный)</p>${charts}
+    ${net ? `<p>Вход (синий) · выход (зелёный), шкала до ${esc(fmtBytes(maxNetwork))}/с</p>${net}` : '<p>История сети недоступна без выбранного интерфейса.</p>'}
+    <details><summary>Таблица интервалов</summary><div class="table-wrap"><table class="data"><thead><tr><th>Время</th><th>CPU</th><th>RAM</th><th>Swap</th><th>Вход</th><th>Выход</th></tr></thead><tbody>${table}</tbody></table></div></details>`;
+}
+
 function processHtml(result) {
   if (result.status !== 'available' || !Array.isArray(result.top_cpu) || !Array.isArray(result.top_memory)) {
     return '<p>Снимок процессов недоступен.</p>';
@@ -119,7 +184,25 @@ export function localServerWire() {
   const button = document.getElementById('server-monitor-refresh');
   const trafficButton = document.getElementById('server-traffic-refresh');
   const processButton = document.getElementById('server-processes-refresh');
-  if (!button || !trafficButton || !processButton) return;
+  const historyButton = document.getElementById('server-history-refresh');
+  if (!button || !trafficButton || !processButton || !historyButton) return;
+  historyButton.onclick = async () => {
+    const generation = localGeneration;
+    const panel = document.getElementById('server-history');
+    const period = document.getElementById('server-history-period').value;
+    historyButton.disabled = true;
+    panel.textContent = 'Чтение истории…';
+    try {
+      const result = await api.get('/api/v1/admin/server-monitor/history?period=' + encodeURIComponent(period));
+      if (generation !== localGeneration || !historyButton.isConnected) return;
+      panel.innerHTML = historyHtml(result);
+    } catch (e) {
+      if (generation !== localGeneration || !historyButton.isConnected) return;
+      panel.textContent = 'Не удалось прочитать историю: ' + (e.message || e);
+    } finally {
+      if (generation === localGeneration && historyButton.isConnected) historyButton.disabled = false;
+    }
+  };
   processButton.onclick = async () => {
     const generation = localGeneration;
     const panel = document.getElementById('server-processes');
