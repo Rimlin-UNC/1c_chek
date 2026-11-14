@@ -7,7 +7,7 @@ test('ручной повтор во время отправки не теряе
   const { access_token: token, user } = await login.json();
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.26');
+    localStorage.setItem('ymaster_seen_version', '1.72.27');
   }, token);
   let received = 0, release;
   const waiting = new Promise(resolve => { release = resolve; });
@@ -38,7 +38,7 @@ test('отложенный ручной повтор не выполняется
   const { access_token: token, user } = await login.json();
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.26');
+    localStorage.setItem('ymaster_seen_version', '1.72.27');
   }, token);
   let received = 0, release;
   const waiting = new Promise(resolve => { release = resolve; });

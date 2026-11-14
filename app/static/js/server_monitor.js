@@ -104,6 +104,11 @@ function trafficHtml(result) {
   const amount = current ? current.rx_bytes + current.tx_bytes : null;
   const warning = amount === null ? '' : amount >= 950e9 ? 'Наблюдённый объём достиг 95 % от ориентира.'
     : amount >= 800e9 ? 'Наблюдённый объём достиг 80 % от ориентира.' : '';
+  const scenario = result.scenario;
+  const projection = scenario && Number.isSafeInteger(scenario.projected_bytes) && scenario.projected_bytes >= 0 && scenario.sample_days === 7
+    ? `<p><strong>Условный сценарий на конец календарного месяца: ${esc(trafficGb(scenario.projected_bytes))}</strong>${scenario.projected_bytes >= 1e12 ? ' — при этих предположениях превышает ориентир 1000 ГБ.' : '.'}</p>
+      <p class="form-hint">Наблюдённый месяц плюс средний трафик за 7 предыдущих дней на оставшееся время от ${esc(String(scenario.as_of).replace('T', ' '))}. Предполагается постоянный темп, полный учёт, календарный месяц с первого числа и совпадение часов. Свежесть, полнота и тариф не подтверждены: это не биллинг и не надёжный прогноз; скачки и простои его изменят. Сверяйте с кабинетом провайдера.</p>`
+    : '<p>Условный сценарий недоступен: недостаточно согласованных наблюдений или не совпадают даты. Отсутствие расчёта не означает нулевой трафик.</p>';
   const stale = result.status === 'stale' ? '<p role="alert">Источник устарел; показатели могут быть неполными.</p>'
     : '<p role="alert">Свежесть источника не подтверждена: часовой пояс vnStat может отличаться.</p>';
   const months = data.months.map(row => `<li>${esc(row.period)}: вход ${esc(trafficGb(row.rx_bytes))}, выход ${esc(trafficGb(row.tx_bytes))}, сумма ${esc(trafficGb(row.rx_bytes + row.tx_bytes))}</li>`).join('');
@@ -112,7 +117,8 @@ function trafficHtml(result) {
   return `${stale}<p>Интерфейс: <strong>${esc(data.interface)}</strong>. Начало учёта: ${esc(data.created_date)}. Последнее обновление: ${esc(data.updated_at.replace('T', ' '))} (время vnStat, часовой пояс не подтверждён).</p>
     <p>${current ? `Календарный месяц приложения ${esc(current.period)}: <strong>${esc(trafficGb(amount))}</strong> из ориентира 1000 ГБ (вход + выход).` : 'За текущий месяц данных нет.'}</p>
     ${warning ? `<p role="alert">${esc(warning)}</p>` : ''}
-    <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора, внутренний трафик и отличие расчётного периода или часового пояса vnStat. Полнота данных не подтверждена; остаток и прогноз не рассчитываются.</p>
+    ${projection}
+    <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора, внутренний трафик и отличие расчётного периода или часового пояса vnStat. Полнота данных не подтверждена; подтверждённый остаток не рассчитывается.</p>
     <p><strong>По месяцам</strong></p><ul>${months || '<li>Данных нет.</li>'}</ul>
     <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;
 }

@@ -7,7 +7,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.26');
+    localStorage.setItem('ymaster_seen_version', '1.72.27');
   }, token);
   const cloudRequests = [];
   let performanceRequests = 0;
@@ -43,7 +43,9 @@ test('локальный монитор работает без облачног
     await route.fulfill({ status: 200, json: { status: 'freshness_unknown', current_period: '2026-11', data: {
       interface: 'ens3', created_date: '2026-10-17', updated_at: '2026-11-08T12:00:00', billing_verified: false,
       months: [{ period: '2026-11', rx_bytes: 400000000000, tx_bytes: 450000000000 }],
-      days: [{ date: '2026-11-08', rx_bytes: 1000000000, tx_bytes: 2000000000 }] } } });
+      days: [{ date: '2026-11-08', rx_bytes: 1000000000, tx_bytes: 2000000000 }] },
+      scenario: { projected_bytes: 1200000000000, sample_days: 7, as_of: '2026-11-08T12:00:00',
+        billing_verified: false, completeness_verified: false } } });
   });
   page.on('request', req => { if (new URL(req.url()).pathname.startsWith('/api/v1/openstack')) cloudRequests.push(req.url()); });
   await page.goto('/#/settings');
@@ -90,6 +92,9 @@ test('локальный монитор работает без облачног
   await expect(card.locator('#server-traffic')).toContainText('не счёт провайдера');
   await expect(card.locator('#server-traffic')).toContainText('80 %');
   await expect(card.locator('#server-traffic')).toContainText('Свежесть источника не подтверждена');
+  await expect(card.locator('#server-traffic')).toContainText('Условный сценарий');
+  await expect(card.locator('#server-traffic')).toContainText('не биллинг');
+  await expect(card.locator('#server-traffic')).toContainText('1200,00 ГБ');
   expect(historyRequests).toBe(1);
   await expect(page.locator('#st-openstack')).toHaveCount(0);
   expect(cloudRequests).toEqual([]);

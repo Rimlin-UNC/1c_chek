@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import calendar
 import json
 import re
 import selectors
@@ -12,7 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from ..config import _env
 
@@ -74,6 +75,62 @@ def _now() -> datetime:
     return datetime.now().astimezone()
 
 
+def scenario(data: dict, now: datetime) -> dict | None:
+    """Условная экстраполяция, не проверка свежести, полноты или тарификации."""
+    try:
+        updated = datetime.fromisoformat(data['updated_at'])
+        local_now = now.replace(tzinfo=None)
+        if updated.tzinfo is not None or updated.date() != local_now.date():
+            return None
+        age = (local_now - updated).total_seconds()
+        # Лишь грубое сито: часовой пояс vnStat неизвестен и свежесть не доказана.
+        if age < -300 or age > 6 * 3600:
+            return None
+        today = updated.date()
+        oldest = today - timedelta(days=7)
+        created = date.fromisoformat(data['created_date'])
+        if created >= min(oldest, today.replace(day=1)):
+            return None
+        months = [row for row in data['months'] if row['period'] == today.strftime('%Y-%m')]
+        if len(months) != 1:
+            return None
+        daily = data['days']
+        by_day = {date.fromisoformat(row['date']): row for row in daily}
+        if len(by_day) != len(daily):
+            return None
+        last_week = [by_day[today - timedelta(days=n)] for n in range(1, 8)]
+
+        def total(row):
+            rx, tx = row['rx_bytes'], row['tx_bytes']
+            if type(rx) is not int or type(tx) is not int or rx < 0 or tx < 0 or rx + tx > 2**53 - 1:
+                raise ValueError('неверные счётчики')
+            return rx + tx
+
+        current = total(months[0])
+        values = [total(row) for row in last_week]
+        if not sum(values):
+            return None
+        # Сравниваем только полностью прошедшие дни этого календарного месяца.
+        if sum(total(row) for d, row in by_day.items() if d.year == today.year and d.month == today.month and d < today) > current:
+            return None
+        remaining = (calendar.monthrange(today.year, today.month)[1] - today.day) * 1440 + (24 * 60 - updated.hour * 60 - updated.minute)
+        # integer arithmetic: средние за 7 суток × минуты до конца месяца.
+        projected = current + (sum(values) * remaining + 5040) // (7 * 1440)
+        if projected > 2**53 - 1:
+            return None
+        return {'projected_bytes': projected, 'sample_days': 7, 'as_of': updated.isoformat(),
+                'remaining_minutes': remaining, 'billing_verified': False, 'completeness_verified': False}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _view(result: dict) -> dict:
+    if 'data' not in result:
+        return result
+    now = _now()
+    return {**result, 'current_period': now.strftime('%Y-%m'), 'scenario': scenario(result['data'], now)}
+
+
 def _read_json(executable: str, mode: str, count: str, interface: str):
     # Читаем ограниченное число байтов, а не capture_output без лимита памяти.
     with subprocess.Popen([executable, '--json', mode, count, '-i', interface],
@@ -118,7 +175,7 @@ def snapshot() -> dict:
         now = time.monotonic()
         if _cached is not None and _cached_key == interface and 0 <= now - _cached_at < _CACHE_SEC:
             # Граница месяца может наступить в течение срока кеширования.
-            return {**_cached, 'current_period': _now().strftime('%Y-%m')} if 'data' in _cached else _cached
+            return _view(_cached)
         executable = shutil.which('vnstat')
         result = {'status': 'not_installed'}
         if executable:
@@ -152,7 +209,7 @@ def snapshot() -> dict:
             except (OSError, UnicodeError, TimeoutError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError, IndexError, RecursionError):
                 pass
         _cached, _cached_key, _cached_at = result, interface, time.monotonic()
-        return result
+        return _view(result)
 
 
 def reset_cache() -> None:

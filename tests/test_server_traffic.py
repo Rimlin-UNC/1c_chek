@@ -146,3 +146,90 @@ def test_vnstat_timestamp_depends_on_client_timezone():
     utc = json.loads((folder / 'month_utc.json').read_text())['interfaces'][0]['updated']
     assert local['date'] == utc['date'] and local['time'] == utc['time']
     assert local['timestamp'] != utc['timestamp']
+
+
+def scenario_data(day='2026-11-08', created='2026-10-01', rx=100, tx=100):
+    from datetime import date, timedelta
+
+    today = date.fromisoformat(day)
+    return {'created_date': created, 'updated_at': f'{day}T12:00:00', 'billing_verified': False,
+            'months': [{'period': today.strftime('%Y-%m'), 'rx_bytes': 1000, 'tx_bytes': 1000}],
+            'days': [{'date': (today - timedelta(days=n)).isoformat(), 'rx_bytes': rx, 'tx_bytes': tx}
+                     for n in range(1, 8)]}
+
+
+def test_conditional_scenario_uses_seven_complete_days_and_source_clock():
+    data = scenario_data()
+    result = traffic.scenario(data, datetime(2026, 11, 8, 13, 0))
+    # 2000 байт уже наблюдено + 200 байт/день × 22,5 дня, без округления в ГБ.
+    assert result['projected_bytes'] == 6500
+    assert result['sample_days'] == 7 and result['as_of'] == '2026-11-08T12:00:00'
+    assert result['remaining_minutes'] == 22 * 1440 + 720
+    assert result['billing_verified'] is False and result['completeness_verified'] is False
+
+
+def test_conditional_scenario_fails_closed_for_missing_inconsistent_or_old_data():
+    import copy
+
+    now = datetime(2026, 11, 8, 13, 0)
+    data = scenario_data()
+    for bad in ([], data['days'][:-1], data['days'] + data['days'][:1]):
+        copydata = copy.deepcopy(data); copydata['days'] = bad
+        assert traffic.scenario(copydata, now) is None
+    copydata = copy.deepcopy(data); copydata['created_date'] = '2026-11-01'
+    assert traffic.scenario(copydata, now) is None
+    copydata = copy.deepcopy(data); copydata['updated_at'] = '2026-11-07T12:00:00'
+    assert traffic.scenario(copydata, now) is None
+    copydata = copy.deepcopy(data); copydata['months'] = []
+    assert traffic.scenario(copydata, now) is None
+    copydata = copy.deepcopy(data); copydata['months'][0]['rx_bytes'] = 1; copydata['months'][0]['tx_bytes'] = 1
+    assert traffic.scenario(copydata, now) is None
+    assert traffic.scenario(scenario_data(rx=0, tx=0), now) is None
+
+
+def test_conditional_scenario_crosses_year_and_leap_february_and_rejects_overflow():
+    data = scenario_data('2028-02-29', created='2027-12-01')
+    result = traffic.scenario(data, datetime(2028, 2, 29, 12))
+    assert result['remaining_minutes'] == 720 and result['projected_bytes'] == 2100
+    data = scenario_data('2027-01-01', created='2026-11-01')
+    result = traffic.scenario(data, datetime(2027, 1, 1, 12))
+    assert result['remaining_minutes'] == 30 * 1440 + 720
+    data['days'][0]['rx_bytes'] = 2**53 - 1
+    assert traffic.scenario(data, datetime(2027, 1, 1, 12)) is None
+
+
+def test_scenario_cached_result_is_recomputed_across_midnight(monkeypatch):
+    monkeypatch.setenv('YM_MONITOR_TRAFFIC_INTERFACE', 'ens3')
+    monkeypatch.setattr(traffic.shutil, 'which', lambda _: '/usr/bin/vnstat')
+    doc = document()
+    from datetime import date, timedelta
+    today = date(2026, 11, 8)
+    doc['interfaces'][0]['created']['date'] = {'year': 2026, 'month': 10, 'day': 1}
+    doc['interfaces'][0]['traffic']['month'][0].update(rx=1000, tx=1000)
+    doc['interfaces'][0]['traffic']['day'] = [
+        {'date': {'year': d.year, 'month': d.month, 'day': d.day}, 'rx': 100, 'tx': 100}
+        for d in [today - timedelta(days=n) for n in range(1, 8)]
+    ]
+    monkeypatch.setattr(traffic, '_read_json', lambda *args: __import__('copy').deepcopy(doc))
+    monkeypatch.setattr(traffic, '_now', lambda: datetime(2026, 11, 8, 13))
+    traffic.reset_cache()
+    try:
+        assert traffic.snapshot()['scenario']['projected_bytes'] == 6500
+        monkeypatch.setattr(traffic, '_now', lambda: datetime(2026, 11, 9, 0, 0))
+        assert traffic.snapshot()['scenario'] is None
+    finally:
+        traffic.reset_cache()
+
+
+def test_conditional_scenario_rejects_suspicious_clock_and_is_never_verified():
+    import copy
+
+    data = scenario_data()
+    assert traffic.scenario(data, datetime(2026, 11, 8, 11, 54)) is None
+    assert traffic.scenario(data, datetime(2026, 11, 8, 18, 1)) is None
+    malformed = copy.deepcopy(data); malformed['updated_at'] = '2026-11-08T12:00:00+00:00'
+    assert traffic.scenario(malformed, datetime(2026, 11, 8, 12)) is None
+    malformed = copy.deepcopy(data); malformed['days'][0]['rx_bytes'] = True
+    assert traffic.scenario(malformed, datetime(2026, 11, 8, 12)) is None
+    malformed = copy.deepcopy(data); malformed['days'][0]['rx_bytes'] = -1
+    assert traffic.scenario(malformed, datetime(2026, 11, 8, 12)) is None

@@ -244,3 +244,28 @@ describe('монтирования сервера по запросу', () => {
     expect(document.querySelector('#server-monitor-note').textContent).not.toMatch(/история производительности.*пока не собира/i);
   });
 });
+
+describe('условный сценарий месячного трафика', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  const data = { interface: 'ens3', created_date: '2026-10-01', updated_at: '2026-11-08T12:00:00',
+    months: [{ period: '2026-11', rx_bytes: 400e9, tx_bytes: 450e9 }], days: [] };
+  it('помечает расчёт предположением и не выдаёт его за подтверждённый счёт или остаток', async () => {
+    api.get.mockResolvedValue({ status: 'freshness_unknown', current_period: '2026-11', data,
+      scenario: { projected_bytes: 1200e9, sample_days: 7, as_of: '2026-11-08T12:00:00',
+        remaining_minutes: 32400, billing_verified: false, completeness_verified: false } });
+    localServerWire(); document.querySelector('#server-traffic-refresh').click(); await flush();
+    const text = document.querySelector('#server-traffic').textContent;
+    expect(text).toMatch(/условный сценарий/i); expect(text).toContain('1200,00 ГБ');
+    expect(text).toMatch(/7.*дн/i); expect(text).toMatch(/не.*биллинг/i);
+    expect(text).toMatch(/не подтвержден/i); expect(text).not.toMatch(/остаток.*150/i);
+    localServerStop();
+  });
+  it('не показывает число прогноза без достаточного ряда', async () => {
+    api.get.mockResolvedValue({ status: 'freshness_unknown', current_period: '2026-11', data, scenario: null });
+    localServerWire(); document.querySelector('#server-traffic-refresh').click(); await flush();
+    const text = document.querySelector('#server-traffic').textContent;
+    expect(text).toMatch(/сценарий недоступен/i);
+    expect(text).not.toMatch(/прогноз.*0,00/i);
+    localServerStop();
+  });
+});
