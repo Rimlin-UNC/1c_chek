@@ -72,12 +72,12 @@ test.describe('настройки: оглавления блоков', () => {
     await expect(card).not.toHaveClass(/collapsed/);
   });
 
-  test('оглавление мониторинга облака читается целиком', async ({ page }) => {
+  test('оглавление мониторинга сервера читается целиком', async ({ page }) => {
     await login(page);
     const welcome = page.getByRole('button', { name: 'Понятно, работаем' });
     await welcome.click();
     await page.locator('a[href="#/settings"]').click();
-    const osm = page.locator('#st-openstack .card-title > .ct-text');
+    const osm = page.locator('#st-server-monitor .card-title > .ct-text');
     await expect(osm).toContainText('Мониторинг', { timeout: 15000 });
   });
 });
@@ -179,7 +179,9 @@ test('разбор конфликтов: администратор закреп
 // v1.70.86 («Единая база», фаза 3): число организаций у чека. Сид кладёт чек
 // «E2E Альфы» с отклонённой заявкой «E2E Беты» и бухгалтера Альфы.
 test('число организаций: администратор разрешает показ, бухгалтер видит только число', async ({ page }) => {
-  test.setTimeout(90_000);   // два входа и два экрана — дольше обычного сценария
+  // Локальный Chromium из npm на 2 ядрах и при полном pytest работает существенно медленнее.
+  // CI сохраняет прежний строгий предел 90 секунд; проверки содержимого не меняются.
+  test.setTimeout(process.env.YM_PLAYWRIGHT_CHROMIUM ? 150_000 : 90_000);
   await login(page);
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();
   await page.locator('a[href="#/receipts"]').click();
@@ -386,7 +388,11 @@ test('заставка загрузки: версия с сервера, «Го�
   await page.goto('/');
   await expect(page.locator('h1.land-h1')).toContainText('Проверка чека онлайн');
   await expect(page.locator('#ym-splash')).toBeHidden();                         // гость: без заставки
-  await page.evaluate(() => localStorage.setItem('ym-splash-guests', '1'));     // как после флажка администратора
+  // Прежняя страница ещё может завершить запрос /about и вернуть флаг в false.
+  // Для следующей загрузки фиксируем и сохранённое значение, и ответ сервера:
+  // это воспроизводит реально включённый администратором режим без гонки.
+  await page.route('**/api/v1/about', (route) => route.fulfill({ json: { ...about, splash_guests: true } }));
+  await page.addInitScript(() => localStorage.setItem('ym-splash-guests', '1'));
   await page.reload();
   const splash = page.locator('#ym-splash');
   await expect(splash).toHaveClass(/is-ready/, { timeout: 15000 });
@@ -545,6 +551,109 @@ test('рабочее место аутсорсера: назначение кл�
   expect(reset.ok()).toBeTruthy();
 });
 
+// v1.71.1 (T-84): бухгалтер заводит клиента сам с экрана «Клиенты» — компания сразу в списке и в шапке,
+// без действий администратора и без перевхода
+test('создание клиента бухгалтером: кнопка «＋ Новый клиент» и работа в нём сразу', async ({ page, request }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('#btn-logout').click();
+  const reloaded = page.waitForEvent('load');
+  await page.locator('#lo-exit').click();
+  await reloaded;
+  await page.fill('#login-username', 'e2e_acc_alpha');
+  await page.fill('#login-password', 'e2e-accountant-password');
+  await page.click('#login-submit');
+  await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  const name = `E2E Новый клиент ${Date.now()}`;
+  await page.locator('#cl-new').click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Новый клиент');
+  await modal.locator('#clc-name').fill(name);
+  await modal.locator('#clc-note').fill('договор № 1');
+  await modal.locator('#clc-save').click();
+  await expect(page.locator('#toast-container')).toContainText('добавлен', { timeout: 15000 });
+  // компания сразу в списке и в переключателе — перевхода не было
+  await expect(page.locator('.cl-card', { hasText: name })).toHaveCount(1, { timeout: 15000 });
+  const sw = page.locator('#client-switch');
+  await expect(sw.locator('option', { hasText: name })).toHaveCount(1, { timeout: 15000 });
+  await page.locator('.cl-card', { hasText: name }).locator('[data-open="docreq"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Что нужно от клиента', { timeout: 15000 });
+  await expect(sw.locator('option:checked')).toHaveText(name);
+  // уборка: компании, заведённые сценарием, в архив (данные синтетические — ADR-14)
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const companies = await (await request.get('/api/v1/companies', { headers: { Authorization: `Bearer ${token}` } })).json();
+  const mine = companies.find((c) => c.name === name);
+  expect(mine).toBeTruthy();
+  const arch = await request.patch(`/api/v1/companies/${mine.id}`,
+    { headers: { Authorization: `Bearer ${token}` }, data: { is_active: false } });
+  expect(arch.ok()).toBeTruthy();
+});
+
+// v1.71.2 (T-85, ADR-50): удаление компании-клиента не оставляет «сирот» — в окне удаления сказано,
+// что уйдёт вместе с компанией; после удаления компания пропадает из списка и из базы
+test('удаление клиента: пояснение в окне и чистое удаление', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const H = { Authorization: `Bearer ${token}` };
+  const name = `E2E Удаляемый клиент ${Date.now()}`;
+  const created = await request.post('/api/v1/companies', { headers: H, data: { name } });
+  expect(created.ok()).toBeTruthy();
+  const company = await created.json();
+
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/companies"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Компании');
+  await page.locator('#cp-table tr', { hasText: name }).locator('.cp-card').click();
+  await page.locator('#cc-delete').click();
+  const modal = page.locator('.modal-slot');
+  await expect(modal).toContainText('Удаление компании');
+  // пояснение: что уходит вместе с компанией и что остаётся
+  await expect(modal).toContainText('банковские выписки');
+  await expect(modal).toContainText('история решений');
+  await modal.locator('input[name="dl-mode"][value="wipe"]').check();
+  page.once('dialog', (d) => d.accept());
+  await modal.locator('#dl-go').click();
+  await expect(page.locator('#toast-container')).toContainText('удалены безвозвратно', { timeout: 15000 });
+  await expect(page.locator('#cp-table tr', { hasText: name })).toHaveCount(0, { timeout: 15000 });
+
+  // в базе компании больше нет, и запрос к ней — 404
+  const companies = await (await request.get('/api/v1/companies', { headers: H })).json();
+  expect(companies.find((c) => c.id === company.id)).toBeFalsy();
+  const again = await request.get(`/api/v1/companies/${company.id}/card`, { headers: H });
+  expect(again.status()).toBe(404);
+});
+
+// v1.71.3 (T-86): согласования авансовых отчётов видны в сводке клиентов — плитка «Согласования»
+// показывает, сколько отчётов ждут бухгалтера, и открывает экран «Согласования» уже в этой компании
+test('клиенты: согласования ждут бухгалтера и открываются одной кнопкой', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const H = { Authorization: `Bearer ${token}` };
+  const companies = await (await request.get('/api/v1/companies', { headers: H })).json();
+  const company = companies.find((c) => c.name === 'E2E Согласование');
+  expect(company).toBeTruthy();
+  // плитка есть только там, где согласование включено: включаем через API, не заходя в настройки
+  const settings = await request.put('/api/v1/approvals/settings', {
+    headers: H, data: { company_id: company.id, enabled: true, timeout_hours: 72, manager_limit: 0,
+      accountant_limit: 0, channels: [] } });
+  expect(settings.ok()).toBeTruthy();
+
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  const card = page.locator('.cl-card', { hasText: 'E2E Согласование' });
+  await expect(card).toBeVisible({ timeout: 15000 });
+  // согласование в этой компании включено (сценарий согласования идёт выше) — плитка есть и переход работает
+  await expect(card.locator('[data-open="approvals"]')).toBeVisible({ timeout: 15000 });
+  await card.locator('[data-open="approvals"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Согласования', { timeout: 15000 });
+});
+
 // v1.70.101 (T-69, ADR-31): понимание чеков — читаемая позиция и категория с причиной; бухгалтер меняет категорию,
 // выбор запоминается для компании и виден в «Настройках» → «Память товаров». Чек — синтетика через API.
 test('понимание чеков: категория позиции, выбор бухгалтера и «Память товаров»', async ({ page, request }) => {
@@ -624,8 +733,11 @@ test('согласование авансового отчёта: сотрудн
   await page.locator('a[href="#/approvals"]').click();
   await expect(page.locator('#page-title')).toHaveText('Согласования');
   await page.locator('#ap-company').selectOption({ label: 'E2E Согласование' });
+  const settings = page.locator('details.ap-conf');
+  await expect(settings).toBeVisible();
+  if (!(await settings.evaluate((el) => el.open))) await settings.locator('summary').click();
   await page.locator('#ap-enabled').check();
-  await page.getByRole('button', { name: 'Сохранить' }).click();
+  await page.locator('#ap-settings').getByRole('button', { name: 'Сохранить' }).click();
   await expect(page.locator('#toast-container')).toContainText('Согласование включено', { timeout: 15000 });
 
   await approvalsRelogin(page, 'e2e_emp_appr');
@@ -715,4 +827,173 @@ test('папка с УПД: документы по ИНН компании и �
   await expect(row).toContainText('закрыт');
   await expect(row).toContainText('УПД № E-101 от 05.10.2026');
   await expect(row).toContainText('сумма нескольких документов');
+});
+
+// T-88: старый клиент работает без договора; сохранение и предупреждение в карточке.
+test('клиенты: договор и тариф сохраняются, срок виден на экране', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const H = { Authorization: `Bearer ${token}` };
+  const name = `E2E Договор ${Date.now()}`;
+  const created = await request.post('/api/v1/companies', { headers: H, data: { name } });
+  expect(created.ok()).toBeTruthy();
+  const company = await created.json();
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/clients"]').click();
+  const card = page.locator('.cl-card', { hasText: name });
+  await expect(card).toContainText('Договор не заполнен', { timeout: 15000 });
+  await card.locator('[data-contract]').click();
+  await page.locator('#contract-number').fill('E2E-1');
+  await page.locator('#contract-date').fill('2025-01-01');
+  await page.locator('#contract-since').fill('2025-01-01');
+  await page.locator('#contract-until').fill('2025-12-31');
+  await page.locator('#contract-fee').fill('12500,50');
+  await page.locator('#contract-frequency').selectOption('month');
+  await page.locator('#contract-form button[type="submit"]').click();
+  await expect(card).toContainText('E2E-1', { timeout: 15000 });
+  await expect(card).toContainText('Дата окончания по данным карточки прошла');
+  const stored = await (await request.get(`/api/v1/clients/${company.id}/contract`, { headers: H })).json();
+  expect(stored.contract.fee).toBe('12500.50');
+  await card.locator('[data-contract]').click();
+  await expect(page.locator('#contract-number')).toHaveValue('E2E-1');
+  await page.locator('#contract-cancel').click();
+});
+
+// T-90: сформировать защищённую печатную сводку в браузере, без внешних адресатов.
+test('клиенты: сводный отчёт открывается для печати и PDF', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  await page.locator('a[href="#/clients"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Клиенты');
+  const period = await page.locator('#cl-period').inputValue();
+  const popupPromise = page.waitForEvent('popup');
+  await page.locator('#cl-report').click();
+  const popup = await popupPromise;
+  await expect(popup.locator('h1')).toHaveText('Сводка по клиентам', { timeout: 15000 });
+  await expect(popup.locator('body')).toContainText('на момент формирования');
+  await expect(popup.locator('body')).toContainText('не бухгалтерская отчётность');
+  expect(popup.url()).toMatch(/^blob:/);
+  expect(popup.url()).not.toContain('token');
+  expect((await popup.pdf({ format: 'A4', landscape: true })).length).toBeGreaterThan(500);
+  expect(period).toMatch(/^\d{4}-\d{2}$/);
+  await popup.close();
+});
+
+// T-91: настоящий браузер и настоящий WebSocket, без моков; база Playwright временная и синтетическая.
+test('живые обновления: чек выбранного клиента появляется без перезагрузки', async ({ page, request }) => {
+  const auth = await request.post('/api/v1/auth/login', { data: { username: 'admin', password } });
+  const { access_token: token } = await auth.json();
+  const headers = { Authorization: `Bearer ${token}` };
+  const users = await (await request.get('/api/v1/users', { headers })).json();
+  const acc = users.find((u) => u.username === 'e2e_acc_alpha');
+  const previous = await (await request.get(`/api/v1/clients/access/${acc.id}`, { headers })).json();
+  const created = await request.post('/api/v1/companies', { headers, data: { name: `E2E живой клиент ${Date.now()}` } });
+  expect(created.ok()).toBeTruthy();
+  const company = await created.json();
+  const granted = await request.put(`/api/v1/clients/access/${acc.id}`, {
+    headers, data: { company_ids: [...previous.company_ids, company.id] },
+  });
+  expect(granted.ok()).toBeTruthy();
+  const frames = [];
+  page.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => {
+    try { frames.push(JSON.parse(String(payload))); } catch { /* heartbeat */ }
+  }));
+  try {
+    await page.goto('/');
+    await page.fill('#login-username', 'e2e_acc_alpha');
+    await page.fill('#login-password', 'e2e-accountant-password');
+    const loginResult = page.waitForResponse((response) => response.url().includes('/api/v1/auth/login')
+      && response.request().method() === 'POST');
+    await page.click('#login-submit');
+    const loginResponse = await loginResult;
+    expect(loginResponse.ok(), `Вход бухгалтера: HTTP ${loginResponse.status()} ${await loginResponse.text()}`).toBeTruthy();
+    await expect(page.locator('#login-form')).toBeHidden({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+    await expect.poll(() => frames.some((f) => f.type === 'connected'), { timeout: 15000 }).toBe(true);
+    const sw = page.locator('#client-switch');
+    await expect(sw.locator('option', { hasText: company.name })).toHaveCount(1, { timeout: 15000 });
+    await sw.selectOption(company.id);
+    await expect.poll(() => frames.some((f) => f.type === 'client_ok' && f.payload.company === company.id),
+      { timeout: 15000 }).toBe(true);
+    await page.locator('a[href="#/receipts"]').click();
+    await expect(page.locator('#page-title')).toHaveText('База чеков');
+    await page.locator('#rc-view-list').click();
+    await expect(page.locator('#receipts-table')).toBeVisible();
+    const fn = `99${String(Date.now()).slice(-14).padStart(14, '0')}`;
+    const result = await request.post('/api/v1/receipts/manual', { headers, data: {
+      date_time: '04.11.2026 12:10', total_sum: 101.25, fn, fd: '99831', fp: '9983101', company_id: company.id,
+    } });
+    expect(result.ok()).toBeTruthy();
+    const receipt = (await result.json()).receipt;
+    expect(receipt.company_id).toBe(company.id);
+    await expect.poll(() => frames.some((f) => f.type === 'receipt_created' && f.payload.id === receipt.id),
+      { timeout: 15000 }).toBe(true);
+    await expect(page.locator('#receipts-table tbody tr', { hasText: fn })).toHaveCount(1, { timeout: 20000 });
+  } finally {
+    await request.put(`/api/v1/clients/access/${acc.id}`, { headers, data: { company_ids: previous.company_ids } });
+    await request.patch(`/api/v1/companies/${company.id}`, { headers, data: { is_active: false } });
+  }
+});
+
+test.describe('переход к форме входа с главной', () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 700 }]) {
+    test(`ссылка входа и история, экран ${viewport.width}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+      await page.locator('.home-header__login').click();
+      await expect(page).toHaveURL(/#land-login$/);
+      await expect(page.locator('#login-username')).toBeInViewport();
+      await expect(page.locator('#public-screen')).toBeHidden();
+      await page.goBack();
+      await expect(page.locator('#login-screen')).toBeVisible();
+      await page.goForward();
+      await expect(page.locator('#login-username')).toBeInViewport();
+    });
+  }
+  test('прямая ссылка с информационной страницы', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto('/dlya-buhgalterov');
+    await page.getByRole('link', { name: 'Войти', exact: true }).click();
+    await expect(page).toHaveURL(/#land-login$/);
+    await expect(page.locator('#login-username')).toBeInViewport();
+  });
+  test('действующая сессия не выбрасывается при открытии ссылки входа', async ({ page }) => {
+    await login(page);
+    await page.goto('/#land-login');
+    await expect(page.locator('#app-shell')).toBeVisible({ timeout: 15000 });
+  });
+});
+
+test('проверка скачанного пакета не обещает восстановление', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Понятно, работаем' }).click();
+  const token = await page.evaluate(() => localStorage.getItem('ymaster_check_token'));
+  const headers = { Authorization: `Bearer ${token}` };
+  const companies = await (await page.request.get('/api/v1/companies', { headers })).json();
+  const company = companies.find(c => c.name.includes('Ямастер'));
+  expect(company).toBeTruthy();
+  const res = await page.request.get(`/api/v1/export/package?company_id=${company.id}&period=2026-10`, { headers });
+  expect(res.ok()).toBeTruthy();
+  await page.locator('a[href="#/export"]').click();
+  await page.locator('#pkg-check-file').setInputFiles({ name: 'synthetic.zip', mimeType: 'application/zip', buffer: await res.body() });
+  await page.locator('#pkg-check').click();
+  await expect(page.locator('#pkg-check-result')).toContainText('Проверка пакета пройдена');
+  await expect(page.locator('#pkg-check-result')).toContainText('восстановление не проверено');
+});
+
+test('добровольное подтверждение показывает текст и сохраняет его в личном архиве', async ({ page }) => {
+  await login(page);
+  await page.goto('/oferty');
+  await page.getByRole('link', { name: 'ознакомиться и подтвердить' }).click();
+  const shown = await page.locator('#offer-text').innerText();
+  expect(shown).toContain('лицензионного договора');
+  await expect(page.getByRole('button', { name: 'Подтвердить' })).toBeVisible();
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Подтвердить' }).click();
+  await expect(page).toHaveURL(/\/api\/v1\/legal\/acceptance\/history\/[0-9a-f]{64}$/);
+  await expect(page.locator('pre')).toHaveText(shown);
+  await expect(page.locator('body')).toContainText('не доказывает прочтение');
+  await page.getByRole('link', { name: 'Мои подтверждения' }).click();
+  await expect(page.getByRole('link', { name: /2026-10/ })).toHaveCount(1);
 });

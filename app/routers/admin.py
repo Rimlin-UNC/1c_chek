@@ -31,7 +31,7 @@ from ..config import settings
 from ..database import get_db
 from ..models import AppSetting, Receipt, User
 from ..schemas import UpdateApplyBody
-from typing import Optional
+from typing import Annotated, Optional
 from ..services import appsettings
 from ..services.audit import log_action
 from ..services.updater import (APP_DIR, check_update, job as update_job,
@@ -340,6 +340,51 @@ def backups_download(name: str, user: User = Depends(require_admin)):
 
 # v1.17.0: мёртвый дубль PUT /update/repo (RepoPatch-версия) удалён —
 # FastAPI использует ПЕРВЫЙ зарегистрированный маршрут (v1.6.0 выше).
+
+
+@router.get("/server-monitor", summary="Локальные показатели сервера (админ)")
+def server_monitor(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Чтение локальной системы, без облака, настроек и сохранения истории."""
+    from ..services import local_monitor
+
+    response.headers["Cache-Control"] = "no-store"
+    return local_monitor.snapshot()
+
+
+@router.get("/server-monitor/traffic", summary="Наблюдённая статистика интерфейса (админ)")
+def server_monitor_traffic(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Необязательная история vnStat; не счёт провайдера и не сбор внутри приложения."""
+    from ..services import server_traffic
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_traffic.snapshot()
+
+
+@router.get("/server-monitor/processes", summary="Локальные процессы (админ)")
+def server_monitor_processes(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Ограниченное чтение procfs по требованию, без аргументов процессов и истории."""
+    from ..services import server_processes
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_processes.snapshot()
+
+
+@router.get("/server-monitor/history", summary="История локальных показателей (админ)")
+def server_monitor_history(response: Response, _user: Annotated[User, Depends(require_admin)], period: str = '1h'):
+    """Только чтение отдельно настроенной базы, без запуска сбора."""
+    from ..services import server_history
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_history.snapshot(period)
+
+
+@router.get("/server-monitor/mounts", summary="Локальные монтирования (админ)")
+def server_monitor_mounts(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Ограниченный обзор mountinfo; потенциально сетевые тома не опрашиваются."""
+    from ..services import server_mounts
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_mounts.snapshot()
 
 
 @router.get("/system", summary="Системная сводка (админ)")

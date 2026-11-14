@@ -92,10 +92,11 @@ def _app_metadata():
     from app.database import Base
     from app.docreq import models as _docreq  # noqa: F401 — v1.70.97: что нужно от клиента
     from app.goods import models as _goods  # noqa: F401 — v1.70.101: память исправлений категорий
-    from app.openstack_monitor import models as _os  # noqa: F401
+    from app.legal import acceptance as _acceptance  # noqa: F401 — архив подтверждений
     from app.pool import models as _pool  # noqa: F401
     from app.primary import models as _primary  # noqa: F401 — v1.70.94: первичка (УПД)
     from app.unified import models as _unified  # noqa: F401
+    from app.usage import models as _usage  # noqa: F401 — технический журнал счётчика
     return Base.metadata
 
 
@@ -155,6 +156,7 @@ def test_app_schema_fits_next_to_supabase_contour():
             with engine.begin() as conn:
                 metadata.create_all(bind=conn)
             app_tables = sorted(metadata.tables)
+            assert {"legal_offer_acceptances", "usage_events"} <= set(app_tables)
             assert len(app_tables) >= 40, f"подозрительно мало таблиц приложения: {len(app_tables)}"
             assert _verify(engine) == EXPECTED, "схема приложения задела демо-контур chek_demo"
 

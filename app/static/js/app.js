@@ -8,14 +8,17 @@
 // Регистрация — только по приглашению администратора, роль в приглашении.
 // ======================================================================
 
-import { api, getToken, setToken, clearToken, setClient } from './api.js';
+import { api, getApiRequestId, getClient, getToken, setToken, clearToken, setClient } from './api.js';
 import { toast, esc, fmtSum, fmtInt, fmtDate, statusLabel, roleLabel, chip, openModal, animateNumber } from './ui.js';
 import { injectIcons } from './icons.js';
 import { barChart, donutChart } from './charts.js';
 import { CameraScanner, decodeImageFile, offlineQueue, parseQrClient } from './scanner.js';
+import * as outbox from './offline_outbox.js';
+import { createNavigationCounts } from './navigation_counts.js';
+import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { osmCardHtml, osmWire, osmStop } from './osm.js';   // v1.70.51: мониторинг OpenStack
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.31';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -58,6 +61,36 @@ const state = {
     } catch (e) { return ''; }
   })(),
 };
+
+const navigationCounts = createNavigationCounts({
+  getContext: () => {
+    const me = state.me, token = getToken();
+    if (!me?.id || !token) return null;
+    const client = me.role === 'accountant' ? getClient() : '';
+    const company = me.role === 'admin' && state.companyFilter !== 'all' ? state.companyFilter : '';
+    return { key: JSON.stringify([me.id, me.role, me.company_id, token, client, company]), client, company };
+  },
+  get: (path, options) => api.get(path, options),
+});
+
+// Это состояние подтверждается действительными ответами сервера, без опроса.
+const connectionStatus = createConnectionStatus({ render: ({ state: conn, live }) => {
+  const dot = document.querySelector('#ws-status .live-dot');
+  const txt = document.querySelector('#ws-status-text');
+  const box = document.querySelector('#ws-status');
+  const banner = document.querySelector('#offline-indicator');
+  const labels = { connected: 'Подключено', connecting: 'Подключение…',
+    unknown: 'Состояние не проверено', disconnected: 'Нет подключения' };
+  const detail = conn === 'connected' && !live ? 'Подключено · без живых обновлений' : labels[conn];
+  if (dot) { dot.classList.toggle('on', conn === 'connected'); dot.classList.toggle('off', conn === 'disconnected'); }
+  if (txt) txt.textContent = detail;
+  if (box) box.title = conn === 'connected' && !live
+    ? 'Сервер ответил, но автоматические живые обновления недоступны' : labels[conn];
+  if (banner) banner.classList.toggle('hidden', conn !== 'disconnected');
+} });
+window.addEventListener('ymaster:api-connection', (event) => {
+  if (event.detail) connectionStatus.apiResult(event.detail.id, event.detail.ok);
+});
 
 const VIEW_TITLES = {
   dashboard: 'Дашборд', scan: 'Сканирование чеков', receipts: 'База чеков',
@@ -144,10 +177,24 @@ const spaceHas = (key) => {
 // --------------------------------------------------------------------------
 //  Точка входа
 // --------------------------------------------------------------------------
+// Общий ограничитель запросов версии: старт и сторож разделяют интервал и in-flight.
+let aboutLastStart = null, aboutInFlight = false;
+async function requestAboutForWatchdog() {
+  const now = Date.now();
+  if (aboutInFlight || (aboutLastStart !== null && now - aboutLastStart < 60000 && now >= aboutLastStart)) return null;
+  aboutLastStart = now;
+  aboutInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try { return await api.get('/api/v1/about', { retries: 1, signal: controller.signal }); }
+  finally { clearTimeout(timeout); aboutInFlight = false; }
+}
+
 // v1.3.0: версия приложения — единый источник /api/v1/about (никаких хардкодов)
 async function loadAppVersion() {
   try {
-    const about = await api.get('/api/v1/about', { retries: 1 });
+    const about = await requestAboutForWatchdog();
+    if (!about) return;
     state.appVersion = about.version;
     window.MXBOT = about.max_bot_username || window.MXBOT || '';  // v1.70.1
     const els = [$('#brand-version'), $('#footer-version')];
@@ -200,7 +247,8 @@ async function boot() {
         await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
       }
     }
-    clearToken();
+    // Сетевой сбой не равен отказу авторизации: токен сохраняем до настоящего 401.
+    // Без подтверждения сервером приложение не открываем и права не выдаём.
   }
   showSplash(false);
   // v1.31.0: гостевая страница «Сдать чек» — работает без входа в систему
@@ -507,6 +555,10 @@ function maxBackDialog() {
 function showLogin() {
   showScreen('login-screen');             // v1.59.1: единый переключатель
   bindLanding();                            // v1.54.0: лендинг на главной
+  // При прямой ссылке цель могла быть скрыта до завершения запуска.
+  if (location.hash === '#land-login') {
+    requestAnimationFrame(() => document.getElementById('land-login')?.scrollIntoView());
+  }
   waInitLoginScreen();                      // v1.43.0: кнопка входа по ключу
   // v1.70.0: кнопка входа/регистрации через MAX на форме входа
   // v1.70.37: подсказка при первом визите — «регистрация через MAX» и
@@ -3315,8 +3367,6 @@ function enterApp() {
       const counts = (r && r.counts) || {};
       const on = !!(r && r.enabled) || !!(counts.todo || counts.mine);
       $$('.approvals-only').forEach(el => el.classList.toggle('hidden', !on || !spaceHas('view:approvals')));
-      const badge = $('#nav-approvals-badge');
-      if (badge) { badge.textContent = String(counts.todo || 0); badge.classList.toggle('hidden', !counts.todo); }
     }).catch(() => {});
   }
   // v1.70.82: демо-контур Supabase — пункт меню только там, где контур
@@ -3359,6 +3409,7 @@ function enterApp() {
     window.addEventListener('ymaster:logout', () => logout());
     // v1.70.100: доступ к клиенту отозван или компания отключена — назад в свою компанию
     window.addEventListener('ymaster:client-reset', (e) => {
+      navigationCounts.schedule();
       toast((e.detail && e.detail.message) || 'Доступ к компании клиента закрыт', 'warn', 'Вы снова в своей компании');
       initClientSwitch().then(() => route());
     });
@@ -3380,11 +3431,23 @@ function enterApp() {
     pwaBtn.onclick = showInstallDialog;
   }
   refreshBadges();
-  window.addEventListener('online', flushOfflineQueue);
+  if (!window.__ymNavCountsBound) {
+    window.__ymNavCountsBound = true;
+    window.addEventListener('online', () => navigationCounts.schedule());
+    window.addEventListener('ymaster:data-changed', () => navigationCounts.schedule());
+  }
+  if (!window.__ymOutboxBound) {
+    window.__ymOutboxBound = true;
+    window.addEventListener('online', () => flushOfflineQueue());
+    setInterval(() => flushOfflineQueue(), 30000);
+  }
   flushOfflineQueue();
 }
 
 function logout() {
+  navigationCounts.reset();
+  stopWs();
+  connectionStatus.reset(getApiRequestId());
   clearToken();
   // Очищаем и серверную cookie сессии (fire-and-forget)
   try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch (e) {}
@@ -3392,7 +3455,6 @@ function logout() {
   viewAsForget();
   state.me = null;
   state.receiptsSelected.clear();
-  if (state.ws) { try { state.ws.close(); } catch (e) {} state.ws = null; }
   if (state.camera) { state.camera.stop(); state.camera = null; }
   history.replaceState(null, '', location.pathname);
   location.reload();
@@ -3746,114 +3808,165 @@ function forcePasswordChange() {
 // --------------------------------------------------------------------------
 //  WebSocket: живые статусы
 // --------------------------------------------------------------------------
-// v1.2.0: WS без «мерцания» — пауза между попытками растёт до 60 с
-// (с разбросом), статус меняется с гистерезисом, «офлайн» показываем
-// только при реальной недоступности, а не на каждом переподключении.
-const WS_BACKOFF = [2, 5, 10, 20, 30, 60, 60];   // секунды
+// Повторы WebSocket с увеличивающейся задержкой и разбросом; отказ только
+// живого канала не доказывает, что обычный API недоступен.
+const WS_BACKOFF = [2, 5, 10, 20, 60, 120, 300];   // секунды; после длительного отказа — редко
+const WS_STALE_MS = 70000;   // сервер сам присылает heartbeat примерно раз в 20 с
+const WS_CONNECT_MS = 20000; // зависшее рукопожатие не должно висеть бесконечно
 
 function connectWS() {
-  if (document.hidden) { scheduleReconnect(5); return; }  // в фоне не дёргаемся
+  if (!state.me || document.hidden || navigator.onLine === false) return;
+  if (state.ws && state.ws.readyState <= 1) return;  // одно соединение, даже при повторных событиях
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   let ws;
-  try { ws = new WebSocket(`${proto}://${location.host}/ws/status`); }
-  catch (e) { scheduleReconnect(10); return; }
+  // v1.72.1 (T-91): подписка — на активного клиента бухгалтера, а не на его собственную компанию:
+  // иначе события компании клиента не приходят вживую (ADR-30). Своя компания — без параметра.
+  const active = (typeof getClient === 'function' && state.me && state.me.role === 'accountant') ? getClient() : '';
+  const qs = active ? `?company=${encodeURIComponent(active)}` : '';
+  try { ws = new WebSocket(`${proto}://${location.host}/ws/status${qs}`); }
+  catch (e) { wsFailed(); return; }
   state.ws = ws;
+  state.wsStarted = Date.now();
+  clearTimeout(state.wsWatch);
+  state.wsWatch = setTimeout(() => {
+    if (!document.hidden && state.ws === ws && ws.readyState === 0) {
+      stopWs();
+      wsFailed();
+    }
+  }, WS_CONNECT_MS);
 
   ws.onopen = () => {
+    if (state.ws !== ws) return;
     state.wsAttempts = 0;
+    noteWsActivity(ws);
     setWsStatus(true);
-    // heartbeat клиента: не даём прокси считать соединение пустым
-    clearInterval(state.wsPing);
-    state.wsPing = setInterval(() => {
-      if (document.hidden) return;                 // v1.6.0: в фоне не тратим трафик
-      if (ws.readyState === 1) { try { ws.send('ping'); } catch (e) {} }
-    }, 25000);
+    // Пока сокет открывался, пользователь мог выбрать другого клиента.
+    if (state.me && state.me.role === 'accountant' && (getClient() || '') !== active) {
+      wsSwitchClient(getClient());
+    }
+    // Дополнительный клиентский ping не нужен: сервер уже посылает heartbeat.
   };
   ws.onclose = () => {
-    clearInterval(state.wsPing);
-    setWsStatus(false);
-    const delay = WS_BACKOFF[Math.min(state.wsAttempts || 0, WS_BACKOFF.length - 1)];
-    state.wsAttempts = (state.wsAttempts || 0) + 1;
-    scheduleReconnect(delay);
+    if (state.ws !== ws) return;
+    state.ws = null;
+    clearTimeout(state.wsWatch);
+    wsFailed();
   };
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
   ws.onmessage = (ev) => {
+    if (state.ws !== ws) return;
+    noteWsActivity(ws);
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'ping') return;             // серверный heartbeat
+      if (msg.type === 'connected' && msg.payload && msg.payload.warning) {
+        toast(msg.payload.warning, 'err', 'Живые обновления');
+      }
+      if (msg.type === 'client_ok' || msg.type === 'client_error') {
+        state.wsClientSent = msg.payload && msg.payload.company !== undefined ? msg.payload.company : '';
+        if (msg.type === 'client_error') toast(msg.payload.detail, 'err', 'Живые обновления');
+        return;
+      }
       handleWsEvent(msg.type, msg.payload);
     } catch { /* ignore */ }
   };
 }
 
+function noteWsActivity(ws) {
+  state.wsLastActivity = Date.now();
+  armWsWatch(ws);
+}
+function armWsWatch(ws) {
+  clearTimeout(state.wsWatch);
+  state.wsWatch = setTimeout(() => {
+    if (document.hidden || state.ws !== ws) return;
+    if (Date.now() - state.wsLastActivity >= WS_STALE_MS) {
+      // Полуоткрытое соединение после потери сети: закрыть, затем обычный backoff.
+      stopWs();
+      wsFailed();
+    }
+  }, Math.max(1, WS_STALE_MS - (Date.now() - state.wsLastActivity)));
+}
+
+function wsFailed() {
+  const delay = WS_BACKOFF[Math.min(state.wsAttempts || 0, WS_BACKOFF.length - 1)];
+  state.wsAttempts = (state.wsAttempts || 0) + 1;
+  setWsStatus(false);
+  scheduleReconnect(delay);
+}
+
+function stopWs() {
+  clearTimeout(state.wsTimer);
+  clearTimeout(state.wsWatch);
+  const old = state.ws;
+  state.ws = null;
+  if (old) { try { old.close(); } catch {} }
+  setWsStatus(false);
+}
+
+/** v1.72.1 (T-91): переключить живые обновления на активного клиента без переподключения сокета. */
+function wsSwitchClient(company) {
+  const ws = state.ws;
+  if (!ws || ws.readyState !== 1) return false;
+  try { ws.send(JSON.stringify({ type: 'client', company: company || '' })); } catch { return false; }
+  return true;
+}
+
 function scheduleReconnect(seconds) {
   clearTimeout(state.wsTimer);
+  if (!state.me || document.hidden || navigator.onLine === false) return;
   const jitter = seconds * (0.8 + Math.random() * 0.4);   // ±20% — анти-шторм
   state.wsTimer = setTimeout(connectWS, jitter * 1000);
 }
 
-// Возврат в приложение (телефон «проснулся») — одно мягкое переподключение
+// Возврат телефона: проверяем давность серверного heartbeat, без новых проверочных запросов.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    updateConnIndicator(true);
+  if (!document.hidden && state.me) {
+    if (state.ws && ((state.ws.readyState === 1 && Date.now() - state.wsLastActivity >= WS_STALE_MS)
+      || (state.ws.readyState === 0 && Date.now() - state.wsStarted >= WS_CONNECT_MS))) stopWs();
     if (!state.ws || state.ws.readyState > 1) {
-      clearTimeout(state.wsTimer);
-      try { if (state.ws) state.ws.close(); } catch (e) {}
+      stopWs();
       connectWS();
-    }
-    // v1.8.0: не чаще раза в 8 с — телефон «просыпается» часто,
-    // а каждая перерисовка выглядит как мигание сайта
-    if (state.me && Date.now() - (state._lastVisRoute || 0) > 8000) {
+    } else if (state.ws.readyState === 1) armWsWatch(state.ws);
+    connectionStatus.update();
+    // Уже открытый экран иногда устаревает во время сна телефона; не чаще раза в минуту.
+    if (Date.now() - (state._lastVisRoute || 0) > 60000) {
       state._lastVisRoute = Date.now();
       route(true);
     }
   }
 });
-window.addEventListener('online', () => updateConnIndicator(true));
-window.addEventListener('offline', () => updateConnIndicator(false));
-
-function updateConnIndicator(force) {
-  const lastOk = window.__ymLastApiOk || 0;
-  // «Офлайн» только если: браузер считает сеть недоступной ИЛИ и WS не может
-  // подключиться (3+ попыток), и API не отвечал дольше 30 секунд.
-  const apiStale = Date.now() - lastOk > 30000;
-  const reallyOffline = !navigator.onLine ||
-    ((state.wsAttempts || 0) >= 3 && apiStale && !(state.ws && state.ws.readyState === 1));
-  const ind = $('#offline-indicator');
-  if (!ind) return;
-  if (force) ind.dataset.lastFlip = '0';
-  const now = Date.now();
-  const last = Number(ind.dataset.lastFlip || 0);
-  if (now - last < 8000) return;                  // гистерезис: не мигаем
-  const isHidden = ind.classList.contains('hidden');
-  if (reallyOffline && isHidden) { ind.classList.remove('hidden'); ind.dataset.lastFlip = now; }
-  if (!reallyOffline && !isHidden) { ind.classList.add('hidden'); ind.dataset.lastFlip = now; }
-}
+window.addEventListener('online', () => {
+  stopWs();
+  connectionStatus.online(getApiRequestId());
+  if (state.me && !document.hidden) connectWS();
+});
+window.addEventListener('offline', () => {
+  connectionStatus.offline(getApiRequestId());
+  stopWs();
+});
 
 function setWsStatus(ok) {
-  // v1.7.0: трогаем DOM только при РЕАЛЬНОЙ смене состояния — иначе текст
-  // дёргается при каждом переподключении и кажется, что «мерцает сайт»
-  if (state.wsOk === ok) return;
   state.wsOk = ok;
-  const dot = $('#ws-status .live-dot');
-  const txt = $('#ws-status-text');
-  if (dot) { dot.classList.toggle('on', ok); dot.classList.toggle('off', !ok); }
-  if (txt) {
-    // v1.8.0: одиночный разрыв не показываем — статус перестаёт мигать
-    if (ok) txt.textContent = 'Живое подключение';
-    else if ((state.wsAttempts || 0) >= 2) txt.textContent = 'Переподключение…';
-  }
-  updateConnIndicator(false);
+  if (ok) connectionStatus.wsOpen();
+  else connectionStatus.wsClosed();
 }
 
 // v1.6.0: события сливаются в одну перерисовку — при пачке чеков не дёргаем
 // сервер N полными запросами, а обновляемся один раз через 1.2 с
 let _routeRefreshTimer = null;
+let _routeRefreshAlive = null;
 function scheduleRouteRefresh(ms = 1200) {
-  if (_routeRefreshTimer) return;
+  // Событие относится к текущему переходу, а не к экрану, открытому позже.
+  // После перехода новый таймер не должен подавляться устаревшим.
+  if (_routeRefreshTimer && _routeRefreshAlive()) return;
+  if (_routeRefreshTimer) clearTimeout(_routeRefreshTimer);
+  const alive = routeGuard();
+  _routeRefreshAlive = alive;
   _routeRefreshTimer = setTimeout(() => {
     _routeRefreshTimer = null;
-    if (!document.hidden && state.me) {
+    _routeRefreshAlive = null;
+    if (alive() && !document.hidden && state.me) {
       // v1.25.1: «Чеки» обновляем НА МЕСТЕ (viewReceipts._refresh) — перестроение
       // вида route() затирало применённые фильтры и оставляло скелетон вместо
       // списка, если данные не изменились (список «пропадал» до F5)
@@ -3900,22 +4013,22 @@ function handleWsEvent(type, p) {
   }
 }
 
-async function refreshBadges() {
+async function refreshQueueBadge() {
   try {
-    const s = await api.get('/api/v1/dashboard/stats?days=7');
-    const badge = $('#nav-receipts-badge');
-    badge.textContent = fmtInt(s.total);
-    badge.classList.add('accent');
-    const q = offlineQueue.size();
+    const q = state.me?.id ? (await outbox.list(state.me.id)).length : 0;
     const qb = $('#nav-queue-badge');
     qb.textContent = q;
     qb.classList.toggle('hidden', q === 0);
     qb.classList.toggle('accent', q > 0);
-    // v1.70.83: администратору — число конфликтов единого реестра в меню
-    if (isAdmin()) {
-      api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(badgeCount(u))).catch(() => {});
-    }
-  } catch { /* тихо */ }
+  } catch { /* ошибка показана на экране очереди */ }
+}
+async function refreshBadges() {
+  await refreshQueueBadge();
+  navigationCounts.schedule();
+  // Число конфликтов и заявок имеет собственный существующий контракт.
+  if (isAdmin()) {
+    api.get('/api/v1/unified/stats').then((u) => setConflictsBadge(badgeCount(u))).catch(() => {});
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -3926,6 +4039,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('.c-open');
   if (!b) return;
   state.companyFilter = b.dataset.id;
+  navigationCounts.schedule();
   try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (err) {}
   const sel = $('#company-filter');
   if (sel) sel.value = b.dataset.id;
@@ -3948,7 +4062,7 @@ function routeGuard() {
 function route(silent = false) {
   _routeSeq += 1;   // v1.70.87 (#25): незаконченные отрисовки прежнего перехода устаревают
   if (state.camera) { state.camera.stop(); state.camera = null; }
-  osmStop();   // v1.70.51: автообновление блока «Мониторинг OpenStack»
+  localServerStop();
   const hash = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
   const parts = hash.split('/');
   const view = parts[0].split('?')[0];
@@ -4144,7 +4258,8 @@ async function viewCounterparties(container, opts = {}) {
       if (alive()) return viewBank(c, { alive, isAdmin: isAdmin(), companies, companyFilter: state.companyFilter });
     },
     // v1.70.100 (T-50): все клиенты в одном окне; цифра открывает экран уже в этой компании
-    clients: (c, alive) => viewClients(c, { alive, open: openClientCompany }),
+    clients: (c, alive) => viewClients(c, { alive, open: openClientCompany,
+      onCreated: () => { if (state.me && state.me.role === 'accountant') initClientSwitch(); } }),
     // v1.70.112 (T-46): согласование авансовых отчётов; администратору — выбор компании, как в «Первичке»
     counterparties: viewCounterparties,     // v1.71.0: контрагенты (T-80)
     approvals: async (c, alive) => {
@@ -4198,6 +4313,7 @@ async function initCompanyFilter() {
   sel.classList.remove('hidden');
   sel.onchange = () => {
     state.companyFilter = sel.value;
+    navigationCounts.schedule();
     try { localStorage.setItem('ymaster-company', sel.value); } catch (e) {}
     route();
   };
@@ -4213,7 +4329,10 @@ async function refreshMe() {
 async function initClientSwitch() {
   const me = await refreshMe();
   clientsSwitcher($('#client-switch'), me, async () => {
+    navigationCounts.schedule();
     await refreshMe();
+    // v1.72.1 (T-91): живые обновления переезжают вместе с клиентом — без перезагрузки страницы
+    wsSwitchClient(getClient());
     route();
   });
 }
@@ -4223,14 +4342,22 @@ async function initClientSwitch() {
 async function openClientCompany(companyId, view) {
   if (isAdmin()) {
     state.companyFilter = companyId;
+    navigationCounts.schedule();
     try { localStorage.setItem('ymaster-company', companyId); } catch (e) { /* приватный режим */ }
     const sel = $('#company-filter');
     if (sel) sel.value = companyId;
   } else {
     const home = state.me && state.me.home_company_id;
     setClient(companyId === home ? '' : companyId);
+    navigationCounts.schedule();
     await refreshMe();
-    clientsSwitcher($('#client-switch'), state.me, async () => { await refreshMe(); route(); });
+    wsSwitchClient(companyId === home ? '' : companyId);      // v1.72.1 (T-91): подписка — на новый клиент
+    clientsSwitcher($('#client-switch'), state.me, async () => {
+      navigationCounts.schedule();
+      await refreshMe();
+      wsSwitchClient(getClient());
+      route();
+    });
   }
   const target = '#/' + view;
   if (location.hash === target) route();
@@ -4525,6 +4652,7 @@ async function viewCompanies(container, alive = routeGuard()) {
   if (cao) cao.onclick = () => openAO1Modal();
   $$('.cp-open').forEach(b => b.onclick = () => {
     state.companyFilter = b.dataset.id;
+    navigationCounts.schedule();
     try { localStorage.setItem('ymaster-company', b.dataset.id); } catch (e) {}
     if (sel) { sel.value = b.dataset.id; }
     location.hash = '#/dashboard';
@@ -4775,6 +4903,10 @@ function openCompanyDelete(d) {
     <div class="modal-title">🗑 Удаление компании «${esc(c.name)}»</div>
     <div class="info-callout" style="margin-bottom:10px">Чеков: <b>${d.receipts}</b> ·
       сотрудников: <b>${d.team.length}</b>. Что сделать с данными компании?</div>
+    <p class="form-hint" style="margin:0 0 10px">Вместе с компанией уйдут её банковские выписки и подключения,
+      первичка, «что нужно от клиента», согласования, договор и доступы бухгалтеров. При переносе настройки,
+      контрагенты и память товаров переедут в выбранную компанию; договор переедет, если в ней нет другого договора.
+      иначе перенос будет остановлен; история решений останется в журнале.</p>
     ${others.length ? `
     <label style="display:block;margin:8px 0"><input type="radio" name="dl-mode" value="move" checked style="width:auto">
       <b>Перенести в другую компанию</b> — чеки переедут целиком (флаг 1С сбросится)</label>
@@ -4807,7 +4939,7 @@ function openCompanyDelete(d) {
       const r = await api.post(`/api/v1/companies/${c.id}/delete`, payload);
       $('#modal-root').classList.add('hidden');
       toast(r.message, 'ok', '🗑');
-      if (state.companyFilter === c.id) { state.companyFilter = 'all'; try { localStorage.setItem('ymaster-company', 'all'); } catch (e) {} }
+      if (state.companyFilter === c.id) { state.companyFilter = 'all'; navigationCounts.schedule(); try { localStorage.setItem('ymaster-company', 'all'); } catch (e) {} }
       route(true);
     } catch (e) { toast(e.message, 'err'); }
   };
@@ -4943,6 +5075,11 @@ function bindShell() {
     _sbTouchX = null;
   }, { passive: true });
   window.addEventListener('hashchange', () => {
+    // Якоря лендинга — не маршруты приложения (как и в boot.js).
+    if (location.hash.startsWith('#land-') || location.hash === '#main' || (!location.hash && !getToken())) {
+      if (!getToken() && $('#login-screen').classList.contains('hidden')) showLogin();
+      return;
+    }
     if (location.hash.startsWith('#/register')) return;
     // v1.32.0/v1.35.0: служебные ссылки обрабатываются при загрузке страницы
     if (location.hash.startsWith('#/pool-magic/')
@@ -5522,7 +5659,6 @@ function feedActionText(f) {
 //  ЭКРАН: Сканирование
 // ==========================================================================
 async function viewScan(container) {
-  const queueSize = offlineQueue.size();
   // v1.11.0: подсказка — в какую компанию попадут новые чеки (админ меняет в шапке)
   container.innerHTML = `
     <div class="scan-layout">
@@ -5554,24 +5690,20 @@ async function viewScan(container) {
           Перетащите сюда фотографии или PDF-чеки — можно несколько сразу
         </div>
         <div class="torch-note">Совет: чеки с экрана телефона тоже распознаются. Держите QR в рамке при хорошем свете.
-        После скана чек автоматически уходит на проверку в ФНС.</div>
+        Скан сначала сохраняется на устройстве; проверка ФНС зависит от настроек сервера и наличия связи.
+        До синхронизации не очищайте данные браузера: сканы могут быть удалены. На общем устройстве они доступны через хранилище браузера.</div>
         ${isAdmin() ? `<div class="torch-note" id="scan-space-hint">🏢</div>` : ''}
       </div>
 
       <div>
-        ${queueSize > 0 ? `
-        <div class="glass card" style="margin-bottom:16px">
-          <div class="card-title">⚡ Офлайн-очередь: ${queueSize}</div>
-          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
-            Эти сканы были сделаны без связи с сервером и ждут синхронизации.</p>
-          <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
-        </div>` : ''}
+        <div id="scan-legacy-queue"></div>
+        <div id="scan-outbox"><div class="glass card" role="status">Проверяем локальную очередь. Не очищайте данные браузера.</div></div>
         <div class="glass card" style="margin-bottom:16px">
           <div class="card-title">🧾 Сдача чеков <span class="spacer"></span>
             <span class="batch-prog" id="scan-batch-prog">0 / 100</span></div>
           <div class="batch-counts" role="status" aria-live="polite">
             <span class="bcount b-ok" id="scan-bc-ok"><b>0</b><i>принято</i></span>
-            <span class="bcount b-pend" id="scan-bc-pend"><b>0</b><i>на проверке</i></span>
+            <span class="bcount b-pend" id="scan-bc-pend"><b>0</b><i>без подтверждения</i></span>
             <span class="bcount b-bad" id="scan-bc-bad"><b>0</b><i>не принято</i></span>
           </div>
           <div class="batch-day" id="scan-batch-day">Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи</div>
@@ -5581,9 +5713,9 @@ async function viewScan(container) {
             <button type="button" class="btn btn-sm" id="btn-scan-sess-reset"
                     title="Обнулить счётчики и начать новую сдачу">🔄 Новая сессия</button>
           </div>
-          <div class="form-hint" style="margin-top:8px">Каждый чек проверяется сразу:
-          дубликат в базу не попадает и идёт в красный счётчик, новый — в синий «на проверке»,
-          а после подтверждения официальным источником становится оранжевым «принят».
+          <div class="form-hint" style="margin-top:8px">После связи сервер принимает или отклоняет скан;
+          проверка ФНС зависит от настроек сервера. Локальная очередь не означает проверку.
+          Подтверждённые официальным источником чеки отмечаются в счётчике.
           На рубеже 100 чеков спросим, продолжать или закончить.</div>
         </div>
         <div class="glass card">
@@ -5595,7 +5727,7 @@ async function viewScan(container) {
           <div class="steps">
             <div class="step"><span class="step-num"></span><div>Отсканируйте QR-код камерой, загрузите фото или введите реквизиты вручную.</div></div>
             <div class="step"><span class="step-num"></span><div>Система разбирает реквизиты 54-ФЗ: <b>ФН, ФД, ФП</b>, сумму и дату, отсекает дубликаты по ФН+ФД+ФП.</div></div>
-            <div class="step"><span class="step-num"></span><div>Чек автоматически проверяется в API ФНС.</div></div>
+            <div class="step"><span class="step-num"></span><div>Проверка ФНС выполняется на сервере, если она включена в настройках; статус виден в карточке чека.</div></div>
             <div class="step"><span class="step-num"></span><div>Бухгалтер назначает сотрудника и выгружает чеки в 1С — без ручного ввода.</div></div>
           </div>
         </div>
@@ -5603,13 +5735,16 @@ async function viewScan(container) {
     </div>`;
 
   renderRecents();
+  refreshOutboxPanel();
 
   const _hint = $('#scan-space-hint');
   if (_hint) {
-    const c = companyIdParam() ? state.companies.find(x => x.id === companyIdParam()) : null;
+    const id = companyIdParam();
+    const c = id ? state.companies.find(x => x.id === id) : null;
     _hint.innerHTML = c
       ? `Новые чеки попадут в компанию: <b>${esc(c.name)}</b> (меняется селектором в шапке)`
-      : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
+      : id ? `Выбрана компания ${esc(id)}; название пока недоступно. Проверьте выбор в шапке.`
+        : 'Новые чеки попадут без компании (платформенные) — выберите компанию селектором в шапке';
   }
   // v1.70.40: сессия сдачи — счётчики живут, пока сотрудник на этом экране
   if (!scanSess.t0) scanSessReset();
@@ -5676,7 +5811,38 @@ async function viewScan(container) {
 
   $('#btn-paste').onclick = () => pasteDialog();
   $('#btn-manual').onclick = () => manualDialog();
-  const flush = $('#btn-flush');
+}
+
+// Обновляем только очередь, не перерисовывая экран и не останавливая камеру.
+async function refreshOutboxPanel() {
+  const panel = document.getElementById('scan-outbox');
+  const legacyPanel = document.getElementById('scan-legacy-queue');
+  const ownerId = state.me?.id;
+  if (!panel || !legacyPanel || !ownerId || state.view !== 'scan') return;
+  // Старая очередь доступна независимо от IndexedDB: не задерживаем предупреждение
+  // из-за медленного или зависшего открытия новой очереди.
+  const legacyQueueSize = offlineQueue.size();
+  legacyPanel.innerHTML = legacyQueueSize
+    ? `<div class="glass card" role="alert">Старые сканы без подтверждённого владельца: ${legacyQueueSize}. Они сохранены на устройстве, но автоматически не отправляются, чтобы не назначить их неверной компании. Обратитесь к администратору; не очищайте данные браузера.</div>` : '';
+  let queue = [], queueError = false;
+  try { queue = await outbox.list(ownerId); } catch { queueError = true; }
+  if (state.me?.id !== ownerId || panel !== document.getElementById('scan-outbox')) return;
+  const markup = `
+${queueError ? `<div class="glass card" role="alert">Локальное хранилище недоступно. Скан не будет сохранён; проверьте настройки и свободное место.</div>` : ''}
+        ${queue.length > 0 ? `
+        <div class="glass card" style="margin-bottom:16px">
+          <div class="card-title">⚡ На устройстве: ${queue.length}</div>
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
+            Сканы ещё не подтверждены сервером и не считаются проверенными ФНС. Удаление данных браузера может их уничтожить.</p>
+          ${queue.filter(x => x.state === 'attention').map(x => `<p role="alert">Нужна помощь: ${esc(x.message || 'сервер не принял скан')} (ФД ${esc(parseQrClient(x.qrData)?.fd || '—')}). Запись сохранена.</p>`).join('')}
+          <button type="button" class="btn btn-primary btn-sm" id="btn-flush">Синхронизировать сейчас</button>
+        </div>` : ''}`;
+  // Не заменяем кнопку при неизменном содержимом: фоновый опрос не должен
+  // прерывать нажатие или сбрасывать фокус клавиатуры.
+  if (panel._outboxMarkup === markup) return;
+  panel.innerHTML = markup;
+  panel._outboxMarkup = markup;
+  const flush = panel.querySelector('#btn-flush');
   if (flush) flush.onclick = () => flushOfflineQueue(true);
 }
 
@@ -5724,11 +5890,11 @@ function scanSessStateOf(r) {
     return (r && r.fns_status && r.fns_status !== 'valid') ? 'bad' : 'ok';
   }
   if (st === 'failed') return 'bad';
-  return 'pend';               // new / verifying — проверка ещё идёт
+  return 'pend';               // new / verifying — результат ещё не подтверждён
 }
 
 function scanSessLabel(state) {
-  return state === 'ok' ? 'принят' : (state === 'pend' ? 'на проверке' : 'не принят');
+  return state === 'ok' ? 'принят' : (state === 'pend' ? 'без подтверждения' : 'не принят');
 }
 
 function scanSessCount(items) {
@@ -5753,7 +5919,7 @@ function scanSessSummaryText(items, ms) {
   const secs = Math.max(1, Math.round((ms || 0) / 1000));
   const mins = Math.floor(secs / 60);
   const dur = mins ? `${mins} мин ${secs % 60} с` : `${secs} с`;
-  return `Итог сессии: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`
+  return `Итог сессии: принято ${c.ok}, без подтверждения ${c.pend}, не принято ${c.bad}`
     + ` · сумма ${fmtSum(c.sum)} · время ${dur}`;
 }
 
@@ -5773,7 +5939,7 @@ function scanSessRender() {
   const hint = document.getElementById('scan-batch-day');
   if (hint) {
     hint.textContent = scanSess.items.length
-      ? 'Дубликат отсеян и в базу не попал: он учтён в красном счётчике'
+      ? 'Показаны статусы полученных сервером чеков; локальная очередь учитывается отдельно'
       : 'Включите камеру или загрузите фото — счётчики заполнятся по мере сдачи';
   }
   const list = document.getElementById('scan-batch-list');
@@ -5844,7 +6010,7 @@ async function scanSessPoll() {
   if (changed) {
     scanSessRender();
     const c = scanSessCount(scanSess.items);
-    toast(`Проверка прошла: принято ${c.ok}, на проверке ${c.pend}, не принято ${c.bad}`,
+    toast(`Обновлены статусы: принято ${c.ok}, без подтверждения ${c.pend}, не принято ${c.bad}`,
       c.bad ? 'warn' : 'ok', '🧾 Статусы');
   }
   scanSessPollSoon();
@@ -6660,6 +6826,151 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.31': [
+    { icon: '🖥️', title: 'Процессы сервера',
+      text: 'Администратор может отдельно просмотреть ограниченный снимок процессов по CPU и памяти.' },
+  ],
+  '1.72.23': [
+    { icon: '🖥️', title: 'Локальное состояние сервера',
+      text: 'В снимок добавлены inode, I/O доступного устройства и задачи ядра; ограничения источника указаны в карточке.' },
+  ],
+  '1.72.22': [
+    { icon: '🛡️', title: 'Защита открытого раздела',
+      text: 'Отложенное обновление дашборда больше не перерисовывает другой раздел после перехода.' },
+  ],
+  '1.72.21': [
+    { icon: '📊', title: 'История сетевого трафика',
+      text: 'При отдельно настроенном vnStat можно просмотреть данные выбранного интерфейса. Это оценка, не счёт провайдера.' },
+  ],
+  '1.72.20': [
+    { icon: '🖥️', title: 'Показатели сервера',
+      text: 'В локальном снимке добавлены нагрузка, swap и сетевые интерфейсы. История и месячный трафик ещё не собираются.' },
+  ],
+  '1.72.19': [
+    { icon: '🖥️', title: 'Мониторинг сервера',
+      text: 'Удалён неиспользуемый облачный мониторинг. Показатели сервера по кнопке остались на месте.' },
+  ],
+  '1.72.18': [
+    { icon: '🛠️', title: 'Надёжность запуска',
+      text: 'Исправлено смешение версий модуля мониторинга после обновления. Если запуск не восстановился, сохраните данные браузера и обратитесь к администратору.' },
+  ],
+  '1.72.17': [
+    { icon: '🖥️', title: 'Показатели среды программы',
+      text: 'Отдельная карточка читает CPU, память и файловую систему программы непосредственно из Linux, без OpenStack. Показатели обновляются по кнопке; истории пока нет.' },
+  ],
+  '1.72.16': [
+    { icon: '☁️', title: 'Мониторинг OpenStack',
+      text: 'Квоты проекта читаются через актуальный SDK, а недоступные показатели гипервизоров больше не выглядят как нули. Доступность зависит от прав облака.' },
+  ],
+  '1.72.15': [
+    { icon: '🔄', title: 'Меньше повторных проверок',
+      text: 'При частом возврате во вкладку проверка версии сервера не повторяется чаще раза в минуту.' },
+  ],
+  '1.72.14': [
+    { icon: '📶', title: 'Понятное состояние связи',
+      text: 'Связь с сервером показывается по реальным ответам; если живые обновления недоступны, это указано отдельно. Лишний опрос при переходах не запускается.' },
+  ],
+  '1.72.13': [
+    { icon: '🔢', title: 'Счётчики в меню',
+      text: 'В меню показано количество доступных документов и других объектов. Некоторые значки считают ожидающие действия; при отсутствии связи число скрывается.' },
+  ],
+  '1.72.12': [
+    { icon: '📶', title: 'Загрузка при обрыве связи',
+      text: 'QR-сканы активной сессии сначала сохраняются на устройстве, затем отправляются при восстановлении связи. Офлайн-вход и другие виды данных пока не поддерживаются.' },
+  ],
+  '1.72.11': [
+    { icon: '📦', title: 'Проверка связей в пакете',
+      text: 'Проверка ZIP дополнительно сверяет отдельные связи записей и файлов. Полнота и восстановление по-прежнему не подтверждаются.' },
+  ],
+  '1.72.10': [
+    { icon: '🔢', title: 'Основа журнала учёта',
+      text: 'Подготовлен журнал без повторного учёта события. Реальные проверки и тарифы к нему пока не подключены.' },
+  ],
+  '1.72.9': [
+    { icon: '📜', title: 'Личный архив подтверждений',
+      text: 'В разделе оферт можно добровольно подтвердить действующий текст и открыть свой сохранённый экземпляр; старые события не восстанавливаются задним числом.' },
+  ],
+  '1.72.8': [
+    { icon: '📦', title: 'Проверка скачанного пакета',
+      text: 'Можно проверить состав и контрольные суммы ZIP за месяц; это не проверка восстановления и не резервная копия.' },
+  ],
+  '1.72.7': [
+    { icon: '📄', title: 'Оферты и вход',
+      text: 'На главной появился раздел документов; проект для бухгалтеров не является действующей офертой. Исправлен переход к форме входа.' },
+  ],
+  '1.72.6': [
+    { icon: '📅', title: 'Корректная проверка периода',
+      text: 'Пакеты и запросы документов проверяют границы месяца до создания записей и напоминаний.' },
+  ],
+  '1.72.5': [
+    { icon: '🔒', title: 'Защита живых обновлений',
+      text: 'Канал статусов проверяет источник страницы и закрывается по окончании срока входа.' },
+  ],
+  '1.72.4': [
+    { icon: '🔒', title: 'Массовые действия: надёжные права',
+      text: 'Архив и перевод сотрудника доступны только администратору; сотрудника можно перевести только в одну компанию.' },
+    { icon: '📦', title: 'Понятный результат загрузки',
+      text: 'При загрузке пакетов показано, сколько удалось и где возникла ошибка. Архивные компании восстанавливаются в разделе «Компании».' },
+  ],
+  '1.72.3': [
+    { icon: '🖨', title: 'Сводный отчёт по клиентам',
+      text: 'Откройте «Сводный отчёт» на экране «Клиенты»: все доступные компании и итоги можно напечатать или сохранить в PDF.' },
+    { icon: '🔒', title: 'Доступ и период без путаницы',
+      text: 'Бухгалтер видит только свои компании. Запросы и статусы показаны на момент формирования; клиентам ничего не отправляется.' },
+  ],
+  '1.72.2': [
+    { icon: '📄', title: 'Договор и тариф клиента',
+      text: 'На экране «Клиенты» можно сохранить реквизиты договора и точную стоимость. Заполнять договор для работы клиента не обязательно.' },
+    { icon: '🔔', title: 'Срок обслуживания — повод проверить договор',
+      text: 'За 30 и 7 дней до указанной даты предупреждение видно в приложении. Клиенту ничего не отправляется; проверьте пролонгацию и условия договора.' },
+  ],
+  '1.72.1': [
+    { icon: '🔔', title: 'Живые обновления — по вашему клиенту',
+      text: 'Если вы ведёте несколько компаний, новые чеки и статусы приходят по той, что выбрана сейчас, '
+        + 'и сразу. Раньше живые обновления шли только по своей компании — по клиентам приходилось '
+        + 'обновлять страницу.' },
+    { icon: '🔀', title: 'Переключили клиента — обновления переехали следом',
+      text: 'Смена компании в списке сверху не рвёт соединение: страница сама подписывается на нового '
+        + 'клиента. Если доступ к компании отозвали, придёт понятное сообщение — работать можно дальше '
+        + 'в своей.' },
+  ],
+  '1.72.0': [
+    { icon: '✅', title: 'Массовые действия по клиентам',
+      text: 'Отметьте несколько компаний на экране «Клиенты» — и одним нажатием напомните всем '
+        + 'о документах, скачайте пакет по каждому, отправьте в архив или верните из него.' },
+    { icon: '🧾', title: 'Видно, что получилось',
+      text: 'Каждый клиент обрабатывается отдельно: если по одной компании отказ, остальные всё равно '
+        + 'выполнятся — в сообщении будет видно, сколько готово и почему не вышло. Отметки не слетают '
+        + 'при смене фильтра.' },
+  ],
+  '1.71.3': [
+    { icon: '⏳', title: 'Согласования видны в сводке клиентов',
+      text: 'Новая плитка «Согласования» в карточке клиента: «ждут меня», «просрочено» и «заведено '
+        + 'за месяц». Нажатие открывает «Согласования» уже в этой компании, а просроченный отчёт '
+        + 'поднимает компанию в очереди внимания.' },
+    { icon: '🏦', title: 'Банки в карточке — каждый со своей ошибкой',
+      text: 'Если банков несколько, в плитке «Банк» каждый идёт отдельной строкой: состояние, когда '
+        + 'последний раз пришла выписка и что именно случилось у этого банка. Худший — сверху, рабочий '
+        + 'остаётся рядом.' },
+  ],
+  '1.71.2': [
+    { icon: '🧹', title: 'Удалённый клиент не оставляет следа',
+      text: 'Раньше после удаления компании в базе оставались её банковские выписки, первичка, '
+        + '«что нужно от клиента» и доступы бухгалтеров. Теперь уходит всё: база чистая, а счётчики '
+        + 'и напоминания не считают удалённого клиента.' },
+    { icon: '↪️', title: 'Перенос без дублей',
+      text: 'Если данные переезжают в другую компанию, настройки, контрагенты и память товаров '
+        + 'доезжают туда же; контрагент с тем же ИНН не раздваивается — счета и названия '
+        + 'переходят в существующую карточку. История решений остаётся в журнале.' },
+  ],
+  '1.71.1': [
+    { icon: '➕', title: 'Клиента заводит сам бухгалтер',
+      text: '«Клиенты» → «＋ Новый клиент»: ИНН (можно оставить пустым), название и памятка. '
+        + 'Компания сразу появляется в списке и в переключателе клиента в шапке — перевхода нет.' },
+    { icon: '🔍', title: 'Проверка по ЕГРЮЛ и подсказка о дубле',
+      text: 'Кнопка «🔍 ЕГРЮЛ» заполняет название по ИНН, а похожие названия программа замечает заранее: '
+        + 'дубль клиента не появится. ИНН из одних нулей больше не принимается.' },
+  ],
   '1.71.0': [
     { icon: '🏢', title: 'Контрагенты из УПД, выписки и по ИНН',
       text: 'Новый раздел «Контрагенты»: программа находит продавца и покупателя в УПД, '
@@ -8421,39 +8732,37 @@ function showWhatsNew() {
   slot.querySelector('#wn-ok').onclick = close;
 }
 
-// Отправка отсканированной строки на сервер (+ офлайн-режим)
+// Нельзя угадывать клиента, если переключатель изменился, а профиль не обновился.
+function scanOutboxContext() {
+  const me = state.me;
+  if (!me?.id) throw new Error('Не определён пользователь скана');
+  const clientId = me.role === 'accountant' ? (getClient() || null) : null;
+  if (clientId && me.company_id !== clientId) {
+    throw new Error('Компания клиента ещё не подтверждена: восстановите связь и проверьте выбор');
+  }
+  return { ownerId: me.id, clientId, companyId: isAdmin() ? scanCompanyId()
+    : (clientId || me.home_company_id || me.company_id || null) };
+}
+
+// Сначала фиксация в IndexedDB, только затем сетевой запрос.
 async function handleScannedText(text, source) {
   const parsed = parseQrClient(text);
   if (!parsed) {
     toast('QR-код прочитан, но это не чек (нет реквизитов ФН/ФД/ФП)', 'warn');
-    return;
+    return false;
   }
-  if (navigator.onLine && state.wsOk) {
-    try {
-      // v1.70.40: повтор внутри сессии отсекаем до запроса к серверу
-      const key = scanSessKey(parsed.fn, parsed.fd, parsed.fp);
-      if (scanSess.seen[key]) {
-        scanSessAdd({
-          state: 'bad', kind: 'duplicate', who: `ФД ${parsed.fd}`,
-          fn: parsed.fn, fd: parsed.fd, fp: parsed.fp, sum: 0,
-        });
-        toast('Этот чек уже отсканирован в текущей сессии — повторно не сохраняем',
-          'warn', '🧾 Дубликат');
-        return;
-      }
-      const r = await api.post('/api/v1/receipts/scan',
-                               { qr_data: text, source, company_id: scanCompanyId() });
-      scanSess.seen[key] = true;
-      scanSessNoteServer(r, `ФД ${parsed.fd}`);   // счётчики, дубликат, анимация
-      return;
-    } catch (e) {
-      if (e.status !== 0) { toast(e.message, 'err', 'Сервер отклонил скан'); return; }
-    }
+  try {
+    const context = scanOutboxContext();
+    await outbox.enqueue({ ...context, qrData: text, source });
+  } catch (e) {
+    toast('Скан НЕ сохранён на устройстве. Проверьте свободное место и повторите: ' + e.message, 'err', 'Ошибка хранения');
+    return false;
   }
-  // Офлайн: в очередь
-  const n = offlineQueue.push({ qr_data: text, source, company_id: scanCompanyId() });
-  toast(`Нет связи — скан сохранён локально (в очереди: ${n})`, 'warn', 'Офлайн-режим');
+  toast('Скан сохранён на устройстве; сервер и ФНС ещё не подтвердили его', 'warn', 'Ожидает отправки');
   refreshBadges();
+  refreshOutboxPanel();
+  flushOfflineQueue();
+  return true;
 }
 
 function beep() {
@@ -8470,26 +8779,73 @@ function beep() {
   } catch { /* без звука */ }
 }
 
+let outboxFlushing = false;
+let deferredManualRetry = null;
 async function flushOfflineQueue(manual = false) {
-  let n = offlineQueue.size();
-  if (!n) { if (manual) toast('Очередь пуста — всё синхронизировано', 'info'); return; }
-  let sent = 0;
-  while (offlineQueue.size() > 0) {
-    const item = offlineQueue.all()[0];
-    try {
-      const result = await api.post('/api/v1/receipts/scan', { qr_data: item.qr_data,
-                                                source: item.source || 'web', company_id: Object.prototype.hasOwnProperty.call(item, 'company_id') ? item.company_id : scanCompanyId() });
-      offlineQueue.shift();
-      if (result.duplicate) toast(result.message || 'Чек уже зарегистрирован', 'warn', 'Офлайн-очередь');
-      else sent++;
-    } catch (e) {
-      if (e.status === 422) { offlineQueue.shift(); continue; }
-      break;
+  const ownerId = state.me?.id;
+  const token = getToken();
+  if (!ownerId || !token) return;
+  if (outboxFlushing) {
+    // Явный повтор не теряется, пока завершается предыдущая попытка. Привязка
+    // к сеансу не позволяет перенести действие на другого пользователя.
+    if (manual) deferredManualRetry = { ownerId, token };
+    return;
+  }
+  outboxFlushing = true;
+  let sent = 0, changed = manual;
+  try {
+    if (manual) await outbox.retry(ownerId);
+    while (state.me?.id === ownerId && getToken()) {
+      const item = await outbox.claim(ownerId);
+      if (!item) break;
+      changed = true;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const result = await api.post('/api/v1/receipts/scan/offline', {
+          qr_data: item.qrData, source: item.source, company_id: item.companyId,
+          expected_user_id: item.ownerId, expected_company_id: item.companyId,
+        }, { clientId: item.clientId, noClientFallback: true, retries: 1, signal: controller.signal });
+        if (!result?.receipt?.id || (result.receipt.company_id || null) !== item.companyId) {
+          await outbox.fail(item.id, item.leaseId, { attention: true,
+            message: result?.message || 'Сервер не подтвердил чек в исходной компании' });
+          continue;
+        }
+        if (await outbox.complete(item.id, item.leaseId)) {
+          sent += 1;
+          try {
+            const current = scanOutboxContext();
+            if (!result.duplicate && state.view === 'scan' && current.ownerId === item.ownerId
+                && current.companyId === item.companyId && current.clientId === item.clientId) {
+              scanSessNoteServer(result, `ФД ${parseQrClient(item.qrData)?.fd || ''}`);
+            }
+          } catch { /* переключили пользователя или компанию; чек уже подтверждён */ }
+        }
+      } catch (e) {
+        const transient = e.status === 0 || e.status === 429 || e.status >= 500;
+        const delay = Math.min(300000, 5000 * 2 ** Math.min(item.attempts - 1, 6));
+        await outbox.fail(item.id, item.leaseId, { attention: !transient,
+          retryAt: Date.now() + delay, message: e.message || 'Нет ответа сервера' });
+        if (transient || e.status === 401) break;
+      } finally { clearTimeout(timeout); }
+    }
+    if (sent) toast(`Сервер подтвердил сканов: ${sent}. Статус ФНС смотрите в карточке.`, 'ok', 'Синхронизация');
+    else if (manual && !(await outbox.list(ownerId)).length) toast('Очередь этого пользователя пуста', 'info');
+  } catch (e) {
+    toast('Не удалось обработать локальную очередь: ' + e.message, 'err', 'Синхронизация');
+  } finally {
+    outboxFlushing = false;
+    // Пустая локальная очередь не должна будить сервер каждые 30 секунд.
+    if (changed) refreshBadges(); else refreshQueueBadge();
+    if (state.me?.id === ownerId) refreshOutboxPanel();
+    const deferred = deferredManualRetry;
+    deferredManualRetry = null;
+    if (deferred && state.me?.id === deferred.ownerId && getToken() === deferred.token) {
+      queueMicrotask(() => {
+        if (state.me?.id === deferred.ownerId && getToken() === deferred.token) flushOfflineQueue(true);
+      });
     }
   }
-  if (sent) toast(`Синхронизировано сканов: ${sent}`, 'ok', 'Офлайн-очередь');
-  refreshBadges();
-  if (state.view === 'scan') route(true);
 }
 
 async function handleFiles(files) {
@@ -8647,8 +9003,7 @@ function pasteDialog() {
   slot.querySelector('#btn-paste-send').onclick = async () => {
     const text = slot.querySelector('#paste-text').value.trim();
     if (!text) return;
-    $('#modal-root').classList.add('hidden');
-    await handleScannedText(text, 'web');
+    if (await handleScannedText(text, 'web')) $('#modal-root').classList.add('hidden');
   };
   setTimeout(() => slot.querySelector('#paste-text').focus(), 50);
 }
@@ -10865,29 +11220,22 @@ async function hardReset(silent = false, autoReload = true) {
   if (autoReload) setTimeout(() => location.reload(), 400);
 }
 
-// v1.17.0: сторож версии — если сервер стал новее, клиент сам сбрасывает кэш
-setInterval(async () => {
+// v1.17.0: сторож версии — WS сообщает об обновлении, HTTP остаётся резервом.
+async function checkServerVersion() {
   if (document.hidden) return;
   try {
-    const r = await api.get('/api/v1/about', { retries: 1 });
-    if (state.appVersion && r.version && r.version !== state.appVersion) {
-      state.appVersion = r.version;
-      hardReset(true, false).catch(() => {});        // кэш — тихо
-      showUpdateBanner(r.version);            // перезагрузка — решает человек
-    }
-  } catch (e) { /* сервер недоступен — молча */ }
-}, 60000);
-document.addEventListener('visibilitychange', async () => {
-  if (document.hidden) return;
-  try {
-    const r = await api.get('/api/v1/about', { retries: 1 });
-    if (state.appVersion && r.version && r.version !== state.appVersion) {
+    const r = await requestAboutForWatchdog();
+    if (r && state.appVersion && r.version && r.version !== state.appVersion) {
       state.appVersion = r.version;
       hardReset(true, false).catch(() => {});
       showUpdateBanner(r.version);
     }
-  } catch (e) {}
-});
+  } catch (e) { /* сервер недоступен — молча */ }
+}
+// Частые локальные тики не создают запросов: ограничитель допускает один за минуту.
+// После возвращения из фона проверяем сразу, если предыдущая попытка устарела.
+setInterval(checkServerVersion, 10000);
+document.addEventListener('visibilitychange', checkServerVersion);
 
 // v1.17.0: копирование команд в буфер (блок «Сервер и команды»)
 async function copyCmd(txt, btn) {
@@ -11023,11 +11371,6 @@ async function viewSettings(container, alive = routeGuard()) {
   if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
   // v1.70.50: клиенты приложения и передача данных — один запрос на две карточки
   if (isAdmin()) { try { clientsInfo = await api.get('/api/v1/admin/clients'); } catch {} }
-  // v1.70.51: мониторинг OpenStack — настройки и состояние контура.
-  // Отдельные try/catch: отказ одного запроса не должен снимать всю карточку.
-  let osSet = null, osStatus = null;
-  if (isAdmin()) { try { osSet = await api.get('/api/v1/openstack/settings'); } catch {} }
-  if (isAdmin()) { try { osStatus = await api.get('/api/v1/openstack/status'); } catch {} }
   // v1.62.0: политика расходов — бухгалтер и админ
   if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
   // v1.70.101 (T-69): память исправлений категорий товаров — по компании политики
@@ -11380,7 +11723,7 @@ async function viewSettings(container, alive = routeGuard()) {
         старое согласие отметится как устаревшее.</p>
       </div>` : ''}
 
-      ${isAdmin() && osSet ? osmCardHtml(osSet.settings || {}, osStatus || {}) : ''}
+      ${isAdmin() ? localServerCardHtml() : ''}
 
       ${isAdmin() && poolSet ? `
       <div class="glass card" id="st-pool" data-sec="integr" style="order:30">
@@ -12869,10 +13212,7 @@ async function viewSettings(container, alive = routeGuard()) {
         toast(r.message, 'ok', '🪝'); }
       catch (e) { toast(e.message, 'err'); }
     };
-    // v1.70.51: мониторинг OpenStack — вкладки, графики, журнал и опрос
-    // облака. Всё поведение живёт в osm.js, здесь только запуск; reload
-    // перерисовывает раздел после сохранения настроек.
-    if ($('#st-openstack')) osmWire(() => route(true));
+    if ($('#st-server-monitor')) localServerWire();
     // v1.66.0: сохранение настроек MAX
     const mxSave = $('#mx-save');
     if (mxSave) mxSave.onclick = async () => {

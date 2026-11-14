@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,15 +27,16 @@ from .database import init_db
 from .approvals import router as approvals_router
 from .bank import router as bank_router
 from .clients import router as clients_router
+from .clients import service as clients_service
 from .counterparties.router import router as counterparties_router  # v1.71.0: контрагенты (T-80)
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
 from .docreq import router as docreq_router
 from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
-from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, onec,
+from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, navigation, onec,
                       receipts, settings_routes, supabase_demo, users, webauthn)
-from .services.events import broadcast, register_loop, subscribe, unsubscribe
+from .services.events import broadcast, register_loop, resubscribe, subscribe, unsubscribe
 from .unified import router as unified_router
 
 import datetime as _dt
@@ -110,14 +112,6 @@ async def lifespan(app: FastAPI):
             log.info("fns limit retry worker started")
     except Exception:                                    # noqa: BLE001
         log.exception("fetch queue workers start failed")
-
-    # v1.70.51: мониторинг OpenStack — поток опроса, если включён в настройках
-    try:
-        from .openstack_monitor import worker as os_worker
-        if os_worker.start_worker():
-            log.info("openstack monitor worker auto-started")
-    except Exception:                                    # noqa: BLE001
-        log.exception("openstack monitor worker start failed")
 
     # v1.44.0: почтовый бот — тик раз в минуту (расписания и условия)
     async def _mail_bot_loop() -> None:
@@ -380,34 +374,92 @@ async def ws_status(ws: WebSocket):
     receipt_duplicate, receipt_verifying, receipt_verified, receipt_deleted.
     v1.11.0: подписчик видит события СВОЕЙ компании (аутентификация —
     по ?token= или HttpOnly-cookie); без токена — только платформенные."""
-    await ws.accept()
-    # --- аутентификация подписчика (v1.11.0) ---
-    company_id, authed = None, False
+    from .services.ws_security import origin_allowed
+    import math
+    import time
+
+    origin_ok = origin_allowed(ws, settings.WS_TRUSTED_ORIGINS)
+    if origin_ok is False:
+        await ws.close(code=1008)
+        return
+    # Проверка до принятия: без Origin разрешены только проверенные токены.
+    company_id, authed, ws_error, ws_user_id = None, False, "", ""
+    expires = None
+    token = ws.query_params.get("token") or ws.cookies.get("ymaster_token")
     try:
         from .auth import ROLE_ADMIN, decode_token
         from .database import SessionLocal
         from .models import User
-        token = ws.query_params.get("token") or ws.cookies.get("ymaster_token")
         if token:
             payload = decode_token(token)
+            exp = payload.get("exp")
+            if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp):
+                raise ValueError("Токен без корректного срока")
+            expires = float(exp)
             db = SessionLocal()
             try:
                 u = db.get(User, payload.get("sub", ""))
                 if u is not None and u.is_active:
-                    authed = True
-                    company_id = u.company_id if u.role != ROLE_ADMIN else None
+                    authed, ws_user_id = True, u.id
+                    company_id = (u.company_id or "") if u.role != ROLE_ADMIN else None
+                    # v1.72.1 (T-91): активный клиент бухгалтера (?company=…) — те же права, что у HTTP (ADR-30);
+                    # отказ не рвёт соединение: подписчик остаётся на своей компании, а причину получает сообщением
+                    requested = (ws.query_params.get("company") or "").strip()
+                    if requested:
+                        from .clients import service as clients
+                        try:
+                            company_id = clients.ws_company(db, u, requested) or company_id
+                        except clients.ClientsError as exc:
+                            ws_error = str(exc)
             finally:
                 db.close()
     except Exception:
         authed = False                            # анонимный подписчик
+    if (token and not authed) or (origin_ok is None and not authed) or (expires is not None and expires <= time.time()):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
     queue = await subscribe(company_id, authed)
     connected = {"ok": True}
 
     async def _pump_incoming():
-        """Следим за разрывом соединения со стороны клиента."""
+        """Следим за разрывом соединения; v1.72.1 — переключение клиента без переподключения сокета.
+
+        Сообщение `{"type": "client", "company": "…"}` переводит подписку на активного клиента: интерфейс
+        переключает компанию чаще, чем нужно рвать соединение. Право проверяется тем же ws_company.
+        """
+        nonlocal company_id
         try:
             while True:
-                await ws.receive_text()
+                raw = await ws.receive_text()
+                if expires is not None and time.time() >= expires:
+                    return
+                try:
+                    msg = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue                                   # ping и прочие строки
+                if not isinstance(msg, dict) or msg.get("type") != "client":
+                    continue
+                with SessionLocal() as db:
+                    target, error = company_id, ""
+                    u = db.get(User, ws_user_id) if ws_user_id else None
+                    if u is None or not u.is_active:
+                        error = "Клиент сменить нельзя — войдите заново"
+                    else:
+                        try:
+                            target = clients_service.ws_company(db, u, msg.get("company"))
+                            if target is None and u.role != ROLE_ADMIN:
+                                target = u.company_id or ""
+                        except clients_service.ClientsError as exc:
+                            error = str(exc)
+                if expires is not None and time.time() >= expires:
+                    return
+                if error:
+                    await ws.send_json({"type": "client_error", "payload": {"detail": error}})
+                    continue
+                resubscribe(queue, target)
+                company_id = target
+                await ws.send_json({"type": "client_ok", "payload": {"company": target or ""}})
         except WebSocketDisconnect:
             connected["ok"] = False
 
@@ -420,19 +472,60 @@ async def ws_status(ws: WebSocket):
     try:
         await ws.send_json({"type": "connected",
                             "payload": {"app": settings.APP_NAME,
-                                        "vendor": settings.VENDOR}})
+                                        "vendor": settings.VENDOR,
+                                        **({"warning": ws_error} if ws_error else {})}})
         # v1.2.0: ping каждые ~20 с — прокси/NAT не рвут «пустое» соединение,
         # телефон перестаёт циклично переподключаться («офлайн/мерцание»).
         idle_ticks = 0
         while connected["ok"]:
+            remaining = expires - time.time() if expires is not None else None
+            if remaining is not None and remaining <= 0:
+                await ws.close(code=1008)
+                break
             try:
-                message = await asyncio.wait_for(queue.get(), timeout=5.0)
+                message = await asyncio.wait_for(queue.get(), timeout=min(5.0, remaining) if remaining is not None else 5.0)
                 idle_ticks = 0
             except asyncio.TimeoutError:
+                if expires is not None and time.time() >= expires:
+                    await ws.close(code=1008)
+                    break
                 idle_ticks += 1
                 if idle_ticks % 4 == 0:
                     await ws.send_json({"type": "ping", "payload": {"demo": False}})
                 continue
+            if expires is not None and time.time() >= expires:
+                await ws.close(code=1008)
+                break
+            # Очередь может содержать событие предыдущего клиента, а доступ к текущему
+            # могли отозвать уже после подключения. Проверяем право перед отправкой.
+            event_company = json.loads(message).get("payload", {}).get("company_id")
+            if event_company is not None and ws_user_id:
+                if company_id is not None and event_company != company_id:
+                    continue
+                with SessionLocal() as db:
+                    u = db.get(User, ws_user_id)
+                    error = ""
+                    if u is None or not u.is_active:
+                        error = "Клиент сменить нельзя — войдите заново"
+                        fallback = ""
+                    else:
+                        fallback = (u.company_id or "") if u.role != ROLE_ADMIN else None
+                        try:
+                            clients_service.ws_company(db, u, event_company)
+                        except clients_service.ClientsError as exc:
+                            error = str(exc)
+                    if error:
+                        company_id = fallback
+                        resubscribe(queue, fallback)
+                if expires is not None and time.time() >= expires:
+                    await ws.close(code=1008)
+                    break
+                if error:
+                    await ws.send_json({"type": "client_error", "payload": {"detail": error}})
+                    continue
+            if expires is not None and time.time() >= expires:
+                await ws.close(code=1008)
+                break
             await ws.send_text(message)
     except (WebSocketDisconnect, RuntimeError):
         pass                        # клиент отключился — это не ошибка сервера
@@ -494,6 +587,7 @@ app.include_router(mail_admin.public_router)   # v1.44.0: отписка (пуб
 app.include_router(companies.router)   # v1.11.0: компании-клиенты
 app.include_router(receipts.router)
 app.include_router(dashboard.router)
+app.include_router(navigation.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(unified_router.router)  # единый фискальный документ
 # v1.70.104 (T-63): первичка из почты — раньше основного роутера первички, иначе /inbox поймал бы /{doc_id}
@@ -536,21 +630,15 @@ from .b2b import router_public as b2b_public  # noqa: E402
 app.include_router(b2b_public.router)      # /api/v1/b2b/* (кабинет компании)
 app.include_router(b2b_admin.router)       # /api/v1/b2b-admin/* (модерация)
 
-# v1.70.51: мониторинг OpenStack (docs/Monitor.md). Внутренний контур для
-# администратора: настройки подключения, показатели, история и журнал.
-# Префикс общий для всей программы — /api/v1/openstack/*, поэтому в список
-# исключений SPA-перехвата ниже он уже входит (api/).
-from .openstack_monitor import router as openstack_router  # noqa: E402
-
-app.include_router(openstack_router.router)  # /api/v1/openstack/* (админ)
-
 # v1.70.47: публичная оферта. Страница /oferta должна отдаваться ДО
 # SPA-перехвата ниже, иначе запрос уйдёт в веб-клиент и пользователь,
 # поставивший галочку «согласен с условиями оферты», не увидел бы условий.
 # Без авторизации: документ читается до принятия его условий.
+from .legal import acceptance as legal_acceptance  # noqa: E402
 from .legal import page as legal_page  # noqa: E402
 
 app.include_router(legal_page.router)      # /oferta, /oferta.txt, /api/v1/legal/*
+app.include_router(legal_acceptance.router)  # добровольное подтверждение действующего текста
 
 # v1.70.106 (T-75, ADR-36): страницы под кластеры запросов — серверный HTML без скриптов, тоже до SPA-перехвата
 from .services import seo_pages as _seo_pages  # noqa: E402

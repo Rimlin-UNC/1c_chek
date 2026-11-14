@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ui from '../../app/static/js/ui.js';
-import { api, getToken, setToken, clearToken } from '../../app/static/js/api.js';
+import { api, getClient, getToken, setToken, clearToken } from '../../app/static/js/api.js';
 
 const root = path.resolve(__dirname, '../..');
 const appJs = fs.readFileSync(path.join(root, 'app/static/js/app.js'), 'utf8');
@@ -29,17 +29,20 @@ const indexHtml = fs.readFileSync(path.join(root, 'app/static/index.html'),
 // модули на пути загрузки не нужны — достаточно стабов.
 const stub = () => () => {};
 Object.assign(globalThis, {
-  api, getToken, setToken, clearToken,
+  api, getClient, getToken, setToken, clearToken,
   toast: ui.toast, esc: ui.esc, fmtSum: ui.fmtSum, fmtInt: ui.fmtInt,
   fmtDate: ui.fmtDate, statusLabel: ui.statusLabel, roleLabel: ui.roleLabel,
   chip: ui.chip, openModal: ui.openModal, animateNumber: ui.animateNumber,
+  createNavigationCounts: () => ({ schedule: stub(), reset: stub() }),
+  createConnectionStatus: () => ({ apiResult: stub(), reset: stub(), wsOpen: stub(), wsClosed: stub(), update: stub() }),
+  getApiRequestId: () => 0,
   injectIcons: stub(),
   barChart: stub(), donutChart: stub(),
   CameraScanner: class {}, decodeImageFile: stub(), offlineQueue: {},
   parseQrClient: stub(),
   packCut: stub(), splitBlocks: stub(), COL_H: 0, columnX: stub(),
   SCALE: 1, RCPT_W: 0,
-  osmCardHtml: stub(), osmWire: stub(), osmStop: stub(),
+  localServerCardHtml: stub(), localServerWire: stub(), localServerStop: stub(),
   viewSupabaseDemo: stub(),
   viewUnifiedReview: stub(), setConflictsBadge: stub(),   // v1.70.83
   applyFill: () => [], fillCallout: () => '', fillFields: () => ({}),   // v1.70.91

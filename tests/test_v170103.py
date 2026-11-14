@@ -38,7 +38,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert "'/js/boot.js'," in sw and "'/fonts/inter-cyrillic-wght-normal.woff2'" in sw
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
@@ -139,7 +139,7 @@ class TestSeoService:
         assert closed.endswith("User-agent: *\nDisallow: /\n") and "Sitemap" not in closed
         xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-05")
         assert "<loc>https://chek.ymaster.ru/</loc><lastmod>2026-11-05</lastmod>" in xml
-        assert "<loc>https://chek.ymaster.ru/oferta</loc>" in xml and xml.count("<url>") >= 2     # v1.70.106: + страницы
+        assert "<loc>https://chek.ymaster.ru/oferta</loc>" not in xml and xml.count("<url>") >= 2
         assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-05") is None
 
     def test_verification_codes(self):

@@ -17,7 +17,8 @@ from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, require_admin
+from ..auth import ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_USER, require_accountant, require_admin
+from ..clients import service as clients_service
 from ..database import get_db
 from ..models import Company, Invite, Receipt, User, iso_z
 from ..schemas import (CheckoLookup, CompanyCreate, CompanyDeleteBody,
@@ -118,9 +119,22 @@ def list_companies(admin: User = Depends(require_admin),
 
 
 @router.post("", status_code=status.HTTP_201_CREATED,
-             summary="Создать компанию-клиента (администратор)")
-def create_company(body: CompanyCreate, admin: User = Depends(require_admin),
+             summary="Создать компанию-клиента (администратор; v1.71.1 — и бухгалтер)")
+def create_company(body: CompanyCreate, actor: User = Depends(require_accountant),
                    db: Session = Depends(get_db)):
+    """Создание компании-клиента.
+
+    v1.71.1 (T-84): завести клиента может и бухгалтер-аутсорсер — тогда он сразу
+    получает компанию в клиенты (строка accountant_clients в той же транзакции,
+    иначе создал бы компанию, которую сам не видит). Предел клиентов проверяется
+    до создания: отказ — 409 и ни компании, ни связи в базе не появляется.
+    """
+    accountant = actor.role == ROLE_ACCOUNTANT
+    if accountant:
+        try:
+            clients_service.check_client_limit(db, actor)
+        except clients_service.ClientsError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     name = body.name.strip()
     if len(name) < 2:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Название компании слишком короткое")
@@ -139,11 +153,20 @@ def create_company(body: CompanyCreate, admin: User = Depends(require_admin),
                             f"Компания с таким ИНН уже есть: «{dup_inn.name}»")
     comp = Company(name=name, inn=inn, note=body.note.strip())
     db.add(comp)
+    db.flush()                      # id нужен для связи «бухгалтер ↔ клиент»
+    clients_service.adopt_client(db, actor, comp.id)   # доступ бухгалтера — той же транзакцией
     db.commit()
     db.refresh(comp)
-    log_action(admin, "company_created", "company", comp.id, {"name": comp.name})
+    log_action(actor, "company_created", "company", comp.id,
+               {"name": comp.name, "by_accountant": accountant})
+    if accountant:
+        # журнал: бухгалтер взял клиента в работу — видно, кто и когда
+        log_action(actor, "clients_access_set", "user", actor.id,
+                   {"username": actor.username, "total": len(clients_service.client_ids(db, actor.id)),
+                    "added": 1, "removed": 0})
     return {**comp.to_dict(), "receipts": 0, "receipts_sum": 0.0,
             "last_activity": None, "accountants": 0, "users": 0}
+
 
 
 @router.patch("/{company_id}", summary="Изменить компанию (администратор)")
@@ -179,14 +202,11 @@ def patch_company(company_id: str, body: CompanyPatch,
         comp.note = body.note.strip()
     if body.is_active is not None:
         if body.is_active is False:
-            # Архивировать можно; последняя активная — нет (система остаётся
-            # хотя бы с одной рабочей компанией)
-            active = db.query(func.count(Company.id)).filter(
-                Company.is_active == True, Company.id != comp.id).scalar()  # noqa: E712
-            if not active:
-                raise HTTPException(status.HTTP_409_CONFLICT,
-                                    "Нельзя архивировать последнюю активную компанию")
-            comp.is_active = False
+            from ..services.company_archive import LastActiveCompany, archive_company
+            try:
+                archive_company(db, comp)
+            except LastActiveCompany as exc:
+                raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         else:
             comp.is_active = True
     db.commit()
@@ -209,17 +229,26 @@ def company_users(company_id: str, admin: User = Depends(require_admin),
 # --------------------------------------------------------------------------
 #  v1.13.0: карточка компании, Checko.ru, умное удаление
 # --------------------------------------------------------------------------
-@router.get("/similar", summary="Похожие компании по названию (администратор)")
+@router.get("/similar", summary="Похожие компании по названию (администратор и бухгалтер)")
 def similar_companies(name: str = Query(min_length=2, max_length=200),
                       exclude_id: str | None = Query(None, max_length=36),
-                      admin: User = Depends(require_admin),
+                      user: User = Depends(require_accountant),
                       db: Session = Depends(get_db)):
-    """Подсказка в диалоге создания: «похожая компания уже есть»."""
-    return _similar_companies(db, name, exclude_id)
+    """Подсказка в диалоге создания: «похожая компания уже есть».
+
+    v1.71.1: подсказка нужна в окне создания клиента, а его открывает бухгалтер.
+    Бухгалтер видит только свои компании (ADR-09, ADR-20): чужие названия в
+    подсказке — это утечка данных других клиентов.
+    """
+    own = clients_service.allowed_company_ids(db, user)
+    if own is None:
+        return _similar_companies(db, name, exclude_id)
+    own = set(own)
+    return [c for c in _similar_companies(db, name, exclude_id) if c["id"] in own]
 
 
 @router.post("/lookup-checko", summary="Предпросмотр карточки по ИНН из Checko (без сохранения)")
-def lookup_checko(body: CheckoLookup, admin: User = Depends(require_admin),
+def lookup_checko(body: CheckoLookup, user: User = Depends(require_accountant),
                   db: Session = Depends(get_db)):
     inn = normalize_inn(body.inn)
     if not inn_is_valid(inn):
@@ -382,8 +411,25 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
         if not target.is_active:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 "Компания назначения заархивирована")
+        # Стабильный порядок блокировок защищает проверку и перенос от одновременных правок.
+        locked = (db.query(Company).populate_existing().filter(Company.id.in_([comp.id, target.id]))
+                  .order_by(Company.id).with_for_update().all())
+        by_id = {company.id: company for company in locked}
+        if comp.id not in by_id or target.id not in by_id or not by_id[target.id].is_active:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Компания назначения не найдена или отключена")
+        comp, target = by_id[comp.id], by_id[target.id]
+        # T-88: договоры не объединяются молча и не перезаписывают друг друга.
+        if comp.contract_no:
+            if target.contract_no:
+                raise HTTPException(status.HTTP_409_CONFLICT,
+                                    "У обеих компаний есть договоры — перенос остановлен, чтобы не потерять данные")
         from ..unified import service as unified
         unified.retarget_company(db, comp.id, target.id, admin)
+        # retarget_company перечитывает компанию назначения; переносим после этого.
+        if comp.contract_no:
+            for field in ("contract_no", "contract_date", "service_since", "service_until", "service_fee",
+                          "service_frequency", "service_currency", "service_manager"):
+                setattr(target, field, getattr(comp, field))
         if rc:
             (db.query(Receipt).filter(Receipt.company_id == comp.id)
              .update({Receipt.company_id: target.id, Receipt.exported: False,
@@ -391,19 +437,29 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
         if body.move_users and uc:
             (db.query(User).filter(User.company_id == comp.id)
              .update({User.company_id: target.id}, synchronize_session=False))
+        elif uc:
+            # v1.71.2: «сотрудники не переходят» — их нужно открепить, иначе внешний ключ
+            # users.company_id → companies.id не даёт удалить компанию (падало с 500).
+            (db.query(User).filter(User.company_id == comp.id)
+             .update({User.company_id: None}, synchronize_session=False))
         (db.query(Invite).filter(Invite.company_id == comp.id)
          .update({Invite.company_id: target.id}, synchronize_session=False))
+        # v1.71.2 (T-85, ADR-50): настройки, контрагенты, память товаров и доступ
+        # бухгалтеров — тоже к компании назначения, иначе после удаления остаются «сироты».
+        from ..accounts import cleanup
+        summary = cleanup.detach_company(db, comp.id, target_company_id=target.id)
         name = comp.name
         db.delete(comp)
         db.commit()
         log_action(admin, "company_deleted", details={
             "company": name, "mode": "move", "receipts_moved": rc,
             "users_moved": (uc if body.move_users else 0),
-            "target": target.name})
+            "target": target.name, "moved": summary["moved"], "deleted": summary["deleted"]})
         broadcast_company_change()
         return {"ok": True, "mode": "move", "receipts_moved": rc,
                 "users_moved": (uc if body.move_users else 0),
                 "target": {"id": target.id, "name": target.name},
+                "moved": summary["moved"], "deleted": summary["deleted"],
                 "message": f"Компания «{name}» удалена; чеков перенесено: {rc}"}
     # mode == "wipe": безвозвратно удалить чеки компании
     from ..unified import service as unified
@@ -415,13 +471,19 @@ def delete_company(company_id: str, body: CompanyDeleteBody,
     if body.move_users and uc:
         (db.query(User).filter(User.company_id == comp.id)
          .update({User.company_id: None}, synchronize_session=False))
+    # v1.71.2 (T-85, ADR-50): безвозвратная очистка — не остаётся ни настроек,
+    # ни контрагентов, ни банковских связей, ни «призрачного» доступа бухгалтера.
+    from ..accounts import cleanup
+    summary = cleanup.detach_company(db, comp.id)
     name = comp.name
     db.delete(comp)
     db.commit()
     log_action(admin, "company_deleted", details={
-        "company": name, "mode": "wipe", "receipts_deleted": rc})
+        "company": name, "mode": "wipe", "receipts_deleted": rc,
+        "deleted": summary["deleted"]})
     broadcast_company_change()
     return {"ok": True, "mode": "wipe", "receipts_deleted": rc,
+            "deleted": summary["deleted"],
             "message": f"Компания «{name}» и её чеки ({rc}) удалены безвозвратно"}
 
 

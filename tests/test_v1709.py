@@ -56,7 +56,7 @@ class TestSettingsMenuStructure:
         вынесена из app.js в отдельный модуль osm.js — тот же приём, что
         для графиков в charts.js и печати в printpack.js.
         """
-        return open("app/static/js/osm.js", encoding="utf-8").read()
+        return open("app/static/js/server_monitor.js", encoding="utf-8").read()
 
     def settings_js(self):
         """Вся разметка раздела настроек: app.js и osm.js.
@@ -105,13 +105,15 @@ class TestSettingsMenuStructure:
         # st-webhooks, поэтому раздел выбран integr, а не device или data.
         # v1.70.101: карточек 32 — «Память товаров» st-goods в разделе «Проверка чеков и почта» (T-69).
         # v1.70.103: карточек 33 — «Поисковики» st-seo в разделе «Устройство и служебное» (T-74).
+        # v1.72.17: отдельная локальная карточка мониторинга сервера.
         assert len(with_sec) == 33, with_sec
+        assert ("st-server-monitor", "integr", "38") in with_sec
         assert ("st-seo", "device", "48") in with_sec
         assert ("st-consent", "integr", "38") in with_sec
         assert ("st-adguard", "device", "49") in with_sec
         assert ("st-clients", "data", "14") in with_sec
         assert ("st-transfer", "data", "15") in with_sec
-        assert ("st-openstack", "integr", "39") in with_sec
+        assert not any(cid == "st-openstack" for cid, _s, _o in with_sec)
         assert all(cid and cid.startswith(("st-", "wa-", "mail-"))
                    for cid, _s, _o in with_sec)
         secs = {s for _c, s, _o in with_sec}

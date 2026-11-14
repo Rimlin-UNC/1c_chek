@@ -2,22 +2,25 @@
 
 GET /api/v1/clients — сводка по всем доступным компаниям за отчётный месяц (бухгалтер, администратор);
 GET /api/v1/clients/mine — компании для переключателя клиента;
-GET/PUT /api/v1/clients/access/{user_id} — клиенты бухгалтера (только администратор).
+GET/PUT /api/v1/clients/access/{user_id} — клиенты бухгалтера (только администратор);
+POST /api/v1/clients/bulk — массовые действия по отмеченным клиентам (v1.72.0, T-89).
 Активный клиент бухгалтера — заголовок X-Ym-Company; проверка — в auth.get_current_user.
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..auth import require_accountant, require_admin
+from ..auth import ROLE_ADMIN, require_accountant, require_admin
 from ..database import get_db
 from ..models import User
 from ..services.audit import log_action
 from . import service
+from .contract import ContractIn
 
 router = APIRouter(prefix="/api/v1/clients", tags=["Рабочее место аутсорсера"])
 
@@ -28,6 +31,15 @@ Db = Annotated[Session, Depends(get_db)]
 
 class AccessIn(BaseModel):
     company_ids: list[Annotated[str, Field(max_length=36)]] = Field(default_factory=list, max_length=service.MAX_CLIENTS)
+
+
+class BulkIn(BaseModel):
+    """v1.72.0 (T-89): пачка компаний и одно действие над всеми. Проверяется до работы — целиком."""
+    company_ids: list[Annotated[str, Field(max_length=36)]] = Field(..., min_length=1,
+                                                                   max_length=service.MAX_BULK)
+    action: Literal["remind", "archive", "restore", "assign"]
+    period: str | None = Field(None, max_length=7)
+    user_id: str | None = Field(None, max_length=36)          # для «назначить сотрудника»
 
 
 def _fail(exc: service.ClientsError) -> HTTPException:
@@ -42,6 +54,27 @@ def overview(user: Accountant, db: Db, period: Annotated[str | None, Query(max_l
         raise _fail(exc) from exc
     data["periods"] = service.period_choices()
     return data
+
+
+@router.get("/report", summary="Печатная сводка клиентов", response_class=HTMLResponse)
+def clients_report(user: Accountant, db: Db, period: Annotated[str | None, Query(max_length=7)] = None) -> HTMLResponse:
+    from . import report
+    if period:
+        from ..docreq import service as docreq
+        try:
+            docreq.period_start(period)
+            docreq.period_end(period)
+        except (docreq.DocRequestError, ValueError, OverflowError) as exc:
+            raise HTTPException(422, "Период — допустимый месяц в виде ГГГГ-ММ") from exc
+    try:
+        data = service.overview(db, user, period)
+    except service.ClientsError as exc:
+        raise _fail(exc) from exc
+    return HTMLResponse(report.render(data), headers={
+        "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        "Referrer-Policy": "no-referrer",
+    })
 
 
 @router.get("/mine", summary="Компании для переключателя клиента (своя — первой)")
@@ -76,3 +109,88 @@ def put_access(user_id: str, body: AccessIn, admin: Admin, db: Db) -> dict:
                {"username": target.username, "total": len(result["company_ids"]),
                 "added": result["added"], "removed": result["removed"]})
     return result
+
+
+@router.post("/bulk", summary="Массовое действие по отмеченным клиентам")
+def bulk(body: BulkIn, user: Accountant, db: Db) -> dict:
+    """v1.72.0 (T-89): одно действие сразу по нескольким клиентам.
+
+    Напоминания доступны бухгалтеру в его компаниях; архив и перевод сотрудника — только администратору.
+    Сотрудник может принадлежать одной компании. Ошибка одной компании не отменяет остальные.
+    """
+    if body.action in ("assign", "archive", "restore") and user.role != ROLE_ADMIN:
+        raise HTTPException(403, "Действие доступно только администратору")
+    if body.action == "assign":
+        if not body.user_id:
+            raise HTTPException(422, "Выберите сотрудника для назначения")
+        if len(set(body.company_ids)) != 1:
+            raise HTTPException(422, "Сотрудник может принадлежать только одной компании — выберите одну")
+    companies, items = service.bulk_targets(db, user, body.company_ids)
+    if not companies and not items:
+        raise HTTPException(422, "Не выбрано ни одного клиента")
+    employee = db.get(User, body.user_id) if body.user_id else None
+    if body.action == "assign" and employee is None:
+        raise HTTPException(404, "Сотрудник не найден")
+    if body.action == "assign" and employee.role == ROLE_ADMIN:
+        raise HTTPException(409, "Администратор не привязан к компаниям")
+    if body.action == "assign" and not employee.is_active:
+        raise HTTPException(409, "Сотрудник отключён")
+    for company in companies:
+        cid, name = company.id, company.short_name or company.name
+        try:
+            item = {"company_id": cid, "name": name, "ok": True}
+            if body.action == "remind":
+                from ..docreq import service as docreq
+                period = body.period or docreq.default_period()
+                docreq.validate_operational_period(period)
+                report = docreq.send_reminders(db, cid, period, "manual", actor_id=user.id)
+                item["note"] = report.get("note") or f"отправлено: {report.get('sent', 0)}"
+            elif body.action == "archive":
+                from ..services.company_archive import archive_company
+                archive_company(db, company)
+            elif body.action == "restore":
+                company.is_active = True
+            else:
+                if not company.is_active:
+                    raise ValueError("Компания отключена")
+                employee.company_id = cid
+            db.commit()
+            items.append(item)
+        except Exception as exc:                                  # noqa: BLE001 — одна компания не держит пачку
+            db.rollback()
+            items.append({"company_id": cid, "name": name, "ok": False, "error": str(exc)[:200]})
+    done = sum(1 for i in items if i.get("ok"))
+    failed = len(items) - done
+    log_action(user, "clients_bulk", "company", company_ids_csv(body.company_ids),
+               {"action": body.action, "total": len(items), "done": done, "failed": failed,
+                "user_id": body.user_id or ""})
+    return {"action": body.action, "title": service.BULK_TITLES.get(body.action, body.action),
+            "items": items, "done": done, "failed": failed}
+
+
+def company_ids_csv(ids: list[str]) -> str:
+    """Компании пачки одной строкой — для журнала действий (колонка entity_id короткая)."""
+    return ",".join(dict.fromkeys(ids))[:64]
+
+
+@router.get('/{company_id}/contract', summary='Договор и тариф клиента')
+def get_contract(company_id: str, user: Accountant, db: Db) -> dict:
+    from . import contract
+    try:
+        company = contract.company_for(db, user, company_id)
+    except service.ClientsError as exc:
+        raise _fail(exc) from exc
+    return {'contract': contract.as_dict(company)}
+
+
+@router.put('/{company_id}/contract', summary='Сохранить договор и тариф клиента')
+def put_contract(company_id: str, body: ContractIn, user: Accountant, db: Db) -> dict:
+    from . import contract
+    try:
+        company = contract.company_for(db, user, company_id)
+    except service.ClientsError as exc:
+        raise _fail(exc) from exc
+    contract.save(company, body)
+    db.commit()
+    log_action(user, 'client_contract_updated', 'company', company_id, {})
+    return {'contract': contract.as_dict(company)}

@@ -65,7 +65,7 @@ class Settings:
     """Глобальные настройки системы «Ямастер Чек»."""
 
     APP_NAME: str = "Ямастер Чек"
-    APP_VERSION: str = "1.71.0"
+    APP_VERSION: str = "1.72.31"
     DEFAULT_BRANCH: str = "main"   # v1.70.18: канал обновлений из приложения — main
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
     # из приложения работает БЕЗ sudo/пароля; выключите в .env, если процессом
@@ -124,6 +124,8 @@ class Settings:
     # v1.70.11: без wildcard-дефолта — веб-клиент и мини-app работают
     # на одном источнике; кросс-домен при необходимости — CORS_ORIGINS в .env
     CORS_ORIGINS: list[str] = [x.strip() for x in _env("CORS_ORIGINS", "").split(",") if x.strip()]
+    # Дополнительные доверенные источники WS (точные http(s) origin через запятую).
+    WS_TRUSTED_ORIGINS: list[str] = [x.strip() for x in _env("WS_TRUSTED_ORIGINS", "").split(",") if x.strip()]
     # v1.70.12: адрес Telegram Bot API — свой шлюз/мост вместо официального
     # (поле настройки «Адрес API» важнее env; bridge: deploy/tg-bridge)
     TELEGRAM_API_BASE: str = _env("TELEGRAM_API_BASE", "https://api.telegram.org")

@@ -88,6 +88,18 @@ def period_end(period: str) -> date:
     return period_start(shift_period(period, 1))
 
 
+def validate_operational_period(period: str) -> None:
+    """Месяц должен иметь представимые начало и исключающую границу следующего месяца.
+
+    Синтаксический parse_period оставлен отдельно для чтения старых строк журнала.
+    """
+    try:
+        period_start(period)
+        period_end(period)
+    except (DocRequestError, ValueError, OverflowError) as exc:
+        raise DocRequestError("Период — допустимый месяц с представимой следующей границей в виде ГГГГ-ММ") from exc
+
+
 def period_title(period: str) -> str:
     year, month = parse_period(period)
     return f"{MONTHS[month - 1]} {year}"
@@ -100,7 +112,9 @@ def now_msk() -> datetime:
 def default_period(now: datetime | None = None) -> str:
     """Отчётный месяц по умолчанию — прошлый: в начале месяца бухгалтер закрывает предыдущий."""
     current = (now or now_msk()).astimezone(MSK)
-    return shift_period(f"{current.year:04d}-{current.month:02d}", -1)
+    month = f"{current.year:04d}-{current.month:02d}"
+    # У начала календаря предыдущего месяца не существует — используем текущий.
+    return month if current.year == 1 and current.month == 1 else shift_period(month, -1)
 
 
 def human_moment(moment: datetime) -> str:
@@ -208,7 +222,7 @@ def schedule(period: str, s: DocRequestSettings) -> list[tuple[str, datetime]]:
 def due_slot(period: str, s: DocRequestSettings, now: datetime, sent: set[str]) -> str | None:
     """Наступившее и ещё не отправленное напоминание. Пропущенные из-за простоя сервера старые
     напоминания пачкой не догоняются: берётся только самое свежее в пределах окна."""
-    due = [slot for slot, at in schedule(period, s) if at <= now < at + WINDOW]
+    due = [slot for slot, at in schedule(period, s) if at <= now and now - at < WINDOW]
     if not due or due[-1] in sent:
         return None
     return due[-1]
@@ -260,6 +274,7 @@ def _doc_label(doc: PrimaryDocument) -> str:
 
 def detect(db: Session, company_id: str, period: str, actor_id: str = "") -> dict:
     """Найти недостающее за период. Повторный поиск дублей не создаёт, отменённое не возвращает."""
+    validate_operational_period(period)
     start, end = period_start(period), period_end(period)
     known = {(r.kind, r.ref_type, r.ref_id) for r in
              db.query(DocRequest).filter(DocRequest.company_id == company_id, DocRequest.period == period)}
@@ -273,10 +288,11 @@ def detect(db: Session, company_id: str, period: str, actor_id: str = "") -> dic
         _new(db, company_id, period, kind, title, actor_id=actor_id, ref_type=ref_type, ref_id=ref_id, **extra)
         created += 1
 
-    # 1. Регулярные поставщики: документы в двух из трёх прошлых месяцев, а в этом месяце — нет
+    # 1. Регулярные поставщики: до трёх прошлых месяцев; до 0001-01 истории быть не может.
+    history_start = date.min if start < date(1, 4, 1) else period_start(shift_period(period, -3))
     history = (db.query(PrimaryDocument)
                .filter(PrimaryDocument.company_id == company_id, PrimaryDocument.seller_inn != "",
-                       PrimaryDocument.doc_date >= period_start(shift_period(period, -3)),
+                       PrimaryDocument.doc_date >= history_start,
                        PrimaryDocument.doc_date < end).all())
     sellers: dict[str, dict] = {}
     for doc in history:
@@ -327,6 +343,7 @@ def detect(db: Session, company_id: str, period: str, actor_id: str = "") -> dic
 
 
 def add_manual(db: Session, company_id: str, period: str, data: dict, user: User) -> DocRequest:
+    validate_operational_period(period)
     title = " ".join(str(data.get("title") or "").split())
     if len(title) < 3:
         raise DocRequestError("Опишите, какой документ нужен")
@@ -578,6 +595,7 @@ def preview(db: Session, company_id: str, period: str, now: datetime | None = No
 def send_reminders(db: Session, company_id: str, period: str, slot: str, actor_id: str = "",
                    now: datetime | None = None) -> dict:
     """Отправить напоминание по всем подключённым каналам и записать каждое сообщение в журнал."""
+    validate_operational_period(period)
     with _send_lock:
         now = now or now_msk()
         s = settings_of(db, company_id)
@@ -657,8 +675,17 @@ def tick(db: Session, now: datetime | None = None, company_id: str | None = None
         company = db.get(Company, s.company_id)
         if company is None or not company.is_active:
             continue
-        for period in (current, shift_period(current, -1), shift_period(current, -2)):
-            slot = due_slot(period, s, now, sent_slots(db, s.company_id, period))
+        # На границе календаря часть месяцев или расписаний не существует; не
+        # прерываем обработку остальных компаний и не подменяем даты напоминаний.
+        available = (now.year - 1) * 12 + now.month
+        for back in range(min(3, available)):
+            period = shift_period(current, -back)
+            try:
+                validate_operational_period(period)
+                slot = due_slot(period, s, now, sent_slots(db, s.company_id, period))
+            except (DocRequestError, ValueError, OverflowError):
+                log.warning("Не удалось рассчитать расписание запросов за период %s", period)
+                continue
             if slot is None:
                 continue
             if s.auto_detect:
@@ -672,7 +699,9 @@ def tick(db: Session, now: datetime | None = None, company_id: str | None = None
 def discipline(db: Session, company_id: str, period: str) -> dict:
     """Дисциплина клиента за три месяца до периода включительно: доля документов, полученных в срок."""
     total = on_time = 0
-    for back in range(3):
+    start = period_start(period)
+    available = (start.year - 1) * 12 + start.month
+    for back in range(min(3, available)):
         p = shift_period(period, -back)
         due = deadline(p, settings_of(db, company_id)).astimezone(timezone.utc).replace(tzinfo=None)
         for req in db.query(DocRequest).filter(DocRequest.company_id == company_id, DocRequest.period == p,

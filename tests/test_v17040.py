@@ -974,7 +974,7 @@ console.log(['ok', 'pend', 'bad'].map((s) => scanSessLabel(s)).join(','));
 """)
         states, labels = out.split("\n")
         assert states == "ok,bad,bad,pend,pend,pend"
-        assert labels == "принят,на проверке,не принят"
+        assert labels == "принят,без подтверждения,не принят"
 
     def test_counters_include_money(self):
         out = _node(_helpers(SCAN_HELPERS, APP_JS) + """
@@ -989,7 +989,7 @@ console.log(JSON.stringify(scanSessCount(items)));
 const items = [{state: 'ok', sum: 1250}, {state: 'bad', sum: 0}];
 console.log(scanSessSummaryText(items, 65000));
 """)
-        for part in ("принято 1", "на проверке 0", "не принято 1",
+        for part in ("принято 1", "без подтверждения 0", "не принято 1",
                      "1250.00 ₽", "1 мин 5 с"):
             assert part in out, part
 

@@ -80,6 +80,9 @@ export function clientsCardHtml(row) {
   const bankMain = b.open ? `<b>${b.open}</b> без документов` : 'всё с документами';
   return `<article class="glass cl-card cl-${esc(row.level)}" data-company="${esc(row.id)}">
     <header class="cl-head">
+      <label class="cl-pick" title="Отметить для массового действия">
+        <input type="checkbox" data-pick="${esc(row.id)}"${row.picked ? ' checked' : ''} aria-label="Отметить «${esc(row.name)}»">
+      </label>
       <div class="cl-title"><b>${esc(row.name)}</b>${row.home ? ' <span class="chip">своя</span>' : ''}
         <span class="form-hint">ИНН ${esc(row.inn || '—')}</span></div>
       <div class="cl-head-actions">
@@ -88,6 +91,7 @@ export function clientsCardHtml(row) {
           title="JSON, CSV и УПД за месяц — для других учётных систем">📦 Пакет за месяц</button>
       </div>
     </header>
+    ${clientsContractSummary(row)}
     <div class="cl-deadline ${dl.cls}">Срок сдачи: ${esc(dl.when || '—')}${dl.text ? ` — <b>${esc(dl.text)}</b>` : ''}</div>
     <div class="cl-tiles">
       ${clientsTile(row, 'docreq', 'Что нужно от клиента', docreqMain,
@@ -99,11 +103,113 @@ export function clientsCardHtml(row) {
         r.fns_bad ? 'cl-bad' : (r.attention || r.policy ? 'cl-warn' : ''))}
       ${clientsTile(row, 'primary', 'Первичка (УПД)', primaryMain, [clientsLine(p.to_export, 'к выгрузке в 1С')],
         p.errors ? 'cl-bad' : '')}
-      ${clientsTile(row, 'bank', 'Банк', bankMain,
-        [`<span class="cl-line${b.status === 'reauth' || b.status === 'error' ? ' cl-bad' : ''}">${esc(conn)}${synced}</span>`],
+      ${clientsTile(row, 'bank', 'Банк', bankMain, clientsBankLines(b, conn, synced),
         b.status === 'reauth' || b.status === 'error' ? 'cl-bad' : (b.open ? 'cl-warn' : ''))}
+      ${clientsApprovalsTile(row)}
     </div>
   </article>`;
+}
+
+/** T-88: договор показывается в сводке; деньги форматируются как строка, без округления float. */
+export function clientsContractSummary(row) {
+  const c = row.contract;
+  const warning = c && c.reminder;
+  let msg = '';
+  if (warning) {
+    const days = Number(warning.days);
+    msg = days < 0 ? `Дата окончания по данным карточки прошла ${-days} ${clientsDays(days)} назад — проверьте договор`
+      : `Дата окончания по данным карточки через ${days} ${clientsDays(days)} — проверьте договор`;
+  }
+  const detail = c ? `Договор № ${esc(c.number)} · ${esc(c.fee)} ${esc(c.currency)} / ${esc(CLIENTS_FREQUENCIES[c.frequency] || c.frequency)}`
+    : 'Договор не заполнен';
+  return `<div class="cl-contract"><span>${detail}</span>${msg ? ` <strong>${esc(msg)}</strong>` : ''}
+    <button type="button" class="btn btn-sm" data-contract="${esc(row.id)}">Договор и тариф</button></div>`;
+}
+
+const CLIENTS_FREQUENCIES = { month: 'месяц', quarter: 'квартал', year: 'год', once: 'разово' };
+
+export function clientsContractFormHtml(contract) {
+  const c = contract || {};
+  const value = (key) => esc(c[key] || '');
+  return `<form id="contract-form">
+    <div class="modal-title">Договор и тариф клиента</div>
+    <p class="form-hint">Обязательные поля отмечены звёздочкой. Напоминание видно только при входе на экран
+      «Клиенты»; клиенту и во внешние каналы оно не отправляется. Проверьте пролонгацию и дополнительные соглашения:
+      дата в карточке сама по себе не подтверждает прекращение договора.</p>
+    <label class="field"><span>Номер договора *</span><input id="contract-number" maxlength="200" required value="${value('number')}"></label>
+    <label class="field"><span>Дата договора *</span><input id="contract-date" type="date" required value="${value('date')}"></label>
+    <label class="field"><span>Начало обслуживания *</span><input id="contract-since" type="date" required value="${value('service_since')}"></label>
+    <label class="field"><span>Окончание обслуживания</span><input id="contract-until" type="date" value="${value('service_until')}"></label>
+    <label class="field"><span>Стоимость *</span><input id="contract-fee" type="text" inputmode="decimal" required value="${value('fee')}" placeholder="Например 12500.50"></label>
+    <label class="field"><span>Периодичность оплаты *</span><select id="contract-frequency" required>
+      <option value="">— выберите —</option>${Object.entries(CLIENTS_FREQUENCIES).map(([key, label]) =>
+    `<option value="${key}"${c.frequency === key ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+    <label class="field"><span>Валюта *</span><input id="contract-currency" maxlength="3" pattern="[A-Za-z]{3}" required value="${esc(c.currency || 'RUB')}"></label>
+    <label class="field"><span>Ответственный менеджер</span><input id="contract-manager" maxlength="200" value="${value('manager')}"></label>
+    <p id="contract-error" class="form-error" role="alert"></p>
+    <div class="modal-actions"><button type="button" class="btn" id="contract-cancel">Отмена</button>
+      <button type="submit" class="btn btn-primary">Сохранить</button></div>
+  </form>`;
+}
+
+export function clientsContractDialog(row, onSaved) {
+  const { slot, close } = openModal(clientsContractFormHtml(row.contract));
+  const form = slot.querySelector('#contract-form');
+  slot.querySelector('#contract-cancel').onclick = close;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const field = (id) => slot.querySelector('#contract-' + id).value.trim();
+    const body = { number: field('number'), date: field('date'), service_since: field('since'),
+      service_until: field('until') || null, fee: field('fee').replace(',', '.'), frequency: field('frequency'),
+      currency: field('currency').toUpperCase(), manager: field('manager') };
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api.put(`/api/v1/clients/${encodeURIComponent(row.id)}/contract`, body);
+      close();
+      toast('Договор и тариф сохранены', 'ok');
+      if (typeof onSaved === 'function') onSaved();
+    } catch (error) {
+      slot.querySelector('#contract-error').textContent = error.message || 'Не удалось сохранить договор';
+      submit.disabled = false;
+    }
+  };
+}
+
+/** Состояние банка одной фразой — как на экране «Банк». */
+export const CLIENTS_BANK_STATE = {
+  active: 'работает', awaiting: 'ждём подтверждения', new: 'ждём настройки', reauth: 'нужно подключить заново',
+  error: 'ошибка подключения',
+};
+
+/** v1.71.4 (T-87): банки в плитке. Один банк — по-прежнему одна строка «состояние, загрузка». Несколько —
+    каждый со своим состоянием и своей ошибкой (худший уже первым, порядок задаёт сервер): видно, какой
+    банк сломался и что именно случилось, а не только «банк: ошибка подключения». */
+export function clientsBankLines(b, conn, synced) {
+  const banks = (b && Array.isArray(b.banks)) ? b.banks : [];
+  if (banks.length <= 1) {
+    return [`<span class="cl-line${b.status === 'reauth' || b.status === 'error' ? ' cl-bad' : ''}">${esc(conn)}${synced}</span>`];
+  }
+  return banks.map((x) => {
+    const bad = x.status === 'reauth' || x.status === 'error';
+    const state = CLIENTS_BANK_STATE[x.status] || x.status;
+    const when = x.last_sync_at ? `, ${esc(clientsWhen(x.last_sync_at))}` : '';
+    const err = bad && x.error ? `<span class="cl-bank-error">${esc(x.error)}</span>` : '';
+    return `<span class="cl-line${bad ? ' cl-bad' : ''}" title="${esc(x.title)}: ${esc(state)}">`
+      + `<b>${esc(x.title)}</b> — ${esc(state)}${when}${err}</span>`;
+  });
+}
+
+/** v1.71.3 (T-86): согласования авансовых отчётов — плитка карточки. Согласование выключено в компании —
+    плитки нет вовсе: нули на экране не рисуем, иначе бухгалтер ищет несуществующую работу. */
+export function clientsApprovalsTile(row) {
+  const a = (row && row.approvals) || {};
+  if (!a.enabled) return '';
+  const main = a.todo ? `<b>${a.todo}</b> ждут меня` : (a.work ? `<b>${a.work}</b> в работе` : 'ждут не меня');
+  return clientsTile(row, 'approvals', 'Согласования', main,
+    [clientsLine(a.overdue, 'просрочено', 'cl-bad'), clientsLine(a.work, 'в работе'),
+      clientsLine(a.month, 'заведено за месяц')],
+    a.overdue ? 'cl-bad' : (a.todo ? 'cl-warn' : ''));
 }
 
 /** Итоги по всем клиентам — плитки над списком. */
@@ -119,13 +225,37 @@ export function clientsTotalsHtml(t) {
       x.overdue ? 'cl-bad' : '')}
     ${kpi('Ошибки ФНС и УПД', Number(x.fns_bad || 0) + Number(x.upd_errors || 0),
       `чеки: ${x.fns_bad || 0} · УПД: ${x.upd_errors || 0}`, (x.fns_bad || x.upd_errors) ? 'cl-bad' : '')}
+    ${kpi('Согласования', Number(x.approvals_todo || 0),
+      `ждут моего хода · просрочено: ${x.approvals_overdue || 0}`,
+      x.approvals_overdue ? 'cl-bad' : (x.approvals_todo ? 'cl-warn' : ''))}
     ${kpi('Платежи без документов', Number(x.bank_open || 0), 'по выпискам за месяц', x.bank_open ? 'cl-warn' : '')}
     ${kpi('К выгрузке', Number(x.to_export || 0) + Number(x.upd_to_export || 0),
       `чеки: ${x.to_export || 0} · УПД: ${x.upd_to_export || 0}`)}
   </div>`;
 }
 
-/** Список карточек с фильтром по статусу и поиском по названию или ИНН. */
+/** v1.72.0 (T-89): панель массовых действий — появляется, когда отмечен хотя бы один клиент. */
+export function clientsBulkHtml(count, opts = {}) {
+  const n = Number(count) || 0;
+  if (!n) return '';
+  return `<div class="glass cl-bulk" id="cl-bulk" role="region" aria-label="Массовые действия">
+    <b>Отмечено клиентов: <span id="cl-bulk-count">${n}</span></b>
+    <div class="cl-bulk-actions">
+      <button type="button" class="btn btn-sm" data-bulk="remind"
+        title="Запрос документов у всех отмеченных компаний — по тем же каналам, что и обычное напоминание">📣 Напомнить всем</button>
+      <button type="button" class="btn btn-sm" data-bulk="pack"
+        title="Архив за месяц по каждому отмеченному клиенту — скачивается по одному">📦 Пакет по всем</button>
+      ${opts.isAdmin && n === 1 ? `<button type="button" class="btn btn-sm" data-bulk="assign"
+        title="Сотрудник переедет в выбранную компанию">👤 Перевести сотрудника</button>` : ''}
+      ${opts.isAdmin ? `<button type="button" class="btn btn-sm" data-bulk="archive"
+        title="Компании уйдут в архив; восстановление — в разделе Компании">🗄 В архив</button>` : ''}
+      <button type="button" class="btn btn-sm btn-ghost" data-bulk="clear">Снять отметки</button>
+    </div>
+    ${opts.isAdmin ? '<small>Восстановление из архива — в разделе «Компании».</small>' : ''}
+  </div>`;
+}
+
+/** Список карточек с фильтром по статусу и поиску по названию или ИНН. */
 export function clientsListHtml(companies, filter = 'all', query = '') {
   const q = String(query || '').trim().toLowerCase();
   const rows = (companies || []).filter((c) => (filter === 'all' || c.level === filter)
@@ -133,9 +263,29 @@ export function clientsListHtml(companies, filter = 'all', query = '') {
   if (!rows.length) {
     return `<div class="glass card cl-empty">${(companies || []).length
       ? 'Под фильтр не попала ни одна компания.'
-      : 'Компаний пока нет. Администратор назначает бухгалтеру клиентов: «Пользователи» → бухгалтер → «🏢 Клиенты».'}</div>`;
+      : 'Клиентов пока нет. Нажмите «＋ Новый клиент» — компания появится в списке сразу. '
+        + 'Ещё клиентов назначает администратор: «Пользователи» → бухгалтер → «🏢 Клиенты».'}</div>`;
   }
   return rows.map(clientsCardHtml).join('');
+}
+
+/** Печатная сводка: токен остаётся в API-заголовке, а не попадает в адрес окна. */
+export async function clientsOpenReport(period) {
+  const win = window.open('', '_blank');
+  if (!win) {
+    toast('Разрешите всплывающее окно для печатного отчёта', 'err');
+    return;
+  }
+  win.opener = null;
+  try {
+    const html = await api.get(`/api/v1/clients/report?period=${encodeURIComponent(period)}`);
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+    win.location.href = url;
+  } catch (error) {
+    win.close();
+    toast(error.message || 'Не удалось открыть отчёт', 'err');
+  }
 }
 
 /** Экран «Клиенты». opts.open(companyId, view) — переключить компанию и открыть экран (из app.js). */
@@ -145,6 +295,7 @@ export async function viewClients(container, opts = {}) {
   let filter = 'all';
   let query = '';
   let data = null;
+  const picked = new Set();          // v1.72.0 (T-89): отмеченные клиенты — переживают фильтр и поиск
   container.innerHTML = `<div class="glass card"><div class="skeleton"></div><div class="skeleton"></div></div>`;
 
   async function load() {
@@ -161,7 +312,28 @@ export async function viewClients(container, opts = {}) {
 
   function paintList() {
     const list = container.querySelector('#cl-list');
-    if (list) list.innerHTML = clientsListHtml(data.companies, filter, query);
+    if (list) {
+      // отметка — часть данных карточки: так чекбокс не «слетает» при смене фильтра
+      const rows = data.companies.map((c) => ({ ...c, picked: picked.has(c.id) }));
+      list.innerHTML = clientsListHtml(rows, filter, query);
+    }
+    paintBulk();
+  }
+
+  function paintBulk() {
+    const host = container.querySelector('#cl-bulk-host');
+    if (!host) return;
+    host.innerHTML = clientsBulkHtml(picked.size, { isAdmin: opts.isAdmin });
+    if (!picked.size) return;
+    host.querySelectorAll('[data-bulk]').forEach((btn) => {
+      btn.onclick = () => clientsBulkRun(btn.dataset.bulk, [...picked], period, {
+        isAdmin: opts.isAdmin, btn, onDone: (action) => {
+          if (action === 'archive' || action === 'restore') picked.clear();
+          load();
+        }, onDownload: (companyId) => clientsDownloadPackage(period, companyId, null),
+        onAssign: () => clientsBulkAssign([...picked], () => load()),
+      });
+    });
   }
 
   function render() {
@@ -174,9 +346,13 @@ export async function viewClients(container, opts = {}) {
             <p class="form-hint">Отчётный месяц — ${esc(data.period_title || data.period)}. Сначала — компании, где
               нужны действия; любая цифра открывает экран уже в этой компании.</p>
           </div>
-          <label class="field cl-period"><span>Месяц</span>
-            <select id="cl-period">${periods.map((p) => `<option value="${esc(p.period)}"${p.period === data.period
-              ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
+          <div class="cl-head-actions">
+            <label class="field cl-period"><span>Месяц</span>
+              <select id="cl-period">${periods.map((p) => `<option value="${esc(p.period)}"${p.period === data.period
+                ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
+            <button type="button" class="btn btn-sm" id="cl-report" title="Все доступные компании; печать или сохранение в PDF">🖨 Сводный отчёт</button>
+            ${clientsCreateButtonHtml()}
+          </div>
         </div>
         ${clientsTotalsHtml(data.totals)}
         <div class="cl-tools">
@@ -185,9 +361,20 @@ export async function viewClients(container, opts = {}) {
           <input type="search" class="cl-search" id="cl-search" placeholder="Поиск по названию или ИНН" value="${esc(query)}">
         </div>
       </div>
+      <div id="cl-bulk-host"></div>
       <div class="cl-list" id="cl-list"></div>`;
     paintList();
     container.querySelector('#cl-period').onchange = (e) => { period = e.target.value; load(); };
+    container.querySelector('#cl-report').onclick = () => clientsOpenReport(period);
+    const newBtn = container.querySelector('#cl-new');
+    if (newBtn) newBtn.onclick = () => clientsCreateDialog({
+      onCreated: (company) => {
+        load();
+        // v1.71.1: компания сразу в переключателе в шапке — иначе бухгалтер видит
+        // «Клиент добавлен», а в шапке его ещё нет (нашёл e2e в CI).
+        if (typeof opts.onCreated === 'function') opts.onCreated(company);
+      },
+    });
     container.querySelectorAll('.cl-filter button').forEach((btn) => {
       btn.onclick = () => {
         filter = btn.dataset.filter;
@@ -196,7 +383,19 @@ export async function viewClients(container, opts = {}) {
       };
     });
     container.querySelector('#cl-search').oninput = (e) => { query = e.target.value; paintList(); };
+    container.querySelector('#cl-list').onchange = (e) => {
+      const box = e.target.closest('[data-pick]');
+      if (!box) return;
+      if (box.checked) picked.add(box.dataset.pick); else picked.delete(box.dataset.pick);
+      paintBulk();
+    };
     container.querySelector('#cl-list').onclick = (e) => {
+      const contract = e.target.closest('[data-contract]');
+      if (contract) {
+        const row = data.companies.find((company) => company.id === contract.dataset.contract);
+        if (row) clientsContractDialog(row, () => load());
+        return;
+      }
       const pack = e.target.closest('[data-pack]');
       if (pack) {
         clientsDownloadPackage(period, pack.dataset.pack, pack);
@@ -209,6 +408,93 @@ export async function viewClients(container, opts = {}) {
   }
 
   await load();
+}
+
+// ------------------------------------------------------------------ массовые действия (T-89, v1.72.0)
+/** Итог пачки одной фразой: «готово 3 из 4», плюс причина первого отказа. */
+export function clientsBulkResult(data) {
+  const done = Number(data.done || 0), failed = Number(data.failed || 0);
+  const first = (data.items || []).find((i) => !i.ok);
+  const tail = first ? ` Первая причина: ${first.name ? first.name + ' — ' : ''}${first.error}` : '';
+  return `Готово: ${done}${failed ? `, не получилось: ${failed}.` + tail : ' из ' + (done + failed) + '.'}`;
+}
+
+/** Выполнить действие пачкой. pack — «Пакет по всем»: скачиваем архив по каждой компании отдельно. */
+export async function clientsBulkRun(action, companyIds, period, opts = {}) {
+  if (!companyIds || !companyIds.length) return null;
+  const btn = opts.btn;
+  if (btn) btn.disabled = true;
+  try {
+    if (action === 'pack') {
+      const items = [];
+      for (const cid of companyIds) {
+        try {
+          if (typeof opts.onDownload !== 'function') throw new Error('Загрузка недоступна');
+          const downloaded = await opts.onDownload(cid);
+          if (downloaded === false) throw new Error('Не удалось скачать пакет');
+          items.push({ company_id: cid, ok: true });
+        } catch (error) {
+          items.push({ company_id: cid, ok: false, error: error.message || 'Ошибка загрузки' });
+        }
+      }
+      const done = items.filter((item) => item.ok).length;
+      const result = { done, failed: items.length - done, items };
+      toast(clientsBulkResult(result), result.failed ? 'warn' : 'ok', 'Пакет по всем');
+      if (typeof opts.onDone === 'function') opts.onDone(action, result);
+      return result;
+    }
+    if (action === 'assign') {
+      if (typeof opts.onAssign === 'function') return opts.onAssign();
+      return null;
+    }
+    if (action === 'clear') {
+      if (typeof opts.onDone === 'function') opts.onDone(action);
+      return null;
+    }
+    const body = { company_ids: companyIds, action, period };
+    const data = await api.post('/api/v1/clients/bulk', body);
+    const failed = Number(data.failed || 0);
+    toast(clientsBulkResult(data), failed ? 'warn' : 'ok', data.title || 'Готово');
+    if (typeof opts.onDone === 'function') opts.onDone(action, data);
+    return data;
+  } catch (e) {
+    toast(e.message, 'err', 'Массовое действие');
+    return null;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** «Назначить сотрудника»: окно выбора и отправка пачкой (администратор). */
+export async function clientsBulkAssign(companyIds, onDone) {
+  let people = [];
+  try {
+    people = (await api.get('/api/v1/users')).items || [];
+  } catch (e) {
+    toast(e.message, 'err', 'Сотрудники');
+    return null;
+  }
+  const staff = people.filter((u) => u.is_active !== false && u.role !== 'admin');
+  openModal(`<div class="card-title">👤 Назначить сотрудника</div>
+    <p class="form-hint">Сотрудник будет переведён в выбранную компанию и больше не будет принадлежать прежней.</p>
+    <label class="field"><span>Сотрудник</span><select id="cb-user">
+      ${staff.map((u) => `<option value="${esc(u.id)}">${esc(u.full_name || u.username)} — ${esc(u.role)}</option>`).join('')}
+    </select></label>
+    <div class="modal-actions"><button type="button" class="btn" id="cb-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="cb-go">Назначить</button></div>`);
+  const root = document.querySelector('.modal-slot');
+  root.querySelector('#cb-cancel').onclick = () => root.closest('.modal-root').classList.add('hidden');
+  root.querySelector('#cb-go').onclick = async () => {
+    const userId = root.querySelector('#cb-user').value;
+    try {
+      const data = await api.post('/api/v1/clients/bulk', { company_ids: companyIds, action: 'assign', user_id: userId });
+      root.closest('.modal-root').classList.add('hidden');
+      toast(clientsBulkResult(data), data.failed ? 'warn' : 'ok', 'Назначено');
+      if (typeof onDone === 'function') onDone(data);
+    } catch (e) {
+      toast(e.message, 'err', 'Назначение');
+    }
+  };
 }
 
 // ------------------------------------------------------------------ пакет для других учётных систем (T-68)
@@ -249,8 +535,10 @@ export async function clientsDownloadPackage(period, companyId, btn) {
     const { blob, filename } = await api.download('/api/v1/export/package?' + qs.toString());
     clientsSave(blob, filename);
     toast(`${filename} — чеки, первичка, банк и возмещения в JSON и CSV, файлы УПД 5.03`, 'ok', 'Пакет готов');
+    return true;
   } catch (e) {
     toast(e.message, 'err');
+    return false;
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -272,6 +560,15 @@ export function clientsPackageHtml(opts = {}) {
       <button type="button" class="btn btn-primary" id="pkg-download"${needCompany ? ' disabled' : ''}>⬇ Скачать пакет</button>
     </div>
     ${needCompany ? '<p class="form-hint">Выберите компанию в шапке — пакет собирается по одной компании.</p>' : ''}
+    <p class="form-hint">Проверка скачанного файла сверяет состав, контрольные суммы, число записей и отдельные
+      связи JSON. Содержимое CSV и УПД с JSON не сверяется. Пакет за месяц не является резервной копией;
+      восстановление, авторство и полнота данных этой проверкой не подтверждаются.
+      Выбранный файл передаётся на этот сервер для проверки; размер архива — до 20 МБ.</p>
+    <div class="dreq-tools">
+      <label class="field"><span>Скачанный ZIP</span><input id="pkg-check-file" type="file" accept=".zip,application/zip"></label>
+      <button type="button" class="btn" id="pkg-check">Проверить пакет</button>
+    </div>
+    <p class="form-hint" id="pkg-check-result" role="status" aria-live="polite"></p>
   </div>`;
 }
 
@@ -279,6 +576,22 @@ export function clientsPackageBind(root, opts = {}) {
   const btn = root.querySelector('#pkg-download');
   if (!btn) return;
   btn.onclick = () => clientsDownloadPackage(root.querySelector('#pkg-period').value, opts.companyId || '', btn);
+  const checkButton = root.querySelector('#pkg-check');
+  const result = root.querySelector('#pkg-check-result');
+  if (!checkButton || !result) return;
+  checkButton.onclick = async () => {
+    const file = root.querySelector('#pkg-check-file').files[0];
+    if (!file) { result.textContent = 'Выберите скачанный ZIP-файл.'; return; }
+    if (file.size > 20 * 1024 * 1024) { result.textContent = 'Архив больше 20 МБ.'; return; }
+    checkButton.disabled = true;
+    result.textContent = 'Проверяем файл…';
+    try {
+      const report = await api.post('/api/v1/export/package/check', new Blob([file], { type: 'application/zip' }));
+      if (report.ok !== true) throw new Error('Не удалось подтвердить состав пакета');
+      result.textContent = `Проверка пакета пройдена. Пропущено УПД: ${report.skipped_upd}. ${report.notice}`;
+    } catch (e) { result.textContent = `Проверка не пройдена: ${e.message}`; }
+    finally { checkButton.disabled = false; }
+  };
 }
 
 /** Переключатель клиента в шапке — бухгалтеру, который ведёт больше одной компании. */
@@ -298,6 +611,110 @@ export function clientsSwitcher(sel, me, onSwitch) {
     setClient(pick && !pick.home ? pick.id : '');
     if (typeof onSwitch === 'function') onSwitch(sel.value);
   };
+}
+
+/** Кнопка «＋ Новый клиент» на экране «Клиенты» (T-84, v1.71.1). */
+export function clientsCreateButtonHtml() {
+  return `<button type="button" class="btn btn-primary btn-sm" id="cl-new"
+    title="Завести компанию-клиента: сразу появится в списке и в переключателе">＋ Новый клиент</button>`;
+}
+
+/** Максимум клиентов у бухгалтера — зеркало app/clients/service.py: MAX_CLIENTS. */
+export const CLIENTS_MAX = 500;
+
+/** Сообщение об отказе создания — словами, с подсказкой, что делать. */
+export function clientsCreateError(status, message) {
+  const text = String(message || '');
+  if (status === 409 && /Похожая компания/.test(text)) {
+    return `${text}. Откройте её из списка — дубль заводить не нужно.`;
+  }
+  if (status === 409 && /предел/.test(text)) return text;
+  if (status === 403) return 'Заводить клиентов может бухгалтер и администратор.';
+  return text || 'Не удалось создать клиента';
+}
+
+/** Окно «Новый клиент». opts.onCreated(company) — после успеха (перерисовать список). */
+export function clientsCreateDialog(opts = {}) {
+  const { slot, close } = openModal(`
+    <h3>＋ Новый клиент</h3>
+    <p class="form-hint">Компания сразу появится в списке и в переключателе клиента в шапке —
+      перевходить не нужно. ИНН можно оставить пустым и заполнить позже.</p>
+    <div class="form-grid">
+      <label class="field full"><span>ИНН (10 цифр ООО / 12 цифр ИП)</span>
+        <div style="display:flex;gap:8px">
+          <input id="clc-inn" inputmode="numeric" maxlength="12" placeholder="7707083893" style="flex:1;min-width:0">
+          <button type="button" class="btn btn-sm" id="clc-checko" title="Заполнить название из ЕГРЮЛ/ЕГРИП (Checko)">🔍 ЕГРЮЛ</button>
+        </div></label>
+      <label class="field full"><span>Название (ООО «…», ИП …)</span>
+        <input id="clc-name" placeholder="ООО «Ромашка»"></label>
+      <label class="field full"><span>Памятка (договор, контакт — необязательно)</span>
+        <input id="clc-note" placeholder="договор № 12 от 01.10.2026"></label>
+      <div class="full hidden" id="clc-similar"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="clc-cancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="clc-save">Создать клиента</button>
+    </div>`);
+  const innInput = slot.querySelector('#clc-inn');
+  const nameInput = slot.querySelector('#clc-name');
+  const noteInput = slot.querySelector('#clc-note');
+  const simBox = slot.querySelector('#clc-similar');
+  const saveBtn = slot.querySelector('#clc-save');
+  let timer = null;
+
+  const digits = () => innInput.value.replace(/\D/g, '');
+
+  async function checkSimilar() {
+    const name = nameInput.value.trim();
+    if (name.length < 3) { simBox.classList.add('hidden'); return; }
+    try {
+      const sims = await api.get('/api/v1/companies/similar?name=' + encodeURIComponent(name));
+      if (!sims.length) { simBox.classList.add('hidden'); return; }
+      simBox.innerHTML = `<div class="info-callout" style="margin:0">⚠ Похожая компания уже есть:
+        <b>${esc(sims[0].name)}</b>${sims[0].inn ? ' (ИНН ' + esc(sims[0].inn) + ')' : ''}.
+        Если это она — не заводите дубль, выберите её в списке.</div>`;
+      simBox.classList.remove('hidden');
+    } catch { simBox.classList.add('hidden'); }
+  }
+
+  nameInput.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(checkSimilar, 500);
+  });
+
+  slot.querySelector('#clc-checko').onclick = async () => {
+    const inn = digits();
+    if (inn.length !== 10 && inn.length !== 12) return toast('ИНН: 10 цифр (ООО) или 12 (ИП)', 'warn');
+    const btn = slot.querySelector('#clc-checko');
+    btn.disabled = true; btn.textContent = '…ищу';
+    try {
+      const card = await api.post('/api/v1/companies/lookup-checko', { inn });
+      if (!nameInput.value.trim()) nameInput.value = card.name_full || '';
+      toast(`Найдено: ${card.name_full}${card.status ? ' · ' + card.status : ''}`, 'ok', '🗂 ЕГРЮЛ');
+    } catch (e) {
+      toast(e.message, 'err');
+    }
+    btn.disabled = false; btn.textContent = '🔍 ЕГРЮЛ';
+  };
+
+  slot.querySelector('#clc-cancel').onclick = close;
+  saveBtn.onclick = async () => {
+    const name = nameInput.value.trim();
+    if (name.length < 2) return toast('Укажите название компании', 'err');
+    saveBtn.disabled = true;
+    try {
+      const company = await api.post('/api/v1/companies', {
+        name, inn: digits(), note: noteInput.value.trim(),
+      });
+      toast(`Клиент «${company.name}» добавлен — он уже в списке и в шапке`, 'ok', '🏢');
+      close();
+      if (typeof opts.onCreated === 'function') opts.onCreated(company);
+    } catch (e) {
+      toast(clientsCreateError(e.status, e.message), 'err', 6000);
+    }
+    saveBtn.disabled = false;
+  };
+  return { slot, close };
 }
 
 /** Администратор: какие компании ведёт бухгалтер. user — { id, name }, companies — все компании. */

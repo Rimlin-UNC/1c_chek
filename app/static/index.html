@@ -42,9 +42,9 @@
      выполняется после разбора страницы и до app.js -->
 <link rel="stylesheet" href="/css/splash.css">
 <script src="/js/splash.js" defer></script>
-<link rel="stylesheet" href="/css/app.css?v=1.71.0">
+<link rel="stylesheet" href="/css/app.css?v=1.72.31">
 <!-- T-83: стили публичной главной, после базовой темы приложения -->
-<link rel="stylesheet" href="/css/home.css?v=1.71.0">
+<link rel="stylesheet" href="/css/home.css?v=1.72.31">
 </head>
 <body>
   <a class="skip" href="#main">К содержимому</a>
@@ -108,7 +108,7 @@
           <a href="#land-business">Для бизнеса</a>
           <a href="#land-facts">Данные</a>
           <a href="#land-faq">Вопросы</a>
-          <a href="/oferta">Оферта</a>
+          <a href="/oferty">Оферты</a>
         </nav>
         <a class="home-header__login" href="#land-login">Войти</a>
       </header>
@@ -455,48 +455,58 @@
         </a>
         <a href="#/pooladmin" data-view="pooladmin" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="settings"></span>Чек-Пул: модерация
+          <span class="nav-badge accent hidden" data-nav-count="pooladmin" title="Чеков в пуле"></span>
         </a>
         <a href="#/fraud" data-view="fraud" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="scan"></span>Чек-Пул: антифрод
+          <span class="nav-badge accent hidden" data-nav-count="fraud" title="Новых сигналов антифрода"></span>
         </a>
         <a href="#/poolpeople" data-view="poolpeople" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Чек-Пул: участники
+          <span class="nav-badge accent hidden" data-nav-count="poolpeople" title="Участников Чек-Пула"></span>
         </a>
         <!-- Модерация контура B2B (доступ компаний к платному API).
              Пункт виден только администратору; каждый блок раздела помечен
              «Это не видит никто» — пометка приходит с сервера (поле marker). -->
         <a href="#/b2badmin" data-view="b2badmin" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="audit"></span>API для бизнеса: модерация
+          <span class="nav-badge accent hidden" data-nav-count="b2badmin" title="Заявок, ожидающих решения"></span>
         </a>
         <div class="nav-group">Чеки и учёт</div>
         <!-- v1.70.100 (T-50): рабочее место аутсорсера — все клиенты в одном окне -->
         <a href="#/clients" data-view="clients" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="list"></span>Клиенты
+          <span class="nav-badge accent hidden" data-nav-count="clients" title="Активных доступных клиентов"></span>
         </a>
-        <!-- v1.71.0 (T-80): карточки контрагентов из УПД, выписки и по ИНН -->
+        <!-- v1.71.2 (T-80): карточки контрагентов из УПД, выписки и по ИНН -->
         <a href="#/counterparties" data-view="counterparties" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="list"></span>Контрагенты
+          <span class="nav-badge accent hidden" data-nav-count="counterparties" title="Карточек контрагентов в выбранной компании"></span>
         </a>
         <a href="#/receipts" data-view="receipts" class="nav-item">
           <span class="nav-icon" data-icon="list"></span>Чеки
-          <span class="nav-badge" id="nav-receipts-badge">0</span>
+          <span class="nav-badge accent hidden" id="nav-receipts-badge" data-nav-count="receipts" title="Доступных чеков в выбранной компании"></span>
         </a>
         <!-- v1.70.112 (T-46): согласование авансовых отчётов — где включено в компании; администратору всегда -->
         <a href="#/approvals" data-view="approvals" class="nav-item approvals-only hidden">
           <span class="nav-icon" data-icon="audit"></span>Согласования
-          <span class="nav-badge hidden" id="nav-approvals-badge">0</span>
+          <span class="nav-badge accent hidden" id="nav-approvals-badge" data-nav-count="approvals" title="Согласований, ожидающих вашего решения"></span>
         </a>
         <a href="#/primary" data-view="primary" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="list"></span>Первичка (УПД)
+          <span class="nav-badge accent hidden" data-nav-count="primary" title="Документов первички в выбранной компании"></span>
         </a>
         <a href="#/docreq" data-view="docreq" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="audit"></span>Что нужно от клиента
+          <span class="nav-badge accent hidden" data-nav-count="docreq" title="Открытых запросов документов за все периоды"></span>
         </a>
         <a href="#/bank" data-view="bank" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="export"></span>Банк: выписка
+          <span class="nav-badge accent hidden" data-nav-count="bank" title="Загруженных выписок в выбранной компании"></span>
         </a>
         <a href="#/export" data-view="export" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="export"></span>Выгрузка в 1С
+          <span class="nav-badge accent hidden" data-nav-count="export" title="Проверенных чеков, не выгруженных в 1С"></span>
         </a>
         <a href="#/mapping" data-view="mapping" class="nav-item accountant-only">
           <span class="nav-icon" data-icon="mapping"></span>Маппинг
@@ -513,9 +523,11 @@
         <div class="nav-group admin-only hidden">Администрирование</div>
         <a href="#/companies" data-view="companies" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Компании
+          <span class="nav-badge accent hidden" data-nav-count="companies" title="Компаний, включая неактивные"></span>
         </a>
         <a href="#/users" data-view="users" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="users"></span>Пользователи
+          <span class="nav-badge accent hidden" data-nav-count="users" title="Пользователей, включая неактивных"></span>
         </a>
         <a href="#/audit" data-view="audit" class="nav-item admin-only hidden">
           <span class="nav-icon" data-icon="audit"></span>Журнал
@@ -552,7 +564,7 @@
           <!-- v1.70.100 (T-50): бухгалтер-аутсорсер — переключатель клиента (виден при двух и более компаниях) -->
           <select id="client-switch" class="company-select hidden" aria-label="Компания-клиент"
                   title="Компания-клиент: данные и действия — в выбранной компании"></select>
-          <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы сохраняются локально">
+          <div class="offline-indicator hidden" id="offline-indicator" title="Нет связи с сервером — сканы могут ожидать отправки на устройстве">
             ⚡ Офлайн
           </div>
           <div class="user-area">
@@ -599,9 +611,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <!-- v1.70.51: Chart.js — графики истории в блоке «Мониторинг OpenStack».
-       Вендорен, как и jsQR: без обращения к внешним сетям при загрузке. -->
-  <script src="/js/vendor/chart.umd.js"></script>
-  <script type="module" src="/js/app.js?v=1.71.0"></script>
+  <script type="module" src="/js/app.js?v=1.72.31"></script>
 </body>
 </html>

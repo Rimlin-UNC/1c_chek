@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
@@ -114,17 +114,8 @@ def _scope(db: Session, user: User, box: str, company_id: str | None):
     if box == "mine" or (box == "all" and user.role == "user"):
         return q.filter(own)
     if box == "todo":
-        draft = and_(AdvanceApproval.status == "draft", AdvanceApproval.employee_id == user.id)
-        stage = {"manager": "manager", "accountant": "accountant", ROLE_ADMIN: "accountant"}.get(user.role)
-        if stage is None:
-            return q.filter(draft)
-        turn = and_(AdvanceApproval.status == "pending", AdvanceApproval.stage == stage,
-                    AdvanceApproval.employee_id != user.id)
-        if user.role != ROLE_ADMIN:
-            turn = and_(turn, AdvanceApproval.company_id == user.company_id)
-        elif company_id:
-            turn = and_(turn, AdvanceApproval.company_id == company_id)
-        return q.filter(or_(draft, turn))
+        # v1.71.3 (T-86): правило «мой ход» — в service.turn_filter, им же считается сводка клиентов
+        return q.filter(or_(*service.turn_filter(user, company_id)))
     if user.role == ROLE_ADMIN:
         return q.filter(AdvanceApproval.company_id == company_id) if company_id else q
     return q.filter(AdvanceApproval.company_id == user.company_id)

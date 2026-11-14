@@ -115,7 +115,7 @@ def _shell_top() -> str:
 <a class="skip" href="#main">К тексту</a>
 <header class="top">
   <a class="brand" href="/"><img src="/img/logo.svg" alt="" width="32" height="32">Ямастер <span>Чек</span></a>
-  <a class="btn" href="/">Войти</a>
+  <a class="btn" href="/#land-login">Войти</a>
 </header>"""
 
 

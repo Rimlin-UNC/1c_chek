@@ -56,8 +56,9 @@ class TestCacheReset:
         assert "caches.delete(k)" in js
         assert "server_update" in js and "hardReset" in js
         # сторож версии: интервал + visibilitychange
-        assert js.count("api.get('/api/v1/about', { retries: 1 })") >= 2
-        assert "visibilitychange" in js
+        assert "api.get('/api/v1/about', { retries: 1, signal: controller.signal })" in js
+        assert "setInterval(checkServerVersion" in js
+        assert "addEventListener('visibilitychange', checkServerVersion)" in js
         assert "btn-cache-reset" in js
 
     def test_sw_cleans_old_caches(self):

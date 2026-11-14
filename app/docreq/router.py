@@ -77,10 +77,18 @@ def _company(db: Session, user: User, company_id: str | None) -> Company:
 def _period(period: str | None) -> str:
     value = period or service.default_period()
     try:
-        service.parse_period(value)
+        service.validate_operational_period(value)
     except service.DocRequestError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     return value
+
+
+def _check_schedule(db: Session, company: Company, period: str) -> None:
+    """Проверка до refresh/detect: даже крайнее допустимое расписание не переполняет datetime."""
+    try:
+        service.schedule(period, service.settings_of(db, company.id))
+    except (service.DocRequestError, ValueError, OverflowError) as exc:
+        raise HTTPException(422, "Расписание напоминаний за этот месяц выходит за допустимые даты") from exc
 
 
 def _users(db: Session, ids: set[str]) -> dict[str, User]:
@@ -115,6 +123,7 @@ def _overview(db: Session, company: Company, period: str) -> dict:
 def overview(user: Accountant, db: Db, company_id: CompanyId = None, period: Period = None) -> dict:
     company = _company(db, user, company_id)
     period = _period(period)
+    _check_schedule(db, company, period)
     service.refresh(db, company.id, period)            # пришедшие документы закрывают запросы сами
     return _overview(db, company, period)
 
@@ -122,7 +131,9 @@ def overview(user: Accountant, db: Db, company_id: CompanyId = None, period: Per
 @router.post("/detect")
 def detect(user: Accountant, db: Db, body: PeriodIn) -> dict:
     company = _company(db, user, body.company_id)
-    result = service.detect(db, company.id, _period(body.period), user.id)
+    period = _period(body.period)
+    _check_schedule(db, company, period)
+    result = service.detect(db, company.id, period, user.id)
     return {**result, "overview": _overview(db, company, body.period)}
 
 
@@ -158,7 +169,12 @@ def journal(user: Accountant, db: Db, company_id: CompanyId = None, period: Peri
     company = _company(db, user, company_id)
     query = db.query(DocRequestEvent).filter(DocRequestEvent.company_id == company.id)
     if period:
-        query = query.filter(DocRequestEvent.period == _period(period))
+        # Старые записи даже с непредставимой датой доступны для аудита.
+        try:
+            service.parse_period(period)
+        except service.DocRequestError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        query = query.filter(DocRequestEvent.period == period)
     events = query.order_by(DocRequestEvent.at.desc(), DocRequestEvent.id).limit(limit).all()
     users = _users(db, {e.actor_id for e in events})
     return {"items": [service.event_dict(e, users) for e in events]}

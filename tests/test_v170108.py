@@ -67,7 +67,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -222,7 +222,7 @@ class TestDocsAndKb:
     def test_database_and_guide(self):
         db = read("docs/DATABASE.md")
         # v1.70.112: таблиц только прибавляется (+3 таблицы согласования T-46) — число не меньше 65
-        m, n = re.search(r"(\d+) объявлений `__tablename__`", db), re.search(r"все (\d+) таблиц приложения", db)
+        m, n = re.search(r"(\d+) объявлений `__tablename__`", db), re.search(r"все (\d+) таблиц(?:ы)? приложения", db)
         assert m and n and int(m.group(1)) >= 65 and int(n.group(1)) >= 65
         assert "| «Моё дело» по API (v1.70.107) |" not in db
         assert "- **Таблицы только выпуска 1.70.107.**" in db and "программа эти таблицы не\n  создаёт и не читает" in db

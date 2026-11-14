@@ -62,6 +62,7 @@ from ..schemas import (
     ExportRequest,
     FetchDetailsRequest,
     ManualReceipt,
+    OfflineScanRequest,
     ReceiptMoveBody,
     ReceiptPatch,
     RememberMerchantBody,
@@ -285,13 +286,17 @@ def _notify_receipt_created(user, receipt) -> None:
 @router.post("/scan", summary="Приём сканирования: строка QR-кода чека")
 def scan(body: ScanRequest, background: BackgroundTasks,
          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    company_id = target_company_id(db, user, body.company_id)
+    return _scan_in_company(body, background, user, db, company_id)
+
+
+def _scan_in_company(body: ScanRequest, background: BackgroundTasks, user: User,
+                     db: Session, company_id: str | None):
     try:
         parsed = parse_qr(body.qr_data)
     except QRParseError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
 
-    # v1.11.0: чек попадает в пространство компании (админ может выбрать)
-    company_id = target_company_id(db, user, body.company_id)
     receipt, created = _upsert_or_claim(db, parsed, body.source, user, company_id, "scan_qr")
     if created:
         log_action(user, "receipt_created", "receipt", receipt.id,
@@ -331,6 +336,20 @@ def scan(body: ScanRequest, background: BackgroundTasks,
 # --------------------------------------------------------------------------
 #  POST /scan/image — приём изображения, QR распознаёт сервер (OpenCV)
 # --------------------------------------------------------------------------
+@router.post("/scan/offline", summary="Приём сохранённого скана с проверкой контекста")
+def scan_offline(body: OfflineScanRequest, background: BackgroundTasks,
+                 user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    # Отдельный маршрут: старая версия после отката не примет этот запрос,
+    # проигнорировав незнакомые поля (она ответит 404/405).
+    if user.id != body.expected_user_id or body.company_id != body.expected_company_id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Контекст скана изменился; запись сохранена на устройстве")
+    company_id = target_company_id(db, user, body.company_id)
+    company = db.get(Company, company_id) if company_id else None
+    if company_id != body.expected_company_id or (company_id and (not company or not company.is_active)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Компания скана изменилась или недоступна; запись сохранена на устройстве")
+    return _scan_in_company(body, background, user, db, company_id)
+
+
 @router.post("/scan/image", summary="Приём изображения чека: сервер находит QR")
 async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
                      user: User = Depends(get_current_user),
