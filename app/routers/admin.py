@@ -351,6 +351,15 @@ def server_monitor(response: Response, _user: Annotated[User, Depends(require_ad
     return local_monitor.snapshot()
 
 
+@router.get("/server-monitor/traffic", summary="Наблюдённая статистика интерфейса (админ)")
+def server_monitor_traffic(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Необязательная история vnStat; не счёт провайдера и не сбор внутри приложения."""
+    from ..services import server_traffic
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_traffic.snapshot()
+
+
 @router.get("/system", summary="Системная сводка (админ)")
 def system_info(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     import sys

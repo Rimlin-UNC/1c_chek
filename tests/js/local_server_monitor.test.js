@@ -71,8 +71,40 @@ describe('расширенный локальный снимок', () => {
     expect(card).toContain('50,00 %');
     expect(card).toContain('ens3');
     expect(card).toContain('1,0 КиБ/с');
-    expect(card).toMatch(/месячн/i);
+    expect(card).toMatch(/трафик интерфейса за месяц/i);
     expect(card).toMatch(/не.*собира/i);
+    localServerStop();
+  });
+});
+
+describe('история трафика — оценка по одному интерфейсу', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('не запрашивает историю без нажатия и не объявляет остаток провайдера', async () => {
+    api.get.mockResolvedValue({ status: 'freshness_unknown', current_period: '2026-11', data: {
+      interface: 'ens3', created_date: '2026-10-17', updated_at: '2026-11-08T12:00:00',
+      months: [{ period: '2026-11', rx_bytes: 400e9, tx_bytes: 450e9 }],
+      days: [{ date: '2026-11-08', rx_bytes: 1e9, tx_bytes: 2e9 }], billing_verified: false } });
+    localServerWire(); expect(api.get).not.toHaveBeenCalled();
+    document.querySelector('#server-traffic-refresh').click(); await flush();
+    const text = document.querySelector('#server-traffic').textContent;
+    expect(text).toContain('ens3'); expect(text).toContain('850,00 ГБ');
+    expect(text).toMatch(/оценк/i); expect(text).toMatch(/не.*счёт/i);
+    expect(text).toContain('80 %');
+    expect(text).toMatch(/свежесть источника не подтверждена/i);
+    expect(text).toContain('2026-11-08');
+    expect(text).not.toMatch(/остаток.*150/i);
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/traffic');
+    localServerStop();
+  });
+  it('не выдаёт ноль, если сборщик отключён, не установлен или устарел', async () => {
+    api.get.mockResolvedValueOnce({status: 'not_configured'}).mockResolvedValueOnce({status: 'not_installed'})
+      .mockResolvedValueOnce({status: 'stale', current_period: '2026-11', data: {
+        interface: 'ens3', created_date: '2026-11-01', updated_at: '2026-11-03T12:00:00', months: [], days: []}});
+    localServerWire(); const button = document.querySelector('#server-traffic-refresh');
+    button.click(); await flush(); expect(document.querySelector('#server-traffic').textContent).toMatch(/не настроен/i);
+    button.click(); await flush(); expect(document.querySelector('#server-traffic').textContent).toMatch(/не установлен/i);
+    button.click(); await flush(); expect(document.querySelector('#server-traffic').textContent).toMatch(/устарел/i);
+    expect(document.querySelector('#server-traffic').textContent).not.toMatch(/остаток.*0/i);
     localServerStop();
   });
 });

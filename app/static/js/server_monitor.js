@@ -34,18 +34,73 @@ export function localServerCardHtml() {
         <p class="form-hint" id="server-monitor-note">CPU и память читаются из Linux на сервере,
           где запущен Ямастер Чек, без подключения к облаку. Диск — файловая система
           каталога приложения; база и другие тома могут находиться отдельно. При контейнеризации
-          или иной изоляции показания могут отличаться от всей ВМ. История, пороги и месячный трафик
-          пока не собираются.</p>
+          или иной изоляции показания могут отличаться от всей ВМ. История производительности
+          и настраиваемые пороги пока не собираются.</p>
         <button type="button" class="btn btn-sm" id="server-monitor-refresh">🔄 Показать / обновить показатели</button>
         <p class="form-hint" id="server-monitor-status" role="status">Нажмите кнопку для локального замера.</p>
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
         <div id="server-monitor-details"></div>
+        <details style="margin-top:16px">
+          <summary>Трафик интерфейса за месяц (оценка)</summary>
+          <p class="form-hint">История доступна только при отдельно настроенном vnStat. Счётчики интерфейса могут отличаться от счёта провайдера.</p>
+          <button type="button" class="btn btn-sm" id="server-traffic-refresh">Показать историю трафика</button>
+          <div id="server-traffic" role="status"><p class="form-hint">Нажмите кнопку для чтения истории.</p></div>
+        </details>
       </div>`;
+}
+
+// Десятичные ГБ применяются только к ориентиру тарифа 1 ТБ = 1000 ГБ.
+function trafficGb(value) {
+  return (value / 1e9).toFixed(2).replace('.', ',') + ' ГБ';
+}
+
+function trafficHtml(result) {
+  const messages = {
+    not_configured: 'Учёт не настроен: выберите интерфейс и установите vnStat по инструкции администратора.',
+    invalid_interface: 'Некорректное имя интерфейса. Проверьте настройку администратора.',
+    not_installed: 'vnStat не установлен или недоступен приложению.',
+    unavailable: 'История vnStat недоступна: проверьте службу, интерфейс и права чтения.',
+  };
+  if (messages[result.status]) return `<p class="form-hint">${esc(messages[result.status])}</p>`;
+  const data = result.data;
+  if (!data || !Array.isArray(data.months) || !Array.isArray(data.days)) return '<p>История недоступна.</p>';
+  const current = data.months.find(row => row.period === result.current_period);
+  const amount = current ? current.rx_bytes + current.tx_bytes : null;
+  const warning = amount === null ? '' : amount >= 950e9 ? 'Наблюдённый объём достиг 95 % от ориентира.'
+    : amount >= 800e9 ? 'Наблюдённый объём достиг 80 % от ориентира.' : '';
+  const stale = result.status === 'stale' ? '<p role="alert">Источник устарел; показатели могут быть неполными.</p>'
+    : '<p role="alert">Свежесть источника не подтверждена: часовой пояс vnStat может отличаться.</p>';
+  const months = data.months.map(row => `<li>${esc(row.period)}: вход ${esc(trafficGb(row.rx_bytes))}, выход ${esc(trafficGb(row.tx_bytes))}, сумма ${esc(trafficGb(row.rx_bytes + row.tx_bytes))}</li>`).join('');
+  const maxDay = Math.max(1, ...data.days.map(row => row.rx_bytes + row.tx_bytes));
+  const days = data.days.map(row => `<li>${esc(row.date)}: вход ${esc(trafficGb(row.rx_bytes))}, выход ${esc(trafficGb(row.tx_bytes))} <progress max="${maxDay}" value="${row.rx_bytes + row.tx_bytes}" aria-label="${esc('Суммарный трафик ' + row.date)}"></progress></li>`).join('');
+  return `${stale}<p>Интерфейс: <strong>${esc(data.interface)}</strong>. Начало учёта: ${esc(data.created_date)}. Последнее обновление: ${esc(data.updated_at.replace('T', ' '))} (время vnStat, часовой пояс не подтверждён).</p>
+    <p>${current ? `Календарный месяц приложения ${esc(current.period)}: <strong>${esc(trafficGb(amount))}</strong> из ориентира 1000 ГБ (вход + выход).` : 'За текущий месяц данных нет.'}</p>
+    ${warning ? `<p role="alert">${esc(warning)}</p>` : ''}
+    <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора, внутренний трафик и отличие расчётного периода или часового пояса vnStat. Полнота данных не подтверждена; остаток и прогноз не рассчитываются.</p>
+    <p><strong>По месяцам</strong></p><ul>${months || '<li>Данных нет.</li>'}</ul>
+    <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;
 }
 
 export function localServerWire() {
   const button = document.getElementById('server-monitor-refresh');
-  if (!button) return;
+  const trafficButton = document.getElementById('server-traffic-refresh');
+  if (!button || !trafficButton) return;
+  trafficButton.onclick = async () => {
+    const generation = localGeneration;
+    const panel = document.getElementById('server-traffic');
+    trafficButton.disabled = true;
+    panel.textContent = 'Чтение истории трафика…';
+    try {
+      const result = await api.get('/api/v1/admin/server-monitor/traffic');
+      if (generation !== localGeneration || !trafficButton.isConnected) return;
+      panel.innerHTML = trafficHtml(result);
+    } catch (e) {
+      if (generation !== localGeneration || !trafficButton.isConnected) return;
+      panel.textContent = 'Не удалось прочитать историю: ' + (e.message || e);
+    } finally {
+      if (generation === localGeneration && trafficButton.isConnected) trafficButton.disabled = false;
+    }
+  };
   button.onclick = async () => {
     const generation = localGeneration;
     const status = document.getElementById('server-monitor-status');
@@ -85,7 +140,7 @@ export function localServerWire() {
         : 'CPU и память читаются из Linux, где запущен Ямастер Чек, без подключения к облаку. '
           + 'При контейнеризации или иной изоляции показания могут отличаться от всей ВМ. ')
         + 'Диск — файловая система приложения; база и другие тома могут находиться отдельно. '
-        + 'История, пороги и месячный трафик пока не собираются.';
+        + 'История производительности и настраиваемые пороги пока не собираются.';
       status.textContent = data.collected_at ? `Локальный замер: ${fmtDate(data.collected_at)}.` : 'Локальный замер получен.';
     } catch (e) {
       if (generation !== localGeneration || !button.isConnected) return;
