@@ -48,12 +48,18 @@ export function localServerCardHtml() {
         <p class="form-hint" id="server-monitor-note">CPU и память читаются из Linux на сервере,
           где запущен Ямастер Чек, без подключения к облаку. Диск — файловая система
           каталога приложения; база и другие тома могут находиться отдельно. При контейнеризации
-          или иной изоляции показания могут отличаться от всей ВМ. История производительности
-          и настраиваемые пороги пока не собираются.</p>
+          или иной изоляции показания могут отличаться от всей ВМ. История производительности включается отдельно и автоматически не собирается;
+          пороги не настраиваются.</p>
         <button type="button" class="btn btn-sm" id="server-monitor-refresh">🔄 Показать / обновить показатели</button>
         <p class="form-hint" id="server-monitor-status" role="status">Нажмите кнопку для локального замера.</p>
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
         <div id="server-monitor-details"></div>
+        <details style="margin-top:16px">
+          <summary>Монтирования (по запросу)</summary>
+          <p class="form-hint">Ограниченный список из mountinfo. Сетевые, автоматические и прочие неподдерживаемые типы не опрашиваются.</p>
+          <button type="button" class="btn btn-sm" id="server-mounts-refresh">Показать монтирования</button>
+          <div id="server-mounts" role="status"><p class="form-hint">Нажмите кнопку для просмотра.</p></div>
+        </details>
         <details style="margin-top:16px">
           <summary>История производительности (необязательно)</summary>
           <p class="form-hint">История доступна только при отдельно настроенном сборе; сама программа его не запускает.</p>
@@ -109,6 +115,25 @@ function trafficHtml(result) {
     <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора, внутренний трафик и отличие расчётного периода или часового пояса vnStat. Полнота данных не подтверждена; остаток и прогноз не рассчитываются.</p>
     <p><strong>По месяцам</strong></p><ul>${months || '<li>Данных нет.</li>'}</ul>
     <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;
+}
+
+function mountsHtml(result) {
+  if (result.status !== 'available' || !Array.isArray(result.mounts)) return '<p>Данные монтирований недоступны.</p>';
+  const statuses = { not_probed: 'не опрашивается', timeout: 'превышен срок опроса', busy: 'лимит опросов', unavailable: 'недоступно' };
+  const rows = result.mounts.map(item => {
+    const disk = item.disk;
+    const status = statuses[item.status] || (item.status === 'available' ? 'получено' : 'недоступно');
+    const pct = disk?.pct;
+    const warning = pct != null && Number.isFinite(Number(pct)) && Number(pct) <= 100
+      ? Number(pct) > 90 ? ' — высокая занятость' : Number(pct) >= 80 ? ' — повышенная занятость' : '' : '';
+    return `<tr><td>${esc(item.path)}</td><td>${esc(item.type)}</td><td>${esc(item.device)}</td>
+      <td>${disk ? esc(fmtPct(disk.pct)) : '—'}</td><td>${disk ? esc(fmtBytes(disk.available_bytes)) : '—'}</td>
+      <td>${esc(fmtPct(item.inodes?.pct))}</td><td>${esc(status + warning)}</td></tr>`;
+  }).join('');
+  return `${result.partial ? '<p role="alert">Данные неполны: список ограничен или содержит ошибки.</p>' : ''}
+    <p>Снимок: ${result.collected_at ? esc(fmtDate(result.collected_at)) : 'время недоступно'}.</p>
+    <p class="form-hint">Пространство имён приложения, не обязательно вся ВМ. Не более 64 записей; до 16 локальных томов за запрос. Сетевые, FUSE, автоматические, неизвестные и скрытые монтирования не опрашиваются. Зависший опрос ограничен и не считается нулём. Один и тот же том может встречаться несколько раз.</p>
+    <div class="table-wrap"><table class="data"><thead><tr><th>Путь</th><th>Тип</th><th>Устройство</th><th>Занято</th><th>Доступно</th><th>Занято inode</th><th>Статус</th></tr></thead><tbody>${rows || '<tr><td colspan="7">Монтирования не видны.</td></tr>'}</tbody></table></div>`;
 }
 
 function historyTime(value) {
@@ -185,7 +210,24 @@ export function localServerWire() {
   const trafficButton = document.getElementById('server-traffic-refresh');
   const processButton = document.getElementById('server-processes-refresh');
   const historyButton = document.getElementById('server-history-refresh');
-  if (!button || !trafficButton || !processButton || !historyButton) return;
+  const mountsButton = document.getElementById('server-mounts-refresh');
+  if (!button || !trafficButton || !processButton || !historyButton || !mountsButton) return;
+  mountsButton.onclick = async () => {
+    const generation = localGeneration;
+    const panel = document.getElementById('server-mounts');
+    mountsButton.disabled = true;
+    panel.textContent = 'Чтение монтирований…';
+    try {
+      const result = await api.get('/api/v1/admin/server-monitor/mounts');
+      if (generation !== localGeneration || !mountsButton.isConnected) return;
+      panel.innerHTML = mountsHtml(result);
+    } catch (e) {
+      if (generation !== localGeneration || !mountsButton.isConnected) return;
+      panel.textContent = 'Не удалось получить монтирования: ' + (e.message || e);
+    } finally {
+      if (generation === localGeneration && mountsButton.isConnected) mountsButton.disabled = false;
+    }
+  };
   historyButton.onclick = async () => {
     const generation = localGeneration;
     const panel = document.getElementById('server-history');
@@ -283,7 +325,7 @@ export function localServerWire() {
         : 'CPU и память читаются из Linux, где запущен Ямастер Чек, без подключения к облаку. '
           + 'При контейнеризации или иной изоляции показания могут отличаться от всей ВМ. ')
         + 'Диск — файловая система приложения; база и другие тома могут находиться отдельно. '
-        + 'История производительности и настраиваемые пороги пока не собираются.';
+        + 'История производительности включается отдельно и автоматически не собирается; пороги не настраиваются.';
       status.textContent = data.collected_at ? `Локальный замер: ${fmtDate(data.collected_at)}.` : 'Локальный замер получен.';
     } catch (e) {
       if (generation !== localGeneration || !button.isConnected) return;

@@ -207,3 +207,40 @@ describe('необязательная история производитель
     localServerStop();
   });
 });
+
+describe('монтирования сервера по запросу', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('не запрашивает автоматически, экранирует имена и показывает неопрошенные тома без нулей', async () => {
+    api.get.mockResolvedValue({ status: 'available', partial: true, mounts: [
+      { path: '/<img src=x onerror=alert(1)>', type: 'ext4', device: '8:1', status: 'available',
+        disk: { pct: 91, available_bytes: 4096, total_bytes: 8192 }, inodes: { pct: 80 } },
+      { path: '/net', type: 'nfs4', device: '0:42', status: 'not_probed', disk: null, inodes: null },
+      { path: '/busy', type: 'ext4', device: '8:2', status: 'timeout', disk: null, inodes: null },
+    ] });
+    localServerWire(); expect(api.get).not.toHaveBeenCalled();
+    document.querySelector('#server-mounts-refresh').click(); await flush();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/mounts');
+    const panel = document.querySelector('#server-mounts');
+    expect(panel.querySelector('img')).toBeNull();
+    expect(panel.textContent).toContain('/<img src=x onerror=alert(1)>');
+    expect(panel.textContent).toContain('91,00 %');
+    expect(panel.textContent).toMatch(/высокая занятость/i);
+    expect(panel.textContent).toMatch(/не опраш/i);
+    expect(panel.textContent).toMatch(/превышен.*срок/i);
+    expect(panel.textContent).toMatch(/неполны/i);
+    expect(panel.querySelectorAll('tr')).toHaveLength(4);
+    localServerStop();
+  });
+  it('не обновляет другой раздел поздним ответом', async () => {
+    let resolve;
+    api.get.mockReturnValue(new Promise(r => { resolve = r; }));
+    localServerWire(); document.querySelector('#server-mounts-refresh').click();
+    localServerStop(); document.body.innerHTML = '<div id="server-mounts">другой раздел</div>';
+    resolve({ status: 'available', mounts: [] }); await flush();
+    expect(document.querySelector('#server-mounts').textContent).toBe('другой раздел');
+  });
+  it('корректно описывает необязательную историю производительности', () => {
+    expect(document.querySelector('#server-monitor-note').textContent).toMatch(/история.*отдельно/i);
+    expect(document.querySelector('#server-monitor-note').textContent).not.toMatch(/история производительности.*пока не собира/i);
+  });
+});

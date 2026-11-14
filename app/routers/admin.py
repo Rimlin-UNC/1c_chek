@@ -378,6 +378,15 @@ def server_monitor_history(response: Response, _user: Annotated[User, Depends(re
     return server_history.snapshot(period)
 
 
+@router.get("/server-monitor/mounts", summary="Локальные монтирования (админ)")
+def server_monitor_mounts(response: Response, _user: Annotated[User, Depends(require_admin)]):
+    """Ограниченный обзор mountinfo; потенциально сетевые тома не опрашиваются."""
+    from ..services import server_mounts
+
+    response.headers["Cache-Control"] = "no-store"
+    return server_mounts.snapshot()
+
+
 @router.get("/system", summary="Системная сводка (админ)")
 def system_info(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     import sys

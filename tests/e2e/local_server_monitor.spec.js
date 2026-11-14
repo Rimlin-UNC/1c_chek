@@ -7,7 +7,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.25');
+    localStorage.setItem('ymaster_seen_version', '1.72.26');
   }, token);
   const cloudRequests = [];
   let performanceRequests = 0;
@@ -18,6 +18,16 @@ test('локальный монитор работает без облачног
         { timestamp: 0, expected: 1, samples: 1, cpu_pct: 30, memory_pct: 50, cpu_samples: 1, memory_samples: 1 },
         { timestamp: 60, expected: 1, samples: 0, cpu_pct: null, memory_pct: null, cpu_samples: 0, memory_samples: 0 },
         { timestamp: 120, expected: 1, samples: 1, cpu_pct: 60, memory_pct: 70, cpu_samples: 1, memory_samples: 1 },
+      ] } });
+  });
+  let mountRequests = 0;
+  await page.route('**/api/v1/admin/server-monitor/mounts', async route => {
+    mountRequests++;
+    await route.fulfill({ status: 200, json: { status: 'available', partial: false,
+      collected_at: '2026-11-08T12:00:00+00:00', mounts: [
+        { path: '/', type: 'ext4', device: '8:1', status: 'available',
+          disk: { pct: 92, available_bytes: 1024, total_bytes: 8192 }, inodes: { pct: 88 } },
+        { path: '/net', type: 'nfs4', device: '0:42', status: 'not_probed', disk: null, inodes: null },
       ] } });
   });
   let processRequests = 0;
@@ -53,6 +63,13 @@ test('локальный монитор работает без облачног
   await expect(page.locator('#server-monitor-details')).toContainText('включая потоки');
   await expect(page.locator('#server-monitor-note')).toContainText('История производительности');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
+  expect(mountRequests).toBe(0);
+  await card.locator('summary').filter({ hasText: 'Монтирования' }).click();
+  await card.locator('#server-mounts-refresh').click();
+  await expect(card.locator('#server-mounts')).toContainText('92,00 %');
+  await expect(card.locator('#server-mounts')).toContainText('высокая занятость');
+  await expect(card.locator('#server-mounts')).toContainText('не опрашивается');
+  expect(mountRequests).toBe(1);
   expect(performanceRequests).toBe(0);
   await card.locator('summary').filter({ hasText: 'История производительности' }).click();
   await card.locator('#server-history-refresh').click();
