@@ -390,17 +390,22 @@ export function localServerWire() {
       const rows = network ? Object.entries(network).map(([name, stats]) => `<li><strong>${esc(name)}</strong>: ${stats
         ? `вход ${esc(fmtBytes(stats.rx_bytes_per_sec))}/с, выход ${esc(fmtBytes(stats.tx_bytes_per_sec))}/с; ошибки вход/выход ${esc(stats.rx_errors_delta)} / ${esc(stats.tx_errors_delta)}, сбросы ${esc(stats.rx_drops_delta)} / ${esc(stats.tx_drops_delta)}`
         : 'первый замер или счётчики сброшены — скорость недоступна'}</li>`).join('') : '';
+      const hasNetworkErrors = network && Object.values(network).some(stats => stats &&
+        ['rx_errors_delta', 'tx_errors_delta', 'rx_drops_delta', 'tx_drops_delta']
+          .some(field => typeof stats[field] === 'number' && Number.isFinite(stats[field]) && stats[field] > 0));
       const inodes = disk.inodes;
       const io = data.disk_io;
       const taskInfo = data.tasks ? `${fmtInt(data.tasks.runnable)} выполняются или готовы из ${fmtInt(data.tasks.total)}` : 'недоступно';
-      detailBox.innerHTML = `${usageGauge('Использование памяти', memory.pct)}${usageGauge('Занятость файловой системы приложения', disk.pct)}
-        <p class="form-hint">Ориентиры памяти и диска: 80–90 % — повышенная нагрузка, выше 90 % — высокая. Показатели диска относятся только к каталогу приложения.</p>
+      detailBox.innerHTML = `${usageGauge('Использование CPU', data.cpu_pct)}${usageGauge('Использование памяти', memory.pct)}${usageGauge('Занятость файловой системы приложения', disk.pct)}
+        <p class="form-hint">Ориентиры CPU, памяти и диска: 80–90 % — повышенная нагрузка, выше 90 % — высокая. CPU — короткий замер, не диагноз; диск относится только к каталогу приложения.</p>
         <p class="form-hint">CPU: пользователь ${esc(fmtPct(detail?.user_pct))}, система ${esc(fmtPct(detail?.system_pct))}, ожидание I/O ${esc(fmtPct(detail?.iowait_pct))}, steal ${esc(fmtPct(detail?.steal_pct))}.</p>
         <p class="form-hint">inode файловой системы приложения: ${inodes ? `занято ${esc(fmtInt(inodes.used))} из ${esc(fmtInt(inodes.total))} (${esc(fmtPct(inodes.pct))}), доступно ${esc(fmtInt(inodes.available))}` : 'недоступно'}.</p>
         <p class="form-hint">I/O устройства файловой системы приложения: ${io ? `${esc(io.device)}, чтение ${esc(fmtDecimal(io.read_iops))} и запись ${esc(fmtDecimal(io.write_iops))} операций/с; скорость ${esc(fmtBytes(io.read_bytes_per_sec))}/с и ${esc(fmtBytes(io.write_bytes_per_sec))}/с; ожидание ${esc(fmtDecimal(io.read_await_ms))} и ${esc(fmtDecimal(io.write_await_ms))} мс; занято ${esc(fmtPct(io.busy_pct))}` : 'недоступно'}. Короткий замер; виртуальное устройство может не совпадать с физическим диском.</p>
         <p class="form-hint">Задачи планировщика (включая потоки): ${esc(taskInfo)}. TCP-сокеты (включая слушающие): ${data.tcp_sockets == null ? 'недоступно' : esc(fmtInt(data.tcp_sockets))}.</p>
+        <p class="form-hint">TCP ESTABLISHED и CLOSE_WAIT (CurrEstab): ${data.tcp_established == null ? 'недоступно' : esc(fmtInt(data.tcp_established))}; моментальное значение сетевого пространства имён приложения, не число подключений пользователей; оба конца локального соединения могут учитываться отдельно.</p>
         <p class="form-hint">Переключения контекста: ${esc(fmtDecimal(data.context_switches_per_sec))}/с. Swap I/O (страниц/с): чтение ${esc(fmtDecimal(data.swap_io?.in_pages_per_sec))}, запись ${esc(fmtDecimal(data.swap_io?.out_pages_per_sec))}; короткий замер.</p>
         <p class="form-hint">Сеть: скорость и изменение ошибок за короткий замер, отдельно по интерфейсам. Виртуальные интерфейсы могут учитывать один и тот же трафик повторно.</p>
+        ${hasNetworkErrors ? '<p role="alert">В коротком замере обнаружены ошибки или сбросы сети; причина не установлена.</p>' : ''}
         <ul>${rows || '<li>Данные сетевых интерфейсов недоступны.</li>'}</ul>`;
       const note = document.getElementById('server-monitor-note');
       note.textContent = (data.container_hint ? 'Обнаружен контейнер: показатели могут не соответствовать всей ВМ. '

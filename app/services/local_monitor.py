@@ -228,6 +228,24 @@ def parse_tcp_sockets(text: str) -> int | None:
     return None
 
 
+def parse_tcp_established(text: str) -> int | None:
+    """CurrEstab — ESTABLISHED и CLOSE_WAIT сетевого пространства имён, без адресов."""
+    lines = [line.split()[1:] for line in text.splitlines() if line.split() and line.split()[0] == 'Tcp:']
+    if len(lines) != 2:
+        return None
+    names, values = lines
+    if len(names) != len(values) or names.count('CurrEstab') != 1:
+        return None
+    value = values[names.index('CurrEstab')]
+    if not value.isascii() or not value.isdigit():
+        return None
+    try:
+        count = int(value)
+    except ValueError:
+        return None
+    return count if count <= 2**53 - 1 else None
+
+
 def inode_view(stat) -> dict | None:
     try:
         total, free, available = stat.f_files, stat.f_ffree, stat.f_favail
@@ -433,6 +451,7 @@ def snapshot() -> dict:
             'load_average': parse_load(loadavg),
             'tasks': parse_tasks(loadavg),
             'tcp_sockets': parse_tcp_sockets(_read_proc('/proc/net/sockstat')),
+            'tcp_established': parse_tcp_established(_read_proc('/proc/net/snmp')),
             'disk_io': disk_rates(io_first, io_last, io_elapsed),
             'uptime_sec': parse_uptime(_read_proc('/proc/uptime')),
             'swap': parse_swap(_read_proc('/proc/meminfo')),

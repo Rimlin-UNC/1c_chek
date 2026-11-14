@@ -391,3 +391,37 @@ describe('защита накопительного графика', () => {
     localServerStop();
   });
 });
+
+describe('текущие TCP-соединения', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('отличает состояния ESTABLISHED и CLOSE_WAIT от всех сокетов', async () => {
+    api.get.mockResolvedValue({ tcp_sockets: 9, tcp_established: 4 });
+    localServerWire(); document.querySelector('#server-monitor-refresh').click(); await flush();
+    const text = document.querySelector('#server-monitor-details').textContent;
+    expect(text).toMatch(/TCP-сокеты.*9/);
+    expect(text).toMatch(/ESTABLISHED.*CLOSE_WAIT.*4/);
+    expect(text).toMatch(/пространств.*имён/i);
+    api.get.mockResolvedValue({ tcp_sockets: null, tcp_established: null });
+    document.querySelector('#server-monitor-refresh').click(); await flush();
+    expect(document.querySelector('#server-monitor-details').textContent).toMatch(/ESTABLISHED.*CLOSE_WAIT.*недоступно/);
+    localServerStop();
+  });
+});
+
+describe('короткий замер CPU и ошибок сети', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('помечает порог CPU и ошибки без утверждения о диагнозе', async () => {
+    api.get.mockResolvedValue({ cpu_pct: 95, network: { ens3: { rx_errors_delta: 1, tx_errors_delta: 0,
+      rx_drops_delta: 0, tx_drops_delta: 0, rx_bytes_per_sec: 1, tx_bytes_per_sec: 2 } } });
+    localServerWire(); document.querySelector('#server-monitor-refresh').click(); await flush();
+    const box = document.querySelector('#server-monitor-details');
+    expect(box.querySelector('[aria-label="Использование CPU"]').className).toMatch(/danger/);
+    expect(box.textContent).toMatch(/коротк.*замер/i);
+    expect(box.querySelector('[role="alert"]').textContent).toMatch(/ошибк|сброс/i);
+    api.get.mockResolvedValue({ cpu_pct: null, network: null });
+    document.querySelector('#server-monitor-refresh').click(); await flush();
+    expect(box.querySelector('[aria-label="Использование CPU"]')).toBeNull();
+    expect(box.querySelector('[role="alert"]')).toBeNull();
+    localServerStop();
+  });
+});

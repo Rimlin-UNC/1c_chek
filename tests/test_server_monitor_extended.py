@@ -207,3 +207,34 @@ def test_snapshot_remains_usable_when_application_statvfs_hangs(monkeypatch):
         if worker:
             worker.join(2)
         monitor.reset_cache()
+
+
+def test_tcp_current_established_parses_named_counter_and_rejects_ambiguity():
+    text = ('Ip: Forwarding InReceives\nIp: 1 20\n'
+            'Tcp: RtoMin CurrEstab MaxConn\nTcp: 200 7 -1\n'
+            'Udp: InDatagrams\nUdp: 3\n')
+    assert monitor.parse_tcp_established(text) == 7
+    assert monitor.parse_tcp_established('Tcp: CurrEstab RtoMin\nTcp: 0 200\n') == 0
+    assert monitor.parse_tcp_established('Tcp: CurrEstab\nTcp: -1\n') is None
+    assert monitor.parse_tcp_established('Tcp: CurrEstab\nTcp: bad\n') is None
+    assert monitor.parse_tcp_established('Tcp: CurrEstab CurrEstab\nTcp: 1 2\n') is None
+    assert monitor.parse_tcp_established('Tcp: CurrEstab OutSegs\nTcp: 1\n') is None
+    assert monitor.parse_tcp_established(text + 'Tcp: CurrEstab\nTcp: 3\n') is None
+    assert monitor.parse_tcp_established('Tcp: Other\nTcp: 5\n') is None
+    assert monitor.parse_tcp_established('Tcp: CurrEstab\nTcp: 9007199254740992\n') is None
+    assert monitor.parse_tcp_established('') is None
+
+
+def test_tcp_current_established_is_in_snapshot_and_missing_is_unknown(monkeypatch):
+    monkeypatch.setattr(monitor, '_read_proc', lambda path: 'Tcp: CurrEstab Other\nTcp: 3 9\n' if path.endswith('/snmp') else '')
+    monkeypatch.setattr(monitor, '_cpu_ticks', lambda: None)
+    monkeypatch.setattr(monitor, '_block_device', lambda: None)
+    monkeypatch.setattr(monitor, '_disk', lambda: None)
+    monitor.reset_cache()
+    try:
+        assert monitor.snapshot()['tcp_established'] == 3
+        monkeypatch.setattr(monitor, '_read_proc', lambda _: '')
+        monitor.reset_cache()
+        assert monitor.snapshot()['tcp_established'] is None
+    finally:
+        monitor.reset_cache()

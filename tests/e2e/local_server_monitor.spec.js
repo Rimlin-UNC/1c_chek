@@ -7,7 +7,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.30');
+    localStorage.setItem('ymaster_seen_version', '1.72.31');
   }, token);
   const cloudRequests = [];
   let performanceRequests = 0;
@@ -66,6 +66,7 @@ test('локальный монитор работает без облачног
   await expect(page.locator('#server-monitor-details')).toContainText('inode файловой системы приложения');
   await expect(page.locator('#server-monitor-details')).toContainText('I/O устройства файловой системы приложения');
   await expect(page.locator('#server-monitor-details')).toContainText('включая потоки');
+  await expect(page.locator('#server-monitor-details')).toContainText('TCP ESTABLISHED и CLOSE_WAIT');
   await expect(page.locator('#server-monitor-note')).toContainText('История производительности');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
   expect(mountRequests).toBe(0);
