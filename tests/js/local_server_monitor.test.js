@@ -108,3 +108,46 @@ describe('история трафика — оценка по одному ин�
     localServerStop();
   });
 });
+
+describe('дополнительные показатели файловой системы и ядра', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('показывает inode и I/O лишь для устройства файловой системы приложения', async () => {
+    api.get.mockResolvedValue({ disk: { pct: 60, used_bytes: 6e9, total_bytes: 10e9, available_bytes: 4e9,
+      inodes: { total: 1000, used: 850, available: 100, pct: 85 } },
+    disk_io: { device: 'sda1', read_iops: 5, write_iops: 10, read_bytes_per_sec: 10240,
+      write_bytes_per_sec: 12800, read_await_ms: 2, write_await_ms: null, busy_pct: 5 },
+    tasks: { runnable: 2, total: 254 }, tcp_sockets: 8, context_switches_per_sec: 123.5,
+    swap_io: { in_pages_per_sec: 2.5, out_pages_per_sec: 3 } });
+    localServerWire(); document.querySelector('#server-monitor-refresh').click(); await flush();
+    const text = document.querySelector('#st-server-monitor').textContent;
+    expect(text).toContain('85,00 %'); expect(text).toContain('850');
+    expect(text).toContain('sda1'); expect(text).toMatch(/5,00.*10,00/);
+    expect(text).toMatch(/2.*254/); expect(text).toMatch(/TCP.*8/);
+    expect(text).toMatch(/включая потоки/i); expect(text).toMatch(/слуша/i);
+    expect(text).toContain('123,50'); expect(text).toContain('2,50'); expect(text).toMatch(/страниц.*с/i);
+    localServerStop();
+  });
+  it('сообщает об отсутствии inode и I/O вместо выдуманных нулей', async () => {
+    api.get.mockResolvedValue({ disk: { pct: 50, inodes: null }, disk_io: null, tasks: null, tcp_sockets: null });
+    localServerWire(); document.querySelector('#server-monitor-refresh').click(); await flush();
+    const text = document.querySelector('#server-monitor-details').textContent;
+    expect(text).toMatch(/inode.*недоступ/i); expect(text).toMatch(/I\/O.*недоступ/i);
+    expect(text).not.toMatch(/inode.*0,00 %/);
+    localServerStop();
+  });
+});
+
+describe('пороговые индикаторы снимка', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('отдельно обозначает пороги памяти и диска и не рисует фиктивный ноль', async () => {
+    api.get.mockResolvedValue({ memory: { pct: 85 }, disk: { pct: 95 } });
+    localServerWire(); document.querySelector('#server-monitor-refresh').click(); await flush();
+    expect(document.querySelector('[aria-label="Использование памяти"]').className).toMatch(/warning/);
+    expect(document.querySelector('[aria-label="Занятость файловой системы приложения"]').className).toMatch(/danger/);
+    expect(document.querySelector('#server-monitor-details').textContent).toMatch(/80.*90/);
+    api.get.mockResolvedValue({ memory: null, disk: null });
+    document.querySelector('#server-monitor-refresh').click(); await flush();
+    expect(document.querySelectorAll('#server-monitor-details progress')).toHaveLength(0);
+    localServerStop();
+  });
+});

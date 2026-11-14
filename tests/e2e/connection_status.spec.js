@@ -18,7 +18,7 @@ test('индикатор работает при недоступных живы
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.22');
+    localStorage.setItem('ymaster_seen_version', '1.72.23');
     // Быстро воспроизводим периодическую проверку локальной очереди в простое.
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 500 : ms, ...args);

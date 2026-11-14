@@ -7,7 +7,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.22');
+    localStorage.setItem('ymaster_seen_version', '1.72.23');
   }, token);
   const cloudRequests = [];
   let historyRequests = 0;
@@ -31,6 +31,9 @@ test('локальный монитор работает без облачног
   await expect(page.locator('#server-monitor-kpi')).toContainText('Load average');
   await expect(page.locator('#server-monitor-kpi')).toContainText('Swap');
   await expect(page.locator('#server-monitor-details')).toContainText('Сеть:');
+  await expect(page.locator('#server-monitor-details')).toContainText('inode файловой системы приложения');
+  await expect(page.locator('#server-monitor-details')).toContainText('I/O устройства файловой системы приложения');
+  await expect(page.locator('#server-monitor-details')).toContainText('включая потоки');
   await expect(page.locator('#server-monitor-note')).toContainText('История производительности');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
   expect(historyRequests).toBe(0);

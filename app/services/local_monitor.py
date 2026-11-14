@@ -158,6 +158,132 @@ def parse_load(text: str) -> list[float] | None:
         return None
 
 
+def _nonnegative_fields(text: str, names: tuple[str, ...]) -> dict | None:
+    values = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if fields and fields[0] in names:
+            if len(fields) != 2 or fields[0] in values:
+                return None
+            try:
+                value = int(fields[1])
+            except ValueError:
+                return None
+            if value < 0:
+                return None
+            values[fields[0]] = value
+    return values if len(values) == len(names) else None
+
+
+def parse_context_switches(text: str) -> int | None:
+    values = _nonnegative_fields(text, ('ctxt',))
+    return values['ctxt'] if values else None
+
+
+def parse_swap_io(text: str) -> tuple[int, int] | None:
+    values = _nonnegative_fields(text, ('pswpin', 'pswpout'))
+    return (values['pswpin'], values['pswpout']) if values else None
+
+
+def counter_rate(first: int | None, last: int | None, seconds: float) -> float | None:
+    if first is None or last is None or last < first or not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return round((last - first) / seconds, 2)
+
+
+def swap_io_rates(first, last, seconds: float) -> dict | None:
+    if first is None or last is None:
+        return None
+    ins, outs = (counter_rate(a, b, seconds) for a, b in zip(first, last))
+    if ins is None or outs is None:
+        return None
+    return {'in_pages_per_sec': ins, 'out_pages_per_sec': outs}
+
+
+def parse_tasks(text: str) -> dict | None:
+    """Четвёртое поле loadavg — задачи планировщика, включая потоки, не число процессов."""
+    try:
+        runnable, total = (int(value) for value in text.split()[3].split('/'))
+        if not 0 <= runnable <= total or total <= 0:
+            return None
+        return {'runnable': runnable, 'total': total}
+    except (IndexError, ValueError):
+        return None
+
+
+def parse_tcp_sockets(text: str) -> int | None:
+    """TCP inuse включает и слушающие сокеты, это не только активные соединения."""
+    for line in text.splitlines():
+        fields = line.split()
+        if fields and fields[0] == 'TCP:':
+            try:
+                index = fields.index('inuse')
+                value = int(fields[index + 1])
+                return value if value >= 0 else None
+            except (ValueError, IndexError):
+                return None
+    return None
+
+
+def inode_view(stat) -> dict | None:
+    try:
+        total, free, available = stat.f_files, stat.f_ffree, stat.f_favail
+        if total <= 0 or not 0 <= available <= free <= total:
+            return None
+        used = total - free
+        return {'total': total, 'used': used, 'available': available, 'pct': round(100 * used / total, 2)}
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def parse_diskstats(text: str, device: tuple[int, int] | None) -> dict | None:
+    """Только точное совпадение major/minor, без догадок о томах и виртуальных дисках."""
+    if device is None:
+        return None
+    for line in text.splitlines():
+        fields = line.split()
+        try:
+            if len(fields) < 14 or (int(fields[0]), int(fields[1])) != device:
+                continue
+            counters = tuple(int(fields[i]) for i in (3, 5, 6, 7, 9, 10, 12))
+            if any(value < 0 for value in counters):
+                return None
+            return {'name': fields[2], 'device': device, 'counters': counters}
+        except (ValueError, IndexError):
+            continue
+    return None
+
+
+def disk_rates(first: dict | None, last: dict | None, seconds: float) -> dict | None:
+    if not first or not last or first['device'] != last['device'] or first['name'] != last['name']:
+        return None
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    delta = [b - a for a, b in zip(first['counters'], last['counters'])]
+    if len(delta) != 7 or any(v < 0 for v in delta):
+        return None
+    reads, r_sectors, r_ms, writes, w_sectors, w_ms, busy_ms = delta
+    busy_pct = busy_ms / (seconds * 10)
+    # При сбросах и несовместимых счётчиках не показываем невозможную загрузку.
+    if busy_pct > 100:
+        return None
+    return {'device': last['name'], 'read_iops': round(reads / seconds, 2),
+            'write_iops': round(writes / seconds, 2),
+            'read_bytes_per_sec': round(r_sectors * 512 / seconds, 2),
+            'write_bytes_per_sec': round(w_sectors * 512 / seconds, 2),
+            'read_await_ms': round(r_ms / reads, 2) if reads else None,
+            'write_await_ms': round(w_ms / writes, 2) if writes else None,
+            'busy_pct': round(busy_pct, 2)}
+
+
+def _block_device() -> tuple[int, int] | None:
+    try:
+        dev = os.stat(BASE_DIR).st_dev
+        return os.major(dev), os.minor(dev)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
 def _read_proc(path: str) -> str:
     try:
         return Path(path).read_text(encoding='ascii')
@@ -194,7 +320,9 @@ def _memory():
 
 def _disk():
     try:
-        return disk_view(os.statvfs(BASE_DIR))
+        stat = os.statvfs(BASE_DIR)
+        disk = disk_view(stat)
+        return {**disk, 'inodes': inode_view(stat)} if disk else None
     except (OSError, AttributeError):
         return None
 
@@ -216,23 +344,41 @@ def snapshot() -> dict:
         now = time.monotonic()
         if _cached is not None and 0 <= now - _cached_at < _CACHE_SEC:
             return dict(_cached)
-        cpu_first = parse_cpu_details(_read_proc('/proc/stat'))
+        system_time = time.monotonic()
+        stat_first = _read_proc('/proc/stat')
+        cpu_first = parse_cpu_details(stat_first)
+        swap_io_first = parse_swap_io(_read_proc('/proc/vmstat'))
         net_first_text = _read_proc('/proc/net/dev')
         net_first = parse_network(net_first_text)
+        device = _block_device()
+        io_first = parse_diskstats(_read_proc('/proc/diskstats'), device)
+        io_time = time.monotonic()
         net_time = time.monotonic()
         first = _cpu_ticks()
-        if first is not None or net_first:
+        if first is not None or net_first or io_first or swap_io_first or parse_context_switches(stat_first) is not None:
             time.sleep(_SAMPLE_SEC)
         last = _cpu_ticks() if first is not None else None
         net_last_text = _read_proc('/proc/net/dev')
         net_elapsed = time.monotonic() - net_time
-        cpu_last = parse_cpu_details(_read_proc('/proc/stat'))
+        stat_last = _read_proc('/proc/stat')
+        cpu_last = parse_cpu_details(stat_last)
+        swap_io_last = parse_swap_io(_read_proc('/proc/vmstat'))
+        system_elapsed = time.monotonic() - system_time
+        io_last = parse_diskstats(_read_proc('/proc/diskstats'), device)
+        io_elapsed = time.monotonic() - io_time
+        loadavg = _read_proc('/proc/loadavg')
         _cached = {
             'collected_at': datetime.now(timezone.utc).isoformat(),
             'cpu_pct': cpu_percent(first, last),
             'logical_cpus': os.cpu_count(),
             'cpu_detail': cpu_breakdown(cpu_first, cpu_last),
-            'load_average': parse_load(_read_proc('/proc/loadavg')),
+            'context_switches_per_sec': counter_rate(parse_context_switches(stat_first),
+                                                      parse_context_switches(stat_last), system_elapsed),
+            'swap_io': swap_io_rates(swap_io_first, swap_io_last, system_elapsed),
+            'load_average': parse_load(loadavg),
+            'tasks': parse_tasks(loadavg),
+            'tcp_sockets': parse_tcp_sockets(_read_proc('/proc/net/sockstat')),
+            'disk_io': disk_rates(io_first, io_last, io_elapsed),
             'uptime_sec': parse_uptime(_read_proc('/proc/uptime')),
             'swap': parse_swap(_read_proc('/proc/meminfo')),
             'network': network_rates(net_first, parse_network(net_last_text), net_elapsed)

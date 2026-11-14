@@ -2449,3 +2449,9 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
   .cp-layout { grid-template-columns: 1fr; }
   .cp-grid { grid-template-columns: 1fr; }
 }
+
+/* Локальные индикаторы: текст и значение доступны и без цветового различия. */
+.server-gauge-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.server-gauge { width: min(100%, 180px); height: 10px; accent-color: var(--ok); }
+.server-gauge.warning { accent-color: var(--warn); }
+.server-gauge.danger { accent-color: var(--bad); }

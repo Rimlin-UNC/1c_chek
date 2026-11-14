@@ -60,3 +60,75 @@ def test_snapshot_handles_unavailable_proc_without_fabrication(monkeypatch):
     assert result['network'] is None and result['swap'] is None
     assert result['load_average'] is None and result['uptime_sec'] is None
     monitor.reset_cache()
+
+
+def test_inode_usage_does_not_assume_unsupported_or_invalid_is_zero():
+    from types import SimpleNamespace
+
+    assert monitor.inode_view(SimpleNamespace(f_files=1000, f_ffree=150, f_favail=100)) == {
+        'total': 1000, 'used': 850, 'available': 100, 'pct': 85.0}
+    assert monitor.inode_view(SimpleNamespace(f_files=0, f_ffree=0, f_favail=0)) is None
+    assert monitor.inode_view(SimpleNamespace(f_files=100, f_ffree=101, f_favail=1)) is None
+    assert monitor.inode_view(SimpleNamespace()) is None
+
+
+def test_loadavg_tasks_and_tcp_sockets_are_not_process_counts_or_established_connections():
+    assert monitor.parse_tasks('0.10 0.20 0.30 2/254 122') == {'runnable': 2, 'total': 254}
+    assert monitor.parse_tasks('0 0 0 7/6 1') is None
+    assert monitor.parse_tasks('0 0 0 1/-2 1') is None
+    assert monitor.parse_tasks('') is None
+    assert monitor.parse_tcp_sockets('sockets: used 10\nTCP: inuse 8 orphan 0 tw 2 alloc 12 mem 1\n') == 8
+    assert monitor.parse_tcp_sockets('TCP: inuse -1 orphan 0\n') is None
+    assert monitor.parse_tcp_sockets('TCP: alloc 2\n') is None
+
+
+def test_block_io_only_exact_device_and_reset_or_unknown_are_unavailable():
+    text = ('8 0 sda 100 4 200 30 90 1 150 45 2 60 80 0 0 0 0\n'
+            '8 1 sda1 5 0 20 10 8 0 30 15 0 12 12\n')
+    first = monitor.parse_diskstats(text, (8, 1))
+    assert first['name'] == 'sda1'
+    assert monitor.parse_diskstats(text, (9, 9)) is None
+    assert monitor.parse_diskstats('8 1 sda1 malformed', (8, 1)) is None
+    updated = monitor.parse_diskstats('8 1 sda1 15 0 60 30 28 0 80 55 0 112 112', (8, 1))
+    assert monitor.disk_rates(first, updated, 2) == {'device': 'sda1', 'read_iops': 5.0,
+        'write_iops': 10.0, 'read_bytes_per_sec': 10240.0, 'write_bytes_per_sec': 12800.0,
+        'read_await_ms': 2.0, 'write_await_ms': 2.0, 'busy_pct': 5.0}
+    assert monitor.disk_rates(updated, first, 2) is None
+    assert monitor.disk_rates(first, updated, 0) is None
+    assert monitor.disk_rates(first, {**updated, 'name': 'other'}, 2) is None
+
+
+def test_disk_io_no_operations_has_unknown_await_and_excess_busy_is_rejected():
+    stat = monitor.parse_diskstats('8 1 sda1 10 0 20 30 40 0 50 60 0 100 100', (8, 1))
+    no_change = monitor.disk_rates(stat, stat, 1)
+    assert no_change['read_iops'] == no_change['write_iops'] == 0
+    assert no_change['read_await_ms'] is None and no_change['write_await_ms'] is None
+    later = monitor.parse_diskstats('8 1 sda1 10 0 20 30 40 0 50 60 0 2200 2200', (8, 1))
+    assert monitor.disk_rates(stat, later, 1) is None
+
+
+def test_inode_data_and_exact_device_sample_are_optional_and_fail_closed(monkeypatch):
+    from types import SimpleNamespace
+
+    stat = SimpleNamespace(f_frsize=4096, f_bsize=4096, f_blocks=100, f_bfree=40,
+                           f_bavail=30, f_files=1000, f_ffree=150, f_favail=100)
+    monkeypatch.setattr(monitor.os, 'statvfs', lambda _: stat)
+    disk = monitor._disk()
+    assert disk['pct'] == 60 and disk['inodes']['pct'] == 85
+    monkeypatch.setattr(monitor.os, 'stat', lambda _: (_ for _ in ()).throw(PermissionError()))
+    assert monitor._block_device() is None
+
+
+def test_context_switch_and_swap_io_rates_reject_bad_or_reset_counters():
+    stat_a = monitor.parse_context_switches('cpu 1 2 3 4\nctxt 1000\n')
+    stat_b = monitor.parse_context_switches('cpu 2 3 4 5\nctxt 1100\n')
+    assert monitor.counter_rate(stat_a, stat_b, 2) == 50.0
+    assert monitor.counter_rate(stat_b, stat_a, 2) is None
+    assert monitor.parse_context_switches('ctxt -1') is None
+    assert monitor.parse_context_switches('') is None
+    a = monitor.parse_swap_io('pgpgin 1\npswpin 12\npswpout 30\n')
+    b = monitor.parse_swap_io('pswpin 16\npswpout 34\n')
+    assert monitor.swap_io_rates(a, b, 2) == {'in_pages_per_sec': 2.0, 'out_pages_per_sec': 2.0}
+    assert monitor.swap_io_rates(b, a, 2) is None
+    assert monitor.parse_swap_io('pswpin -1\npswpout 4') is None
+    assert monitor.parse_swap_io('pswpin 1') is None
