@@ -241,6 +241,7 @@ function extraHistoryHtml(result, rows) {
 
 function historyHtml(result) {
   if (result.status === 'not_configured') return '<p>Сбор истории не настроен; приложение его автоматически не запускает.</p>';
+  if (result.status === 'busy') return '<p>Чтение истории уже выполняется; попробуйте ещё раз.</p>';
   if (result.status !== 'available' || !Array.isArray(result.buckets)) return '<p>История недоступна: проверьте отдельную базу и настройки.</p>';
   const rows = result.buckets;
   const last = result.last_sample_at;
@@ -265,7 +266,7 @@ function historyHtml(result) {
     <td>${esc(fmtPct(row.memory_pct))} (${esc(row.memory_samples)}/${esc(row.expected)})</td><td>${esc(fmtPct(row.swap_pct))}</td>
     <td>${row.rx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.rx_bytes_per_sec)) + '/с'}</td><td>${row.tx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.tx_bytes_per_sec)) + '/с'}</td></tr>`).join('');
   return `${notice}${clock}${stale}<p>Последний снимок: ${last == null ? '—' : esc(historyTime(last))} (время устройства). Интерфейс: ${esc(result.interface || 'не выбран')}.</p>
-    <p class="form-hint">Точки — средние наблюдённых значений за интервал. Пропуски и неполные интервалы не соединяются; CPU и RAM подписаны в таблице числом наблюдений. График сети — скорость, не биллинг.</p>
+    <p class="form-hint">Ответ истории может использовать кэш до 10 секунд на процесс. Точки — средние наблюдённых значений за интервал. Пропуски и неполные интервалы не соединяются; CPU и RAM подписаны в таблице числом наблюдений. График сети — скорость, не биллинг.</p>
     <p>CPU (синий) · RAM (зелёный)</p>${charts}
     <p>Swap — процент занятого от размера swap, отдельно от RAM</p>${swap}
     ${net ? `<p>Вход (синий) · выход (зелёный), шкала до ${esc(fmtBytes(maxNetwork))}/с</p>${net}` : '<p>История сети недоступна без выбранного интерфейса.</p>'}

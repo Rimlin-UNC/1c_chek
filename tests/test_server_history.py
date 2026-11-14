@@ -402,3 +402,72 @@ def test_real_separate_collector_restart_and_admin_api_read_only(tmp_path, monke
     assert data['interface'] is None and data['last_sample_at'] is not None
     assert sum(row['samples'] for row in data['buckets']) == count
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+
+
+def test_history_snapshot_cache_is_bounded_by_period_and_configuration(tmp_path, monkeypatch):
+    db = tmp_path / 'history.db'
+    history.initialize(db)
+    monkeypatch.setenv('YM_MONITOR_HISTORY_FILE', str(db))
+    monkeypatch.setenv('YM_MONITOR_TRAFFIC_INTERFACE', 'ens3')
+    clock = [100.0]
+    monkeypatch.setattr(history.time, 'monotonic', lambda: clock[0])
+    calls = []
+    def fake_read(path, period, *, interface):
+        calls.append((path, period, interface))
+        return {'status': 'available', 'serial': len(calls)}
+    monkeypatch.setattr(history, 'read', fake_read)
+    history.reset_cache()
+    try:
+        assert history.snapshot('1h')['serial'] == 1
+        assert history.snapshot('1h')['serial'] == 1
+        assert history.snapshot('24h')['serial'] == 2
+        clock[0] += 11
+        assert history.snapshot('1h')['serial'] == 3
+        monkeypatch.setenv('YM_MONITOR_TRAFFIC_INTERFACE', 'eth0')
+        assert history.snapshot('1h')['serial'] == 4
+        assert history.snapshot('24h')['serial'] == 5
+        import os
+        info = db.stat()
+        os.utime(db, ns=(info.st_atime_ns, info.st_mtime_ns - 2_000_000_000))
+        assert history.snapshot('1h')['serial'] == 6
+        db.chmod(0o644)
+        assert history.snapshot('1h')['status'] == 'unavailable'
+        assert len(calls) == 6
+    finally:
+        history.reset_cache()
+
+
+def test_history_single_flight_and_recovery_from_failure(tmp_path, monkeypatch):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    db = tmp_path / 'history.db'
+    history.initialize(db)
+    monkeypatch.setenv('YM_MONITOR_HISTORY_FILE', str(db))
+    calls = []
+    def slow_read(path, period, *, interface):
+        calls.append(period)
+        time.sleep(.05)
+        return {'status': 'available'}
+    monkeypatch.setattr(history, 'read', slow_read)
+    history.reset_cache()
+    try:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(history.snapshot, ['30d'] * 8))
+        assert all(result['status'] in ('available', 'busy') for result in results)
+        assert any(result['status'] == 'available' for result in results)
+        assert any(result['status'] == 'busy' for result in results)
+        assert calls == ['30d']
+        assert history.snapshot('30d')['status'] == 'available'
+        history.reset_cache()
+        def failed_read(*args, **kwargs):
+            calls.append('failed')
+            raise sqlite3.OperationalError('temporary error')
+        monkeypatch.setattr(history, 'read', failed_read)
+        assert history.snapshot('30d')['status'] == 'unavailable'
+        assert history.snapshot('30d')['status'] == 'unavailable'
+        assert calls.count('failed') == 2
+        monkeypatch.setattr(history, 'read', slow_read)
+        assert history.snapshot('30d')['status'] == 'available'
+    finally:
+        history.reset_cache()

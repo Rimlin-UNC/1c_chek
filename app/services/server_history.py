@@ -11,6 +11,7 @@ import os
 import re
 import sqlite3
 import stat
+import threading
 import time
 from contextlib import closing
 from pathlib import Path
@@ -25,6 +26,9 @@ _MAX_ROWS = 50000
 _MAX_EXTRA_ROWS = 50000
 _MAX_GAP = 600
 _RANGES = {'1h': (3600, 60), '24h': (86400, 600), '7d': (7 * 86400, 3600), '30d': (_RETENTION, 21600)}
+_CACHE_SECONDS = 10
+_cache_lock = threading.Lock()
+_cache: dict[str, tuple[tuple, float, dict]] = {}
 
 
 def _configured_path() -> Path | None:
@@ -281,6 +285,7 @@ def read(path: Path, period: str, *, interface: str, now: int | None = None) -> 
 
 
 def snapshot(period: str) -> dict:
+    """Один запрос истории на процесс; короткий кэш не меняет базу."""
     if period not in _RANGES:
         return {'status': 'invalid_range'}
     try:
@@ -290,9 +295,30 @@ def snapshot(period: str) -> dict:
         interface = _env('YM_MONITOR_TRAFFIC_INTERFACE', '').strip()
         if not _INTERFACE.fullmatch(interface) or interface == 'lo':
             interface = ''
-        return read(path, period, interface=interface)
+        _validate_file(path)
+        info = path.lstat()
+        key = (path, interface, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+        if not _cache_lock.acquire(blocking=False):
+            return {'status': 'busy'}
+        try:
+            now = time.monotonic()
+            cached = _cache.get(period)
+            if cached and cached[0] == key and 0 <= now - cached[1] < _CACHE_SECONDS:
+                return cached[2]
+            result = read(path, period, interface=interface)
+            if result.get('status') == 'available':
+                _cache[period] = (key, time.monotonic(), result)
+            return result
+        finally:
+            _cache_lock.release()
     except (OSError, sqlite3.Error, ValueError, TypeError, OverflowError):
         return {'status': 'unavailable'}
+
+
+def reset_cache() -> None:
+    """Сброс для изолированных проверок."""
+    with _cache_lock:
+        _cache.clear()
 
 
 def main() -> int:

@@ -425,3 +425,15 @@ describe('короткий замер CPU и ошибок сети', () => {
     localServerStop();
   });
 });
+
+describe('ограничение повторных запросов истории', () => {
+  it('сообщает о занятом чтении вместо ложной ошибки или нулевой истории', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockResolvedValue({ status: 'busy' });
+    localServerWire(); document.querySelector('#server-history-refresh').click(); await flush();
+    const panel = document.querySelector('#server-history');
+    expect(panel.textContent).toMatch(/уже выполняется/i);
+    expect(panel.querySelector('svg')).toBeNull();
+    localServerStop();
+  });
+});
