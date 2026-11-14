@@ -7,7 +7,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.29');
+    localStorage.setItem('ymaster_seen_version', '1.72.30');
   }, token);
   const cloudRequests = [];
   let performanceRequests = 0;
@@ -45,7 +45,8 @@ test('локальный монитор работает без облачног
     await route.fulfill({ status: 200, json: { status: 'freshness_unknown', current_period: '2026-11', data: {
       interface: 'ens3', created_date: '2026-10-17', updated_at: '2026-11-08T12:00:00', billing_verified: false,
       months: [{ period: '2026-11', rx_bytes: 400000000000, tx_bytes: 450000000000 }],
-      days: [{ date: '2026-11-08', rx_bytes: 1000000000, tx_bytes: 2000000000 }] },
+      days: Array.from({ length: 8 }, (_, i) => ({ date: `2026-11-${String(i + 1).padStart(2, '0')}`,
+        rx_bytes: 1000000000, tx_bytes: 2000000000 })) },
       scenario: { projected_bytes: 1200000000000, sample_days: 7, as_of: '2026-11-08T12:00:00',
         billing_verified: false, completeness_verified: false } } });
   });
@@ -94,6 +95,10 @@ test('локальный монитор работает без облачног
   await card.locator('summary').filter({ hasText: 'Трафик интерфейса' }).click();
   await card.locator('#server-traffic-refresh').click();
   await expect(card.locator('#server-traffic')).toContainText('850,00 ГБ');
+  await expect(card.locator('#server-traffic')).toContainText('85,00 %');
+  await expect(card.locator('#server-traffic svg[aria-label*="Накопленный"]')).toBeVisible();
+  await expect(card.locator('#server-traffic svg circle')).toHaveCount(8);
+  await expect(card.locator('#server-traffic')).toContainText('не остаток тарифа');
   await expect(card.locator('#server-traffic')).toContainText('не счёт провайдера');
   await expect(card.locator('#server-traffic')).toContainText('80 %');
   await expect(card.locator('#server-traffic')).toContainText('Свежесть источника не подтверждена');

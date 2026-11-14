@@ -90,6 +90,43 @@ function trafficGb(value) {
   return (value / 1e9).toFixed(2).replace('.', ',') + ' ГБ';
 }
 
+function trafficCumulative(result, data, amount) {
+  const period = result.current_period;
+  if (typeof period !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return null;
+  const [year, month] = period.split('-').map(Number);
+  if (year < 1970 || year > 9999 || typeof data.updated_at !== 'string' || typeof data.created_date !== 'string') return null;
+  const last = data.updated_at.slice(0, 10);
+  if (!new RegExp('^' + period + '-(0[1-9]|[12][0-9]|3[01])$').test(last) || data.created_date >= period + '-01') return null;
+  const lastDay = Number(last.slice(8));
+  if (lastDay > new Date(Date.UTC(year, month, 0)).getUTCDate()) return null;
+  const daily = new Map();
+  for (const row of data.days) {
+    if (!row || typeof row.date !== 'string' || !row.date.startsWith(period + '-')) continue;
+    if (daily.has(row.date) || !Number.isSafeInteger(row.rx_bytes) || !Number.isSafeInteger(row.tx_bytes)
+        || row.rx_bytes < 0 || row.tx_bytes < 0) return null;
+    daily.set(row.date, row.rx_bytes + row.tx_bytes);
+  }
+  let sum = 0; const points = [];
+  for (let day = 1; day <= lastDay; day++) {
+    const date = `${period}-${String(day).padStart(2, '0')}`;
+    if (!daily.has(date)) return null;
+    sum += daily.get(date);
+    if (!Number.isSafeInteger(sum) || sum > amount) return null;
+    points.push({ date, value: sum });
+  }
+  const max = Math.max(1, sum), width = 480, height = 110;
+  const positions = points.map((point, i) => ({ ...point,
+    x: points.length < 2 ? 0 : i * width / (points.length - 1), y: height - point.value * height / max }));
+  let marks = '';
+  positions.forEach((point, i) => {
+    if (i) marks += `<line class="cpu" x1="${positions[i-1].x.toFixed(2)}" y1="${positions[i-1].y.toFixed(2)}" x2="${point.x.toFixed(2)}" y2="${point.y.toFixed(2)}"></line>`;
+    marks += `<circle class="cpu" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2"><title>${esc(point.date)}: ${esc(trafficGb(point.value))}</title></circle>`;
+  });
+  return `<p>Накоплено по дневным строкам с 1 числа по ${esc(last)}: ${esc(trafficGb(sum))}.</p>
+    <svg class="server-history-chart" viewBox="-3 -3 486 116" role="img" aria-label="Накопленный наблюдённый трафик">${marks}</svg>
+    <p class="form-hint">Сумма дневных наблюдений, включая неполный последний день; не счёт и не подтверждение непрерывного сбора. Даты, начало периода и свежесть vnStat могут отличаться от биллинга.</p>`;
+}
+
 function trafficHtml(result) {
   const messages = {
     not_configured: 'Учёт не настроен: выберите интерфейс и установите vnStat по инструкции администратора.',
@@ -102,6 +139,10 @@ function trafficHtml(result) {
   if (!data || !Array.isArray(data.months) || !Array.isArray(data.days)) return '<p>История недоступна.</p>';
   const current = data.months.find(row => row.period === result.current_period);
   const amount = current ? current.rx_bytes + current.tx_bytes : null;
+  const ratio = amount === null ? '' : `<p>Наблюдено ${esc(fmtPct(amount / 1e12 * 100))} от ориентира 1000 ГБ.</p>
+    <progress class="server-gauge ${amount >= 950e9 ? 'danger' : amount >= 800e9 ? 'warning' : 'normal'}" max="100" value="${Math.min(100, Math.max(0, amount / 1e12 * 100))}" aria-label="Процент от ориентира"></progress>
+    <p>${amount <= 1e12 ? `Разница до ориентира: ${esc(trafficGb(1e12 - amount))}` : `Выше ориентира на ${esc(trafficGb(amount - 1e12))}`} — это не остаток тарифа и не подтверждение счёта.</p>`;
+  const cumulative = amount === null ? null : trafficCumulative(result, data, amount);
   const warning = amount === null ? '' : amount >= 950e9 ? 'Наблюдённый объём достиг 95 % от ориентира.'
     : amount >= 800e9 ? 'Наблюдённый объём достиг 80 % от ориентира.' : '';
   const scenario = result.scenario;
@@ -116,8 +157,9 @@ function trafficHtml(result) {
   const days = data.days.map(row => `<li>${esc(row.date)}: вход ${esc(trafficGb(row.rx_bytes))}, выход ${esc(trafficGb(row.tx_bytes))} <progress max="${maxDay}" value="${row.rx_bytes + row.tx_bytes}" aria-label="${esc('Суммарный трафик ' + row.date)}"></progress></li>`).join('');
   return `${stale}<p>Интерфейс: <strong>${esc(data.interface)}</strong>. Начало учёта: ${esc(data.created_date)}. Последнее обновление: ${esc(data.updated_at.replace('T', ' '))} (время vnStat, часовой пояс не подтверждён).</p>
     <p>${current ? `Календарный месяц приложения ${esc(current.period)}: <strong>${esc(trafficGb(amount))}</strong> из ориентира 1000 ГБ (вход + выход).` : 'За текущий месяц данных нет.'}</p>
-    ${warning ? `<p role="alert">${esc(warning)}</p>` : ''}
+    ${ratio}${warning ? `<p role="alert">${esc(warning)}</p>` : ''}
     ${projection}
+    ${cumulative || '<p>Накопительный график недоступен: нет последовательного дневного ряда с начала месяца или данные не согласуются.</p>'}
     <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора, внутренний трафик и отличие расчётного периода или часового пояса vnStat. Полнота данных не подтверждена; подтверждённый остаток не рассчитывается.</p>
     <p><strong>По месяцам</strong></p><ul>${months || '<li>Данных нет.</li>'}</ul>
     <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;

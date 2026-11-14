@@ -321,3 +321,73 @@ describe('история swap', () => {
     localServerStop();
   });
 });
+
+describe('ориентир и накопленный наблюдённый трафик', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  const days = [1, 2, 3].map(day => ({ date: `2026-11-0${day}`, rx_bytes: 1e9, tx_bytes: 1e9 }));
+  const response = { status: 'freshness_unknown', current_period: '2026-11', data: {
+    interface: 'ens3', created_date: '2026-10-17', updated_at: '2026-11-03T12:00:00',
+    months: [{ period: '2026-11', rx_bytes: 400e9, tx_bytes: 450e9 }], days } };
+  it('показывает процент и условную разницу от ориентира без выдачи её за остаток биллинга', async () => {
+    api.get.mockResolvedValue(response);
+    localServerWire(); document.querySelector('#server-traffic-refresh').click(); await flush();
+    const panel = document.querySelector('#server-traffic');
+    expect(panel.textContent).toContain('85,00 %');
+    expect(panel.textContent).toContain('150,00 ГБ');
+    expect(panel.textContent).toMatch(/не.*остаток/i);
+    expect(panel.querySelector('progress[aria-label*="ориентира"]').classList.contains('warning')).toBe(true);
+    const chart = panel.querySelector('svg[aria-label*="Накопленный"]');
+    expect(chart).not.toBeNull();
+    expect(chart.querySelectorAll('circle')).toHaveLength(3);
+    expect(chart.textContent).toContain('6,00 ГБ');
+    localServerStop();
+  });
+  it('не строит накопительный график при пропуске в ряду или позднем начале учёта', async () => {
+    api.get.mockResolvedValueOnce({ ...response, data: { ...response.data, days: [days[0], days[2]] } })
+      .mockResolvedValueOnce({ ...response, data: { ...response.data, created_date: '2026-11-01' } });
+    localServerWire(); const button = document.querySelector('#server-traffic-refresh');
+    button.click(); await flush();
+    expect(document.querySelector('#server-traffic svg[aria-label*="Накопленный"]')).toBeNull();
+    expect(document.querySelector('#server-traffic').textContent).toMatch(/накопительный график недоступен/i);
+    button.click(); await flush();
+    expect(document.querySelector('#server-traffic svg[aria-label*="Накопленный"]')).toBeNull();
+    localServerStop();
+  });
+  it('не показывает отрицательную разницу как доступный остаток при превышении', async () => {
+    api.get.mockResolvedValue({ ...response, data: { ...response.data, months: [{ period: '2026-11', rx_bytes: 800e9, tx_bytes: 400e9 }] } });
+    localServerWire(); document.querySelector('#server-traffic-refresh').click(); await flush();
+    const text = document.querySelector('#server-traffic').textContent;
+    expect(text).toContain('120,00 %'); expect(text).toContain('200,00 ГБ');
+    const gauge = document.querySelector('#server-traffic progress[aria-label*="ориентира"]');
+    expect(gauge.classList.contains('danger')).toBe(true); expect(gauge.value).toBe(100);
+    expect(text).toMatch(/выше ориентира/i); expect(text).not.toMatch(/остаток.*-200/i);
+    localServerStop();
+  });
+});
+
+describe('защита накопительного графика', () => {
+  beforeEach(() => { localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml(); });
+  it('не строит график при дублях или когда суточная сумма превышает месячную', async () => {
+    const row = { date: '2028-02-01', rx_bytes: 100, tx_bytes: 200 };
+    const data = { interface: 'ens3', created_date: '2027-12-01', updated_at: '2028-02-01T12:00:00',
+      months: [{ period: '2028-02', rx_bytes: 10, tx_bytes: 10 }], days: [row, row] };
+    api.get.mockResolvedValueOnce({ status: 'freshness_unknown', current_period: '2028-02', data })
+      .mockResolvedValueOnce({ status: 'freshness_unknown', current_period: '2028-02', data: { ...data, days: [row] } });
+    localServerWire(); const button = document.querySelector('#server-traffic-refresh');
+    button.click(); await flush(); expect(document.querySelector('#server-traffic svg')).toBeNull();
+    button.click(); await flush(); expect(document.querySelector('#server-traffic svg')).toBeNull();
+    localServerStop();
+  });
+  it('обрабатывает високосный февраль и не соединяет неполный ряд', async () => {
+    const days = Array.from({ length: 29 }, (_, i) => ({ date: `2028-02-${String(i + 1).padStart(2, '0')}`, rx_bytes: 1e9, tx_bytes: 0 }));
+    const data = { interface: 'ens3', created_date: '2027-12-01', updated_at: '2028-02-29T12:00:00',
+      months: [{ period: '2028-02', rx_bytes: 29e9, tx_bytes: 0 }], days };
+    api.get.mockResolvedValueOnce({ status: 'freshness_unknown', current_period: '2028-02', data })
+      .mockResolvedValueOnce({ status: 'freshness_unknown', current_period: '2028-02', data: { ...data, days: days.filter(row => row.date !== '2028-02-15') } });
+    localServerWire(); const button = document.querySelector('#server-traffic-refresh');
+    button.click(); await flush();
+    expect(document.querySelectorAll('#server-traffic svg circle')).toHaveLength(29);
+    button.click(); await flush(); expect(document.querySelector('#server-traffic svg')).toBeNull();
+    localServerStop();
+  });
+});
