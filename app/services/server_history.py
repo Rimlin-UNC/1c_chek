@@ -58,7 +58,7 @@ def _validate_file(path: Path) -> None:
         raise ValueError('история должна быть отдельным обычным файлом без ссылок')
 
 
-def _connection(path: Path, *, write: bool, app_id: int = _APP_ID) -> sqlite3.Connection:
+def _connection(path: Path, *, write: bool) -> sqlite3.Connection:
     _validate_file(path)
     mode = 'rw' if write else 'ro'
     con = sqlite3.connect(f'{path.as_uri()}?mode={mode}', uri=True, timeout=1)
@@ -66,7 +66,7 @@ def _connection(path: Path, *, write: bool, app_id: int = _APP_ID) -> sqlite3.Co
         con.execute('PRAGMA trusted_schema=OFF')
         if not write:
             con.execute('PRAGMA query_only=ON')
-        if con.execute('PRAGMA application_id').fetchone()[0] != app_id:
+        if con.execute('PRAGMA application_id').fetchone()[0] != _APP_ID:
             raise ValueError('это не отдельная база истории мониторинга')
         if con.execute('PRAGMA user_version').fetchone()[0] != 1:
             raise ValueError('неподдерживаемая версия истории')
@@ -102,9 +102,9 @@ def _create_extra(con: sqlite3.Connection) -> None:
     con.execute(_EXTRA_CREATE)
 
 
-def enable_extra(path: Path, *, app_id: int = _APP_ID) -> None:
+def enable_extra(path: Path) -> None:
     """Явное добавление таблицы в существующую историю; старую схему не меняем."""
-    with closing(_connection(path, write=True, app_id=app_id)) as con, con:
+    with closing(_connection(path, write=True)) as con, con:
         con.execute('BEGIN IMMEDIATE')
         state = _extra_state(con)
         if state == 'unavailable':
@@ -113,7 +113,7 @@ def enable_extra(path: Path, *, app_id: int = _APP_ID) -> None:
             _create_extra(con)
 
 
-def initialize(path: Path, *, app_id: int = _APP_ID) -> None:
+def initialize(path: Path) -> None:
     """Явно создать только новый файл, никогда не перезаписывать существующий."""
     if not path.is_absolute():
         raise ValueError('путь истории должен быть абсолютным')
@@ -123,7 +123,7 @@ def initialize(path: Path, *, app_id: int = _APP_ID) -> None:
     os.close(fd)
     # При ошибке пустой файл остаётся для ручного расследования, не удаляем его.
     with closing(sqlite3.connect(f'{path.as_uri()}?mode=rw', uri=True, timeout=1)) as con, con:
-        con.execute(f'PRAGMA application_id={int(app_id)}')
+        con.execute(f'PRAGMA application_id={_APP_ID}')
         con.execute('PRAGMA user_version=1')
         con.execute('''CREATE TABLE samples (
             timestamp INTEGER PRIMARY KEY, cpu_pct REAL, memory_pct REAL, swap_pct REAL,
@@ -158,7 +158,7 @@ def _extra_values(timestamp: int, data: dict) -> tuple:
             _number(io.get('write_await_ms'), 2**53 - 1), _number(io.get('busy_pct'), 100))
 
 
-def record(path: Path, data: dict, interface: str, *, now: int | None = None, app_id: int = _APP_ID) -> None:
+def record(path: Path, data: dict, interface: str, *, now: int | None = None) -> None:
     """Одна запись на минуту, только в заранее созданную базу с маркером."""
     timestamp = int(time.time() if now is None else now)
     if timestamp < 0:
@@ -174,7 +174,7 @@ def record(path: Path, data: dict, interface: str, *, now: int | None = None, ap
               _number(net.get('rx_bytes_per_sec'), 2**53 - 1),
               _number(net.get('tx_bytes_per_sec'), 2**53 - 1))
     full = False
-    with closing(_connection(path, write=True, app_id=app_id)) as con:
+    with closing(_connection(path, write=True)) as con:
         con.execute('BEGIN IMMEDIATE')
         latest = con.execute('SELECT max(timestamp) FROM samples').fetchone()[0]
         paused_value, resume_at = con.execute('SELECT retention_paused, resume_at FROM state WHERE id=1').fetchone()
@@ -206,10 +206,10 @@ def record(path: Path, data: dict, interface: str, *, now: int | None = None, ap
         raise ValueError('достигнут предел истории; очистка приостановлена после перерыва')
 
 
-def resume_retention(path: Path, *, now: int | None = None, app_id: int = _APP_ID) -> None:
+def resume_retention(path: Path, *, now: int | None = None) -> None:
     """Явное решение администратора после проверки времени и сохранения истории."""
     timestamp = int(time.time() if now is None else now)
-    with closing(_connection(path, write=True, app_id=app_id)) as con:
+    with closing(_connection(path, write=True)) as con:
         con.execute('BEGIN IMMEDIATE')
         latest = con.execute('SELECT max(timestamp) FROM samples').fetchone()[0]
         if latest is not None and latest > timestamp:
@@ -218,14 +218,14 @@ def resume_retention(path: Path, *, now: int | None = None, app_id: int = _APP_I
         con.commit()
 
 
-def read(path: Path, period: str, *, interface: str, now: int | None = None, app_id: int = _APP_ID) -> dict:
+def read(path: Path, period: str, *, interface: str, now: int | None = None) -> dict:
     if period not in _RANGES:
         return {'status': 'invalid_range'}
     length, width = _RANGES[period]
     timestamp = int(time.time() if now is None else now)
     timestamp -= timestamp % 60
     start = timestamp - length + 60
-    with closing(_connection(path, write=False, app_id=app_id)) as con:
+    with closing(_connection(path, write=False)) as con:
         rows = con.execute('''SELECT CAST(timestamp / ? AS INTEGER) * ? AS bucket,
             count(*), avg(cpu_pct), avg(memory_pct), avg(swap_pct),
             avg(CASE WHEN interface = ? THEN rx_bytes_per_sec END),
@@ -288,15 +288,10 @@ def snapshot(period: str, *, source: str = 'local') -> dict:
     """Один запрос истории на процесс; короткий кэш не меняет базу."""
     if period not in _RANGES:
         return {'status': 'invalid_range'}
-    if source not in ('local', 'node_exporter'):
+    if source != 'local':
         return {'status': 'invalid_source'}
     try:
-        if source == 'node_exporter':
-            from .node_exporter_monitor import HISTORY_APP_ID
-            value = _env('YM_NODE_EXPORTER_HISTORY_FILE', '').strip()
-            path = Path(value) if value else None
-        else:
-            path = _configured_path()
+        path = _configured_path()
         if path is None:
             return {'status': 'not_configured'}
         interface = _env('YM_MONITOR_TRAFFIC_INTERFACE', '').strip()
@@ -304,7 +299,7 @@ def snapshot(period: str, *, source: str = 'local') -> dict:
             interface = ''
         _validate_file(path)
         info = path.lstat()
-        key = (source, path, interface, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+        key = (path, interface, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
         if not _cache_lock.acquire(blocking=False):
             return {'status': 'busy'}
         try:
@@ -312,10 +307,7 @@ def snapshot(period: str, *, source: str = 'local') -> dict:
             cached = _cache.get(period)
             if cached and cached[0] == key and 0 <= now - cached[1] < _CACHE_SECONDS:
                 return cached[2]
-            result = (read(path, period, interface=interface, app_id=HISTORY_APP_ID) if source == 'node_exporter'
-                      else read(path, period, interface=interface))
-            if source == 'node_exporter':
-                result = {**result, 'source': source}
+            result = read(path, period, interface=interface)
             if result.get('status') == 'available':
                 _cache[period] = (key, time.monotonic(), result)
             return result

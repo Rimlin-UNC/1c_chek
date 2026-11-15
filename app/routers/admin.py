@@ -351,15 +351,6 @@ def server_monitor(response: Response, _user: Annotated[User, Depends(require_ad
     return local_monitor.snapshot()
 
 
-@router.get("/server-monitor/node-exporter", summary="Показатели node_exporter (админ)")
-def server_monitor_node_exporter(response: Response, _user: Annotated[User, Depends(require_admin)]):
-    """Только явно включённый источник на loopback; без фонового сбора."""
-    from ..services import node_exporter_monitor
-
-    response.headers["Cache-Control"] = "no-store"
-    return node_exporter_monitor.snapshot()
-
-
 @router.get("/server-monitor/traffic", summary="Наблюдённая статистика интерфейса (админ)")
 def server_monitor_traffic(response: Response, _user: Annotated[User, Depends(require_admin)]):
     """Необязательная история vnStat; не счёт провайдера и не сбор внутри приложения."""

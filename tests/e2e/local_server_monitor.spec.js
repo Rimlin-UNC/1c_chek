@@ -7,13 +7,14 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   await page.addInitScript(token => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.33');
+    localStorage.setItem('ymaster_seen_version', '1.72.34');
   }, token);
   const cloudRequests = [];
+  const exporterRequests = [];
   let performanceRequests = 0;
   await page.route('**/api/v1/admin/server-monitor/history?**', async route => {
     performanceRequests++;
-    await route.fulfill({ status: 200, json: { status: 'available', source: route.request().url().includes('source=node_exporter') ? 'node_exporter' : 'local', period: '1h', interface: null,
+    await route.fulfill({ status: 200, json: { status: 'available', period: '1h', interface: null,
       current_timestamp: 120, last_sample_at: 120, retention_paused: false, extra_status: 'available', buckets: [
         { timestamp: 0, expected: 1, samples: 1, cpu_pct: 30, memory_pct: 50, cpu_samples: 1, memory_samples: 1,
           load_1: 1.25, load_samples: 1, io_device: 'sda1', read_iops: 5, read_iops_samples: 1 },
@@ -21,12 +22,6 @@ test('локальный монитор работает без облачног
         { timestamp: 120, expected: 1, samples: 1, cpu_pct: 60, memory_pct: 70, cpu_samples: 1, memory_samples: 1,
           load_1: 2, load_samples: 1, io_device: 'sdb1', read_iops: 6, read_iops_samples: 1 },
       ] } });
-  });
-  let exporterRequests = 0;
-  await page.route('**/api/v1/admin/server-monitor/node-exporter', async route => {
-    exporterRequests++;
-    await route.fulfill({ status: 200, json: { status: 'available', cpu_pct: 25, memory: { pct: 60 },
-      swap: null, load: [1, 2, 3], network: { ens3: { rx_bytes_per_sec: 1024, tx_bytes_per_sec: null } } } });
   });
   let mountRequests = 0;
   await page.route('**/api/v1/admin/server-monitor/mounts', async route => {
@@ -56,10 +51,16 @@ test('локальный монитор работает без облачног
       scenario: { projected_bytes: 1200000000000, sample_days: 7, as_of: '2026-11-08T12:00:00',
         billing_verified: false, completeness_verified: false } } });
   });
-  page.on('request', req => { if (new URL(req.url()).pathname.startsWith('/api/v1/openstack')) cloudRequests.push(req.url()); });
+  page.on('request', req => {
+    const path = new URL(req.url()).pathname;
+    if (path.startsWith('/api/v1/openstack')) cloudRequests.push(req.url());
+    if (path.includes('node-exporter')) exporterRequests.push(req.url());
+  });
   await page.goto('/#/settings');
   const card = page.locator('#st-server-monitor');
   await expect(card).toBeAttached({ timeout: 30000 });
+  await expect(card.locator('#server-exporter-refresh')).toHaveCount(0);
+  await expect(card.locator('#server-history-source')).toHaveCount(0);
   if (!(await page.locator('#server-monitor-refresh').isVisible())) await card.locator('.card-title').click();
   const response = page.waitForResponse(r => r.url().endsWith('/api/v1/admin/server-monitor'));
   await page.locator('#server-monitor-refresh').click();
@@ -75,12 +76,6 @@ test('локальный монитор работает без облачног
   await expect(page.locator('#server-monitor-details')).toContainText('TCP ESTABLISHED и CLOSE_WAIT');
   await expect(page.locator('#server-monitor-note')).toContainText('История производительности');
   await expect(page.locator('#server-monitor-status')).toContainText('Локальный замер');
-  expect(exporterRequests).toBe(0);
-  await card.locator('summary').filter({ hasText: 'Готовый сборщик node_exporter' }).click();
-  await card.locator('#server-exporter-refresh').click();
-  await expect(card.locator('#server-exporter')).toContainText('60,00 %');
-  await expect(card.locator('#server-exporter')).toContainText('1,0 КиБ/с');
-  expect(exporterRequests).toBe(1);
   expect(mountRequests).toBe(0);
   await card.locator('summary').filter({ hasText: 'Монтирования' }).click();
   await card.locator('#server-mounts-refresh').click();
@@ -98,12 +93,6 @@ test('локальный монитор работает без облачног
   await expect(card.locator('#server-history svg[aria-label*="IOPS"]')).toBeVisible();
   await expect(card.locator('#server-history svg[aria-label*="IOPS"] line')).toHaveCount(0);
   expect(performanceRequests).toBe(1);
-  await card.locator('#server-history-source').selectOption('node_exporter');
-  await card.locator('#server-history-refresh').click();
-  await expect(card.locator('#server-history')).toContainText('Источник истории: node_exporter');
-  await expect(card.locator('#server-history svg[aria-label*="CPU"]')).toHaveCount(1);
-  await expect(card.locator('#server-history')).toContainText('Устройство выбрано администратором');
-  expect(performanceRequests).toBe(2);
   expect(processRequests).toBe(0);
   await card.locator('summary').filter({ hasText: 'Процессы' }).click();
   await card.locator('#server-processes-refresh').click();
@@ -127,4 +116,5 @@ test('локальный монитор работает без облачног
   expect(historyRequests).toBe(1);
   await expect(page.locator('#st-openstack')).toHaveCount(0);
   expect(cloudRequests).toEqual([]);
+  expect(exporterRequests).toEqual([]);
 });
