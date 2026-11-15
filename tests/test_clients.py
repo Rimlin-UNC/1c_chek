@@ -130,7 +130,8 @@ def test_overview_overdue_escalated_and_bank(client_firm):
     assert row_before["docreq"]["days_left"] == 0
     assert row_after["docreq"]["overdue"] == 3 and row_after["docreq"]["days_left"] == -1
     assert row_after["score"] > row_before["score"]
-    assert row_after["bank"] == {"open": 0, "status": "none", "last_sync_at": "", "last_error": ""}
+    # v1.71.4 (T-87): у банка появился список подключений — здесь их нет
+    assert row_after["bank"] == {"open": 0, "status": "none", "last_sync_at": "", "last_error": "", "banks": []}
 
 
 def test_days_left_and_period_choices():

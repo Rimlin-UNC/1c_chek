@@ -7,6 +7,9 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 
+# База часовых поясов для учёта календарного месяца
+tzdata>=2024.1
+
 # База данных
 SQLAlchemy>=2.0
 
@@ -61,13 +64,6 @@ tesserocr>=2.12; sys_platform == "linux" and (platform_machine == "x86_64" or pl
 # пропустит, обновление не сломается, а второе прочтение покажет «не установлено».
 onnxruntime>=1.18; sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "aarch64") and python_version >= "3.10"
 rapidocr>=3.10,<3.11; sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "aarch64") and python_version >= "3.10"
-
-# v1.70.51: мониторинг OpenStack — подключение к Keystone/Nova/Placement
-# по ТЗ docs/Monitor.md. Обе библиотеки обязательны по документу; импорт
-# ленивый (app/openstack_monitor/connection.py), поэтому без настроенного
-# подключения программа SDK не загружает и сбор не влияет на остальную работу.
-openstacksdk>=4.0
-keystoneauth1>=5.0
 
 # ВЕРСИИ И ОТКАТ:
 #  • верхняя граница не ставится специально — обновления проверяются тестами

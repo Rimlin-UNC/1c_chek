@@ -61,9 +61,9 @@ def get(client, path: str, host: str = PROD, scheme: str = "https"):
 def test_registry_matches_sitemap_and_robots():
     assert tuple(p.path for p in seo_pages.PAGES) == PATHS == seo.CONTENT_PAGES
     assert seo.BLOG_INDEX == "/blog" and len(seo.BLOG_PAGES) == 10
-    assert seo.PAGES == ("/", "/oferta", *PATHS, seo.BLOG_INDEX, *seo.BLOG_PAGES)
+    assert seo.PAGES == ("/", *PATHS, seo.BLOG_INDEX, *seo.BLOG_PAGES)
     xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-08")
-    assert xml.count("<url>") == 16
+    assert xml.count("<url>") == 15
     for path in (*PATHS, seo.BLOG_INDEX, *seo.BLOG_PAGES):
         assert f"<loc>https://chek.ymaster.ru{path}</loc>" in xml
         assert not any(path.startswith(d) for d in seo.DISALLOW)

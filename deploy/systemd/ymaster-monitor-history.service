@@ -1,0 +1,16 @@
+# ОБРАЗЕЦ: не включается автоматически; перед применением проверьте пути,
+# пользователя и настройку YM_MONITOR_HISTORY_FILE согласно docs/Monitor.md.
+[Unit]
+Description=Ямастер Чек — разовый сбор истории локальных показателей
+
+[Service]
+Type=oneshot
+User=ymaster
+Group=ymaster
+WorkingDirectory=/opt/ymaster-check
+ExecStart=/opt/ymaster-check/venv/bin/python -m app.services.server_history collect
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ymaster-check/data
+PrivateTmp=true

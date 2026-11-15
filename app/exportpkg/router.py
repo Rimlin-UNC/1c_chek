@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ADMIN, require_accountant
@@ -17,7 +17,7 @@ from ..database import get_db
 from ..docreq import service as docreq
 from ..models import Company, User
 from ..services.audit import log_action
-from . import service
+from . import check, service
 
 router = APIRouter(prefix="/api/v1/export", tags=["Выгрузка"])
 
@@ -58,3 +58,20 @@ def package(user: Accountant, db: Db, period: Annotated[str | None, Query(max_le
                {"company": company.name, "period": month, **manifest["counts"]})
     return Response(data, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.post("/package/check", summary="Проверить состав и контрольные суммы скачанного месячного пакета")
+async def check_package(_user: Accountant, request: Request) -> Response:
+    """Тело читается потоком с пределом, без multipart и временных файлов."""
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/zip":
+        raise HTTPException(415, "Для проверки нужен ZIP-файл")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > check.MAX_UPLOAD:
+            raise HTTPException(413, "Архив больше 20 МБ")
+        data.extend(chunk)
+    try:
+        result = check.inspect_package(bytes(data))
+    except check.CheckError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})

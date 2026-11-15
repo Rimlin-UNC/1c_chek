@@ -66,6 +66,8 @@ def inn_is_valid(inn: str) -> bool:
         return True
     if not d.isdigit():
         return False
+    if not d.strip("0"):          # T-84: ИНН из одних нулей проходил контроль цифр (0 == 0)
+        return False
     if len(d) == 10:
         return _inn_checksum(d[:9], _INN10_WEIGHTS) == int(d[9])
     if len(d) == 12:

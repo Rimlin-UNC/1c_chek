@@ -14,12 +14,15 @@ UPDATE строится только по изменённым колонкам,
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, time, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
+from ..approvals import service as approvals
+from ..approvals.models import AdvanceApproval, ApprovalSettings
 from ..auth import ROLE_ACCOUNTANT, ROLE_ADMIN
 from ..bank.models import BankConnection, BankOperation
 from ..bank.providers import TITLES as BANK_TITLES
@@ -34,10 +37,11 @@ HEADER = "X-Ym-Company"
 HOME_ATTR = "_ym_home_company"      # своя компания бухгалтера на время подмены (атрибут объекта, не колонка)
 ATTENTION_DAYS = 3                  # как на дашборде: чек «висит» в проверке дольше 3 дней
 MAX_CLIENTS = 500
+MAX_BULK = 200                      # v1.72.0 (T-89): сколько компаний можно отметить за один раз
 BAD_CONN = ("reauth", "error")
 # вес признака в очереди внимания: просрочка и ошибки — выше, «к выгрузке» — только сведение
-WEIGHTS = {"overdue": 5, "fns_bad": 3, "upd_errors": 3, "bank_open": 2, "attention": 2, "policy": 2,
-           "escalated": 2, "open": 1}
+WEIGHTS = {"overdue": 5, "fns_bad": 3, "upd_errors": 3, "approvals_overdue": 3, "bank_open": 2,
+           "attention": 2, "policy": 2, "escalated": 2, "open": 1}
 
 
 class ClientsError(Exception):
@@ -90,6 +94,33 @@ def activate(db: Session, user: User, requested: str | None) -> bool:
     return True
 
 
+def ws_company(db: Session, user: User, requested: str | None) -> str | None:
+    """v1.72.1 (T-91): компания для живых обновлений по выбору бухгалтера.
+
+    Пусто — прежнее поведение (своя компания у бухгалтера, все — у администратора). Выбрана компания —
+    право проверяется теми же правилами, что у HTTP-запросов (ADR-30): администратору — любая активная,
+    бухгалтеру — своя или назначенная администратором и активная. Компания не найдена или отключена —
+    отказ с понятной причиной; молча подписать на другую значило бы «обновлений нет, а почему — неизвестно».
+    """
+    if requested is not None and not isinstance(requested, str):
+        raise ClientsError("Неверный выбор компании — выберите клиента заново", 422)
+    cid = (requested or "").strip()
+    if not cid:
+        return None
+    if len(cid) > 36:
+        raise ClientsError("Нет доступа к компании клиента — выберите клиента заново", 403)
+    if user.role != ROLE_ADMIN:
+        allowed = allowed_company_ids(db, user) or []
+        if cid not in allowed:
+            raise ClientsError("Компания не назначена этому бухгалтеру — выберите клиента заново", 403)
+    company = db.get(Company, cid)
+    if company is None:
+        raise ClientsError("Компания не найдена — выберите клиента заново", 404)
+    if not company.is_active:
+        raise ClientsError("Компания отключена — выберите клиента заново", 403)
+    return cid
+
+
 def company_title(company: Company) -> str:
     return company.short_name or company.name
 
@@ -112,6 +143,29 @@ def clients_of(db: Session, user: User) -> list[dict]:
 
 def access_of(db: Session, accountant: User) -> list[str]:
     return client_ids(db, accountant.id)
+
+
+def check_client_limit(db: Session, user: User, extra: int = 1) -> None:
+    """Предел клиентов бухгалтера (T-84): лишний клиент не создаётся и не назначается."""
+    have = len(client_ids(db, user.id))
+    if have + extra > MAX_CLIENTS:
+        raise ClientsError(f"У бухгалтера уже {have} клиентов — предел {MAX_CLIENTS}. "
+                           "Снимите лишних в «Пользователи» → «🏢 Клиенты».")
+
+
+def adopt_client(db: Session, user: User, company_id: str) -> None:
+    """Бухгалтер завёл клиента сам (T-84): связь появляется в той же транзакции.
+
+    Иначе бухгалтер создал бы компанию, которую сам же не видит: доступ к клиенту
+    выдаётся только строкой accountant_clients (ADR-30). Свою компанию не добавляем.
+    """
+    if user.role != ROLE_ACCOUNTANT or not company_id or company_id == user.company_id:
+        return
+    exists = (db.query(AccountantClient)
+              .filter(AccountantClient.user_id == user.id,
+                      AccountantClient.company_id == company_id).first())
+    if exists is None:
+        db.add(AccountantClient(user_id=user.id, company_id=company_id, granted_by=user.id))
 
 
 def set_access(db: Session, admin: User, accountant: User, company_ids: list[str]) -> dict:
@@ -172,7 +226,10 @@ def _blank(company: Company, home: str | None) -> dict:
         "receipts": {"count": 0, "sum": 0.0, "attention": 0, "fns_bad": 0, "policy": 0, "to_export": 0},
         "primary": {"errors": 0, "to_export": 0},
         "docreq": {"open": 0, "overdue": 0, "escalated": 0, "deadline": "", "days_left": 0},
-        "bank": {"open": 0, "status": "none", "last_sync_at": "", "last_error": ""},
+        # v1.71.4 (T-87): список банков — каждый со своим состоянием, загрузкой и ошибкой
+        "bank": {"open": 0, "status": "none", "last_sync_at": "", "last_error": "", "banks": []},
+        # v1.71.3 (T-86): согласования авансовых отчётов — как на своём экране, но сразу по всем клиентам
+        "approvals": {"enabled": False, "todo": 0, "overdue": 0, "work": 0, "month": 0},
         "score": 0, "level": "ok",
     }
 
@@ -183,9 +240,10 @@ def overview(db: Session, user: User, period: str | None = None, now: datetime |
     now = now or datetime.now(timezone.utc)
     period = period or docreq.default_period(now)
     try:
-        docreq.parse_period(period)
-    except docreq.DocRequestError as exc:
-        raise ClientsError(str(exc)) from exc
+        docreq.period_start(period)
+        docreq.period_end(period)
+    except (docreq.DocRequestError, ValueError, OverflowError) as exc:
+        raise ClientsError("Период — допустимый месяц в виде ГГГГ-ММ") from exc
     ids = allowed_company_ids(db, user)
     stmt = select(Company).where(Company.is_active.is_(True))
     if ids is not None:
@@ -193,6 +251,16 @@ def overview(db: Session, user: User, period: str | None = None, now: datetime |
     companies = sorted(db.execute(stmt).scalars(), key=lambda c: company_title(c).lower())
     home = home_company_id(user)
     rows = {c.id: _blank(c, home) for c in companies}
+    # Договор доступен только в уже отфильтрованном списке компаний.
+    from .contract import as_dict, reminder
+    today = now.astimezone(docreq.MSK).date()
+    for company in companies:
+        item = as_dict(company)
+        if item:
+            from datetime import date
+            item["reminder"] = reminder(date.fromisoformat(item["service_until"]) if item["service_until"] else None,
+                                        today)
+        rows[company.id]["contract"] = item
     cids = list(rows)
     result = {"period": period, "period_title": month_title(period), "companies": [], "totals": {},
               "generated_at": now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")}
@@ -200,11 +268,18 @@ def overview(db: Session, user: User, period: str | None = None, now: datetime |
         _fill(db, user, rows, cids, period, now)
     for row in rows.values():
         r, p, d, b = row["receipts"], row["primary"], row["docreq"], row["bank"]
+        ap = row["approvals"]
         parts = {"overdue": d["overdue"], "fns_bad": r["fns_bad"], "upd_errors": p["errors"],
-                 "bank_open": b["open"], "attention": r["attention"], "policy": r["policy"],
-                 "escalated": d["escalated"], "open": d["open"]}
+                 "approvals_overdue": ap["overdue"], "bank_open": b["open"], "attention": r["attention"],
+                 "policy": r["policy"], "escalated": d["escalated"], "open": d["open"]}
+        alert = (row["contract"] or {}).get("reminder")
+        # В приоритете видны 30 дней, 7 дней и прошедшая дата; это сигнал на проверку,
+        # а не автоматический вывод о прекращении или продлении договора.
+        contract_score = {"soon": 1, "urgent": 3, "expired": 5}.get((alert or {}).get("level"), 0)
         row["score"] = sum(WEIGHTS[k] * v for k, v in parts.items()) + (3 if b["status"] in BAD_CONN else 0)
-        bad = d["overdue"] or r["fns_bad"] or p["errors"] or b["status"] in BAD_CONN
+        row["score"] += contract_score
+        bad = (d["overdue"] or r["fns_bad"] or p["errors"] or ap["overdue"] or b["status"] in BAD_CONN
+               or (alert and alert["level"] in ("urgent", "expired")))
         row["level"] = "bad" if bad else ("warn" if row["score"] else "ok")
     ordered = sorted(rows.values(), key=lambda x: (-x["score"], x["name"].lower()))
     result["companies"] = ordered
@@ -273,26 +348,108 @@ def _fill(db: Session, user: User, rows: dict[str, dict], cids: list[str], perio
     for cid, count in bank_open.items():
         rows[cid]["bank"]["open"] = count
     # v1.70.102 (ADR-32): банков у компании может быть несколько — в сводке худшее состояние, последняя
-    # проверка и первая ошибка с названием банка; список banks — для подсказки «какие банки подключены»
+    # проверка и первая ошибка с названием банка.
+    # v1.71.4 (T-87): список банков — каждый со своим состоянием, загрузкой и ошибкой, худший первым:
+    # по нему карточка клиента показывает «какой банк сломался и что именно случилось», а не одну строку.
     rank = {"reauth": 4, "error": 3, "awaiting": 2, "new": 1, "active": 0}
     for conn in db.execute(select(BankConnection).where(BankConnection.company_id.in_(cids))).scalars():
         info = rows[conn.company_id]["bank"]
         status = conn.status or "new"
         title = BANK_TITLES.get(conn.bank, conn.bank)
-        info.setdefault("banks", []).append({"bank": conn.bank, "title": title, "status": status})
+        last = conn.last_sync_at.isoformat() + "Z" if conn.last_sync_at else ""
+        info["banks"].append({"bank": conn.bank, "title": title, "status": status,
+                              "error": (conn.last_error or "")[:200],
+                              "last_error": f"{title}: {conn.last_error}"[:200] if conn.last_error else "",
+                              "last_sync_at": last, "method": conn.method or "",
+                              "accounts": _accounts_count(conn.accounts_enc)})
         if info["status"] == "none" or rank.get(status, 1) > rank.get(info["status"], 1):
             info["status"] = status
-        last = conn.last_sync_at.isoformat() + "Z" if conn.last_sync_at else ""
         if last > info["last_sync_at"]:
             info["last_sync_at"] = last
         if conn.last_error and not info["last_error"]:
             info["last_error"] = f"{title}: {conn.last_error}"[:200]
+    for cid in cids:
+        info = rows[cid]["bank"]
+        info["banks"].sort(key=lambda b: (-rank.get(b["status"], 1), b["title"]))
+    _approvals(db, rows, cids, user, now, datetime.combine(docreq.period_start(period), time.min))
+
+
+def _accounts_count(value: str) -> int:
+    """Сколько счетов компании подключено в этом банке (accounts_enc — [{id, tail, currency, status}])."""
+    try:
+        rows = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return 0
+    return len(rows) if isinstance(rows, list) else 0
+
+
+def _approvals(db: Session, rows: dict[str, dict], cids: list[str], user: User, now: datetime,
+               month_start: datetime) -> None:
+    """v1.71.3 (T-86): согласования авансовых отчётов в сводке — по компаниям, где согласование включено.
+
+    «Ждут моего хода» — то же правило, что в списке «Ждут меня» на экране «Согласования» (approvals.turn_filter):
+    второе мнение разошлось бы с экраном. Считаются только отчёты компаний, доступных пользователю (ADR-30:
+    бухгалтер видит компании, назначенные администратором, и не видит спорные чеки единого реестра).
+    """
+    enabled = {cid for (cid,) in db.execute(select(ApprovalSettings.company_id)
+                                            .where(ApprovalSettings.company_id.in_(cids),
+                                                   ApprovalSettings.enabled.is_(True)))}
+    if not enabled:
+        return
+    ids = sorted(enabled)
+    for cid in ids:
+        rows[cid]["approvals"]["enabled"] = True
+    todo = _grouped(db, select(AdvanceApproval.company_id, func.count(AdvanceApproval.id))
+                    .where(or_(*approvals.turn_filter(user)), AdvanceApproval.company_id.in_(ids))
+                    .group_by(AdvanceApproval.company_id))
+    overdue = _grouped(db, select(AdvanceApproval.company_id, func.count(AdvanceApproval.id))
+                       .where(or_(*approvals.turn_filter(user)), AdvanceApproval.company_id.in_(ids),
+                              AdvanceApproval.deadline_at.isnot(None), AdvanceApproval.deadline_at <= _naive_utc(now))
+                       .group_by(AdvanceApproval.company_id))
+    work = _grouped(db, select(AdvanceApproval.company_id, func.count(AdvanceApproval.id))
+                    .where(AdvanceApproval.company_id.in_(ids),
+                           AdvanceApproval.status.in_(("draft", "pending")))
+                    .group_by(AdvanceApproval.company_id))
+    month = _grouped(db, select(AdvanceApproval.company_id, func.count(AdvanceApproval.id))
+                     .where(AdvanceApproval.company_id.in_(ids), AdvanceApproval.created_at >= month_start)
+                     .group_by(AdvanceApproval.company_id))
+    for cid in ids:
+        info = rows[cid]["approvals"]
+        info["todo"], info["overdue"] = todo.get(cid, 0), overdue.get(cid, 0)
+        info["work"], info["month"] = work.get(cid, 0), month.get(cid, 0)
+
+
+# ------------------------------------------------------------------ массовые действия (T-89, v1.72.0)
+BULK_ACTIONS = ("remind", "archive", "restore", "assign")
+BULK_TITLES = {"remind": "напомнили о документах", "archive": "отправили в архив",
+               "restore": "вернули из архива", "assign": "назначили сотрудника"}
+
+
+def bulk_targets(db: Session, user: User, company_ids: list[str]) -> tuple[list[Company], list[dict]]:
+    """Компании пачки, которые пользователю можно менять, и отказы по остальным (причина — для окна).
+
+    Права те же, что у одиночных действий: администратор — любая компания, бухгалтер — только назначенная
+    ему администратором и активная (ADR-30). Чужую компанию не «пропускаем молча»: она попадает в отказы
+    с причиной, иначе бухгалтер считает, что напомнил клиенту, а напоминания не было.
+    """
+    allowed = allowed_company_ids(db, user)
+    found = {c.id: c for c in db.execute(select(Company).where(Company.id.in_(company_ids or [""]))).scalars()}
+    ok, refused = [], []
+    for cid in dict.fromkeys(company_ids):
+        company = found.get(cid)
+        if company is None:
+            refused.append({"company_id": cid, "ok": False, "error": "компания не найдена"})
+        elif allowed is not None and cid not in allowed:
+            refused.append({"company_id": cid, "ok": False, "error": "компания не назначена этому бухгалтеру"})
+        else:
+            ok.append(company)
+    return ok, refused
 
 
 def _totals(rows: list[dict]) -> dict:
     out = {"companies": len(rows), "bad": 0, "warn": 0, "ok": 0, "receipts": 0, "sum": 0.0, "attention": 0,
            "fns_bad": 0, "policy": 0, "to_export": 0, "upd_errors": 0, "upd_to_export": 0, "open": 0,
-           "overdue": 0, "escalated": 0, "bank_open": 0}
+           "overdue": 0, "escalated": 0, "bank_open": 0, "approvals_todo": 0, "approvals_overdue": 0}
     for row in rows:
         out[row["level"]] += 1
         r, p, d, b = row["receipts"], row["primary"], row["docreq"], row["bank"]
@@ -306,12 +463,23 @@ def _totals(rows: list[dict]) -> dict:
         out["overdue"] += d["overdue"]
         out["escalated"] += d["escalated"]
         out["bank_open"] += b["open"]
+        out["approvals_todo"] += row["approvals"]["todo"]
+        out["approvals_overdue"] += row["approvals"]["overdue"]
     return out
 
 
 def period_choices(now: datetime | None = None, count: int = 6) -> list[dict]:
     """Последние месяцы для выбора периода: отчётный (прошлый) — первым, затем текущий и ранние."""
-    current = docreq.default_period(now)
-    months = [docreq.shift_period(current, 1), current] + [docreq.shift_period(current, -k) for k in range(1, count)]
-    return [{"period": p, "title": month_title(p)} for p in months]
+    actual = (now or docreq.now_msk()).astimezone(docreq.MSK)
+    current = docreq.default_period(actual)
+    months = ([current] if actual.year == 1 and actual.month == 1 else [docreq.shift_period(current, 1), current])
+    months += [docreq.shift_period(current, -k) for k in range(1, count)]
+    choices = []
+    for period in months:
+        try:
+            docreq.validate_operational_period(period)
+        except docreq.DocRequestError:
+            continue
+        choices.append({"period": period, "title": month_title(period)})
+    return choices
 

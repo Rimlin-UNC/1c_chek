@@ -30,7 +30,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -90,7 +90,7 @@ class TestWiring:
         from app.services import seo, seo_pages
         assert seo.CONTENT_PAGES == ("/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov")
         assert seo.BLOG_INDEX == "/blog" and len(seo.BLOG_PAGES) == 10
-        assert seo.PAGES == ("/", "/oferta", *seo.CONTENT_PAGES, seo.BLOG_INDEX, *seo.BLOG_PAGES)
+        assert seo.PAGES == ("/", *seo.CONTENT_PAGES, seo.BLOG_INDEX, *seo.BLOG_PAGES)
         assert tuple(p.path for p in seo_pages.PAGES) == seo.CONTENT_PAGES
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))

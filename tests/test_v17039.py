@@ -271,7 +271,11 @@ class TestWebScanningUnaffected:
     def test_web_client_parser_untouched(self):
         js = _read("app/static/js/app.js")
         assert "parseQrClient" in js
-        assert "qr_data: text" in js
+        # С 1.72.12 исходный текст сначала фиксируется в очереди, затем
+        # без преобразования передаётся серверу; браузерный сценарий проверяет путь целиком.
+        assert "qrData: text" in js
+        assert "qr_data: item.qrData" in js
+        assert "'/api/v1/receipts/scan/offline'" in js
 
 
 # ------------------------------------------------- независимость от порядка

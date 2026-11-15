@@ -132,7 +132,7 @@ class TestRelease17066:
     def test_version_is_release(self):
         src = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
         # живое значение сверяет выпуск-владелец; здесь — форма релиза
-        assert re.search(r"APP_VERSION: str = \"1\.(?:70|71)\.\d+\"", src)
+        assert re.search(r"APP_VERSION: str = \"1\.(?:7[0-9])\.\d+\"", src)
 
     def test_changelog_has_release(self):
         text = CHANGELOG.read_text(encoding="utf-8")
@@ -162,11 +162,11 @@ class TestRelease17066:
         for year in range(33, 38):
             text = (ROOT / "tests" / f"test_v170{year}.py").read_text(
                 encoding="utf-8")
-            assert re.search(r"\"1\.(?:70|71)\.\d+\"", text)
+            assert re.search(r"\"1\.(?:7[0-9])\.\d+\"", text)
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:70|71)\.\d+", sw)
+        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

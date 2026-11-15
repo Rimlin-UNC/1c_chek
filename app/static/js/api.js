@@ -43,13 +43,24 @@ export class ApiError extends Error {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let connectionRequestId = 0;
+export function getApiRequestId() { return connectionRequestId; }
+function reportConnection(id, token, ok) {
+  // Ответ предыдущей сессии не меняет состояние новой.
+  if (getToken() === token) window.dispatchEvent(new CustomEvent('ymaster:api-connection', { detail: { id, ok } }));
+}
 
 async function once(method, path, body, options = {}) {
-  const headers = withClient({});
+  const headers = Object.prototype.hasOwnProperty.call(options, 'clientId')
+    ? (options.clientId ? { 'X-Ym-Company': options.clientId } : {})
+    : withClient({});
   const token = getToken();
   if (token) headers['Authorization'] = 'Bearer ' + token;
   let payload;
   if (body instanceof FormData) {
+    payload = body;
+  } else if (body instanceof Blob) {
+    headers['Content-Type'] = body.type || 'application/octet-stream';
     payload = body;
   } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -63,10 +74,13 @@ async function once(method, path, body, options = {}) {
     throw new ApiError(0, 'Нет связи с сервером', null);
   }
   if (resp.status === 401 && !path.includes('/auth/login') && !path.includes('/auth/register')) {
-    clearToken();
-    // best-effort очистка серверной cookie сессии
-    try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch {}
-    window.dispatchEvent(new CustomEvent('ymaster:logout'));
+    // Поздний ответ старой вкладки не должен разлогинить нового пользователя.
+    if (getToken() === token) {
+      clearToken();
+      // best-effort очистка серверной cookie сессии
+      try { fetch('/api/v1/auth/logout', { method: 'POST' }); } catch {}
+      window.dispatchEvent(new CustomEvent('ymaster:logout'));
+    }
     throw new ApiError(401, 'Сессия истекла, войдите заново');
   }
   if (!resp.ok) {
@@ -78,7 +92,7 @@ async function once(method, path, body, options = {}) {
         : (data.detail?.message || JSON.stringify(data.detail || data));
     } catch { /* не JSON */ }
     const err = new ApiError(resp.status, msg, data);
-    if (resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
+    if (!options.noClientFallback && resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
       setClient('');                       // клиент отозван или отключён — назад в свою компанию
       window.dispatchEvent(new CustomEvent('ymaster:client-reset', { detail: { message: msg } }));
       err.clientReset = true;
@@ -86,6 +100,7 @@ async function once(method, path, body, options = {}) {
     throw err;
   }
   window.__ymLastApiOk = Date.now();   // для индикатора «офлайн» (гистерезис)
+  if (!['GET', 'HEAD'].includes(method)) window.dispatchEvent(new CustomEvent('ymaster:data-changed'));
   const ct = resp.headers.get('content-type') || '';
   return ct.includes('json') ? resp.json() : resp.text();
 }
@@ -93,10 +108,13 @@ async function once(method, path, body, options = {}) {
 /** Запрос с автоматическим повтором при сбоях сети (status 0). */
 async function request(method, path, body, options = {}) {
   const attempts = options.retries !== undefined ? options.retries : 3;
+  const id = ++connectionRequestId, token = getToken();
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await once(method, path, body, options);
+      const result = await once(method, path, body, options);
+      reportConnection(id, token, true);
+      return result;
     } catch (e) {
       lastErr = e;
       if (e.clientReset && !options.clientRetried) {      // v1.70.100: повтор уже без клиента
@@ -104,7 +122,11 @@ async function request(method, path, body, options = {}) {
       }
       // Повторяем только сетевые сбои и 502/503/504 (просыпающийся сервер)
       const retryable = e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504;
-      if (!retryable || i === attempts - 1) throw e;
+      if (!retryable || i === attempts - 1 || options.signal?.aborted) {
+        // 502/503/504 может означать отказ внешнего сервиса, а не сети приложения.
+        if (e.status === 0 && !options.signal?.aborted) reportConnection(id, token, false);
+        throw e;
+      }
       await sleep(350 * (i + 1));
     }
   }
@@ -120,18 +142,22 @@ export const api = {
   download: async (p, b) => {
     // v1.8.2: без тела — GET (эндпоинты скачивания — GET: бэкап, QR и т.п.);
     // прежде отправлялся POST и кнопка «Скачать резервную копию БД» падала 405
-    const headers = withClient({ 'Authorization': 'Bearer ' + getToken() });
+    const token = getToken(), id = ++connectionRequestId;
+    const headers = withClient({ 'Authorization': 'Bearer ' + token });
     const opts = b === undefined
       ? { method: 'GET', headers }
       : { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
           body: JSON.stringify(b) };
-    const resp = await fetch(p, opts);
+    let resp;
+    try { resp = await fetch(p, opts); }
+    catch (e) { reportConnection(id, token, false); throw e; }
     if (!resp.ok) {
       let msg = 'Ошибка ' + resp.status;
       try { const j = await resp.json(); msg = typeof j.detail === 'string' ? j.detail : msg; } catch {}
       throw new ApiError(resp.status, msg);
     }
     window.__ymLastApiOk = Date.now();
+    reportConnection(id, token, true);
     const blob = await resp.blob();
     const cd = resp.headers.get('content-disposition') || '';
     const m = cd.match(/filename="?([^";]+)"?/);

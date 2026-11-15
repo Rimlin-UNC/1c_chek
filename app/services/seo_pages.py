@@ -299,7 +299,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 <a class="skip" href="#main">К тексту</a>
 <header class="top">
   <a class="brand" href="/"><img src="/img/logo.svg" alt="" width="32" height="32">Ямастер <span>Чек</span></a>
-  <a class="btn" href="/">Войти</a>
+  <a class="btn" href="/#land-login">Войти</a>
 </header>
 <nav class="crumbs" aria-label="Вы здесь">
   <ol itemscope itemtype="https://schema.org/BreadcrumbList">

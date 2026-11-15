@@ -1,299 +1,31 @@
-"""v1.70.52 — подключение к облаку провайдера по файлу openrc.sh.
-
-Задача владельца (дословно): «Провайдер сервера предоставляет на скриншоте,
-заработай чтоб можно было видеть статистику сервера.»
-
-На скриншоте — панель управления провайдера: вкладка «API», блок панели
-OpenStack (адрес, логин, пароль под маской с кнопкой «Показать») и рядом
-блок «OpenStack CLI клиент», который отдаёт готовый файл openrc.sh со
-всеми параметрами Keystone. Вручную переносить из панели в карточку
-мониторинга семь полей долго, а ошибка в домене или регионе превращается
-в непонятный отказ подключения.
-
-Решение выпуска: на вкладке «Подключение» карточки мониторинга облака
-появились поле для содержимого openrc.sh и кнопка «Заполнить из openrc.sh».
-Файл разбирается СТРОГО в браузере: его текст не уходит на сервер ни одним
-запросом, поэтому секрет не попадает ни в журнал запросов, ни в ответы
-программы. Реальные адрес и логин провайдера владельца в репозитории не
-хранятся — в проверках используются заведомо подставные значения.
-
-Что здесь проверяется:
- 1. Настоящий парсер parseOpenrc прогоняется в Node на пяти входах: полный
-    файл, прикладные учётные данные, пустой текст, мусор, значения с путём
-    и пробелами.
- 2. Поле и кнопка на карточке существуют, подсказка объясняет, что разбор
-    идёт в браузере; отсутствующие переменные не стирают ручной ввод.
- 3. Содержимое поля не достигает сервера: в маршрутах контура нет openrc,
-    в полезной нагрузке «Сохранить» нет этого поля, текст не читается нигде,
-    кроме обработчика заполнения.
- 4. Данные провайдера владельца отсутствуют во всех текстовых файлах
-    репозитория.
- 5. Выпуск v1.70.52: точки синхронизации, «Что нового», CHANGELOG, журнал
-    вёрстки, цитата владельца, прежний класс выпуска — только история.
-"""
-
-import json
+# Исторические проверки выпуска и общефункциональные регрессии.
+# Рабочий облачный контур удалён по поручению владельца (#105).
 import pathlib
 import re
-import shutil
-import subprocess
-
-import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 STATIC = APP / "static"
-APP_JS = STATIC / "js" / "app.js"
-OSM_JS = STATIC / "js" / "osm.js"
-INDEX = STATIC / "index.html"
-MAX_HTML = STATIC / "maxapp" / "index.html"
-CABINET = STATIC / "b2b" / "index.html"
-SW = STATIC / "sw.js"
-MANIFEST = STATIC / "manifest.webmanifest"
 DOCS = ROOT / "docs"
+APP_JS = STATIC / "js" / "app.js"
+INDEX = STATIC / "index.html"
+VENDOR = STATIC / "js" / "vendor"
 CHANGELOG = ROOT / "CHANGELOG.md"
 JOURNAL = DOCS / "ui_journal.md"
-ROUTER = APP / "openstack_monitor" / "router.py"
-RELEASE_51_TESTS = ROOT / "tests" / "test_v17051.py"
+
+
+def _read(path):
+    return pathlib.Path(path).read_text(encoding="utf-8")
 
 OWNER_QUOTE_HEAD = "провайдер сервера предоставляет на скриншоте"
+
 OWNER_QUOTE_TAIL = "чтоб можно было видеть статистику сервера"
 
-# Заведомо подставные значения: настоящие адрес и логин провайдера владельца
-# не должны попадать ни в код, ни в тесты (см. TestProviderDataIsNotInTheRepo).
 FAKE_USERNAME = "cloud-user-00000000-0000-0000-0000-000000000000"
+
 FAKE_AUTH_URL = "https://horizon.example.ru:5000/v3"
 
 
-def _read(path: pathlib.Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-# ==========================================================================
-#  1. Настоящий парсер openrc.sh в Node
-# ==========================================================================
-NODE_SHIM = """
-import { readFileSync } from 'node:fs';
-const el = () => ({ classList: { add() {}, remove() {}, toggle() {} }, style: {},
-  appendChild() {}, querySelector: () => null, addEventListener() {},
-  setAttribute() {}, remove() {}, innerHTML: '', textContent: '', value: '' });
-globalThis.document = { getElementById: () => el(), querySelector: () => el(),
-  querySelectorAll: () => [], createElement: () => el(),
-  addEventListener() {}, body: el(), documentElement: el() };
-globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
-globalThis.window = {};
-globalThis.performance = { now: () => 0 };
-globalThis.requestAnimationFrame = () => 0;
-const inputs = JSON.parse(readFileSync('__INPUTS__', 'utf8'));
-const { parseOpenrc } = await import('__OSM__');
-const out = {};
-for (const [name, text] of Object.entries(inputs)) {
-  out[name] = parseOpenrc(text);
-}
-console.log(JSON.stringify(out));
-"""
-
-
-def _inputs() -> dict:
-    full = "\n".join([
-        "# Console openrc file — скачан из панели провайдера",
-        "export OS_AUTH_URL=" + FAKE_AUTH_URL,
-        "export OS_PROJECT_NAME=demo",
-        "export OS_USERNAME=" + FAKE_USERNAME,
-        'export OS_USER_DOMAIN_NAME="Default"',
-        "export OS_PROJECT_DOMAIN_NAME='Default'",
-        "export OS_REGION_NAME=RegionOne",
-        "export OS_INTERFACE=public",
-        'export OS_PASSWORD="s3cr3t-value"',
-        "export OS_TENANT_NAME=fallback-project",
-        "  OS_IDENTITY_API_VERSION=3",
-    ])
-    appcred = "\n".join([
-        "export OS_AUTH_URL=" + FAKE_AUTH_URL,
-        "export OS_APPLICATION_CREDENTIAL_ID=ac-id-1",
-        "export OS_APPLICATION_CREDENTIAL_SECRET=ac-secret-1",
-    ])
-    garbage = "\n".join([
-        "просто текст",
-        "без переменных",
-        "FOO=bar",
-        "# export OS_REGION_NAME=закомментировано",
-    ])
-    return {
-        "full": full,
-        "appcred": appcred,
-        "empty": "",
-        "garbage": garbage,
-        "urlpath": "export OS_AUTH_URL=" + FAKE_AUTH_URL + "/auth",
-        "spaces": 'export OS_PASSWORD="value with spaces"',
-    }
-
-
-def _run_parser(tmp_path):
-    node = shutil.which("node") or shutil.which("nodejs")
-    if not node:
-        pytest.skip("node недоступен")
-    inputs = tmp_path / "inputs.json"
-    inputs.write_text(json.dumps(_inputs()), encoding="utf-8")
-    script = (NODE_SHIM
-              .replace("__INPUTS__", inputs.as_posix())
-              .replace("__OSM__", OSM_JS.as_posix()))
-    f = tmp_path / "openrc.mjs"
-    f.write_text(script, encoding="utf-8")
-    code = subprocess.run([node, str(f)], capture_output=True, text=True,
-                          check=False)
-    assert code.returncode == 0, (code.stdout + code.stderr)[:800]
-    return json.loads(code.stdout)
-
-
-class TestOpenrcParserInNode:
-    """Проверяется НАСТОЯЩАЯ функция из osm.js, а не её пересказ."""
-
-    def test_full_file_is_parsed(self, tmp_path):
-        res = _run_parser(tmp_path)["full"]
-        assert res["OS_AUTH_URL"] == FAKE_AUTH_URL
-        assert res["OS_USERNAME"] == FAKE_USERNAME
-        assert res["OS_PROJECT_NAME"] == "demo"
-        assert res["OS_PASSWORD"] == "s3cr3t-value", "кавычки не сняты"
-        assert res["OS_USER_DOMAIN_NAME"] == "Default"
-        assert res["OS_PROJECT_DOMAIN_NAME"] == "Default"
-        assert res["OS_REGION_NAME"] == "RegionOne"
-        assert res["OS_INTERFACE"] == "public"
-        assert res["OS_TENANT_NAME"] == "fallback-project"
-        # строка без export и с ведущими пробелами тоже разобрана
-        assert res["OS_IDENTITY_API_VERSION"] == "3"
-
-    def test_comments_are_skipped(self, tmp_path):
-        res = _run_parser(tmp_path)
-        for case in ("full", "garbage"):
-            assert not any(k.lstrip().startswith("#") for k in res[case]), case
-        # закомментированный export не становится значением
-        assert "OS_REGION_NAME" not in res["garbage"]
-
-    def test_application_credential_file(self, tmp_path):
-        res = _run_parser(tmp_path)["appcred"]
-        assert res == {
-            "OS_AUTH_URL": FAKE_AUTH_URL,
-            "OS_APPLICATION_CREDENTIAL_ID": "ac-id-1",
-            "OS_APPLICATION_CREDENTIAL_SECRET": "ac-secret-1",
-        }
-
-    def test_empty_and_garbage_yield_nothing(self, tmp_path):
-        res = _run_parser(tmp_path)
-        assert res["empty"] == {}
-        assert res["garbage"] == {}, "нерелевантные строки не должны париться"
-
-    def test_value_keeps_path_and_spaces(self, tmp_path):
-        res = _run_parser(tmp_path)
-        assert res["urlpath"]["OS_AUTH_URL"] == FAKE_AUTH_URL + "/auth", \
-            "путь после порта потерян"
-        assert res["spaces"]["OS_PASSWORD"] == "value with spaces"
-
-    def test_parser_is_exported_for_reuse(self):
-        js = _read(OSM_JS)
-        assert "export function parseOpenrc(" in js
-
-
-# ==========================================================================
-#  2. Поле и кнопка на карточке
-# ==========================================================================
-class TestOpenrcFieldOnTheCard:
-
-    def test_textarea_and_button_exist(self):
-        js = _read(OSM_JS)
-        assert 'id="osm-openrc"' in js
-        assert 'id="osm-openrc-apply"' in js
-        assert "Заполнить из openrc.sh" in js
-
-    def test_textarea_sits_on_the_connection_tab(self):
-        """Поле живёт в шаблоне вкладки «Подключение», до полей формы:
-        администратор видит его первым, а не ищет после четырнадцати полей.
-        Обёртку `osm-panel-conn` искать нельзя: в исходнике она стоит ПОСЛЕ
-        шаблона connPanel, поэтому тело вырезается по границам функции."""
-        js = _read(OSM_JS)
-        body = js.split("function connPanel(", 1)[1].split("\nfunction ", 1)[0]
-        assert 'id="osm-openrc"' in body
-        assert body.index('id="osm-openrc"') < body.index('id="osm-auth-url"')
-
-    def test_hint_says_parsing_happens_in_the_browser(self):
-        js = _read(OSM_JS)
-        assert "Разбирается в браузере" in js
-        assert "не отправляется" in js
-        assert "на вашем устройстве" in js
-
-    def test_missing_variables_do_not_wipe_manual_input(self):
-        js = _read(OSM_JS)
-        assert "if (!el || !value) return;" in js, \
-            "пустая переменная openrc.sh не должна стирать введённое руками"
-
-    def test_filled_list_is_reported_to_the_admin(self):
-        js = _read(OSM_JS)
-        assert "filled.push(" in js
-        assert "filled.join(" in js
-        # пустой результат — честная ошибка, а не тихая вставка
-        assert "не найдено ни одной переменной OS_" in js
-
-    def test_auth_type_switch_is_shared_with_the_handler(self):
-        """Переключение полей по способу аутентификации — одна функция на
-        select и на заполнение из файла: иначе раскладка разошлась бы."""
-        js = _read(OSM_JS)
-        assert "function syncAuthTypeVisibility()" in js
-        assert js.count("syncAuthTypeVisibility()") >= 3, \
-            "объявление + onchange + заполнение из openrc"
-
-    def test_placeholder_shows_the_expected_shape(self):
-        """В подсказке поля — образец строк файла: администратор сразу видит,
-        что вставлять нужно файл целиком, а не одно значение."""
-        js = _read(OSM_JS)
-        tag = js.split("<textarea", 1)[1].split(">", 1)[0]
-        assert 'id="osm-openrc"' in tag
-        for var in ("OS_AUTH_URL", "OS_USERNAME", "OS_PROJECT_NAME"):
-            assert var in tag, f"в образце нет {var}"
-
-
-# ==========================================================================
-#  3. Содержимое файла не достигает сервера
-# ==========================================================================
-class TestOpenrcNeverReachesTheServer:
-
-    def test_backend_has_no_openrc_route(self):
-        router = _read(ROUTER).lower()
-        assert "openrc" not in router, \
-            "приём файла на сервере — лишний путь для секрета"
-
-    def test_settings_payload_has_no_openrc_field(self):
-        js = _read(OSM_JS)
-        body = js.split("function readConnectionForm() {", 1)[1].split(
-            "\n}", 1)[0]
-        assert "osm-openrc" not in body, \
-            "полезная нагрузка «Сохранить» не должна содержать текст файла"
-
-    def test_textarea_value_is_read_exactly_once(self):
-        js = _read(OSM_JS)
-        assert js.count("getElementById('osm-openrc')") == 1, \
-            "значение поля читает только обработчик заполнения"
-
-    def test_no_request_carries_openrc(self):
-        js = _read(OSM_JS)
-        low = js.lower()
-        calls = list(re.finditer(r"api\.(?:post|get|put|delete)\(|fetch\(", low))
-        assert calls, "запросы в osm.js не найдены — проверка выродилась"
-        for m in calls:
-            chunk = low[m.start():m.start() + 160]
-            assert "openrc" not in chunk, f"запрос с текстом файла: {chunk}"
-
-    def test_apply_only_touches_dom_values(self):
-        """applyOpenrc кладёт значения в поля и ничего не отправляет: внутри
-        функции нет ни api, ни fetch."""
-        js = _read(OSM_JS)
-        body = js.split("function applyOpenrc(", 1)[1].split("\n}", 1)[0]
-        assert "api." not in body and "fetch(" not in body
-        assert "el.value = value" in body
-
-
-# ==========================================================================
-#  4. Данные провайдера владельца не хранятся в репозитории
-# ==========================================================================
 class TestProviderDataIsNotInTheRepo:
     """Скриншот владельца содержит настоящие адрес панели и логин. Им не
     место в коде, тестах и документации: репозиторий переживает смену
@@ -333,9 +65,6 @@ class TestProviderDataIsNotInTheRepo:
         assert all(len(n) > 6 for n in self.NEEDLES), "иглы вырождены"
 
 
-# ==========================================================================
-#  5. Выпуск v1.70.52
-# ==========================================================================
 class TestRelease17052:
     """v1.70.53: выпуск 1.70.52 отгружен.
 

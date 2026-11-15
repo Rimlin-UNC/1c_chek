@@ -33,7 +33,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -211,7 +211,7 @@ class TestDocsAndKb:
 
     def test_database_doc(self):
         db = read("docs/DATABASE.md")
-        m, n = re.search(r"(\d+) объявлений `__tablename__`", db), re.search(r"все (\d+) таблиц приложения", db)
+        m, n = re.search(r"(\d+) объявлений `__tablename__`", db), re.search(r"все (\d+) таблиц(?:ы)? приложения", db)
         assert m and n and int(m.group(1)) >= 68 and int(n.group(1)) >= 68           # v1.70.113: таблиц больше
         assert "| Согласование авансовых отчётов (v1.70.112) | `approval_settings`" in db
         assert "с 1.70.112 — `approval_settings`, `advance_approvals` и `advance_approval_events`" in db

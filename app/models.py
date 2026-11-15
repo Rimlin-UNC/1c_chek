@@ -79,6 +79,15 @@ class Company(Base):
     # базе: старая версия после отката создаёт компании без этой колонки.
     show_companies_count: Mapped[bool] = mapped_column(Boolean, default=False,
                                                        server_default=false())
+    # T-88: поля договора добавляются без значений для существующих клиентов.
+    contract_no: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contract_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    service_since: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    service_until: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    service_fee: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    service_frequency: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    service_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    service_manager: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # v1.13.0: карточка компании — данные ЕГРЮЛ/ЕГРИП (JSON из Checko)
     card_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     card_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

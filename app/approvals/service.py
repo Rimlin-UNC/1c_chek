@@ -238,6 +238,25 @@ def can_view(user: User, approval: AdvanceApproval) -> bool:
     return user.role in ("manager", "accountant") and user.company_id == approval.company_id
 
 
+def turn_filter(user: User, company_id: str | None = None) -> list:
+    """v1.71.3 (T-86): «мой ход» — подпись своего черновика или решение на моём этапе.
+
+    Одно правило на два места: список «Ждут меня» на экране «Согласования» и плитка «Согласования»
+    в сводке клиентов. `company_id` — только для администратора (у него явный выбор компании в шапке).
+    """
+    draft = and_(AdvanceApproval.status == "draft", AdvanceApproval.employee_id == user.id)
+    stage = {"manager": "manager", "accountant": "accountant", "admin": "accountant"}.get(user.role)
+    if stage is None:
+        return [draft]
+    turn = and_(AdvanceApproval.status == "pending", AdvanceApproval.stage == stage,
+                AdvanceApproval.employee_id != user.id)
+    if user.role != "admin":
+        turn = and_(turn, AdvanceApproval.company_id == user.company_id)
+    elif company_id:
+        turn = and_(turn, AdvanceApproval.company_id == company_id)
+    return [draft, turn]
+
+
 def can_act(user: User, approval: AdvanceApproval) -> bool:
     """Решение на текущем этапе: сотрудник — подпись своего отчёта; руководитель и бухгалтер — своей компании."""
     if approval.status == "draft" and approval.stage == "employee":

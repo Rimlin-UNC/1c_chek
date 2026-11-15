@@ -28,6 +28,12 @@ init_db()
 # бухгалтера, поэтому сначала — первый запуск, как у приложения.
 seed_if_needed()
 with SessionLocal() as db:
+    # Все браузерные воркеры используют одну одноразовую БД. Смена пароля
+    # в параллельных сценариях даёт гонку входа, поэтому задаём его здесь.
+    admin = db.query(User).filter(User.username == 'admin').one()
+    admin.password_hash = hash_password('playwright-test-password')
+    admin.must_change_password = False
+    db.commit()
     appsettings.set_setting(db, 'pool_enabled', '1')
     appsettings.set_setting(db, 'pool_pick_monthly_limit', '100')
     for number in (1, 2):
@@ -87,6 +93,9 @@ with SessionLocal() as db:
                                   attempts=1, first_at=when, last_at=when)], None)
     db.add(User(username='e2e_acc_alpha', full_name='E2E Бухгалтер Альфы', role='accountant',
                 company_id=alpha.id, password_hash=hash_password('e2e-accountant-password')))
+    # Отдельный пользователь изолирует офлайн-тест от пароля администратора и других сценариев.
+    db.add(User(username='e2e_offline', full_name='E2E Офлайн', role='user',
+                company_id=None, password_hash=hash_password('e2e-offline-password')))
     # v1.70.112 (T-46): согласование авансового отчёта — своя компания, чтобы не менять числа других сценариев;
     # сотрудник с двумя чеками за октябрь, руководитель и бухгалтер. Включает согласование администратор в сценарии.
     # v1.70.113 (T-79): папка с УПД и закрытие выписки — компания с ИНН (документы и выписку загружает сценарий)

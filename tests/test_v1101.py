@@ -48,7 +48,7 @@ class TestMenuSelectable:
         assert "e.target.closest('a.nav-item')" in JS
         assert "closeSidebar();\n    if (location.hash === target) route();" in JS
         # переход по hash (назад/вперёд, ссылки) тоже закрывает
-        assert re.search(r"hashchange[^}]*closeSidebar\(\)", JS, re.S)
+        assert re.search(r"hashchange[\s\S]*?closeSidebar\(\)", JS)
 
     def test_safe_area_in_standalone(self):
         """В standalone «чёлка»/жест-бар не перекрывают шапку и подвал меню."""

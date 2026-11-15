@@ -32,7 +32,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -131,7 +131,7 @@ class TestCode:
         assert '"tests/test_bank_closing.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 73
+        assert declared == 72
 
     def test_settlement_rules(self):
         from app.bank import closing
@@ -182,7 +182,7 @@ class TestDocsAndKb:
 
     def test_database_doc_and_research(self):
         db = read("docs/DATABASE.md")
-        assert "73 объявлений `__tablename__`" in db and "все 73 таблиц приложения" in db
+        assert "75 объявлений `__tablename__`" in db and "все 75 таблиц приложения" in db
         assert "| Закрытие выписки документами (v1.70.113) | `bank_incomes`" in db
         design = read("docs/primary_docs_design.md")
         assert "### Комментарии владельца в #61 (06.11.2026): Indra OCR основным движком? — разбор 07.11.2026" in design
@@ -205,4 +205,7 @@ class TestDocsAndKb:
         row = next(r for r in ledger if r["Версия"] == VERSION)
         assert row["Опора репетиции"] == "да" and row["Откат на неё"] == "можно"
         kb = read("docs/kb/README.md")
-        assert f"v{VERSION}" in kb and "issues #4–" in kb
+        # v1.71.1: сводка несёт только последний выпуск; историю держат реестр и CHANGELOG
+        m = re.search(r"\| Последний выпуск \| \*\*v([\d.]+)\*\*", kb)
+        assert m and TestRelease._ver(m.group(1)) >= TestRelease._ver(VERSION)
+        assert "issues #4–" in kb

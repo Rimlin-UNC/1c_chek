@@ -1,0 +1,12 @@
+# ОБРАЗЕЦ: запускается только по решению администратора.
+[Unit]
+Description=Раз в минуту собирать локальные показатели Ямастер Чек
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=false
+Unit=ymaster-monitor-history.service
+
+[Install]
+WantedBy=timers.target

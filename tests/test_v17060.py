@@ -143,7 +143,7 @@ class TestPlaywrightGate:
                               timeout=600, check=False)
         assert proc.returncode == 0, proc.stderr[-1500:]
         for scenario in ("верные учётные данные", "неверный пароль",
-                         "сворачивание работает", "мониторинга облака"):
+                         "сворачивание работает", "мониторинга сервера"):
             assert scenario in proc.stdout, proc.stdout[-1500:]
 
     def test_scenarios_pass_with_browsers(self):
@@ -155,7 +155,8 @@ class TestPlaywrightGate:
             pytest.skip("браузеры Playwright не загружены: "
                         "npx playwright install chromium")
         proc = subprocess.run([str(PLAYWRIGHT_BIN), "test"], cwd=ROOT,
-                              capture_output=True, text=True, timeout=900,
+                              capture_output=True, text=True,
+                              timeout=2400 if os.environ.get("YM_PLAYWRIGHT_CHROMIUM") else 900,
                               check=False)
         assert proc.returncode == 0, proc.stdout[-2000:]
 
@@ -213,7 +214,7 @@ class TestRelease17060:
     def test_version_is_release(self):
         src = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
         # живое значение сверяет выпуск-владелец; здесь — форма релиза
-        assert re.search(r"APP_VERSION: str = \"1\.(?:70|71)\.\d+\"", src)
+        assert re.search(r"APP_VERSION: str = \"1\.(?:7[0-9])\.\d+\"", src)
 
     def test_changelog_has_release(self):
         text = CHANGELOG.read_text(encoding="utf-8")
@@ -243,11 +244,11 @@ class TestRelease17060:
         for year in range(33, 38):
             text = (ROOT / "tests" / f"test_v170{year}.py").read_text(
                 encoding="utf-8")
-            assert re.search(r'"1\.(?:70|71)\.\d+"', text)
+            assert re.search(r'"1\.(?:7[0-9])\.\d+"', text)
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:70|71)\.\d+", sw)
+        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

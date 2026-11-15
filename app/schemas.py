@@ -63,6 +63,12 @@ class ScanRequest(BaseModel):
                                       description="v1.11.0: компания чека (админ)")
 
 
+class OfflineScanRequest(ScanRequest):
+    """Контекст обязательно передаётся даже для платформенной компании (null)."""
+    expected_user_id: str = Field(min_length=1, max_length=36)
+    expected_company_id: Optional[str] = Field(max_length=36)
+
+
 class VerifyRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=500)
 

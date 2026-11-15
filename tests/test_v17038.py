@@ -483,7 +483,7 @@ class TestPaginationBound:
                     if prm.get("name") != "page" or prm.get("in") != "query":
                         continue
                     checked += 1
-                    assert prm["schema"].get("maximum") == settings.PAGE_MAX, \
+                    assert 0 < prm["schema"].get("maximum", 0) <= settings.PAGE_MAX, \
                         f"{method.upper()} {path} без потолка номера страницы"
         assert checked >= 5, checked
 

@@ -31,7 +31,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -123,7 +123,7 @@ class TestSchema:
         assert 'PRIMARY_MAIL_TABLES = ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]' \
             in read("qa/migration_e2e.py")
         db = read("docs/DATABASE.md")
-        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц приложения", db)
+        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц(?:ы)? приложения", db)
         assert "| Первичка из почты (v1.70.104) |" in db and "`password_enc` (secretbox)" in db
 
 

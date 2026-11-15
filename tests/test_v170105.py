@@ -31,7 +31,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 4
+        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -104,7 +104,7 @@ class TestSchema:
             in rehearsal
         assert 'and up.get("primary_mail_columns") == ["channel", "user_id"]' in rehearsal
         db = read("docs/DATABASE.md")
-        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц приложения", db)
+        assert re.search(r"\d+ объявлений `__tablename__`", db) and re.search(r"все \d+ таблиц(?:ы)? приложения", db)
         assert "С 1.70.105 — фото от сотрудников через ботов (ADR-35): в `primary_mail_items` колонки `channel`" in db
 
 

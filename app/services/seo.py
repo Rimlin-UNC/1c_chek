@@ -48,7 +48,7 @@ BLOG_PAGES = (
     "/blog/proverka-chekov-dlya-buhgaltera", "/blog/qr-kod-ili-ruchnoj-kod",
 )
 # страницы карты сайта
-PAGES = ("/", "/oferta", *CONTENT_PAGES, BLOG_INDEX, *BLOG_PAGES)
+PAGES = ("/", *CONTENT_PAGES, BLOG_INDEX, *BLOG_PAGES)
 _HOST = re.compile(r"^(?:[a-z0-9-]{1,63}\.)*[a-z0-9-]{1,63}(?::\d{1,5})?$")
 _CODE = re.compile(r"^[A-Za-z0-9_-]{6,100}$")
 _CONTENT = re.compile(r"""content\s*=\s*["']([^"']*)["']""", re.I)
@@ -161,6 +161,8 @@ def robots_txt(cfg: dict, host_header: str | None, scheme: str | None) -> str:
                 "User-agent: *\nDisallow: /\n")
     lines = ["# Ямастер Чек — правила для поисковых роботов", "User-agent: *", "Allow: /"]
     lines += [f"Disallow: {path}" for path in DISALLOW]
+    # Документ API должен быть доступен роботу, чтобы тот прочитал noindex.
+    lines.append("Allow: /api/v1/legal/offerta")
     lines += ["", "# Яндекс: служебные параметры адреса не создают копий страниц (директива межсекционная)",
               f"Clean-param: {'&'.join(CLEAN_PARAMS)} /",
               "", f"Sitemap: {origin(host_header, scheme)}/sitemap.xml"]
