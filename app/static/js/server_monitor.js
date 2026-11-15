@@ -43,15 +43,17 @@ let localGeneration = 0;
 
 export function localServerCardHtml() {
   return `
-      <div class="glass card" id="st-server-monitor" data-sec="integr" style="order:38">
+      <div class="glass card" id="st-server-monitor" data-sec="integr" style="order:38" data-wide>
         <div class="card-title">🖥️ Мониторинг сервера</div>
         <p class="form-hint" id="server-monitor-note">CPU и память читаются из Linux на сервере,
           где запущен Ямастер Чек, без подключения к облаку. Диск — файловая система
           каталога приложения; база и другие тома могут находиться отдельно. При контейнеризации
           или иной изоляции показания могут отличаться от всей ВМ. История производительности включается отдельно и автоматически не собирается;
           пороги не настраиваются.</p>
-        <button type="button" class="btn btn-sm" id="server-charts-refresh">📈 Показать графики и трафик</button>
-        <button type="button" class="btn btn-sm" id="server-monitor-refresh">🔄 Показать / обновить показатели</button>
+        <div class="card-actions">
+          <button type="button" class="btn btn-sm" id="server-charts-refresh">📈 Показать графики и трафик</button>
+          <button type="button" class="btn btn-sm" id="server-monitor-refresh">🔄 Показать / обновить показатели</button>
+        </div>
         <p class="form-hint" id="server-monitor-status" role="status">Нажмите кнопку для локального замера.</p>
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
         <div id="server-monitor-details"></div>

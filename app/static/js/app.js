@@ -18,7 +18,9 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.35';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.36';
+// v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
+import { layoutPlan, jumpModel, jumpValue, parseJumpValue, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -5320,6 +5322,129 @@ function makeSettingsCollapsible(container) {
 }
 
 // ==========================================================================
+// v1.72.36: РАСКЛАДКА НАСТРОЕК — строки, пролёты, навигация на узких экранах
+// ==========================================================================
+// Причины (по снимку владельца от 15.11.2026): карточки настроек лежали в
+// одной auto-fit сетке, поэтому таблица «Копия / Тип / В копии / Размер»
+// шириной в 720 px оказывалась в колонке 300 px и наезжала на соседнюю
+// карточку; карточки в ряду имели разную высоту; на планшете меню из пяти
+// крупных аккордеонов уезжало над контентом. Здесь — только раскладка:
+// содержимое карточек и права ролей не меняются.
+
+/**
+ * Собрать карточки настроек в разделы и пометить широкие.
+ *
+ * Зачем разделы: в одной плоской сетке «широкая» карточка с таблицей (ей нужна
+ * вся строка) оставляет дырку рядом с узкой соседкой, а следующая строка
+ * начинается ниже — получаются пустые «стаканы». Сетка на раздел + плотная
+ * укладка (grid-auto-flow: dense) заполняют такие дырки узкими карточками
+ * того же раздела, не переставляя карточки между разделами.
+ *
+ * Узлы не пересоздаются, а переносятся — обработчики кнопок остаются живыми.
+ */
+function applySettingsLayout(container) {
+  const grid = container && container.querySelector('.settings-grid');
+  if (!grid) return;
+  const cards = Array.from(grid.querySelectorAll('.glass.card'));
+  const plan = layoutPlan(cards.map((card) => ({
+    id: card.id || '',
+    sec: card.getAttribute('data-sec') || '',
+    order: (card.getAttribute('style') || '').match(/order:\s*(-?\d+)/)?.[1],
+    // таблица внутри <details> не делает карточку широкой: свёрнутая,
+    // она не требует всей строки (иначе рядом остаётся пустая колонка)
+    hasTable: !!card.querySelector('.table-wrap') ||
+      Array.from(card.querySelectorAll('table.data')).some((t) => !t.closest('details')),
+    hasChart: !!card.querySelector('canvas, svg.chart, .osm-chart, .chart-svg'),
+    hidden: card.classList.contains('hidden'),
+  })));
+  const byId = new Map(cards.filter((c) => c.id).map((c) => [c.id, c]));
+  const order = [];
+  plan.forEach((item) => {
+    const card = byId.get(item.id);
+    if (!card) return;
+    card.classList.toggle('card-wide', item.wide);
+    card.classList.toggle('card-section-start', item.sectionStart);
+    if (item.sectionStart) order.push(item.sec);
+  });
+  if (grid.querySelector('.stg-section')) return;   // уже собрано
+  order.forEach((sec) => {
+    const section = document.createElement('section');
+    section.className = 'stg-section';
+    section.setAttribute('data-sec', sec);
+    const inner = document.createElement('div');
+    inner.className = 'stg-section-grid';
+    section.appendChild(inner);
+    plan.filter((item) => item.sec === sec)
+      .forEach((item) => { if (byId.get(item.id)) inner.appendChild(byId.get(item.id)); });
+    grid.appendChild(section);
+  });
+  // карточки без раздела (на будущее) остаются в сетке как были
+  grid.classList.add('settings-grouped');
+}
+
+/** Селект «Перейти к настройке…» — замена колонки меню на планшете и телефоне. */
+function buildSettingsJump(nav) {
+  if (!nav || nav.querySelector('#snav-jump')) return null;
+  const groups = [];
+  nav.querySelectorAll('.snav-group').forEach((grp) => {
+    if (grp.style.display === 'none') return;
+    const title = (grp.querySelector('.snav-title') || {}).textContent || '';
+    const items = Array.from(grp.querySelectorAll('.snav-item')).map((b) => {
+      const ico = (b.querySelector('.snav-ico') || {}).textContent || '';
+      const label = (b.querySelector('span:last-child') || b).textContent || '';
+      return { id: b.getAttribute('data-open') || '', ico: ico.trim(), label: label.trim() };
+    });
+    groups.push({ key: grp.getAttribute('data-grp') || '', title: title.trim(), items });
+  });
+  const model = jumpModel(groups);
+  if (!model.length) return null;
+  const options = model.map((g) => `<optgroup label="${esc(g.title)}">` +
+    g.items.map((it) => `<option value="${esc(it.value)}">${esc(it.label)}</option>`).join('') +
+    '</optgroup>').join('');
+  const row = document.createElement('div');
+  row.className = 'snav-jump';
+  row.innerHTML = '<label class="field"><span>Раздел настроек</span>' +
+    '<select id="snav-jump" aria-label="Перейти к настройке">' +
+    '<option value="">Перейти к настройке…</option>' + options + '</select></label>';
+  const tools = nav.querySelector('.snav-tools');
+  if (tools) tools.insertAdjacentElement('afterend', row);
+  else nav.prepend(row);
+  const sel = row.querySelector('select');
+  sel.onchange = () => {
+    const cur = parseJumpValue(sel.value);
+    if (!cur.group || !cur.card) return;
+    const item = nav.querySelector(`.snav-group[data-grp="${cur.group}"] .snav-item[data-open="${cur.card}"]`);
+    if (item) item.click();
+    else {
+      // карточка скрыта ролью или раздел пуст — честно возвращаем селект
+      try { history.replaceState(null, '', '#/settings/' + cur.group + '/' + cur.card); } catch (e) { /* нет history */ }
+    }
+    sel.blur();
+  };
+  return sel;
+}
+
+/** Состояние кнопки: loading (aria-busy + блокировка) и disabled. */
+function setBtnBusy(btn, busy) {
+  if (!btn) return;
+  if (busy) {
+    btn.setAttribute('aria-busy', 'true');
+    btn.disabled = true;
+  } else {
+    btn.removeAttribute('aria-busy');
+    btn.disabled = false;
+  }
+}
+
+/** Короткая подсветка результата действия на самой кнопке (успех / ошибка). */
+function flashBtn(btn, kind, ms = 1800) {
+  if (!btn) return;
+  const cls = kind === 'ok' ? 'is-ok' : 'is-err';
+  btn.classList.add(cls);
+  setTimeout(() => btn.classList.remove(cls), ms);
+}
+
+// ==========================================================================
 // v1.20.0: ОФОРМЛЕНИЕ — акцентный цвет, плотность, «Спокойный час»
 // (ТЗ «Ямастер» п.6: пользователь выбирает акцент и плотность; хранится
 // локально, применяется до отрисовки — без вспышки)
@@ -6826,6 +6951,16 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.36': [
+    { icon: '🧭', title: 'Настройки: аккуратная сетка и меню на любом экране',
+      text: 'Раздел «Настройки» перестроен без изменения функций: карточки собраны по разделам, карточки с таблицами и графиками занимают всю ширину строки, поэтому таблица резервных копий больше не наезжает на соседнюю карточку и не обрезается. Заголовки карточек переносятся по словам, а не по слогам; кнопки выстроены в зоны «настройка → действия → данные».' },
+    { icon: '💾', title: 'Копии: компактная таблица и весь архив отдельно',
+      text: 'В карточке «Резервные копии» видно десять последних копий внутри прокручиваемой таблицы с закреплённой шапкой; длинные имена обрезаются многоточием, полное имя — в подсказке. Кнопка «Все копии» открывает весь архив в отдельном окне. На телефоне каждая копия показывается компактной карточкой с подписями полей, а «Восстановить» остаётся на месте и не уезжает за край.' },
+    { icon: '📱', title: 'Меню настроек: список на компьютере, селект на планшете и телефоне',
+      text: 'На компьютере меню настроек — один список с иконками, счётчиками и активным пунктом, выделенным так же, как в основном меню. На планшете и телефоне вместо пяти крупных аккордеонов над контентом появился селект «Перейти к настройке…» — раздел открывается сразу, без прокрутки через всё меню. Прямые ссылки вида #/settings/checks/st-fns работают как раньше.' },
+    { icon: '⏳', title: 'Кнопки показывают работу: загрузка, успех, ошибка',
+      text: 'Кнопки «Создать копию», «Проверить копию», «Восстановить», «Обновить список», «Проверить обновления» и откат версии показывают спиннер во время работы и коротко подсвечиваются по результату. Ширина кнопки при этом не меняется, повторное нажатие блокируется, а состояние озвучивается вспомогательным технологиям (aria-busy).' },
+  ],
   '1.72.35': [
     { icon: '📈', title: 'Графики сервера и трафик',
       text: 'Графики CPU, памяти и диска; трафик входа и выхода относительно 1000 ГБ за месяц.' },
@@ -11957,7 +12092,7 @@ async function viewSettings(container, alive = routeGuard()) {
           </div>
           <button type="button" class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
         </details>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <div class="card-actions">
           <button type="button" class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
           <button type="button" class="btn btn-sm" id="btn-changelog">📜 История версий</button>
           <button type="button" class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
@@ -11968,7 +12103,7 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>` : ''}
 
       ${isAdmin() ? `
-      <div class="glass card" id="st-releases" data-sec="data" style="order:12">
+      <div class="glass card" id="st-releases" data-sec="data" style="order:12" data-wide>
         <div class="card-title">↩ Последние рабочие версии
           <span class="form-hint">(v1.46.0 · хранятся три последние)</span></div>
         <p class="form-hint" style="margin-bottom:8px">Программа сама запоминает версии, на которых успешно работала.
@@ -12051,30 +12186,45 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>
 
       ${isAdmin() ? `
-      <div class="glass card" id="st-backups" data-sec="data" style="order:10">
+      <div class="glass card" id="st-backups" data-sec="data" style="order:10" data-wide>
         <div class="card-title">💾 Резервные копии <span class="form-hint">(v1.5.0)</span></div>
-        <p class="form-hint" style="margin-bottom:10px">Копии создаются автоматически: ежедневные (7 шт.),
-        перед каждым обновлением (5) и архив месяца (12 месяцев) — каталог data/backups на сервере.
-        Данные не затрагиваются ни обновлениями, ни git.</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-          <select id="bk-kind" style="max-width:250px">
-            <option value="manual">Ручная — хранятся 10</option>
-            <option value="daily">Дневная — хранятся 7</option>
-            <option value="weekly">Недельная — хранятся 2</option>
-            <option value="archive">Месячный архив — хранятся 12</option>
-          </select>
-          <button type="button" class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
-          <p class="form-hint" style="margin:8px 0 0">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
-          1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
-          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.
-          Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит файл и добавит его в список («загруженные», хранятся 10).</p>
+
+        <div class="card-section">
+          <div class="card-section-title">Настройка копии</div>
+          <div class="bk-setup">
+            <label class="field"><span>Тип копии</span>
+              <select id="bk-kind" autocomplete="off">
+                <option value="manual">Ручная — хранятся 10</option>
+                <option value="daily">Дневная — хранятся 7</option>
+                <option value="weekly">Недельная — хранятся 2</option>
+                <option value="archive">Месячный архив — хранятся 12</option>
+              </select></label>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
+          </div>
+        </div>
+
+        <div class="card-actions">
           <button type="button" class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
           <button type="button" class="btn btn-sm" id="btn-bk-import"
                   title="Загрузить копию из файла: .db, .sqlite, .sqlite3">⬆ Загрузить копию</button>
           <input type="file" id="bk-import-file" accept=".db,.sqlite,.sqlite3" style="display:none">
         </div>
-        <div id="bk-filters" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0"></div>
-        <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
+
+        <details class="card-note">
+          <summary>Как работают копии и что в них входит</summary>
+          <p class="form-hint">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
+          1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
+          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями
+          не переписывается. Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит
+          файл и добавит его в список («загруженные», хранятся 10). Каталог на сервере:
+          <span class="cell-mono">data/backups</span> — данные не затрагиваются ни обновлениями, ни git.</p>
+        </details>
+
+        <div class="card-section">
+          <div class="card-section-title">Копии в архиве</div>
+          <div id="bk-filters" class="bk-filters"></div>
+          <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
+        </div>
       </div>` : ''}
 
       <div class="glass card" id="st-profile" data-sec="personal" style="order:41">
@@ -12219,9 +12369,16 @@ async function viewSettings(container, alive = routeGuard()) {
     nav.querySelectorAll('.snav-group').forEach((grp) => {
       const isCur = !!cur.group && grp.getAttribute('data-grp') === cur.group;
       grp.classList.toggle('open', allMode || isCur);
-      grp.querySelectorAll('.snav-item').forEach((b) =>
-        b.classList.toggle('active', !!cur.card && b.getAttribute('data-open') === cur.card));
+      grp.querySelectorAll('.snav-item').forEach((b) => {
+        const on = !!cur.card && b.getAttribute('data-open') === cur.card;
+        b.classList.toggle('active', on);
+        // v1.72.36: активный пункт называется и вспомогательным технологиям
+        if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+      });
     });
+    // v1.72.36: на планшете и телефоне меню — селект; держим его в согласии с маршрутом
+    const jump = $('#snav-jump');
+    if (jump) jump.value = jumpValue(cur.group, cur.card);
   };
   if (isAdmin()) bindSplashCard();          // v1.70.100: длительность заставки — только администратор
   if (isAdmin()) bindSeoCard();             // v1.70.103: поисковики — только администратор
@@ -12336,12 +12493,15 @@ async function viewSettings(container, alive = routeGuard()) {
         const d = (b.created_at || '').slice(0, 10);
         if (d) dates[d] = (dates[d] || 0) + 1;
       });
+      const matching = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
+        (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date)).length;
+      // «показано» — столько же, сколько реально в таблице (страница ограничена)
+      const shownNow = Math.min(matching, bkLimit());
       box.innerHTML =
-        `<span class="form-hint" style="margin-right:auto">Копий в архиве: <b>${items.length}</b>` +
-        ` · показано: <b>${items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
-            (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date)).length}</b></span>` +
-        `<label class="form-hint">Дата <select id="bk-date"></select></label>` +
-        `<label class="form-hint">Тип <select id="bk-type"></select></label>`;
+        `<span class="form-hint bk-filters-count">Копий в архиве: <b>${items.length}</b>` +
+        ` · показано: <b>${shownNow}</b></span>` +
+        `<label class="field bk-filter"><span>Дата</span><select id="bk-date"></select></label>` +
+        `<label class="field bk-filter"><span>Тип</span><select id="bk-type"></select></label>`;
       const dsel = box.querySelector('#bk-date');
       const ksel = box.querySelector('#bk-type');
       dsel.innerHTML = '<option value="">Все даты</option>' +
@@ -12353,60 +12513,105 @@ async function viewSettings(container, alive = routeGuard()) {
       dsel.onchange = () => { bkState.date = dsel.value; renderBackups(items); };
       ksel.onchange = () => { bkState.kind = ksel.value; renderBackups(items); };
     };
-    const renderBackups = (items) => {
-      const el = $('#bk-list');
-      if (!el) return;
-      const rowsText = (b) => (b.rows
-        ? `<span class="cell-mono" style="font-size:11.5px">${b.rows.receipts ?? '—'} чек. · ` +
-          `${b.rows.users ?? '—'} польз. · ${b.rows.companies ?? '—'} комп.</span>` +
-          (b.copy_version ? ` <span class="chip exported"><span class="dot"></span>v${esc(b.copy_version)}</span>` : '')
-        : '<span class="form-hint">—</span>');
-      const visible = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
-          (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date));
-      el.innerHTML = visible.length
-        ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th></th></tr></thead><tbody>
-           ${visible.slice(0, 24).map(b => `<tr style="cursor:default">
-             <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
-             <td>${kindNames[b.kind] || b.kind}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}${b.source ? ` <span class="form-hint" style="font-size:11.5px" title="Загружено из файла: ${esc(b.source)}">из файла</span>` : ''}</td>
-             <td>${rowsText(b)}</td>
-             <td>${b.size_kb} КБ</td>
-             <td style="white-space:nowrap">
-               <button type="button" class="btn btn-sm" data-verify="${esc(b.name)}"
-                       title="Проверить копию: целостность базы и хеш">🛡</button>
-               <button type="button" class="btn btn-sm" data-restore="${esc(b.name)}"
-                       title="Восстановить базу из этой копии">↩ Восстановить</button>
-               <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download title="Скачать копию">⬇</a>
-             </td>
-           </tr>`).join('')}</tbody></table>`
-        : (items.length
-          ? '<p class="form-hint">Нет копий по выбранным условиям фильтра</p>'
-          : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>');
-      el.querySelectorAll('button[data-verify]').forEach(btn => {
+    // v1.72.36: таблица копий — в контейнере со скроллом и с фиксированными
+    // ширинами колонок. Раньше таблица шириной 720 px лежала прямо в карточке
+    // шириной ~300 px и наезжала на соседнюю; длинное имя копии рвало строку.
+    const bkPage = { limit: 10 };
+    // на телефоне 10 строк-карточек — это очень длинная страница: показываем 5,
+    // остальные доступны кнопкой «Все копии»
+    const bkLimit = () => (window.matchMedia('(max-width: 640px)').matches ? 5 : bkPage.limit);
+    const rowsText = (b) => (b.rows
+      ? `<span class="cell-mono" style="font-size:11.5px">${b.rows.receipts ?? '—'} чек. · ` +
+        `${b.rows.users ?? '—'} польз. · ${b.rows.companies ?? '—'} комп.</span>` +
+        (b.copy_version ? ` <span class="chip exported"><span class="dot"></span>v${esc(b.copy_version)}</span>` : '')
+      : '<span class="form-hint">—</span>');
+    // Подпись колонки — обычный <span class="td-k">, а не ::before с
+    // attr(): псевдоэлементы-подписи в таблицах проект запрещает
+    // (test_v1581/test_v1593), а data-label остаётся для тестов и скринридеров.
+    const bkRowHtml = (b) => `<tr>
+      <td class="cell-mono bk-name" data-label="Копия" title="${esc(b.name)}"><span class="td-k">Копия</span><span class="td-v">${esc(b.name)}</span></td>
+      <td data-label="Тип"><span class="td-k">Тип</span><span class="td-v">${kindNames[b.kind] || esc(b.kind)}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}${b.source ? ` <span class="form-hint" style="font-size:11.5px" title="Загружено из файла: ${esc(b.source)}">из файла</span>` : ''}</span></td>
+      <td data-label="В копии" class="bk-in"><span class="td-k">В копии</span><span class="td-v">${rowsText(b)}</span></td>
+      <td data-label="Размер" class="bk-size"><span class="td-k">Размер</span><span class="td-v">${b.size_kb} КБ</span></td>
+      <td class="bk-row-actions" data-label="">
+        <button type="button" class="btn-icon" data-verify="${esc(b.name)}"
+                title="Проверить копию: целостность базы и хеш"
+                aria-label="Проверить копию ${esc(b.name)}">🛡</button>
+        <button type="button" class="btn btn-sm btn-restore" data-restore="${esc(b.name)}"
+                title="Восстановить базу из этой копии" aria-label="Восстановить базу из копии ${esc(b.name)}">↩ <span class="bk-restore-label">Восстановить</span></button>
+        <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn-icon"
+           download title="Скачать копию" aria-label="Скачать копию ${esc(b.name)}">⬇</a>
+      </td>
+    </tr>`;
+    const bkTableHtml = (list) => `
+      <div class="table-scroll bk-table-scroll">
+        <table class="data settings-table settings-cards-table bk-table">
+          <colgroup>
+            <col class="bk-col-name"><col class="bk-col-kind"><col class="bk-col-in">
+            <col class="bk-col-size"><col class="bk-col-acts">
+          </colgroup>
+          <thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th>Действия</th></tr></thead>
+          <tbody>${list.map(bkRowHtml).join('')}</tbody>
+        </table>
+      </div>`;
+    const bkFootHtml = (page) => `<div class="card-foot">
+      <span>Показано <b>${page.shown.length}</b> из <b>${page.total}</b></span>
+      ${page.hasMore ? `<span class="spacer"></span>
+        <button type="button" class="btn btn-sm" id="bk-more">Все копии (${page.total})</button>` : ''}
+    </div>`;
+    const bindBkRows = (root, onDone) => {
+      if (!root) return;
+      root.querySelectorAll('button[data-verify]').forEach(btn => {
         btn.onclick = async () => {
           const name = btn.getAttribute('data-verify');
-          btn.disabled = true;
+          setBtnBusy(btn, true);
           try {
             const r = await api.post('/api/v1/admin/backups/verify', { name });
             toast(r.message, r.ok ? 'ok' : 'err', '🛡 Проверка копии');
-          } catch (e) { toast(e.message, 'err', '🛡 Проверка копии'); }
-          btn.disabled = false;
+            flashBtn(btn, r.ok ? 'ok' : 'err');
+          } catch (e) { toast(e.message, 'err', '🛡 Проверка копии'); flashBtn(btn, 'err'); }
+          setBtnBusy(btn, false);
         };
       });
-      el.querySelectorAll('button[data-restore]').forEach(btn => {
+      root.querySelectorAll('button[data-restore]').forEach(btn => {
         btn.onclick = async () => {
           const name = btn.getAttribute('data-restore');
           if (!confirm(`Восстановить базу из копии «${name}»?\n\n` +
               'Текущие данные будут заменены данными копии.\n' +
               'Перед восстановлением автоматически создаётся страховая копия текущего состояния.\n\n' +
               'После восстановления потребуется перезапуск приложения.')) return;
-          btn.disabled = true;
+          setBtnBusy(btn, true);
           try {
             const r = await api.post('/api/v1/admin/backups/restore', { name });
             toast(r.message, 'ok', '↩ Восстановление');
+            if (onDone) onDone();
             try { const it = (await api.get('/api/v1/admin/backups')).items; renderBkFilters(it); renderBackups(it); } catch (_e) {}
-          } catch (e) { toast(e.message, 'err', 'Восстановление'); btn.disabled = false; }
+          } catch (e) { toast(e.message, 'err', 'Восстановление'); setBtnBusy(btn, false); flashBtn(btn, 'err'); }
         };
       });
+    };
+    const renderBackups = (items) => {
+      const el = $('#bk-list');
+      if (!el) return;
+      const visible = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
+          (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date));
+      const page = pageSlice(visible, bkLimit());
+      el.innerHTML = visible.length
+        ? bkTableHtml(page.shown) + bkFootHtml(page)
+        : (items.length
+          ? '<p class="form-hint">Нет копий по выбранным условиям фильтра</p>'
+          : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>');
+      bindBkRows(el);
+      const more = el.querySelector('#bk-more');
+      if (more) more.onclick = () => {
+        // полный архив — в модальном окне: карточка остаётся компактной
+        const modal = openModal(
+          `<div class="modal-title">💾 Все копии <span class="form-hint">(${visible.length})</span></div>` +
+          '<p class="form-hint" style="margin-bottom:10px">Полный архив за выбранный период. ' +
+          'Действия те же, что в карточке настроек.</p>' + bkTableHtml(visible), {});
+        modal.slot.classList.add('modal-wide');
+        bindBkRows(modal.slot, modal.close);
+      };
     };
     const loadBackups = async () => {
       try {
@@ -12419,18 +12624,24 @@ async function viewSettings(container, alive = routeGuard()) {
     loadBackups();
     const bcr = $('#btn-bk-create');
     if (bcr) bcr.onclick = async () => {
-      bcr.disabled = true;
+      const kindSel = $('#bk-kind');
+      const kind = kindSel ? kindSel.value : 'manual';
+      setBtnBusy(bcr, true);
       try {
-        const kindSel = $('#bk-kind');
-        const r = await api.post('/api/v1/admin/backups',
-                                 { kind: kindSel ? kindSel.value : 'manual' });
-        toast(r.message, 'ok', '💾'); renderBkFilters(r.items); renderBackups(r.items);
+        const r = await api.post('/api/v1/admin/backups', { kind });
+        toast(r.message, 'ok', '💾');
+        flashBtn(bcr, 'ok');
+        renderBkFilters(r.items); renderBackups(r.items);
       }
-      catch (e) { toast(e.message, 'err'); }
-      bcr.disabled = false;
+      catch (e) { toast(e.message, 'err'); flashBtn(bcr, 'err'); }
+      setBtnBusy(bcr, false);
     };
     const brf = $('#btn-bk-refresh');
-    if (brf) brf.onclick = loadBackups;
+    if (brf) brf.onclick = async () => {
+      setBtnBusy(brf, true);
+      try { await loadBackups(); flashBtn(brf, 'ok'); }
+      finally { setBtnBusy(brf, false); }
+    };
     // v1.49.0: загрузка копии из внешнего источника (файл с компьютера)
     const bif = $('#btn-bk-import'), bifFile = $('#bk-import-file');
     if (bif && bifFile) bif.onclick = () => bifFile.click();
@@ -12438,7 +12649,7 @@ async function viewSettings(container, alive = routeGuard()) {
       const f = bifFile.files && bifFile.files[0];
       bifFile.value = '';
       if (!f) return;
-      bif.disabled = true;
+      setBtnBusy(bif, true);
       try {
         const fd = new FormData();
         fd.append('file', f, f.name);
@@ -12450,9 +12661,10 @@ async function viewSettings(container, alive = routeGuard()) {
         const r = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(r.detail || 'Загрузка не удалась');
         toast(r.message, 'ok', '⬆ Загрузка копии');
+        flashBtn(bif, 'ok');
         renderBkFilters(r.items); renderBackups(r.items);
-      } catch (e) { toast(e.message, 'err', '⬆ Загрузка копии'); }
-      bif.disabled = false;
+      } catch (e) { toast(e.message, 'err', '⬆ Загрузка копии'); flashBtn(bif, 'err'); }
+      setBtnBusy(bif, false);
     };
   }
 
@@ -12467,6 +12679,9 @@ async function viewSettings(container, alive = routeGuard()) {
     if (!has) g.style.display = 'none';
   });
   const snavFinal = $('#settings-nav');
+  // v1.72.36: сначала селект (планшет/телефон), потом подсветка: иначе
+  // settingsApply не находит #snav-jump и прямая ссылка оставляет его пустым
+  buildSettingsJump(snavFinal);
   if (snavFinal) settingsApply(snavFinal, _cur);
   // v1.70.10: меню без открытых разделов выглядит «пустым» — раскрываем
   // первый видимый непустой раздел (кроме режима «все настройки»)
@@ -12498,9 +12713,9 @@ async function viewSettings(container, alive = routeGuard()) {
       relItems = items || [];
       const cur = relItems.find(v => v.current);
       const head =
-        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+        '<div class="card-actions">' +
         `<span class="form-hint">Сейчас работает: <b>v${esc(cur ? cur.version : '…')}</b> · ` +
-        `в реестре ${relItems.length} из 3</span>` +
+        `в реестре ${relItems.length} из 3</span><span class="spacer"></span>` +
         '<button type="button" class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
       if (!relItems.length) {
         relBox.innerHTML = head +
@@ -12515,19 +12730,23 @@ async function viewSettings(container, alive = routeGuard()) {
           'Срочно нужен откат сейчас — воспользуйтесь откатом к коммиту (ниже) либо на сервере: ' +
           '<span class="cell-mono">sudo bash rollback.sh</span></p>';
       } else {
+        // v1.72.36: таблица версий — фиксированные ширины, обрезка, мобильные строки-карточки
         relBox.innerHTML = head +
-          '<table class="data rb-table" style="min-width:0"><thead>' +   // v1.70.103: rb-table — кнопка не дробится
-          '<tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th></th></tr></thead><tbody>' +
+          '<div class="table-scroll">' +
+          '<table class="data settings-table settings-cards-table rb-table">' +
+          '<colgroup><col class="rb-col-ver"><col class="rb-col-commit">' +
+          '<col class="rb-col-when"><col class="rb-col-act"></colgroup>' +
+          '<thead><tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th>Действие</th></tr></thead><tbody>' +
           relItems.map(v => `<tr>
-            <td><b>v${esc(v.version)}</b>${v.current
+            <td data-label="Версия"><span class="td-k">Версия</span><span class="td-v"><b>v${esc(v.version)}</b>${v.current
               ? ' <span class="chip exported"><span class="dot"></span>работает сейчас</span>'
-              : (v.note ? `<div class="form-hint">${esc(v.note)}</div>` : '')}</td>
-            <td class="cell-mono" style="font-size:11.5px">${esc(v.commit_short)}</td>
-            <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
-            <td>${v.current
+              : (v.note ? `<div class="form-hint">${esc(v.note)}</div>` : '')}</span></td>
+            <td class="cell-mono" data-label="Коммит"><span class="td-k">Коммит</span><span class="td-v">${esc(v.commit_short)}</span></td>
+            <td class="rb-when" data-label="Когда работала"><span class="td-k">Когда работала</span><span class="td-v">${esc((v.at || '').slice(0, 16).replace('T', ' '))}</span></td>
+            <td class="rb-row-actions" data-label="">${v.current
               ? '<span class="form-hint">—</span>'
               : `<button type="button" class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
-          </tr>`).join('') + '</tbody></table>';
+          </tr>`).join('') + '</tbody></table></div>';
       }
       // откат к версии из реестра
       relBox.querySelectorAll('button[data-rb]').forEach(btn => {
@@ -12537,18 +12756,22 @@ async function viewSettings(container, alive = routeGuard()) {
               '• Файлы программы вернутся к проверенной версии.',
               '• База данных НЕ трогается; перед откатом — копия базы.',
               '• Приложение перезапустится (~10 секунд).'])) return;
-          btn.disabled = true;
+          setBtnBusy(btn, true);
           try {
             const r = await api.post('/api/v1/admin/update/rollback',
                                      { version: ver, commit });
             toast(r.message, 'ok', '↩ Откат');
+            flashBtn(btn, 'ok');
             relWatch();
-          } catch (e) { toast(e.message, 'err', 'Откат'); btn.disabled = false; }
+          } catch (e) { toast(e.message, 'err', 'Откат'); setBtnBusy(btn, false); flashBtn(btn, 'err'); }
         };
       });
       // обновить список
       const rf = document.getElementById('rel-refresh');
-      if (rf) rf.onclick = () => { rf.disabled = true; relLoad().then(() => { rf.disabled = false; }); };
+      if (rf) rf.onclick = async () => {
+        setBtnBusy(rf, true);
+        try { await relLoad(); flashBtn(rf, 'ok'); } finally { setBtnBusy(rf, false); }
+      };
       // откат к произвольному коммиту
       const go = document.getElementById('rb-commit-go');
       const inp = document.getElementById('rb-commit');
@@ -12562,13 +12785,14 @@ async function viewSettings(container, alive = routeGuard()) {
             '• Коммит должен быть рабочей версией программы.',
             '• База данных НЕ трогается; перед откатом — копия базы.',
             '• Приложение перезапустится (~10 секунд).'])) return;
-        go.disabled = true;
+        setBtnBusy(go, true);
         try {
           const r = await api.post('/api/v1/admin/update/rollback',
                                    { version: 'коммит ' + c.slice(0, 8), commit: c });
           toast(r.message, 'ok', '↩ Откат');
+          flashBtn(go, 'ok');
           relWatch();
-        } catch (e) { toast(e.message, 'err', 'Откат'); go.disabled = false; }
+        } catch (e) { toast(e.message, 'err', 'Откат'); setBtnBusy(go, false); flashBtn(go, 'err'); }
       };
     };
     const relLoad = async () => {
@@ -12683,21 +12907,24 @@ async function viewSettings(container, alive = routeGuard()) {
     }).catch(() => {});
     const bc = $('#btn-check-update');
     if (bc) bc.onclick = async () => {
-      bc.disabled = true; bc.textContent = 'Проверяю…';
+      // v1.72.36: подпись и ширина кнопки не меняются — состояние видно по спиннеру
+      setBtnBusy(bc, true);
       await loadUpdCard(true);
-      bc.disabled = false; bc.textContent = '🔍 Проверить обновления';
+      setBtnBusy(bc, false);
+      flashBtn(bc, state.githubUnreachable ? 'err' : 'ok');
       if (state.githubUnreachable) toast('GitHub недоступен с сервера — воспользуйтесь ручной инструкцией в карточке', 'err', '🔄 Обновление');
     };
     const bsr = $('#btn-save-repo');
     if (bsr) bsr.onclick = async () => {
-      bsr.disabled = true;
+      setBtnBusy(bsr, true);
       try {
         const r = await api.put('/api/v1/admin/update/repo', {
           repo_url: $('#upd-repo').value.trim() || undefined,
           repo_branch: $('#upd-branch-input').value.trim() || undefined });
         toast(r.message, 'ok', '🔄');
-      } catch (e) { toast(e.message, 'err'); }
-      bsr.disabled = false;
+        flashBtn(bsr, 'ok');
+      } catch (e) { toast(e.message, 'err'); flashBtn(bsr, 'err'); }
+      setBtnBusy(bsr, false);
     };
     const ba = $('#btn-apply-update');
     if (ba) ba.onclick = () => {
@@ -12866,6 +13093,7 @@ async function viewSettings(container, alive = routeGuard()) {
     }
   }
   makeSettingsCollapsible(container);   // v1.21.0: сворачиваемые блоки
+  applySettingsLayout(container);       // v1.72.36: широкие карточки и начало разделов
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();
