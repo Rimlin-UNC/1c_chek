@@ -233,3 +233,18 @@ def test_conditional_scenario_rejects_suspicious_clock_and_is_never_verified():
     assert traffic.scenario(malformed, datetime(2026, 11, 8, 12)) is None
     malformed = copy.deepcopy(data); malformed['days'][0]['rx_bytes'] = -1
     assert traffic.scenario(malformed, datetime(2026, 11, 8, 12)) is None
+
+
+def test_current_billing_month_uses_moscow_not_host_timezone(monkeypatch):
+    from datetime import timezone
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 30, 21, 30, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(traffic, 'datetime', Frozen)
+    assert traffic._now().isoformat().startswith('2026-12-01T00:30:00+03:00')
+    result = traffic._view({'status': 'freshness_unknown', 'data': {'updated_at': '2026-11-30T21:00:00'}})
+    assert result['current_period'] == '2026-12'
+    assert result['billing_timezone'] == 'Europe/Moscow'

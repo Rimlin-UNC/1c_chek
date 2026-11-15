@@ -374,8 +374,8 @@ describe('защита накопительного графика', () => {
     api.get.mockResolvedValueOnce({ status: 'freshness_unknown', current_period: '2028-02', data })
       .mockResolvedValueOnce({ status: 'freshness_unknown', current_period: '2028-02', data: { ...data, days: [row] } });
     localServerWire(); const button = document.querySelector('#server-traffic-refresh');
-    button.click(); await flush(); expect(document.querySelector('#server-traffic svg')).toBeNull();
-    button.click(); await flush(); expect(document.querySelector('#server-traffic svg')).toBeNull();
+    button.click(); await flush(); expect(document.querySelector('#server-traffic svg[aria-label*="Накопленный"]')).toBeNull();
+    button.click(); await flush(); expect(document.querySelector('#server-traffic svg[aria-label*="Накопленный"]')).toBeNull();
     localServerStop();
   });
   it('обрабатывает високосный февраль и не соединяет неполный ряд', async () => {
@@ -387,7 +387,7 @@ describe('защита накопительного графика', () => {
     localServerWire(); const button = document.querySelector('#server-traffic-refresh');
     button.click(); await flush();
     expect(document.querySelectorAll('#server-traffic svg circle')).toHaveLength(29);
-    button.click(); await flush(); expect(document.querySelector('#server-traffic svg')).toBeNull();
+    button.click(); await flush(); expect(document.querySelector('#server-traffic svg[aria-label*="Накопленный"]')).toBeNull();
     localServerStop();
   });
 });
@@ -449,6 +449,57 @@ describe('мониторинг после удаления node_exporter', () =>
     document.querySelector('#server-monitor-refresh').click(); await flush();
     expect(document.querySelector('#server-monitor-kpi').textContent).toContain('25,00 %');
     expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor');
+    localServerStop();
+  });
+});
+
+describe('графики ВМ и месячный трафик', () => {
+  it('обновляет графики и трафик одной кнопкой без фоновых запросов', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockImplementation(async url => url.includes('/history?') ? {status: 'not_configured'} : {status: 'not_configured'});
+    localServerWire();
+    expect(api.get).not.toHaveBeenCalled();
+    document.querySelector('#server-charts-refresh').click(); await flush();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/history?period=1h');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/server-monitor/traffic');
+    expect(document.querySelector('#server-history').textContent).toMatch(/не настроен/);
+    expect(document.querySelector('#server-traffic').textContent).toMatch(/не настроен/);
+    localServerStop();
+  });
+  it('показывает вход и выход в месяце и отдельные суточные столбцы без заполнения пропусков', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockResolvedValue({status:'freshness_unknown', current_period:'2026-11', billing_timezone:'Europe/Moscow',
+      data:{interface:'eth0', created_date:'2026-10-01', updated_at:'2026-11-03T12:00:00',
+        months:[{period:'2026-11',rx_bytes:400e9,tx_bytes:450e9}],
+        days:[{date:'2026-11-01',rx_bytes:100e9,tx_bytes:20e9},{date:'2026-11-03',rx_bytes:50e9,tx_bytes:40e9}]}});
+    localServerWire(); document.querySelector('#server-traffic-refresh').click(); await flush();
+    const panel = document.querySelector('#server-traffic');
+    expect(panel.textContent).toContain('Вход: 400,00 ГБ');
+    expect(panel.textContent).toContain('Выход: 450,00 ГБ');
+    expect(panel.textContent).toMatch(/Москв/);
+    const chart = panel.querySelector('svg[aria-label="Трафик по дням: вход и выход"]');
+    expect(chart).not.toBeNull();
+    expect(chart.querySelectorAll('rect')).toHaveLength(4);
+    expect(chart.textContent).toContain('2026-11-01');
+    expect(chart.textContent).not.toContain('2026-11-02');
+    localServerStop();
+  });
+});
+
+describe('история места на диске', () => {
+  it('строит график и явно отделяет недоступный диск от нуля', async () => {
+    localServerStop(); vi.clearAllMocks(); document.body.innerHTML = localServerCardHtml();
+    api.get.mockResolvedValue({status:'available', disk_status:'available', extra_status:'not_enabled',
+      last_sample_at:120, current_timestamp:120, buckets:[
+        {timestamp:0,expected:1,samples:1,disk_pct:60,disk_samples:1},
+        {timestamp:60,expected:1,samples:0,disk_pct:null,disk_samples:0},
+        {timestamp:120,expected:1,samples:1,disk_pct:70,disk_samples:1}]});
+    localServerWire(); document.querySelector('#server-history-refresh').click(); await flush();
+    const chart = document.querySelector('#server-history svg[aria-label*="Диск"]');
+    expect(chart).not.toBeNull();
+    expect(chart.querySelectorAll('circle')).toHaveLength(2);
+    expect(chart.querySelectorAll('line')).toHaveLength(0);
+    expect(document.querySelector('#server-history').textContent).toMatch(/файловой системы приложения/i);
     localServerStop();
   });
 });

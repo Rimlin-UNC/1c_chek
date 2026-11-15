@@ -471,3 +471,71 @@ def test_history_single_flight_and_recovery_from_failure(tmp_path, monkeypatch):
         assert history.snapshot('30d')['status'] == 'available'
     finally:
         history.reset_cache()
+
+
+def test_disk_history_records_only_valid_values_and_shows_missing_slots(tmp_path):
+    db = tmp_path / 'history.db'
+    history.initialize(db)
+    history.record(db, {**sample(), 'disk': {'pct': 60}}, 'ens3', now=3600)
+    history.record(db, {**sample(), 'disk': {'pct': 110}}, 'ens3', now=3720)
+    result = history.read(db, '1h', interface='ens3', now=3720)
+    rows = {row['timestamp']: row for row in result['buckets']}
+    assert result['disk_status'] == 'available'
+    assert rows[3600]['disk_pct'] == 60 and rows[3600]['disk_samples'] == 1
+    assert rows[3660]['disk_pct'] is None and rows[3660]['disk_samples'] == 0
+    assert rows[3720]['disk_pct'] is None and rows[3720]['disk_samples'] == 0
+
+
+def test_old_disk_history_requires_explicit_enable_and_unknown_schema_not_touched(tmp_path):
+    db = tmp_path / 'history.db'
+    history.initialize(db)
+    with sqlite3.connect(db) as con:
+        con.execute('drop table disk_samples')
+    history.record(db, sample(), 'ens3', now=3600)
+    assert history.read(db, '1h', interface='ens3', now=3600)['disk_status'] == 'not_enabled'
+    history.enable_disk(db)
+    history.enable_disk(db)
+    history.record(db, {**sample(), 'disk': {'pct': 70}}, 'ens3', now=3660)
+    rows = {r['timestamp']: r for r in history.read(db, '1h', interface='ens3', now=3660)['buckets']}
+    assert rows[3600]['disk_pct'] is None and rows[3660]['disk_pct'] == 70
+    with sqlite3.connect(db) as con:
+        con.execute('drop table disk_samples')
+        con.execute('create table disk_samples (important text)')
+        con.execute("insert into disk_samples values ('keep')")
+    with pytest.raises(ValueError):
+        history.enable_disk(db)
+    history.record(db, sample(cpu=80), 'ens3', now=3720)
+    assert history.read(db, '1h', interface='ens3', now=3720)['disk_status'] == 'unavailable'
+    with sqlite3.connect(db) as con:
+        assert con.execute('select important from disk_samples').fetchall() == [('keep',)]
+        assert con.execute('select cpu_pct from samples where timestamp=3720').fetchone() == (80,)
+
+
+def test_disk_retention_and_limit_never_stop_base_collection(tmp_path, monkeypatch):
+    db = tmp_path / 'history.db'
+    history.initialize(db)
+    monkeypatch.setattr(history, '_MAX_DISK_ROWS', 1)
+    history.record(db, {**sample(), 'disk': {'pct': 30}}, 'ens3', now=3600)
+    history.record(db, {**sample(cpu=90), 'disk': {'pct': 60}}, 'ens3', now=3660)
+    result = history.read(db, '1h', interface='ens3', now=3660)
+    assert result['disk_full'] is True
+    row = next(row for row in result['buckets'] if row['timestamp'] == 3660)
+    assert row['cpu_pct'] == 90 and row['disk_pct'] is None
+    with sqlite3.connect(db) as con:
+        assert con.execute('select count(*) from disk_samples').fetchone()[0] == 1
+        assert con.execute('select count(*) from samples').fetchone()[0] == 2
+
+
+def test_disk_unknown_trigger_is_never_executed(tmp_path):
+    db = tmp_path / 'history.db'
+    history.initialize(db)
+    with sqlite3.connect(db) as con:
+        con.execute('create table user_values(value text)')
+        con.execute("create trigger disk_guard after insert on disk_samples begin insert into user_values values ('executed'); end")
+    with pytest.raises(ValueError):
+        history.enable_disk(db)
+    history.record(db, {**sample(), 'disk': {'pct': 20}}, 'ens3', now=3600)
+    assert history.read(db, '1h', interface='ens3', now=3600)['disk_status'] == 'unavailable'
+    with sqlite3.connect(db) as con:
+        assert con.execute('select * from user_values').fetchall() == []
+        assert con.execute('select count(*) from samples').fetchone()[0] == 1

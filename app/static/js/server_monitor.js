@@ -50,6 +50,7 @@ export function localServerCardHtml() {
           каталога приложения; база и другие тома могут находиться отдельно. При контейнеризации
           или иной изоляции показания могут отличаться от всей ВМ. История производительности включается отдельно и автоматически не собирается;
           пороги не настраиваются.</p>
+        <button type="button" class="btn btn-sm" id="server-charts-refresh">📈 Показать графики и трафик</button>
         <button type="button" class="btn btn-sm" id="server-monitor-refresh">🔄 Показать / обновить показатели</button>
         <p class="form-hint" id="server-monitor-status" role="status">Нажмите кнопку для локального замера.</p>
         <div class="grid kpi-grid" id="server-monitor-kpi"></div>
@@ -127,6 +128,39 @@ function trafficCumulative(result, data, amount) {
     <p class="form-hint">Сумма дневных наблюдений, включая неполный последний день; не счёт и не подтверждение непрерывного сбора. Даты, начало периода и свежесть vnStat могут отличаться от биллинга.</p>`;
 }
 
+function dailyTrafficChart(result, data) {
+  const period = result.current_period;
+  if (typeof period !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return '';
+  const [year, month] = period.split('-').map(Number);
+  if (year < 1970 || year > 9999 || typeof data.updated_at !== 'string') return '';
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const last = data.updated_at.slice(0, 10);
+  if (!last.startsWith(period + '-')) return '';
+  const rows = [], seen = new Set();
+  for (const row of data.days) {
+    if (!row || typeof row.date !== 'string' || !row.date.startsWith(period + '-')) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) return '';
+    const day = Number(row.date.slice(-2));
+    if (day < 1 || day > maxDay || row.date > last || seen.has(day) ||
+        !Number.isSafeInteger(row.rx_bytes) || !Number.isSafeInteger(row.tx_bytes) ||
+        row.rx_bytes < 0 || row.tx_bytes < 0 || !Number.isSafeInteger(row.rx_bytes + row.tx_bytes)) return '';
+    seen.add(day);
+    rows.push({ ...row, day });
+  }
+  if (!rows.length) return '';
+  rows.sort((a, b) => a.day - b.day);
+  const max = Math.max(1, ...rows.flatMap(row => [row.rx_bytes, row.tx_bytes]));
+  const width = 480 / maxDay, barWidth = width * 0.35;
+  const bars = rows.map(row => [['rx_bytes', 'cpu', 'Вход'], ['tx_bytes', 'memory', 'Выход']].map(([field, color, label], i) => {
+    const height = row[field] * 110 / max;
+    const x = (row.day - 1) * width + (0.1 + i * 0.4) * width;
+    return `<rect class="${color}" x="${x.toFixed(2)}" y="${(110 - height).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}"><title>${esc(row.date)} · ${label}: ${esc(trafficGb(row[field]))}</title></rect>`;
+  }).join('')).join('');
+  return `<p>Суточный трафик: вход (синий) · выход (зелёный); шкала до ${esc(trafficGb(max))} на направление.</p>
+    <svg class="server-history-chart" viewBox="-3 -3 486 116" role="img" aria-label="Трафик по дням: вход и выход">${bars}</svg>
+    <p class="form-hint">Дни без строки отсутствуют на графике, не равны нулю; последний день может быть неполным. Сбор может иметь перерывы.</p>`;
+}
+
 function trafficHtml(result) {
   const messages = {
     not_configured: 'Учёт не настроен: выберите интерфейс и установите vnStat по инструкции администратора.',
@@ -156,11 +190,12 @@ function trafficHtml(result) {
   const maxDay = Math.max(1, ...data.days.map(row => row.rx_bytes + row.tx_bytes));
   const days = data.days.map(row => `<li>${esc(row.date)}: вход ${esc(trafficGb(row.rx_bytes))}, выход ${esc(trafficGb(row.tx_bytes))} <progress max="${maxDay}" value="${row.rx_bytes + row.tx_bytes}" aria-label="${esc('Суммарный трафик ' + row.date)}"></progress></li>`).join('');
   return `${stale}<p>Интерфейс: <strong>${esc(data.interface)}</strong>. Начало учёта: ${esc(data.created_date)}. Последнее обновление: ${esc(data.updated_at.replace('T', ' '))} (время vnStat, часовой пояс не подтверждён).</p>
-    <p>${current ? `Календарный месяц приложения ${esc(current.period)}: <strong>${esc(trafficGb(amount))}</strong> из ориентира 1000 ГБ (вход + выход).` : 'За текущий месяц данных нет.'}</p>
+    <p>${current ? `Выбран месяц ${esc(current.period)} по Москве; значение vnStat: <strong>${esc(trafficGb(amount))}</strong> из 1000 ГБ (вход + выход). Вход: ${esc(trafficGb(current.rx_bytes))}; Выход: ${esc(trafficGb(current.tx_bytes))}.` : 'За текущий месяц по Москве данных нет.'}</p>
     ${ratio}${warning ? `<p role="alert">${esc(warning)}</p>` : ''}
     ${projection}
+    ${dailyTrafficChart(result, data)}
     ${cumulative || '<p>Накопительный график недоступен: нет последовательного дневного ряда с начала месяца или данные не согласуются.</p>'}
-    <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора, внутренний трафик и отличие расчётного периода или часового пояса vnStat. Полнота данных не подтверждена; подтверждённый остаток не рассчитывается.</p>
+    <p class="form-hint">Это оценка счётчиков интерфейса, не счёт провайдера. Возможны перерывы сбора и внутренний трафик. Границы месячных данных vnStat не подтверждены: настройте MonthRotate и часовой пояс по инструкции. Полнота данных не подтверждена; подтверждённый остаток не рассчитывается.</p>
     <p><strong>По месяцам</strong></p><ul>${months || '<li>Данных нет.</li>'}</ul>
     <details><summary>По дням (до 31 дня)</summary><ul>${days || '<li>Данных нет.</li>'}</ul></details>`;
 }
@@ -254,6 +289,8 @@ function historyHtml(result) {
     { field: 'cpu_pct', count: 'cpu_samples', className: 'cpu', label: 'CPU', format: pct },
     { field: 'memory_pct', count: 'memory_samples', className: 'memory', label: 'RAM', format: pct },
   ], 100, 'CPU и RAM; пропуски не соединяются');
+  const disk = result.disk_status === 'available' ? historyGraph(rows, [{ field: 'disk_pct', count: 'disk_samples', className: 'cpu', label: 'Диск', format: pct }],
+    100, 'Диск файловой системы приложения; пропуски не соединяются') : '';
   const swap = historyGraph(rows, [{ field: 'swap_pct', count: 'swap_samples', className: 'cpu', label: 'Swap', format: pct }],
     100, 'Swap; пропуски не соединяются');
   const maxNetwork = Math.max(1, ...rows.flatMap(row => [row.rx_bytes_per_sec, row.tx_bytes_per_sec])
@@ -263,14 +300,16 @@ function historyHtml(result) {
     { field: 'tx_bytes_per_sec', count: 'tx_samples', className: 'memory', label: 'Выход', format: n => fmtBytes(n) + '/с' },
   ], maxNetwork, 'Скорости выбранного интерфейса; пропуски не соединяются') : '';
   const table = rows.map(row => `<tr><td>${esc(historyTime(row.timestamp))}</td><td>${esc(fmtPct(row.cpu_pct))} (${esc(row.cpu_samples)}/${esc(row.expected)})</td>
-    <td>${esc(fmtPct(row.memory_pct))} (${esc(row.memory_samples)}/${esc(row.expected)})</td><td>${esc(fmtPct(row.swap_pct))}</td>
+    <td>${esc(fmtPct(row.memory_pct))} (${esc(row.memory_samples)}/${esc(row.expected)})</td><td>${esc(fmtPct(row.disk_pct))} (${esc(row.disk_samples ?? 0)}/${esc(row.expected)})</td><td>${esc(fmtPct(row.swap_pct))}</td>
     <td>${row.rx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.rx_bytes_per_sec)) + '/с'}</td><td>${row.tx_bytes_per_sec == null ? '—' : esc(fmtBytes(row.tx_bytes_per_sec)) + '/с'}</td></tr>`).join('');
   return `${notice}${clock}${stale}<p>Последний снимок: ${last == null ? '—' : esc(historyTime(last))} (время устройства). Интерфейс: ${esc(result.interface || 'не выбран')}.</p>
     <p class="form-hint">Ответ истории может использовать кэш до 10 секунд на процесс. Точки — средние наблюдённых значений за интервал. Пропуски и неполные интервалы не соединяются; CPU и RAM подписаны в таблице числом наблюдений. График сети — скорость, не биллинг.</p>
     <p>CPU (синий) · RAM (зелёный)</p>${charts}
+    ${result.disk_full ? '<p role="alert">Достигнут предел истории диска; проверьте сбор и инструкцию.</p>' : ''}
+    ${disk ? `<p>Диск — занятость файловой системы приложения, не других томов</p>${disk}` : '<p>История диска не включена или недоступна; см. инструкцию администратора.</p>'}
     <p>Swap — процент занятого от размера swap, отдельно от RAM</p>${swap}
     ${net ? `<p>Вход (синий) · выход (зелёный), шкала до ${esc(fmtBytes(maxNetwork))}/с</p>${net}` : '<p>История сети недоступна без выбранного интерфейса.</p>'}
-    <details><summary>Таблица интервалов</summary><div class="table-wrap"><table class="data"><thead><tr><th>Время</th><th>CPU</th><th>RAM</th><th>Swap</th><th>Вход</th><th>Выход</th></tr></thead><tbody>${table}</tbody></table></div></details>
+    <details><summary>Таблица интервалов</summary><div class="table-wrap"><table class="data"><thead><tr><th>Время</th><th>CPU</th><th>RAM</th><th>Диск</th><th>Swap</th><th>Вход</th><th>Выход</th></tr></thead><tbody>${table}</tbody></table></div></details>
     ${extraHistoryHtml(result, rows)}`;
 }
 
@@ -290,11 +329,18 @@ function processHtml(result) {
 
 export function localServerWire() {
   const button = document.getElementById('server-monitor-refresh');
+  const chartsButton = document.getElementById('server-charts-refresh');
   const trafficButton = document.getElementById('server-traffic-refresh');
   const processButton = document.getElementById('server-processes-refresh');
   const historyButton = document.getElementById('server-history-refresh');
   const mountsButton = document.getElementById('server-mounts-refresh');
-  if (!button || !trafficButton || !processButton || !historyButton || !mountsButton) return;
+  if (!button || !chartsButton || !trafficButton || !processButton || !historyButton || !mountsButton) return;
+  chartsButton.onclick = () => {
+    historyButton.closest('details').open = true;
+    trafficButton.closest('details').open = true;
+    historyButton.click();
+    trafficButton.click();
+  };
   mountsButton.onclick = async () => {
     const generation = localGeneration;
     const panel = document.getElementById('server-mounts');

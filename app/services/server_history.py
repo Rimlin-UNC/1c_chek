@@ -24,6 +24,7 @@ _APP_ID = 0x594D4831
 _RETENTION = 30 * 86400
 _MAX_ROWS = 50000
 _MAX_EXTRA_ROWS = 50000
+_MAX_DISK_ROWS = 50000
 _MAX_GAP = 600
 _RANGES = {'1h': (3600, 60), '24h': (86400, 600), '7d': (7 * 86400, 3600), '30d': (_RETENTION, 21600)}
 _CACHE_SECONDS = 10
@@ -113,6 +114,34 @@ def enable_extra(path: Path) -> None:
             _create_extra(con)
 
 
+_DISK_CREATE = "CREATE TABLE disk_samples (timestamp INTEGER PRIMARY KEY, disk_pct REAL)"
+
+
+def _disk_state(con: sqlite3.Connection) -> str:
+    row = con.execute("SELECT type, sql FROM sqlite_master WHERE name='disk_samples'").fetchone()
+    if not row:
+        return 'not_enabled'
+    if row != ('table', _DISK_CREATE):
+        return 'unavailable'
+    if con.execute("SELECT 1 FROM sqlite_master WHERE tbl_name='disk_samples' AND type IN ('trigger', 'index') LIMIT 1").fetchone():
+        return 'unavailable'
+    columns = con.execute('PRAGMA table_info(disk_samples)').fetchall()
+    if [(row[1], row[2].upper()) for row in columns] != [('timestamp', 'INTEGER'), ('disk_pct', 'REAL')] or not columns[0][5]:
+        return 'unavailable'
+    return 'available'
+
+
+def enable_disk(path: Path) -> None:
+    """Явно добавить таблицу только в проверенную базу; старые данные не меняются."""
+    with closing(_connection(path, write=True)) as con, con:
+        con.execute('BEGIN IMMEDIATE')
+        state = _disk_state(con)
+        if state == 'unavailable':
+            raise ValueError('таблица истории диска имеет неизвестный формат')
+        if state == 'not_enabled':
+            con.execute(_DISK_CREATE)
+
+
 def initialize(path: Path) -> None:
     """Явно создать только новый файл, никогда не перезаписывать существующий."""
     if not path.is_absolute():
@@ -131,6 +160,7 @@ def initialize(path: Path) -> None:
         con.execute('CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), retention_paused INTEGER NOT NULL, resume_at INTEGER)')
         con.execute('INSERT INTO state VALUES (1, 0, NULL)')
         _create_extra(con)
+        con.execute(_DISK_CREATE)
 
 
 def _number(value, maximum: float) -> float | None:
@@ -195,12 +225,21 @@ def record(path: Path, data: dict, interface: str, *, now: int | None = None) ->
                 extra_count = con.execute('SELECT count(*) FROM extra_samples').fetchone()[0]
                 if extra_count < _MAX_EXTRA_ROWS:
                     con.execute('INSERT INTO extra_samples VALUES (?, ?, ?, ?, ?, ?, ?, ?)', _extra_values(timestamp, data))
+            disk_state = _disk_state(con)
+            if inserted and disk_state == 'available':
+                disk_count = con.execute('SELECT count(*) FROM disk_samples').fetchone()[0]
+                if disk_count < _MAX_DISK_ROWS:
+                    disk = data.get('disk')
+                    pct = _number(disk.get('pct'), 100) if isinstance(disk, dict) else None
+                    con.execute('INSERT INTO disk_samples VALUES (?, ?)', (timestamp, pct))
             con.execute('UPDATE state SET resume_at=NULL WHERE id=1')
             if not paused:
                 # Только отдельная база; после заметного перерыва автоочистка приостанавливается.
                 con.execute('DELETE FROM samples WHERE timestamp < ?', (timestamp - _RETENTION,))
                 if extra_state == 'available':
                     con.execute('DELETE FROM extra_samples WHERE timestamp < ?', (timestamp - _RETENTION,))
+                if disk_state == 'available':
+                    con.execute('DELETE FROM disk_samples WHERE timestamp < ?', (timestamp - _RETENTION,))
         con.commit()
     if full:
         raise ValueError('достигнут предел истории; очистка приостановлена после перерыва')
@@ -248,10 +287,20 @@ def read(path: Path, period: str, *, interface: str, now: int | None = None) -> 
                 FROM extra_samples e JOIN samples s ON e.timestamp=s.timestamp
                 WHERE e.timestamp >= ? AND e.timestamp <= ? GROUP BY bucket ORDER BY bucket""",
                 (width, width, start, timestamp)).fetchall()
+        disk_state = _disk_state(con)
+        disk_rows = []
+        disk_full = False
+        if disk_state == 'available':
+            disk_full = con.execute('SELECT count(*) FROM disk_samples').fetchone()[0] >= _MAX_DISK_ROWS
+            disk_rows = con.execute('''SELECT CAST(d.timestamp / ? AS INTEGER) * ? AS bucket,
+                avg(d.disk_pct), count(d.disk_pct) FROM disk_samples d JOIN samples s ON d.timestamp=s.timestamp
+                WHERE d.timestamp >= ? AND d.timestamp <= ? GROUP BY bucket ORDER BY bucket''',
+                (width, width, start, timestamp)).fetchall()
         last = con.execute('SELECT max(timestamp) FROM samples').fetchone()[0]
         paused = bool(con.execute('SELECT retention_paused FROM state WHERE id=1').fetchone()[0])
     by_time = {row[0]: row for row in rows}
     extras_by_time = {row[0]: row for row in extra_rows}
+    disk_by_time = {row[0]: row for row in disk_rows}
     first_bucket = start // width * width
     last_bucket = timestamp // width * width
     inferred_pause = last is not None and timestamp - last > _MAX_GAP
@@ -267,6 +316,8 @@ def read(path: Path, period: str, *, interface: str, now: int | None = None) -> 
                         'cpu_samples': row[7] if row else 0, 'memory_samples': row[8] if row else 0,
                         'swap_samples': row[9] if row else 0, 'rx_samples': row[10] if row else 0,
                         'tx_samples': row[11] if row else 0})
+        disk = disk_by_time.get(bucket)
+        buckets[-1].update({'disk_pct': disk[1] if disk else None, 'disk_samples': disk[2] if disk else 0})
         extra = extras_by_time.get(bucket)
         mixed = bool(extra and extra[4] > 1)
         valid_io = extra is not None and extra[4] == 1
@@ -281,7 +332,8 @@ def read(path: Path, period: str, *, interface: str, now: int | None = None) -> 
     return {'status': 'available', 'period': period, 'bucket_seconds': width, 'interface': interface or None,
             'last_sample_at': last, 'current_timestamp': timestamp, 'retention_paused': paused,
             'collection_gap': inferred_pause, 'clock_backwards': clock_backwards,
-            'extra_status': extra_state, 'extra_full': extra_full, 'buckets': buckets}
+            'extra_status': extra_state, 'extra_full': extra_full,
+            'disk_status': disk_state, 'disk_full': disk_full, 'buckets': buckets}
 
 
 def snapshot(period: str, *, source: str = 'local') -> dict:
@@ -325,7 +377,7 @@ def reset_cache() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Выделенная история локальных метрик; запускается только администратором')
-    parser.add_argument('action', choices=('init', 'collect', 'resume', 'enable-extra'))
+    parser.add_argument('action', choices=('init', 'collect', 'resume', 'enable-extra', 'enable-disk'))
     args = parser.parse_args()
     try:
         path = _configured_path()
@@ -337,6 +389,8 @@ def main() -> int:
             resume_retention(path)
         elif args.action == 'enable-extra':
             enable_extra(path)
+        elif args.action == 'enable-disk':
+            enable_disk(path)
         else:
             interface = _env('YM_MONITOR_TRAFFIC_INTERFACE', '').strip()
             record(path, local_monitor.snapshot(), interface)

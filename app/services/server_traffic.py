@@ -13,10 +13,12 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from ..config import _env
 
+_BILLING_ZONE = ZoneInfo('Europe/Moscow')
 _INTERFACE = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.:-]{0,14}\Z')
 _CACHE_SEC = 60.0
 _MAX_OUTPUT = 1024 * 1024
@@ -72,7 +74,7 @@ def parse(document, interface: str) -> dict | None:
 
 
 def _now() -> datetime:
-    return datetime.now().astimezone()
+    return datetime.now(timezone.utc).astimezone(_BILLING_ZONE)
 
 
 def scenario(data: dict, now: datetime) -> dict | None:
@@ -128,7 +130,8 @@ def _view(result: dict) -> dict:
     if 'data' not in result:
         return result
     now = _now()
-    return {**result, 'current_period': now.strftime('%Y-%m'), 'scenario': scenario(result['data'], now)}
+    return {**result, 'current_period': now.strftime('%Y-%m'), 'billing_timezone': 'Europe/Moscow',
+            'scenario': scenario(result['data'], now)}
 
 
 def _read_json(executable: str, mode: str, count: str, interface: str):
