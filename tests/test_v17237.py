@@ -18,6 +18,8 @@
 # ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 
+import re
+
 from app.config import settings
 
 
@@ -27,7 +29,10 @@ def read(path):
 
 class TestVersion17237:
     def test_config_version(self):
-        assert settings.APP_VERSION == "1.72.37"
+        # живое значение сверяет выпуск-владелец; здесь — форма и то, что
+        # 1.72.37 не откатился назад
+        assert re.search(r'APP_VERSION: str = "1\.72\.(3[7-9]|[4-9]\d)"',
+                         read("app/config.py")), settings.APP_VERSION
 
     def test_static_versions_synced(self):
         ver = settings.APP_VERSION
