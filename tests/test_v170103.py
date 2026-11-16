@@ -330,7 +330,10 @@ class TestLanding:
         assert ".login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.875rem;" in css
         # обход разделов на 360 и 768 px: «↩ Откатиться» в «Последних рабочих версиях» тоже дробилась по буквам
         assert ".rb-table .btn { overflow-wrap: normal; }" in css
-        assert "'<table class=\"data rb-table\" style=\"min-width:0\"><thead>'" in read("app/static/js/app.js")
+        # v1.72.36: таблица версий переехала в .table-scroll с фиксированными ширинами и
+        # мобильными строками-карточками; требование «кнопка не дробится» осталось
+        # (классы .rb-table .btn) — замок проверяет новую разметку.
+        assert "'<table class=\"data settings-table settings-cards-table rb-table\">'" in read("app/static/js/app.js")
 
 
 class TestDocsAndKb:

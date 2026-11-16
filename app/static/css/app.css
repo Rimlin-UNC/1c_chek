@@ -67,6 +67,10 @@
   --text-faint: #6b6b6b;
   --accent: #ff7a00;                   /* корпоративный оранжевый #FF7A00 */
   --accent-soft: #fff1e3;              /* v1.58.3: мягкая оранжевая подложка кнопок */
+  /* v1.72.36: единые отступы карточек настроек — объявлены здесь, в корневом
+     блоке токенов (контракт test_v17035: токен должен быть объявлен в нём) */
+  --card-pad: 24px;
+  --card-gap: 24px;
   --accent-text: #9a4a00;              /* v1.58.3: тёмно-оранжевый текст кнопок */
   --accent-2: #4b0082;
   --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
@@ -204,7 +208,7 @@ a:hover { text-decoration: underline; }
 .btn-block { width: 100%; }
 .btn-icon {
   background: transparent; border: 1px solid transparent; color: var(--text-dim);
-  font-size: 18px; border-radius: 8px; width: 38px; height: 38px; cursor: pointer;
+  font-size: 18px; border-radius: 8px; width: 40px; height: 40px; cursor: pointer;   /* v1.72.38: 38 → 40, ровно с .btn */
   transition: background var(--speed), color var(--speed);
   display: inline-flex; align-items: center; justify-content: center;
 }
@@ -1504,47 +1508,35 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   body.print-ao1 .print-piece { width: auto; transform: none; }
 }
 
-/* v1.70.9: настройки — меню с разделами и подменю (адаптив) */
+/* v1.72.37: настройки — одна колонка по центру (решение владельца):
+   читаемость важнее плотности, карточки идут строго друг под другом.
+   Прежняя колонка меню (v1.70.9) заменена горизонтальными табами. */
 .settings-layout {
-  display: grid; grid-template-columns: 268px minmax(0, 1fr);
-  gap: 18px; align-items: start;
+  display: flex; flex-direction: column; gap: var(--card-gap);
+  width: 100%; max-width: 1160px; margin-inline: auto;
 }
+/* Контент остаётся в одну колонку 900 px, а полоса табов может быть шире:
+   пять разделов в 900 px не помещаются и давали прокрутку на десктопе. */
+.settings-layout .settings-grid,
+.settings-layout .stg-panels { max-width: 900px; margin-inline: auto; width: 100%; }
 .settings-layout .settings-grid { min-width: 0; }
-/* v1.70.10: в режиме «все настройки» прячем только группы меню —
-   панель с кнопками остаётся на виду (раньше пряталась и вместе с ней
-   единственная кнопка возврата; меню казалось пропавшим навсегда) */
-body.settings-all .settings-nav .snav-group { display: none; }
-body.settings-all #snav-collapse { display: none; }
-body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr); }
+/* Режим «все настройки»: разделы идут подряд, но полосу табов НЕ прячем —
+   иначе вместе с ней исчезает единственный путь назад (замок v1.70.10).
+   Клик по любому табу выходит из режима; в меню «⋯ Ещё» кнопка меняет
+   подпись на «☰ Меню настроек». */
+body.settings-all .stg-tab.active { color: var(--text-dim); border-bottom-color: transparent; }
 .settings-nav {
-  position: sticky; top: calc(var(--topbar-h) + 12px);
-  display: flex; flex-direction: column; gap: 10px;
+  /* v1.72.37: полоса табов липнет к верху прокручиваемой области (.content),
+     а не к --topbar-h: со старым смещением бар съезжал вниз на 63 px и
+     накрывал заголовок первого раздела. Фон нужен, чтобы карточки не
+     проступали под табами при прокрутке. */
+  position: sticky; top: 0;
+  display: block; z-index: 16;
+  background: var(--bg);
 }
-.snav-tools { display: flex; gap: 8px; flex-wrap: wrap; }
-.snav-group {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
-}
-.snav-head {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 12px 14px; background: transparent; border: none;
-  cursor: pointer; font: inherit; font-weight: 700;
-  color: var(--text); text-align: left;
-}
-.snav-head:hover { background: var(--accent-soft); }
-.snav-head .snav-ico { font-size: 18px; flex: 0 0 auto; }
-.snav-title { flex: 1 1 auto; min-width: 0; }
-.snav-cnt {
-  flex: 0 0 auto; font-size: 12px; color: var(--text-dim);
-  background: var(--bg-soft); border-radius: 999px; padding: 1px 8px;
-}
-.snav-chev {
-  flex: 0 0 auto; transition: transform var(--speed);
-  color: var(--text-faint); font-size: 18px; line-height: 1;
-}
-.snav-group.open .snav-chev { transform: rotate(90deg); }
-.snav-sub { display: none; flex-direction: column; gap: 2px; padding: 0 6px 8px; }
-.snav-group.open .snav-sub { display: flex; }
+/* v1.72.37: аккордеоны разделов удалены вместе с разметкой — их место
+   заняли горизонтальные табы. Пункты .snav-item остались: они живут
+   в выпадающей панели таба. */
 .snav-item {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 9px 10px; border: none; border-radius: 10px;
@@ -1557,7 +1549,7 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .snav-item span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .snav-empty { padding: 8px 10px; font-size: 12.5px; color: var(--text-faint); }
 @media (max-width: 900px) {
-  .settings-layout { grid-template-columns: 1fr; }
+  .settings-layout { gap: 16px; }
   .settings-nav { position: static; }
 }
 
@@ -2086,19 +2078,6 @@ label.field[hidden] { display: none; }
   .glass.card.foldable > .card-title > .chip { grid-column: 1 / -1; grid-row: 3; justify-self: start; }
   .glass.card.foldable > .card-title > .spacer { display: none; }
 }
-/* v1.70.58: заголовок страницы на телефоне переносится на вторую строку
-   вместо обрезания точками; базовое правило (одна строка с «…» для
-   планшета и выше) не тронуто — высота шапки 50px вмещает две строки. */
-@media (max-width: 640px) {
-  .page-title {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    font-size: 17px;
-    line-height: 1.15;
-  }
-}
-
 /* ======================================================================
    v1.70.72: полная карточка чека и «чек как в магазине»
    Вид бумажного чека — моношрифт на белом листе, чтобы человек узнавал
@@ -2462,3 +2441,735 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 .server-history-chart .cpu { stroke: #2973c7; fill: #2973c7; }
 .server-history-chart .memory { stroke: var(--ok); fill: var(--ok); }
 .server-history-chart circle.partial { fill: var(--panel); stroke-width: 1.5; }
+
+/* ==========================================================================
+   v1.72.36 — «Настройки»: каркас сетки, карточки, таблицы, меню и состояния.
+   ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+
+   Что и почему (по снимку владельца от 15.11.2026):
+   • таблица «Копия / Тип / В копии / Размер» шириной 720 px стояла прямо в
+     карточке шириной ~300 px и наезжала на соседнюю карточку — теперь таблицы
+     живут в .table-scroll, колонки заданы colgroup + table-layout: fixed,
+     длинные имена обрезаются многоточием с полным текстом в title;
+   • карточки в ряду были разной высоты, а «широкие» карточки с таблицами
+     оставляли дырки — карточки собраны в разделы (.stg-section) со своей
+     сеткой и плотной укладкой;
+   • меню настроек выглядело как пять крупных аккордеонов; теперь это один
+     список с активным пунктом как в основном левом меню, а на планшете и
+     телефоне — селект «Перейти к настройке…»;
+   • у кнопок не было состояний — добавлены aria-busy (спиннер, ширина не
+     меняется) и короткие is-ok / is-err.
+   Ни одна карточка, роль или текст не удалены; правки только оформления.
+   ========================================================================== */
+
+/* --- 1. Токены карточки настроек ----------------------------------------- */
+.settings-grid,
+.stg-section-grid {
+  /* значения — из :root, здесь только точка переопределения на будущее */
+  --card-pad: 24px;
+  --card-gap: 24px;
+}
+
+/* --- 2. Каркас: разделы с собственной сеткой ----------------------------- */
+/* JS (applySettingsLayout) собирает карточки в <section class="stg-section">
+   и включает .settings-grouped. Без JS остаётся прежняя auto-fit сетка —
+   оформление деградирует, а не ломается. */
+.settings-grid.settings-grouped {
+  display: flex; flex-direction: column; gap: var(--card-gap);
+  width: 100%; max-width: 900px; margin-inline: auto;
+}
+.stg-section + .stg-section { margin-top: 0; }
+/* Раздел — заголовок и карточки друг под другом. Многоколоночных сеток нет:
+   при окне 900–1400 px карточки становились по 300 px и токены с таблицами
+   вылезали за края (снимок 15.11.2026). */
+.stg-section,
+.stg-section-grid {
+  min-width: 0; width: 100%;
+}
+.stg-section-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  align-items: stretch;
+}
+.stg-section-grid > .glass.card,
+.settings-grid > .glass.card { padding: var(--card-pad); }
+/* широкая карточка: таблицы, графики, длинные ряды показателей */
+.stg-section-grid > .card-wide,
+.stg-section-grid > .glass.card[data-wide],
+.settings-grid > .card-wide,
+.settings-grid > .glass.card[data-wide] { grid-column: 1 / -1; }
+/* карточка, с которой начинается раздел (ставит JS) — пригодится для рамок */
+.stg-section-grid > .card-section-start { grid-column-start: 1; }
+
+/* Заголовок раздела: в одноколоночном виде он единственное, что отделяет
+   «данные» от «проверки чеков», поэтому слева — акцентная плашка. */
+.stg-section-title {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 12px;
+  font-size: 15px; font-weight: 800; letter-spacing: .01em; color: var(--text);
+}
+.stg-section-title::before {
+  content: ""; flex: 0 0 auto;
+  width: 4px; height: 18px; border-radius: 3px; background: var(--grad);
+}
+.stg-section[hidden] { display: none; }
+/* Прокрутка к карточке не должна прятать её под липкой полосой табов
+   (v1.72.37: заголовок раздела уезжал под табы после scrollIntoView). */
+.stg-section,
+.stg-section-title,
+.stg-section-grid > .glass.card { scroll-margin-top: calc(var(--topbar-h) + 64px); }
+@media (max-width: 640px) {
+  .stg-section-grid { --card-pad: 16px; }
+}
+
+/* --- 3. Карточка: заголовок, зоны, действия, подпись, подвал ------------- */
+/* Контракт карточки: .card-title (шапка) + .fold-body (тело, его создаёт
+   makeSettingsCollapsible) + зоны .card-section / .card-actions / .card-note /
+   .card-foot / .table-scroll. Новые карточки собираются из этих классов. */
+.settings-grid .card-title {
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  margin-bottom: 12px;
+  letter-spacing: .6px;
+  /* заголовок переносится по словам: прежнее overflow-wrap: anywhere рвало
+     «МОНИТ/ОРИНГ» и «ВЕРС/СИИ» по слогам в узкой колонке */
+  overflow-wrap: break-word;
+}
+.settings-grid .card-title > .ct-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.25;
+}
+.settings-grid .card-title > .form-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  font-size: 11.5px;
+}
+.settings-grid .card-title > .fold-chevron { flex: 0 0 auto; margin-left: auto; }
+.card-section + .card-section { margin-top: 16px; }
+.card-section-title {
+  font-size: 11px; font-weight: 800; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--text-faint);
+  margin: 0 0 8px;
+}
+.card-actions {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: 12px;
+}
+.card-actions:first-child { margin-top: 0; }
+.card-actions > .spacer,
+.card-foot > .spacer { flex: 1 1 auto; }
+.card-note { margin-top: 12px; }
+.card-note > summary {
+  cursor: pointer; font-size: 12.5px; color: var(--text-dim);
+  font-weight: 600; list-style-position: inside;
+}
+.card-note > summary:hover { color: var(--accent-text); }
+.card-note > p { margin-top: 6px; }
+.card-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 12.5px; color: var(--text-dim);
+}
+.card-foot b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* --- 4. Таблицы настроек: скролл, фиксированные колонки, обрезка --------- */
+.table-scroll {
+  overflow: auto;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.table-scroll > table.data { margin: 0; }
+table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
+.settings-table th,
+.settings-table td { padding: 9px 10px; }
+.settings-table th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.settings-table .cell-mono { white-space: nowrap; }
+.bk-table-scroll { max-height: 360px; }
+/* Ширины заданы с запасом под три действия в строке: при 100 % ширины
+   карточки они не должны вылезать за ячейку (иначе контейнер получает
+   горизонтальную прокрутку и «Восстановить» обрезается). */
+.bk-col-name { width: 22%; }
+.bk-col-kind { width: 15%; }
+.bk-col-in { width: 20%; }
+.bk-col-size { width: 14%; }
+.bk-col-acts { width: 29%; }
+/* «Размер» и «Действия» — самые узкие колонки: их содержимое не должно
+   переноситься, иначе строка вырастает вдвое */
+.settings-table th.bk-col-size,
+.settings-table th.bk-col-acts { white-space: nowrap; }
+.settings-table td.bk-size { white-space: nowrap; }
+/* в «В копии» длинная строка «32 чек. · 98 польз. · 8 комп.»: переносим
+   её, но не прячем остаток под многоточием */
+.settings-table td.bk-in { white-space: normal; }
+/* все три действия выравниваются по одной высоте 30 px */
+.settings-table .bk-row-actions .btn-sm {
+  padding: 0 10px;
+  height: 30px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.settings-table .bk-row-actions,
+.settings-table .rb-row-actions {
+  /* подписи кнопок не рвутся, но сами кнопки переносятся на вторую строку,
+     если места в ячейке мало — вместо горизонтального переполнения таблицы */
+  white-space: normal;
+  text-align: right;
+  overflow: hidden;
+}
+.settings-table .bk-row-actions .btn,
+.settings-table .rb-row-actions .btn { white-space: nowrap; overflow-wrap: normal; }
+.settings-table .bk-row-actions > * + * { margin-left: 4px; }
+.settings-table .bk-row-actions .btn-icon { width: 30px; height: 30px; font-size: 15px; }
+.settings-table td.bk-name { font-size: 12px; }
+/* подписи колонок существуют в разметке всегда, но нужны только в
+   мобильных строках-карточках */
+.settings-table .td-k { display: none; }
+.rb-col-ver { width: 30%; }
+.rb-col-commit { width: 18%; }
+.rb-col-when { width: 28%; }
+.rb-col-act { width: 24%; }
+.settings-table .rb-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* Мобильное окно «Все копии» — шире обычной модалки, но не на весь экран */
+.modal-slot.modal-wide { width: min(920px, 96vw); }
+
+/* --- 5. Меню настроек: горизонтальные табы и выпадающие панели ----------- */
+/* v1.72.37 (решение владельца): вместо колонки-аккордеона — классические
+   Tabs. Таб = раздел; его выпадающая панель = карточки раздела (один
+   уровень вложенности). Иконка показывается только у активного таба.
+   На компьютере панель — абсолютный список (не сдвигает контент), на
+   телефоне — раскрытие в потоке (аккордеон), как и просила спека. */
+.settings-tabs { background: var(--bg); border-bottom: 1px solid var(--border); }
+/* Полоса табов: если пять разделов + «⋯ Ещё» не влезают (окно 1024–1300 px),
+   кнопка меню переносится на вторую строку, а не выталкивает табы в прокрутку. */
+.stg-tabs-bar {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 4px 8px; min-width: 0;
+}
+.stg-tabs-row {
+  display: flex; align-items: stretch; gap: 2px;
+  flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.stg-tabs-row::-webkit-scrollbar { display: none; }
+.stg-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  flex: 0 0 auto; min-height: 44px; padding: 12px 16px;
+  border: 0; border-bottom: 3px solid transparent; background: transparent;
+  font: inherit; font-weight: 600; font-size: 14px; color: var(--text-dim);
+  white-space: nowrap; cursor: pointer;
+  transition: color var(--speed), background var(--speed), border-color var(--speed);
+}
+.stg-tab:hover { background: var(--bg-soft); color: var(--text); }
+.stg-tab.active {
+  color: var(--accent-text); font-weight: 700;
+  border-bottom-color: var(--accent);
+}
+.stg-tab-ico { display: none; font-size: 16px; line-height: 1; }
+.stg-tab.active .stg-tab-ico { display: inline; }
+/* Полоса табов — контейнер: на 1024–1300 px пять разделов не помещаются в
+   колонку контента, поэтому таб сжимается (padding, иконка), а не уезжает
+   в горизонтальную прокрутку. Прокрутка остаётся только на телефоне. */
+#settings-nav { container-type: inline-size; container-name: stgnav; }
+@container stgnav (max-width: 1140px) {
+  .stg-tab { padding: 12px 12px; }
+  .stg-tab.active .stg-tab-ico { display: none; }
+}
+@container stgnav (max-width: 1010px) {
+  .stg-tab { padding: 12px 8px; font-size: 13.5px; }
+}
+.stg-tabs-tools { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
+.stg-tabs-tools .btn { min-height: 36px; }
+.stg-more {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 32;
+  display: flex; flex-direction: column; min-width: 235px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow);
+}
+.stg-more[hidden] { display: none; }
+.stg-more-item {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 10px 12px; border: 0; border-radius: 8px;
+  background: transparent; font: inherit; font-weight: 600; font-size: 13.5px;
+  color: var(--text-dim); text-align: left; cursor: pointer;
+}
+.stg-more-item:hover { background: var(--bg-soft); color: var(--text); }
+.stg-panels { position: relative; }
+.stg-panel {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.stg-panel[hidden] { display: none; }
+.stg-panel .snav-item {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 44px; min-width: 0; padding: 10px 12px;
+  border: 0; border-radius: 10px; background: transparent;
+  font: inherit; font-weight: 600; font-size: 13.5px; color: var(--text-dim);
+  text-align: left; cursor: pointer;
+}
+.stg-panel .snav-item:hover { background: var(--bg-soft); color: var(--text); }
+.stg-panel .snav-item.active {
+  background: linear-gradient(90deg, rgba(255, 122, 0, .14), rgba(255, 122, 0, .04));
+  color: var(--text); font-weight: 700;
+}
+.stg-panel .snav-item .snav-ico { flex: 0 0 auto; }
+.stg-panel .snav-item-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stg-panel .snav-empty { padding: 10px 12px; font-size: 12.5px; color: var(--text-faint); }
+
+@media (max-width: 768px) {
+  /* телефон: панель раскрывается под полосой табов и толкает контент вниз */
+  .stg-panel {
+    position: static; display: flex; flex-direction: column;
+    margin-top: 6px; padding: 4px;
+    border: 1px solid var(--border); border-radius: 12px; box-shadow: none;
+  }
+  .stg-tab { padding: 12px; font-size: 13.5px; }
+  .stg-tab-label { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+}
+/* --- 6. Кнопки: загрузка, успех, ошибка ---------------------------------- */
+/* Спиннер поверх подписи: подпись остаётся в потоке, поэтому ширина кнопки
+   не прыгает, а доступное имя не меняется (тот же приём, что в PR #2173). */
+.btn { position: relative; }
+.btn[aria-busy="true"] {
+  color: transparent !important;
+  cursor: progress;
+  pointer-events: none;
+  opacity: 1;                          /* :disabled гасил бы и спиннер */
+}
+.btn[aria-busy="true"]::after {
+  content: "";
+  position: absolute;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(51, 51, 51, .22);
+  border-top-color: var(--text);
+  animation: spin .7s linear infinite;
+}
+.btn-primary[aria-busy="true"]::after,
+.btn-accent[aria-busy="true"]::after {
+  border-color: rgba(26, 26, 26, .25);
+  border-top-color: #1a1a1a;
+}
+.btn-icon[aria-busy="true"]::after,
+.btn-sm[aria-busy="true"]::after { width: 15px; height: 15px; border-width: 2px; }
+.btn.is-ok {
+  background: #eaf7f1;
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok-text);
+}
+.btn.is-err {
+  background: #fdeeec;
+  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+  color: var(--bad-text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn[aria-busy="true"]::after { animation-duration: 1.4s; }
+}
+
+/* --- 7. Телефон: таблицы настроек — строки-карточки (label / value) ------ */
+@media (max-width: 640px) {
+  .table-scroll { border: 0; overflow: visible; }
+  .bk-table-scroll { max-height: none; }
+  /* table.data на телефоне становится блоком со своим скроллом и min-width
+     880 px — для настроечных таблиц это ломало и колонки, и карточку */
+  table.data.settings-cards-table {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+  }
+  table.data.settings-cards-table thead { display: none; }
+  table.data.settings-cards-table tbody { display: block; }
+  table.data.settings-cards-table tr {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: var(--panel);
+  }
+  table.data.settings-cards-table tbody tr:last-child { margin-bottom: 0; }
+  table.data.settings-cards-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    width: auto;
+    padding: 4px 0;
+    border: 0;
+    text-align: left;
+    overflow: visible;
+    white-space: normal;
+  }
+  /* Подпись колонки — реальный элемент .td-k (см. bkRowHtml/relRender):
+     подписи через ::before и attr() в проекте запрещены (v1.70.9). */
+  table.data.settings-cards-table .td-k {
+    display: block;
+    flex: 0 0 auto;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  table.data.settings-cards-table .td-v { min-width: 0; text-align: right; }
+  table.data.settings-cards-table .cell-mono { white-space: normal; overflow-wrap: anywhere; }
+  table.data.settings-cards-table .bk-row-actions,
+  table.data.settings-cards-table .rb-row-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .settings-table .bk-row-actions .btn-icon { width: 36px; height: 36px; }
+}
+
+/* --- v1.72.36: зоны карточки копий и фильтры ----------------------------- */
+.bk-setup { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.bk-setup label.field { flex: 1 1 220px; max-width: 300px; margin: 0; }
+.bk-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin: 0 0 10px; }
+/* счётчики — отдельной строкой: раньше подпись «показано: 14» приклеивалась
+   к слову «Дата» соседнего поля */
+.bk-filters .bk-filters-count { flex: 1 1 100%; margin: 0; }
+.bk-filters label.bk-filter { flex: 0 1 200px; min-width: 150px; margin: 0; }
+/* раскрытый блок «как работают копии» не прилипает к следующей зоне */
+.card-note + .card-section { margin-top: 16px; }
+
+/* --- v1.72.36: действия в строке копии ----------------------------------- */
+/* Колонка действий должна вмещать три кнопки. В узкой карточке (планшет,
+   1280 px) подпись «Восстановить» не помещается — оставляем иконку ↩ с
+   подсказкой и aria-label, чтобы строка не превращалась в три этажа.
+   Контейнерные запросы считаются от реальной ширины карточки, а не окна. */
+.bk-table-scroll { container-type: inline-size; container-name: bktable; }
+@container bktable (max-width: 820px) {
+  .settings-table .bk-row-actions .bk-restore-label { display: none; }
+  .settings-table .bk-row-actions .btn-restore { padding: 0; width: 30px; height: 30px; font-size: 15px; }
+}
+@media (max-width: 640px) {
+  /* на телефоне строка-карточка широкая: подпись возвращаем */
+  .settings-table .bk-row-actions .bk-restore-label { display: inline; }
+  .settings-table .bk-row-actions .btn-restore { width: auto; height: auto; padding: 8px 12px; font-size: 13px; }
+}
+
+/* --- v1.72.36: карточка «Сервер и команды» -------------------------------- */
+/* Команды — для копирования: одна строка + горизонтальная прокрутка вместо
+   рваного переноса посередине токена (SECRET_KEY, --branch=…). */
+#st-server .cmd-line { align-items: center; }
+#st-server .cmd-line code {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+@media (max-width: 640px) {
+  #st-server .cmd-line code { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: visible; }
+}
+/* ряд «Сейчас работает … Обновить» не прилипает к тексту ниже */
+#st-releases .card-actions { margin: 0 0 10px; }
+/* значок «проверена» в таблице — компактный, чтобы «Тип» оставался в строку */
+.settings-table .chip { font-size: 10.5px; padding: 1px 7px; }
+
+/* --- v1.72.37: токены, чекбоксы, тач-зоны, таблицы ---------------------- */
+/* Токен не может растянуть карточку: одна длинная строка без пробелов
+   раньше выезжала на соседнюю карточку (снимок 15.11.2026). Маска задаётся
+   в JS (maskToken), а здесь — страховка от переполнения. */
+.token-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.token-value {
+  flex: 1 1 200px; min-width: 0; max-width: 100%;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text);
+  font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.token-field .btn { flex: 0 0 auto; }
+.token-line { min-width: 0; }
+.token-line input, .field input.token-input {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* чекбокс и подпись в две строки больше не наезжают друг на друга */
+.check-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  min-height: 44px; padding: 6px 0; cursor: pointer;
+}
+.check-row > input[type="checkbox"],
+.check-row > input[type="radio"] {
+  flex: 0 0 auto; width: 20px; height: 20px; margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.check-row > span { min-width: 0; }
+/* .field — колонка; чекбокс-строка должна оставаться строкой («Утренний дайджест»
+   в карточке MAX стоял над подписью, а не слева от неё) */
+.field.check-row { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; }
+/* Тач-зоны: не меньше 44 px у интерактивных элементов настроек. В таблицах —
+   30 px: иначе каждая строка превращается в трёхэтажную. */
+/* :is() — чтобы правило не выглядело отдельным объявлением .btn-sm вне
+   единого блока тач-целей (замок v1.70.33 запрещает такие переопределения) */
+.settings-layout :is(.btn, .btn-sm) { min-height: 44px; }
+.settings-layout input:not([type="checkbox"]):not([type="radio"]),
+.settings-layout select { min-height: 44px; }
+.settings-layout .btn-icon { width: 44px; height: 44px; }
+.settings-table :is(.btn, .btn-sm) { min-height: 30px; }
+.settings-table .btn-icon { width: 30px; height: 30px; }
+/* группы кнопок переносятся, а не выдавливают друг друга */
+.card-actions { row-gap: 8px; }
+.settings-layout .card-actions .btn { flex: 0 1 auto; }
+/* длинные значения в списках «ключ — значение» и в inline-коде переносятся */
+.settings-layout .kv dd { min-width: 0; overflow-wrap: anywhere; }
+.settings-layout code.inline { overflow-wrap: anywhere; word-break: break-word; }
+/* таблица внутри карточки всегда в своём контейнере прокрутки */
+.settings-layout .table-scroll { max-width: 100%; }
+
+/* v1.70.58: заголовок страницы на телефоне переносится на вторую строку
+   вместо обрезания точками; базовое правило (одна строка с «…» для
+   планшета и выше) не тронуто — высота шапки 50px вмещает две строки. */
+@media (max-width: 640px) {
+  .page-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    font-size: 17px;
+    line-height: 1.15;
+  }
+}
+
+/* --- v1.72.36: мелочи таблицы копий -------------------------------------- */
+/* «В копии» — единственная ячейка с многострочным содержимым: её моноширинный
+   текст переносится, а не обрезается многоточием */
+.settings-table td.bk-in .cell-mono { white-space: normal; overflow-wrap: anywhere; font-size: 11px; }
+
+/* ======================================================================
+   v1.72.38 — общая вёрстка под все устройства
+   ----------------------------------------------------------------------
+   Сплошной обход 18 экранов на 1600 / 1280 / 1024 / 768 / 390 px показал
+   три класса дефектов, не связанных с «Настройками»:
+     1) шапка на телефоне: заголовок получал 60–150 px и рвался по слогам
+        («Дашбор/д», «Клиент/ы»), рядом висели селектор компании, аватар и
+        кнопка выхода;
+     2) формы: двухколоночные .filter-bar и .field на 390 px обрезали
+        значения селектов («все добавивш», «любое число»);
+     3) кнопки: .btn-sm жил высотой 30 px, .btn-icon — 38 px, на телефоне
+        цели касания меньше 44 px, а шрифт в полях 13–14 px (iOS зумит
+        страницу при фокусе).
+   Палитра, радиусы и тени не менялись — только размеры, переносы и порядок.
+   ====================================================================== */
+
+/* --- 1. Текст не выходит за карточку ---------------------------------- */
+/* Причина «выпирающего» текста — flex/grid-элемент с min-width: auto:
+   длинное слово (ИНН, токен, путь) распирало карточку, а не переносилось. */
+.content :is(.card, .glass, .panel),
+.modal-slot :is(.card, .glass, .panel) { min-width: 0; }
+.content :is(.card, .glass, .panel) > *,
+.modal-slot :is(.card, .glass, .panel) > * { min-width: 0; }
+.content :is(.card, .glass) :is(p, li, dd, dt, td, th, label, figcaption) {
+  overflow-wrap: break-word;
+}
+/* Читаемая мера строки: на 1600 px абзац в карточке тянулся на 150 знаков. */
+.content :is(.card, .glass) > p,
+.content :is(.card, .glass) .card-section > p { max-width: 78ch; }
+/* Моноширинные значения (токены, пути, команды) переносятся, а не рвут блок. */
+.content :is(.card, .glass) :is(code, .cell-mono, .token-value, .mono) {
+  overflow-wrap: anywhere;
+}
+.empty-state { max-width: 100%; }
+
+/* --- 2. Кнопки: одна высота и нормальные цели касания ----------------- */
+/* Размеры кнопок на устройствах с мышью. Медиа-условие обязательно:
+   безусловное min-height здесь перебило бы единый блок тач-целей
+   (@media pointer: coarse — 44 px) и уменьшило бы кнопки на планшетах;
+   замки v1.70.33/v1.70.35 ловят именно это. */
+@media (min-width: 768px) and (pointer: fine) {
+  .btn { min-height: 40px; }
+  /* :is() вместо «.btn-sm { … }»: второго такого правила вне блока
+     тач-целей быть не должно (замок v1.70.33). */
+  :is(.btn-sm) { min-height: 32px; }
+}
+.btn-icon { flex: 0 0 auto; }
+/* Ряд кнопок переносится целиком, а не по одной букве подписи. */
+.content :is(.card-actions, .modal-actions, .dash-toolbar) { row-gap: 8px; }
+.content :is(.card-actions, .modal-actions) > .btn { flex: 0 1 auto; }
+
+/* --- 3. Таблицы: прокрутка внутри карточки, без рывка страницы -------- */
+.table-wrap { overscroll-behavior-x: contain; scrollbar-width: thin; }
+.table-wrap:focus-within { outline: none; }
+/* Тень у края прокручиваемой таблицы. Классический приём с двумя слоями
+   фона на background-attachment: local — тень видна только там, где есть
+   что прокручивать, и исчезает в крайнем положении. Без неё на телефоне
+   таблица выглядела обрезанной: половина колонок «пропала» без намёка,
+   что её можно сдвинуть. */
+.table-wrap {
+  background-image:
+    linear-gradient(to right, var(--panel) 40%, transparent),
+    linear-gradient(to left, var(--panel) 40%, transparent),
+    radial-gradient(farthest-side at 0 50%, rgba(20, 16, 12, .16), transparent),
+    radial-gradient(farthest-side at 100% 50%, rgba(20, 16, 12, .16), transparent);
+  background-position: left center, right center, left center, right center;
+  background-repeat: no-repeat;
+  background-size: 28px 100%, 28px 100%, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+/* Таблица копий в узкой карточке: «db-manual-20261116-045506.db» — 27
+   знаков, в 136 px оно превращалось в «db-manual-2026…». Имя копии
+   переносится по символам (значение читается целиком), а ширина колонки
+   «Размер» увеличена, чтобы «1220 КБ» не обрезалось до «1220 …».
+   table-layout: fixed остаётся — колонки не скачут при обновлении списка. */
+table.data.bk-table { table-layout: fixed; }
+table.data.bk-table .bk-name { white-space: normal; overflow-wrap: anywhere; }
+
+/* --- 4. Настройки: табы переносятся, а не уезжают под «⋯ Ещё» --------- */
+/* На 1024–1140 px пять табов не влезают в колонку контента: полоса
+   переносится на вторую строку, прокрутка остаётся только телефону. */
+@container stgnav (max-width: 1140px) {
+  .stg-tabs-row { flex-wrap: wrap; overflow-x: visible; row-gap: 0; }
+  .stg-tabs-tools { margin-left: auto; }
+}
+@container stgnav (max-width: 900px) {
+  .stg-tab { font-size: 13px; padding: 10px 8px; }
+}
+
+/* --- 5. Телефон и узкий планшет -------------------------------------- */
+@media (max-width: 767px) {
+  /* Шапка: заголовок в две строки по словам, без разрыва внутри слова */
+  .topbar {
+    height: auto; min-height: var(--topbar-h);
+    padding: 6px 12px; gap: 8px; align-items: center;
+  }
+  #page-title {
+    font-size: 16px; line-height: 1.2; letter-spacing: 0;
+    min-width: 64px; padding: 2px 0;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: normal; overflow-wrap: normal; word-break: normal; hyphens: none;
+  }
+  .company-select { max-width: 156px; }
+  .topbar-right { gap: 8px; flex: 0 0 auto; }
+  .user-chip { gap: 8px; }
+  .avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 14px; }
+  .btn-icon { width: 44px; height: 44px; }
+
+  /* Меню: ширина панели остаётся прежней — её же использует margin-left
+     у закрытой панели; менять одно без другого нельзя, иначе закрытое
+     меню высовывает полосу на 50 px поверх контента (проверено на 390 px). */
+  .sidebar-nav { padding: 8px; }
+  :is(.nav-item) { min-height: 44px; }
+  .sidebar-footer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  body.sb-open .content { overflow: hidden; }
+
+  /* Формы: одна колонка, поля не уже 100 %, шрифт 16 px — без зума iOS */
+  .filter-bar { gap: 10px; }
+  .filter-bar .field { flex: 1 1 100%; min-width: 0; }
+  .filter-bar .btn { flex: 1 1 100%; }
+  .content :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+  .modal-slot :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+    font-size: 16px;
+  }
+  .content :is(.field, .form-grid) > :is(input, select, textarea) { width: 100%; }
+
+  /* Кнопки и цели касания */
+  .content :is(.btn, .btn-sm), .modal-slot :is(.btn, .btn-sm) { min-height: 44px; }
+  .btn-sm { padding: 10px 14px; font-size: 13.5px; }
+
+  /* Таблицы: компактнее, прокрутка внутри карточки */
+  table.data { min-width: 640px; }
+  /* Пустая таблица — это заглушка с рисунком, а не данные: принудительная
+     ширина 640 px растягивала её на две карточки и обрезала иллюстрацию
+     по краям (видно было только середину рисунка). */
+  table.data:has(td .empty-state) { min-width: 0; width: 100%; }
+  table.data:has(td .empty-state) thead { display: none; }
+  table.data:has(td .empty-state) td { padding: 6px 2px; }
+  table.data th, table.data td { padding: 8px 10px; }
+  .table-wrap { margin-inline: -4px; padding-inline: 4px; }
+
+  /* Табы настроек: горизонтальная прокрутка только здесь, панель — в потоке */
+  .stg-tabs-row { flex-wrap: nowrap; overflow-x: auto; }
+  .stg-panel {
+    position: static; margin-top: 6px; grid-template-columns: 1fr;
+    box-shadow: none; background: var(--bg-soft);
+  }
+
+  /* Подвал: две строки вместо четырёх */
+  .app-footer {
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    font-size: 11px; line-height: 1.35;
+  }
+  .content { padding: 12px; scroll-padding-top: 8px; }
+}
+
+/* --- 6. Узкий телефон (iPhone SE, 360–420 px) ------------------------- */
+@media (max-width: 480px) {
+  /* Шапка в две строки: сверху «меню — заголовок — профиль», снизу
+     переключатель компании во всю ширину. В одну строку селектор получал
+     112–156 px и показывал «Все компа…», а заголовок сжимался до 64 px.
+     Раскладка сеткой: display: contents у .topbar-right поднимает селектор
+     и профиль в общую сетку шапки, поэтому селектор уезжает на свою строку,
+     а аватар остаётся рядом с заголовком. Третья строка появляется только
+     при офлайне (:has) — плашка «⚡ Офлайн» не наезжает на селектор. */
+  .topbar {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "burger title user" "company company company";
+    align-items: center; row-gap: 8px; position: relative;
+    height: auto; min-height: var(--topbar-h); padding: 8px 12px;
+  }
+  .topbar:has(.offline-indicator:not(.hidden)) {
+    grid-template-areas: "burger title user" "offline offline offline" "company company company";
+  }
+  #btn-sidebar { grid-area: burger; }
+  #page-title { grid-area: title; }
+  .topbar-right { display: contents; }
+  .topbar-right .user-area { grid-area: user; justify-self: end; }
+  .topbar-right .company-select { grid-area: company; width: 100%; max-width: none; }
+  .topbar-right .offline-indicator { grid-area: offline; justify-self: start; }
+  .topbar .persona-menu { position: absolute; right: 8px; top: calc(100% - 2px); }
+  .chip-caret { display: none; }
+  .kv { grid-template-columns: 1fr; gap: 2px 0; }
+  .kv dt { font-size: 12px; }
+  .kv dd { margin: 0 0 8px; }
+  .content { padding: 10px; }
+  .card { padding: 14px 12px; }
+  .stg-tabs-bar { gap: 4px; }
+  .app-footer { font-size: 10.5px; }
+}
+
+/* --- 7. Таблицы данных: ширина по содержимому ------------------------- */
+/* width: 100% заставлял браузер ужимать колонки до переноса: «0 бух. ·
+   0 сотр.», «15.11.26, 23:57» и «2 на 1 332,00 ₽» ложились в две строки,
+   хотя места в карточке хватало. Таблица теперь не уже карточки, но может
+   быть шире — тогда прокручивается .table-wrap (с тенью из блока 3). */
+table.data { width: 100%; }
+/* Плотнее по горизонтали: 14 px отступа в шести колонках отнимали 168 px —
+   из-за этого «0 бух. · 0 сотр.» и «15.11.26, 23:57» переносились на вторую
+   строку, а строка таблицы вырастала до 79 px. */
+table.data :is(th, td) { padding-left: 12px; padding-right: 12px; }
+/* text-wrap: pretty не даёт оставить на второй строке одно короткое слово
+   («0 бух. · 0» / «сотр.») — браузер перераспределяет слова в строке. */
+table.data td { text-wrap: pretty; }
+/* Заглушка в пустой таблице — не данные: держим её по ширине карточки,
+   чтобы длинная подсказка не растягивала таблицу. */
+table.data:has(td .empty-state) { width: 100%; }

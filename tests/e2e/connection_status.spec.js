@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seenVersion } from './seen_version.js';
 
 test('индикатор работает при недоступных живых обновлениях и без опроса на переходах', async ({ page, request }) => {
   test.setTimeout(120000);
@@ -16,13 +17,14 @@ test('индикатор работает при недоступных живы
   }
   const token = (await response.json()).access_token;
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(token => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
+    localStorage.setItem('ymaster_seen_version', seen);
     // Быстро воспроизводим периодическую проверку локальной очереди в простое.
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 500 : ms, ...args);
-  }, token);
+  }, { token, seen });
   await page.routeWebSocket('**/ws/status**', socket => socket.close());
   let countsCalls = 0, conflictCalls = 0;
   page.on('request', r => {

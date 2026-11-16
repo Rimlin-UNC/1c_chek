@@ -1,14 +1,16 @@
 import { expect, test } from '@playwright/test';
+import { seenVersion } from './seen_version.js';
 
 test('локальный монитор работает без облачного блока и фоновых запросов', async ({ page, request }) => {
   test.setTimeout(120000);
   const login = await request.post('/api/v1/auth/login', { data: { username: 'admin', password: 'playwright-test-password' } });
   expect(login.ok()).toBeTruthy();
   const token = (await login.json()).access_token;
-  await page.addInitScript(token => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
-  }, token);
+    localStorage.setItem('ymaster_seen_version', seen);
+  }, { token, seen });
   const cloudRequests = [];
   const exporterRequests = [];
   let performanceRequests = 0;
@@ -56,7 +58,10 @@ test('локальный монитор работает без облачног
     if (path.startsWith('/api/v1/openstack')) cloudRequests.push(req.url());
     if (path.includes('node-exporter')) exporterRequests.push(req.url());
   });
-  await page.goto('/#/settings');
+  // v1.72.38: в «Настройках» появились разделы-табы, чужие карточки скрыты.
+  // Прямая ссылка на раздел «Чек-Пул и интеграции» (карточка монитора — data-sec="integr")
+  // открывает её сама, как это делает человек по закладке.
+  await page.goto('/#/settings/integr');
   const card = page.locator('#st-server-monitor');
   await expect(card).toBeAttached({ timeout: 30000 });
   await expect(card.locator('#server-exporter-refresh')).toHaveCount(0);

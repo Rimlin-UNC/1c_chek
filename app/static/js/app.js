@@ -18,7 +18,9 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.35';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.38';
+// v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
+import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -5320,6 +5322,105 @@ function makeSettingsCollapsible(container) {
 }
 
 // ==========================================================================
+// v1.72.36: РАСКЛАДКА НАСТРОЕК — строки, пролёты, навигация на узких экранах
+// ==========================================================================
+// Причины (по снимку владельца от 15.11.2026): карточки настроек лежали в
+// одной auto-fit сетке, поэтому таблица «Копия / Тип / В копии / Размер»
+// шириной в 720 px оказывалась в колонке 300 px и наезжала на соседнюю
+// карточку; карточки в ряду имели разную высоту; на планшете меню из пяти
+// крупных аккордеонов уезжало над контентом. Здесь — только раскладка:
+// содержимое карточек и права ролей не меняются.
+
+/** Разделы страницы «Настройки»: ключ data-sec, иконка и название.
+ *  Один список и для табов, и для заголовков разделов в одноколоночном виде. */
+const SETTINGS_SECTIONS = [
+  { key: 'data',     icon: '🗄', title: 'Данные и восстановление' },
+  { key: 'checks',   icon: '🧾', title: 'Проверка чеков и почта' },
+  { key: 'integr',   icon: '🧩', title: 'Чек-Пул и интеграции' },
+  { key: 'personal', icon: '👤', title: 'Личное и доступ' },
+  { key: 'device',   icon: '📱', title: 'Устройство и служебное' },
+];
+const settingsSectionTitle = (key) =>
+  (SETTINGS_SECTIONS.find((x) => x.key === key) || {}).title || '';
+
+/**
+ * Собрать карточки настроек в разделы и пометить широкие.
+ *
+ * Зачем разделы: в одной плоской сетке «широкая» карточка с таблицей (ей нужна
+ * вся строка) оставляет дырку рядом с узкой соседкой, а следующая строка
+ * начинается ниже — получаются пустые «стаканы». Сетка на раздел + плотная
+ * укладка (grid-auto-flow: dense) заполняют такие дырки узкими карточками
+ * того же раздела, не переставляя карточки между разделами.
+ *
+ * Узлы не пересоздаются, а переносятся — обработчики кнопок остаются живыми.
+ */
+function applySettingsLayout(container) {
+  const grid = container && container.querySelector('.settings-grid');
+  if (!grid) return;
+  const cards = Array.from(grid.querySelectorAll('.glass.card'));
+  const plan = layoutPlan(cards.map((card) => ({
+    id: card.id || '',
+    sec: card.getAttribute('data-sec') || '',
+    order: (card.getAttribute('style') || '').match(/order:\s*(-?\d+)/)?.[1],
+    // таблица внутри <details> не делает карточку широкой: свёрнутая,
+    // она не требует всей строки (иначе рядом остаётся пустая колонка)
+    hasTable: !!card.querySelector('.table-wrap') ||
+      Array.from(card.querySelectorAll('table.data')).some((t) => !t.closest('details')),
+    hasChart: !!card.querySelector('canvas, svg.chart, .osm-chart, .chart-svg'),
+    hidden: card.classList.contains('hidden'),
+  })));
+  const byId = new Map(cards.filter((c) => c.id).map((c) => [c.id, c]));
+  const order = [];
+  plan.forEach((item) => {
+    const card = byId.get(item.id);
+    if (!card) return;
+    card.classList.toggle('card-wide', item.wide);
+    card.classList.toggle('card-section-start', item.sectionStart);
+    if (item.sectionStart) order.push(item.sec);
+  });
+  if (grid.querySelector('.stg-section')) return;   // уже собрано
+  order.forEach((sec) => {
+    const section = document.createElement('section');
+    section.className = 'stg-section';
+    section.setAttribute('data-sec', sec);
+    // v1.72.37: в одноколоночном виде разделы идут подряд — заголовок нужен,
+    // иначе граница между «данными» и «проверкой чеков» теряется
+    const head = document.createElement('h2');
+    head.className = 'stg-section-title';
+    head.textContent = settingsSectionTitle(sec);
+    section.appendChild(head);
+    const inner = document.createElement('div');
+    inner.className = 'stg-section-grid';
+    section.appendChild(inner);
+    plan.filter((item) => item.sec === sec)
+      .forEach((item) => { if (byId.get(item.id)) inner.appendChild(byId.get(item.id)); });
+    grid.appendChild(section);
+  });
+  // карточки без раздела (на будущее) остаются в сетке как были
+  grid.classList.add('settings-grouped');
+}
+
+/** Состояние кнопки: loading (aria-busy + блокировка) и disabled. */
+function setBtnBusy(btn, busy) {
+  if (!btn) return;
+  if (busy) {
+    btn.setAttribute('aria-busy', 'true');
+    btn.disabled = true;
+  } else {
+    btn.removeAttribute('aria-busy');
+    btn.disabled = false;
+  }
+}
+
+/** Короткая подсветка результата действия на самой кнопке (успех / ошибка). */
+function flashBtn(btn, kind, ms = 1800) {
+  if (!btn) return;
+  const cls = kind === 'ok' ? 'is-ok' : 'is-err';
+  btn.classList.add(cls);
+  setTimeout(() => btn.classList.remove(cls), ms);
+}
+
+// ==========================================================================
 // v1.20.0: ОФОРМЛЕНИЕ — акцентный цвет, плотность, «Спокойный час»
 // (ТЗ «Ямастер» п.6: пользователь выбирает акцент и плотность; хранится
 // локально, применяется до отрисовки — без вспышки)
@@ -6826,6 +6927,36 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.72.38': [
+    { icon: '📱', title: 'Шапка и меню на телефоне: ничего не рвётся и не прячется',
+      text: 'Заголовок экрана больше не ломается по слогам («Клиент/ы») и не сжимается до 60 px: на телефоне шапка стала двухстрочной — сверху «меню, название, профиль», снизу переключатель компании во всю ширину. Пункты выдвижного меню — 44 px в высоту, ширина панели не выходит за экран, а подложка не даёт прокручивать страницу под открытым меню.' },
+    { icon: '🧾', title: 'Формы: одна колонка и нормальные поля',
+      text: 'Фильтры в «Чеках» и других разделах на телефоне выстроены в одну колонку: значения селектов больше не обрезаются до «все добавивш» и «любое число». Поля ввода получили шрифт 16 px — iOS больше не зумит страницу при касании поля, — а кнопки выросли до 44 px, чтобы попадать пальцем.' },
+    { icon: '📊', title: 'Таблицы: видно, что их можно прокрутить',
+      text: 'У прокручиваемой таблицы появилась тень у края — сразу понятно, что часть колонок за краем, а не «пропала». Строки стали компактнее и перестали переноситься на вторую строку по мелочам («0 бух. · 0 сотр.», «15.11.26, 23:57»). Пустая таблица с рисунком больше не растягивается на две карточки, а имя резервной копии в настройках показывается целиком.' },
+    { icon: '🧭', title: 'Настройки и главная: табы и меню на любом экране',
+      text: 'Полоса табов настроек на планшете и узком ноутбуке переносится на вторую строку вместо ухода в прокрутку, а на телефоне панель таба раскрывается в потоке и больше не накрывает карточки раздела. На главной странице ссылки меню («Как это работает», «Для бизнеса», «Оферты») переносятся и остаются в экране — раньше последняя ссылка уезжала за правый край.' },
+  ],
+  '1.72.37': [
+    { icon: '🗂', title: 'Настройки: табы вместо меню и одна колонка карточек',
+      text: 'Раздел «Настройки» собран как обычные вкладки: пять разделов идут полосой над контентом, активный подчёркнут акцентной линией, а его карточки открываются в выпадающей панели. Карточки стоят строго одна под другой в колонке шириной 900 px — на любом мониторе больше нет двух- и трёхколоночных сеток, из-за которых содержимое сжималось до 300 px. На телефоне табы прокручиваются по горизонтали, панель раскрывается под ними. Кнопки «Все настройки» и «Свернуть» переехали в меню «⋯ Ещё» рядом с табами.' },
+    { icon: '🔑', title: 'Токены больше не вылезают за карточку',
+      text: 'Токены ФНС, MAX и 1С показываются маской (hj6••••••4f2a) в отдельном поле с ограничением ширины: длинная строка не растягивает карточку и не выезжает на соседнюю. Рядом с токеном — кнопки «показать» и «копировать», чтобы не выделять строку мышью. Чекбокс в карточке MAX больше не наезжает на подпись, а кнопки в ряду переносятся, а не выдавливают друг друга.' },
+    { icon: '📅', title: 'Таблицы в настройках: читаемые даты и карточки на телефоне',
+      text: 'Таблицы «Последние входы», «Ключи доступа» и «Ключи API» теперь живут в контейнере прокрутки и не выходят за карточку, а даты печатаются как 16.11.26, 00:33 вместо сырого 2026-11-16T00:33:12.871Z. На телефоне каждая строка становится карточкой с подписями полей; размер копии («1240 КБ») больше не обрезается.' },
+    { icon: '🧭', title: 'Адрес помнит раздел, кнопки не дублируют нажатие',
+      text: 'Открытый раздел записывается в адрес (#/settings/checks), и прямая ссылка открывает нужный таб даже после входа в программу. Переключение таба поднимает экран к началу раздела, а кнопка «Свернуть» возвращает к полосе табов. Элементы настроек получили тач-зоны не меньше 44 px; «Показать» и «Копировать» у токенов тоже.' },
+  ],
+  '1.72.36': [
+    { icon: '🧭', title: 'Настройки: аккуратная сетка и меню на любом экране',
+      text: 'Раздел «Настройки» перестроен без изменения функций: карточки собраны по разделам, карточки с таблицами и графиками занимают всю ширину строки, поэтому таблица резервных копий больше не наезжает на соседнюю карточку и не обрезается. Заголовки карточек переносятся по словам, а не по слогам; кнопки выстроены в зоны «настройка → действия → данные».' },
+    { icon: '💾', title: 'Копии: компактная таблица и весь архив отдельно',
+      text: 'В карточке «Резервные копии» видно десять последних копий внутри прокручиваемой таблицы с закреплённой шапкой; длинные имена обрезаются многоточием, полное имя — в подсказке. Кнопка «Все копии» открывает весь архив в отдельном окне. На телефоне каждая копия показывается компактной карточкой с подписями полей, а «Восстановить» остаётся на месте и не уезжает за край.' },
+    { icon: '📱', title: 'Меню настроек: список на компьютере, селект на планшете и телефоне',
+      text: 'На компьютере меню настроек — один список с иконками, счётчиками и активным пунктом, выделенным так же, как в основном меню. На планшете и телефоне вместо пяти крупных аккордеонов над контентом появился селект «Перейти к настройке…» — раздел открывается сразу, без прокрутки через всё меню. Прямые ссылки вида #/settings/checks/st-fns работают как раньше.' },
+    { icon: '⏳', title: 'Кнопки показывают работу: загрузка, успех, ошибка',
+      text: 'Кнопки «Создать копию», «Проверить копию», «Восстановить», «Обновить список», «Проверить обновления» и откат версии показывают спиннер во время работы и коротко подсвечиваются по результату. Ширина кнопки при этом не меняется, повторное нажатие блокируется, а состояние озвучивается вспомогательным технологиям (aria-busy).' },
+  ],
   '1.72.35': [
     { icon: '📈', title: 'Графики сервера и трафик',
       text: 'Графики CPU, памяти и диска; трафик входа и выхода относительно 1000 ГБ за месяц.' },
@@ -11402,13 +11533,7 @@ async function viewSettings(container, alive = routeGuard()) {
 
   // v1.70.9: страница настроек — меню с разделами и подменю;
   // прямой заход по #/settings/<раздел>/<карточка> открывает группу и карточку
-  const SETTINGS_GROUPS = [
-    { key: 'data',     icon: '🗄', title: 'Данные и восстановление' },
-    { key: 'checks',   icon: '🧾', title: 'Проверка чеков и почта' },
-    { key: 'integr',   icon: '🧩', title: 'Чек-Пул и интеграции' },
-    { key: 'personal', icon: '👤', title: 'Личное и доступ' },
-    { key: 'device',   icon: '📱', title: 'Устройство и служебное' },
-  ];
+  const SETTINGS_GROUPS = SETTINGS_SECTIONS;
   const _cur = (() => {
     const p = (state.routeParam || '').split('/').filter(Boolean);
     return { group: p[0] || '', card: p[1] || '' };
@@ -11422,15 +11547,29 @@ async function viewSettings(container, alive = routeGuard()) {
   }
   container.innerHTML = `
     <div class="settings-layout">
-    <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">${
-      SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
-      <div class="snav-group" data-grp="${g.key}">
-        <button type="button" class="snav-head" aria-expanded="false">
-          <span class="snav-ico">${g.icon}</span><span class="snav-title">${g.title}</span>
-          <span class="snav-cnt"></span><span class="snav-chev" aria-hidden="true">›</span>
-        </button>
-        <div class="snav-sub"></div>
-      </div>`).join('')}
+    <nav class="settings-nav settings-tabs" id="settings-nav" aria-label="Разделы настроек">
+      <div class="stg-tabs-bar">
+      <div class="stg-tabs-row" role="tablist" aria-label="Разделы настроек">${
+        SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
+        <button type="button" role="tab" class="stg-tab" id="stg-tab-${g.key}" data-sec="${g.key}"
+                aria-controls="stg-panel-${g.key}" aria-selected="false" aria-expanded="false" tabindex="-1">
+          <span class="stg-tab-ico" aria-hidden="true">${g.icon}</span><span class="stg-tab-label">${g.title}</span>
+        </button>`).join('')}
+        <div class="stg-tabs-tools">
+          <button type="button" class="btn btn-sm" id="snav-more" aria-expanded="false"
+                  aria-controls="snav-more-menu" title="Все настройки, свернуть меню">⋯ Ещё</button>
+          <div class="stg-more" id="snav-more-menu" hidden>
+            <button type="button" class="stg-more-item" id="snav-all">🔍 Все настройки</button>
+            <button type="button" class="stg-more-item" id="snav-collapse">✕ Свернуть</button>
+          </div>
+        </div>
+      </div>
+      </div>
+      <div class="stg-panels">${
+        SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
+        <div class="stg-panel" id="stg-panel-${g.key}" data-sec="${g.key}" role="tabpanel"
+             aria-labelledby="stg-tab-${g.key}" hidden></div>`).join('')}
+      </div>
     </nav>
     <div class="settings-grid">
       <div class="glass card" id="wa-card" data-sec="personal" style="order:40">
@@ -11458,7 +11597,7 @@ async function viewSettings(container, alive = routeGuard()) {
             <input id="mc-fromname" placeholder="Чек-Пул Ямастер" value=""></label>
           <label class="field"><span>Адрес сайта для ссылок в письмах</span>
             <input id="mc-baseurl" placeholder="https://chek.ymaster.ru" value=""></label>
-          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+          <label class="check-row">
             <input type="checkbox" id="mc-tls" style="width:auto">
             <span>STARTTLS (для порта 465 не важен — SSL с первого байта)</span></label>
         </div>
@@ -11478,7 +11617,7 @@ async function viewSettings(container, alive = routeGuard()) {
 
         <div class="card-title" style="margin-top:14px">🤖 Бот рассылок
           <span class="spacer"></span>
-          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+          <label class="check-row">
             <input type="checkbox" id="mc-bot" style="width:auto">
             <span>включён</span></label></div>
         <div id="mc-rules" class="form-hint" style="margin:6px 0">Загружаем…</div>
@@ -11672,9 +11811,13 @@ async function viewSettings(container, alive = routeGuard()) {
         <a href="https://business.max.ru/self" target="_blank" rel="noopener">business.max.ru</a>
         (Чат-боты → ⋮ → Настройки → скопировать токен). Выбор канала — в карточке
         Telegram выше: «Telegram», «MAX» или «Оба ассистента».</p>
-        <label class="field" style="margin-bottom:10px"><span>Токен бота MAX
-          ${maxSet.has_token ? '(задан: ' + esc(maxSet.token_masked) + (maxSet.bot_username ? ', @' + esc(maxSet.bot_username) : '') + ')' : '(не задан)'}</span>
+        <label class="field" style="margin-bottom:6px"><span>Токен бота MAX
+          ${maxSet.has_token ? '(задан)' : '(не задан)'}</span>
           <input id="mx-token" type="password" autocomplete="off" placeholder="токен с платформы MAX"></label>
+        ${maxSet.has_token ? `<div class="token-field" style="margin-bottom:10px">
+          <code class="token-value" title="Маска приходит с сервера: полный токен он не отдаёт">${esc(maxSet.token_masked)}</code>
+          <span class="form-hint">${maxSet.bot_username ? '@' + esc(maxSet.bot_username) : 'маска токена'}</span></div>`
+        : '<div style="margin-bottom:10px"></div>'}
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;margin:6px 0 12px">
           <input type="checkbox" id="mx-enabled" ${maxSet.enabled ? 'checked' : ''} style="width:auto">
           <span>Включить бота: напоминания в ${esc(maxSet.reminder_time)} сотрудникам без чеков за сегодня</span></label>
@@ -11685,8 +11828,8 @@ async function viewSettings(container, alive = routeGuard()) {
             <input value="${maxSet.bound_users}" disabled></label>
           <label class="field full"><span>Текст напоминания ({name} — имя сотрудника)</span>
             <input id="mx-text" value="${esc(maxSet.reminder_text)}"></label>
-          <label class="field full" style="display:flex;gap:10px;align-items:center;cursor:pointer">
-            <input type="checkbox" id="mx-digest" ${maxSet.digest_enabled ? 'checked' : ''} style="width:auto">
+          <label class="field full check-row">
+            <input type="checkbox" id="mx-digest" ${maxSet.digest_enabled ? 'checked' : ''}>
             <span>Утренний дайджест бухгалтеру и администратору (в 08:00)</span></label>
         </div>
         <p class="form-hint" style="margin:0 0 6px">Токен принадлежит боту: <b>${esc(maxSet.token_bot || '—')}</b>${maxSet.token_mismatch ? ' — <b style="color:var(--bad-text)">служебное имя не совпадает с публичным ником: подписи/ссылки работают только у бота из токена. Вставьте токен бота из публичного ника.</b>' : ''}</p>
@@ -11957,7 +12100,7 @@ async function viewSettings(container, alive = routeGuard()) {
           </div>
           <button type="button" class="btn btn-sm" id="btn-save-repo" style="margin-top:8px">💾 Сохранить источник</button>
         </details>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <div class="card-actions">
           <button type="button" class="btn btn-sm" id="btn-check-update">🔍 Проверить обновления</button>
           <button type="button" class="btn btn-sm" id="btn-changelog">📜 История версий</button>
           <button type="button" class="btn btn-sm" id="btn-backup">💾 Скачать резервную копию БД</button>
@@ -11968,7 +12111,7 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>` : ''}
 
       ${isAdmin() ? `
-      <div class="glass card" id="st-releases" data-sec="data" style="order:12">
+      <div class="glass card" id="st-releases" data-sec="data" style="order:12" data-wide>
         <div class="card-title">↩ Последние рабочие версии
           <span class="form-hint">(v1.46.0 · хранятся три последние)</span></div>
         <p class="form-hint" style="margin-bottom:8px">Программа сама запоминает версии, на которых успешно работала.
@@ -11992,8 +12135,9 @@ async function viewSettings(container, alive = routeGuard()) {
       <div class="glass card" id="st-onec" data-sec="integr" style="order:32">
         <div class="card-title">Интеграция с 1С</div>
         <label class="field" style="margin-bottom:12px"><span>Токен Push-доступа</span>
-          <div class="token-line"><input id="onec-token" readonly value="${esc(onec.api_token_masked)}">
-          <button type="button" class="btn btn-sm" id="onec-reveal">показать</button></div></label>
+          <div class="token-line"><input id="onec-token" class="token-input" readonly value="${esc(onec.api_token_masked)}">
+          <button type="button" class="btn btn-sm" id="onec-reveal">показать</button>
+          <button type="button" class="btn btn-sm" data-copy-target="#onec-token">⧉ копировать</button></div></label>
         <button type="button" class="btn btn-sm" id="onec-regen" style="margin-bottom:12px">♻ Сгенерировать новый токен</button>
         <div class="info-callout" style="font-size:12.5px;margin-bottom:0">
           Адрес для 1С: <code class="inline">${location.origin}/onec/v1/receipts/pull</code><br>
@@ -12051,30 +12195,45 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>
 
       ${isAdmin() ? `
-      <div class="glass card" id="st-backups" data-sec="data" style="order:10">
+      <div class="glass card" id="st-backups" data-sec="data" style="order:10" data-wide>
         <div class="card-title">💾 Резервные копии <span class="form-hint">(v1.5.0)</span></div>
-        <p class="form-hint" style="margin-bottom:10px">Копии создаются автоматически: ежедневные (7 шт.),
-        перед каждым обновлением (5) и архив месяца (12 месяцев) — каталог data/backups на сервере.
-        Данные не затрагиваются ни обновлениями, ни git.</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-          <select id="bk-kind" style="max-width:250px">
-            <option value="manual">Ручная — хранятся 10</option>
-            <option value="daily">Дневная — хранятся 7</option>
-            <option value="weekly">Недельная — хранятся 2</option>
-            <option value="archive">Месячный архив — хранятся 12</option>
-          </select>
-          <button type="button" class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
-          <p class="form-hint" style="margin:8px 0 0">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
-          1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
-          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями не переписывается.
-          Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит файл и добавит его в список («загруженные», хранятся 10).</p>
+
+        <div class="card-section">
+          <div class="card-section-title">Настройка копии</div>
+          <div class="bk-setup">
+            <label class="field"><span>Тип копии</span>
+              <select id="bk-kind" autocomplete="off">
+                <option value="manual">Ручная — хранятся 10</option>
+                <option value="daily">Дневная — хранятся 7</option>
+                <option value="weekly">Недельная — хранятся 2</option>
+                <option value="archive">Месячный архив — хранятся 12</option>
+              </select></label>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-bk-create">＋ Создать копию сейчас</button>
+          </div>
+        </div>
+
+        <div class="card-actions">
           <button type="button" class="btn btn-sm" id="btn-bk-refresh">↻ Обновить список</button>
           <button type="button" class="btn btn-sm" id="btn-bk-import"
                   title="Загрузить копию из файла: .db, .sqlite, .sqlite3">⬆ Загрузить копию</button>
           <input type="file" id="bk-import-file" accept=".db,.sqlite,.sqlite3" style="display:none">
         </div>
-        <div id="bk-filters" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0"></div>
-        <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
+
+        <details class="card-note">
+          <summary>Как работают копии и что в них входит</summary>
+          <p class="form-hint">Автоматически: каждый день — дневная копия, каждый понедельник — недельная,
+          1-го числа — месячный архив. В копию входит вся база: чеки, пользователи, компании, настройки.
+          Каждая копия проверяется на целостность; архивная история (недельные и месячные) обновлениями
+          не переписывается. Скачанную раньше копию можно вернуть: кнопка «⬆ Загрузить копию» проверит
+          файл и добавит его в список («загруженные», хранятся 10). Каталог на сервере:
+          <span class="cell-mono">data/backups</span> — данные не затрагиваются ни обновлениями, ни git.</p>
+        </details>
+
+        <div class="card-section">
+          <div class="card-section-title">Копии в архиве</div>
+          <div id="bk-filters" class="bk-filters"></div>
+          <div id="bk-list"><div class="skeleton" style="height:60px"></div></div>
+        </div>
       </div>` : ''}
 
       <div class="glass card" id="st-profile" data-sec="personal" style="order:41">
@@ -12212,57 +12371,98 @@ async function viewSettings(container, alive = routeGuard()) {
   });
 
   // v1.70.9: тулбар и поведение меню-иерархии настроек
+  // ======================================================================
+  // v1.72.37: навигация настроек — горизонтальные табы (Tabs).
+  // Таб = раздел, выпадающая панель таба = карточки раздела (один уровень).
+  // На телефоне панель раскрывается в потоке (аккордеон), на компьютере —
+  // абсолютным выпадающим списком, чтобы не сдвигать контент.
+  // Второстепенные действия («Все настройки», «Свернуть») — в меню «⋯ Ещё».
+  // ======================================================================
+  const settingsTabs = () => Array.from(($('#settings-nav') || document)
+    .querySelectorAll('.stg-tab'));
+  const settingsPanels = () => Array.from(($('#settings-nav') || document)
+    .querySelectorAll('.stg-panel'));
+
+  /** Закрыть все выпадающие панели табов. */
+  const closeSettingsPanels = () => {
+    settingsPanels().forEach((p) => { p.hidden = true; });
+    settingsTabs().forEach((t) => t.setAttribute('aria-expanded', 'false'));
+  };
+
+  /** Открыть панель раздела (drop-down под табом). */
+  const openSettingsPanel = (key) => {
+    closeSettingsPanels();
+    const panel = document.querySelector(`.stg-panel[data-sec="${key}"]`);
+    const tab = document.querySelector(`.stg-tab[data-sec="${key}"]`);
+    if (!panel || !tab) return;
+    panel.hidden = false;
+    tab.setAttribute('aria-expanded', 'true');
+  };
+
+  /**
+   * Подсветка табов и показ нужного раздела.
+   * Возвращает ключ активного таба ('' в режиме «все настройки»).
+   */
+  // v1.72.37: прокручивается .content (у него overflow-y:auto), а не window —
+  // иначе после переключения таба экран оставался на прежнем месте
+  const scrollSettingsTop = () => {
+    const box = document.querySelector('.content');
+    if (box) box.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   const settingsApply = (nav, cur) => {
+    if (!nav) return '';
     const allMode = document.body.classList.contains('settings-all');
+    const tabs = Array.from(nav.querySelectorAll('.stg-tab'));
+    const model = tabsModel(tabs.map((t) => ({
+      key: t.getAttribute('data-sec'),
+      title: (t.querySelector('.stg-tab-label') || {}).textContent || '',
+      items: [{ id: '__tab__' }],
+    })));
+    // v1.72.37: адрес — источник истины. После входа роутер иногда успевает
+    // перерисовать экран без подпути, и глубокий переход (#/settings/integr)
+    // открывал первый таб. Хвост адреса страхует.
+    const hashSec = (String(location.hash || '').match(/^#\/settings\/([a-z]+)/) || [])[1] || '';
+    const active = allMode ? '' : tabForRoute(model, cur.group || hashSec);
     const bAll = $('#snav-all');
     if (bAll) bAll.textContent = allMode ? '☰ Меню настроек' : '🔍 Все настройки';
-    nav.querySelectorAll('.snav-group').forEach((grp) => {
-      const isCur = !!cur.group && grp.getAttribute('data-grp') === cur.group;
-      grp.classList.toggle('open', allMode || isCur);
-      grp.querySelectorAll('.snav-item').forEach((b) =>
-        b.classList.toggle('active', !!cur.card && b.getAttribute('data-open') === cur.card));
+    tabs.forEach((tab, i) => {
+      const on = !!active && tab.getAttribute('data-sec') === active;
+      tab.classList.toggle('active', on);
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      tab.tabIndex = on || (!active && i === 0) ? 0 : -1;
     });
+    nav.querySelectorAll('.stg-panel .snav-item').forEach((b) => {
+      const on = !!cur.card && b.getAttribute('data-open') === cur.card;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    });
+    // контент: один раздел за раз; в режиме «все настройки» — всё подряд
+    container.querySelectorAll('.settings-grid > .stg-section').forEach((sec) => {
+      sec.hidden = !allMode && !!active && sec.getAttribute('data-sec') !== active;
+    });
+    // v1.72.37: на телефоне полоса табов прокручивается — активный таб
+    // подводим в видимую часть, иначе непонятно, какой раздел открыт
+    const row = nav.querySelector('.stg-tabs-row');
+    if (row && row.scrollWidth > row.clientWidth + 1) {
+      const onTab = nav.querySelector('.stg-tab.active');
+      if (onTab) {
+        try { onTab.scrollIntoView({ inline: 'center', block: 'nearest' }); }
+        catch (e) { /* старые браузеры */ }
+      }
+    }
+    return active;
   };
+
   if (isAdmin()) bindSplashCard();          // v1.70.100: длительность заставки — только администратор
   if (isAdmin()) bindSeoCard();             // v1.70.103: поисковики — только администратор
+
   const snav = $('#settings-nav');
   if (snav) {
-    snav.insertAdjacentHTML('afterbegin',
-      '<div class="snav-tools">' +
-      '<button type="button" class="btn btn-sm" id="snav-all">🔍 Все настройки</button>' +
-      '<button type="button" class="btn btn-sm" id="snav-collapse">✕ Свернуть</button>' +
-      '</div>');
-    $('#snav-all').onclick = () => {
-      const on = !document.body.classList.contains('settings-all');
-      document.body.classList.toggle('settings-all', on);
-      localStorage.setItem('settings_all', on ? '1' : '');
-      if ((location.hash || '#/settings').length > '#/settings'.length) {
-        location.hash = '#/settings';             // пере-рендер через route()
-      } else {
-        settingsApply(snav, { group: '', card: '' });
-        // v1.70.10: вернулись в меню — первый раздел раскрываем сразу
-        if (!on) {
-          const g0 = Array.from(snav.querySelectorAll('.snav-group'))
-            .find((g) => g.style.display !== 'none' && g.querySelector('.snav-item'));
-          if (g0 && !snav.querySelector('.snav-group.open')) {
-            g0.classList.add('open');
-            g0.querySelector('.snav-head').setAttribute('aria-expanded', 'true');
-          }
-        }
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-    };
-    $('#snav-collapse').onclick = () => {
-      snav.querySelectorAll('.snav-group.open').forEach((g) => {
-        g.classList.remove('open');
-        g.querySelector('.snav-head').setAttribute('aria-expanded', 'false');
-      });
-      // v1.70.10: свернули из глубины страницы — показываем, где меню
-      try { snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* старые браузеры */ }
-    };
+    // карточки раздела -> пункты выпадающей панели таба
     const cardsAll = Array.from(container.querySelectorAll('.settings-grid > .glass.card'));
-    snav.querySelectorAll('.snav-group').forEach((grp) => {
-      const key = grp.getAttribute('data-grp');
+    snav.querySelectorAll('.stg-panel').forEach((panel) => {
+      const key = panel.getAttribute('data-sec');
       const items = cardsAll
         .filter((c) => c.getAttribute('data-sec') === key)
         .map((c) => {
@@ -12273,45 +12473,137 @@ async function viewSettings(container, alive = routeGuard()) {
           const ico = cp0 >= 0x2190 ? String.fromCodePoint(cp0) : '';
           const label = (ico ? raw.slice(String.fromCodePoint(cp0).length).trim() : raw) || raw;
           return { id: c.id || '', ico: ico, label: label };
-        });
-      grp.querySelector('.snav-sub').innerHTML = items.length ? items.map((it) =>
-        `<button type="button" class="snav-item" data-open="${it.id}">` +
-        (it.ico ? `<span class="snav-ico">${it.ico}</span>` : '') +
-        `<span>${esc(it.label)}</span></button>`).join('')
+        })
+        .filter((it) => it.id);
+      panel.innerHTML = items.length ? items.map((it) =>
+        `<button type="button" class="snav-item" data-open="${esc(it.id)}">` +
+        (it.ico ? `<span class="snav-ico">${esc(it.ico)}</span>` : '') +
+        `<span class="snav-item-label">${esc(it.label)}</span></button>`).join('')
         : '<div class="snav-empty">для вашей роли здесь пусто</div>';
-      grp.querySelector('.snav-cnt').textContent = items.length || '';
-      grp.querySelector('.snav-head').onclick = () => {
-        const open = grp.classList.toggle('open');
-        grp.querySelector('.snav-head').setAttribute('aria-expanded', open);
-        if (open && window.matchMedia('(max-width: 900px)').matches) {
-          snav.querySelectorAll('.snav-group').forEach((g2) => {
-            if (g2 !== grp) g2.classList.remove('open');
-          });
-          const gtop = grp.getBoundingClientRect().top;
-          if (gtop < 0 || gtop > 320) {
-            window.scrollTo({ top: window.pageYOffset + gtop - 76, behavior: 'smooth' });
-          }
-        }
-      };
-      grp.querySelectorAll('.snav-item').forEach((btn) => {
+      const tab = snav.querySelector(`.stg-tab[data-sec="${key}"]`);
+      if (tab) tab.setAttribute('data-count', String(items.length || ''));
+      panel.querySelectorAll('.snav-item').forEach((btn) => {
         btn.onclick = () => {
           const id = btn.getAttribute('data-open');
           if (!id) return;
           document.body.classList.remove('settings-all');
           localStorage.setItem('settings_all', '');
-          snav.querySelectorAll('.snav-group').forEach((g2) => {
-            if (g2 !== grp) g2.classList.remove('open');
-          });
-          grp.classList.add('open');
           settingsApply(snav, { group: key, card: id });
           try { history.replaceState(null, '', '#/settings/' + key + '/' + id); } catch (e) { /* no history */ }
+          closeSettingsPanels();
           const el = document.getElementById(id);
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         };
       });
     });
+
+    // клик по табу: переключить раздел и открыть/закрыть его панель
+    const tabs = Array.from(snav.querySelectorAll('.stg-tab'));
+    tabs.forEach((tab, i) => {
+      tab.onclick = () => {
+        const key = tab.getAttribute('data-sec');
+        const wasOpen = tab.getAttribute('aria-expanded') === 'true';
+        document.body.classList.remove('settings-all');
+        localStorage.setItem('settings_all', '');
+        settingsApply(snav, { group: key, card: '' });
+        try { history.replaceState(null, '', '#/settings/' + key); } catch (e) { /* no history */ }
+        // v1.72.38: на телефоне панель таба не открывается сама. Она
+        // раскрывается в потоке (CSS) и накрывала карточки раздела — со
+        // стороны это выглядело как сломанная страница. После тапа человек
+        // сразу видит карточки, а список карточек открывает повторным тапом.
+        const phoneTabs = window.matchMedia('(max-width: 767px)').matches;
+        if (phoneTabs || wasOpen) closeSettingsPanels(); else openSettingsPanel(key);
+        scrollSettingsTop();
+      };
+      // стрелки ←/→ переключают табы, Home/End — на края
+      tab.onkeydown = (ev) => {
+        const keys = { ArrowRight: 1, ArrowLeft: -1 };
+        let next = null;
+        if (ev.key in keys) next = (i + keys[ev.key] + tabs.length) % tabs.length;
+        else if (ev.key === 'Home') next = 0;
+        else if (ev.key === 'End') next = tabs.length - 1;
+        else if (ev.key === 'Escape') { closeSettingsPanels(); return; }
+        if (next === null) return;
+        ev.preventDefault();
+        tabs[next].focus();
+        tabs[next].click();
+      };
+    });
+
+    // меню «⋯ Ещё»: все настройки и сворачивание
+    const moreBtn = $('#snav-more');
+    const moreMenu = $('#snav-more-menu');
+    if (moreBtn && moreMenu) {
+      moreBtn.onclick = () => {
+        const open = moreMenu.hidden;
+        moreMenu.hidden = !open;
+        moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        closeSettingsPanels();
+      };
+    }
+    const bAll = $('#snav-all');
+    if (bAll) bAll.onclick = () => {
+      const on = !document.body.classList.contains('settings-all');
+      document.body.classList.toggle('settings-all', on);
+      localStorage.setItem('settings_all', on ? '1' : '');
+      moreMenu.hidden = true;
+      moreBtn.setAttribute('aria-expanded', 'false');
+      closeSettingsPanels();
+      settingsApply(snav, { group: '', card: '' });
+      try { history.replaceState(null, '', '#/settings'); } catch (e) { /* no history */ }
+      scrollSettingsTop();
+    };
+    const bCollapse = $('#snav-collapse');
+    if (bCollapse) bCollapse.onclick = () => {
+      closeSettingsPanels();
+      if (moreMenu) moreMenu.hidden = true;
+      if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
+      try { snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* старые браузеры */ }
+    };
+
+    // клик мимо и Esc закрывают выпадающие панели
+    document.addEventListener('click', (ev) => {
+      if (!snav.contains(ev.target)) {
+        closeSettingsPanels();
+        if (moreMenu && !moreMenu.hidden) {
+          moreMenu.hidden = true;
+          moreBtn.setAttribute('aria-expanded', 'false');
+        }
+      }
+    });
+    // смена ширины (поворот телефона, окно рядом) закрывает выпадающие панели:
+    // иначе на телефоне остаётся развёрнутый аккордеон во весь экран
+    window.addEventListener('resize', () => {
+      closeSettingsPanels();
+      // и активный таб снова подводим в видимую часть полосы
+      const onTab = snav.querySelector('.stg-tab.active');
+      settingsApply(snav, { group: onTab ? onTab.getAttribute('data-sec') : '', card: '' });
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      closeSettingsPanels();
+      if (moreMenu && !moreMenu.hidden) {
+        moreMenu.hidden = true;
+        moreBtn.setAttribute('aria-expanded', 'false');
+        moreBtn.focus();
+      }
+    });
+
     settingsApply(snav, _cur);
+    // первая загрузка без маршрута: показываем первый доступный раздел
+    if (!_cur.group && !document.body.classList.contains('settings-all')) {
+      const first = tabs[0];
+      if (first) settingsApply(snav, { group: first.getAttribute('data-sec'), card: '' });
+    }
   }
+
+  // v1.72.37: «⧉ копировать» у токенов — копирует значение поля, а не маску
+  container.querySelectorAll('[data-copy-target]').forEach((btn) => {
+    btn.onclick = () => {
+      const el = document.querySelector(btn.getAttribute('data-copy-target'));
+      if (el) copyCmd(el.value || el.textContent || '', btn);
+    };
+  });
 
   // PWA-кнопка в настройках (все роли)
   const bp = $('#btn-pwa');
@@ -12336,12 +12628,15 @@ async function viewSettings(container, alive = routeGuard()) {
         const d = (b.created_at || '').slice(0, 10);
         if (d) dates[d] = (dates[d] || 0) + 1;
       });
+      const matching = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
+        (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date)).length;
+      // «показано» — столько же, сколько реально в таблице (страница ограничена)
+      const shownNow = Math.min(matching, bkLimit());
       box.innerHTML =
-        `<span class="form-hint" style="margin-right:auto">Копий в архиве: <b>${items.length}</b>` +
-        ` · показано: <b>${items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
-            (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date)).length}</b></span>` +
-        `<label class="form-hint">Дата <select id="bk-date"></select></label>` +
-        `<label class="form-hint">Тип <select id="bk-type"></select></label>`;
+        `<span class="form-hint bk-filters-count">Копий в архиве: <b>${items.length}</b>` +
+        ` · показано: <b>${shownNow}</b></span>` +
+        `<label class="field bk-filter"><span>Дата</span><select id="bk-date"></select></label>` +
+        `<label class="field bk-filter"><span>Тип</span><select id="bk-type"></select></label>`;
       const dsel = box.querySelector('#bk-date');
       const ksel = box.querySelector('#bk-type');
       dsel.innerHTML = '<option value="">Все даты</option>' +
@@ -12353,60 +12648,105 @@ async function viewSettings(container, alive = routeGuard()) {
       dsel.onchange = () => { bkState.date = dsel.value; renderBackups(items); };
       ksel.onchange = () => { bkState.kind = ksel.value; renderBackups(items); };
     };
-    const renderBackups = (items) => {
-      const el = $('#bk-list');
-      if (!el) return;
-      const rowsText = (b) => (b.rows
-        ? `<span class="cell-mono" style="font-size:11.5px">${b.rows.receipts ?? '—'} чек. · ` +
-          `${b.rows.users ?? '—'} польз. · ${b.rows.companies ?? '—'} комп.</span>` +
-          (b.copy_version ? ` <span class="chip exported"><span class="dot"></span>v${esc(b.copy_version)}</span>` : '')
-        : '<span class="form-hint">—</span>');
-      const visible = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
-          (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date));
-      el.innerHTML = visible.length
-        ? `<table class="data" style="min-width:0"><thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th></th></tr></thead><tbody>
-           ${visible.slice(0, 24).map(b => `<tr style="cursor:default">
-             <td class="cell-mono" style="font-size:11.5px">${esc(b.name)}</td>
-             <td>${kindNames[b.kind] || b.kind}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}${b.source ? ` <span class="form-hint" style="font-size:11.5px" title="Загружено из файла: ${esc(b.source)}">из файла</span>` : ''}</td>
-             <td>${rowsText(b)}</td>
-             <td>${b.size_kb} КБ</td>
-             <td style="white-space:nowrap">
-               <button type="button" class="btn btn-sm" data-verify="${esc(b.name)}"
-                       title="Проверить копию: целостность базы и хеш">🛡</button>
-               <button type="button" class="btn btn-sm" data-restore="${esc(b.name)}"
-                       title="Восстановить базу из этой копии">↩ Восстановить</button>
-               <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn btn-sm" download title="Скачать копию">⬇</a>
-             </td>
-           </tr>`).join('')}</tbody></table>`
-        : (items.length
-          ? '<p class="form-hint">Нет копий по выбранным условиям фильтра</p>'
-          : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>');
-      el.querySelectorAll('button[data-verify]').forEach(btn => {
+    // v1.72.36: таблица копий — в контейнере со скроллом и с фиксированными
+    // ширинами колонок. Раньше таблица шириной 720 px лежала прямо в карточке
+    // шириной ~300 px и наезжала на соседнюю; длинное имя копии рвало строку.
+    const bkPage = { limit: 10 };
+    // на телефоне 10 строк-карточек — это очень длинная страница: показываем 5,
+    // остальные доступны кнопкой «Все копии»
+    const bkLimit = () => (window.matchMedia('(max-width: 640px)').matches ? 5 : bkPage.limit);
+    const rowsText = (b) => (b.rows
+      ? `<span class="cell-mono" style="font-size:11.5px">${b.rows.receipts ?? '—'} чек. · ` +
+        `${b.rows.users ?? '—'} польз. · ${b.rows.companies ?? '—'} комп.</span>` +
+        (b.copy_version ? ` <span class="chip exported"><span class="dot"></span>v${esc(b.copy_version)}</span>` : '')
+      : '<span class="form-hint">—</span>');
+    // Подпись колонки — обычный <span class="td-k">, а не ::before с
+    // attr(): псевдоэлементы-подписи в таблицах проект запрещает
+    // (test_v1581/test_v1593), а data-label остаётся для тестов и скринридеров.
+    const bkRowHtml = (b) => `<tr>
+      <td class="cell-mono bk-name" data-label="Копия" title="${esc(b.name)}"><span class="td-k">Копия</span><span class="td-v">${esc(b.name)}</span></td>
+      <td data-label="Тип"><span class="td-k">Тип</span><span class="td-v">${kindNames[b.kind] || esc(b.kind)}${b.verified ? ' <span class="chip exported" title="Копия проверена при создании"><span class="dot"></span>✓</span>' : ''}${b.source ? ` <span class="form-hint" style="font-size:11.5px" title="Загружено из файла: ${esc(b.source)}">из файла</span>` : ''}</span></td>
+      <td data-label="В копии" class="bk-in"><span class="td-k">В копии</span><span class="td-v">${rowsText(b)}</span></td>
+      <td data-label="Размер" class="bk-size"><span class="td-k">Размер</span><span class="td-v">${b.size_kb} КБ</span></td>
+      <td class="bk-row-actions" data-label="">
+        <button type="button" class="btn-icon" data-verify="${esc(b.name)}"
+                title="Проверить копию: целостность базы и хеш"
+                aria-label="Проверить копию ${esc(b.name)}">🛡</button>
+        <button type="button" class="btn btn-sm btn-restore" data-restore="${esc(b.name)}"
+                title="Восстановить базу из этой копии" aria-label="Восстановить базу из копии ${esc(b.name)}">↩ <span class="bk-restore-label">Восстановить</span></button>
+        <a href="/api/v1/admin/backups/${encodeURIComponent(b.name)}/download" class="btn-icon"
+           download title="Скачать копию" aria-label="Скачать копию ${esc(b.name)}">⬇</a>
+      </td>
+    </tr>`;
+    const bkTableHtml = (list) => `
+      <div class="table-scroll bk-table-scroll">
+        <table class="data settings-table settings-cards-table bk-table">
+          <colgroup>
+            <col class="bk-col-name"><col class="bk-col-kind"><col class="bk-col-in">
+            <col class="bk-col-size"><col class="bk-col-acts">
+          </colgroup>
+          <thead><tr><th>Копия</th><th>Тип</th><th>В копии</th><th>Размер</th><th>Действия</th></tr></thead>
+          <tbody>${list.map(bkRowHtml).join('')}</tbody>
+        </table>
+      </div>`;
+    const bkFootHtml = (page) => `<div class="card-foot">
+      <span>Показано <b>${page.shown.length}</b> из <b>${page.total}</b></span>
+      ${page.hasMore ? `<span class="spacer"></span>
+        <button type="button" class="btn btn-sm" id="bk-more">Все копии (${page.total})</button>` : ''}
+    </div>`;
+    const bindBkRows = (root, onDone) => {
+      if (!root) return;
+      root.querySelectorAll('button[data-verify]').forEach(btn => {
         btn.onclick = async () => {
           const name = btn.getAttribute('data-verify');
-          btn.disabled = true;
+          setBtnBusy(btn, true);
           try {
             const r = await api.post('/api/v1/admin/backups/verify', { name });
             toast(r.message, r.ok ? 'ok' : 'err', '🛡 Проверка копии');
-          } catch (e) { toast(e.message, 'err', '🛡 Проверка копии'); }
-          btn.disabled = false;
+            flashBtn(btn, r.ok ? 'ok' : 'err');
+          } catch (e) { toast(e.message, 'err', '🛡 Проверка копии'); flashBtn(btn, 'err'); }
+          setBtnBusy(btn, false);
         };
       });
-      el.querySelectorAll('button[data-restore]').forEach(btn => {
+      root.querySelectorAll('button[data-restore]').forEach(btn => {
         btn.onclick = async () => {
           const name = btn.getAttribute('data-restore');
           if (!confirm(`Восстановить базу из копии «${name}»?\n\n` +
               'Текущие данные будут заменены данными копии.\n' +
               'Перед восстановлением автоматически создаётся страховая копия текущего состояния.\n\n' +
               'После восстановления потребуется перезапуск приложения.')) return;
-          btn.disabled = true;
+          setBtnBusy(btn, true);
           try {
             const r = await api.post('/api/v1/admin/backups/restore', { name });
             toast(r.message, 'ok', '↩ Восстановление');
+            if (onDone) onDone();
             try { const it = (await api.get('/api/v1/admin/backups')).items; renderBkFilters(it); renderBackups(it); } catch (_e) {}
-          } catch (e) { toast(e.message, 'err', 'Восстановление'); btn.disabled = false; }
+          } catch (e) { toast(e.message, 'err', 'Восстановление'); setBtnBusy(btn, false); flashBtn(btn, 'err'); }
         };
       });
+    };
+    const renderBackups = (items) => {
+      const el = $('#bk-list');
+      if (!el) return;
+      const visible = items.filter(b => (!bkState.kind || b.kind === bkState.kind) &&
+          (!bkState.date || (b.created_at || '').slice(0, 10) === bkState.date));
+      const page = pageSlice(visible, bkLimit());
+      el.innerHTML = visible.length
+        ? bkTableHtml(page.shown) + bkFootHtml(page)
+        : (items.length
+          ? '<p class="form-hint">Нет копий по выбранным условиям фильтра</p>'
+          : '<p class="form-hint">Копий пока нет — создайте первую кнопкой выше</p>');
+      bindBkRows(el);
+      const more = el.querySelector('#bk-more');
+      if (more) more.onclick = () => {
+        // полный архив — в модальном окне: карточка остаётся компактной
+        const modal = openModal(
+          `<div class="modal-title">💾 Все копии <span class="form-hint">(${visible.length})</span></div>` +
+          '<p class="form-hint" style="margin-bottom:10px">Полный архив за выбранный период. ' +
+          'Действия те же, что в карточке настроек.</p>' + bkTableHtml(visible), {});
+        modal.slot.classList.add('modal-wide');
+        bindBkRows(modal.slot, modal.close);
+      };
     };
     const loadBackups = async () => {
       try {
@@ -12419,18 +12759,24 @@ async function viewSettings(container, alive = routeGuard()) {
     loadBackups();
     const bcr = $('#btn-bk-create');
     if (bcr) bcr.onclick = async () => {
-      bcr.disabled = true;
+      const kindSel = $('#bk-kind');
+      const kind = kindSel ? kindSel.value : 'manual';
+      setBtnBusy(bcr, true);
       try {
-        const kindSel = $('#bk-kind');
-        const r = await api.post('/api/v1/admin/backups',
-                                 { kind: kindSel ? kindSel.value : 'manual' });
-        toast(r.message, 'ok', '💾'); renderBkFilters(r.items); renderBackups(r.items);
+        const r = await api.post('/api/v1/admin/backups', { kind });
+        toast(r.message, 'ok', '💾');
+        flashBtn(bcr, 'ok');
+        renderBkFilters(r.items); renderBackups(r.items);
       }
-      catch (e) { toast(e.message, 'err'); }
-      bcr.disabled = false;
+      catch (e) { toast(e.message, 'err'); flashBtn(bcr, 'err'); }
+      setBtnBusy(bcr, false);
     };
     const brf = $('#btn-bk-refresh');
-    if (brf) brf.onclick = loadBackups;
+    if (brf) brf.onclick = async () => {
+      setBtnBusy(brf, true);
+      try { await loadBackups(); flashBtn(brf, 'ok'); }
+      finally { setBtnBusy(brf, false); }
+    };
     // v1.49.0: загрузка копии из внешнего источника (файл с компьютера)
     const bif = $('#btn-bk-import'), bifFile = $('#bk-import-file');
     if (bif && bifFile) bif.onclick = () => bifFile.click();
@@ -12438,7 +12784,7 @@ async function viewSettings(container, alive = routeGuard()) {
       const f = bifFile.files && bifFile.files[0];
       bifFile.value = '';
       if (!f) return;
-      bif.disabled = true;
+      setBtnBusy(bif, true);
       try {
         const fd = new FormData();
         fd.append('file', f, f.name);
@@ -12450,35 +12796,24 @@ async function viewSettings(container, alive = routeGuard()) {
         const r = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(r.detail || 'Загрузка не удалась');
         toast(r.message, 'ok', '⬆ Загрузка копии');
+        flashBtn(bif, 'ok');
         renderBkFilters(r.items); renderBackups(r.items);
-      } catch (e) { toast(e.message, 'err', '⬆ Загрузка копии'); }
-      bif.disabled = false;
+      } catch (e) { toast(e.message, 'err', '⬆ Загрузка копии'); flashBtn(bif, 'err'); }
+      setBtnBusy(bif, false);
     };
   }
 
   // v1.46.0: «Последние рабочие версии» — откат одним щелчком
   // v1.48.0: секции без карточек (для роли) не показываем
-  // v1.70.9: то же для меню — пустые группы скрываются целиком;
-  // прямой заход по #/settings/<раздел>/<карточка> открывает и подсвечивает
-  document.querySelectorAll('#settings-nav .snav-group').forEach((g) => {
-    const gkey = g.getAttribute('data-grp');
+  // v1.72.37: таб без карточек тоже скрывается — пустой раздел не нужен
+  document.querySelectorAll('#settings-nav .stg-tab').forEach((tab) => {
+    const key = tab.getAttribute('data-sec');
     const has = Array.from(container.querySelectorAll('.settings-grid > .glass.card'))
-      .some((c) => c.getAttribute('data-sec') === gkey);
-    if (!has) g.style.display = 'none';
+      .some((c) => c.getAttribute('data-sec') === key);
+    tab.hidden = !has;
   });
   const snavFinal = $('#settings-nav');
   if (snavFinal) settingsApply(snavFinal, _cur);
-  // v1.70.10: меню без открытых разделов выглядит «пустым» — раскрываем
-  // первый видимый непустой раздел (кроме режима «все настройки»)
-  if (snavFinal && !_cur.group && !document.body.classList.contains('settings-all') &&
-      !snavFinal.querySelector('.snav-group.open')) {
-    const g0 = Array.from(snavFinal.querySelectorAll('.snav-group'))
-      .find((g) => g.style.display !== 'none' && g.querySelector('.snav-item'));
-    if (g0) {
-      g0.classList.add('open');
-      g0.querySelector('.snav-head').setAttribute('aria-expanded', 'true');
-    }
-  }
   if (_cur.group && _cur.card) {
     const elCur = document.getElementById(_cur.card);
     if (elCur) setTimeout(() => elCur.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
@@ -12498,9 +12833,9 @@ async function viewSettings(container, alive = routeGuard()) {
       relItems = items || [];
       const cur = relItems.find(v => v.current);
       const head =
-        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+        '<div class="card-actions">' +
         `<span class="form-hint">Сейчас работает: <b>v${esc(cur ? cur.version : '…')}</b> · ` +
-        `в реестре ${relItems.length} из 3</span>` +
+        `в реестре ${relItems.length} из 3</span><span class="spacer"></span>` +
         '<button type="button" class="btn btn-sm" id="rel-refresh" title="Обновить список">🔄 Обновить</button></div>';
       if (!relItems.length) {
         relBox.innerHTML = head +
@@ -12515,19 +12850,23 @@ async function viewSettings(container, alive = routeGuard()) {
           'Срочно нужен откат сейчас — воспользуйтесь откатом к коммиту (ниже) либо на сервере: ' +
           '<span class="cell-mono">sudo bash rollback.sh</span></p>';
       } else {
+        // v1.72.36: таблица версий — фиксированные ширины, обрезка, мобильные строки-карточки
         relBox.innerHTML = head +
-          '<table class="data rb-table" style="min-width:0"><thead>' +   // v1.70.103: rb-table — кнопка не дробится
-          '<tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th></th></tr></thead><tbody>' +
+          '<div class="table-scroll">' +
+          '<table class="data settings-table settings-cards-table rb-table">' +
+          '<colgroup><col class="rb-col-ver"><col class="rb-col-commit">' +
+          '<col class="rb-col-when"><col class="rb-col-act"></colgroup>' +
+          '<thead><tr><th>Версия</th><th>Коммит</th><th>Когда работала</th><th>Действие</th></tr></thead><tbody>' +
           relItems.map(v => `<tr>
-            <td><b>v${esc(v.version)}</b>${v.current
+            <td data-label="Версия"><span class="td-k">Версия</span><span class="td-v"><b>v${esc(v.version)}</b>${v.current
               ? ' <span class="chip exported"><span class="dot"></span>работает сейчас</span>'
-              : (v.note ? `<div class="form-hint">${esc(v.note)}</div>` : '')}</td>
-            <td class="cell-mono" style="font-size:11.5px">${esc(v.commit_short)}</td>
-            <td>${esc((v.at || '').slice(0, 16).replace('T', ' '))}</td>
-            <td>${v.current
+              : (v.note ? `<div class="form-hint">${esc(v.note)}</div>` : '')}</span></td>
+            <td class="cell-mono" data-label="Коммит"><span class="td-k">Коммит</span><span class="td-v">${esc(v.commit_short)}</span></td>
+            <td class="rb-when" data-label="Когда работала"><span class="td-k">Когда работала</span><span class="td-v">${esc((v.at || '').slice(0, 16).replace('T', ' '))}</span></td>
+            <td class="rb-row-actions" data-label="">${v.current
               ? '<span class="form-hint">—</span>'
               : `<button type="button" class="btn btn-sm" data-rb="${esc(v.version)}|${esc(v.commit)}">↩ Откатиться</button>`}</td>
-          </tr>`).join('') + '</tbody></table>';
+          </tr>`).join('') + '</tbody></table></div>';
       }
       // откат к версии из реестра
       relBox.querySelectorAll('button[data-rb]').forEach(btn => {
@@ -12537,18 +12876,22 @@ async function viewSettings(container, alive = routeGuard()) {
               '• Файлы программы вернутся к проверенной версии.',
               '• База данных НЕ трогается; перед откатом — копия базы.',
               '• Приложение перезапустится (~10 секунд).'])) return;
-          btn.disabled = true;
+          setBtnBusy(btn, true);
           try {
             const r = await api.post('/api/v1/admin/update/rollback',
                                      { version: ver, commit });
             toast(r.message, 'ok', '↩ Откат');
+            flashBtn(btn, 'ok');
             relWatch();
-          } catch (e) { toast(e.message, 'err', 'Откат'); btn.disabled = false; }
+          } catch (e) { toast(e.message, 'err', 'Откат'); setBtnBusy(btn, false); flashBtn(btn, 'err'); }
         };
       });
       // обновить список
       const rf = document.getElementById('rel-refresh');
-      if (rf) rf.onclick = () => { rf.disabled = true; relLoad().then(() => { rf.disabled = false; }); };
+      if (rf) rf.onclick = async () => {
+        setBtnBusy(rf, true);
+        try { await relLoad(); flashBtn(rf, 'ok'); } finally { setBtnBusy(rf, false); }
+      };
       // откат к произвольному коммиту
       const go = document.getElementById('rb-commit-go');
       const inp = document.getElementById('rb-commit');
@@ -12562,13 +12905,14 @@ async function viewSettings(container, alive = routeGuard()) {
             '• Коммит должен быть рабочей версией программы.',
             '• База данных НЕ трогается; перед откатом — копия базы.',
             '• Приложение перезапустится (~10 секунд).'])) return;
-        go.disabled = true;
+        setBtnBusy(go, true);
         try {
           const r = await api.post('/api/v1/admin/update/rollback',
                                    { version: 'коммит ' + c.slice(0, 8), commit: c });
           toast(r.message, 'ok', '↩ Откат');
+          flashBtn(go, 'ok');
           relWatch();
-        } catch (e) { toast(e.message, 'err', 'Откат'); go.disabled = false; }
+        } catch (e) { toast(e.message, 'err', 'Откат'); setBtnBusy(go, false); flashBtn(go, 'err'); }
       };
     };
     const relLoad = async () => {
@@ -12683,21 +13027,24 @@ async function viewSettings(container, alive = routeGuard()) {
     }).catch(() => {});
     const bc = $('#btn-check-update');
     if (bc) bc.onclick = async () => {
-      bc.disabled = true; bc.textContent = 'Проверяю…';
+      // v1.72.36: подпись и ширина кнопки не меняются — состояние видно по спиннеру
+      setBtnBusy(bc, true);
       await loadUpdCard(true);
-      bc.disabled = false; bc.textContent = '🔍 Проверить обновления';
+      setBtnBusy(bc, false);
+      flashBtn(bc, state.githubUnreachable ? 'err' : 'ok');
       if (state.githubUnreachable) toast('GitHub недоступен с сервера — воспользуйтесь ручной инструкцией в карточке', 'err', '🔄 Обновление');
     };
     const bsr = $('#btn-save-repo');
     if (bsr) bsr.onclick = async () => {
-      bsr.disabled = true;
+      setBtnBusy(bsr, true);
       try {
         const r = await api.put('/api/v1/admin/update/repo', {
           repo_url: $('#upd-repo').value.trim() || undefined,
           repo_branch: $('#upd-branch-input').value.trim() || undefined });
         toast(r.message, 'ok', '🔄');
-      } catch (e) { toast(e.message, 'err'); }
-      bsr.disabled = false;
+        flashBtn(bsr, 'ok');
+      } catch (e) { toast(e.message, 'err'); flashBtn(bsr, 'err'); }
+      setBtnBusy(bsr, false);
     };
     const ba = $('#btn-apply-update');
     if (ba) ba.onclick = () => {
@@ -12781,20 +13128,31 @@ async function viewSettings(container, alive = routeGuard()) {
     const cc = $('#cl-connections');
     if (cc) {
       const c = clientsInfo.connections || {};
+      // v1.72.37: таблица живёт в .table-scroll — иначе она выходила за карточку
+      // (снимок 15.11.2026), а даты печатались сырым ISO
+      const dt = (v) => (v ? fmtDate(v) : '—');
       const tbl = (head, rows) => rows ? `
-        <table class="data" style="font-size:12.5px;margin-top:4px">
+        <div class="table-scroll">
+        <table class="data settings-table settings-cards-table" style="font-size:12.5px;margin-top:4px">
           <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-          <tbody>${rows}</tbody></table>` : '';
+          <tbody>${rows}</tbody></table></div>` : '';
       const pk = (c.passkeys || []).map((p) =>
-        `<tr><td>${esc(_v(p.label))}</td><td>${esc(_v(p.username))}</td>
-         <td>${esc(_v(p.created_at))}</td><td>${esc(_v(p.last_used_at))}</td></tr>`).join('');
+        `<tr><td data-label="Метка"><span class="td-k">Метка</span><span class="td-v">${esc(_v(p.label))}</span></td>
+         <td data-label="Владелец"><span class="td-k">Владелец</span><span class="td-v">${esc(_v(p.username))}</span></td>
+         <td data-label="Добавлено"><span class="td-k">Добавлено</span><span class="td-v">${esc(dt(p.created_at))}</span></td>
+         <td data-label="Последний вход"><span class="td-k">Последний вход</span><span class="td-v">${esc(dt(p.last_used_at))}</span></td></tr>`).join('');
       const lg = (c.logins || []).map((l) =>
-        `<tr><td>${esc(_v(l.username))}</td><td>${esc(ACT[l.action] || l.action)}</td>
-         <td>${esc(_v(l.ip))}</td><td>${esc(_v(l.at))}</td></tr>`).join('');
+        `<tr><td data-label="Пользователь"><span class="td-k">Пользователь</span><span class="td-v">${esc(_v(l.username))}</span></td>
+         <td data-label="Способ"><span class="td-k">Способ</span><span class="td-v">${esc(ACT[l.action] || l.action)}</span></td>
+         <td data-label="Адрес"><span class="td-k">Адрес</span><span class="td-v">${esc(_v(l.ip))}</span></td>
+         <td data-label="Когда"><span class="td-k">Когда</span><span class="td-v">${esc(dt(l.at))}</span></td></tr>`).join('');
       const ks = (c.api_keys || []).map((k) =>
-        `<tr><td>${esc(_v(k.name))}</td><td><code class="inline">${esc(_v(k.prefix))}…</code></td>
-         <td>${k.active ? '✅ да' : '⛔ нет'}</td><td>${esc(_v(k.rate_per_hour))}</td>
-         <td>${esc(_v(k.monthly_quota))}</td><td>${esc(_v(k.last_used_at))}</td></tr>`).join('');
+        `<tr><td data-label="Название"><span class="td-k">Название</span><span class="td-v">${esc(_v(k.name))}</span></td>
+         <td data-label="Префикс"><span class="td-k">Префикс</span><span class="td-v"><code class="inline">${esc(_v(k.prefix))}…</code></span></td>
+         <td data-label="Действует"><span class="td-k">Действует</span><span class="td-v">${k.active ? '✅ да' : '⛔ нет'}</span></td>
+         <td data-label="В час"><span class="td-k">В час</span><span class="td-v">${esc(_v(k.rate_per_hour))}</span></td>
+         <td data-label="Квота"><span class="td-k">Квота</span><span class="td-v">${esc(_v(k.monthly_quota))}</span></td>
+         <td data-label="Последний вызов"><span class="td-k">Последний вызов</span><span class="td-v">${esc(dt(k.last_used_at))}</span></td></tr>`).join('');
       cc.innerHTML = `
         <dl class="kv" style="font-size:13px">
           <dt>Устройств с быстрым входом</dt><dd>${esc(_v(c.passkeys_total))}</dd>
@@ -12866,6 +13224,10 @@ async function viewSettings(container, alive = routeGuard()) {
     }
   }
   makeSettingsCollapsible(container);   // v1.21.0: сворачиваемые блоки
+  applySettingsLayout(container);       // v1.72.36: широкие карточки и начало разделов
+  // v1.72.37: разделы появляются только сейчас — пересчитываем активный таб
+  // и видимость раздела уже после сборки <section class="stg-section">
+  if (snavFinal) settingsApply(snavFinal, _cur);
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();

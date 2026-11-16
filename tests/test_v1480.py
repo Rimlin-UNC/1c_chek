@@ -51,14 +51,15 @@ class TestSettingsHierarchy:
         i_dev = js.index('🧹 Обслуживание устройства')
         seg_dev = js[js.rindex('glass card', i_dev - 500, i_dev):i_dev]
         assert 'order:52' in seg_dev
-        # пустые секции/группы скрываются (v1.70.9: группы меню)
-        assert "querySelectorAll('#settings-nav .snav-group')" in js
-        assert "g.style.display = 'none'" in js
+        # пустые разделы скрываются (v1.72.37: таб без карточек не рисуется)
+        assert "querySelectorAll('#settings-nav .stg-tab')" in js
+        assert "tab.hidden = !has" in js
         assert "snav-item" in js and "history.replaceState" in js
 
     def test_section_css(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
-        assert ".snav-group {" in css and ".settings-layout {" in css
+        # v1.72.37: колонки меню больше нет — полоса табов над контентом
+        assert ".stg-tabs-row {" in css and ".settings-layout {" in css
         assert "@media (max-width: 900px)" in css
 
 

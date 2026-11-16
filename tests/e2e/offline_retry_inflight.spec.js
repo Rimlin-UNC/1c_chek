@@ -1,14 +1,16 @@
 import { test, expect } from '@playwright/test';
+import { seenVersion } from './seen_version.js';
 
 test('ручной повтор во время отправки не теряется после отказа сервера', async ({ page, request }) => {
   test.setTimeout(120000);
   const login = await request.post('/api/v1/auth/login', { data: { username: 'e2e_offline', password: 'e2e-offline-password' } });
   expect(login.ok()).toBeTruthy();
   const { access_token: token, user } = await login.json();
-  await page.addInitScript(token => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
-  }, token);
+    localStorage.setItem('ymaster_seen_version', seen);
+  }, { token, seen });
   let received = 0, release;
   const waiting = new Promise(resolve => { release = resolve; });
   await page.route('**/api/v1/receipts/scan/offline', async route => {
@@ -36,10 +38,11 @@ test('отложенный ручной повтор не выполняется
   const login = await request.post('/api/v1/auth/login', { data: { username: 'e2e_offline', password: 'e2e-offline-password' } });
   expect(login.ok()).toBeTruthy();
   const { access_token: token, user } = await login.json();
-  await page.addInitScript(token => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
-  }, token);
+    localStorage.setItem('ymaster_seen_version', seen);
+  }, { token, seen });
   let received = 0, release;
   const waiting = new Promise(resolve => { release = resolve; });
   await page.route('**/api/v1/receipts/scan/offline', async route => {

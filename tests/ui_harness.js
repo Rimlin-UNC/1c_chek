@@ -795,12 +795,17 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.7: камера в мини-приложении и копирование кода входа');
   ok(bundle.includes("'1.70.8':"),
      'v1.70.8: What’s New — сертификат Минцифры для API MAX');
+  // v1.72.37: вертикальное меню сменилось горизонтальными табами; проверка
+  // держит только то, что живо и сегодня, а хвост 1.70.9 — историю.
   ok(bundle.includes("'1.70.9':") && bundle.includes('settings-nav') &&
-     bundle.includes('data-sec="data"') && bundle.includes('settingsApply'),
+     bundle.includes('data-sec="data"') && bundle.includes('settingsApply') &&
+     bundle.includes('stg-tab') && bundle.includes('stg-panel'),
      'v1.70.9: настройки — меню с разделами и подменю');
+  // v1.72.37: полоса табов в режиме «все настройки» больше не скрывается —
+  // выход из режима остаётся на экране (инвариант v1.70.10).
   ok(bundle.includes("'1.70.10':") &&
      bundle.includes("localStorage.setItem('settings_all', '')") &&
-     bundle.includes("snav.scrollIntoView"),
+     bundle.includes('snav.scrollIntoView') && bundle.includes('stg-tabs-bar'),
      'v1.70.10: возврат из «Все настройки» всегда виден');
   ok(bundle.includes("'1.70.12':") && bundle.includes('tg-apibase'),
      'v1.70.12: Telegram — сменный адрес API (мост/шлюз)');
