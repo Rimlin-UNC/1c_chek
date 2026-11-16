@@ -1,14 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
+import { seenVersion } from './seen_version.js';
 
 test('отложенное обновление дашборда не затирает сверку и результат PDF', async ({ page, request }) => {
   test.setTimeout(120000);
   const login = await request.post('/api/v1/auth/login', { data: { username: 'admin', password: 'playwright-test-password' } });
   expect(login.ok()).toBeTruthy();
   const { access_token: token } = await login.json();
-  await page.addInitScript(token => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
+    localStorage.setItem('ymaster_seen_version', seen);
     const OriginalWebSocket = window.WebSocket;
     window.WebSocket = class extends OriginalWebSocket {
       constructor(...args) { super(...args); window.__testSocket = this; }
@@ -21,7 +23,7 @@ test('отложенное обновление дашборда не затир
       }
       return originalTimeout(callback, delay, ...args);
     };
-  }, token);
+  }, { token, seen });
   await page.goto('/#/dashboard');
   await expect(page.locator('#login-screen')).toBeHidden();
   await expect.poll(() => page.evaluate(() => !!window.__testSocket?.onmessage), { timeout: 25000 }).toBe(true);
@@ -29,7 +31,10 @@ test('отложенное обновление дашборда не затир
     window.__holdRefresh = true;
     window.__testSocket.onmessage({ data: JSON.stringify({ type: 'receipt_created', payload: { fn: '123', fd: '456', total_sum: 1 } }) });
   });
-  await expect.poll(() => page.evaluate(() => typeof window.__pendingRefresh)).toBe('function');
+  // v1.72.38: 5 с по умолчанию хватало не всегда — на двухъядерной машине
+  // рядом с сервером и Chromium отложенный таймер ставился позже.
+  await expect.poll(() => page.evaluate(() => typeof window.__pendingRefresh), { timeout: 15000 })
+    .toBe('function');
   await page.locator('a[href="#/primary"]').click();
   await expect(page.locator('#prim-file')).toBeAttached();
   const stamp = Date.now();

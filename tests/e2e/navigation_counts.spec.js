@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { seenVersion } from './seen_version.js';
 
 test('счётчики меню на телефоне обновляются после создания компании', async ({ page, request }) => {
   test.setTimeout(120000);
@@ -16,10 +17,11 @@ test('счётчики меню на телефоне обновляются п�
   }
   const token = (await login.json()).access_token;
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(token => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
-  }, token);
+    localStorage.setItem('ymaster_seen_version', seen);
+  }, { token, seen });
   await page.goto('/#/dashboard');
   await expect(page.locator('#app-shell')).toBeVisible({ timeout: 30000 });
   await page.locator('#btn-sidebar').click();

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { seenVersion } from './seen_version.js';
 
 test('потерянный ответ: скан сохраняется до отправки и повтор не создаёт дубль', async ({ page, request }) => {
   test.setTimeout(120000);
@@ -6,13 +7,14 @@ test('потерянный ответ: скан сохраняется до от
   expect(login.ok()).toBeTruthy();
   const { access_token: freshToken, user } = await login.json();
   const legacy = JSON.stringify([{ qr_data: 'старый скан', source: 'web' }]);
-  await page.addInitScript(({ token, legacy }) => {
+  const seen = await seenVersion(page);
+  await page.addInitScript(({ token, legacy, seen }) => {
     localStorage.setItem('ymaster_check_token', token);
-    localStorage.setItem('ymaster_seen_version', '1.72.35');
+    localStorage.setItem('ymaster_seen_version', seen);
     localStorage.setItem('ymaster_check_offline_queue', legacy);
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 1000 : ms, ...args);
-  }, { token: freshToken, legacy });
+  }, { token: freshToken, legacy, seen });
   let received = 0;
   let mode = 'normal';
   await page.route('**/api/v1/receipts/scan/offline', async route => {

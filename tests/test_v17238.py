@@ -15,6 +15,7 @@
 # ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 # ======================================================================
 
+import glob
 import re
 
 from app.config import settings
@@ -207,3 +208,22 @@ class TestBrowserLock:
             assert width in spec
         assert "scrollWidth" in spec
         assert "min-height" in spec or "getBoundingClientRect" in spec
+
+    def test_e2e_specs_do_not_pin_old_versions(self):
+        """Сценарии не держат закреплённую версию в localStorage.
+
+        v1.72.38: в девяти файлах стояло '1.72.35'. После выпуска 1.72.36
+        окно «Что нового» открывалось у каждого такого сценария, перекрывало
+        заставку — и прогон падал по таймауту 120 с. Теперь версия берётся
+        у сервера (tests/e2e/seen_version.js), а этот замок не даёт вернуть
+        захардкоженную строку.
+        """
+        helper = read("tests/e2e/seen_version.js")
+        assert "export async function seenVersion" in helper
+        assert "/api/v1/about" in helper
+        for path in sorted(glob.glob("tests/e2e/*.js")):
+            text = read(path)
+            assert "ymaster_seen_version', '1." not in text, path
+            if "ymaster_seen_version" in text:
+                assert "seenVersion" in text, path
+
