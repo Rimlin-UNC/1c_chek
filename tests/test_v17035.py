@@ -271,7 +271,9 @@ class TestTextIsReadable:
         (".echeck-head", "--warn-text"),
         (".land-badge", "--warn-text"),
         (".land-accent", "--accent-text"),
-        (".snav-cnt", "--text-dim"),
+        # v1.72.37: счётчик разделов (.snav-cnt) удалён вместе с вертикальным
+        # меню — параметр снят явно, остальные площадки остались под замком
+
     ])
     def test_fixed_sites_use_the_token(self, sel, token):
         d = declarations(sel)
@@ -801,7 +803,7 @@ class TestNoDeadCss:
 class TestRelease:
     # v1.70.41: точки синхронизации живут дальше; свою версию и
     # требование «своя запись первая» проверяет test_v17041.
-    VERSION = "1.72.36"
+    VERSION = "1.72.37"
 
     def test_all_sync_points(self):
         for p in (ROOT / "app/config.py", INDEX, ROOT / "app/static/sw.js",

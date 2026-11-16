@@ -25,7 +25,8 @@ def read(path):
 
 class TestVersion17236:
     def test_config_version(self):
-        assert settings.APP_VERSION == "1.72.36"
+        # v1.72.37: строгий пин ушёл вперёд — здесь остаётся «не ниже»
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= (1, 72, 36)
 
     def test_static_versions_synced(self):
         ver = settings.APP_VERSION
@@ -67,8 +68,10 @@ class TestSettingsLayoutJs:
     osm = read("app/static/js/server_monitor.js")
 
     def test_layout_module_is_pure_and_wired(self):
-        for fn in ("export function layoutPlan", "export function jumpModel",
-                   "export function jumpValue", "export function parseJumpValue",
+        # v1.72.37: селект-навигация (jumpModel/jumpValue/parseJumpValue) удалена,
+        # её место заняли горизонтальные табы и маска токена
+        for fn in ("export function layoutPlan", "export function tabsModel",
+                   "export function tabForRoute", "export function maskToken",
                    "export function pageSlice", "export function orderOf"):
             assert fn in self.module, fn
         # модуль без DOM и без побочных эффектов: только экспорт и константы
@@ -92,16 +95,20 @@ class TestSettingsLayoutJs:
         assert 'id="st-releases" data-sec="data" style="order:12" data-wide' in self.js
         assert 'id="st-server-monitor" data-sec="integr" style="order:38" data-wide' in self.osm
 
-    def test_jump_select_for_narrow_screens(self):
-        assert "function buildSettingsJump" in self.js
-        assert "buildSettingsJump(snavFinal)" in self.js
-        # селект строится до подсветки: иначе value остаётся пустым
-        assert self.js.index("buildSettingsJump(snavFinal)") < self.js.index("settingsApply(snavFinal, _cur)")
-        assert 'id="snav-jump"' in self.js
-        assert "parseJumpValue(sel.value)" in self.js
-        assert "jump.value = jumpValue(cur.group, cur.card)" in self.js
-        # активный пункт называется вспомогательным технологиям
+    def test_tabs_nav_for_narrow_screens(self):
+        # v1.72.37: вместо селекта «Перейти к настройке…» — горизонтальные табы.
+        # Селект и его помощник удалены целиком (не спрятаны в CSS).
+        assert "buildSettingsJump" not in self.js
+        assert 'id="snav-jump"' not in self.js
+        assert "parseJumpValue" not in self.js
+        # таб = раздел; активный подсвечен и назван вспомогательным технологиям
+        assert 'role="tab"' in self.js and 'class="stg-tab"' in self.js
+        assert "tab.setAttribute('aria-selected', on ? 'true' : 'false')" in self.js
+        # пункт панели таба помечается aria-current
         assert "b.setAttribute('aria-current', 'true')" in self.js
+        # адрес синхронизирован с табом, глубокий переход открывает раздел
+        assert "history.replaceState(null, '', '#/settings/' + key)" in self.js
+        assert "tabForRoute(model," in self.js and "maskToken" not in self.js
 
     def test_backups_card_zones(self):
         start = self.js.index('id="st-backups"')
@@ -160,30 +167,33 @@ class TestSettingsLayoutCss:
     css = read("app/static/css/app.css")
 
     def test_sections_and_spans(self):
+        # v1.72.37: многоколоночных сеток нет вообще — раздел и его карточки
+        # идут одной колонкой на любой ширине окна (ТЗ владельца).
         assert ".stg-section-grid {" in self.css
-        assert "grid-auto-flow: row dense;" in self.css
         assert ".settings-section-grid" not in self.css        # переименовано: замок v1709
-        assert ".settings-grid.settings-grouped { display: block; }" in self.css
-        assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in self.css
-        # три колонки — по ширине раздела (container query), а не окна:
-        # при окне 1600 px карточки были по 330 px и содержимое ломалось
-        assert ".stg-section { container-type: inline-size; }" in self.css
-        assert "@container (min-width: 1200px)" in self.css
-        # старое правило трёх колонок по окну удалено (в CSS остался только
-        # медиазапрос корпуса приложения .app-shell)
-        assert ("@container (min-width: 1200px) {\n"
-                "  .stg-section-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }\n}") in self.css
-        assert ".settings-section-grid > .card-wide" not in self.css
+        assert ".settings-grid.settings-grouped {" in self.css
+        assert "display: flex; flex-direction: column;" in self.css
+        assert "grid-auto-flow: row dense;" not in self.css
+        # ни двух-, ни трёхколоночной сетки именно в каркасе настроек
+        start = self.css.index(".settings-grid.settings-grouped {")
+        assert "grid-template-columns" not in self.css[start:start + 220]
+        assert "@container (min-width: 1200px)" not in self.css
+        # раздел не может быть шире сетки (иначе таблица тянула его на 1609 px)
+        assert ".stg-section," in self.css and "min-width: 0; width: 100%;" in self.css
+        # широкие карточки помечены — пригодится для рамок/полей
         assert ".stg-section-grid > .card-wide" in self.css
         assert ".stg-section-grid > .glass.card[data-wide]" in self.css
 
     def test_old_locks_kept(self):
         # правила, на которые опираются тесты прошлых выпусков, не удалены
-        assert ".settings-layout {\n  display: grid; grid-template-columns: 268px minmax(0, 1fr);" in self.css
-        assert "body.settings-all .settings-nav .snav-group { display: none; }" in self.css
-        assert "body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr); }" in self.css
+        # v1.72.37: колонка меню стала полосой табов, но каркас страницы тот же
+        assert ".settings-layout {" in self.css
+        assert "flex-direction: column" in self.css
+        assert "max-width: 1160px" in self.css      # полоса табов шире контента
+        assert "body.settings-all .settings-nav { display: none;" not in self.css
         assert "@media (max-width: 900px)" in self.css
-        assert "@media (max-width: 640px) { .settings-grid { grid-template-columns: 1fr; } }" in self.css
+        assert "@media (max-width: 768px)" in self.css
+        assert "@media (max-width: 640px)" in self.css
 
     def test_tables(self):
         assert ".table-scroll {" in self.css and "overflow: auto;" in self.css
@@ -201,12 +211,16 @@ class TestSettingsLayoutCss:
         assert "table.data.settings-cards-table {\n    display: block;\n    min-width: 0;" in self.css
 
     def test_nav_and_select(self):
-        assert "#settings-nav .snav-item.active::before" in self.css
-        assert "background: var(--grad);" in self.css
-        assert ".snav-jump { display: none; }" in self.css
-        assert "#settings-nav .snav-jump { display: block; }" in self.css
-        assert "#settings-nav .snav-group { display: none; }" in self.css
-        assert "body.settings-all .settings-layout { grid-template-columns: minmax(0, 1fr); }" in self.css
+        # положение: липкая полоса табов, активный таб — акцентная линия снизу
+        assert ".settings-nav {" in self.css and "position: sticky;" in self.css
+        assert ".stg-tab.active {" in self.css and "border-bottom-color: var(--accent);" in self.css
+        # панель таба — абсолютный блок с той же тенью, что у карточек
+        assert ".stg-panel {" in self.css and "position: absolute;" in self.css
+        assert "box-shadow: var(--shadow);" in self.css
+        # селект «Перейти к настройке…» и вертикальные группы удалены
+        assert ".snav-jump" not in self.css
+        assert ".snav-group" not in self.css
+        assert ".snav-head" not in self.css
 
     def test_button_states(self):
         assert '.btn[aria-busy="true"] {' in self.css
@@ -216,7 +230,7 @@ class TestSettingsLayoutCss:
 
     def test_card_contract(self):
         for frag in (".card-section-title {", ".card-actions {", ".card-note {",
-                     ".card-foot {", "--card-pad: 18px;"):
+                     ".card-foot {", "--card-pad: 24px;"):
             assert frag in self.css, frag
 
 
@@ -226,4 +240,5 @@ class TestStyleguideUpdated:
         assert "## 8. Карточка, таблица, кнопки и состояния (v1.72.36)" in doc
         assert "Figma" in doc and "Storybook" in doc
         assert "aria-busy" in doc
-        assert "раздел < 1200 px" in doc
+        # v1.72.37: одноколоночный вид — новая таблица ширин (§8.2)
+        assert "### 8.2 Сетка настроек (v1.72.37)" in doc

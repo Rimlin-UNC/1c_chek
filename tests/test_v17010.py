@@ -29,25 +29,41 @@ class TestAllModeExitAlwaysVisible:
     js = open("app/static/js/app.js", encoding="utf-8").read()
 
     def test_groups_hidden_not_nav(self):
-        # прячутся только группы; сам nav с кнопками — НИКОГДА
-        assert "body.settings-all .settings-nav .snav-group { display: none; }" in self.css
+        # v1.72.37: разделы больше не прячутся по одному — экран показывает
+        # один раздел табом либо все подряд. Инвариант v1.70.10 прежний:
+        # полоса навигации в режиме «все настройки» остаётся на месте.
         assert "body.settings-all .settings-nav { display: none;" not in self.css
-        assert "body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr); }" in self.css
+        assert "body.settings-all .stg-tab.active" in self.css
+        assert "body.settings-all .settings-grid" not in self.css
+        # таб в режиме «все настройки» остаётся кликабельным выходом
+        assert ".stg-tab {" in self.css and "cursor: pointer" in self.css
 
     def test_collapse_hidden_in_all_mode(self):
-        assert "body.settings-all #snav-collapse { display: none; }" in self.css
+        # «Свернуть» живёт в меню «⋯ Ещё» и доступна в любом режиме
+        assert 'id="snav-collapse"' in self.js
+        assert "const bCollapse = $('#snav-collapse');" in self.js
+        assert "#snav-collapse" in self.css or ".stg-more-item" in self.css
 
     def test_toolbar_still_inside_sticky_nav(self):
-        # панель кнопок остаётся в sticky-nav → доступна и при прокрутке
-        assert "snav.insertAdjacentHTML('afterbegin'" in self.js
+        # кнопки «⋯ Ещё» / «Все настройки» / «Свернуть» — внутри #settings-nav,
+        # а сам nav липкий: при прокрутке выход из режима остаётся под рукой
         assert ".settings-nav {" in self.css and "position: sticky" in self.css
+        i = self.js.index('<nav class="settings-nav settings-tabs" id="settings-nav"')
+        j = self.js.index('</nav>', i)
+        frag = self.js[i:j]
+        assert 'id="snav-more"' in frag
+        assert 'id="snav-all"' in frag
+        assert 'id="snav-collapse"' in frag
 
     def test_deeplink_resets_stored_mode(self):
         assert "localStorage.setItem('settings_all', '')" in self.js
 
     def test_first_group_auto_opens(self):
-        assert "snav-group.open')) {" in self.js
-        assert "первый видимый непустой раздел" in self.js
+        # первый доступный раздел открыт по умолчанию: таб подсвечен,
+        # его раздел — единственный видимый
+        assert "const first = tabs[0];" in self.js
+        assert "settingsApply(snav, { group: first.getAttribute('data-sec'), card: '' })" in self.js
+        assert "первый доступный раздел" in self.js
 
     def test_collapse_returns_view_to_menu(self):
         assert "snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' })" in self.js

@@ -1,10 +1,12 @@
-/* v1.72.36: браузерные проверки раздела «Настройки» на реальных ширинах.
-   Замок против возврата дефектов со снимка 15.11.2026:
+/* v1.72.37: браузерные проверки раздела «Настройки» на реальных ширинах.
+   Замок против возврата дефектов со снимков 15.11.2026 (текст выходил за
+   рамки блока):
    • таблица копий не выходит за карточку и не перекрывается соседней;
-   • карточка с таблицей занимает всю строку;
+   • карточки стоят строго одна под другой (одна колонка на любой ширине);
+   • токен и таблица остаются внутри карточки, даты — не сырой ISO;
+   • меню — горизонтальные табы, панель таба открывается и ведёт к карточке;
+   • прямая ссылка #/settings/<раздел> открывает нужный раздел и таб;
    • на телефоне строки таблицы — карточки «подпись — значение»;
-   • на планшете и телефоне меню настроек — селект, на компьютере — список;
-   • прямая ссылка #/settings/<раздел>/<карточка> подсвечивает пункт;
    • у кнопки создания копии есть состояние aria-busy.
    Сервер и базу поднимает playwright.config.js (одноразовая SQLite). */
 import { expect, test } from '@playwright/test';
@@ -125,25 +127,110 @@ test.describe('настройки: раскладка карточек', () => {
   });
 });
 
-test.describe('настройки: меню', () => {
-  test('компьютер — список, планшет и телефон — селект', async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 900 });
+test.describe('настройки: табы и одна колонка', () => {
+  test('меню — полоса табов, на компьютере видна целиком', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     await openSettings(page);
-    await expect(page.locator('#snav-jump')).toBeHidden();
-    await expect(page.locator('#settings-nav .snav-group').first()).toBeVisible();
-
-    await page.setViewportSize({ width: 900, height: 900 });
-    await expect(page.locator('#snav-jump')).toBeVisible();
-    await expect(page.locator('#settings-nav .snav-group').first()).toBeHidden();
+    const tabs = page.locator('#settings-nav .stg-tab');
+    await expect(tabs).toHaveCount(5);
+    await expect(tabs.first()).toBeVisible();
+    // полоса табов не прокручивается на обычном мониторе
+    const row = await page.locator('#settings-nav .stg-tabs-row')
+      .evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+    expect(row.sw - row.cw).toBeLessThanOrEqual(1);
+    await expect(page.locator('.stg-tab.active')).toHaveCount(1);
   });
 
-  test('прямая ссылка подсвечивает карточку и селект', async ({ page }) => {
-    await page.setViewportSize({ width: 900, height: 900 });
+  test('телефон: табы прокручиваются по горизонтали, страница — нет', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openSettings(page);
+    const row = await page.locator('#settings-nav .stg-tabs-row')
+      .evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, ox: getComputedStyle(el).overflowX }));
+    expect(row.ox).toBe('auto');
+    expect(row.sw).toBeGreaterThan(row.cw);
+    const pageOverflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(pageOverflow).toBeLessThanOrEqual(1);
+  });
+
+  test('клик по табу открывает раздел и его панель с карточками', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openSettings(page);
+    await page.locator('.stg-tab[data-sec="checks"]').click();
+    await expect(page.locator('.stg-tab[data-sec="checks"]')).toHaveAttribute('aria-selected', 'true');
+    await expect(page).toHaveURL(/#\/settings\/checks$/);
+    const panel = page.locator('.stg-panel:not([hidden])');
+    await expect(panel).toBeVisible();
+    expect(await panel.locator('.snav-item').count()).toBeGreaterThan(0);
+    // виден только выбранный раздел
+    const visible = await page.locator('.stg-section:not([hidden])').count();
+    expect(visible).toBe(1);
+    // пункт панели ведёт к карточке и закрывает панель
+    const first = panel.locator('.snav-item').first();
+    const id = await first.getAttribute('data-open');
+    expect(id).toBeTruthy();
+    await first.click();
+    await expect(page.locator('.stg-panel:not([hidden])')).toHaveCount(0);
+    await expect(page.locator('#' + id)).toBeAttached();
+    // прокрутка плавная: ждём, пока карточка действительно попадёт в экран
+    await expect.poll(async () => page.locator('#' + id).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const h = window.innerHeight || document.documentElement.clientHeight;
+      const content = el.closest('.content');
+      return { inView: r.top < h && r.bottom > 0, scrollTop: content ? content.scrollTop : 0 };
+    }), { timeout: 5000 }).toEqual({ inView: true, scrollTop: expect.any(Number) });
+  });
+
+  test('прямая ссылка открывает нужный раздел и таб', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
     await login(page);
     await page.goto('/#/settings/data/st-backups');
     await expect(page.locator('#st-backups')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('#snav-jump')).toHaveValue('data|st-backups');
+    await expect(page.locator('.stg-tab.active')).toHaveAttribute('data-sec', 'data');
+    await expect(page.locator('.stg-section:not([hidden])')).toHaveAttribute('data-sec', 'data');
     await expect(page.locator('#st-backups')).toBeInViewport();
+  });
+
+  test('карточки стоят одной колонкой на любой ширине', async ({ page }) => {
+    // вход один: повторный login() на уже авторизованном экране не находит форму
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openSettings(page);
+    for (const width of [1600, 1280, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(page.locator('#st-backups')).toBeVisible();
+      const boxes = await page.locator('#st-backups, #st-update').evaluateAll((els) =>
+        els.map((el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), w: Math.round(r.width) }; }));
+      expect(boxes[0].x).toBe(boxes[1].x);
+      expect(boxes[0].w).toBe(boxes[1].w);
+    }
+  });
+
+  test('токен и таблица не выходят за карточку, даты читаемые', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+    await ensureBackupRows(page);
+    // таблица копий внутри карточки
+    const card = await page.locator('#st-backups').boundingBox();
+    const table = await page.locator('#st-backups table.bk-table').boundingBox();
+    expect(table.x).toBeGreaterThanOrEqual(card.x - 1);
+    expect(table.x + table.width).toBeLessThanOrEqual(card.x + card.width + 1);
+    // поле токена 1С не шире карточки (прежний дефект — токен выезжал наружу).
+    // Карточка живёт в разделе «Чек-Пул и интеграции», поэтому сначала её таб,
+    // затем раскрываем свёрнутые блоки внутри карточки.
+    await page.locator('.stg-tab[data-sec="integr"]').click();
+    await page.evaluate(() => {
+      document.querySelectorAll('.settings-grid details').forEach((d) => { d.open = true; });
+    });
+    const token = page.locator('#onec-token');
+    await expect(token).toBeVisible({ timeout: 10000 });
+    const tb = await token.boundingBox();
+    const tokenCardRight = await page.locator('#onec-token').evaluate((el) =>
+      el.closest('.glass.card').getBoundingClientRect().right);
+    expect(tb.x + tb.width).toBeLessThanOrEqual(tokenCardRight + 1);
+    // даты в таблицах — не сырой ISO 8601
+    const raw = await page.locator('#st-backups table.bk-table tbody').evaluate((el) =>
+      (el.textContent.match(/\d{4}-\d{2}-\d{2}T\d/g) || []).length);
+    expect(raw).toBe(0);
   });
 });
 

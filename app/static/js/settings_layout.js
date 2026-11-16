@@ -1,5 +1,5 @@
 // ======================================================================
-// Ямастер Чек — раскладка страницы «Настройки» (v1.72.36)
+// Ямастер Чек — раскладка и мелочи страницы «Настройки» (v1.72.37)
 // Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 //
 // Чистые функции без DOM — их проверяет Vitest (tests/js/settings_layout.test.js).
@@ -79,43 +79,61 @@ export function layoutPlan(cards) {
 }
 
 /**
- * Модель выпадающего списка навигации (планшет и телефон).
- * На узких экранах колонка меню превращается в селект «Перейти к настройке…».
+ * Модель горизонтальных табов настроек (v1.72.37).
+ * Таб = раздел, выпадающая панель таба = карточки этого раздела (один уровень).
  * @param {Array<{key: string, title: string, icon?: string,
  *                items: Array<{id: string, label: string, ico?: string}>}>} groups
- * @returns {Array<{key: string, title: string, items: Array<{value: string, label: string}>}>}
+ * @returns {Array<{key: string, title: string, icon: string,
+ *                  cards: Array<{id: string, label: string, ico: string}>}>}
  */
-export function jumpModel(groups) {
+export function tabsModel(groups) {
   return (Array.isArray(groups) ? groups : [])
-    .filter((g) => g && g.key && Array.isArray(g.items) && g.items.length)
+    .filter((g) => g && g.key)
     .map((g) => ({
       key: String(g.key),
       title: String(g.title || ''),
-      items: g.items
+      icon: String(g.icon || ''),
+      cards: (Array.isArray(g.items) ? g.items : [])
         .filter((it) => it && it.id)
         .map((it) => ({
-          value: `${g.key}|${it.id}`,
-          label: `${it.ico ? it.ico + ' ' : ''}${String(it.label || it.id).trim()}`,
+          id: String(it.id),
+          label: String(it.label || it.id).trim(),
+          ico: String(it.ico || ''),
         })),
     }))
-    .filter((g) => g.items.length);
+    .filter((g) => g.cards.length);
 }
 
 /**
- * Значение селекта навигации для текущего маршрута.
- * Нет выбранной карточки — пустая строка (пункт «Перейти к настройке…»).
+ * Активный таб для маршрута #/settings/<раздел>/<карточка>.
+ * Если раздел неизвестен (или маршрута нет) — первый доступный таб.
+ * @returns {string} ключ раздела или '' для пустой модели
  */
-export function jumpValue(group, card) {
-  if (!group || !card) return '';
-  return `${group}|${card}`;
+export function tabForRoute(model, group) {
+  const list = Array.isArray(model) ? model : [];
+  if (!list.length) return '';
+  const found = list.find((t) => t.key === String(group || ''));
+  return found ? found.key : list[0].key;
 }
 
-/** Разбор значения селекта обратно в пару «раздел / карточка». */
-export function parseJumpValue(value) {
-  const s = String(value || '');
-  const i = s.indexOf('|');
-  if (i <= 0 || i === s.length - 1) return { group: '', card: '' };
-  return { group: s.slice(0, i), card: s.slice(i + 1) };
+/**
+ * Маска токена для показа в интерфейсе: первые `head` и последние `tail`
+ * символов, между ними фиксированное число точек. Строка любой длины
+ * превращается в предсказуемо короткую — она физически не может растянуть
+ * карточку (дефект со снимка 15.11.2026: токен MAX выезжал на соседнюю карточку).
+ * @param {string} value
+ * @param {{head?: number, tail?: number}} [opts]
+ * @returns {string}
+ */
+export function maskToken(value, opts) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s) return '';
+  const o = opts || {};
+  const head = Number.isFinite(o.head) ? Math.max(0, o.head) : 6;
+  const tail = Number.isFinite(o.tail) ? Math.max(0, o.tail) : 4;
+  const dots = '\u2022'.repeat(6);
+  if (s.length <= head + tail) return s.length <= 4 ? dots : `${s.slice(0, 2)}${dots}${s.slice(-2)}`;
+  return `${s.slice(0, head)}${dots}${tail ? s.slice(-tail) : ''}`;
 }
 
 /**

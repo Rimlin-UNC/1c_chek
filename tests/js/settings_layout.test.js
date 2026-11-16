@@ -1,9 +1,12 @@
-/* v1.72.36: раскладка страницы «Настройки» — чистые функции без DOM.
-   Проверяют порядок карточек, широкие карточки, начало разделов,
-   модель селекта-навигации и порционную выдачу длинных списков. */
+/* v1.72.37: раскладка страницы «Настройки» — чистые функции без DOM.
+   Проверяют порядок карточек, широкие карточки, начало разделов, модель
+   горизонтальных табов (таб = раздел, панель = карточки раздела), выбор
+   активного таба по маршруту, маску токена и порционную выдачу списков.
+   Селект-навигация (jumpModel/jumpValue/parseJumpValue) удалена вместе с
+   вертикальным меню — её тесты заменены на табы. */
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_ORDER, jumpModel, jumpValue, layoutPlan, orderOf, pageSlice, parseJumpValue,
+  DEFAULT_ORDER, layoutPlan, maskToken, orderOf, pageSlice, tabForRoute, tabsModel,
 } from '../../app/static/js/settings_layout.js';
 
 describe('orderOf', () => {
@@ -75,31 +78,88 @@ describe('layoutPlan', () => {
   });
 });
 
-describe('навигация селектом', () => {
-  it('строит пункты по непустым группам и карточкам', () => {
-    const model = jumpModel([
-      { key: 'data', title: 'Данные и восстановление', items: [
+describe('tabsModel', () => {
+  it('таб = раздел, панель = его карточки', () => {
+    const model = tabsModel([
+      { key: 'data', title: 'Данные и восстановление', icon: '🗄', items: [
         { id: 'st-backups', label: 'Резервные копии', ico: '💾' },
+        { id: 'st-update', label: 'Обновления', ico: '🔄' },
       ] },
-      { key: 'checks', title: 'Проверка чеков', items: [] },
-      { key: '', title: 'Без ключа', items: [{ id: 'x', label: 'X' }] },
+      { key: 'personal', title: 'Личное и доступ', items: [
+        { id: 'st-profile', label: 'Мой профиль' },
+      ] },
     ]);
-    expect(model).toEqual([{
-      key: 'data',
-      title: 'Данные и восстановление',
-      items: [{ value: 'data|st-backups', label: '💾 Резервные копии' }],
-    }]);
+    expect(model).toHaveLength(2);
+    expect(model[0]).toEqual({
+      key: 'data', title: 'Данные и восстановление', icon: '🗄',
+      cards: [
+        { id: 'st-backups', label: 'Резервные копии', ico: '💾' },
+        { id: 'st-update', label: 'Обновления', ico: '🔄' },
+      ],
+    });
+    expect(model[1].cards[0]).toEqual({ id: 'st-profile', label: 'Мой профиль', ico: '' });
   });
 
-  it('значение селекта и обратный разбор согласованы', () => {
-    expect(jumpValue('checks', 'st-fns')).toBe('checks|st-fns');
-    expect(parseJumpValue(jumpValue('checks', 'st-fns'))).toEqual({ group: 'checks', card: 'st-fns' });
-    expect(jumpValue('', 'st-fns')).toBe('');
-    expect(parseJumpValue('')).toEqual({ group: '', card: '' });
-    expect(parseJumpValue('без-разделителя')).toEqual({ group: '', card: '' });
-    expect(parseJumpValue('|st-fns')).toEqual({ group: '', card: '' });
-    expect(parseJumpValue('checks|')).toEqual({ group: '', card: '' });
-    expect(parseJumpValue('a|b|c')).toEqual({ group: 'a', card: 'b|c' });
+  it('пустые разделы и пункты без id не рисуются', () => {
+    const model = tabsModel([
+      { key: 'checks', title: 'Проверка чеков', items: [] },
+      { key: '', title: 'Без ключа', items: [{ id: 'x', label: 'X' }] },
+      { key: 'device', title: 'Устройство', items: [{ label: 'без id' }] },
+      null,
+    ]);
+    expect(model).toEqual([]);
+  });
+
+  it('подпись карточки подстрахована её id, вход любого вида безопасен', () => {
+    expect(tabsModel([{ key: 'a', items: [{ id: 'st-fns' }] }])[0].cards[0].label).toBe('st-fns');
+    expect(tabsModel(null)).toEqual([]);
+    expect(tabsModel('мусор')).toEqual([]);
+  });
+});
+
+describe('tabForRoute', () => {
+  const model = tabsModel([
+    { key: 'data', title: 'Данные', items: [{ id: 'st-backups', label: 'Копии' }] },
+    { key: 'integr', title: 'Интеграции', items: [{ id: 'st-max', label: 'MAX' }] },
+  ]);
+
+  it('узнаёт раздел из адреса #/settings/<раздел>', () => {
+    expect(tabForRoute(model, 'integr')).toBe('integr');
+    expect(tabForRoute(model, 'data')).toBe('data');
+  });
+
+  it('неизвестный раздел и пустой маршрут — первый таб', () => {
+    expect(tabForRoute(model, 'nope')).toBe('data');
+    expect(tabForRoute(model, '')).toBe('data');
+    expect(tabForRoute(model, undefined)).toBe('data');
+  });
+
+  it('пустая модель — пустая строка (табов нет)', () => {
+    expect(tabForRoute([], 'data')).toBe('');
+    expect(tabForRoute(null, 'data')).toBe('');
+  });
+});
+
+describe('maskToken', () => {
+  it('оставляет начало и конец длинного токена', () => {
+    expect(maskToken('hj6abcdefghijklmnopqrstuvwxyz4f2a')).toBe('hj6abc\u2022\u2022\u2022\u2022\u2022\u20224f2a');
+  });
+
+  it('длину можно задать, хвост можно убрать', () => {
+    expect(maskToken('0123456789abcdef', { head: 4, tail: 2 })).toBe('0123\u2022\u2022\u2022\u2022\u2022\u2022ef');
+    expect(maskToken('0123456789abcdef', { head: 4, tail: 0 })).toBe('0123\u2022\u2022\u2022\u2022\u2022\u2022');
+  });
+
+  it('короткие строки не раскрываются', () => {
+    expect(maskToken('abc')).toBe('\u2022\u2022\u2022\u2022\u2022\u2022');
+    expect(maskToken('abcdefgh')).toBe('ab\u2022\u2022\u2022\u2022\u2022\u2022gh');
+    expect(maskToken('')).toBe('');
+    expect(maskToken(null)).toBe('');
+  });
+
+  it('маска всегда короче исходной строки', () => {
+    const long = 'x'.repeat(400);
+    expect(maskToken(long).length).toBeLessThan(long.length);
   });
 });
 

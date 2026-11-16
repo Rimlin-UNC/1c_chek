@@ -69,8 +69,8 @@
   --accent-soft: #fff1e3;              /* v1.58.3: мягкая оранжевая подложка кнопок */
   /* v1.72.36: единые отступы карточек настроек — объявлены здесь, в корневом
      блоке токенов (контракт test_v17035: токен должен быть объявлен в нём) */
-  --card-pad: 18px;
-  --card-gap: 16px;
+  --card-pad: 24px;
+  --card-gap: 24px;
   --accent-text: #9a4a00;              /* v1.58.3: тёмно-оранжевый текст кнопок */
   --accent-2: #4b0082;
   --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
@@ -1508,47 +1508,35 @@ body.ym-focus .content .card:hover { opacity: .6; }   /* подсмотреть 
   body.print-ao1 .print-piece { width: auto; transform: none; }
 }
 
-/* v1.70.9: настройки — меню с разделами и подменю (адаптив) */
+/* v1.72.37: настройки — одна колонка по центру (решение владельца):
+   читаемость важнее плотности, карточки идут строго друг под другом.
+   Прежняя колонка меню (v1.70.9) заменена горизонтальными табами. */
 .settings-layout {
-  display: grid; grid-template-columns: 268px minmax(0, 1fr);
-  gap: 18px; align-items: start;
+  display: flex; flex-direction: column; gap: var(--card-gap);
+  width: 100%; max-width: 1160px; margin-inline: auto;
 }
+/* Контент остаётся в одну колонку 900 px, а полоса табов может быть шире:
+   пять разделов в 900 px не помещаются и давали прокрутку на десктопе. */
+.settings-layout .settings-grid,
+.settings-layout .stg-panels { max-width: 900px; margin-inline: auto; width: 100%; }
 .settings-layout .settings-grid { min-width: 0; }
-/* v1.70.10: в режиме «все настройки» прячем только группы меню —
-   панель с кнопками остаётся на виду (раньше пряталась и вместе с ней
-   единственная кнопка возврата; меню казалось пропавшим навсегда) */
-body.settings-all .settings-nav .snav-group { display: none; }
-body.settings-all #snav-collapse { display: none; }
-body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr); }
+/* Режим «все настройки»: разделы идут подряд, но полосу табов НЕ прячем —
+   иначе вместе с ней исчезает единственный путь назад (замок v1.70.10).
+   Клик по любому табу выходит из режима; в меню «⋯ Ещё» кнопка меняет
+   подпись на «☰ Меню настроек». */
+body.settings-all .stg-tab.active { color: var(--text-dim); border-bottom-color: transparent; }
 .settings-nav {
-  position: sticky; top: calc(var(--topbar-h) + 12px);
-  display: flex; flex-direction: column; gap: 10px;
+  /* v1.72.37: полоса табов липнет к верху прокручиваемой области (.content),
+     а не к --topbar-h: со старым смещением бар съезжал вниз на 63 px и
+     накрывал заголовок первого раздела. Фон нужен, чтобы карточки не
+     проступали под табами при прокрутке. */
+  position: sticky; top: 0;
+  display: block; z-index: 16;
+  background: var(--bg);
 }
-.snav-tools { display: flex; gap: 8px; flex-wrap: wrap; }
-.snav-group {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
-}
-.snav-head {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 12px 14px; background: transparent; border: none;
-  cursor: pointer; font: inherit; font-weight: 700;
-  color: var(--text); text-align: left;
-}
-.snav-head:hover { background: var(--accent-soft); }
-.snav-head .snav-ico { font-size: 18px; flex: 0 0 auto; }
-.snav-title { flex: 1 1 auto; min-width: 0; }
-.snav-cnt {
-  flex: 0 0 auto; font-size: 12px; color: var(--text-dim);
-  background: var(--bg-soft); border-radius: 999px; padding: 1px 8px;
-}
-.snav-chev {
-  flex: 0 0 auto; transition: transform var(--speed);
-  color: var(--text-faint); font-size: 18px; line-height: 1;
-}
-.snav-group.open .snav-chev { transform: rotate(90deg); }
-.snav-sub { display: none; flex-direction: column; gap: 2px; padding: 0 6px 8px; }
-.snav-group.open .snav-sub { display: flex; }
+/* v1.72.37: аккордеоны разделов удалены вместе с разметкой — их место
+   заняли горизонтальные табы. Пункты .snav-item остались: они живут
+   в выпадающей панели таба. */
 .snav-item {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 9px 10px; border: none; border-radius: 10px;
@@ -1561,7 +1549,7 @@ body.settings-all .settings-layout { grid-template-columns: auto minmax(0, 1fr);
 .snav-item span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .snav-empty { padding: 8px 10px; font-size: 12.5px; color: var(--text-faint); }
 @media (max-width: 900px) {
-  .settings-layout { grid-template-columns: 1fr; }
+  .settings-layout { gap: 16px; }
   .settings-nav { position: static; }
 }
 
@@ -2478,24 +2466,31 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 .settings-grid,
 .stg-section-grid {
   /* значения — из :root, здесь только точка переопределения на будущее */
-  --card-pad: 18px;
-  --card-gap: 16px;
+  --card-pad: 24px;
+  --card-gap: 24px;
 }
 
 /* --- 2. Каркас: разделы с собственной сеткой ----------------------------- */
 /* JS (applySettingsLayout) собирает карточки в <section class="stg-section">
    и включает .settings-grouped. Без JS остаётся прежняя auto-fit сетка —
    оформление деградирует, а не ломается. */
-.settings-grid.settings-grouped { display: block; }
-.stg-section + .stg-section { margin-top: 20px; }
+.settings-grid.settings-grouped {
+  display: flex; flex-direction: column; gap: var(--card-gap);
+  width: 100%; max-width: 900px; margin-inline: auto;
+}
+.stg-section + .stg-section { margin-top: 0; }
+/* Раздел — заголовок и карточки друг под другом. Многоколоночных сеток нет:
+   при окне 900–1400 px карточки становились по 300 px и токены с таблицами
+   вылезали за края (снимок 15.11.2026). */
+.stg-section,
 .stg-section-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0; width: 100%;
+}
+.stg-section-grid {
+  display: flex;
+  flex-direction: column;
   gap: var(--card-gap);
-  align-items: start;
-  /* плотная укладка: узкая карточка занимает дырку рядом с широкой,
-     но карточки разных разделов не перемешиваются — они в разных сетках */
-  grid-auto-flow: row dense;
+  align-items: stretch;
 }
 .stg-section-grid > .glass.card,
 .settings-grid > .glass.card { padding: var(--card-pad); }
@@ -2507,21 +2502,25 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 /* карточка, с которой начинается раздел (ставит JS) — пригодится для рамок */
 .stg-section-grid > .card-section-start { grid-column-start: 1; }
 
-/* Три колонки включаются по реальной ширине раздела, а не окна: при окне
-   1600 px карточки получались по 330 px, и содержимое (списки, команды)
-   ломалось. Три колонки — только когда раздел шире 1200 px (широкий монитор
-   или свёрнутое меню). */
-.stg-section { container-type: inline-size; }
-@container (min-width: 1200px) {
-  .stg-section-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Заголовок раздела: в одноколоночном виде он единственное, что отделяет
+   «данные» от «проверки чеков», поэтому слева — акцентная плашка. */
+.stg-section-title {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 12px;
+  font-size: 15px; font-weight: 800; letter-spacing: .01em; color: var(--text);
 }
-@media (max-width: 1024px) {
-  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .stg-section-grid { grid-template-columns: minmax(0, 1fr); }
+.stg-section-title::before {
+  content: ""; flex: 0 0 auto;
+  width: 4px; height: 18px; border-radius: 3px; background: var(--grad);
 }
+.stg-section[hidden] { display: none; }
+/* Прокрутка к карточке не должна прятать её под липкой полосой табов
+   (v1.72.37: заголовок раздела уезжал под табы после scrollIntoView). */
+.stg-section,
+.stg-section-title,
+.stg-section-grid > .glass.card { scroll-margin-top: calc(var(--topbar-h) + 64px); }
 @media (max-width: 640px) {
-  .settings-grid,
-  .stg-section-grid { --card-pad: 14px; }
+  .stg-section-grid { --card-pad: 16px; }
 }
 
 /* --- 3. Карточка: заголовок, зоны, действия, подпись, подвал ------------- */
@@ -2610,8 +2609,8 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
    горизонтальную прокрутку и «Восстановить» обрезается). */
 .bk-col-name { width: 20%; }
 .bk-col-kind { width: 16%; }
-.bk-col-in { width: 23%; }
-.bk-col-size { width: 10%; }
+.bk-col-in { width: 21%; }
+.bk-col-size { width: 12%; }
 .bk-col-acts { width: 31%; }
 /* «Размер» и «Действия» — самые узкие колонки: их содержимое не должно
    переноситься, иначе строка вырастает вдвое */
@@ -2653,89 +2652,106 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
 /* Мобильное окно «Все копии» — шире обычной модалки, но не на весь экран */
 .modal-slot.modal-wide { width: min(920px, 96vw); }
 
-/* --- 5. Меню настроек: один список, активный пункт как в левом меню ------- */
-#settings-nav {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 10px;
-  gap: 2px;
+/* --- 5. Меню настроек: горизонтальные табы и выпадающие панели ----------- */
+/* v1.72.37 (решение владельца): вместо колонки-аккордеона — классические
+   Tabs. Таб = раздел; его выпадающая панель = карточки раздела (один
+   уровень вложенности). Иконка показывается только у активного таба.
+   На компьютере панель — абсолютный список (не сдвигает контент), на
+   телефоне — раскрытие в потоке (аккордеон), как и просила спека. */
+.settings-tabs { background: var(--bg); border-bottom: 1px solid var(--border); }
+/* Полоса табов: если пять разделов + «⋯ Ещё» не влезают (окно 1024–1300 px),
+   кнопка меню переносится на вторую строку, а не выталкивает табы в прокрутку. */
+.stg-tabs-bar {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 4px 8px; min-width: 0;
 }
-#settings-nav .snav-tools { padding: 0 0 6px; gap: 6px; }
-#settings-nav .snav-tools .btn { flex: 1 1 auto; }
-#settings-nav .snav-group {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  overflow: visible;
+.stg-tabs-row {
+  display: flex; align-items: stretch; gap: 2px;
+  flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
-#settings-nav .snav-head {
-  padding: 8px 10px;
-  border-radius: 10px;
-  gap: 8px;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: .02em;
-  /* на этом кегле обычный пробел «слипается» — задаём его явно */
-  word-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--text-faint);
+.stg-tabs-row::-webkit-scrollbar { display: none; }
+.stg-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  flex: 0 0 auto; min-height: 44px; padding: 12px 16px;
+  border: 0; border-bottom: 3px solid transparent; background: transparent;
+  font: inherit; font-weight: 600; font-size: 14px; color: var(--text-dim);
+  white-space: nowrap; cursor: pointer;
+  transition: color var(--speed), background var(--speed), border-color var(--speed);
 }
-#settings-nav .snav-head:hover { background: var(--bg-soft); color: var(--text); }
-#settings-nav .snav-head .snav-ico { font-size: 15px; }
-#settings-nav .snav-cnt {
-  background: var(--bg-soft);
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 700;
+.stg-tab:hover { background: var(--bg-soft); color: var(--text); }
+.stg-tab.active {
+  color: var(--accent-text); font-weight: 700;
+  border-bottom-color: var(--accent);
 }
-#settings-nav .snav-sub { padding: 2px 0 8px; gap: 1px; }
-#settings-nav .snav-item {
-  position: relative;
-  padding: 9px 10px 9px 13px;
-  border-radius: 10px;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text-dim);
+.stg-tab-ico { display: none; font-size: 16px; line-height: 1; }
+.stg-tab.active .stg-tab-ico { display: inline; }
+/* Полоса табов — контейнер: на 1024–1300 px пять разделов не помещаются в
+   колонку контента, поэтому таб сжимается (padding, иконка), а не уезжает
+   в горизонтальную прокрутку. Прокрутка остаётся только на телефоне. */
+#settings-nav { container-type: inline-size; container-name: stgnav; }
+@container stgnav (max-width: 1140px) {
+  .stg-tab { padding: 12px 12px; }
+  .stg-tab.active .stg-tab-ico { display: none; }
 }
-#settings-nav .snav-item:hover { background: var(--bg-soft); color: var(--text); }
-/* активный пункт — тот же приём, что .nav-item.active в основном меню */
-#settings-nav .snav-item.active {
+@container stgnav (max-width: 1010px) {
+  .stg-tab { padding: 12px 8px; font-size: 13.5px; }
+}
+.stg-tabs-tools { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
+.stg-tabs-tools .btn { min-height: 36px; }
+.stg-more {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 32;
+  display: flex; flex-direction: column; min-width: 235px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow);
+}
+.stg-more[hidden] { display: none; }
+.stg-more-item {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 10px 12px; border: 0; border-radius: 8px;
+  background: transparent; font: inherit; font-weight: 600; font-size: 13.5px;
+  color: var(--text-dim); text-align: left; cursor: pointer;
+}
+.stg-more-item:hover { background: var(--bg-soft); color: var(--text); }
+.stg-panels { position: relative; }
+.stg-panel {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.stg-panel[hidden] { display: none; }
+.stg-panel .snav-item {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 44px; min-width: 0; padding: 10px 12px;
+  border: 0; border-radius: 10px; background: transparent;
+  font: inherit; font-weight: 600; font-size: 13.5px; color: var(--text-dim);
+  text-align: left; cursor: pointer;
+}
+.stg-panel .snav-item:hover { background: var(--bg-soft); color: var(--text); }
+.stg-panel .snav-item.active {
   background: linear-gradient(90deg, rgba(255, 122, 0, .14), rgba(255, 122, 0, .04));
-  color: var(--text);
-  font-weight: 700;
+  color: var(--text); font-weight: 700;
 }
-#settings-nav .snav-item.active::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 20%; height: 60%; width: 3px;
-  border-radius: 3px;
-  background: var(--grad);
+.stg-panel .snav-item .snav-ico { flex: 0 0 auto; }
+.stg-panel .snav-item-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Селект-навигация: показывается только там, где колонки меню нет */
-.snav-jump { display: none; }
-.snav-jump .field { margin: 0; font-size: 12px; }
-.snav-jump select { min-height: 40px; }
+.stg-panel .snav-empty { padding: 10px 12px; font-size: 12.5px; color: var(--text-faint); }
 
-@media (max-width: 1024px) {
-  /* Планшет и телефон: колонка меню заменяется селектом над контентом.
-     Пять крупных аккордеонов больше не сдвигают настройки вниз. */
-  /* Липкая панель на телефоне перекрывала строки таблицы: селект «прилипал»
-     над прокруткой и обрезал карточки копий. На узких экранах меню — обычный
-     блок в потоке, как и было до v1.72.36. */
-  #settings-nav { position: static; padding: 8px; }
-  #settings-nav .snav-group { display: none; }
-  #settings-nav .snav-jump { display: block; }
-  #settings-nav #snav-collapse { display: none; }
-  #settings-nav .snav-tools { padding: 0 0 6px; }
-  #settings-nav .snav-tools .btn { flex: 0 1 auto; }
-  /* режим «все настройки» раньше делал колонку auto — на телефоне это
-     оставляло контенту половину ширины; здесь всегда одна колонка */
-  body.settings-all .settings-layout { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 768px) {
+  /* телефон: панель раскрывается под полосой табов и толкает контент вниз */
+  .stg-panel {
+    position: static; display: flex; flex-direction: column;
+    margin-top: 6px; padding: 4px;
+    border: 1px solid var(--border); border-radius: 12px; box-shadow: none;
+  }
+  .stg-tab { padding: 12px; font-size: 13.5px; }
+  .stg-tab-label { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
 }
-
 /* --- 6. Кнопки: загрузка, успех, ошибка ---------------------------------- */
 /* Спиннер поверх подписи: подпись остаётся в потоке, поэтому ширина кнопки
    не прыгает, а доступное имя не меняется (тот же приём, что в PR #2173). */
@@ -2847,13 +2863,6 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
 /* раскрытый блок «как работают копии» не прилипает к следующей зоне */
 .card-note + .card-section { margin-top: 16px; }
 
-/* --- v1.72.36: заголовки разделов меню — без слоговых переносов ---------- */
-/* Иконки разделов скрыты: те же иконки есть у пунктов внутри, а без них
-   длинные названия («Данные и восстановление») помещаются в одну строку. */
-#settings-nav .snav-head .snav-ico { display: none; }
-
-#settings-nav .snav-title { min-width: 0; }
-
 /* --- v1.72.36: действия в строке копии ----------------------------------- */
 /* Колонка действий должна вмещать три кнопки. В узкой карточке (планшет,
    1280 px) подпись «Восстановить» не помещается — оставляем иконку ↩ с
@@ -2887,6 +2896,56 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
 #st-releases .card-actions { margin: 0 0 10px; }
 /* значок «проверена» в таблице — компактный, чтобы «Тип» оставался в строку */
 .settings-table .chip { font-size: 10.5px; padding: 1px 7px; }
+
+/* --- v1.72.37: токены, чекбоксы, тач-зоны, таблицы ---------------------- */
+/* Токен не может растянуть карточку: одна длинная строка без пробелов
+   раньше выезжала на соседнюю карточку (снимок 15.11.2026). Маска задаётся
+   в JS (maskToken), а здесь — страховка от переполнения. */
+.token-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.token-value {
+  flex: 1 1 200px; min-width: 0; max-width: 100%;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text);
+  font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.token-field .btn { flex: 0 0 auto; }
+.token-line { min-width: 0; }
+.token-line input, .field input.token-input {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* чекбокс и подпись в две строки больше не наезжают друг на друга */
+.check-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  min-height: 44px; padding: 6px 0; cursor: pointer;
+}
+.check-row > input[type="checkbox"],
+.check-row > input[type="radio"] {
+  flex: 0 0 auto; width: 20px; height: 20px; margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.check-row > span { min-width: 0; }
+/* .field — колонка; чекбокс-строка должна оставаться строкой («Утренний дайджест»
+   в карточке MAX стоял над подписью, а не слева от неё) */
+.field.check-row { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; }
+/* Тач-зоны: не меньше 44 px у интерактивных элементов настроек. В таблицах —
+   30 px: иначе каждая строка превращается в трёхэтажную. */
+/* :is() — чтобы правило не выглядело отдельным объявлением .btn-sm вне
+   единого блока тач-целей (замок v1.70.33 запрещает такие переопределения) */
+.settings-layout :is(.btn, .btn-sm) { min-height: 44px; }
+.settings-layout input:not([type="checkbox"]):not([type="radio"]),
+.settings-layout select { min-height: 44px; }
+.settings-layout .btn-icon { width: 44px; height: 44px; }
+.settings-table :is(.btn, .btn-sm) { min-height: 30px; }
+.settings-table .btn-icon { width: 30px; height: 30px; }
+/* группы кнопок переносятся, а не выдавливают друг друга */
+.card-actions { row-gap: 8px; }
+.settings-layout .card-actions .btn { flex: 0 1 auto; }
+/* длинные значения в списках «ключ — значение» и в inline-коде переносятся */
+.settings-layout .kv dd { min-width: 0; overflow-wrap: anywhere; }
+.settings-layout code.inline { overflow-wrap: anywhere; word-break: break-word; }
+/* таблица внутри карточки всегда в своём контейнере прокрутки */
+.settings-layout .table-scroll { max-width: 100%; }
 
 /* v1.70.58: заголовок страницы на телефоне переносится на вторую строку
    вместо обрезания точками; базовое правило (одна строка с «…» для

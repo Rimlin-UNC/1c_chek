@@ -71,8 +71,12 @@ class TestSettingsMenuStructure:
         js = self.js()
         for key in ("data", "checks", "integr", "personal", "device"):
             assert f"key: '{key}'" in js, key
-            assert f'data-grp="${{g.key}}"' in js  # шаблон группы
-        assert "SETTINGS_GROUPS" in js
+        # v1.72.37: вертикальные группы сменились горизонтальными табами.
+        # Пять разделов по-прежнему описаны одним списком (он же даёт заголовки
+        # разделов в одноколоночном виде) и рисуются шаблоном таба.
+        assert "SETTINGS_SECTIONS" in js
+        assert 'data-sec="${g.key}"' in js
+        assert 'class="stg-tab' in js
 
     def test_all_cards_have_id_and_sec(self):
         js = self.js()
@@ -83,7 +87,10 @@ class TestSettingsMenuStructure:
         # v1.70.51: карточка «Мониторинг OpenStack» живёт в osm.js, поэтому
         # к шаблону настроек добавлен весь модуль — иначе 31-я карточка
         # осталась бы за пределами замка.
-        seg = js[i0:i0 + 60000] + "\n" + self.osm_js()
+        # v1.72.37: окно расширено до 80 000 символов — новый блок маски токена
+        # в карточке MAX сдвинул разметку, и st-adguard (порядок 49) переставал
+        # попадать в замок, из-за чего он считал 32 карточки вместо 33.
+        seg = js[i0:i0 + 80000] + "\n" + self.osm_js()
         cards = re.findall(
             r'<div class="glass card"(?: id="([\w-]+)")?'
             r'(?: data-sec="(\w+)")? style="order:(\d+)', seg)
@@ -106,7 +113,10 @@ class TestSettingsMenuStructure:
         # v1.70.101: карточек 32 — «Память товаров» st-goods в разделе «Проверка чеков и почта» (T-69).
         # v1.70.103: карточек 33 — «Поисковики» st-seo в разделе «Устройство и служебное» (T-74).
         # v1.72.17: отдельная локальная карточка мониторинга сервера.
-        assert len(with_sec) == 33, with_sec
+        # v1.72.37: 34, а не 33 — окно в 60 000 символов обрезало хвост шаблона
+        # (st-adguard и st-about не проверялись, хотя test_expected_distribution
+        # их уже считал: 6+7+8+6+7=34). Окно расширено — замок снова полный.
+        assert len(with_sec) == 34, with_sec
         assert ("st-server-monitor", "integr", "38") in with_sec
         assert ("st-seo", "device", "48") in with_sec
         assert ("st-consent", "integr", "38") in with_sec
@@ -144,12 +154,18 @@ class TestSettingsMenuStructure:
         assert "settings-sect" not in css
 
     def test_menu_wiring(self):
+        # v1.72.37: меню — горизонтальные табы. Активный таб синхронизирован
+        # с адресом (#/settings/<раздел>), панель таба — карточки раздела.
         js = self.js()
         for frag in ("settingsApply", "snav-all", "snav-collapse",
                      "history.replaceState", "settings_all",
-                     "scrollIntoView", "snav-item", "snav-sub",
-                     "matchMedia('(max-width: 900px)')"):
+                     "scrollIntoView", "snav-item", "stg-tab",
+                     "stg-panel", "snav-more", "tabForRoute"):
             assert frag in js, frag
+        # старая вертикальная разметка удалена целиком, а не спрятана
+        for gone in ("snav-group", "snav-head", "snav-sub", "snav-jump",
+                     "buildSettingsJump", "data-grp="):
+            assert gone not in js, gone
 
     def test_deeplink_route_parses(self):
         js = self.js()
@@ -161,20 +177,23 @@ class TestSettingsMenuStructure:
 # ---------------------------------------------------------------- CSS/адаптив
 class TestSettingsMenuCss:
     def test_layout_and_responsive(self):
+        # v1.72.37: вместо колонки 268px + сетки карточек — полоса табов и
+        # одна колонка контента; на телефоне табы прокручиваются по горизонтали.
         css = open("app/static/css/app.css", encoding="utf-8").read()
         assert ".settings-layout {" in css
-        assert "grid-template-columns: 268px minmax(0, 1fr)" in css
-        # v1.70.10: прячутся только группы, панель с кнопками остаётся видимой
-        assert "body.settings-all .settings-nav .snav-group { display: none;" in css
+        assert "grid-template-columns: 268px minmax(0, 1fr)" not in css
+        # в режиме «все настройки» карточки идут подряд, а полоса табов
+        # остаётся на месте (иначе терялся выход из режима — замок v1.70.10)
+        assert "body.settings-all .stg-tab.active" in css
         assert "body.settings-all .settings-nav { display: none;" not in css
-        assert "@media (max-width: 900px)" in css
         assert ".settings-nav {" in css and "position: sticky" in css
-        assert ".snav-group {" in css and ".snav-item.active" in css
-        # после 900px — одна колонка (телефон: меню над карточками)
+        assert ".stg-tabs-row {" in css and "overflow-x: auto" in css
+        assert ".stg-tab.active" in css and ".snav-item.active" in css
+        assert "@media (max-width: 900px)" in css
         i = css.index("@media (max-width: 900px)")
         frag = css[i:i + 400]
-        assert ".settings-layout { grid-template-columns: 1fr; }" in frag, frag[:200]
-        assert ".settings-nav { position: static; }" in frag
+        assert ".settings-nav { position: static; }" in frag, frag[:200]
+        assert "@media (max-width: 768px)" in css
 
     def test_scroll_margin_for_sticky_topbar(self):
         css = open("app/static/css/app.css", encoding="utf-8").read()
