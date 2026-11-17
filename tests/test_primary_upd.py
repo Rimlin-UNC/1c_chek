@@ -341,5 +341,9 @@ def test_roles_and_limits(client, firms):
     user = _mk_user(client, hdr, a["id"], f"prim_u_{uuid4().hex[:10]}", role="user")
     assert _upload(client, user, ("u.xml", _for(a))).status_code == 403
     assert client.get("/api/v1/primary", headers=user).status_code == 403
+    # v1.73.1: предел больше не отказ всей пачке — лишние документы пропускаются словами,
+    # а причина видна в итоге (раньше здесь был HTTP 400 и человек не понимал, что делать)
     too_many = [(f"{i}.xml", b"<x/>") for i in range(51)]
-    assert _upload(client, a["hdr"], *too_many).status_code == 400
+    over = _upload(client, a["hdr"], *too_many)
+    assert over.status_code == 200, over.text[:200]
+    assert any("перенесите следующей пачкой" in (r.get("message") or "") for r in over.json()["results"])

@@ -32,6 +32,7 @@ from .counterparties.router import router as counterparties_router  # v1.71.0: �
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
 from .docreq import router as docreq_router
+from .primary import inbox_router as primary_inbox_router  # v1.73.0: приёмная папка (T-109)
 from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
 from .routers import (admin, auth_routes, companies, dashboard, invites, mail_admin, maxapp, navigation, onec,
@@ -175,6 +176,16 @@ async def lifespan(app: FastAPI):
             approvals.tick(db)
         except Exception:                                # noqa: BLE001
             log.exception("approvals tick failed")
+        finally:
+            db.close()
+        # v1.73.0 (T-109, ADR-60): приёмная папка первички — обход по своему интервалу (не чаще раза в минуту,
+        # сам тик раз в минуту). Файлы на сетевом диске событиями не видны, поэтому только опрос; свой перехват
+        from .primary import inbox as primary_inbox
+        db = SessionLocal()
+        try:
+            primary_inbox.tick(db)
+        except Exception:                                # noqa: BLE001
+            log.exception("primary inbox tick failed")
         finally:
             db.close()
 
@@ -591,6 +602,7 @@ app.include_router(navigation.router)
 app.include_router(supabase_demo.router)  # отдельный read-only Supabase демо-контур
 app.include_router(unified_router.router)  # единый фискальный документ
 # v1.70.104 (T-63): первичка из почты — раньше основного роутера первички, иначе /inbox поймал бы /{doc_id}
+app.include_router(primary_inbox_router.router)  # v1.73.0: приёмная папка — раньше карточки /{doc_id}
 app.include_router(primary_mail_router.router)
 app.include_router(primary_router.router)  # v1.70.94: первичка — электронные УПД
 app.include_router(docreq_router.router)  # v1.70.97: что нужно от клиента (T-58)

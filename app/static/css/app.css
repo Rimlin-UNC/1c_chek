@@ -2342,6 +2342,22 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 .prim-folder-sum { margin-top: 10px; }
 .prim-folder-sum p { margin: 4px 0; }
 .prim-folder-problems { margin: 6px 0 0 18px; padding: 0; max-height: 40vh; overflow: auto; font-size: 13px; }
+/* v1.73.0: замечания отбора папки (крупный XML, лишние документы архива) — словами, а не молчанием */
+.prim-folder-notices { margin: 6px 0 0 18px; padding: 0; font-size: 13px; color: var(--text-dim); }
+/* v1.73.0 (T-109, ADR-60): приёмная папка первички — настройка, кнопки и журнал в одной карточке */
+.inbox-settings { display: grid; gap: 10px; margin: 10px 0 6px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.inbox-settings .inbox-check { display: flex; align-items: center; gap: 8px; }
+.inbox-settings .inbox-check input { width: auto; }
+.inbox-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0 4px; }
+.inbox-actions .btn { min-width: 0; }
+#inbox-log { margin-top: 10px; }
+#inbox-log .data td { vertical-align: top; font-size: 13px; }
+#inbox-log .data td:first-child { overflow-wrap: anywhere; max-width: 40ch; }
+.inbox-settings + .form-hint code { overflow-wrap: anywhere; }
+@media (max-width: 719px) {
+  .inbox-settings { grid-template-columns: 1fr; }
+  .inbox-actions .btn { width: 100%; }
+}
 .bank-cl-controls { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 6px 0 10px; }
 .bank-cl-sum { margin: 6px 0; font-variant-numeric: tabular-nums; }
 .bank-cl-bar { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; margin: 4px 0 12px; }

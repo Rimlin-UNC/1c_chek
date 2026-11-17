@@ -197,14 +197,17 @@ from app.unified.models import UnifiedDocument
 ids, pw = json.loads(os.environ["REH_IDS"]), os.environ["REH_PASSWORD"]
 res = {"version": app_version(),
        "unified_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("unified_")),
+       # v1.73.0: primary_inbox* считается отдельно, иначе прежний состав первички «раздувается»
        "primary_tables": sorted(t for t in inspect(engine).get_table_names()
-                                if t.startswith("primary_") and not t.startswith("primary_mail")),
+                                if t.startswith("primary_") and not t.startswith(("primary_mail", "primary_inbox"))),
        "primary_mail_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_mail")),
        "primary_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_documents")
                                  if c["name"] in ("source", "channel", "print_json")),
        # v1.70.105 (T-64): канал входящего файла и сотрудник — у очереди почты и ботов
        "primary_mail_columns": sorted(c["name"] for c in inspect(engine).get_columns("primary_mail_items")
                                       if c["name"] in ("channel", "user_id")),
+       # v1.73.0 (T-109): приёмная папка первички — настройка и журнал
+       "primary_inbox_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("primary_inbox")),
        "docreq_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("doc_request")),
        "bank_tables": sorted(t for t in inspect(engine).get_table_names() if t.startswith("bank_")),
        "clients_tables": sorted(t for t in inspect(engine).get_table_names() if t == "accountant_clients"),
@@ -714,6 +717,7 @@ def main() -> int:
               and up.get("primary_mail_tables") == ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]
               and up.get("primary_columns") == ["channel", "print_json", "source"]
               and up.get("primary_mail_columns") == ["channel", "user_id"]
+              and up.get("primary_inbox_tables") == ["primary_inbox_files", "primary_inbox_settings"]
               and up.get("docreq_tables") == ["doc_request_events", "doc_request_settings", "doc_requests"]
               and up.get("bank_tables") == ["bank_connections", "bank_incomes", "bank_links", "bank_operations",
                                             "bank_reimbursements", "bank_settings", "bank_statements"]
@@ -733,7 +737,8 @@ def main() -> int:
               "(с v1.70.104), согласование авансовых отчётов: 3 таблицы approval_settings, advance_approvals и "
               "advance_approval_events (с v1.70.112), поступления bank_incomes и ручные привязки bank_links для "
               "закрытия выписки документами (с v1.70.113), три таблицы контрагентов "
-              "counterparties/counterparty_bank_accounts/counterparty_aliases (с v1.71.0)")
+              "counterparties/counterparty_bank_accounts/counterparty_aliases (с v1.71.0), приёмная папка "
+              "первички: 2 таблицы primary_inbox* (с v1.73.0)")
         check(checks, up["docs_after_init"] == 0, "перенос архива при старте не запускается")
         check(checks, up["fingerprint_after_init"] == seed["fingerprint"], "старые таблицы после init_db не изменились")
         check(checks, up["totals"] == {"admin": 22, "acc_a": 13, "acc_b": 8, "user_a": 4, "acc_g": 1},

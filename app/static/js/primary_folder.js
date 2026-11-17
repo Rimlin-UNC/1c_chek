@@ -14,6 +14,7 @@ export const PRIM_FOLDER_KINDS = {
   upd: 'УПД и счета-фактуры', maybe: 'XML формата ФНС — проверит сервер', zip: 'архивы ЭДО',
   buyer: 'титулы покупателя', correction: 'корректировочные документы', edo: 'служебные файлы ЭДО',
   other: 'другие XML', notxml: 'не XML (подписи, PDF и прочее)',
+  hidden: 'скрытые и служебные файлы', empty: 'пустые файлы', too_big: 'XML больше 5 МБ',
 };
 export const PRIM_FOLDER_SEND = ['upd', 'maybe', 'zip'];
 const PRIM_FOLDER_HEAD = 8192;
@@ -21,6 +22,10 @@ const PRIM_FOLDER_CHUNK = 20;
 const PRIM_FOLDER_CHUNK_BYTES = 8 * 1024 * 1024;
 const PRIM_FOLDER_HASH_BATCH = 500;
 const PRIM_FOLDER_FUNCTIONS = ['СЧФ', 'СЧФДОП', 'ДОП'];
+const PRIM_FOLDER_XML_MAX = 5 * 1024 * 1024;          // app/primary/upd.py: MAX_BYTES — больше не один документ
+const PRIM_FOLDER_ZIP_MAX = 20 * 1024 * 1024;         // router.py: MAX_ZIP_BYTES
+const PRIM_FOLDER_ZIP_DOCS = 50;                      // service.py: MAX_FILES — предел документов из архива
+const PRIM_FOLDER_SERVICE = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
 
 /** Путь файла в папке: при выборе кнопкой — webkitRelativePath, при перетаскивании — relativePath. */
 export function primFolderPath(file) {
@@ -37,8 +42,8 @@ export function primFolderDecode(bytes) {
   if (enc === 'cp1251' || enc === 'win-1251') enc = 'windows-1251';
   try {
     return new TextDecoder(enc).decode(u8);
-  } catch (e) {
-    return new TextDecoder('utf-8').decode(u8);
+  } catch {
+    return new TextDecoder('utf-8').decode(u8);       // кодировка из объявления неизвестна браузеру
   }
 }
 
@@ -98,7 +103,7 @@ export function primFolderFromDrop(dt) {
   const walk = async (entry, path) => {
     if (entry.isFile) {
       const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-      try { Object.defineProperty(file, 'relativePath', { value: path + file.name }); } catch (e) { /* только имя */ }
+      try { Object.defineProperty(file, 'relativePath', { value: path + file.name }); } catch { /* только имя */ }
       files.push(file);
       return;
     }
@@ -116,7 +121,7 @@ export function primFolderFromDrop(dt) {
 }
 
 /** Байты файла или его части: Blob.arrayBuffer, а где его нет (старые браузеры) — FileReader. */
-export function primFolderBytes(blob) {
+export async function primFolderBytes(blob) {
   if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -138,20 +143,162 @@ export async function primFolderSha(file) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Отбор файлов папки: { send: [файлы к отправке], counts: {вид: число}, total }. */
+/** Имя файла внутри архива: флаг UTF-8 (бит 11) важнее правила XML — иначе кириллица превращается в кашу. */
+export function primFolderEntryName(nameBytes, view, headerAt) {
+  const flags = view ? view.getUint16(headerAt + 8, true) : 0;
+  if (flags & 0x0800) {
+    try { return new TextDecoder('utf-8').decode(nameBytes); } catch { /* ниже общий путь */ }
+  }
+  const latin = new TextDecoder('utf-8').decode(nameBytes);
+  if (!latin.includes('\ufffd')) return latin;                       // уже валидный UTF-8
+  try { return new TextDecoder('windows-1251').decode(nameBytes); } catch {  return latin; }
+}
+
+/** Минимальный читатель ZIP на клиенте: центральный каталог → имена .xml и их смещения.
+    Полноценная распаковка здесь не нужна: нужен только перечень документов, чтобы отправить их по одному
+    (сервер иначе отказывает всей пачке, если в архиве больше 50 документов, — см. service.unpack).
+    Метод «сохранённый» (stored) отдаём как есть, сжатые — через DecompressionStream, если он есть в браузере. */
+async function primFolderZipCentral(file) {
+  const bytes = new Uint8Array(await primFolderBytes(file));
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // конец центрального каталога: сигнатура 0x06054b50, ищем с конца (комментарий до 64 КБ)
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;                                  // не архив или обрезан
+  const total = view.getUint16(eocd + 10, true);
+  let offset = view.getUint32(eocd + 16, true);
+  const entries = [];
+  for (let n = 0; n < total && offset + 46 <= bytes.length; n += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) return null;
+    const method = view.getUint16(offset + 10, true);
+    const compSize = view.getUint32(offset + 20, true);
+    const rawSize = view.getUint32(offset + 24, true);
+    const nameLen = view.getUint16(offset + 28, true);
+    const extraLen = view.getUint16(offset + 30, true);
+    const commentLen = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const name = primFolderEntryName(bytes.subarray(offset + 46, offset + 46 + nameLen), view, offset);
+    offset += 46 + nameLen + extraLen + commentLen;
+    if (!name || name.endsWith('/') || name.startsWith('__MACOSX/')) continue;
+    if (!/\.xml$/i.test(name)) continue;
+    if (rawSize > PRIM_FOLDER_XML_MAX) continue;              // такой документ сервер всё равно отклонит
+    entries.push({ name, method, compSize, rawSize, localOffset });
+  }
+  return entries;
+}
+
+/** Документы архива как отдельные файлы для отправки; null — архив не читается. */
+export async function primFolderZipList(file) {
+  const entries = await primFolderZipCentral(file);
+  if (!entries) return null;
+  const out = [];
+  for (const entry of entries) {
+    const doc = await primFolderZipDoc(file, entry);
+    if (doc && typeof doc === 'string') return { error: doc, docs: out };   // не молчим: причина словами
+    if (doc) out.push({ file: doc, path: `${primFolderPath(file)}/${entry.name}`, name: entry.name });
+  }
+  return { docs: out };
+}
+
+/** Deflate без zlib-заголовка (то, что лежит в ZIP) → ArrayBuffer. */
+async function primFolderInflate(bytes) {
+  const source = new Response(bytes).body;                     // поток из байтов: Blob.stream() есть не везде
+  const stream = source.pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Response(stream).arrayBuffer();
+}
+
+/** Один документ из архива: смещение локального заголовка → байты (stored или deflate). */
+async function primFolderZipDoc(file, entry) {
+  const slice = file.slice(0, entry.localOffset + 30);
+  const head = new Uint8Array(await primFolderBytes(slice));
+  const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  if (view.getUint32(entry.localOffset, true) !== 0x04034b50) return null;
+  const nameLen = view.getUint16(entry.localOffset + 26, true);
+  const extraLen = view.getUint16(entry.localOffset + 28, true);
+  const start = entry.localOffset + 30 + nameLen + extraLen;
+  const raw = file.slice(start, start + entry.compSize);
+  let body;
+  if (entry.method === 0) {
+    body = await primFolderBytes(raw);
+  } else if (entry.method === 8 && typeof DecompressionStream === 'function') {
+    try {
+      body = await primFolderInflate(await primFolderBytes(raw));
+    } catch (e) {
+      return 'распаковка не удалась: ' + (e && e.message ? e.message : 'браузер не смог распаковать');
+    }
+  } else {
+    return 'метод сжатия архива браузеру неизвестен';        // например, дефлект 64 или шифрование
+  }
+  const name = `${entry.name}`.split('/').pop();
+  return new File([body], name, { type: 'application/xml' });
+}
+
+/** Скрытый или служебный файл: «.скрытый.xml», «.DS_Store», «Thumbs.db», «~$документ.docx».
+    Такие файлы не документы ЭДО: серверная приёмная папка их тоже пропускает (app/primary/inbox.py). */
+export function primFolderServicePath(path) {
+  const parts = String(path || '').split(/[\\/]/).filter(Boolean).map((x) => x.toLowerCase());
+  if (!parts.length) return true;
+  const base = parts[parts.length - 1];
+  if (base.startsWith('~$') || PRIM_FOLDER_SERVICE.has(base)) return true;
+  // скрытый файл или файл внутри скрытого каталога (.git, .DS_Store, .Trash): такой путь — не документ ЭДО
+  return parts.some((part) => part.startsWith('.'));
+}
+
+/** Отбор файлов папки: { send: [файлы к отправке], counts: {вид: число}, total, notices: [замечания] }.
+    Возвращает ровно то, что имеет смысл показать: крупный XML и архивы с лишними документами не отправляются
+    целиком, а объясняются словами — иначе браузер зря читает десятки мегабайт и получает отказ сервера. */
 export async function primFolderScan(files, onProgress = () => {}) {
   const counts = {};
   const send = [];
+  const notices = [];
+  const note = (text) => { if (!notices.includes(text)) notices.push(text); };
+  const count = (kind) => { counts[kind] = (counts[kind] || 0) + 1; };
   const list = [...(files || [])];
   for (let i = 0; i < list.length; i += 1) {
     const f = list[i];
     const path = primFolderPath(f);
-    const kind = /\.xml$/i.test(path) ? primFolderKind(path, await primFolderHead(f)) : primFolderKind(path, '');
-    counts[kind] = (counts[kind] || 0) + 1;
+    const base = path.split(/[\\/]/).pop();
+    const size = Number(f.size) || 0;
+    if (primFolderServicePath(path)) { count('hidden'); continue; }
+    if (!size) { count('empty'); continue; }
+    if (/\.xml$/i.test(base) && size > PRIM_FOLDER_XML_MAX) {
+      count('too_big');
+      note(`${base} — ${(size / 1048576).toFixed(1)} МБ: документ ЭДО больше 5 МБ не бывает, файл не отправлен`);
+      continue;
+    }
+    const kind = /\.xml$/i.test(base) ? primFolderKind(path, await primFolderHead(f)) : primFolderKind(path, '');
+    if (kind === 'zip') {
+      const inside = await primFolderZipList(f);
+      count('zip');
+      if (size > PRIM_FOLDER_ZIP_MAX) {
+        note(`${base} — ${(size / 1048576).toFixed(1)} МБ: архив больше 20 МБ не принимается, файл не отправлен`);
+      } else if (!inside) {
+        note(`${base}: архив не читается (повреждён или обрезан) — файл не отправлен`);
+      } else if (inside.error) {
+        note(`${base}: ${inside.error} — документы архива не отправлены`);
+      } else if (!inside.docs.length) {
+        note(`${base}: в архиве нет XML-документов — файл не отправлен`);
+      } else {
+        const docs = inside.docs.slice(0, PRIM_FOLDER_ZIP_DOCS);
+        if (inside.docs.length > docs.length) {
+          note(`${base}: документов ${inside.docs.length}, за раз можно ${PRIM_FOLDER_ZIP_DOCS} — верхние ${docs.length} `
+            + `уйдут из этого архива, остальные ${inside.docs.length - docs.length} перенесите следующей папкой`);
+        }
+        docs.forEach((doc) => {                             // имя — с путём архива, иначе в отчёте только «ON_…xml»
+          try { Object.defineProperty(doc.file, 'relativePath', { value: doc.path }); } catch { /* имя как есть */ }
+          send.push(doc.file);
+        });
+      }
+      if (i % 50 === 0) onProgress(`Просмотрено файлов: ${i + 1} из ${list.length}`);
+      continue;
+    }
+    count(kind);
     if (PRIM_FOLDER_SEND.includes(kind)) send.push(f);
     if (i % 50 === 0) onProgress(`Просмотрено файлов: ${i + 1} из ${list.length}`);
   }
-  return { send, counts, total: list.length };
+  return { send, counts, total: list.length, notices };
 }
 
 /** Сложить ответ порции в общий итог. */
@@ -177,9 +324,9 @@ export function primFolderMerge(acc, res) {
 export async function primFolderUpload(files, opts = {}) {
   const say = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
   const scan = await primFolderScan(files, say);
-  let send = scan.send;
+  let send = scan.send;                                      // документы архивов уже распакованы в отдельные File
   let known = 0;
-  const xml = send.filter((f) => !/\.zip$/i.test(primFolderPath(f)));
+  const xml = send;
   if (xml.length) {
     say('Проверяем, что уже загружено…');
     const hashes = new Map();
@@ -215,9 +362,10 @@ export async function primFolderUpload(files, opts = {}) {
   let settle = [];
   if (ids.length) {
     say('Сверяем с банковской выпиской…');
-    try { settle = (await api.post('/api/v1/bank/closing/settle', { company_ids: ids })).companies || []; } catch (e) { settle = []; }
+    try { settle = (await api.post('/api/v1/bank/closing/settle', { company_ids: ids })).companies || []; } catch { settle = []; }
   }
-  return { ...total, scan: { counts: scan.counts, total: scan.total }, known, sent: send.length, settle };
+  return { ...total, scan: { counts: scan.counts, total: scan.total, notices: scan.notices },
+    known, sent: send.length, settle };
 }
 
 function primFolderSide(s, title) {
@@ -228,6 +376,7 @@ function primFolderSide(s, title) {
 /** Итог загрузки папки для экрана «Первичка». */
 export function primFolderSummaryHtml(sum) {
   const counts = (sum.scan && sum.scan.counts) || {};
+  const notices = (sum.scan && sum.scan.notices) || [];
   const skipped = Object.entries(counts).filter(([k]) => !PRIM_FOLDER_SEND.includes(k))
     .map(([k, n]) => `${esc(PRIM_FOLDER_KINDS[k] || k)}: ${n}`).join(' · ');
   const companies = Object.values(sum.companies || {});
@@ -244,6 +393,7 @@ export function primFolderSummaryHtml(sum) {
     <p><b>Папка: файлов ${esc(String((sum.scan && sum.scan.total) || 0))}.</b> УПД загружено: ${sum.created},
       уже были: ${sum.duplicates + (sum.known || 0)}, не принято: ${sum.rejected}.</p>
     ${skipped ? `<p class="form-hint">Пропущены: ${skipped}.</p>` : ''}
+    ${notices ? `<ul class="prim-folder-notices">${notices.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
     ${rows ? `<div class="table-wrap"><table class="data"><thead><tr><th>Компания</th><th class="num">Расходы</th>
       <th class="num">Продажи</th><th class="num">Уже были</th><th>Сверка с выпиской</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="form-hint">Подробно — «Банк: выписка» → «Закрытие документами».</p>` : ''}
