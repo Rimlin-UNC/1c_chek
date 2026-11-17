@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -184,4 +185,50 @@ class PrimaryMailFile(Base):
     item_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     media_type: Mapped[str] = mapped_column(String(40), default="application/octet-stream")
     data: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ------------------------------------------------------------------ v1.73.0 (T-109, ADR-60): приёмная папка
+class PrimaryInboxSetting(Base):
+    """Приёмная папка первички: каталог, куда складывают выгрузку СБИС — одна строка на всю программу.
+
+    Настройка общая, а не по компании: папка лежит на сервере, а не у бухгалтера, и раскладывает
+    документы по компаниям программа сама — по ИНН покупателя (расход) и продавца (продажа).
+    Паролей здесь нет: путь и расписание. Состояние последнего обхода — для честного экрана.
+    """
+    __tablename__ = "primary_inbox_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    path: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=10)
+    status: Mapped[str] = mapped_column(String(10), default="new")            # new | active | error
+    last_error: Mapped[str] = mapped_column(String(300), default="")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_result_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_by: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_by: Mapped[str] = mapped_column(String(36), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PrimaryInboxFile(Base):
+    """Журнал приёмной папки: что сделано с каждым файлом. Хранится год, документы остаются.
+
+    status: ok — в реестре (document_id), duplicate — уже был, rejected — в quarantine (message — причина).
+    """
+    __tablename__ = "primary_inbox_files"
+    __table_args__ = (Index("ix_primary_inbox_files_status", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    path: Mapped[str] = mapped_column(Text, default="")                      # путь внутри приёмной папки
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="", index=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(12), default="ok")
+    message: Mapped[str] = mapped_column(String(300), default="")
+    document_id: Mapped[str] = mapped_column(String(36), default="")
+    channel: Mapped[str] = mapped_column(String(10), default="inbox", server_default="inbox")   # inbox | console
+    created_by: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -193,17 +193,21 @@ def is_sale(doc: PrimaryDocument, company_inn: str) -> bool:
     return bool(inn) and _inn(doc.seller_inn) == inn and _inn(doc.buyer_inn) != inn
 
 
-def route_targets(db: Session, user: User, parsed: dict) -> tuple[list[tuple[Company, str]], str]:
+def route_targets(db: Session, user: User, parsed: dict,
+                  allowed: list[str] | None = None) -> tuple[list[tuple[Company, str]], str]:
     """Куда положить документ из папки: [(компания, "in" — расход | "out" — продажа)] среди доступных пользователю.
 
     Покупатель — наша компания: расход; продавец — наша: продажа; документ между двумя своими компаниями — в обе.
-    Администратору доступны все компании, бухгалтеру — своя и назначенные клиенты (аутсорсер)."""
+    Администратору доступны все компании, бухгалтеру — своя и назначенные клиенты (аутсорсер).
+    allowed (v1.73.0, T-109): явный список компаний для фонового разбора — администратор тоже не раскладывает
+    документы наугад по всем компаниям; None — все (прежнее поведение для загрузки на экране)."""
     from ..clients import service as clients
     seller, buyer = _inn(parsed["seller"]["inn"]), _inn(parsed["buyer"]["inn"])
     wanted = [inn for inn in dict.fromkeys((buyer, seller)) if inn]
     if not wanted:
         return [], "В документе нет ИНН продавца и покупателя — не понять, чей он"
-    allowed = clients.allowed_company_ids(db, user)            # None — администратор
+    if allowed is None:
+        allowed = clients.allowed_company_ids(db, user)        # None — администратор
     query = select(Company).where(Company.is_active.is_(True))
     if allowed is not None:
         query = query.where(Company.id.in_(allowed or [""]))
@@ -221,14 +225,19 @@ def route_targets(db: Session, user: User, parsed: dict) -> tuple[list[tuple[Com
                 "документ не загружен")
 
 
-def accept_routed(db: Session, user: User, data: bytes, file_name: str, channel: str = "") -> list[dict]:
-    """Один файл из папки → результаты по каждой компании, куда он лёг (обычно одна; между своими — две)."""
+def accept_routed(db: Session, user: User, data: bytes, file_name: str, channel: str = "",
+                  allowed: list[str] | None = None) -> list[dict]:
+    """Один файл из папки → результаты по каждой компании, куда он лёг (обычно одна; между своими — две).
+
+    allowed (v1.73.0, T-109): компании для фонового разбора (приёмная папка). Список компаний передаётся
+    заранее, чтобы администратор с пустым доступом не разложил документы по всем компаниям подряд.
+    """
     name = (file_name or "")[:255]
     try:
         parsed = upd.parse(data)
     except upd.UpdError as exc:
         return [{"file": name, "result": "rejected", "message": str(exc), "issues": []}]
-    targets, reason = route_targets(db, user, parsed)
+    targets, reason = route_targets(db, user, parsed, allowed)
     if not targets:
         return [{"file": name, "result": "rejected", "message": reason, "issues": [], "reason": "foreign"}]
     sha = hashlib.sha256(data).hexdigest()

@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.72.38';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.0';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6927,6 +6927,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.0': [
+    { icon: '📥', title: 'Приёмная папка: программа сама забирает УПД из СБИС',
+      text: 'Выгружаете документы из СБИС в один каталог на сервере — и всё. Дальше программа сама находит там новые XML и архивы, разбирает их, раскладывает по компаниям по ИНН (покупатель — расход, продавец — продажа), а принятое переносит в подпапку «processed». Ничего не нужно выбирать в браузере и держать вкладку открытой, файлы не гоняются по сети с вашего компьютера.' },
+    { icon: '🧹', title: 'Порядок в папке: карантин с причиной и без дублей',
+      text: 'Что не приняли — уезжает в «quarantine» рядом с файлом-причиной: «Ни покупатель, ни продавец — не ваши компании», «файл ещё пишется», «не УПД». Недописанный файл программа не читает, а дождётся следующего обхода. Повторная выкладка той же папки ничего не задваивает — файлы узнаются по SHA-256, а в журнале видно, что с каждым случилось.' },
+  ],
   '1.72.38': [
     { icon: '📱', title: 'Шапка и меню на телефоне: ничего не рвётся и не прячется',
       text: 'Заголовок экрана больше не ломается по слогам («Клиент/ы») и не сжимается до 60 px: на телефоне шапка стала двухстрочной — сверху «меню, название, профиль», снизу переключатель компании во всю ширину. Пункты выдвижного меню — 44 px в высоту, ширина панели не выходит за экран, а подложка не даёт прокручивать страницу под открытым меню.' },

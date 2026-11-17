@@ -58,7 +58,8 @@ OLD_COMMIT = "b3db4fef67942d59fad9567f579823b70c6bf16d"
 OLD_LABEL = "1.70.80"
 UNIFIED_TABLES = ["unified_company_links", "unified_documents", "unified_events", "unified_items",
                   "unified_origins", "unified_ownership"]
-PRIMARY_TABLES = ["primary_document_lines", "primary_documents"]      # v1.70.94: первичка (УПД)
+PRIMARY_TABLES = ["primary_document_lines", "primary_documents",        # v1.70.94: первичка (УПД)
+                  "primary_inbox_files", "primary_inbox_settings"]       # v1.73.0 (ADR-60): приёмная папка
 PRIMARY_MAIL_TABLES = ["primary_mail_files", "primary_mail_items", "primary_mailboxes"]   # v1.70.104: из почты
 # v1.70.86 (фаза 3): компания, которую создаёт старая версия во время отката, —
 # без колонки показа числа; флаг «нет» ей ставит значение по умолчанию в базе.
@@ -762,7 +763,8 @@ def run_scenario(url: str, old_dir: Path, new_dir: Path, *, postgres: bool,
     rep.check(up["unified_tables"] == UNIFIED_TABLES and up.get("primary_tables") == PRIMARY_TABLES
               and up.get("primary_mail_tables") == PRIMARY_MAIL_TABLES and up["documents"] == 0,
               "обновление: init_db() создал 6 таблиц unified_* (с 1.70.85 — заявки компаний), 2 таблицы "
-              "первички (с 1.70.94) и 3 таблицы первички из почты (с 1.70.104), перенос архива при старте "
+              "первички (с 1.70.94), 3 таблицы первички из почты (с 1.70.104) и 2 таблицы приёмной папки "
+              "(с 1.73.0, ADR-60), перенос архива при старте "
               "не запускается",
               f"таблицы {up['unified_tables']} {up.get('primary_tables')} {up.get('primary_mail_tables')}, "
               f"документов {up['documents']}")

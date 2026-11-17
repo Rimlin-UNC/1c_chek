@@ -31,7 +31,8 @@ class TestVersion17237:
     def test_config_version(self):
         # живое значение сверяет выпуск-владелец; здесь — форма и то, что
         # 1.72.37 не откатился назад
-        assert re.search(r'APP_VERSION: str = "1\.72\.(3[7-9]|[4-9]\d)"',
+        # v1.73.0: версия ушла на следующую линию; проверяется, что она не откатилась назад
+        assert re.search(r'APP_VERSION: str = "(1\.72\.(3[7-9]|[4-9]\d)|1\.7[3-9]\.\d+)"',
                          read("app/config.py")), settings.APP_VERSION
 
     def test_static_versions_synced(self):

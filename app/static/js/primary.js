@@ -20,6 +20,7 @@ import { api } from './api.js';
 import { esc, fmtSum, openModal, toast } from './ui.js';
 import { CHANNEL_FROM, mailConnectPanel, mailInboxHtml } from './primary_mail.js';
 import { primFolderFromDrop, primFolderSummaryHtml, primFolderUpload } from './primary_folder.js';   // v1.70.113 (T-79)
+import { inboxLoad } from './primary_inbox.js';   // v1.73.0 (T-109, ADR-60): приёмная папка на сервере
 
 export const PRIMARY_STATUSES = [
   { code: 'ok', title: 'Без замечаний', chip: 'verified' },
@@ -522,6 +523,7 @@ export async function viewPrimary(container, opts = {}) {
         <span class="form-hint" id="prim-ocr" aria-live="polite"></span></div>
       <div id="prim-results" aria-live="polite"></div>
     </div>
+    <div class="glass card" id="prim-inbox"><div class="skeleton" style="height:60px"></div></div>
     <div class="glass card" id="prim-mail"><div class="skeleton" style="height:60px"></div></div>
     <div class="glass card">
       <div class="card-title">Реестр документов <span class="spacer"></span>
@@ -973,6 +975,21 @@ export async function viewPrimary(container, opts = {}) {
     }
   }
 
+  // v1.73.0 (T-109): приёмная папка — сервер сам забирает УПД из каталога, браузер сюда файлы не гоняет
+  async function loadInbox() {
+    const box = $('#prim-inbox');
+    if (!box) return;
+    try {
+      await inboxLoad(box, { isAdmin: opts.isAdmin, onTaken: () => { state.offset = 0; load(); } });
+    } catch (e) {
+      // 403 у бухгалтера чужой компании и 409 «не настроена» — не поломка экрана, а честная причина
+      if (container.isConnected) {
+        box.innerHTML = `<div class="card-title">📥 Приёмная папка на сервере</div>
+          <p class="form-hint">${esc(e.message || 'Недоступно')}</p>`;
+      }
+    }
+  }
+
   async function reviewMail(id) {
     const base = `/api/v1/primary/inbox/${encodeURIComponent(id)}`;
     let rec;
@@ -1017,6 +1034,7 @@ export async function viewPrimary(container, opts = {}) {
 
   const listed = load();          // реестр — первым запросом, состояние распознавания — следом, не дожидаясь
   loadOcr();
+  loadInbox();
   loadMail();
   await listed;
 }

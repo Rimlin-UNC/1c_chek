@@ -86,7 +86,8 @@ class TestRelease:
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
         assert reg["Контрагенты"] == "1.71.0"          # блок заведён выпуском 1.71.0
-        assert reg["Первичка (электронные УПД)"] == VERSION
+        # v1.73.0: блок ушёл вперёд вместе с приёмной папкой — проверяется «не старше» прошлого выпуска
+        assert TestRelease._ver(reg["Первичка (электронные УПД)"]) >= TestRelease._ver(VERSION)
         assert reg["Банковская выписка"] == "1.70.113"
         assert all(TestRelease._ver(v) <= TestRelease._ver(settings.APP_VERSION) for v in reg.values())
 
@@ -136,7 +137,7 @@ class TestCode:
         assert '"tests/test_primary_printupd.py"' in read("qa/pg_local.py")
         declared = sum(len(re.findall(r"^\s*__tablename__\s*=", p.read_text(encoding="utf-8"), re.M))
                        for p in (ROOT / "app").rglob("*.py"))
-        assert declared == 72  # Три модели удалённого облачного контура больше не регистрируются.
+        assert declared == 74  # Три модели удалённого облачного контура больше не регистрируются.
 
     def test_form_rules(self):
         from app.primary import printupd
@@ -179,7 +180,7 @@ class TestDocsAndKb:
 
     def test_database_doc_and_counts(self):
         db = read("docs/DATABASE.md")
-        assert "75 объявлений `__tablename__`" in db and "все 75 таблиц приложения" in db
+        assert "77 объявлений `__tablename__`" in db and "все 77 таблиц приложения" in db
         assert "с v1.70.114 (T-62, ADR-45) колонка `print_json`" in db
 
     def test_design_and_counterparties(self):

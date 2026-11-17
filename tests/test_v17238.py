@@ -48,7 +48,7 @@ def media_block(css, header, last=False):
 
 class TestVersion17238:
     def test_config_version(self):
-        assert settings.APP_VERSION == "1.72.38"
+        assert settings.APP_VERSION == "1.73.0"
 
     def test_static_versions_synced(self):
         ver = settings.APP_VERSION
@@ -68,9 +68,10 @@ class TestVersion17238:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        for block in ("Адаптивный интерфейс", "Настройки", "Резервные копии",
+        # v1.73.0: «Настройки» ушли вперёд вместе с приёмной папкой; здесь — закреплённые этим выпуском блоки
+        for block in ("Адаптивный интерфейс", "Резервные копии",
                       "Обновления", "Последние рабочие версии"):
-            assert reg[block] == settings.APP_VERSION, block
+            assert reg[block] == "1.72.38", block
 
     def test_changelog_and_whatsnew(self):
         ch = read("CHANGELOG.md")

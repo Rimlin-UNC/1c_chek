@@ -5,17 +5,17 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.72.38';
+const CACHE = 'ymaster-check-v1.73.0';
 // v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
 // SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.72.38', '/css/home.css?v=1.72.38', '/js/app.js?v=1.72.38', '/js/counterparties.js?v=1.72.38',   // T-83: главная и приложение
+  '/css/app.css?v=1.73.0', '/css/home.css?v=1.73.0', '/js/app.js?v=1.73.0', '/js/counterparties.js?v=1.73.0',   // T-83: главная и приложение
   '/js/api.js', '/js/ui.js', '/js/offline_outbox.js', '/js/navigation_counts.js', '/js/connection_status.js',
   '/js/approvals.js', '/js/bank.js', '/js/card.js', '/js/clients.js',
-  '/js/counterparties.js', '/js/docreq.js', '/js/goods.js', '/js/server_monitor.js?v=1.72.38', '/js/settings_layout.js',
-  '/js/primary.js', '/js/primary_folder.js', '/js/primary_mail.js',
+  '/js/counterparties.js', '/js/docreq.js', '/js/goods.js', '/js/server_monitor.js?v=1.73.0', '/js/settings_layout.js',
+  '/js/primary.js', '/js/primary_folder.js', '/js/primary_mail.js', '/js/primary_inbox.js',   // v1.73.0: приёмная папка
   '/js/supabase_demo.js', '/js/unified_fill.js', '/js/unified_review.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
   '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',

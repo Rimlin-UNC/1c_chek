@@ -90,9 +90,14 @@ class TestSchema:
 
     def test_tables_created_and_checked_on_upgrade(self):
         assert "from .primary import models as _primary_models" in read("app/database.py")
-        assert 'PRIMARY_TABLES = ["primary_document_lines", "primary_documents"]' in read("qa/migration_e2e.py")
-        assert 'up.get("primary_tables") == ["primary_document_lines", "primary_documents"]' in \
-            read("qa/upgrade_rehearsal.py")
+        # v1.73.0: к двум таблицам первички добавились две таблицы приёмной папки (ADR-60)
+        migration = read("qa/migration_e2e.py")
+        assert 'PRIMARY_TABLES = ["primary_document_lines", "primary_documents",' in migration
+        assert '"primary_inbox_files", "primary_inbox_settings"]' in migration
+        rehearsal = read("qa/upgrade_rehearsal.py")
+        assert 'up.get("primary_tables") == ["primary_document_lines", "primary_documents"]' in rehearsal
+        assert ('up.get("primary_inbox_tables") == ["primary_inbox_files", "primary_inbox_settings"]'
+                in rehearsal)
         assert "from app.primary import models as _primary" in read("tests/test_migration_compat_postgres.py")
         db = read("docs/DATABASE.md")
         assert re.search(r"\d+ объявлени\w* `__tablename__`", db) and "| Первичка (v1.70.94) |" in db
