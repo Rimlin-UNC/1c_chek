@@ -80,8 +80,11 @@ class TestRelease:
     def test_ledger_row(self):
         import csv
         rows = list(csv.DictReader(read("docs/kb/09_releases.csv").splitlines()))
-        assert rows[-1]["Версия"] == VERSION and rows[-1]["Дата"] == "2026-11-17"
-        assert not [k for k, v in rows[-1].items() if "," in v], "в полях реестра нет запятых"
+        # 1.73.2: реестр ушёл вперёд; строка выпуска 1.73.1 обязана остаться и не откатиться
+        row = next(r for r in rows if r["Версия"] == VERSION)
+        assert row["Дата"] == "2026-11-17"
+        assert _ver(rows[-1]["Версия"]) >= _ver(VERSION)
+        assert not [k for k, v in row.items() if "," in v], "в полях реестра нет запятых"
 
     def test_ui_journal_entry(self):
         journal = read("docs/ui_journal.md")

@@ -48,7 +48,7 @@ def media_block(css, header, last=False):
 
 class TestVersion17238:
     def test_config_version(self):
-        assert settings.APP_VERSION == "1.73.1"
+        assert settings.APP_VERSION == "1.73.2"
 
     def test_static_versions_synced(self):
         ver = settings.APP_VERSION

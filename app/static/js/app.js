@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.1';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.2';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6927,6 +6927,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.2': [
+    { icon: '🛠', title: 'Установка и демо-контур снова проходят',
+      text: '17 ноября 2026 года библиотека распознавания изображений (opencv) выпустила версию, у которой нет сборки для Linux — только для Windows. Программа ставила её по привычному «не ниже 4.9» и падала на установке: «нет файла для этой платформы». Теперь версия ограничена сверху, установка идёт как раньше. На работу с чеками и УПД это не влияет — распознавание пользуется той же библиотекой.' },
+  ],
   '1.73.1': [
     { icon: '📁', title: '«Папка с УПД»: архив из СБИС больше не роняет всю загрузку',
       text: 'Если в выгрузке лежал архив с пятьюдесятью и более документами, загрузка обрывалась отказом «Не больше 50 документов» — и повторная попытка падала на том же архиве. Теперь программа сама раскладывает архив на документы и отдаёт их по одному: первые 50 уходят сразу, об остальных честно сказано, сколько их и что делать.' },
