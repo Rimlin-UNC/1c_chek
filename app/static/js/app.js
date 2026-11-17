@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.0';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.1';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6927,6 +6927,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.1': [
+    { icon: '📁', title: '«Папка с УПД»: архив из СБИС больше не роняет всю загрузку',
+      text: 'Если в выгрузке лежал архив с пятьюдесятью и более документами, загрузка обрывалась отказом «Не больше 50 документов» — и повторная попытка падала на том же архиве. Теперь программа сама раскладывает архив на документы и отдаёт их по одному: первые 50 уходят сразу, об остальных честно сказано, сколько их и что делать.' },
+    { icon: '🧹', title: 'Браузер не гоняет по сети то, что всё равно не примут',
+      text: 'Скрытые и служебные файлы (.DS_Store, Thumbs.db, папки вроде .git), пустые файлы и XML больше 5 МБ — то есть заведомо не документ ЭДО — больше не читаются целиком, не считаются по SHA-256 и не отправляются на сервер. Вместо этого в итоге написано словами, что пропущено и почему; файлы остаются у вас на диске.' },
+  ],
   '1.73.0': [
     { icon: '📥', title: 'Приёмная папка: программа сама забирает УПД из СБИС',
       text: 'Выгружаете документы из СБИС в один каталог на сервере — и всё. Дальше программа сама находит там новые XML и архивы, разбирает их, раскладывает по компаниям по ИНН (покупатель — расход, продавец — продажа), а принятое переносит в подпапку «processed». Ничего не нужно выбирать в браузере и держать вкладку открытой, файлы не гоняются по сети с вашего компьютера.' },

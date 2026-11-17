@@ -143,7 +143,12 @@ async def upload(user: Accountant, db: Db, files: Annotated[list[UploadFile], Fi
             continue
         items.extend(_unpack(name, data))
     if len(items) > service.MAX_FILES:
-        raise HTTPException(400, f"Не больше {service.MAX_FILES} документов за одну загрузку")
+        # v1.73.0: архив обрезается в service.unpack (остаток — строкой-замечанием), поэтому сюда попадает
+        # только россыпь из многих файлов: лишние пропускаем словами, а не отказываем всей пачке.
+        dropped = len(items) - service.MAX_FILES
+        items = items[:service.MAX_FILES]
+        items.append(("загрузка", None, f"Не больше {service.MAX_FILES} документов за один раз — "
+                                        f"остальные {dropped} перенесите следующей пачкой"))
     if route == "auto":
         results = []
         for label, body, reason in items:

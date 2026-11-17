@@ -126,15 +126,17 @@ def unpack(name: str, data: bytes) -> list[tuple[str, bytes | None, str]]:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         return [(name, None, "Архив повреждён")]
-    out, unpacked = [], 0
+    out, unpacked, skipped = [], 0, 0
     for info in archive.infolist():
         inner = info.filename
         if info.is_dir() or not inner.lower().endswith(".xml") or inner.startswith("__MACOSX/"):
             continue
         label = f"{name}/{inner}"[:255]
         if len(out) >= MAX_FILES:
-            out.append((label, None, "В архиве больше 50 документов — остальные не загружены"))
-            break
+            # v1.73.0: предел — это обрезка, а не отказ всему архиву. Раньше здесь добавлялся 51-й элемент,
+            # и роутер видел len(items) > MAX_FILES → HTTP 400 на всю пачку (см. tests/test_primary_folder_limits.py).
+            skipped += 1
+            continue
         if info.file_size > upd.MAX_BYTES or unpacked + info.file_size > MAX_UNPACKED:
             out.append((label, None, "Файл в архиве слишком большой"))
             continue
@@ -149,6 +151,8 @@ def unpack(name: str, data: bytes) -> list[tuple[str, bytes | None, str]]:
             out.append((label, None, "Архив слишком большой после распаковки"))
             break
         out.append((label, body, ""))
+    if skipped:
+        out.append((name, None, f"В архиве больше {MAX_FILES} документов — остальные {skipped} не загружены"))
     return out or [(name, None, "В архиве нет XML-документов")]
 
 

@@ -1,5 +1,6 @@
 /* v1.70.113 (T-79, #63): «📁 Папка с УПД» — отбор УПД среди файлов папки, кодировка, порции, обход перетащенной
    папки, пропуск уже загруженного по SHA-256, итог по компаниям. API подменён, данные синтетические. */
+import { deflateRawSync } from 'node:zlib';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const calls = { post: [] };
@@ -38,6 +39,52 @@ const enc1251 = (text) => {
 };
 const upd = (fn = 'СЧФДОП', id = 'ON_NSCHFDOPPR_1') => enc1251(`<?xml version="1.0" encoding="windows-1251"?>
 <Файл ИдФайл="${id}" ВерсФорм="5.03"><Документ КНД="1115131" Функция="${fn}" ДатаИнфПр="10.10.2026"></Документ></Файл>`);
+/** Настоящий ZIP с deflate: центральный каталог, локальные заголовки и CRC — как у выгрузки СБИС. */
+const zipped = (docs) => {
+  const enc = new TextEncoder();
+  const crc = (bytes) => {
+    let c = 0xffffffff;
+    for (const b of bytes) {
+      c ^= b;
+      for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, body] of docs) {
+    const nameBytes = enc.encode(name);
+    const packed = new Uint8Array(deflateRawSync(Buffer.from(body)));
+    const local = new Uint8Array(30 + nameBytes.length + packed.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true);
+    lv.setUint16(8, 8, true); lv.setUint32(14, crc(body), true);
+    lv.setUint32(18, packed.length, true); lv.setUint32(22, body.length, true);
+    lv.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30); local.set(packed, 30 + nameBytes.length);
+    const head = new Uint8Array(46 + nameBytes.length);
+    const hv = new DataView(head.buffer);
+    hv.setUint32(0, 0x02014b50, true); hv.setUint16(4, 20, true); hv.setUint16(6, 20, true);
+    hv.setUint16(8, 0x0800, true); hv.setUint16(10, 8, true); hv.setUint32(16, crc(body), true);
+    hv.setUint32(20, packed.length, true); hv.setUint32(24, body.length, true);
+    hv.setUint16(28, nameBytes.length, true); hv.setUint32(42, offset, true);
+    head.set(nameBytes, 46);
+    parts.push(local); central.push(head); offset += local.length;
+  }
+  const cd = new Uint8Array(central.reduce((a, c) => a + c.length, 0));
+  let at = 0;
+  for (const c of central) { cd.set(c, at); at += c.length; }
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, docs.length, true); ev.setUint16(10, docs.length, true);
+  ev.setUint32(12, cd.length, true); ev.setUint32(16, offset, true);
+  const out = new Uint8Array(offset + cd.length + 22);
+  let pos = 0;
+  for (const part of [...parts, cd, eocd]) { out.set(part, pos); pos += part.length; }
+  return out;
+};
+
 const file = (path, bytes) => {
   const f = new File([bytes], path.split('/').pop());
   Object.defineProperty(f, 'webkitRelativePath', { value: path });
@@ -81,6 +128,71 @@ describe('«Папка с УПД»: отбор файлов', () => {
     expect(acc.created).toBe(3);
     expect(acc.companies['c-a']).toEqual({ company_id: 'c-a', name: 'Альфа', in: 2, out: 1, duplicates: 1 });
     expect(acc.problems).toEqual([{ file: 'x.xml', message: 'не ваши компании' }]);
+  });
+
+  it('скрытые и служебные файлы не отправляются', async () => {
+    const files = [file('Папка/.скрытый.xml', upd()), file('Папка/.DS_Store', new Uint8Array([1])),
+      file('Папка/Thumbs.db', new Uint8Array([2])), file('Папка/ON_NSCHFDOPPR_1.xml', upd())];
+    const scan = await mod.primFolderScan(files, () => {});
+    expect(scan.counts.hidden).toBe(3);
+    expect(scan.send.map((f) => f.name)).toEqual(['ON_NSCHFDOPPR_1.xml']);
+    expect(mod.primFolderServicePath('.скрытый.xml')).toBe(true);
+    expect(mod.primFolderServicePath('вложенная/.git/config.xml')).toBe(true);
+    expect(mod.primFolderServicePath('ON_NSCHFDOPPR_1.xml')).toBe(false);
+  });
+
+  it('пустой файл не отправляется — серверу его читать незачем', async () => {
+    const scan = await mod.primFolderScan([file('Папка/пустой.xml', new Uint8Array(0)), file('Папка/a.xml', upd())], () => {});
+    expect(scan.counts.empty).toBe(1);
+    expect(scan.send.map((f) => f.name)).toEqual(['a.xml']);
+  });
+
+  it('XML больше 5 МБ остаётся дома: словами, а не отказом сервера', async () => {
+    const big = new Uint8Array(6 * 1024 * 1024);
+    big.set(upd(), 0);
+    const scan = await mod.primFolderScan([file('Папка/огромный.xml', big)], () => {});
+    expect(scan.counts.too_big).toBe(1);
+    expect(scan.send).toEqual([]);
+    expect(scan.notices.join(' ')).toContain('больше 5 МБ не бывает');
+  });
+
+  it('архив разбирается на документы и уходит по одному, а не целиком', async () => {
+    const archive = zipped([['внутри/ON_NSCHFDOPPR_5.xml', upd('СЧФДОП', 'ON_NSCHFDOPPR_5')],
+      ['внутри/ON_NSCHFDOPPR_6.xml', upd('СЧФДОП', 'ON_NSCHFDOPPR_6')],
+      ['внутри/подпись.sig', new Uint8Array([1, 2])]]);
+    const scan = await mod.primFolderScan([file('Папка/архив.zip', archive)], () => {});
+    expect(scan.counts.zip).toBe(1);
+    expect(scan.send.map((f) => mod.primFolderPath(f))).toEqual(
+      ['Папка/архив.zip/внутри/ON_NSCHFDOPPR_5.xml', 'Папка/архив.zip/внутри/ON_NSCHFDOPPR_6.xml']);
+    expect(scan.notices).toEqual([]);
+    const doc = new TextDecoder('windows-1251').decode(await mod.primFolderBytes(scan.send[0]));
+    expect(doc).toContain('ИдФайл="ON_NSCHFDOPPR_5"');
+  });
+
+  it('архив больше 50 документов обрезается словами, а не отказом всей пачки', async () => {
+    const docs = Array.from({ length: 60 }, (_, i) => [`папка/ON_NSCHFDOPPR_${i}.xml`, upd('СЧФДОП', `ON_NSCHFDOPPR_${i}`)]);
+    const scan = await mod.primFolderScan([file('Папка/много.zip', zipped(docs))], () => {});
+    expect(scan.send.length).toBe(50);
+    expect(scan.notices.join(' ')).toContain('документов 60, за раз можно 50');
+    expect(scan.notices.join(' ')).toContain('остальные 10');
+  });
+
+  it('битый архив и архив без XML объясняются, а не молчат', async () => {
+    const broken = await mod.primFolderScan([file('Папка/битый.zip', new Uint8Array([0x50, 0x4b, 1, 2, 3]))], () => {});
+    expect(broken.send).toEqual([]);
+    expect(broken.notices.join(' ')).toContain('архив не читается');
+    const empty = await mod.primFolderScan([file('Папка/пустой.zip',
+      zipped([['внутри/подпись.sig', new Uint8Array([1])]]))], () => {});
+    expect(empty.send).toEqual([]);
+    expect(empty.notices.join(' ')).toContain('нет XML-документов');
+  });
+
+  it('замечания отбора печатаются в итоге', () => {
+    const html = mod.primFolderSummaryHtml({ created: 0, duplicates: 0, rejected: 0, known: 0, sent: 0,
+      companies: {}, settle: [], scan: { total: 1, counts: { too_big: 1 }, notices: ['огромный.xml — 12.0 МБ'] } });
+    expect(html).toContain('prim-folder-notices');
+    expect(html).toContain('огромный.xml — 12.0 МБ');
+    expect(html).toContain('XML больше 5 МБ: 1');
   });
 
   it('перетащенная папка обходится целиком; не папка — null', async () => {

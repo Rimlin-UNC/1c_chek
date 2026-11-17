@@ -2342,6 +2342,8 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 .prim-folder-sum { margin-top: 10px; }
 .prim-folder-sum p { margin: 4px 0; }
 .prim-folder-problems { margin: 6px 0 0 18px; padding: 0; max-height: 40vh; overflow: auto; font-size: 13px; }
+/* v1.73.0: замечания отбора папки (крупный XML, лишние документы архива) — словами, а не молчанием */
+.prim-folder-notices { margin: 6px 0 0 18px; padding: 0; font-size: 13px; color: var(--text-dim); }
 /* v1.73.0 (T-109, ADR-60): приёмная папка первички — настройка, кнопки и журнал в одной карточке */
 .inbox-settings { display: grid; gap: 10px; margin: 10px 0 6px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 .inbox-settings .inbox-check { display: flex; align-items: center; gap: 8px; }

@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Замок выпуска 1.73.0: версия ниже — та, чьи следы он ищет в документах и коде.
+# Живая версия программы проверяется отдельно (test_live_version_is_current).
 VERSION = "1.73.0"
 ISSUE = "https://github.com/Rimlin-UNC/1c_chek/issues/109"
 
@@ -26,7 +28,8 @@ def _ver(value: str) -> tuple[int, ...]:
 class TestRelease:
     def test_config_version(self):
         from app.config import settings
-        assert settings.APP_VERSION == VERSION
+        # 1.73.1: живая версия ушла вперёд (правка «Папки с УПД»); замок следит, что она не откатилась
+        assert _ver(settings.APP_VERSION) >= _ver(VERSION), settings.APP_VERSION
 
     def test_static_versions_synced(self):
         ver = read("app/config.py").split('APP_VERSION: str = "', 1)[1].split('"', 1)[0]
@@ -54,10 +57,11 @@ class TestRelease:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert reg["Приёмная папка первички"] == VERSION
+        from app.config import settings
+        assert _ver(reg["Приёмная папка первички"]) >= _ver(VERSION)
         assert _ver(reg["Первичка (электронные УПД)"]) >= _ver(VERSION)
         assert _ver(reg["Настройки"]) >= _ver(VERSION)
-        assert all(_ver(v) <= _ver(VERSION) for v in reg.values())
+        assert all(_ver(v) <= _ver(settings.APP_VERSION) for v in reg.values())
 
     def test_whats_new_present(self):
         js = read("app/static/js/app.js")
@@ -82,9 +86,10 @@ class TestRelease:
         assert match and _ver(match.group(1)) >= _ver(VERSION)
 
     def test_release_ledger_row(self):
+        from app.config import settings
         rows = read("docs/kb/09_releases.csv").strip().splitlines()
         last = rows[-1].split(",")
-        assert last[0] == VERSION and last[1] == "2026-11-16"
+        assert _ver(last[0]) >= _ver(VERSION) and last[0] == settings.APP_VERSION, last[0]
 
     def test_release_ledger_row_has_no_commas_inside_fields(self):
         """Замок прошлых выпусков: в полях реестра нет запятых — строка читается и без csv.
@@ -98,7 +103,8 @@ class TestRelease:
         last = next(_csv.reader([lines[-1]]))
         assert len(last) == len(header), f"колонок {len(last)} вместо {len(header)}"
         assert not [value for value in last if "," in value], "в полях реестра нет запятых"
-        assert last[0] == VERSION
+        from app.config import settings
+        assert last[0] == settings.APP_VERSION
         assert last[2].startswith("требует уточнения"), last[2][:40]   # хеш уточняется после CI
 
 
