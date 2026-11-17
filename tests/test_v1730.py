@@ -86,6 +86,21 @@ class TestRelease:
         last = rows[-1].split(",")
         assert last[0] == VERSION and last[1] == "2026-11-16"
 
+    def test_release_ledger_row_has_no_commas_inside_fields(self):
+        """Замок прошлых выпусков: в полях реестра нет запятых — строка читается и без csv.
+
+        Проверка живёт здесь, потому что ловила реальную ошибку: свободный текст с запятыми
+        превращал последнюю строку в набор лишних колонок ещё до CI.
+        """
+        import csv as _csv
+        lines = read("docs/kb/09_releases.csv").strip().splitlines()
+        header = next(_csv.reader([lines[0]]))
+        last = next(_csv.reader([lines[-1]]))
+        assert len(last) == len(header), f"колонок {len(last)} вместо {len(header)}"
+        assert not [value for value in last if "," in value], "в полях реестра нет запятых"
+        assert last[0] == VERSION
+        assert last[2].startswith("требует уточнения"), last[2][:40]   # хеш уточняется после CI
+
 
 # ====================================================================== код и маршруты
 class TestCode:
