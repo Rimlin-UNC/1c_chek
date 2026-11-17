@@ -42,8 +42,8 @@ export function primFolderDecode(bytes) {
   if (enc === 'cp1251' || enc === 'win-1251') enc = 'windows-1251';
   try {
     return new TextDecoder(enc).decode(u8);
-  } catch (e) {
-    return new TextDecoder('utf-8').decode(u8);
+  } catch {
+    return new TextDecoder('utf-8').decode(u8);       // кодировка из объявления неизвестна браузеру
   }
 }
 
@@ -103,7 +103,7 @@ export function primFolderFromDrop(dt) {
   const walk = async (entry, path) => {
     if (entry.isFile) {
       const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-      try { Object.defineProperty(file, 'relativePath', { value: path + file.name }); } catch (e) { /* только имя */ }
+      try { Object.defineProperty(file, 'relativePath', { value: path + file.name }); } catch { /* только имя */ }
       files.push(file);
       return;
     }
@@ -147,11 +147,11 @@ export async function primFolderSha(file) {
 export function primFolderEntryName(nameBytes, view, headerAt) {
   const flags = view ? view.getUint16(headerAt + 8, true) : 0;
   if (flags & 0x0800) {
-    try { return new TextDecoder('utf-8').decode(nameBytes); } catch (e) { /* ниже общий путь */ }
+    try { return new TextDecoder('utf-8').decode(nameBytes); } catch { /* ниже общий путь */ }
   }
   const latin = new TextDecoder('utf-8').decode(nameBytes);
   if (!latin.includes('\ufffd')) return latin;                       // уже валидный UTF-8
-  try { return new TextDecoder('windows-1251').decode(nameBytes); } catch (e) { return latin; }
+  try { return new TextDecoder('windows-1251').decode(nameBytes); } catch {  return latin; }
 }
 
 /** Минимальный читатель ZIP на клиенте: центральный каталог → имена .xml и их смещения.
@@ -287,7 +287,7 @@ export async function primFolderScan(files, onProgress = () => {}) {
             + `уйдут из этого архива, остальные ${inside.docs.length - docs.length} перенесите следующей папкой`);
         }
         docs.forEach((doc) => {                             // имя — с путём архива, иначе в отчёте только «ON_…xml»
-          try { Object.defineProperty(doc.file, 'relativePath', { value: doc.path }); } catch (e) { /* имя как есть */ }
+          try { Object.defineProperty(doc.file, 'relativePath', { value: doc.path }); } catch { /* имя как есть */ }
           send.push(doc.file);
         });
       }
@@ -362,7 +362,7 @@ export async function primFolderUpload(files, opts = {}) {
   let settle = [];
   if (ids.length) {
     say('Сверяем с банковской выпиской…');
-    try { settle = (await api.post('/api/v1/bank/closing/settle', { company_ids: ids })).companies || []; } catch (e) { settle = []; }
+    try { settle = (await api.post('/api/v1/bank/closing/settle', { company_ids: ids })).companies || []; } catch { settle = []; }
   }
   return { ...total, scan: { counts: scan.counts, total: scan.total, notices: scan.notices },
     known, sent: send.length, settle };

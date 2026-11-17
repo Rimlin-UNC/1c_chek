@@ -1,5 +1,6 @@
 /* v1.70.113 (T-79, #63): «📁 Папка с УПД» — отбор УПД среди файлов папки, кодировка, порции, обход перетащенной
    папки, пропуск уже загруженного по SHA-256, итог по компаниям. API подменён, данные синтетические. */
+import { Buffer } from 'node:buffer';
 import { deflateRawSync } from 'node:zlib';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
