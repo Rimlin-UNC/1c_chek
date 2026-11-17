@@ -105,12 +105,26 @@ export function inboxPanelHtml(state, log, opts = {}) {
       определяется по ИНН (покупатель — расход, продавец — продажа), принятое переносится в «processed»,
       отказ — в «quarantine» с причиной. Повторная выкладка той же папки ничего не задваивает.</p>
     ${problems ? `<div class="form-error"><ul>${problems}</ul></div>` : ''}
-    <p class="form-hint">Последний обход: ${esc(inboxWhen(s.last_run_at))}. Всего в журнале:
+    <p class="form-hint">${esc(inboxLastRun(s))}. Всего в журнале:
       ${fmtInt(counters.total || 0)} — в реестр ${fmtInt(counters.ok || 0)}, уже было
       ${fmtInt(counters.duplicate || 0)}, не принято ${fmtInt(counters.rejected || 0)}.</p>
+    ${s.last_error ? `<p class="form-error">Последний обход не удался: ${esc(s.last_error)}</p>` : ''}
     <div id="inbox-result" aria-live="polite"></div>
     ${form}
     <div id="inbox-log">${inboxJournalHtml(log && log.items)}</div>`;
+}
+
+/** Строка итога одного обхода — та же формулировка, что в ответе «Забрать сейчас». */
+export function inboxLastRun(state) {
+  const s = state || {};
+  const res = s.last_result || {};
+  const files = Number(res.files) || 0;
+  if (!files) return 'Последний обход: ' + inboxWhen(s.last_run_at) + '. Файлов на разбор не было.';
+  const parts = [`файлов: ${fmtInt(files)}`, `в реестр: ${fmtInt(res.ok || 0)}`,
+    `уже было: ${fmtInt(res.duplicate || 0)}`, `не принято: ${fmtInt(res.rejected || 0)}`];
+  if (Number(res.later)) parts.push(`дописываются: ${fmtInt(res.later)}`);
+  if (Number(res.left)) parts.push(`осталось на следующий раз: ${fmtInt(res.left)}`);
+  return parts.join(' · ');
 }
 
 /** Прочитать состояние и журнал и перерисовать карточку внутри container. */

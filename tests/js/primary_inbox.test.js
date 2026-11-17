@@ -97,6 +97,21 @@ describe('inboxPanelHtml', () => {
     expect(html).toContain('Каталог не найден');
   });
 
+  it('итог последнего обхода написан словами, а не нулями', () => {
+    const withResult = { ...state, last_result: { files: 12, ok: 9, duplicate: 2, rejected: 1, later: 3 } };
+    expect(mod.inboxLastRun(withResult))
+      .toBe('файлов: 12 · в реестр: 9 · уже было: 2 · не принято: 1 · дописываются: 3');
+    expect(mod.inboxPanelHtml(withResult, {}, { isAdmin: false })).toContain('файлов: 12');
+    expect(mod.inboxLastRun({ ...state, last_result: {} })).toContain('Файлов на разбор не было');
+  });
+
+  it('ошибка последнего обхода не молчит', () => {
+    const html = mod.inboxPanelHtml({ ...state, last_error: 'Нет прав на запись: /srv/inbox' }, {}, { isAdmin: true });
+    expect(html).toContain('Последний обход не удался');
+    expect(html).toContain('Нет прав на запись');
+    expect(mod.inboxPanelHtml(state, {}, { isAdmin: true })).not.toContain('Последний обход не удался');
+  });
+
   it('журнал печатает файл, итог и причину', () => {
     const html = mod.inboxPanelHtml(state, { items: [{ file: 'сбис/УПД.xml', status: 'rejected',
       message: 'Ни покупатель, ни продавец — не ваши компании', created_at: '2026-11-16T11:05:00Z' }] },
