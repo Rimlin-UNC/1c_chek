@@ -47,6 +47,49 @@ BLOG_PAGES = (
     "/blog/chek-ne-prohodit-proverku-v-fns", "/blog/proverka-kassovyh-chekov-dlya-biznesa",
     "/blog/proverka-chekov-dlya-buhgaltera", "/blog/qr-kod-ili-ruchnoj-kod",
 )
+# Иллюстрации блога для Image Sitemap 1.1 (Google Картинки, Google Discover и Яндекс Вебмастер)
+BLOG_IMAGES: dict[str, tuple[str, str]] = {
+    "/blog/proverka-cheka-onlajn": (
+        "/img/blog/01-online-check.jpg",
+        "Проверка кассового чека онлайн камерой смартфона по QR-коду",
+    ),
+    "/blog/proverka-cheka-po-qr-kodu": (
+        "/img/blog/02-qr-instruction.jpg",
+        "Шесть фискальных реквизитов в QR-коде кассового чека",
+    ),
+    "/blog/proverka-cheka-po-kodu": (
+        "/img/blog/03-manual-code.jpg",
+        "Ручной ввод реквизитов ФН, ФД и ФП с бумажного чека на ноутбуке",
+    ),
+    "/blog/proverka-cheka-na-sajte-nalogovoj": (
+        "/img/blog/04-tax-site.jpg",
+        "Сверка кассового чека с реестром налоговой и передача в учёт компании",
+    ),
+    "/blog/proverka-cheka-fns-rossii": (
+        "/img/blog/05-fns-verify.jpg",
+        "Сопоставление даты, суммы и фискального признака чека с реестром ФНС",
+    ),
+    "/blog/ofd-i-proverka-chekov": (
+        "/img/blog/06-ofd-flow.jpg",
+        "Маршрут фискальных данных от онлайн-кассы и ФН через ОФД в ФНС",
+    ),
+    "/blog/chek-ne-prohodit-proverku-v-fns": (
+        "/img/blog/07-not-found.jpg",
+        "Диагностика семи причин, почему кассовый чек не найден в реестре ФНС",
+    ),
+    "/blog/proverka-kassovyh-chekov-dlya-biznesa": (
+        "/img/blog/08-business-control.jpg",
+        "Контроль авансовых чеков сотрудников, отсечение дублей и выгрузка в 1С",
+    ),
+    "/blog/proverka-chekov-dlya-buhgaltera": (
+        "/img/blog/09-accountant-mass.jpg",
+        "Пакетная сверка чеков, банковских выписок и УПД для бухгалтера и аутсорсинга",
+    ),
+    "/blog/qr-kod-ili-ruchnoj-kod": (
+        "/img/blog/10-qr-vs-code.jpg",
+        "Сравнение сканирования QR-кода камерой и ручного ввода реквизитов чека",
+    ),
+}
 # страницы карты сайта
 PAGES = ("/", *CONTENT_PAGES, BLOG_INDEX, *BLOG_PAGES)
 _HOST = re.compile(r"^(?:[a-z0-9-]{1,63}\.)*[a-z0-9-]{1,63}(?::\d{1,5})?$")
@@ -169,15 +212,29 @@ def robots_txt(cfg: dict, host_header: str | None, scheme: str | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _sitemap_image(base: str, path: str) -> str:
+    meta = BLOG_IMAGES.get(path)
+    if not meta:
+        return ""
+    src, title = meta
+    return (f"<image:image><image:loc>{html.escape(base + src)}</image:loc>"
+            f"<image:title>{html.escape(title)}</image:title></image:image>")
+
+
 def sitemap_xml(cfg: dict, host_header: str | None, scheme: str | None, lastmod: str) -> str | None:
-    """Карта сайта; при выключенной индексации — None (ответ 404)."""
+    """Карта сайта с иллюстрациями статей (Image Sitemap 1.1); при выключенной индексации — None (ответ 404)."""
     if not indexing_enabled(cfg, host_header):
         return None
     base = origin(host_header, scheme)
-    urls = "".join(f"  <url><loc>{html.escape(base + path)}</loc><lastmod>{lastmod}</lastmod></url>\n"
-                   for path in PAGES)
+    urls = "".join(
+        f"  <url><loc>{html.escape(base + path)}</loc><lastmod>{lastmod}</lastmod>"
+        f"{_sitemap_image(base, path)}</url>\n"
+        for path in PAGES
+    )
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" '
+            'xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n'
+            + urls + "</urlset>\n")
 
 
 def status(cfg: dict, host_header: str | None) -> dict:
