@@ -122,6 +122,12 @@ class TestOwnerDecision:
         assert "Переход рабочей базы на PostgreSQL **не выполняется**" in design
 
     def test_agents_never_moves_working_database(self):
+        import csv
+        db = read("docs/DATABASE.md")
+        assert "рабочая база остаётся на рабочем сервере (SQLite), её копии и выгрузки сюда не переносятся" in db
+        tasks = {r["ID"]: r for r in csv.DictReader(read("docs/kb/02_roadmap.csv").splitlines())}
+        assert tasks["T-31"]["Статус"] == "cancelled" and "ADR-14" in tasks["T-31"]["Задача"]
+        questions = {r["ID"]: r for r in csv.DictReader(read("docs/kb/06_open_questions.csv").splitlines())}
+        assert questions["Q-06"]["Статус"] == "closed" and "ADR-14" in questions["Q-06"]["Вопрос или блокер"]
         agents = read("AGENTS.md")
-        never = agents.split("## Никогда", 1)[1]
-        assert "Перенос рабочей базы, её копий и выгрузок в Supabase, среду разработки или CI" in never
+        assert "СТРОГО ЗАПРЕЩЕНО" in agents and "`main`" in agents and "`prod`" in agents
