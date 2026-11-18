@@ -92,7 +92,9 @@ def test_registry_matches_sitemap_and_robots():
     assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-08") is None
 
 
-def test_cluster_illustrations_exist_in_jpg_and_webp_with_exact_dimensions():
+def test_cluster_illustrations_exist_in_jpg_and_webp_with_exact_dimensions(monkeypatch):
+    # Соседний тест OCR в том же воркере xdist занижает Image.MAX_IMAGE_PIXELS до 10 000.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 20_000_000)
     for page in seo_pages.PAGES:
         for img in (page.hero, page.inline):
             jpg_file = STATIC / img.jpg.lstrip("/")

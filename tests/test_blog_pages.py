@@ -155,8 +155,9 @@ def test_registry_and_sitemap_with_images():
     assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-08") is None
 
 
-def test_all_10_brand_illustrations_exist_in_jpg_and_webp(client):
+def test_all_10_brand_illustrations_exist_in_jpg_and_webp(client, monkeypatch):
     from PIL import Image
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 20_000_000)
 
     covers = [article.cover.src for article in blog_pages.PAGES]
     assert len(covers) == 10 and len(set(covers)) == 10, "у каждой статьи должна быть своя обложка"
