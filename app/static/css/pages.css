@@ -948,6 +948,9 @@ button:focus-visible,
   object-fit: cover;
   background: #f6f5f3;
 }
+.blog-figure--scan img {
+  aspect-ratio: 1100 / 613;
+}
 .blog-figure figcaption {
   padding: 10px 16px 12px;
   border-top: 1px solid var(--line);
@@ -957,15 +960,28 @@ button:focus-visible,
   line-height: 1.5;
 }
 
+.blog-article h2[id] {
+  scroll-margin-top: 22px;
+}
+
 .blog-how,
 .blog-trust,
 .blog-tool,
 .blog-extra,
 .blog-faq,
 .blog-cta,
-.blog-links {
+.blog-links,
+.cluster-reads {
   margin-top: 30px;
   scroll-margin-top: 22px;
+}
+
+.cluster-reads {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.cluster-reads h2 {
+  margin-top: 0;
 }
 
 .blog-tool {

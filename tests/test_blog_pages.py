@@ -145,7 +145,8 @@ def test_registry_and_sitemap_with_images():
     xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-08")
     assert xml.count("<url>") == 15
     assert 'xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"' in xml
-    assert xml.count("<image:image>") == 10
+    expected_images = sum(len(v) for v in seo.CONTENT_IMAGES.values()) + len(seo.BLOG_IMAGES)
+    assert xml.count("<image:image>") == expected_images == 17
     for article in blog_pages.PAGES:
         assert f"<loc>https://chek.ymaster.ru{article.path}</loc>" in xml
         assert f"<image:loc>https://chek.ymaster.ru{article.cover.src}</image:loc>" in xml

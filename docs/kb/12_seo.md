@@ -214,3 +214,33 @@ canonical на `chek.ymaster.ru` и `noindex` на копиях, `BreadcrumbList
 - Яндекс Вебмастер, диагностика: https://yandex.ru/support/webmaster/ru/diagnosis/possible.html
 - Яндекс Вебмастер, title: https://yandex.ru/support/webmaster/en/search-results/title
 - web.dev, Core Web Vitals: https://web.dev/articles/vitals
+
+## 12. Фирменные иллюстрации, Image SEO, SSR-карусель блога и развитие кластеров (PR #111, 18.11.2026)
+
+- **Иллюстрации в едином фирменном стиле (`#FF7A00`, `#4B0082`, `#0E2A47`, `#2E8B57`, `#D9534F`):** обновлены все 10
+  сюжетных иллюстраций статей блога (`app/static/img/blog/01-online-check` … `10-qr-vs-code`, `1376×768`) и добавлены
+  3 вторые смысловые иллюстрации для кластерных страниц (`app/static/img/pages/01-qr-verify-steps`,
+  `02-employees-to-1c`, `03-accountants-api-upd`, `1376×768`), без текста на изображениях. Все они отдаются в паре
+  WebP (`36–85 КБ`) + progressive JPEG; для hero-иллюстраций `manual/{scan,ao,clients}.jpg` созданы WebP-пары и
+  выставлены точные физические размеры (`1100×613` и `1376×768`).
+- **Image SEO для Яндекса и Google:** в `app/services/seo.py` добавлено расширение Image Sitemap 1.1
+  (`xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"`, 17 записей `<image:image>` по `/`, 3 кластерам и
+  10 статьям при неизменных 15 `<url>`). На `/blog`, 10 статьях и 3 кластерах включены `<picture>`, `preload` +
+  `fetchpriority="high"` для LCP-картинки, различающиеся `alt` и `title`, видимые `<figcaption>`, `max-image-preview:large`
+  на `chek.ymaster.ru` (и строгий `noindex, nofollow` на копиях), `og:image:type/width/height/alt`,
+  `twitter:card="summary_large_image"` и валидная HTML5 Microdata (`Blog`, `ItemList`, `BlogPosting`, `Article`,
+  `ImageObject`, `Organization` с растровым логотипом `/img/icon-512.png`, `BreadcrumbList` — без JSON-LD).
+- **Интерактивная SSR-карусель и удержание читателей:** на `/blog` собрана серверная Scroll-Snap-карусель всех 10
+  статей (3D-акцент центрального слайда, Container Queries, scroll-driven параллакс, glassmorphism-управление,
+  прогресс-индикаторы с тач-зоной `≥ 40 px`, уважение к `prefers-reduced-motion`) и фильтр каталога по трём рубрикам
+  с View Transitions API в автономном модуле `app/static/js/blog.js` (0 внешних библиотек, строгий CSP `'self'`).
+  На 10 статьях и 3 кластерных страницах по-прежнему 0 тегов `<script>`; добавлены полоса прогресса чтения,
+  якорное оглавление по `H2`, структурированные FAQ и двусторонняя иллюстрированная перелинковка кластер ↔ блог; на
+  главной `/` блок `.home-blog` оформлен тремя иллюстрированными карточками статей.
+- **Дополнительные источники ресерча:**
+  [habr.com/ru/articles/720242](https://habr.com/ru/articles/720242/),
+  [habr.com/ru/articles/1022684](https://habr.com/ru/articles/1022684/),
+  [habr.com/ru/articles/1034960](https://habr.com/ru/articles/1034960/),
+  [habr.com/ru/articles/1057660](https://habr.com/ru/articles/1057660/),
+  [habr.com/ru/articles/900958](https://habr.com/ru/articles/900958/),
+  [developers.google.com/search/docs/appearance/google-images](https://developers.google.com/search/docs/appearance/google-images).

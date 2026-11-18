@@ -90,6 +90,24 @@ BLOG_IMAGES: dict[str, tuple[str, str]] = {
         "Сравнение сканирования QR-кода камерой и ручного ввода реквизитов чека",
     ),
 }
+# Иллюстрации главной и кластерных страниц для Image Sitemap 1.1 (по 1–2 на страницу)
+CONTENT_IMAGES: dict[str, tuple[tuple[str, str], ...]] = {
+    "/": (
+        ("/img/manual/hero.jpg", "Проверка кассового чека онлайн по QR-коду, баллы и выгрузка в 1С — Ямастер Чек"),
+    ),
+    "/kak-proverit-chek": (
+        ("/img/manual/scan.jpg", "Сканирование QR-кода кассового чека камерой смартфона"),
+        ("/img/pages/01-qr-verify-steps.jpg", "Шесть реквизитов QR-кода и проверка признаков подлинного чека в ФНС"),
+    ),
+    "/cheki-sotrudnikov-v-1c": (
+        ("/img/manual/ao.jpg", "Бухгалтер разбирает авансовые чеки сотрудников для выгрузки в 1С"),
+        ("/img/pages/02-employees-to-1c.jpg", "Путь чека сотрудника через фильтр дублей и политики расходов в 1С"),
+    ),
+    "/dlya-buhgalterov": (
+        ("/img/manual/clients.jpg", "Экран «Клиенты» для бухгалтера на аутсорсинге с карточками компаний"),
+        ("/img/pages/03-accountants-api-upd.jpg", "Автозагрузка выписок банков по API, сверка УПД 5.03 и пакет за месяц"),
+    ),
+}
 # страницы карты сайта
 PAGES = ("/", *CONTENT_PAGES, BLOG_INDEX, *BLOG_PAGES)
 _HOST = re.compile(r"^(?:[a-z0-9-]{1,63}\.)*[a-z0-9-]{1,63}(?::\d{1,5})?$")
@@ -213,12 +231,15 @@ def robots_txt(cfg: dict, host_header: str | None, scheme: str | None) -> str:
 
 
 def _sitemap_image(base: str, path: str) -> str:
-    meta = BLOG_IMAGES.get(path)
-    if not meta:
-        return ""
-    src, title = meta
-    return (f"<image:image><image:loc>{html.escape(base + src)}</image:loc>"
-            f"<image:title>{html.escape(title)}</image:title></image:image>")
+    items: list[tuple[str, str]] = list(CONTENT_IMAGES.get(path, ()))
+    blog_meta = BLOG_IMAGES.get(path)
+    if blog_meta:
+        items.append(blog_meta)
+    return "".join(
+        f"<image:image><image:loc>{html.escape(base + src)}</image:loc>"
+        f"<image:title>{html.escape(title)}</image:title></image:image>"
+        for src, title in items
+    )
 
 
 def sitemap_xml(cfg: dict, host_header: str | None, scheme: str | None, lastmod: str) -> str | None:
