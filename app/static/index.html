@@ -243,14 +243,49 @@
                 <a href="/cheki-sotrudnikov-v-1c">Чеки сотрудников в 1С</a>
                 <a href="/dlya-buhgalterov">Для бухгалтеров</a></p>
               <section class="home-blog" aria-labelledby="home-blog-title">
-                <h2 id="home-blog-title">Блог: разборы без лишних слов</h2>
+                <div class="home-blog__head">
+                  <h2 id="home-blog-title">Блог: наглядные разборы с иллюстрациями</h2>
+                  <a class="home-blog__all-link" href="/blog">Все 10 статей в карусели →</a>
+                </div>
                 <p>Десять материалов о фискальных реквизитах, операторе данных, спорных статусах и документообороте компании. Каждая статья объясняет одну ситуацию и ведёт к рабочему инструменту.</p>
                 <ul class="home-blog__list">
-                  <li><a href="/blog/proverka-cheka-onlajn">Как узнать подлинность за 30 секунд</a></li>
-                  <li><a href="/blog/proverka-cheka-po-qr-kodu">Инструкция по QR-коду</a></li>
-                  <li><a href="/blog/proverka-cheka-po-kodu">Ручной код без камеры</a></li>
+                  <li class="home-blog__item">
+                    <a class="home-blog__card" href="/blog/proverka-cheka-onlajn">
+                      <picture>
+                        <source srcset="/img/blog/01-online-check.webp" type="image/webp">
+                        <img class="home-blog__img" src="/img/blog/01-online-check.jpg" alt="Смартфон считывает QR-код бумажного чека с зелёной галочкой" title="Как за 30 секунд узнать подлинность документа" width="1376" height="768" loading="lazy" decoding="async">
+                      </picture>
+                      <span class="home-blog__body">
+                        <strong class="home-blog__title">Как узнать подлинность за 30 секунд</strong>
+                        <span class="home-blog__desc">Три шага сканирования камерой и 5 признаков расхождения.</span>
+                      </span>
+                    </a>
+                  </li>
+                  <li class="home-blog__item">
+                    <a class="home-blog__card" href="/blog/proverka-cheka-po-qr-kodu">
+                      <picture>
+                        <source srcset="/img/blog/02-qr-instruction.webp" type="image/webp">
+                        <img class="home-blog__img" src="/img/blog/02-qr-instruction.jpg" alt="Квадратный код кассового чека под лупой и шесть карточек полей" title="Пошаговая инструкция по шести полям QR-кода" width="1376" height="768" loading="lazy" decoding="async">
+                      </picture>
+                      <span class="home-blog__body">
+                        <strong class="home-blog__title">Инструкция по QR-коду</strong>
+                        <span class="home-blog__desc">Что зашифровано в t, s, fn, i, fp, n и как снять без бликов.</span>
+                      </span>
+                    </a>
+                  </li>
+                  <li class="home-blog__item">
+                    <a class="home-blog__card" href="/blog/proverka-cheka-po-kodu">
+                      <picture>
+                        <source srcset="/img/blog/03-manual-code.webp" type="image/webp">
+                        <img class="home-blog__img" src="/img/blog/03-manual-code.jpg" alt="Специалист переносит строки ФН, ФД и ФП с бумажного чека на ноутбуке" title="Ввод реквизитов вручную с потёртой кассовой ленты" width="1376" height="768" loading="lazy" decoding="async">
+                      </picture>
+                      <span class="home-blog__body">
+                        <strong class="home-blog__title">Ручной код без камеры</strong>
+                        <span class="home-blog__desc">Где найти ФН, ФД и ФП текстом, если бумага побледнела.</span>
+                      </span>
+                    </a>
+                  </li>
                 </ul>
-                <p class="home-blog__all"><a href="/blog">Все статьи блога →</a></p>
               </section>
               <p class="land-note" itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
                 <link itemprop="logo" href="https://chek.ymaster.ru/img/icon-512.png">

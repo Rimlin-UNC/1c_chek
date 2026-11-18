@@ -1,10 +1,12 @@
-"""T-82: блог-кластер из 10 серверных статей под 25 ключей (issue #72, #59).
+"""T-82+: блог-кластер из 10 серверных статей под 25 ключей, фирменные иллюстрации и карусель на /blog.
 
 Проверяется: ровно десять самостоятельных страниц и индекс /blog; у каждой свои title/description/H1,
-видимый серверный HTML без скриптов и JSON-LD, canonical на рабочем адресе и noindex на копиях; не менее двух
-локальных картинок с alt/размерами; скелет из лида, шагов, блока «чек не найден», трёх FAQ, мини-инструмента и CTA;
-ровно одна ссылка вверх, одна вбок, одна вниз с разными анкорами; все 25 ключей распределены по интенту без
-переспама; страницы и индекс есть в sitemap.xml и достижимы crawlable-ссылками.
+видимый серверный HTML без JSON-LD, inline-стилей и встроенных скриптов; на /blog подключён только один
+локальный ES-модуль /js/blog.js для карусели и фильтра рубрик, при этом все 10 слайдов и карточек отдаются
+сервером и индексируются без JS; canonical и max-image-preview:large на рабочем адресе, noindex на копиях;
+10 уникальных обложек 1376×768 в двух форматах (JPEG + WebP) с alt, title, figcaption, fetchpriority и
+микроданными Schema.org (BlogPosting, Blog, ItemList, ImageObject, BreadcrumbList); расширение Image Sitemap
+в sitemap.xml; полный набор Open Graph и Twitter Cards; сохранность всех 25 ключей без переспама и дорвеев.
 """
 from __future__ import annotations
 
@@ -49,7 +51,7 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 
 
 class _Audit(HTMLParser):
-    """Видимый текст, заголовки, ссылки с анкорами и картинки без head/script/style."""
+    """Видимый текст, заголовки, ссылки с анкорами, источники picture и картинки без head/script/style."""
 
     def __init__(self):
         super().__init__()
@@ -58,9 +60,12 @@ class _Audit(HTMLParser):
         self.words: list[str] = []
         self.links: list[tuple[str, str]] = []
         self.images: list[dict[str, str]] = []
+        self.sources: list[dict[str, str]] = []
         self.headings: list[tuple[str, str]] = []
+        self.captions: list[str] = []
         self._heading: str | None = None
         self._heading_text: list[str] = []
+        self._caption: list[str] | None = None
         self._anchor: tuple[str, list[str]] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
@@ -81,6 +86,10 @@ class _Audit(HTMLParser):
             self._anchor = (data.get("href", ""), [])
         elif tag == "img":
             self.images.append(data)
+        elif tag == "source":
+            self.sources.append(data)
+        elif tag == "figcaption":
+            self._caption = []
         elif tag in {"h1", "h2", "h3"}:
             self._heading = tag
             self._heading_text = []
@@ -90,6 +99,9 @@ class _Audit(HTMLParser):
             self.headings.append((tag, re.sub(r"\s+", " ", "".join(self._heading_text)).strip()))
             self._heading = None
             self._heading_text = []
+        if self._caption is not None and tag == "figcaption":
+            self.captions.append(re.sub(r"\s+", " ", "".join(self._caption)).strip())
+            self._caption = None
         if self._anchor is not None and tag == "a":
             href, parts = self._anchor
             self.links.append((href, re.sub(r"\s+", " ", "".join(parts)).strip()))
@@ -108,6 +120,8 @@ class _Audit(HTMLParser):
         self.words += re.findall(r"[а-яёa-z0-9]+", data.lower())
         if self._heading is not None:
             self._heading_text.append(data)
+        if self._caption is not None:
+            self._caption.append(data)
         if self._anchor is not None:
             self._anchor[1].append(data)
 
@@ -122,7 +136,7 @@ def get(client, path: str, host: str = PROD, scheme: str = "https"):
     return client.get(path, headers={"host": host, "x-forwarded-proto": scheme})
 
 
-def test_registry_and_sitemap():
+def test_registry_and_sitemap_with_images():
     assert blog_pages.BLOG_INDEX == BLOG_INDEX
     paths = tuple(a.path for a in blog_pages.PAGES)
     assert paths == BLOG_PATHS == seo.BLOG_PAGES
@@ -130,33 +144,88 @@ def test_registry_and_sitemap():
     assert seo.PAGES == ("/", *seo.CONTENT_PAGES, BLOG_INDEX, *BLOG_PATHS)
     xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-08")
     assert xml.count("<url>") == 15
-    for path in (BLOG_INDEX, *BLOG_PATHS):
-        assert f"<loc>https://chek.ymaster.ru{path}</loc>" in xml
-        assert not any(path.startswith(d) for d in seo.DISALLOW)
+    assert 'xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"' in xml
+    expected_images = sum(len(v) for v in seo.CONTENT_IMAGES.values()) + len(seo.BLOG_IMAGES)
+    assert xml.count("<image:image>") == expected_images == 17
+    for article in blog_pages.PAGES:
+        assert f"<loc>https://chek.ymaster.ru{article.path}</loc>" in xml
+        assert f"<image:loc>https://chek.ymaster.ru{article.cover.src}</image:loc>" in xml
+        assert not any(article.path.startswith(d) for d in seo.DISALLOW)
+    assert f"<loc>https://chek.ymaster.ru{BLOG_INDEX}</loc>" in xml
     assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-08") is None
 
 
-def test_blog_index_is_server_html_and_lists_all_articles(client):
+def test_all_10_brand_illustrations_exist_in_jpg_and_webp(client, monkeypatch):
+    from PIL import Image
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 20_000_000)
+
+    covers = [article.cover.src for article in blog_pages.PAGES]
+    assert len(covers) == 10 and len(set(covers)) == 10, "у каждой статьи должна быть своя обложка"
+    assert len({article.cover.alt for article in blog_pages.PAGES}) == 10
+    assert len({article.cover.caption for article in blog_pages.PAGES}) == 10
+
+    for article in blog_pages.PAGES:
+        jpg_file = ROOT / "app/static" / article.cover.src.lstrip("/")
+        webp_file = ROOT / "app/static" / article.cover.webp.lstrip("/")
+        assert jpg_file.is_file() and jpg_file.stat().st_size > 10_000, jpg_file
+        assert webp_file.is_file() and webp_file.stat().st_size > 10_000, webp_file
+        with Image.open(jpg_file) as im_jpg:
+            assert im_jpg.size == (blog_pages.IMG_WIDTH, blog_pages.IMG_HEIGHT)
+        with Image.open(webp_file) as im_webp:
+            assert im_webp.size == (blog_pages.IMG_WIDTH, blog_pages.IMG_HEIGHT)
+    assert get(client, blog_pages.PAGES[0].cover.src).status_code == 200
+    assert get(client, blog_pages.PAGES[0].cover.webp).status_code == 200
+    assert get(client, "/js/blog.js").status_code == 200
+
+
+def test_blog_index_has_carousel_cards_seo_and_lists_all_articles(client):
     res = get(client, BLOG_INDEX)
     assert res.status_code == 200
-    assert f'<link rel="canonical" href="https://chek.ymaster.ru{BLOG_INDEX}">' in res.text
+    markup = res.text
+    assert f'<link rel="canonical" href="https://chek.ymaster.ru{BLOG_INDEX}">' in markup
+    assert 'content="index, follow, max-image-preview:large, max-snippet:-1"' in markup
+    assert '<meta property="og:type" content="website">' in markup
+    assert '<meta name="twitter:card" content="summary_large_image">' in markup
     assert "x-robots-tag" not in res.headers
-    assert "<script" not in res.text and "ld+json" not in res.text and "style=" not in res.text
-    parsed = audit(res.text)
+    assert "ld+json" not in markup and "style=" not in markup
+    # На /blog допускается ровно один локальный версионированный модуль карусели (CSP script-src 'self').
+    scripts = re.findall(r"<script\b[^>]*>.*?</script>", markup, re.S)
+    assert len(scripts) == 1
+    assert re.fullmatch(r'<script type="module" src="/js/blog\.js\?v=[\d.]+"></script>', scripts[0])
+    assert 'itemtype="https://schema.org/Blog"' in markup
+    assert 'itemtype="https://schema.org/ItemList"' in markup
+    assert 'data-blog-carousel' in markup and 'aria-roledescription="карусель"' in markup
+    assert markup.count('class="bcar__slide"') == 10
+    assert markup.count('data-slide-to="') == 10
+    assert markup.count('class="blog-card"') == 10
+    assert markup.count('data-filter="') == 4
+
+    parsed = audit(markup)
     assert [tag for tag, _ in parsed.headings].count("h1") == 1
     links = {href for href, _ in parsed.links}
     assert set(BLOG_PATHS) <= links
-    assert {"/", "/kak-proverit-chek", "/oferta"} <= links
+    assert {"/", "/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov", "/oferta"} <= links
+    blog_imgs = [img for img in parsed.images if img.get("src", "").startswith("/img/blog/")]
+    assert len(blog_imgs) == 20  # 10 слайдов карусели + 10 карточек каталога
+    assert blog_imgs[0].get("loading") == "eager" and blog_imgs[0].get("fetchpriority") == "high"
+    assert all(img.get("loading") == "lazy" for img in blog_imgs[1:])
+    assert all(img.get("alt") and img.get("title") for img in blog_imgs)
+    assert len([s for s in parsed.sources if s.get("type") == "image/webp"]) == 20
     assert len(parsed.words) >= 200
+    raw = markup.lower()
+    for banned in ("№1", "лучший сервис", "гарантируем", "бесплатно навсегда", "₽", "руб/мес", "рейтинг", "отзывы"):
+        assert banned not in raw, banned
+
     copy = get(client, BLOG_INDEX, host="localhost:8000", scheme="http")
     assert copy.headers.get("x-robots-tag") == "noindex, nofollow"
     assert '<meta name="robots" content="noindex, nofollow">' in copy.text
+    assert 'rel="canonical"' not in copy.text
 
 
 def test_metadata_is_unique_and_all_25_keys_are_distributed():
     articles = blog_pages.PAGES
     assert len(articles) == 10
-    for attr in ("title", "description", "h1"):
+    for attr in ("title", "description", "h1", "teaser"):
         assert len({getattr(a, attr) for a in articles}) == 10, attr
     all_keys: set[str] = set()
     for article in articles:
@@ -171,17 +240,26 @@ def test_metadata_is_unique_and_all_25_keys_are_distributed():
 
 
 @pytest.mark.parametrize("article", blog_pages.PAGES, ids=lambda a: a.path)
-def test_article_structure_images_cta_and_links(client, article):
+def test_article_structure_images_seo_cta_and_links(client, article):
     res = get(client, article.path)
     assert res.status_code == 200
     markup = res.text
     assert f'<link rel="canonical" href="https://chek.ymaster.ru{article.path}">' in markup
+    assert 'content="index, follow, max-image-preview:large, max-snippet:-1"' in markup
+    assert f'<meta property="og:image" content="https://chek.ymaster.ru{article.cover.src}">' in markup
+    assert f'<meta property="og:image:width" content="{blog_pages.IMG_WIDTH}">' in markup
+    assert f'<meta property="og:image:height" content="{blog_pages.IMG_HEIGHT}">' in markup
+    assert '<meta property="og:image:alt" content="' in markup
+    assert '<meta name="twitter:card" content="summary_large_image">' in markup
+    assert f'<meta name="twitter:image" content="https://chek.ymaster.ru{article.cover.src}">' in markup
     assert "x-robots-tag" not in res.headers
     assert markup.count("<h1") == 1 and markup.count("<title>") == 1
     assert "<script" not in markup and "ld+json" not in markup and "style=" not in markup
     assert '<meta name="keywords"' not in markup.lower()
     for hidden in ('class="hidden"', "display:none", "display: none", "visibility:hidden", 'aria-hidden="true"'):
         assert hidden not in markup, hidden
+    assert 'itemtype="https://schema.org/BlogPosting"' in markup
+    assert markup.count('itemtype="https://schema.org/ImageObject"') == 2
     assert '<ol itemscope itemtype="https://schema.org/BreadcrumbList">' in markup
     assert markup.count('itemtype="https://schema.org/ListItem"') == 3
     assert re.search(r'<link rel="stylesheet" href="/css/pages\.css\?v=[\d.]+">', markup)
@@ -194,10 +272,13 @@ def test_article_structure_images_cta_and_links(client, article):
     assert len(parsed.words) >= 400, (article.path, len(parsed.words))
     content_images = [image for image in parsed.images if image.get("src", "").startswith("/img/blog/")]
     assert len(content_images) >= 2
+    assert content_images[0].get("loading") == "eager" and content_images[0].get("fetchpriority") == "high"
     for image in content_images:
-        assert image.get("alt"), image
-        assert image.get("width") and image.get("height"), image
+        assert image.get("alt") and image.get("title"), image
+        assert image.get("width") == str(blog_pages.IMG_WIDTH), image
+        assert image.get("height") == str(blog_pages.IMG_HEIGHT), image
         assert image.get("loading") in {"eager", "lazy"}, image
+    assert len(parsed.captions) == 2 and len(set(parsed.captions)) == 2
     visible = " ".join(parsed.words)
     for key in article.keywords:
         assert key in visible, (article.path, key)

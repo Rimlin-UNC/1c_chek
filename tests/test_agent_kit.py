@@ -149,15 +149,18 @@ class TestSessionCheckDivergence:
 class TestAgentDocs:
     def test_mission_checklist_policy_history(self):
         agents = read("AGENTS.md")
-        for head in ("## Задание агента (владелец, 03.11.2026)", "## Чек-лист задачи (от идеи до отчёта)",
-                     "## История и откат", "### Политика: только нужные коннекторы"):
+        for head in ("# РОЛЬ И ЦЕЛЬ", "# ТВОИ ИНСТРУМЕНТЫ И ЖЕСТКИЕ ОГРАНИЧЕНИЯ",
+                     "# ВНУТРЕННИЕ РОЛИ", "# РАБОЧИЙ ПРОЦЕСС (PIPELINE)",
+                     "## 🟢 ФАЗА 1: ИССЛЕДОВАНИЕ И ПРОЕКТИРОВАНИЕ",
+                     "## 🔵 ФАЗА 2: РЕАЛИЗАЦИЯ", "# ФОРМАТ ВЫВОДА В ЧАТ"):
             assert head in agents, head
-        mission = agents.split("## Задание агента (владелец, 03.11.2026)", 1)[1].split("\n## ", 1)[0]
-        for needle in ("№ 1", "Только вперёд", "Хабр", "10_research.md", "реестр выпусков", "release_gate.py"):
-            assert needle in mission, needle
-        policy = agents.split("### Политика: только нужные коннекторы", 1)[1].split("\n### ", 1)[0]
-        for name in ("GitHub", "Google Sheets, Docs, Slides", "Supabase", "Vercel", "Google Drive", "Notion"):
-            assert f"| {name}" in policy, name
+        rules = agents.split("# ТВОИ ИНСТРУМЕНТЫ И ЖЕСТКИЕ ОГРАНИЧЕНИЯ", 1)[1].split("\n# ", 1)[0]
+        for branch in ("`main`", "`master`", "`prod`"):
+            assert branch in rules, branch
+        assert "Pull Request" in rules
+        assert "ТОЧКА ОСТАНОВКИ (HUMAN-IN-THE-LOOP)" in agents
+        for role in ("Researcher", "Architect", "Critic", "Tech Lead", "Senior Dev", "QA Engineer"):
+            assert role in agents, role
 
     def test_kb_index_links_new_sections(self):
         index = read("docs/kb/README.md")
