@@ -932,7 +932,10 @@ class TestVersion17037Sync:
 class TestRelease:
     """Требование «своя запись первая» живёт в файле текущего выпуска."""
 
-    VERSION = "1.73.2"
+    @property
+    def VERSION(self) -> str:  # с "1.73.3": единый источник из settings.APP_VERSION
+        from app.config import settings
+        return settings.APP_VERSION
 
     def test_whats_new_is_first(self):
         js = read(APP_JS)
