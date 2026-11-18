@@ -699,7 +699,10 @@ class TestRelease:
     # требование «своя запись первая» проверяет test_v17041.
     # v1.70.45: VERSION здесь — ТЕКУЩАЯ версия (класс сверяет точки
     # синхронизации, CHANGELOG и журнал), поэтому поднимается каждый выпуск.
-    VERSION = "1.73.2"
+    @property
+    def VERSION(self) -> str:  # с "1.73.3": единый источник из settings.APP_VERSION
+        from app.config import settings
+        return settings.APP_VERSION
 
     def test_all_sync_points(self):
         points = [

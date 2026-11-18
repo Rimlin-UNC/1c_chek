@@ -65,10 +65,10 @@ class TestOpencvCeiling:
             assert re.search(r"requirements\.txt", text), f"{rel} не ставит зависимости из requirements.txt"
 
     def test_documented_in_changelog(self):
-        """Раздел живого выпуска объясняет потолок: без этого следующий агент снимет его как «лишний»."""
-        from app.config import settings
+        """Раздел выпуска 1.73.2 объясняет потолок: без этого следующий агент снимет его как «лишний»."""
+        ver = "1.73.2"
         text = read("CHANGELOG.md")
-        assert f"## [{settings.APP_VERSION}]" in text, settings.APP_VERSION
-        entry = text.split(f"## [{settings.APP_VERSION}]", 1)[1].split("\n## [", 1)[0]
+        assert f"## [{ver}]" in text, ver
+        entry = text.split(f"## [{ver}]", 1)[1].split("\n## [", 1)[0]
         assert "opencv" in entry and "5.1.0.95" in entry
         assert "pip download" in entry, "нет подсказки, как проверить снятие потолка"

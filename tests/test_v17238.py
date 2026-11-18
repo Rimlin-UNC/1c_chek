@@ -48,7 +48,8 @@ def media_block(css, header, last=False):
 
 class TestVersion17238:
     def test_config_version(self):
-        assert settings.APP_VERSION == "1.73.2"
+        # v1.73.3: версия ушла вперёд; структурная проверка не даёт откатиться ниже 1.72.38
+        assert tuple(int(x) for x in settings.APP_VERSION.split(".")) >= (1, 72, 38)
 
     def test_static_versions_synced(self):
         ver = settings.APP_VERSION
