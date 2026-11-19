@@ -21,6 +21,7 @@ const SAMPLE = {
     signer_chief_role: 'Руководитель организации или иное уполномоченное лицо', signer_chief: '',
     signer_accountant_role: 'Главный бухгалтер или иное уполномоченное лицо', signer_accountant: '',
     signer_entrepreneur: '' },
+  labels: { basis: 'Основание передачи (сдачи) / получения (приёмки)' },
   saved: {},
   form: { status: '1', shipper: 'он же', consignee: 'ООО «Ромашка-Строй»', sheets: '1', basis: '',
     shipment_doc: '№ п/п 1–2 № УТ-215 от 14 октября 2026 г.', currency: 'Российский рубль, 643' },
@@ -33,7 +34,9 @@ describe('PRIM_PRINT_FIELDS', () => {
     expect(keys).toContain('basis');
     expect(keys).toContain('signer_chief');
     expect(keys).toContain('signer_entrepreneur');
-    expect(keys).toHaveLength(16);
+    for (const key of ['payment_advance', 'transfer_name', 'accept_date', 'seller_bank', 'edo_operator',
+      'edo_sent_cert', 'transfer_date']) expect(keys).toContain(key);
+    expect(keys).toHaveLength(48);   // v1.73.4: все поля бланка, разложенные по разделам
     expect(new Set(keys).size).toBe(keys.length);
     const status = PRIM_PRINT_FIELDS.find((f) => f.key === 'status');
     expect(status.options.map((o) => o.value)).toEqual(['1', '2']);

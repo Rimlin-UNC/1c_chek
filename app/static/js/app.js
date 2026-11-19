@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.3';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.4';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6927,6 +6927,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.4': [
+    { icon: '📁', title: '«Папка с УПД» находит документы, которые раньше пропускала',
+      text: 'Файлы выгрузки ЭДО с именем вида «1_ON_NSCHFDOPPR_.xml» больше не отсеиваются: программа узнаёт УПД по признаку ИдФайл, начинающемуся с ON_NSCHFDOPPR, а не только по началу имени файла. Заодно XML без объявленной кодировки читается в windows-1251, а не превращается в мусор.' },
+    { icon: '🖨', title: 'Печатный УПД: бланк один в один с формой из ЭДО',
+      text: 'Печатная форма перерисована по утверждённому бланку: 16 граф (добавлены 1а, 1б, 2а, 3, 4, 10, 10а и 11 — страна происхождения и прослеживаемость), подписи «Товар передал / получил», блок электронного документооборота и реквизиты банков. Поля по-прежнему заполняются на экране, печать и сохранение в PDF — одной кнопкой.' },
+  ],
   '1.73.3': [
     { icon: '📰', title: 'Блог и главная: фирменные иллюстрации, карусель и рубрики',
       text: 'Все десять статей блога получили единые светлые иллюстрации в двух форматах (WebP и JPG), на странице «/blog» появились карусель главных материалов и быстрый фильтр по рубрикам («QR и код», «ФНС и ОФД», «Бизнес и 1С»), а на главной — витрина из трёх ключевых разборов. Внутри статей добавлены полоса прогресса чтения, кликабельное оглавление, блок частых вопросов и переход к следующему материалу.' },

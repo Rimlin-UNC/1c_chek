@@ -129,6 +129,101 @@ def _party(element) -> dict:
     return {"kind": "", "name": "", "inn": "", "kpp": ""}
 
 
+def _address(element) -> str:
+    """Адрес стороны одной строкой: «АдрТекст» элемента <Адрес> (в 5.01–5.03 он же печатается в графах 2а/6а)."""
+    node = _kid(element, "Адрес")
+    info = _kid(node, "АдрИнф")
+    text = _attr(info, "АдрТекст", "АдресТекст")
+    if text:
+        return text
+    if info is None:      # 5.01: структурный адрес <АдрРФ><Город><НаимГород>…
+        parts = []
+        for name in ("Индекс", "КодРегион", "Район", "Город", "НаселПункт", "Улица", "Дом", "Корпус", "Кварт"):
+            node = _kid(_kid(element, "Адрес"), name)
+            if node is not None and (node.text or "").strip():
+                parts.append(node.text.strip())
+        return ", ".join(parts)
+    return ""
+
+
+def _print_party(element) -> dict:
+    """Реквизиты стороны для печатной формы: то, что печатается, но не входит в краткую запись реестра."""
+    ident = _kid(element, "ИдСв")
+    entrepreneur = _kid(ident, "СвИП")
+    ogrnip = _kid(entrepreneur, "ОГРНИП")
+    return {
+        "address": _address(element),
+        "ogrnip": (ogrnip.text or "").strip() if ogrnip is not None else "",
+        "ogrnip_date": _attr(ogrnip, "ДатаОГРНИП", "Дата"),
+    }
+
+
+def _basis(doc) -> str:
+    """Основание передачи (сдачи) — строка «Основание передачи» бланка: <СвПродПер><СвПер><ОснПер>."""
+    transfer = _kid(_kid(doc, "СвПродПер"), "СвПер")
+    for name in ("ОснПер", "ОснДовер"):
+        node = _kid(transfer, name)
+        if node is None:
+            continue
+        kind = _attr(node, "РеквНаимДок")
+        number = _attr(node, "РеквНомерДок", "НомерДок")
+        day = _attr(node, "РеквДатаДок", "ДатаДок")
+        parts = [kind] if kind else []
+        if number:
+            parts.append(f"№ {number}")
+        if day:
+            parts.append(f"от {day}")
+        text = " ".join(parts).strip()
+        if text:
+            return text
+    return ""
+
+
+def _shipper(element) -> str:
+    """Графа 3 «Грузоотправитель и его адрес»: <ОнЖе> или сторона с адресом."""
+    if element is None:
+        return ""
+    if _kid(element, "ОнЖе") is not None:
+        return "он же"
+    party = _party(element)
+    address = _address(element)
+    return ", ".join(p for p in (party["name"], address) if p)
+
+
+def _consignee(element) -> str:
+    """Графа 4 «Грузополучатель и его адрес»."""
+    if element is None:
+        return ""
+    party = _party(element)
+    address = _address(element)
+    if not party["name"] and not address:
+        return ""
+    return ", ".join(p for p in (party["name"], address) if p)
+
+
+def _shipment_doc(element) -> str:
+    """Графа 5а «Документ об отгрузке»: <ДокПодтвОтгрНом РеквНаимДок/РеквНомерДок/РеквДатаДок>."""
+    if element is None:
+        return ""
+    parts = [_attr(element, "РеквНаимДок")]
+    number = _attr(element, "РеквНомерДок", "НомерДок")
+    day = _attr(element, "РеквДатаДок", "ДатаДок")
+    if number:
+        parts.append(f"№ {number}")
+    if day:
+        parts.append(f"от {day}")
+    return " ".join(p for p in parts if p)
+
+
+def _signer(element) -> dict:
+    """Подписант документа: должность и ФИО (в бланке — строка «Руководитель организации»)."""
+    if element is None:
+        return {"role": "", "name": ""}
+    fio = _kid(element, "ФИО")
+    name = " ".join(p for p in (_attr(fio, "Фамилия"), _attr(fio, "Имя"), _attr(fio, "Отчество")) if p)
+    return {"role": _attr(element, "Должн"), "name": name}
+
+
 def _line(element, index: int) -> dict:
     extra = _kid(element, "ДопСведТов")
     raw_rate = element.get("НалСт", "")
@@ -184,6 +279,14 @@ def parse(data: bytes) -> dict:
         "correction_date": _date(_attr(correction, "ДатаИспр", "ДатаИспрСчФ")),
         "seller": _party(_kid(info, "СвПрод")),
         "buyer": _party(_kid(info, "СвПокуп")),
+        # v1.73.4: реквизиты, которые печатаются в бланке, но в краткую запись реестра не входят
+        "seller_print": _print_party(_kid(info, "СвПрод")),
+        "buyer_print": _print_party(_kid(info, "СвПокуп")),
+        "shipper": _shipper(_kid(info, "ГрузОт")),
+        "consignee": _consignee(_kid(info, "ГрузПолуч")),
+        "shipment_doc": _shipment_doc(_kid(info, "ДокПодтвОтгрНом")),
+        "basis": _basis(doc),
+        "signer": _signer(_kid(doc, "Подписант")),
         "lines": [_line(el, i) for i, el in enumerate(_kids(table, "СведТов"), 1)],
         "totals": {"without_vat": _num(_attr(totals, "СтТовБезНДСВсего")),
                    "with_vat": _num(_attr(totals, "СтТовУчНалВсего")),

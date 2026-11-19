@@ -35,16 +35,50 @@ export function primFolderPath(file) {
 /** Первые байты XML → текст: кодировка из объявления <?xml … encoding="…"?> (ФНС — windows-1251), иначе UTF-8. */
 export function primFolderDecode(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  // v1.73.4: BOM важнее объявления — выгрузки ЭДО бывают в UTF-16 (тогда «<Файл» и «ИдФайл»
+  // в тексте не находятся, и УПД пропадал из папки как «другой XML»).
+  if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xfe) {
+    try { return new TextDecoder('utf-16le').decode(u8); } catch { /* ниже общий путь */ }
+  }
+  if (u8.length >= 2 && u8[0] === 0xfe && u8[1] === 0xff) {
+    try { return new TextDecoder('utf-16be').decode(u8); } catch { /* ниже общий путь */ }
+  }
   let declaration = '';
   for (let i = 0; i < Math.min(u8.length, 200); i += 1) declaration += String.fromCharCode(u8[i]);
   const m = /encoding\s*=\s*["']([\w.-]+)["']/i.exec(declaration);
-  let enc = m ? m[1].toLowerCase() : 'utf-8';
-  if (enc === 'cp1251' || enc === 'win-1251') enc = 'windows-1251';
-  try {
-    return new TextDecoder(enc).decode(u8);
-  } catch {
-    return new TextDecoder('utf-8').decode(u8);       // кодировка из объявления неизвестна браузеру
+  if (m) {
+    let enc = m[1].toLowerCase();
+    if (enc === 'cp1251' || enc === 'win-1251') enc = 'windows-1251';
+    try {
+      return new TextDecoder(enc).decode(u8);
+    } catch {
+      /* кодировка из объявления неизвестна браузеру — ниже общий путь */
+    }
   }
+  // v1.73.4: без объявления кодировки XML ФНС почти всегда windows-1251. Раньше такой файл читался
+  // как UTF-8 с «кракозябрами», атрибут «ИдФайл» не находился, и УПД пропадал из папки как «другой XML».
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(u8);
+  } catch {
+    try {
+      return new TextDecoder('windows-1251').decode(u8);
+    } catch {
+      return new TextDecoder('utf-8').decode(u8);
+    }
+  }
+}
+
+/** Идентификатор документа ФНС — УПД/счёт-фактура продавца: «ON_NSCHFDOPPR_…» (ИдФайл или имя файла).
+    Именно этот признак владелец назвал надёжным: значение ИдФайл, начинающееся с ON_NSCHFDOPPR, — это и есть УПД.
+    Маркер ищется в любом месте строки: выгрузки ЭДО зовут файлы и «ON_NSCHFDOPPR_…», и
+    «1_ON_NSCHFDOPPR_.xml» — с приставкой оператора, номера загрузки или папки. */
+export const PRIM_FOLDER_UPD_MARK = 'ON_NSCHFDOPPR';
+
+/** Атрибут XML из первых байтов: терпит и «ИдФайл="…"», и «ИдФайл='…'», и пробелы вокруг «=». */
+export function primFolderAttr(text, name) {
+  const re = new RegExp(`${name}\\s*=\\s*["']([^"']+)["']`);
+  const found = re.exec(String(text || ''));
+  return found ? found[1] : '';
 }
 
 /** Вид файла по пути и началу текста: upd | maybe | zip | buyer | correction | edo | other | notxml. */
@@ -52,6 +86,9 @@ export function primFolderKind(path, head) {
   const base = String(path || '').split(/[\\/]/).pop();
   if (/\.zip$/i.test(base)) return 'zip';
   if (!/\.xml$/i.test(base)) return 'notxml';
+  // v1.73.4: служебные и чужие документы узнаются по началу идентификатора, УПД — положительным
+  // признаком «ON_NSCHFDOPPR» (в ИдФайл или в имени файла), а не только по атрибуту «Функция»:
+  // без «Функции» в первых 8 КБ файл уходил в «maybe», а при неверной кодировке — и вовсе в «other».
   const byName = (id) => {
     const up = String(id || '').toUpperCase();
     if (/^ON_N?SCHFDOPPOK|^ON_N?KORSCHFDOPPOK/.test(up)) return 'buyer';
@@ -62,11 +99,14 @@ export function primFolderKind(path, head) {
   const named = byName(base);
   if (named) return named;
   const text = String(head || '');
-  const fromId = byName((/ИдФайл\s*=\s*"([^"]+)"/.exec(text) || [])[1]);
+  const fileId = primFolderAttr(text, 'ИдФайл');
+  const fromId = byName(fileId);
   if (fromId) return fromId;
+  const upperId = String(fileId || base).toUpperCase();
+  if (upperId.includes(PRIM_FOLDER_UPD_MARK)) return 'upd';
   if (!/<Файл[\s>]/.test(text)) return 'other';
-  const fn = (/Функция\s*=\s*"([^"]*)"/.exec(text) || [])[1];
-  if (fn === undefined) return 'maybe';
+  const fn = primFolderAttr(text, 'Функция');
+  if (!fn) return 'maybe';
   if (PRIM_FOLDER_FUNCTIONS.includes(fn)) return 'upd';
   return /^К|ДИС/.test(fn) ? 'correction' : 'other';
 }

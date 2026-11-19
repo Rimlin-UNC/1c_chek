@@ -109,6 +109,46 @@ describe('«Папка с УПД»: отбор файлов', () => {
     expect(mod.primFolderKind('a/config.xml', '<settings><a/></settings>')).toBe('other');
   });
 
+  it('v1.73.4: УПД узнаётся по ИдФайл=ON_NSCHFDOPPR_…, даже если имя файла с приставкой', () => {
+    const head = enc1251('<Файл ИдФайл="ON_NSCHFDOPPR_2be66c22_2BM-7704217370_20260908_1eb2e289_0_0_0_0_0_00" ВерсФорм="5.03">');
+    const text = mod.primFolderDecode(head);
+    expect(mod.primFolderKind('выгрузка/1_ON_NSCHFDOPPR_.xml', text)).toBe('upd');
+    expect(mod.primFolderKind('выгрузка/ON_NSCHFDOPPR_2026-09-08.xml', text)).toBe('upd');
+    // без «Функции» в первых 8 КБ, но с правильным ИдФайл — это УПД, а не «maybe»
+    expect(mod.primFolderKind('выгрузка/документ.xml', text)).toBe('upd');
+    // регистр и одинарные кавычки не мешают
+    expect(mod.primFolderKind('x/1.xml', "<Файл ИдФайл='on_nschfdopPR_42'>")).toBe('upd');
+    // титул покупателя и корректировочный документ по-прежнему не УПД
+    expect(mod.primFolderKind('x/ON_NSCHFDOPPOK_42.xml', text)).toBe('buyer');
+    expect(mod.primFolderKind('x/1.xml', '<Файл ИдФайл="ON_NSCHFDOPPOK_42">')).toBe('buyer');
+    expect(mod.primFolderKind('x/1.xml', '<Файл ИдФайл="ON_KORSCHFDOPPR_42">')).toBe('correction');
+    // служебный файл ЭДО остаётся служебным, даже если внутри есть наш маркер
+    expect(mod.primFolderKind('x/DP_IZVPOL_42.xml', '<Файл ИдФайл="ON_NSCHFDOPPR_42">')).toBe('edo');
+  });
+
+  it('v1.73.4: файл в UTF-16 читается, а не считается «другим XML»', () => {
+    const text = '<Файл ИдФайл="ON_NSCHFDOPPR_utf16"><Документ Функция="СЧФДОП"></Файл>';
+    const bytes = new Uint8Array(2 + text.length * 2);
+    bytes[0] = 0xff; bytes[1] = 0xfe;
+    for (let i = 0; i < text.length; i += 1) {
+      bytes[2 + i * 2] = text.charCodeAt(i) & 0xff;
+      bytes[3 + i * 2] = text.charCodeAt(i) >> 8;
+    }
+    const head = mod.primFolderDecode(bytes);
+    expect(head).toContain('ИдФайл="ON_NSCHFDOPPR_utf16"');
+    expect(mod.primFolderKind('a/2_ОN.xml', head)).toBe('upd');
+  });
+
+  it('v1.73.4: папка с такими файлами действительно отправляет их на загрузку', async () => {
+    const head = enc1251('<Файл ИдФайл="ON_NSCHFDOPPR_2be66c22_0_0_0_0_0_00" ВерсФорм="5.03">'
+      + '<Документ Функция="СЧФДОП"></Файл>');
+    const files = [file('Папка/1_ON_NSCHFDOPPR_.xml', head), file('Папка/2_ON_NSCHFDOPPR_.xml', head),
+      file('Папка/ON_NSCHFDOPPOK_3.xml', head)];
+    const scan = await mod.primFolderScan(files);
+    expect(scan.send.map((f) => f.name).sort()).toEqual(['1_ON_NSCHFDOPPR_.xml', '2_ON_NSCHFDOPPR_.xml']);
+    expect(scan.counts).toMatchObject({ upd: 2, buyer: 1 });
+  });
+
   it('кодировка — из объявления XML; без объявления — UTF-8', () => {
     expect(mod.primFolderDecode(upd())).toContain('Функция="СЧФДОП"');
     expect(mod.primFolderDecode(new TextEncoder().encode('<Файл Функция="ДОП">'))).toBe('<Файл Функция="ДОП">');

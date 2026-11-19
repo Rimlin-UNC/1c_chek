@@ -93,23 +93,61 @@ class ConfirmIn(BaseModel):
 
 
 class PrintFormIn(BaseModel):
-    """v1.70.114 (T-62): заполняемые поля печатной формы УПД — то, чего нет в электронном документе."""
+    """v1.70.114 (T-62): заполняемые поля печатной формы УПД — то, чего нет в электронном документе.
+
+    v1.73.4: полей стало больше — бланк собран один в один с формой из ЭДО, и в нём есть строки,
+    которых у нас раньше не было (счёт-фактура при оплате (5б), даты отгрузки и приёмки, подписанты
+    обеих сторон, банковские реквизиты, блок электронной подписи). Список и пределы длины —
+    в printupd.FIELD_SPECS, чтобы модель запроса, база и интерфейс не расходились.
+    """
     status: Literal["1", "2"] = "1"
+    correction: str = Field("", max_length=60)
     seller_address: str = Field("", max_length=300)
     buyer_address: str = Field("", max_length=300)
     shipper: str = Field("", max_length=300)
     consignee: str = Field("", max_length=300)
     payment_doc: str = Field("", max_length=200)
+    payment_advance: str = Field("", max_length=300)
     shipment_doc: str = Field("", max_length=200)
     contract_id: str = Field("", max_length=100)
     currency: str = Field("", max_length=100)
     basis: str = Field("", max_length=300)
     sheets: str = Field("1", max_length=3)
+    transfer_position: str = Field("", max_length=200)
+    transfer_sign: str = Field("", max_length=60)
+    transfer_name: str = Field("", max_length=200)
+    accept_position: str = Field("", max_length=200)
+    accept_sign: str = Field("", max_length=60)
+    accept_name: str = Field("", max_length=200)
+    transfer_date: str = Field("", max_length=20)
+    accept_date: str = Field("", max_length=20)
+    transfer_other: str = Field("", max_length=300)
+    accept_other: str = Field("", max_length=300)
+    seller_bank: str = Field("", max_length=300)
+    buyer_bank: str = Field("", max_length=300)
+    seller_subject: str = Field("", max_length=300)
+    buyer_subject: str = Field("", max_length=300)
     signer_chief_role: str = Field("", max_length=200)
     signer_chief: str = Field("", max_length=200)
     signer_accountant_role: str = Field("", max_length=200)
     signer_accountant: str = Field("", max_length=200)
     signer_entrepreneur: str = Field("", max_length=200)
+    seller_ogrnip: str = Field("", max_length=60)
+    resp_left_position: str = Field("", max_length=200)
+    resp_left_sign: str = Field("", max_length=60)
+    resp_left_name: str = Field("", max_length=200)
+    resp_right_position: str = Field("", max_length=200)
+    resp_right_sign: str = Field("", max_length=60)
+    resp_right_name: str = Field("", max_length=200)
+    edo_operator: str = Field("", max_length=200)
+    edo_id: str = Field("", max_length=60)
+    edo_sent_name: str = Field("", max_length=300)
+    edo_sent_time: str = Field("", max_length=60)
+    edo_sent_cert: str = Field("", max_length=60)
+    edo_approved_name: str = Field("", max_length=300)
+    edo_approved_time: str = Field("", max_length=60)
+    edo_approved_cert: str = Field("", max_length=60)
+    edo_approved_role: str = Field("", max_length=200)
 
 
 class ExportIn(BaseModel):
@@ -339,7 +377,9 @@ def get_print_form(doc_id: str, user: Accountant, db: Db) -> dict:
     doc = _visible(db, user, doc_id)
     saved = printupd.clean(printupd.stored(doc))
     return {"title": printupd.title(doc), "defaults": printupd.defaults(doc), "saved": saved,
-            "form": printupd.form(doc, saved), "fields": list(printupd.FIELDS)}
+            "form": printupd.form(doc, saved), "fields": list(printupd.FIELDS),
+            # v1.73.4: подписи и разделы полей — окно собирает те же 47 полей бланка, что и сервер
+            "labels": printupd.LABELS, "groups": printupd.GROUPS}
 
 
 @router.put("/{doc_id}/print-form")
@@ -347,7 +387,7 @@ def save_print_form(doc_id: str, user: Accountant, db: Db, body: PrintFormIn) ->
     """Запомнить заполняемые поля печатной формы к документу (одна запись на документ)."""
     doc = _visible(db, user, doc_id)
     values = printupd.clean(body.model_dump())
-    doc.print_json = printupd.dump(values)
+    doc.print_json = printupd.dump(values, printupd.auto(doc))   # реквизиты из XML остаются рядом с правками
     db.commit()
     log_action(user, "primary_print_form", details={"document": doc.id,
                                                     "filled": sorted(k for k, v in values.items() if v)})

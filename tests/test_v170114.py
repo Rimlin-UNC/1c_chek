@@ -142,7 +142,10 @@ class TestCode:
     def test_form_rules(self):
         from app.primary import printupd
         assert printupd.LIMITS["status"] == 1 and printupd.LIMITS["sheets"] == 3
-        assert len(printupd.FIELDS) == 16 and len(printupd.COLUMNS) == 13
+        # Замок перепроверен по бланку 2026 года (v1.73.4): полей стало 48 — они
+        # сгруппированы в шапку, основание и передачу, подписи и блок ЭДО; граф — 16,
+        # добавлены 1а, 1б, 2а, 3, 4, 10, 10а и 11 (страна происхождения и прослеживаемость).
+        assert len(printupd.FIELDS) == 48 and len(printupd.COLUMNS) == 16
         assert printupd.status_title("ДОП") == "2" and printupd.status_title("СЧФДОП") == "1"
         assert printupd.VAT_LABELS["22/122"] == "22/122%"
         source = read("app/primary/printupd.py")
