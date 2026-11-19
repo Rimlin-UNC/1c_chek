@@ -249,7 +249,7 @@ def test_printed_page_shows_lines_of_real_document(client, firms):
 # ------------------------------------------------------------------ v1.73.4: реквизиты из XML в бланке
 REAL_EDO = """<?xml version="1.0" encoding="windows-1251"?>
 <Файл ИдФайл="ON_NSCHFDOPPR_2be66c22_2BM-7704217370-774301001_20260908_1eb2e289_0_0_0_0_0_00" ВерсФорм="5.03">
-  <Документ КНД="1115131" Функция="СЧФДОП" ДатаИнфПр="08.09.2026">
+  <Документ КНД="1115131" Функция="СЧФДОП" ДатаИнфПр="08.09.2026" НаимЭконСубСост="ООО &quot;Интернет Решения&quot;">
     <СвСчФакт НомерДок="118050913" ДатаДок="07.09.2026">
       <СвПрод><ИдСв><СвЮЛУч НаимОрг="Интернет Решения, ООО" ИННЮЛ="7704217370" КПП="997750001"/></ИдСв>
         <Адрес><АдрИнф КодСтр="643" НаимСтран="Россия" АдрТекст="123112, г. Москва, Пресненская наб., д. 10"/></Адрес>
@@ -338,3 +338,70 @@ def test_entrepreneur_requisites_for_act_only_form():
     assert values["seller_ogrnip"] == "318532100013002, 18.05.2018"
     assert values["signer_entrepreneur"] == "Федоров Андрей Сергеевич"
     assert printupd.status_title("ДОП") == "2"
+
+
+def test_row_5b_is_always_on_the_blank_after_5a():
+    """Строка (5б) есть в бланке всегда, сразу после (5а): пустая печатается прочерком.
+
+    В PDF из ЭДО нумерация шапки идёт (2), (2а), (2б), (3), (4), (5), (5а), (5б), (6)…
+    Раньше (5б) появлялась только при заполненном поле — и нумерация «прыгала».
+    """
+    page = printupd.html(_doc())
+    assert page.index(">(5а)<") < page.index(">(5б)<") < page.index(">(6)<")
+    assert "К счёту-фактуре (счетам-фактурам)" in page
+    filled = printupd.html(_doc(print_json=printupd.dump({"payment_advance": "№ 77 от 01.10.2026"})))
+    assert "№ 77 от 01.10.2026" in filled and filled.count("(5б)") == 1
+
+
+def test_long_row_5b_label_takes_full_width():
+    """Длинная подпись (5б) печатается во всю ширину шапки, значение — справа у номера строки.
+
+    Иначе подпись либо уезжает за правый край бланка, либо ломается на десять строк.
+    """
+    page = printupd.html(_doc())
+    assert 'class="hl hl-wrap" colspan="2"' in page
+    assert 'class="hv-r"' in page
+
+
+def test_seller_subject_uses_full_name_from_document():
+    """«Составитель документа» — из Документ/@НаимЭконСубСост, как в PDF из ЭДО."""
+    from app.primary import upd
+
+    parsed = upd.parse(REAL_EDO)
+    assert parsed["subject"] == 'ООО "Интернет Решения"'
+    values = printupd.auto_from(parsed)
+    assert values["seller_subject"] == 'ООО "Интернет Решения"'
+    assert values["buyer_subject"] == 'ООО "ЯМАСТЕР", ИНН 4712030034'
+
+
+def test_chief_signature_is_electronic_when_signer_known():
+    """Подписант известен → в блоке подписей «электронно» и его ФИО, как в PDF из ЭДО."""
+    from app.primary import upd
+
+    parsed = upd.parse(REAL_EDO)
+    values = printupd.auto_from(parsed)
+    assert values["signer_chief"] == "Мельникова Анна Валерьевна"
+    assert values["signer_chief_role"] == "Руководитель группы"
+    page = printupd.html(_doc(print_json=printupd.dump({}, values)))
+    assert page.count("электронно") >= 3          # руководитель, ИП и обе строки передачи
+    assert "Мельникова Анна Валерьевна" in page
+
+
+def test_partial_save_does_not_erase_saved_fields(client, firms):
+    """Частичный PUT (одно поле) не стирает остальные правки — их зовут боты и скрипты."""
+    _, a, _ = firms
+    doc_id = _doc_id(client, a)
+    first = client.put(f"/api/v1/primary/{doc_id}/print-form", headers=a["hdr"],
+                       json={"basis": "Договор № 7 от 01.02.2026", "sheets": "2"})
+    assert first.status_code == 200, first.text
+    second = client.put(f"/api/v1/primary/{doc_id}/print-form", headers=a["hdr"],
+                        json={"seller_bank": "Р/с 40702810400000000123"})
+    assert second.status_code == 200, second.text
+    form = client.get(f"/api/v1/primary/{doc_id}/print-form", headers=a["hdr"]).json()
+    assert form["saved"]["seller_bank"] == "Р/с 40702810400000000123"
+    assert form["saved"]["basis"] == "Договор № 7 от 01.02.2026"      # не затёрто
+    assert form["saved"]["sheets"] == "2"
+    # явная очистка из окна печати сохраняется: поле пришло пустым, значит бухгалтер его стёр
+    cleared = client.put(f"/api/v1/primary/{doc_id}/print-form", headers=a["hdr"], json={"sheets": ""})
+    assert cleared.json()["form"]["sheets"] == "1"                    # вернулось значение по умолчанию
+    assert cleared.json()["form"]["basis"] == "Договор № 7 от 01.02.2026"

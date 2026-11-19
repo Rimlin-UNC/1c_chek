@@ -182,11 +182,17 @@ def auto_from(parsed: dict) -> dict:
         "shipment_doc": parsed.get("shipment_doc") or "",
         "basis": parsed.get("basis") or "",
         "seller_ogrnip": ", ".join(p for p in (ogrnip, ogrnip_date) if p),
-        "seller_subject": subject_seller,
+        # строка «составителя документа»: полное наименование из Документ/@НаимЭконСубСост,
+        # а если его нет — краткое имя и ИНН продавца
+        "seller_subject": parsed.get("subject") or subject_seller,
         "buyer_subject": subject_buyer,
         "transfer_position": signer.get("role") or "",
         "transfer_name": signer.get("name") or "",
         "transfer_sign": "электронно" if signer.get("name") else "",
+        # v1.73.4: в PDF из ЭДО подпись руководителя в блоке под таблицей тоже электронная —
+        # там «электронно» и ФИО подписанта, а не пустые линии под рукописную подпись.
+        "signer_chief": signer.get("name") or "",
+        "signer_chief_role": signer.get("role") or "",
         "transfer_date": date_short(parsed.get("date")),
         "accept_date": date_short(parsed.get("date")),
     }
@@ -296,6 +302,30 @@ def clean(raw: dict | None) -> dict:
     return out
 
 
+def keep(doc: PrimaryDocument, values: dict, explicit: set[str] | None = None) -> dict:
+    """Склеить присланные правки с уже сохранёнными: непереданное поле не стирает заполненное.
+
+    Окно печати отправляет все поля формы, поэтому явно очищенное поле сохраняется пустым.
+    Боты и скрипты зовут PUT частично (одно-два поля) — остальное остаётся как было, вместе
+    с реквизитами из XML. Раньше такой запрос затирал всё остальное.
+    """
+    out = dict(stored(doc))
+    sent = clean(values)
+    if explicit is None:
+        out.update(sent)
+        return out
+    for key in explicit:
+        if key not in LIMITS:
+            continue
+        if key in sent:
+            out[key] = sent[key]
+        else:
+            # явно очищено (пустая строка, не число листов) — правка снимается,
+            # и печать берёт значение по умолчанию из документа
+            out.pop(key, None)
+    return out
+
+
 def form(doc: PrimaryDocument, saved: dict | None = None) -> dict:
     """Поля печатной формы: значения документа, поверх — правки.
 
@@ -347,13 +377,14 @@ def header_rows(doc: PrimaryDocument, values: dict) -> str:
         ("Грузополучатель и его адрес:", values.get("consignee", ""), "4", False),
         ("К платежно-расчётному документу", values.get("payment_doc", ""), "5", False),
     ]
-    if (values.get("payment_advance") or "").strip():
-        rows.append(("К счёту-фактуре (счетам-фактурам), выставленному (выставленным) при получении оплаты, "
-                     "частичной оплаты или иных платежей в счёт предстоящих поставок товаров (выполнения работ, "
-                     "оказания услуг), передачи имущественных прав",
-                     values.get("payment_advance", ""), "5б", False))
+    # v1.73.4: строка (5б) есть в бланке всегда — после (5а) и перед (6); пустая печатается
+    # прочерком, как в PDF из ЭДО («-»), иначе нумерация строк шапки «прыгает».
     rows += [
         ("Документ об отгрузке:", values.get("shipment_doc", ""), "5а", False),
+        ("К счёту-фактуре (счетам-фактурам), выставленному (выставленным) при получении оплаты, "
+         "частичной оплаты или иных платежей в счёт предстоящих поставок товаров (выполнения работ, "
+         "оказания услуг), передачи имущественных прав",
+         values.get("payment_advance", "") or "-", "5б", False),
         ("Покупатель", doc.buyer_name or "—", "6", True),
         ("Адрес", values.get("buyer_address", ""), "6а", False),
         ("ИНН/КПП покупателя", " / ".join(x for x in (doc.buyer_inn, doc.buyer_kpp) if x) or "—", "6б", False),
@@ -361,11 +392,19 @@ def header_rows(doc: PrimaryDocument, values: dict) -> str:
         ("Идентификатор государственного контракта, договора (соглашения) (при наличии)",
          values.get("contract_id", ""), "8", False),
     ]
-    body = "".join(
-        f'<tr><td class="hl">{_esc(label)}</td>'
-        f'<td class="hv{" b" if bold else ""}">{_esc(value)}</td>'
-        f'<td class="hn">({_esc(number)})</td></tr>'
-        for label, value, number, bold in rows)
+    def row(label: str, value: str, number: str, bold: bool) -> str:
+        # v1.73.4: длинная подпись (5б) в бланке занимает всю ширину шапки, а значение
+        # печатается справа у номера строки — поэтому у неё своя разметка, иначе строка
+        # либо уезжает за правый край, либо ломается на десять строк в узкой колонке.
+        if len(label) > 60:
+            return (f'<tr class="wide"><td class="hl hl-wrap" colspan="2">{_esc(label)}'
+                    f'<span class="hv-r{" b" if bold else ""}">{_esc(value)}</span></td>'
+                    f'<td class="hn">({_esc(number)})</td></tr>')
+        return (f'<tr><td class="hl">{_esc(label)}</td>'
+                f'<td class="hv{" b" if bold else ""}">{_esc(value)}</td>'
+                f'<td class="hn">({_esc(number)})</td></tr>')
+
+    body = "".join(row(*item) for item in rows)
     return f'<table class="hdr"><colgroup><col style="width:{HDR_LABEL_W}pt"><col>'            f'<col style="width:{HDR_NUM_W}pt"></colgroup><tbody>{body}</tbody></table>'
 
 
@@ -471,10 +510,13 @@ def signatures(values: dict) -> str:
                 '<tr class="cap"><td class="c">(подпись)</td><td class="c">(ф.и.о.)</td></tr>'
                 "</tbody></table>")
 
+    # подпись руководителя в электронном документе ставится словами «электронно» — так же,
+    # как в PDF из ЭДО; если ФИО не заполнено, остаётся пустая линия под рукописную подпись
+    chief = values.get("signer_chief", "")
     left = (
         '<div class="role">Руководитель организации<br>или иное уполномоченное лицо</div>'
         f'<div class="pos">{_esc(values.get("signer_chief_role", ""))}</div>'
-        + lines("", values.get("signer_chief", ""))
+        + lines("", chief, "электронно")
         + '<div class="role ip">Индивидуальный предприниматель<br>или иное уполномоченное лицо</div>'
         + lines("", values.get("signer_entrepreneur", ""), "электронно")
     )
@@ -616,7 +658,11 @@ table.page > tbody > tr > td { padding: 14pt; vertical-align: top; }
 /* --- шапка (2)–(8): 14 строк, как в бланке --- */
 table.hdr { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: .8pt; }
 .hdr td { border-bottom: .6pt solid #000; padding: 0 2pt .5pt 0; vertical-align: bottom; }
-.hdr .hl { padding-left: 8pt; white-space: nowrap; }
+.hdr .hl { padding-left: 8pt; }
+/* v1.73.4: длинная подпись строки (5б — «К счёту-фактуре…») переносится по словам,
+   как в бланке; остальные подписи остаются в одну строку */
+.hdr .hl-wrap { white-space: normal; line-height: 1.05; }
+.hdr .hv-r { float: right; padding-left: 6pt; }
 .hdr .hn { text-align: right; font-size: 6.8pt; padding-right: 1pt; border-bottom: 0; }
 .hdr tr:last-child td { border-bottom: 0; }
 .b { font-weight: 700; }

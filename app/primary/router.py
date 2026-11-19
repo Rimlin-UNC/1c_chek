@@ -386,7 +386,10 @@ def get_print_form(doc_id: str, user: Accountant, db: Db) -> dict:
 def save_print_form(doc_id: str, user: Accountant, db: Db, body: PrintFormIn) -> dict:
     """Запомнить заполняемые поля печатной формы к документу (одна запись на документ)."""
     doc = _visible(db, user, doc_id)
-    values = printupd.clean(body.model_dump())
+    # v1.73.4: PUT может быть частичным (так его зовут боты и скрипты) — незаполненные поля
+    # запроса не должны стирать уже сохранённые правки: склеиваем с тем, что лежит в print_json.
+    # поля, которых нет в теле запроса, не трогаем: PUT бывает частичным (боты, скрипты)
+    values = printupd.keep(doc, body.model_dump(), set(body.model_fields_set))
     doc.print_json = printupd.dump(values, printupd.auto(doc))   # реквизиты из XML остаются рядом с правками
     db.commit()
     log_action(user, "primary_print_form", details={"document": doc.id,
