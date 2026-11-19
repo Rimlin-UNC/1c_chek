@@ -9,7 +9,9 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.main import app
 from app.primary import printupd
 from app.primary.models import PrimaryDocument, PrimaryDocumentLine
 from tests.conftest import login
@@ -126,7 +128,6 @@ def test_html_has_form_requisites_lines_and_totals():
                    "Товар (груз) получил/услуги, результаты работ, права принял",
                    "Ответственный за правильность оформления факта хозяйственной жизни",
                    "Наименование экономического субъекта — составителя документа",
-                   "ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ", "ОТПРАВЛЕНО", "УТВЕРЖДЕНО",
                    "(банковские реквизиты продавца)", "(банковские реквизиты покупателя)",
                    "к постановлению Правительства Российской Федерации от 26.12.2011 № 1137",
                    "от 23.01.2026 № 26", "/js/primary_print_page.js"):
@@ -387,6 +388,27 @@ def test_chief_signature_is_electronic_when_signer_known():
     assert "Мельникова Анна Валерьевна" in page
 
 
+def test_blank_has_no_electronic_signature_block():
+    """Блок «ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ» в бланк не печатается (указание владельца).
+
+    Печатается сама форма УПД, а не протокол подписания: ни сертификатов, ни отметок
+    «ОТПРАВЛЕНО»/«УТВЕРЖДЕНО», ни оператора ЭДО в бланке нет. Поля формы при этом остаются
+    в окне печати — они не мешают бумаге, но и не попадают на неё.
+    """
+    from app.primary import upd
+
+    values = printupd.auto_from(upd.parse(REAL_EDO))
+    values.update({"edo_operator": 'ООО "Компания "Тензор""', "edo_id": "855f6271",
+                   "edo_sent_cert": "50D9410CDF528EB241C1D5B9019FF107", "edo_sent_name": "ОТПРАВИЛ"})
+    page = printupd.html(_doc(print_json=printupd.dump({}, values)))
+    for absent in ("ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ", "ОТПРАВЛЕНО", "УТВЕРЖДЕНО",
+                   "Сертификат", "Идентификатор:", "Оператор ЭДО"):
+        assert absent not in page, absent
+    assert "М.П." in page and "Товар (груз) передал" in page     # сама форма на месте
+    # поля остаются доступными в окне печати — их можно заполнить, они просто не печатаются
+    assert "edo_operator" in printupd.FIELDS and "edo_sent_cert" in printupd.FIELDS
+
+
 def test_partial_save_does_not_erase_saved_fields(client, firms):
     """Частичный PUT (одно поле) не стирает остальные правки — их зовут боты и скрипты."""
     _, a, _ = firms
@@ -405,3 +427,74 @@ def test_partial_save_does_not_erase_saved_fields(client, firms):
     cleared = client.put(f"/api/v1/primary/{doc_id}/print-form", headers=a["hdr"], json={"sheets": ""})
     assert cleared.json()["form"]["sheets"] == "1"                    # вернулось значение по умолчанию
     assert cleared.json()["form"]["basis"] == "Договор № 7 от 01.02.2026"
+
+
+def test_print_opens_in_new_tab_without_session_cookie(client, firms):
+    """Мобильный Chrome открывает новую вкладку без cookie и без заголовка — бланк должен открыться.
+
+    Так было на Android: вкладка «🖨 Печать / PDF» приходила на /print без сессии и получала
+    `{"detail":"Требуется авторизация"}` вместо УПД. Теперь окно печати берёт одноразовый билет
+    печати и открывает адрес с ним.
+    """
+    _, a, _ = firms
+    doc_id = _doc_id(client, a)
+    ticket = client.get(f"/api/v1/primary/{doc_id}/print-ticket", headers=a["hdr"])
+    assert ticket.status_code == 200, ticket.text
+    body = ticket.json()
+    assert body["url"].startswith(f"/api/v1/primary/{doc_id}/print?ticket=")
+
+    # новая вкладка: ни cookie сессии, ни заголовка Authorization
+    fresh = TestClient(app)
+    bare = fresh.get(f"/api/v1/primary/{doc_id}/print")
+    assert bare.status_code == 401 and "Требуется авторизация" in bare.text   # как было на телефоне
+    page = fresh.get(body["url"])
+    assert page.status_code == 200, page.text
+    assert "Универсальный передаточный документ" in page.text and ">11</th>" in page.text
+    assert 'data-print="0"' in page.text
+
+
+def test_print_ticket_is_bound_to_one_document_and_short_lived(client, firms):
+    """Билет открывает ровно свой документ: чужой адрес с тем же билетом — отказ."""
+    _, a, b = firms
+    mine = _doc_id(client, a)
+    other = _doc_id(client, b)
+    body = client.get(f"/api/v1/primary/{mine}/print-ticket", headers=a["hdr"]).json()
+
+    fresh = TestClient(app)
+    wrong = fresh.get(f"/api/v1/primary/{other}/print?ticket={body['ticket']}")
+    assert wrong.status_code == 401
+    tampered = fresh.get(f"/api/v1/primary/{mine}/print?ticket={body['ticket'][:-4]}AAAA")
+    assert tampered.status_code == 401
+    assert fresh.get(f"/api/v1/primary/{mine}/print?ticket=").status_code == 401
+
+
+def test_print_ticket_needs_print_rights(client, firms):
+    """Сотрудник без прав бухгалтера билет не получает — и вкладка печати тоже закрыта."""
+    hdr_root, a, _ = firms
+    doc_id = _doc_id(client, a)
+    plain = _mk_user(client, hdr_root, a["id"], f"prim_plain_{uuid4().hex[:8]}")
+    assert client.get(f"/api/v1/primary/{doc_id}/print-ticket", headers=plain).status_code == 403
+    assert client.get(f"/api/v1/primary/{doc_id}/print", headers=plain).status_code == 403
+
+
+def test_print_ticket_expires_and_carries_no_session():
+    """Билет живёт минуты и не содержит токена сессии — в адрес и историю он не утекает."""
+    from app.auth import create_print_ticket, decode_token
+
+    doc = _doc()
+    doc.id = "doc-expire"
+    user = type("U", (), {"id": "u-1", "username": "бухгалтер", "role": "accountant"})()
+    ticket = create_print_ticket(user, doc.id)
+    import jwt as pyjwt
+
+    from app.config import settings
+
+    payload = pyjwt.decode(ticket, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    assert payload["doc"] == doc.id and payload["scope"] == "print"
+    assert "username" not in payload and "role" not in payload      # это не сессия
+    assert payload["exp"] - payload["iat"] == 30 * 60               # полчаса, а не 12 часов
+    with pytest.raises(Exception):
+        decode_token(ticket)                    # печатный билет не годится как токен доступа
+    old = create_print_ticket(user, doc.id, minutes=-1)             # уже просрочен
+    fresh = TestClient(app)
+    assert fresh.get(f"/api/v1/primary/{doc.id}/print?ticket={old}").status_code == 401

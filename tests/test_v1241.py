@@ -18,7 +18,11 @@ class TestQRPrint:
         seg = self._fn_segment(js)
         # ожидание картинок — ДО window.print() и до тоста
         assert "await whenImagesReady(root);" in seg
-        assert seg.index("whenImagesReady(root);") < seg.index("window.print();")
+        # v1.73.5: на Android печать из скрипта блокируется, поэтому вызов идёт через
+        # printWithHint() — он печатает на компьютере и объясняет путь в меню на телефоне.
+        call = "window.print();" if "window.print();" in seg else "printWithHint();"
+        assert call in seg
+        assert seg.index("whenImagesReady(root);") < seg.index(call)
         # страховка по таймауту внутри хелпера
         assert "setTimeout(done" in js
 

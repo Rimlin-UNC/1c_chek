@@ -83,13 +83,53 @@ def create_access_token(user: User) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
+def create_print_ticket(user: User, doc_id: str, *, minutes: int = 30) -> str:
+    """v1.73.5: одноразовый билет на печать одной формы — для новой вкладки.
+
+    Вкладка «🖨 Печать / PDF» открывается по обычному адресу и не передаёт заголовок
+    Authorization: на компьютере сессию спасает HttpOnly-cookie, а в мобильном Chrome
+    (внешний «просмотрщик», приватный режим, режим экономии данных) cookie может не дойти —
+    и вместо бланка человек видел «Требуется авторизация». Билет подписан тем же секретом,
+    живёт минуты и открывает ровно один документ, поэтому токен сессии не утекает в адрес
+    и в историю браузера.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user.id,
+        "doc": doc_id,
+        "scope": "print",
+        "iat": now,
+        "exp": now + timedelta(minutes=minutes),
+        "iss": "ymaster-check",
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_print_ticket(ticket: str, doc_id: str) -> str:
+    """Проверить билет печати: возвращает id пользователя или бросает 401."""
+    try:
+        payload = jwt.decode(ticket, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Срок печати истёк — нажмите «Печать» снова")
+    except jwt.PyJWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Ссылка печати недействительна")
+    if payload.get("scope") != "print" or payload.get("doc") != doc_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Ссылка печати недействительна")
+    return str(payload.get("sub") or "")
+
+
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен истёк, войдите заново")
     except jwt.PyJWTError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Недействительный токен")
+    # v1.73.5: узкие билеты (печать формы) — не сессия. Билет печати попадает в адрес и в
+    # историю браузера, поэтому токеном доступа он быть не должен ни при каких условиях.
+    if payload.get("scope"):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Недействительный токен")
+    return payload
 
 
 # --------------------------------------------------------------------------
@@ -167,6 +207,31 @@ def get_current_user(
             clients.activate(db, user, requested)
         except clients.ClientsError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
+    return user
+
+
+def current_user_optional(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """v1.73.5: тот же вход, но без отказа — None, если сессии нет.
+
+    Нужен страницам, которые открываются в новой вкладке: токен в заголовке там не уходит,
+    и вместо 401 страница сама решает, чем подтвердить доступ (билет печати из адреса).
+    """
+    token = credentials.credentials if credentials and credentials.credentials else None
+    if not token:
+        token = request.cookies.get("ymaster_token")
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        return None
+    user = db.get(User, payload.get("sub", ""))
+    if user is None or not user.is_active:
+        return None
     return user
 
 

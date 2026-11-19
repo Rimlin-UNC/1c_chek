@@ -11,7 +11,7 @@ const start = source.indexOf('async function printReceiptsPDF(ids, report = null
 const end = source.indexOf('\nfunction dataCount', start);
 const makePrint = new Function('api', 'openModal', 'toast', 'shopReceiptHTML', 'esc',
   'packCut', 'splitBlocks', 'COL_H', 'columnX', 'SCALE', 'RCPT_W', 'MARGIN_Y',
-  'setPrintPageMargin', 'whenImagesReady', 'dataCount', 'printWithTitle',
+  'setPrintPageMargin', 'whenImagesReady', 'dataCount', 'printWithTitle', 'printWithHint',
   `${source.slice(start, end)}; return printReceiptsPDF;`);
 
 describe('печать карточек', () => {
@@ -34,7 +34,8 @@ describe('печать карточек', () => {
     };
     print = makePrint(api, () => ({ close: vi.fn() }), toast, shopReceiptHTML, esc,
       packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y,
-      vi.fn(), vi.fn(async () => {}), n => `чеков: ${n}`, name => { document.title = name; window.print(); });
+      vi.fn(), vi.fn(async () => {}), n => `чеков: ${n}`, name => { document.title = name; window.print(); },
+      () => { window.print(); });
   });
   afterEach(() => { vi.restoreAllMocks(); document.getElementById('print-root')?.remove(); });
   it('печатает все выбранные карточки с позициями, оплатой и фискальными реквизитами', async () => {

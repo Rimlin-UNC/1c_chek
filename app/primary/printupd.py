@@ -549,27 +549,6 @@ def _date_words(raw: str) -> str:
     return f"« {day} » {month_name} 20 {year[2:]} г."
 
 
-def edo_block(values: dict) -> str:
-    """Блок электронной подписи: кто отправил, кто утвердил, время и сертификаты."""
-    def row(title: str, name_key: str, time_key: str, cert_key: str) -> str:
-        return ("<tr>"
-                f'<td class="edo-t">{_esc(title)}</td>'
-                f'<td class="edo-n">{_esc(values.get(name_key, ""))}</td>'
-                f'<td class="edo-time">{_esc(values.get(time_key, ""))}</td>'
-                f'<td class="edo-c">Сертификат {_esc(values.get(cert_key, ""))}</td></tr>')
-
-    return (
-        '<div class="edo">'
-        '<div class="edo-head"><span class="edo-title">ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ</span>'
-        f'<span class="edo-id">Идентификатор: {_esc(values.get("edo_id", ""))}</span></div>'
-        '<table class="edo-grid"><tbody>'
-        + row("ОТПРАВЛЕНО", "edo_sent_name", "edo_sent_time", "edo_sent_cert")
-        + row("УТВЕРЖДЕНО", "edo_approved_name", "edo_approved_time", "edo_approved_cert")
-        + "</tbody></table>"
-        f'<div class="edo-role">{_esc(values.get("edo_approved_role", ""))}</div>'
-        "</div>")
-
-
 def tail(values: dict) -> str:
     """Нижняя половина бланка: основание передачи, транспортировка, передал/получил, реквизиты, ЭДО."""
     def halves(left_html: str, right_html: str) -> str:
@@ -624,10 +603,10 @@ def tail(values: dict) -> str:
                f'<div class="fillline">{_esc(values.get("buyer_subject", ""))}</div>'
                '<div class="hint1">(может не заполняться при проставлении печати в М. П., '
                "может быть указан ИНН/КПП)</div>"),
-        '<table class="mprow"><colgroup><col style="width:36%"><col></colgroup><tbody><tr>'
-        '<td class="mpcell"><div class="mp">М.П.</div></td>'
-        f'<td class="edocell"><div class="operator">Оператор ЭДО {_esc(values.get("edo_operator", ""))}</div>'
-        f"{edo_block(values)}</td></tr></tbody></table>",
+        # v1.73.5: блок «ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ» (сертификаты, «ОТПРАВЛЕНО»,
+        # «УТВЕРЖДЕНО», идентификатор и оператор ЭДО) в печатный бланк не выводится — по
+        # указанию владельца: печатается сама форма УПД, а не протокол подписания.
+        '<div class="mp">М.П.</div>',
     ))
 
 
@@ -717,22 +696,7 @@ table.triple td { padding: 0 1pt; border-bottom: .6pt solid #000; font-size: 7pt
                   vertical-align: bottom; }
 table.triple tr.cap td { border-bottom: 0; font-size: 6pt; height: 8pt; vertical-align: top; }
 table.triple td.c { text-align: center; }
-table.mprow { width: 813.2pt; border-collapse: collapse; table-layout: fixed; margin-top: -1pt; }
-table.mprow td { vertical-align: bottom; padding: 0 2pt; }
-table.mprow td.mpcell { padding-top: 8pt; }
-.mp { font-size: 7pt; }
-.operator { font-size: 7pt; text-align: right; padding: 0 2pt 1pt 0; }
-/* --- блок электронной подписи --- */
-.edo { border: .8pt solid #000; width: 521pt; margin: 2pt 0 0 auto; }
-.edo-head { display: flex; justify-content: space-between; align-items: baseline; padding: 1.2pt 4pt 0; }
-.edo-title, .edo-id { font-size: 7pt; }
-table.edo-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 1pt; }
-table.edo-grid td { font-size: 7pt; padding: 2.2pt 4pt; vertical-align: top; }
-.edo-t { width: 62pt; }
-.edo-n { width: 148pt; font-weight: 700; }
-.edo-time { width: 92pt; font-weight: 700; }
-.edo-c { font-size: 6.8pt; }
-.edo-role { padding: 0 4pt 2pt 66pt; font-size: 7pt; }
+.mp { font-size: 7pt; padding: 8pt 2pt 0; }
 /* --- печать и просмотр на узком экране --- */
 @media print {
   body { background: #fff; }
@@ -741,6 +705,16 @@ table.edo-grid td { font-size: 7pt; padding: 2.2pt 4pt; vertical-align: top; }
 }
 @media screen and (max-width: 1100px) { table.page { zoom: .78; } }
 @media screen and (max-width: 820px) { table.page { zoom: .52; } }
+/* v1.73.5 (Android): бланк — альбомный лист, на телефоне вместе с масштабированием
+   это 400+ px в ширину. Узкий экран прокручивается вбок, но не ломает раскладку листа. */
+body { overflow-x: auto; -webkit-text-size-adjust: 100%; }
+/* Телефон: бланк шире экрана — текст остаётся читаемым, а лист прокручивается вбок.
+   Дальше можно приблизить двумя пальцами: maximum-scale не ограничен. */
+@media screen and (max-width: 560px) {
+  table.page { zoom: .52; margin: 6px auto; }
+  .toolbar { padding: 8px 6px; display: block; text-align: center; }
+  .toolbar button { width: 100%; margin-bottom: 6px; }
+}
 """
 
 
@@ -767,7 +741,7 @@ def html(doc: PrimaryDocument, values: dict | None = None, *, auto_print: bool =
 <style>{CSS}</style></head>
 <body data-print="{1 if auto_print else 0}">
 <div class="toolbar"><button type="button" id="pp-print">🖨 Печать / сохранить в PDF</button>
-  <span class="hint">В окне печати выберите «Сохранить как PDF», чтобы получить файл.</span></div>
+  <span class="hint" id="pp-hint">В окне печати выберите «Сохранить как PDF», чтобы получить файл.</span></div>
 <table class="page"><tbody><tr><td>
   <div class="top">
     <div class="stub">

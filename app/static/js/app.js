@@ -18,7 +18,7 @@ import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.4';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.5';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6927,6 +6927,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.5': [
+    { icon: '📱', title: 'Печать УПД на телефоне: бланк открывается, а не «Требуется авторизация»',
+      text: 'В мобильном браузере новая вкладка печати приходила без сессии, и вместо бланка был отказ «Требуется авторизация». Теперь вкладка получает одноразовую ссылку на печать одного документа: она живёт полчаса и не содержит токена входа. Если браузер телефона не умеет открывать печать из скрипта (так ведёт себя Chrome на Android), программа прямо подсказывает, где печать: ⋮ → «Поделиться» → «Печать» или «Сохранить как PDF».' },
+    { icon: '📄', title: 'Бланк УПД без электронной подписи',
+      text: 'По вашему замечанию из печатной формы убран блок «ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ»: на бумаге печатается сама форма УПД, без сертификатов, отметок «ОТПРАВЛЕНО»/«УТВЕРЖДЕНО», идентификатора и оператора ЭДО. Поля этих сведений остались в окне заполнения — они не мешают бланку, но больше на него не попадают.' },
+  ],
   '1.73.4': [
     { icon: '📁', title: '«Папка с УПД» находит документы, которые раньше пропускала',
       text: 'Файлы выгрузки ЭДО с именем вида «1_ON_NSCHFDOPPR_.xml» больше не отсеиваются: программа узнаёт УПД по признаку ИдФайл, начинающемуся с ON_NSCHFDOPPR, а не только по началу имени файла. Заодно XML без объявленной кодировки читается в windows-1251, а не превращается в мусор.' },
@@ -10052,7 +10058,7 @@ async function printReceiptsPDF(ids, report = null) {
       root.remove();
       urls.forEach(url => URL.revokeObjectURL(url));
     }, { once: true });
-    if (report?.filename) printWithTitle(report.filename); else window.print();
+    if (report?.filename) printWithTitle(report.filename); else printWithHint();
     printing = true;
   } catch (e) {
     close();
@@ -10220,7 +10226,26 @@ function aoReportFilename(rep, meta) {
 }
 
 // Браузер предлагает document.title в качестве имени PDF; смену имени можно отменить.
+// v1.73.5 (Android): мобильный Chrome не открывает системное окно печати по вызову из скрипта —
+// вызов молча игнорируется, и человек видит только «ничего не произошло». Вместо этого честно
+// говорим, где печать: меню ⋮ → «Поделиться» → «Печать» (или «Сохранить как PDF»).
+function printBlockedByBrowser() {
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  return /Android/i.test(ua) && /Chrome|CriOS|wv\)/i.test(ua);
+}
+
+function printWithHint() {
+  if (printBlockedByBrowser()) {
+    toast('Печать в этом браузере открывается из меню: ⋮ → «Поделиться» → «Печать» '
+      + '(или «Сохранить как PDF»).', 'warn', '🖨');
+    return false;
+  }
+  window.print();
+  return true;
+}
+
 function printWithTitle(name) {
+  if (printBlockedByBrowser()) { printWithHint(); return; }
   const previous = document.title;
   document.title = name;
   const restore = () => { document.title = previous; };

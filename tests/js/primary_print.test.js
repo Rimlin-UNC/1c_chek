@@ -101,3 +101,15 @@ describe('primPrintBody', () => {
     expect(body.signer_chief).toBe('');
   });
 });
+
+describe('печать в новой вкладке (v1.73.5, Android)', () => {
+  it('окно печати берёт одноразовый билет, а не голый адрес /print', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'app/static/js/primary.js'), 'utf8');
+    // на телефоне новая вкладка приходит без сессии — адрес без билета давал «Требуется авторизация»
+    expect(src).toContain('/print-ticket');
+    expect(src).toContain('openWithTicket');
+    expect(src).not.toMatch(/win\.location = `\/api\/v1\/primary\/\$\{encodeURIComponent\(id\)\}\/print/);
+  });
+});

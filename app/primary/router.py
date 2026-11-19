@@ -29,7 +29,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from ..auth import require_accountant, require_admin
+from ..auth import (create_print_ticket, current_user_optional, decode_print_ticket,
+                    require_accountant, require_admin)
 from ..database import get_db
 from ..models import User
 from ..services.audit import log_action
@@ -397,9 +398,61 @@ def save_print_form(doc_id: str, user: Accountant, db: Db, body: PrintFormIn) ->
     return {"ok": True, "form": printupd.form(doc, values)}
 
 
+class PrintTicketOut(BaseModel):
+    """v1.73.5: одноразовая ссылка на печать формы — её открывает новая вкладка."""
+
+    ticket: str
+    url: str
+
+
+@router.get("/{doc_id}/print-ticket")
+def print_ticket(doc_id: str, user: Accountant, db: Db) -> PrintTicketOut:
+    """Ссылка печати для новой вкладки: адрес работает без заголовка Authorization.
+
+    На компьютере сессию в новой вкладке держит HttpOnly-cookie, а в мобильном Chrome
+    (внешний просмотрщик, режим экономии данных, приватное окно) cookie может не дойти —
+    и человек видел вместо бланка «Требуется авторизация». Билет подписан секретом сервера,
+    живёт 30 минут и открывает ровно один документ, поэтому токен сессии в адрес не попадает.
+    """
+    _visible(db, user, doc_id)                     # права и видимость — те же, что у печати
+    ticket = create_print_ticket(user, doc_id)
+    return PrintTicketOut(ticket=ticket, url=f"/api/v1/primary/{doc_id}/print?ticket={ticket}")
+
+
+PRINT_ROLES = ("admin", "accountant")
+
+
+def _print_user(doc_id: str, ticket: str, user: User | None, db: Session) -> User:
+    """Кто печатает: обычная сессия, а если новая вкладка её не принесла — билет из адреса.
+
+    Права те же, что у окна печати: бухгалтер и администратор. Сотрудник без этих прав
+    получает 403 (как на /print-form), а не бланк с реквизитами.
+    """
+    if not ticket:
+        if user is None:
+            raise HTTPException(401, "Требуется авторизация")
+        if user.role not in PRINT_ROLES:
+            raise HTTPException(403, "Недостаточно прав для этого действия")
+        return user
+    found = db.get(User, decode_print_ticket(ticket, doc_id))
+    if found is None or not found.is_active:
+        raise HTTPException(401, "Требуется авторизация")
+    if found.role not in PRINT_ROLES:
+        raise HTTPException(403, "Недостаточно прав для этого действия")
+    return found
+
+
 @router.get("/{doc_id}/print", response_class=HTMLResponse)
-def print_form(doc_id: str, user: Accountant, db: Db, print_: Annotated[int, Query(alias="print")] = 0) -> HTMLResponse:
-    """Готовая печатная форма УПД (A4, альбомная): печать из браузера, «Сохранить как PDF» (T-62, ADR-45)."""
+def print_form(doc_id: str, db: Db, print_: Annotated[int, Query(alias="print")] = 0,
+               ticket: Annotated[str, Query(max_length=600)] = "",
+               user: User | None = Depends(current_user_optional)) -> HTMLResponse:
+    """Готовая печатная форма УПД (A4, альбомная): печать из браузера, «Сохранить как PDF» (T-62, ADR-45).
+
+    v1.73.5: доступна и по билету печати (?ticket=…) — мобильный Chrome открывает новую
+    вкладку без cookie сессии, и раньше вместо бланка показывал «Требуется авторизация».
+    Блок электронной подписи (сертификаты, «ОТПРАВЛЕНО»/«УТВЕРЖДЕНО») в бланк не печатается.
+    """
+    user = _print_user(doc_id, ticket, user, db)
     doc = _visible(db, user, doc_id)
     page = printupd.html(doc, auto_print=bool(print_))
     log_action(user, "primary_printed", details={"document": doc.id})

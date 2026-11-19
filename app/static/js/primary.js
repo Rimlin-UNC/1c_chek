@@ -701,7 +701,18 @@ export async function viewPrimary(container, opts = {}) {
       await api.put(`/api/v1/primary/${encodeURIComponent(id)}/print-form`, body);
       return body;
     };
-    const openPage = (suffix) => window.open(`/api/v1/primary/${encodeURIComponent(id)}/print${suffix}`, '_blank', 'noopener');
+    // v1.73.5: новая вкладка не передаёт заголовок Authorization — на компьютере сессию спасает
+    // HttpOnly-cookie, а в мобильном Chrome (внешний просмотрщик, режим экономии) её нет, и вместо
+    // бланка человек видел «Требуется авторизация». Поэтому просим одноразовый билет печати.
+    const printUrl = async (auto) => {
+      const t = await api.get(`/api/v1/primary/${encodeURIComponent(id)}/print-ticket`);
+      return `${t.url}${auto ? '&print=1' : ''}`;
+    };
+    const openWithTicket = async (win, auto) => {
+      let url;
+      try { url = await printUrl(auto); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
+      if (win) win.location = url; else window.open(url, '_blank', 'noopener');
+    };
     get('prim-print-reset').onclick = () => {
       const form = (data && data.defaults) || {};
       for (const f of PRIM_PRINT_FIELDS) {
@@ -717,14 +728,12 @@ export async function viewPrimary(container, opts = {}) {
     get('prim-print-view').onclick = async () => {
       const win = window.open('', '_blank');
       try { await save(); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
-      if (win) win.location = `/api/v1/primary/${encodeURIComponent(id)}/print`;
-      else openPage('');
+      await openWithTicket(win, false);
     };
     get('prim-print-go').onclick = async () => {
       const win = window.open('', '_blank');          // окно открывается сразу: иначе браузер заблокирует
       try { await save(); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
-      if (win) win.location = `/api/v1/primary/${encodeURIComponent(id)}/print?print=1`;
-      else openPage('?print=1');
+      await openWithTicket(win, true);
       if (typeof close === 'function') close();
     };
   }

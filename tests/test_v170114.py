@@ -157,7 +157,8 @@ class TestCode:
         assert "export const PRIM_PRINT_FIELDS = [" in primary
         assert "export function primPrintHtml(data) {" in primary
         assert "export function primPrintBody(get) {" in primary
-        for needle in ("id=\"prim-card-print\"", "print-form`", "/print?print=1", "window.open('', '_blank')"):
+        # v1.73.5: вкладка печати берёт одноразовый билет (на Android без cookie был отказ)
+        for needle in ("id=\"prim-card-print\"", "print-form`", "/print-ticket", "window.open('', '_blank')"):
             assert needle in primary, needle
         page = read("app/static/js/primary_print_page.js")
         assert "window.print()" in page and "dataset.print" in page
