@@ -398,52 +398,102 @@ function primDownload(blob, filename) {
 }
 
 /* ---- v1.70.114 (T-62): печатная форма УПД (ADR-45) ---- */
-// Заполняемые поля формы в том же порядке, что в бланке. Реквизиты документа (номер, дата,
-// стороны, строки, суммы) не редактируются: они пришли из ЭДО или из сверенного черновика,
-// и печатная форма должна совпадать с файлом для 1С.
+// v1.73.4: бланк собран один в один с формой из ЭДО (16 граф, блок передачи товара, банковские
+// реквизиты и блок электронной подписи), поэтому и заполняемых полей стало 47. Они разложены по
+// разделам бланка: 47 полей подряд в окне читать невозможно. Подписи полей приходят с сервера
+// (printupd.FIELD_SPECS) и здесь только дублируются как запасной вариант — состав полей один.
 export const PRIM_PRINT_FIELDS = [
-  { key: 'status', label: 'Статус документа (1 или 2)', type: 'select', options: [
+  { key: 'status', label: 'Статус документа (1 или 2)', type: 'select', group: 'Шапка', options: [
     { value: '1', title: '1 — счёт-фактура и передаточный документ (акт)' },
     { value: '2', title: '2 — передаточный документ (акт)' }] },
-  { key: 'seller_address', label: 'Адрес продавца (2а)', max: 300 },
-  { key: 'buyer_address', label: 'Адрес покупателя (6а)', max: 300 },
-  { key: 'shipper', label: 'Грузоотправитель и его адрес (3)', max: 300 },
-  { key: 'consignee', label: 'Грузополучатель и его адрес (4)', max: 300 },
-  { key: 'payment_doc', label: 'К платёжно-расчётному документу (5)', max: 200 },
-  { key: 'shipment_doc', label: 'Документ об отгрузке (5а)', max: 200 },
-  { key: 'contract_id', label: 'Идентификатор госконтракта, договора (8)', max: 100 },
-  { key: 'currency', label: 'Валюта: наименование, код (7)', max: 100 },
-  { key: 'basis', label: 'Основание передачи (сдачи) / получения (приёмки)', max: 300 },
-  { key: 'sheets', label: 'Документ составлен на … листах', max: 3, inputmode: 'numeric' },
-  { key: 'signer_chief_role', label: 'Руководитель: должность', max: 200 },
-  { key: 'signer_chief', label: 'Руководитель: ФИО', max: 200 },
-  { key: 'signer_accountant_role', label: 'Главный бухгалтер: должность', max: 200 },
-  { key: 'signer_accountant', label: 'Главный бухгалтер: ФИО', max: 200 },
-  { key: 'signer_entrepreneur', label: 'Индивидуальный предприниматель: ФИО и реквизиты', max: 200 },
+  { key: 'correction', label: 'Исправление № и дата', group: 'Шапка', max: 60 },
+  { key: 'seller_address', label: 'Адрес продавца (2а)', group: 'Шапка', max: 300 },
+  { key: 'buyer_address', label: 'Адрес покупателя (6а)', group: 'Шапка', max: 300 },
+  { key: 'shipper', label: 'Грузоотправитель и его адрес (3)', group: 'Шапка', max: 300 },
+  { key: 'consignee', label: 'Грузополучатель и его адрес (4)', group: 'Шапка', max: 300 },
+  { key: 'payment_doc', label: 'К платёжно-расчётному документу (5)', group: 'Шапка', max: 200 },
+  { key: 'payment_advance', label: 'К счёту-фактуре при оплате, частичной оплате (5б)', group: 'Шапка', max: 300 },
+  { key: 'shipment_doc', label: 'Документ об отгрузке (5а)', group: 'Шапка', max: 200 },
+  { key: 'contract_id', label: 'Идентификатор госконтракта, договора (8)', group: 'Шапка', max: 100 },
+  { key: 'currency', label: 'Валюта: наименование, код (7)', group: 'Шапка', max: 100 },
+  { key: 'basis', label: 'Основание передачи (сдачи) / получения (приёмки)', group: 'Основание и передача', max: 300 },
+  { key: 'sheets', label: 'Документ составлен на … листах', group: 'Основание и передача', max: 3, inputmode: 'numeric' },
+  { key: 'transfer_position', label: 'Товар передал: должность', group: 'Основание и передача', max: 200 },
+  { key: 'transfer_sign', label: 'Товар передал: подпись (в ЭДО — «электронно»)', group: 'Основание и передача', max: 60 },
+  { key: 'transfer_name', label: 'Товар передал: ФИО', group: 'Основание и передача', max: 200 },
+  { key: 'accept_position', label: 'Товар получил: должность', group: 'Основание и передача', max: 200 },
+  { key: 'accept_sign', label: 'Товар получил: подпись (в ЭДО — «электронно»)', group: 'Основание и передача', max: 60 },
+  { key: 'accept_name', label: 'Товар получил: ФИО', group: 'Основание и передача', max: 200 },
+  { key: 'transfer_date', label: 'Дата отгрузки, передачи (сдачи)', group: 'Основание и передача', max: 20,
+    placeholder: '06.04.2026' },
+  { key: 'accept_date', label: 'Дата получения (приёмки)', group: 'Основание и передача', max: 20,
+    placeholder: '06.04.2026' },
+  { key: 'transfer_other', label: 'Иные сведения об отгрузке, передаче', group: 'Основание и передача', max: 300 },
+  { key: 'accept_other', label: 'Иные сведения о получении, приёмке', group: 'Основание и передача', max: 300 },
+  { key: 'seller_bank', label: 'Банковские реквизиты продавца', group: 'Основание и передача', max: 300 },
+  { key: 'buyer_bank', label: 'Банковские реквизиты покупателя', group: 'Основание и передача', max: 300 },
+  { key: 'seller_subject', label: 'Экономический субъект — составитель документа (продавец)', group: 'Подписи', max: 300 },
+  { key: 'buyer_subject', label: 'Экономический субъект — составитель документа (покупатель)', group: 'Подписи', max: 300 },
+  { key: 'signer_chief_role', label: 'Руководитель: должность', group: 'Подписи', max: 200 },
+  { key: 'signer_chief', label: 'Руководитель: ФИО', group: 'Подписи', max: 200 },
+  { key: 'signer_accountant_role', label: 'Главный бухгалтер: должность', group: 'Подписи', max: 200 },
+  { key: 'signer_accountant', label: 'Главный бухгалтер: ФИО', group: 'Подписи', max: 200 },
+  { key: 'signer_entrepreneur', label: 'Индивидуальный предприниматель: ФИО', group: 'Подписи', max: 200 },
+  { key: 'seller_ogrnip', label: 'ОГРНИП и дата присвоения (ИП)', group: 'Подписи', max: 60 },
+  { key: 'resp_left_position', label: 'Ответственный (передал): должность', group: 'Подписи', max: 200 },
+  { key: 'resp_left_sign', label: 'Ответственный (передал): подпись', group: 'Подписи', max: 60 },
+  { key: 'resp_left_name', label: 'Ответственный (передал): ФИО', group: 'Подписи', max: 200 },
+  { key: 'resp_right_position', label: 'Ответственный (получил): должность', group: 'Подписи', max: 200 },
+  { key: 'resp_right_sign', label: 'Ответственный (получил): подпись', group: 'Подписи', max: 60 },
+  { key: 'resp_right_name', label: 'Ответственный (получил): ФИО', group: 'Подписи', max: 200 },
+  { key: 'edo_operator', label: 'Оператор ЭДО', group: 'ЭДО', max: 200 },
+  { key: 'edo_id', label: 'Идентификатор документа (ЭДО)', group: 'ЭДО', max: 60 },
+  { key: 'edo_sent_name', label: 'Отправлено: кто подписал', group: 'ЭДО', max: 300 },
+  { key: 'edo_sent_time', label: 'Отправлено: дата и время', group: 'ЭДО', max: 60 },
+  { key: 'edo_sent_cert', label: 'Отправлено: сертификат', group: 'ЭДО', max: 60 },
+  { key: 'edo_approved_name', label: 'Утверждено: кто подписал', group: 'ЭДО', max: 300 },
+  { key: 'edo_approved_time', label: 'Утверждено: дата и время', group: 'ЭДО', max: 60 },
+  { key: 'edo_approved_cert', label: 'Утверждено: сертификат', group: 'ЭДО', max: 60 },
+  { key: 'edo_approved_role', label: 'Утверждено: должность', group: 'ЭДО', max: 200 },
 ];
 
 /** Окно «Печатная форма»: поля из ответа /print-form (значения документа + сохранённые правки). */
 export function primPrintHtml(data) {
   const form = (data && data.form) || (data && data.defaults) || {};
+  const labels = (data && data.labels) || {};
   const fields = PRIM_PRINT_FIELDS.map((f) => {
     const id = `prim-pf-${f.key}`;
     const value = form[f.key] ?? '';
+    const label = esc(labels[f.key] || f.label);
     if (f.type === 'select') {
       const options = (f.options || []).map((o) => `<option value="${esc(o.value)}" ${
         String(value) === String(o.value) ? 'selected' : ''}>${esc(o.title)}</option>`).join('');
-      return `<label class="field"><span>${esc(f.label)}</span><select id="${id}">${options}</select></label>`;
+      return `<label class="field"><span>${label}</span><select id="${id}">${options}</select></label>`;
     }
-    return `<label class="field"><span>${esc(f.label)}</span><input id="${id}" type="text" maxlength="${f.max || 200}"
-      ${f.inputmode ? `inputmode="${f.inputmode}"` : ''} value="${esc(value)}"></label>`;
-  }).join('');
+    return `<label class="field"><span>${label}</span><input id="${id}" type="text" maxlength="${f.max || 200}"
+      ${f.inputmode ? `inputmode="${f.inputmode}"` : ''}${f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : ''}
+      value="${esc(value)}"></label>`;
+  });
+  // Разделы бланка: шапка, основание и передача, подписи, ЭДО. Пустые разделы не рисуются.
+  const groups = [];
+  PRIM_PRINT_FIELDS.forEach((f, i) => {
+    const name = f.group || 'Поля';
+    let group = groups.find((g) => g.name === name);
+    if (!group) { group = { name, items: [] }; groups.push(group); }
+    group.items.push(fields[i]);
+  });
+  const body = groups.map((g) => `<fieldset class="prim-print-group"><legend>${esc(g.name)}</legend>
+      <div class="prim-print-form">${g.items.join('')}</div></fieldset>`).join('');
   const saved = data && data.saved && Object.keys(data.saved).length;
   return `
     <h3 class="modal-title">🖨 Печатная форма УПД: ${esc((data && data.title) || 'документ')}</h3>
-    <p class="form-hint">Форма по постановлению Правительства № 1137 — как оригинал: шапка со строками (1)–(8),
-      таблица с графами А–9, «Всего к оплате (9)», подписи и основание передачи. Реквизиты документа берутся из
-      записи и не меняются, а поля ниже можно заполнить: ${saved ? 'сохранённые правки подставлены' : 'значения взяты из документа'}.
+    <p class="form-hint">Форма по постановлению Правительства № 1137 — как в ЭДО: шапка со строками (1)–(8),
+      таблица с 16 графами (А, 1, 1а, 1б, 2 … 10, 10а, 11), «Всего к оплате», подписи, блок «Товар (груз)
+      передал / получил», банковские реквизиты и блок электронной подписи. Реквизиты документа и строки
+      берутся из записи и не меняются, а поля ниже можно заполнить: ${saved
+        ? 'сохранённые правки подставлены' : 'значения взяты из документа'}.
       Печать — кнопкой «Печать / PDF»: в окне печати выберите «Сохранить как PDF».</p>
-    <div class="prim-print-form">${fields}</div>
+    ${body}
     <div class="modal-actions">
       <button type="button" class="btn" id="prim-print-reset">↩ Значения из документа</button>
       <button type="button" class="btn" id="prim-print-save">Сохранить поля</button>
@@ -651,7 +701,18 @@ export async function viewPrimary(container, opts = {}) {
       await api.put(`/api/v1/primary/${encodeURIComponent(id)}/print-form`, body);
       return body;
     };
-    const openPage = (suffix) => window.open(`/api/v1/primary/${encodeURIComponent(id)}/print${suffix}`, '_blank', 'noopener');
+    // v1.73.5: новая вкладка не передаёт заголовок Authorization — на компьютере сессию спасает
+    // HttpOnly-cookie, а в мобильном Chrome (внешний просмотрщик, режим экономии) её нет, и вместо
+    // бланка человек видел «Требуется авторизация». Поэтому просим одноразовый билет печати.
+    const printUrl = async (auto) => {
+      const t = await api.get(`/api/v1/primary/${encodeURIComponent(id)}/print-ticket`);
+      return `${t.url}${auto ? '&print=1' : ''}`;
+    };
+    const openWithTicket = async (win, auto) => {
+      let url;
+      try { url = await printUrl(auto); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
+      if (win) win.location = url; else window.open(url, '_blank', 'noopener');
+    };
     get('prim-print-reset').onclick = () => {
       const form = (data && data.defaults) || {};
       for (const f of PRIM_PRINT_FIELDS) {
@@ -667,14 +728,12 @@ export async function viewPrimary(container, opts = {}) {
     get('prim-print-view').onclick = async () => {
       const win = window.open('', '_blank');
       try { await save(); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
-      if (win) win.location = `/api/v1/primary/${encodeURIComponent(id)}/print`;
-      else openPage('');
+      await openWithTicket(win, false);
     };
     get('prim-print-go').onclick = async () => {
       const win = window.open('', '_blank');          // окно открывается сразу: иначе браузер заблокирует
       try { await save(); } catch (e) { if (win) win.close(); toast(e.message, 'err'); return; }
-      if (win) win.location = `/api/v1/primary/${encodeURIComponent(id)}/print?print=1`;
-      else openPage('?print=1');
+      await openWithTicket(win, true);
       if (typeof close === 'function') close();
     };
   }

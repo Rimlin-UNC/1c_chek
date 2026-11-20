@@ -142,9 +142,12 @@ class TestCode:
     def test_form_rules(self):
         from app.primary import printupd
         assert printupd.LIMITS["status"] == 1 and printupd.LIMITS["sheets"] == 3
-        assert len(printupd.FIELDS) == 16 and len(printupd.COLUMNS) == 13
+        # Замок перепроверен по бланку 2026 года (v1.73.4): полей стало 48 — они
+        # сгруппированы в шапку, основание и передачу, подписи и блок ЭДО; граф — 16,
+        # добавлены 1а, 1б, 2а, 3, 4, 10, 10а и 11 (страна происхождения и прослеживаемость).
+        assert len(printupd.FIELDS) == 48 and len(printupd.COLUMNS) == 16
         assert printupd.status_title("ДОП") == "2" and printupd.status_title("СЧФДОП") == "1"
-        assert printupd.VAT_LABELS["22/122"] == "22/122%"
+        assert printupd.VAT_LABELS["22/122"] == "22/122"   # v1.73.6: как в PDF из ЭДО
         source = read("app/primary/printupd.py")
         assert "from html import escape" in source and "escape(" in source
         assert "A4 landscape" in source and "@media print" in source
@@ -154,7 +157,8 @@ class TestCode:
         assert "export const PRIM_PRINT_FIELDS = [" in primary
         assert "export function primPrintHtml(data) {" in primary
         assert "export function primPrintBody(get) {" in primary
-        for needle in ("id=\"prim-card-print\"", "print-form`", "/print?print=1", "window.open('', '_blank')"):
+        # v1.73.5: вкладка печати берёт одноразовый билет (на Android без cookie был отказ)
+        for needle in ("id=\"prim-card-print\"", "print-form`", "/print-ticket", "window.open('', '_blank')"):
             assert needle in primary, needle
         page = read("app/static/js/primary_print_page.js")
         assert "window.print()" in page and "dataset.print" in page

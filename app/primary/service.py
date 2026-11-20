@@ -30,7 +30,7 @@ from ..models import Company, User
 from ..services import appsettings
 from ..services.companies_util import inn_is_valid
 from ..services.scoping import target_company_id
-from . import ocr, print_form, schema, upd
+from . import ocr, print_form, printupd, schema, upd
 from .models import PrimaryDocument, PrimaryDocumentLine
 
 # Не первичный документ продавца — не сохраняем, только объясняем причину
@@ -104,6 +104,9 @@ def _store(db: Session, user: User, parsed: dict, issues: list[dict], company_id
         vat_total=total("vat", "vat_sum"), total_with_vat=total("with_vat", "sum_with_vat"),
         status=upd.status_of(issues), issues_json=json.dumps(issues, ensure_ascii=False),
         created_by=user.id, source=source, channel=channel)
+    # v1.73.4: реквизиты для печатной формы (адреса сторон, основание передачи, подписант, ОГРНИП ИП)
+    # кладутся рядом с документом — печать без окна не зависит от того, остался ли XML под рукой.
+    doc.print_json = printupd.dump({}, printupd.auto_from(parsed))
     doc.lines = [PrimaryDocumentLine(
         position=ln["position"] or i, name=ln["name"], unit_code=ln["unit_code"][:10], unit_name=ln["unit_name"][:40],
         quantity=ln["quantity"], price=ln["price"], sum_without_vat=ln["sum_without_vat"],

@@ -29,7 +29,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from ..auth import require_accountant, require_admin
+from ..auth import (create_print_ticket, current_user_optional, decode_print_ticket,
+                    require_accountant, require_admin)
 from ..database import get_db
 from ..models import User
 from ..services.audit import log_action
@@ -93,23 +94,61 @@ class ConfirmIn(BaseModel):
 
 
 class PrintFormIn(BaseModel):
-    """v1.70.114 (T-62): заполняемые поля печатной формы УПД — то, чего нет в электронном документе."""
+    """v1.70.114 (T-62): заполняемые поля печатной формы УПД — то, чего нет в электронном документе.
+
+    v1.73.4: полей стало больше — бланк собран один в один с формой из ЭДО, и в нём есть строки,
+    которых у нас раньше не было (счёт-фактура при оплате (5б), даты отгрузки и приёмки, подписанты
+    обеих сторон, банковские реквизиты, блок электронной подписи). Список и пределы длины —
+    в printupd.FIELD_SPECS, чтобы модель запроса, база и интерфейс не расходились.
+    """
     status: Literal["1", "2"] = "1"
+    correction: str = Field("", max_length=60)
     seller_address: str = Field("", max_length=300)
     buyer_address: str = Field("", max_length=300)
     shipper: str = Field("", max_length=300)
     consignee: str = Field("", max_length=300)
     payment_doc: str = Field("", max_length=200)
+    payment_advance: str = Field("", max_length=300)
     shipment_doc: str = Field("", max_length=200)
     contract_id: str = Field("", max_length=100)
     currency: str = Field("", max_length=100)
     basis: str = Field("", max_length=300)
     sheets: str = Field("1", max_length=3)
+    transfer_position: str = Field("", max_length=200)
+    transfer_sign: str = Field("", max_length=60)
+    transfer_name: str = Field("", max_length=200)
+    accept_position: str = Field("", max_length=200)
+    accept_sign: str = Field("", max_length=60)
+    accept_name: str = Field("", max_length=200)
+    transfer_date: str = Field("", max_length=20)
+    accept_date: str = Field("", max_length=20)
+    transfer_other: str = Field("", max_length=300)
+    accept_other: str = Field("", max_length=300)
+    seller_bank: str = Field("", max_length=300)
+    buyer_bank: str = Field("", max_length=300)
+    seller_subject: str = Field("", max_length=300)
+    buyer_subject: str = Field("", max_length=300)
     signer_chief_role: str = Field("", max_length=200)
     signer_chief: str = Field("", max_length=200)
     signer_accountant_role: str = Field("", max_length=200)
     signer_accountant: str = Field("", max_length=200)
     signer_entrepreneur: str = Field("", max_length=200)
+    seller_ogrnip: str = Field("", max_length=60)
+    resp_left_position: str = Field("", max_length=200)
+    resp_left_sign: str = Field("", max_length=60)
+    resp_left_name: str = Field("", max_length=200)
+    resp_right_position: str = Field("", max_length=200)
+    resp_right_sign: str = Field("", max_length=60)
+    resp_right_name: str = Field("", max_length=200)
+    edo_operator: str = Field("", max_length=200)
+    edo_id: str = Field("", max_length=60)
+    edo_sent_name: str = Field("", max_length=300)
+    edo_sent_time: str = Field("", max_length=60)
+    edo_sent_cert: str = Field("", max_length=60)
+    edo_approved_name: str = Field("", max_length=300)
+    edo_approved_time: str = Field("", max_length=60)
+    edo_approved_cert: str = Field("", max_length=60)
+    edo_approved_role: str = Field("", max_length=200)
 
 
 class ExportIn(BaseModel):
@@ -339,25 +378,123 @@ def get_print_form(doc_id: str, user: Accountant, db: Db) -> dict:
     doc = _visible(db, user, doc_id)
     saved = printupd.clean(printupd.stored(doc))
     return {"title": printupd.title(doc), "defaults": printupd.defaults(doc), "saved": saved,
-            "form": printupd.form(doc, saved), "fields": list(printupd.FIELDS)}
+            "form": printupd.form(doc, saved), "fields": list(printupd.FIELDS),
+            # v1.73.4: подписи и разделы полей — окно собирает те же 47 полей бланка, что и сервер
+            "labels": printupd.LABELS, "groups": printupd.GROUPS}
 
 
 @router.put("/{doc_id}/print-form")
 def save_print_form(doc_id: str, user: Accountant, db: Db, body: PrintFormIn) -> dict:
     """Запомнить заполняемые поля печатной формы к документу (одна запись на документ)."""
     doc = _visible(db, user, doc_id)
-    values = printupd.clean(body.model_dump())
-    doc.print_json = printupd.dump(values)
+    # v1.73.4: PUT может быть частичным (так его зовут боты и скрипты) — незаполненные поля
+    # запроса не должны стирать уже сохранённые правки: склеиваем с тем, что лежит в print_json.
+    # поля, которых нет в теле запроса, не трогаем: PUT бывает частичным (боты, скрипты)
+    values = printupd.keep(doc, body.model_dump(), set(body.model_fields_set))
+    doc.print_json = printupd.dump(values, printupd.auto(doc))   # реквизиты из XML остаются рядом с правками
     db.commit()
     log_action(user, "primary_print_form", details={"document": doc.id,
                                                     "filled": sorted(k for k, v in values.items() if v)})
     return {"ok": True, "form": printupd.form(doc, values)}
 
 
+class PrintTicketOut(BaseModel):
+    """v1.73.5: одноразовая ссылка на печать формы — её открывает новая вкладка."""
+
+    ticket: str
+    url: str
+
+
+@router.get("/{doc_id}/print-ticket")
+def print_ticket(doc_id: str, user: Accountant, db: Db) -> PrintTicketOut:
+    """Ссылка печати для новой вкладки: адрес работает без заголовка Authorization.
+
+    На компьютере сессию в новой вкладке держит HttpOnly-cookie, а в мобильном Chrome
+    (внешний просмотрщик, режим экономии данных, приватное окно) cookie может не дойти —
+    и человек видел вместо бланка «Требуется авторизация». Билет подписан секретом сервера,
+    живёт 30 минут и открывает ровно один документ, поэтому токен сессии в адрес не попадает.
+    """
+    _visible(db, user, doc_id)                     # права и видимость — те же, что у печати
+    ticket = create_print_ticket(user, doc_id)
+    return PrintTicketOut(ticket=ticket, url=f"/api/v1/primary/{doc_id}/print?ticket={ticket}")
+
+
+PRINT_ROLES = ("admin", "accountant")
+
+
+class PrintDenied(Exception):
+    """Печать не разрешена: для страницы печати это не JSON, а понятный экран."""
+
+    def __init__(self, status: int, title: str, hint: str) -> None:
+        super().__init__(title)
+        self.status, self.title, self.hint = status, title, hint
+
+
+PRINT_DENIED_PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — печать УПД</title>
+<style>body{{margin:0;padding:24px 18px;font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+background:#f5f6f8;color:#1c2024}}h1{{font-size:20px;margin:0 0 10px}}p{{margin:0 0 8px}}
+.box{{max-width:520px;margin:8vh auto;background:#fff;border:1px solid #e2e5e9;border-radius:12px;
+padding:20px}}b{{color:#111}}.muted{{color:#6b7280;font-size:14px}}</style></head><body>
+<div class="box"><h1>{title}</h1><p>{hint}</p>
+<p class="muted">Откройте «Первичка» → выберите документ → «🖨 Печать / PDF». Ссылка печати живёт
+30 минут, поэтому из закладки или старой вкладки она может не сработать — возьмите новую.</p>
+</div></body></html>"""
+
+
+def _print_user(doc_id: str, ticket: str, user: User | None, db: Session) -> User:
+    """Кто печатает: обычная сессия, а если новая вкладка её не принесла — билет из адреса.
+
+    Права те же, что у окна печати: бухгалтер и администратор. Сотрудник без этих прав
+    не получает бланк с реквизитами. Отказ поднимается как PrintDenied: страница печати
+    открывается в новой вкладке, и человек должен увидеть объяснение, а не JSON.
+    """
+    where = "/api/v1/primary"
+    if not ticket:
+        if user is None:
+            raise PrintDenied(401, "Нужно войти в программу",
+                              "Вкладка печати открылась без входа. Войдите в «Ямастер Чек» и "
+                              "нажмите «🖨 Печать / PDF» ещё раз.")
+        if user.role not in PRINT_ROLES:
+            raise PrintDenied(403, "Недостаточно прав для печати",
+                              "Печатать УПД могут бухгалтер и администратор.")
+        return user
+    try:
+        found = db.get(User, decode_print_ticket(ticket, doc_id))
+    except HTTPException:
+        found = None
+    if found is None or not found.is_active:
+        raise PrintDenied(401, "Ссылка печати больше не действует",
+                          "Она живёт 30 минут и открывает только свой документ. "
+                          f"Вернитесь в программу ({where}) и нажмите «🖨 Печать / PDF» снова.")
+    if found.role not in PRINT_ROLES:
+        raise PrintDenied(403, "Недостаточно прав для печати",
+                          "Печатать УПД могут бухгалтер и администратор.")
+    return found
+
+
 @router.get("/{doc_id}/print", response_class=HTMLResponse)
-def print_form(doc_id: str, user: Accountant, db: Db, print_: Annotated[int, Query(alias="print")] = 0) -> HTMLResponse:
-    """Готовая печатная форма УПД (A4, альбомная): печать из браузера, «Сохранить как PDF» (T-62, ADR-45)."""
-    doc = _visible(db, user, doc_id)
+def print_form(doc_id: str, db: Db, print_: Annotated[int, Query(alias="print")] = 0,
+               ticket: Annotated[str, Query(max_length=600)] = "",
+               user: User | None = Depends(current_user_optional)) -> HTMLResponse:
+    """Готовая печатная форма УПД (A4, альбомная): печать из браузера, «Сохранить как PDF» (T-62, ADR-45).
+
+    v1.73.5: доступна и по билету печати (?ticket=…) — мобильный Chrome открывает новую
+    вкладку без cookie сессии, и раньше вместо бланка показывал «Требуется авторизация».
+    Блок электронной подписи (сертификаты, «ОТПРАВЛЕНО»/«УТВЕРЖДЕНО») в бланк не печатается.
+    """
+    try:
+        user = _print_user(doc_id, ticket, user, db)
+        doc = _visible(db, user, doc_id)
+    except PrintDenied as denied:
+        return HTMLResponse(PRINT_DENIED_PAGE.format(title=denied.title, hint=denied.hint),
+                            status_code=denied.status, headers={"Cache-Control": "no-store"})
+    except HTTPException as denied:
+        return HTMLResponse(PRINT_DENIED_PAGE.format(
+            title="Документ не найден",
+            hint="Возможно, он удалён или принадлежит другой компании."),
+            status_code=denied.status_code, headers={"Cache-Control": "no-store"})
     page = printupd.html(doc, auto_print=bool(print_))
     log_action(user, "primary_printed", details={"document": doc.id})
     return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})

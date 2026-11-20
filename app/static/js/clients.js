@@ -282,6 +282,13 @@ export async function clientsOpenReport(period) {
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
     win.location.href = url;
+    // v1.73.5 (Android): в мобильном Chrome печать из скрипта блокируется молча —
+    // отчёт всё равно открыт на экране, поэтому подсказываем путь через меню браузера.
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua) && /Chrome|CriOS|wv\)/i.test(ua)) {
+      toast('Отчёт открыт. Печать на телефоне: ⋮ → «Поделиться» → «Печать» '
+        + '(или «Сохранить как PDF»).', 'warn');
+    }
   } catch (error) {
     win.close();
     toast(error.message || 'Не удалось открыть отчёт', 'err');
