@@ -426,7 +426,11 @@ def header_rows(doc: PrimaryDocument, values: dict) -> str:
                 f'<td class="hn">({_esc(number)})</td></tr>')
 
     body = "".join(row(*item) for item in rows)
-    return f'<table class="hdr"><colgroup><col style="width:{HDR_LABEL_W}pt"><col>'            f'<col style="width:{HDR_NUM_W}pt"></colgroup><tbody>{body}</tbody></table>'
+    # v1.73.6 (аудит): строка-распорка — прижимает шапку низом к таблице товаров, как в PDF,
+    # где между строкой (8) и шапкой таблицы ровно 10.5 pt белого поля.
+    filler = '<tr class="filler"><td colspan="3"></td></tr>'
+    return f'<table class="hdr"><colgroup><col style="width:{HDR_LABEL_W}pt"><col>' \
+           f'<col style="width:{HDR_NUM_W}pt"></colgroup><tbody>{body}{filler}</tbody></table>'
 
 
 def table_head() -> str:
@@ -585,10 +589,12 @@ def _date_words(raw: str) -> str:
 
 def tail(values: dict) -> str:
     """Нижняя половина бланка: основание передачи, транспортировка, передал/получил, реквизиты, ЭДО."""
-    def halves(left_html: str, right_html: str) -> str:
-        return ('<table class="halves"><colgroup><col style="width:50%"><col></colgroup>'
+    def halves(left_html: str, right_html: str, cls: str = "") -> str:
+        """Пара половин одной полосы; cls задаёт высоту полосы по PDF из ЭДО."""
+        return (f'<table class="halves {cls}"><colgroup><col style="width:50%"><col></colgroup>'
                 f'<tr><td class="hl">{left_html}</td><td class="hr">{right_html}</td></tr></table>')
 
+    bank_extra = bool((values.get("seller_bank") or "").strip() or (values.get("buyer_bank") or "").strip())
     transfer_date = _date_words(values.get("transfer_date", ""))
     accept_date = _date_words(values.get("accept_date", ""))
     return "".join((
@@ -599,35 +605,35 @@ def tail(values: dict) -> str:
         '<div class="transportline">'
         '<span class="lbl">Данные о транспортировке и грузе</span>'
         '<span class="fillline"></span></div>',
-        '<div class="hint1 center">(транспортная накладная, поручение экспедитору, экспедиторская/складская '
-        "расписка и др./масса нетто/брутто груза, если не приведены ссылки на транспортные документы, "
-        "содержащие эти сведения)</div>",
+        '<div class="hint1 center one-line">(транспортная накладная, поручение экспедитору, '
+        "экспедиторская/складская расписка и др./масса нетто/брутто груза, если не приведены ссылки "
+        "на транспортные документы, содержащие эти сведения)</div>",
         halves('<div class="lbl">Товар (груз) передал/услуги, результаты работ, права сдал</div>'
                + _triple(values, "transfer_position", "transfer_sign", "transfer_name"),
                '<div class="lbl">Товар (груз) получил/услуги, результаты работ, права принял</div>'
-               + _triple(values, "accept_position", "accept_sign", "accept_name")),
-        halves('<div class="lbl">Дата отгрузки, передачи (сдачи)</div>'
-               f'<div class="date">{_esc(transfer_date)}</div>',
-               '<div class="lbl">Дата получения (приемки)</div>'
-               f'<div class="date">{_esc(accept_date)}</div>'),
+               + _triple(values, "accept_position", "accept_sign", "accept_name"), "b-transfer"),
+        halves('<div class="dateline"><span class="lbl">Дата отгрузки, передачи (сдачи)</span>'
+               f'<span class="date">{_esc(transfer_date)}</span></div>',
+               '<div class="dateline"><span class="lbl">Дата получения (приемки)</span>'
+               f'<span class="date">{_esc(accept_date)}</span></div>', "b-date"),
+        # v1.73.6 (аудит): раскладка нижней половины снята с PDF из ЭДО строка за строкой.
+        # Полоса «Иные сведения» (445.9…467.1): слева подпись+линия, справа ещё и
+        # «Товары … приняты без расхождений (претензий)» (458.6) — отдельной полосы
+        # во всю ширину нет. Подсказки (468.6) открывают следующую полосу.
         halves('<div class="lbl">Иные сведения об отгрузке, передаче</div>'
-               f'<div class="fillline">{_esc(values.get("transfer_other", ""))}</div>'
-               '<div class="hint1">(ссылки на неотъемлемые приложения, сопутствующие документы, '
-               "иные документы и т. п.)</div>",
+               f'<div class="fillline">{_esc(values.get("transfer_other", ""))}</div>',
                '<div class="lbl">Иные сведения о получении, приемке</div>'
                f'<div class="fillline">{_esc(values.get("accept_other", ""))}</div>'
+               '<div class="lbl acc">Товары (работы, услуги, права) приняты без расхождений (претензий)</div>',
+               "b-other"),
+        halves('<div class="hint1">(ссылки на неотъемлемые приложения, сопутствующие документы, '
+               'иные документы и т. п.)</div>',
                '<div class="hint1">(информация о наличии/отсутствии претензии; ссылки на неотъемлемые '
-               "приложения и другие документы и т. п.)</div>"),
-        halves('<div class="lbl acc">Товары (работы, услуги, права) приняты без расхождений (претензий)</div>',
-               ""),
-        halves(f'<div class="fillline">{_esc(values.get("seller_bank", ""))}</div>'
-               '<div class="hint1 center">(банковские реквизиты продавца)</div>',
-               f'<div class="fillline">{_esc(values.get("buyer_bank", ""))}</div>'
-               '<div class="hint1 center">(банковские реквизиты покупателя)</div>'),
+               'приложения и другие документы и т. п.)</div>', "b-hints"),
         halves('<div class="lbl">Ответственный за правильность оформления факта хозяйственной жизни</div>'
                + _triple(values, "resp_left_position", "resp_left_sign", "resp_left_name"),
                '<div class="lbl">Ответственный за правильность оформления факта хозяйственной жизни</div>'
-               + _triple(values, "resp_right_position", "resp_right_sign", "resp_right_name")),
+               + _triple(values, "resp_right_position", "resp_right_sign", "resp_right_name"), "b-resp"),
         halves('<div class="lbl">Наименование экономического субъекта — составителя документа '
                "(в т. ч. комиссионера/агента)</div>"
                f'<div class="fillline">{_esc(values.get("seller_subject", ""))}</div>'
@@ -636,7 +642,13 @@ def tail(values: dict) -> str:
                '<div class="lbl">Наименование экономического субъекта — составителя документа</div>'
                f'<div class="fillline">{_esc(values.get("buyer_subject", ""))}</div>'
                '<div class="hint1">(может не заполняться при проставлении печати в М. П., '
-               "может быть указан ИНН/КПП)</div>"),
+               "может быть указан ИНН/КПП)</div>", "b-subject"),
+        # v1.73.6 (аудит): в PDF из ЭДО (бланк 1137 в ред. 23.01.2026) строки банковских
+        # реквизитов НЕТ — полоса печатается только если поля заполнены в форме.
+        halves(f'<div class="fillline">{_esc(values.get("seller_bank", ""))}</div>'
+               '<div class="hint1 center">(банковские реквизиты продавца)</div>',
+               f'<div class="fillline">{_esc(values.get("buyer_bank", ""))}</div>'
+               '<div class="hint1 center">(банковские реквизиты покупателя)</div>', "b-bank") if bank_extra else "",
         # v1.73.5: блок «ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ» (сертификаты, «ОТПРАВЛЕНО»,
         # «УТВЕРЖДЕНО», идентификатор и оператор ЭДО) в печатный бланк не выводится — по
         # указанию владельца: печатается сама форма УПД, а не протокол подписания.
@@ -645,7 +657,10 @@ def tail(values: dict) -> str:
 
 
 CSS = """
-@page { size: A4 landscape; margin: 0; }
+/* v1.73.6: размер страницы задан точно в пунктах, а не «A4 landscape» (595,28 pt):
+   лист 594,96 pt плюс рамка не влезали в округлённый A4 и «М.П.» уезжало на вторую
+   страницу. Теперь один документ — ровно одна страница. */
+@page { size: 841.92pt 594.96pt; margin: 0; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body { background: #eef1f5; color: #000; font-family: Tahoma, 'PT Sans', 'DejaVu Sans', Arial, sans-serif;
@@ -666,11 +681,14 @@ table.page > tbody > tr > td { padding: 14pt; vertical-align: top; }
                padding: 0 2pt; font-weight: 700; }
 .legend { margin-top: 4.4pt; font-size: 7.5pt; line-height: 9pt; }
 .appendix { text-align: right; font-size: 7pt; line-height: 8.3pt; }
+table.headtop { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.headtop td { vertical-align: top; padding: 0; }
+table.headtop td.apx { text-align: right; }
 .title { font-size: 9pt; font-weight: 700; margin-top: 1.4pt; }
 .correction { font-size: 7pt; margin-top: 1.6pt; }
 /* --- шапка (2)–(8): 14 строк, как в бланке --- */
 table.hdr { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: .8pt; }
-.hdr td { border-bottom: .6pt solid #000; padding: 0 2pt .5pt 0; vertical-align: bottom; }
+.hdr td { border-bottom: .6pt solid #000; padding: 0 2pt 1.1pt 0; vertical-align: bottom; }
 .hdr .hl { padding-left: 5pt; }   /* снято с PDF: подписи шапки начинаются на 5 pt от рамки */
 /* v1.73.4: длинная подпись строки (5б — «К счёту-фактуре…») переносится по словам,
    как в бланке; остальные подписи остаются в одну строку */
@@ -678,11 +696,16 @@ table.hdr { width: 100%; border-collapse: collapse; table-layout: fixed; margin-
 .hdr .hv-r { float: right; padding-left: 6pt; }
 .hdr .hn { text-align: right; font-size: 6.8pt; padding-right: 1pt; border-bottom: 0; }
 .hdr tr:last-child td { border-bottom: 0; }
+/* распорка: белое поле между шапкой (8) и таблицей товаров — ровно как в PDF */
+.hdr tr.filler td { border-bottom: 0; padding: 0; height: 8.5pt; }
 .b { font-weight: 700; }
 /* --- таблица товаров: 16 граф, ширины сняты с оригинала --- */
-table.grid { width: 805pt; border-collapse: collapse; table-layout: fixed; }
-.grid th, .grid td { border: .6pt solid #000; padding: .8pt 2pt; vertical-align: middle; font-weight: 400; }
-.grid th { text-align: center; font-size: 6.7pt; line-height: 1.08; overflow-wrap: anywhere;
+/* v1.73.6 (аудит): в PDF между строкой (8) и шапкой таблицы 10.5 pt белого поля */
+table.grid { width: 805pt; border-collapse: collapse; table-layout: fixed; margin-top: 4.2pt; }
+.grid th, .grid td { border: .6pt solid #000; padding: .3pt 1.8pt; vertical-align: middle; font-weight: 400; }
+/* v1.73.6 (аудит): в PDF текст шапки прижат к ВЕРХУ ячейки (первая строка на 2 pt ниже
+   линии), у нас он центрировался — из-за этого «Код товара» уезжал на 12.6 pt вниз */
+.grid th { text-align: center; vertical-align: top; font-size: 6.7pt; line-height: 1.05; overflow-wrap: anywhere;
            word-break: break-word; }
 .grid td { font-size: 7pt; }
 .grid td.c { text-align: center; }
@@ -691,59 +714,91 @@ table.grid { width: 805pt; border-collapse: collapse; table-layout: fixed; }
 .grid tr.totals td:first-child { text-align: left; font-size: 8pt; }
 .empty-row { text-align: left; }
 /* --- подписи: слева «на … листах», справа рамка с двумя колонками --- */
+/* v1.73.6: высоты подогнаны под PDF из ЭДО — блок подписей там 65.3 pt
+   (301.8 … 367.1), иначе нижняя половина уезжала за нижний край листа. */
 table.signers { width: 813.2pt; border-collapse: collapse; table-layout: fixed; }
 table.signers td { vertical-align: top; padding: 0; }
-.signers .sheets { padding-top: 1.6pt; font-size: 7pt; line-height: 9.2pt; }
+.signers .sheets { padding-top: 1.2pt; font-size: 7pt; line-height: 8.8pt; }
 .signers .fill { display: inline-block; min-width: 16pt; border-bottom: .6pt solid #000; text-align: center; }
-.signers .boxed { border: .6pt solid #000; padding: 1.2pt 3pt 2pt; }
+.signers .boxed { border: .6pt solid #000; padding: .8pt 3pt 0; }
 table.signgrid { width: 100%; border-collapse: collapse; table-layout: fixed; }
 table.signgrid td { vertical-align: top; padding: 0 5pt 0 2pt; }
 table.signgrid td.vr { border-left: .6pt solid #000; padding-left: 6pt; }
-.signers .role { line-height: 9.2pt; }
-.signers .ip { margin-top: 5.6pt; }
-.signers .pos { font-size: 6.9pt; min-height: 7pt; }
-table.sgn { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 4.4pt; }
-table.sgn td { border-bottom: .6pt solid #000; height: 9.4pt; vertical-align: bottom; font-size: 6.9pt;
+.signers .role { line-height: 7.9pt; }
+.signers .ip { margin-top: .8pt; }
+.signers .pos { font-size: 6.9pt; min-height: 6.4pt; line-height: 7.6pt; }
+table.sgn { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 1pt; }
+table.sgn td { border-bottom: .6pt solid #000; height: 7.4pt; vertical-align: bottom; font-size: 6.9pt;
                padding: 0 1pt; }
-table.sgn tr.cap td { border-bottom: 0; height: 8pt; font-size: 6pt; vertical-align: top; }
+table.sgn tr.cap td { border-bottom: 0; height: 5.4pt; font-size: 6pt; vertical-align: top; }
 table.sgn td.c { text-align: center; }
 /* v1.73.6: строка подписи руководителя — должность слева, «электронно» и ФИО на одной
    линии с ней, как в PDF из ЭДО; линия подписи проходит под всей строкой. */
-table.roleline { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 4.4pt; }
+table.roleline { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 1pt; }
 table.roleline td { vertical-align: bottom; padding: 0 1pt; }
 table.roleline td.r { text-align: left; }
 table.roleline td.c { text-align: center; }
-table.roleline td.sgn { border-bottom: .6pt solid #000; height: 9.4pt; font-size: 6.9pt; }
-table.roleline tr.cap td { border-bottom: 0; height: 8pt; font-size: 6pt; padding-top: 1pt; }
-.signers .ogrnip { margin-top: 14pt; border-bottom: .6pt solid #000; font-size: 6.9pt; min-height: 9pt; }
-.signers .hint1 { font-size: 6pt; line-height: 1.15; }
+table.roleline td.sgn { border-bottom: .6pt solid #000; height: 7.4pt; font-size: 6.9pt; }
+table.roleline tr.cap td { border-bottom: 0; height: 5.4pt; font-size: 6pt; padding-top: 0; }
+.signers .ogrnip { margin-top: 4pt; border-bottom: .6pt solid #000; font-size: 6.9pt; min-height: 6.6pt; }
+.signers .hint1 { font-size: 6pt; line-height: 1.05; }
+/* v1.73.6 (аудит): в PDF подсказка под ОГРНИП — одна строка; у нас она ломалась на две
+   и растягивала рамку подписей на 5.6 pt, сдвигая вниз всю нижнюю половину */
+.signers .hint1 { white-space: nowrap; font-size: 5.6pt; letter-spacing: -.1pt; }
+/* подсказка ОГРНИП должна остаться в одну строку и ВНУТРИ рамки: при 6 pt
+   Tahoma делает её на 390 pt и она вылезала за правый край листа (842.4 при
+   ширине 841.92), в PDF — 346 pt при 6 pt */
 /* --- нижняя половина: основание, передача товара, реквизиты, ЭДО --- */
+/* v1.73.6: интервалы и высоты строк нижней половины — по PDF из ЭДО
+   (Основание 367.1, Данные 385.1, Товар передал 404.6, Дата 435.4, Ответственный 477.4,
+   Наименование 508.2, М.П. 535.2; нижняя граница листа 594.96). */
+/* v1.73.6 (аудит): в PDF нижняя половина идёт шагами — основание 367.1, данные 385.1,
+   передал 404.6, дата 435.4, иные 445.9, приняты 458.6, ответственный 477.4,
+   наименование 508.2, М.П. 535.2. Интервалы заданы явно. */
 .tail { font-size: 7pt; }
+/* v1.73.6 (аудит): в PDF «Основание передачи» начинается сразу под рамкой подписей
+   (367.1) — отдельного отступа нет */
 .basisline, .transportline { display: flex; align-items: baseline; border-bottom: .6pt solid #000;
-                             margin-top: 4.2pt; padding-bottom: .8pt; }
-.transportline { margin-top: 3.4pt; }
+                             margin-top: .2pt; padding-bottom: .4pt; }
+.transportline { margin-top: 1pt; }
 .basisline .lbl, .transportline .lbl { flex: none; padding-right: 4pt; }
-.basisline .fillline, .transportline .fillline { flex: 1 1 auto; min-height: 8pt; }
-.hint1 { font-size: 6pt; line-height: 1.2; }
-.hint1.center { text-align: center; margin: 0 0 0 170pt; }
+.basisline .fillline, .transportline .fillline { flex: 1 1 auto; min-height: 7pt; }
+.hint1 { font-size: 6pt; line-height: 1.1; }
+/* v1.73.6 (аудит): в PDF подсказка к «Данным о транспортировке» — ОДНА строка
+   (6 pt, 828 pt ширины); у нас она ломалась на две и добавляла 6.6 pt */
+.hint1.center { text-align: center; margin: 0; }
+.hint1.one-line { white-space: nowrap; }   /* 6 pt, одна строка — как в PDF */
 table.halves { width: 813.2pt; border-collapse: collapse; table-layout: fixed; }
-table.halves td { vertical-align: top; padding: 2.4pt 2pt 0 2.3pt; }
+table.halves td { vertical-align: top; padding: 0 2pt 0 2.3pt; }
+/* Высоты полос сняты с PDF из ЭДО: полоса «передал» 404.6→435.4 (30.8), дата 10.5,
+   иные сведения/приняты 31.5, ответственный 30.8, наименование 27.0 */
+table.halves.b-transfer { height: 30.2pt; }
+table.halves.b-date { height: 10.5pt; }
+table.halves.b-other { height: 17.4pt; }
+table.halves.b-bank { height: 22.4pt; }
+table.halves.b-hints { height: 8.8pt; }
+.dateline { display: flex; align-items: baseline; }
+.dateline .date { padding-left: 24pt; }
+table.halves.b-resp { height: 30.8pt; }
+table.halves.b-subject { height: 26.4pt; }
 table.halves td.hr { padding-left: 6pt; }
-.lbl { font-size: 7pt; }
-.fillline { border-bottom: .6pt solid #000; min-height: 9pt; }
+.lbl { font-size: 7pt; line-height: 8.4pt; }
+.fillline { border-bottom: .6pt solid #000; min-height: 7.6pt; }
 .date { padding-left: 54pt; }
-.lbl.acc { padding-top: 3pt; }
-table.triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: .8pt; }
-table.triple td { padding: 0 1pt; border-bottom: .6pt solid #000; font-size: 7pt; height: 10.6pt;
+.lbl.acc { padding-top: .6pt; }
+table.triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: .4pt; }
+table.triple td { padding: 0 1pt; border-bottom: .6pt solid #000; font-size: 7pt; height: 8.6pt;
                   vertical-align: bottom; }
-table.triple tr.cap td { border-bottom: 0; font-size: 6pt; height: 8pt; vertical-align: top; }
+table.triple tr.cap td { border-bottom: 0; font-size: 6pt; height: 7pt; vertical-align: top; }
 table.triple td.c { text-align: center; }
-.mp { font-size: 7pt; padding: 8pt 2pt 0; }
+.mp { font-size: 7pt; padding: 1pt 2pt 0; }
 /* --- печать и просмотр на узком экране --- */
 @media print {
   body { background: #fff; }
   .toolbar { display: none; }
-  table.page { margin: 0; box-shadow: none; }
+  /* 593,6 pt вместо 594,96 — запас под рамку и округления браузера, чтобы
+     «М.П.» гарантированно оставалось на первой странице */
+  table.page { margin: 0; box-shadow: none; height: 593.6pt; }
 }
 @media screen and (max-width: 1100px) { table.page { zoom: .78; } }
 @media screen and (max-width: 820px) { table.page { zoom: .52; } }
@@ -779,6 +834,10 @@ def html(doc: PrimaryDocument, values: dict | None = None, *, auto_print: bool =
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- v1.73.6 (аудит): адрес бланка может нести билет печати (?ticket=…). Без этого
+     заголовка браузер отправлял его в Referer при загрузке /js/primary_print_page.js,
+     и одноразовая ссылка оседала в журналах доступа. -->
+<meta name="referrer" content="no-referrer">
 <title>{_esc(title(doc))}</title>
 <style>{CSS}</style></head>
 <body data-print="{1 if auto_print else 0}">
@@ -792,10 +851,15 @@ def html(doc: PrimaryDocument, values: dict | None = None, *, auto_print: bool =
       <div class="legend">1 – счёт-фактура<br>и передаточный<br>документ (акт)<br>2 – передаточный<br>документ (акт)</div>
     </div>
     <div class="head">
-      <div class="appendix">Приложение N 1 к постановлению Правительства Российской Федерации от 26.12.2011 № 1137<br>
-        (в ред. Постановления Правительства РФ от 23.01.2026 № 26)</div>
-      <div class="title">{_esc(heading)}</div>
-      <div class="correction">Исправление {_esc(correction)}</div>
+      <!-- v1.73.6 (аудит): заголовок и «Исправление» — слева, приложение — справа в тех же
+           двух строках, как в PDF из ЭДО (заголовок 19.2, приложение 20.5/28.8). Раньше три
+           блока шли друг под другом и вся шапка уезжала вниз на 13.5 pt. -->
+      <table class="headtop"><colgroup><col><col style="width:322pt"></colgroup><tbody><tr>
+        <td class="hl"><div class="title">{_esc(heading)}</div>
+          <div class="correction">Исправление {_esc(correction)}</div></td>
+        <td class="apx"><div class="appendix">Приложение N 1 к постановлению Правительства Российской Федерации от 26.12.2011 № 1137
+          <br>(в ред. Постановления Правительства РФ от 23.01.2026 № 26)</div></td>
+      </tr></tbody></table>
       {header_rows(doc, data)}
     </div>
   </div>

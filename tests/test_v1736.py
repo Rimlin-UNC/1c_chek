@@ -67,6 +67,34 @@ class TestGeometryMatchesPdf:
         assert "table.grid { width: 805pt;" in css          # таблица товаров внутри рамки 813.2
         assert ".hdr .hl { padding-left: 5pt; }" in css      # подписи шапки (2)–(8), как в PDF
 
+    def test_blank_prints_on_a_single_page(self):
+        """v1.73.6 (аудит): «A4 landscape» = 595.28 pt, а лист 594.96 pt — «М.П.» уезжало.
+
+        Страница задаётся точными пунктами, а высота листа при печати чуть меньше листа,
+        чтобы округления браузера не отправили хвост бланка на вторую страницу.
+        """
+        css = printupd.CSS
+        assert "@page { size: 841.92pt 594.96pt; margin: 0; }" in css
+        assert "size: A4 landscape" not in css
+        assert "table.page { margin: 0; box-shadow: none; height: 593.6pt; }" in css
+
+    def test_title_and_appendix_share_the_first_rows(self):
+        """Заголовок слева, приложение к постановлению справа — как в PDF (19.2 / 20.5)."""
+        page = printupd.html(_doc())
+        assert '<table class="headtop">' in page
+        assert "table.headtop td.apx { text-align: right; }" in printupd.CSS
+
+    def test_blank_does_not_leak_print_ticket_through_referer(self):
+        """Адрес бланка несёт ?ticket=… — Referer не должен уносить его в журналы."""
+        page = printupd.html(_doc())
+        assert '<meta name="referrer" content="no-referrer">' in page
+
+    def test_bank_requisites_are_optional(self):
+        """В бланке 1137 ред. 23.01.2026 строки банковских реквизитов нет — только по заполнению."""
+        assert "банковские реквизиты" not in printupd.html(_doc())
+        filled = printupd.html(_doc(), {"seller_bank": "Р/с 40702810400000000123"})
+        assert "(банковские реквизиты продавца)" in filled
+
     def test_totals_row_stops_at_column_nine(self):
         """В PDF «Всего к оплате» обрывается на графе 9 — справа от неё рамки нет."""
         row = printupd.totals_row(_doc(), printupd.defaults(_doc()))
