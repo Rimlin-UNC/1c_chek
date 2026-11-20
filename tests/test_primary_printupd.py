@@ -446,7 +446,11 @@ def test_print_opens_in_new_tab_without_session_cookie(client, firms):
     # новая вкладка: ни cookie сессии, ни заголовка Authorization
     fresh = TestClient(app)
     bare = fresh.get(f"/api/v1/primary/{doc_id}/print")
-    assert bare.status_code == 401 and "Требуется авторизация" in bare.text   # как было на телефоне
+    # v1.73.5: без входа — не сырой JSON, а понятный экран с объяснением, как открыть печать
+    assert bare.status_code == 401
+    assert bare.text.lstrip().startswith("<!doctype html")
+    assert "Нужно войти в программу" in bare.text and "Печать / PDF" in bare.text
+    assert '{"detail"' not in bare.text
     page = fresh.get(body["url"])
     assert page.status_code == 200, page.text
     assert "Универсальный передаточный документ" in page.text and ">11</th>" in page.text

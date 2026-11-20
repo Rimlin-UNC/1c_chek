@@ -6,9 +6,10 @@
     авторизация» (так было на Android); билет не годится как токен доступа и живёт минуты;
  2. там, где браузер не вызывает печать из скрипта (мобильный Chrome), страница объясняет
     словами, где печать, а не молчит;
- 3. блок «ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ» в бланк не печатается (указание владельца),
+ 3. отказ печати — это экран с объяснением, а не сырой JSON в новой вкладке;
+ 4. блок «ДОКУМЕНТ ПОДПИСАН ЭЛЕКТРОННОЙ ПОДПИСЬЮ» в бланк не печатается (указание владельца),
     а поля этих сведений остаются в окне заполнения;
- 4. точки синхронизации выпуска переведены на 1.73.5.
+ 5. точки синхронизации выпуска переведены на 1.73.5.
 
 Проверки версии — структурные (>= 1.73.5), чтобы следующие выпуски не ломали тест.
 """
@@ -74,6 +75,27 @@ class TestPrintOnPhone:
         body = auth.split("def decode_token", 1)[1].split("\ndef ", 1)[0]
         assert 'payload.get("scope")' in body
         assert "create_print_ticket" in auth and '"scope": "print"' in auth
+
+
+class TestDeniedPrintIsHuman:
+    """Никакого сырого JSON в новой вкладке: отказ печати — это экран с объяснением."""
+
+    def test_denied_page_is_html_with_a_hint(self):
+        from app.primary import router as primary_router
+
+        for status, title in ((401, "Нужно войти в программу"),
+                              (403, "Недостаточно прав для печати"),
+                              (401, "Ссылка печати больше не действует")):
+            page = primary_router.PRINT_DENIED_PAGE.format(title=title, hint="подсказка")
+            assert page.lstrip().startswith("<!doctype html")
+            assert "viewport" in page and title in page and "Печать / PDF" in page
+            assert status in (401, 403)
+
+    def test_route_returns_html_not_json_on_denial(self):
+        src = read("app/primary/router.py")
+        body = src.split("def print_form(", 1)[1].split("\n@router.", 1)[0]
+        assert "except PrintDenied" in body and "HTMLResponse(PRINT_DENIED_PAGE" in body
+        assert 'raise HTTPException(401, "Требуется авторизация")' not in src
 
 
 class TestBlankWithoutEdo:

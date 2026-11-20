@@ -422,23 +422,55 @@ def print_ticket(doc_id: str, user: Accountant, db: Db) -> PrintTicketOut:
 PRINT_ROLES = ("admin", "accountant")
 
 
+class PrintDenied(Exception):
+    """Печать не разрешена: для страницы печати это не JSON, а понятный экран."""
+
+    def __init__(self, status: int, title: str, hint: str) -> None:
+        super().__init__(title)
+        self.status, self.title, self.hint = status, title, hint
+
+
+PRINT_DENIED_PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — печать УПД</title>
+<style>body{{margin:0;padding:24px 18px;font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+background:#f5f6f8;color:#1c2024}}h1{{font-size:20px;margin:0 0 10px}}p{{margin:0 0 8px}}
+.box{{max-width:520px;margin:8vh auto;background:#fff;border:1px solid #e2e5e9;border-radius:12px;
+padding:20px}}b{{color:#111}}.muted{{color:#6b7280;font-size:14px}}</style></head><body>
+<div class="box"><h1>{title}</h1><p>{hint}</p>
+<p class="muted">Откройте «Первичка» → выберите документ → «🖨 Печать / PDF». Ссылка печати живёт
+30 минут, поэтому из закладки или старой вкладки она может не сработать — возьмите новую.</p>
+</div></body></html>"""
+
+
 def _print_user(doc_id: str, ticket: str, user: User | None, db: Session) -> User:
     """Кто печатает: обычная сессия, а если новая вкладка её не принесла — билет из адреса.
 
     Права те же, что у окна печати: бухгалтер и администратор. Сотрудник без этих прав
-    получает 403 (как на /print-form), а не бланк с реквизитами.
+    не получает бланк с реквизитами. Отказ поднимается как PrintDenied: страница печати
+    открывается в новой вкладке, и человек должен увидеть объяснение, а не JSON.
     """
+    where = "/api/v1/primary"
     if not ticket:
         if user is None:
-            raise HTTPException(401, "Требуется авторизация")
+            raise PrintDenied(401, "Нужно войти в программу",
+                              "Вкладка печати открылась без входа. Войдите в «Ямастер Чек» и "
+                              "нажмите «🖨 Печать / PDF» ещё раз.")
         if user.role not in PRINT_ROLES:
-            raise HTTPException(403, "Недостаточно прав для этого действия")
+            raise PrintDenied(403, "Недостаточно прав для печати",
+                              "Печатать УПД могут бухгалтер и администратор.")
         return user
-    found = db.get(User, decode_print_ticket(ticket, doc_id))
+    try:
+        found = db.get(User, decode_print_ticket(ticket, doc_id))
+    except HTTPException:
+        found = None
     if found is None or not found.is_active:
-        raise HTTPException(401, "Требуется авторизация")
+        raise PrintDenied(401, "Ссылка печати больше не действует",
+                          "Она живёт 30 минут и открывает только свой документ. "
+                          f"Вернитесь в программу ({where}) и нажмите «🖨 Печать / PDF» снова.")
     if found.role not in PRINT_ROLES:
-        raise HTTPException(403, "Недостаточно прав для этого действия")
+        raise PrintDenied(403, "Недостаточно прав для печати",
+                          "Печатать УПД могут бухгалтер и администратор.")
     return found
 
 
@@ -452,8 +484,17 @@ def print_form(doc_id: str, db: Db, print_: Annotated[int, Query(alias="print")]
     вкладку без cookie сессии, и раньше вместо бланка показывал «Требуется авторизация».
     Блок электронной подписи (сертификаты, «ОТПРАВЛЕНО»/«УТВЕРЖДЕНО») в бланк не печатается.
     """
-    user = _print_user(doc_id, ticket, user, db)
-    doc = _visible(db, user, doc_id)
+    try:
+        user = _print_user(doc_id, ticket, user, db)
+        doc = _visible(db, user, doc_id)
+    except PrintDenied as denied:
+        return HTMLResponse(PRINT_DENIED_PAGE.format(title=denied.title, hint=denied.hint),
+                            status_code=denied.status, headers={"Cache-Control": "no-store"})
+    except HTTPException as denied:
+        return HTMLResponse(PRINT_DENIED_PAGE.format(
+            title="Документ не найден",
+            hint="Возможно, он удалён или принадлежит другой компании."),
+            status_code=denied.status_code, headers={"Cache-Control": "no-store"})
     page = printupd.html(doc, auto_print=bool(print_))
     log_action(user, "primary_printed", details={"document": doc.id})
     return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
