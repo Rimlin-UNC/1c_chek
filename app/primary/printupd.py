@@ -812,6 +812,13 @@ body { overflow-x: auto; -webkit-text-size-adjust: 100%; }
   .toolbar { padding: 8px 6px; display: block; text-align: center; }
   .toolbar button { width: 100%; margin-bottom: 6px; }
 }
+/* v1.73.6 (аудит): кнопка на сенсорном экране была 32 px по высоте при каноне
+   проекта 44 px (app.css, блок @media (pointer: coarse)). Палец по ней попадал
+   мимо, а печать с телефона — основной сценарий. Правило по указателю, а не по
+   ширине: планшет и телефон одинаково. */
+@media (pointer: coarse) {
+  .toolbar button { min-height: 44px; font-size: 15px; }
+}
 """
 
 

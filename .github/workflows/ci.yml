@@ -87,6 +87,21 @@ jobs:
           .venv/bin/python -m pip check
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
+      # v1.73.6: браузер Playwright ставится на каждом прогоне и весит больше
+      # остальных инструментов вместе. Ключ — версия @playwright/test из lock-файла,
+      # поэтому обновление Playwright само сбрасывает кэш, а повторный push не качает
+      # браузер заново. Системные библиотеки (--with-deps) всё равно ставятся apt:
+      # они нужны всегда, кэшировать apt здесь смысла нет.
+      - name: Playwright version
+        id: pwver
+        run: echo "v=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pwver.outputs.v }}
+
       - name: Node tools (ESLint, Vitest, Playwright, Newman, stylelint, html-validate)
         run: |
           npm ci --no-audit --no-fund

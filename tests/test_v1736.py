@@ -95,6 +95,17 @@ class TestGeometryMatchesPdf:
         filled = printupd.html(_doc(), {"seller_bank": "Р/с 40702810400000000123"})
         assert "(банковские реквизиты продавца)" in filled
 
+    def test_toolbar_button_is_a_touch_target_on_coarse_pointer(self):
+        """v1.73.6 (аудит): кнопка печати была 32 px при каноне проекта 44 px.
+
+        Печать с телефона — основной сценарий (v1.73.5), поэтому правило висит на
+        указателе, а не на ширине экрана: планшет попадает под то же правило.
+        """
+        css = printupd.CSS
+        assert "@media (pointer: coarse)" in css
+        block = css.split("@media (pointer: coarse)", 1)[1].split("}", 2)[0]
+        assert ".toolbar button { min-height: 44px;" in block
+
     def test_totals_row_stops_at_column_nine(self):
         """В PDF «Всего к оплате» обрывается на графе 9 — справа от неё рамки нет."""
         row = printupd.totals_row(_doc(), printupd.defaults(_doc()))
