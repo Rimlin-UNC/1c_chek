@@ -99,14 +99,20 @@ CURRENCIES = {"643": "Российский рубль", "978": "Евро", "840"
 # как fns_refs/upd: ставка в записи — код, на бумаге — проценты словами
 VAT_LABELS = {"none": "без НДС", "agent": "НДС исчисляется налоговым агентом",
               "22": "22%", "20": "20%", "18": "18%", "10": "10%", "7": "7%", "5": "5%", "0": "0%",
-              "22/122": "22/122%", "20/120": "20/120%", "18/118": "18/118%", "10/110": "10/110%",
-              "7/107": "7/107%", "5/105": "5/105%"}
+              # v1.73.6: у расчётных ставок знака процента на бумаге нет — в PDF из ЭДО «20/120»;
+              # VAT_LABELS заодно печатает пояснение к графе 7, поэтому там же и слово «НДС».
+              "22/122": "22/122", "20/120": "20/120", "18/118": "18/118", "10/110": "10/110",
+              "7/107": "7/107", "5/105": "5/105"}
 # Графы таблицы бланка — 16 номеров, как в утверждённой форме (включая 10, 10а и 11).
 COLUMNS = ("А", "1", "1а", "1б", "2", "2а", "3", "4", "5", "6", "7", "8", "9", "10", "10а", "11")
 # Ширины граф в пунктах — сняты с PDF владельца (14 … 827,2 pt), поэтому таблица совпадает
 # с оригиналом и по границам, и по переносам длинных названий.
-COLUMN_WIDTHS = (66.8, 15.0, 134.3, 48.0, 17.2, 44.3, 42.8, 40.5, 57.0, 40.5, 32.3, 55.5,
-                 57.0, 40.5, 40.5, 81.0)
+# v1.73.6: ширины сняты с PDF из ЭДО (шаг 0.1 pt по вертикальным линиям таблицы товаров):
+# код товара 65.2, № п/п 16.6, наименование 138.8, вид товара 36.7, единица 20.3 | 44.2,
+# количество 42.8, цена 38.3, стоимость без налога 58.5, акциз 40.5, ставка 30.8,
+# сумма налога 55.5, стоимость с налогом 57.0, страна 39.8 | 39.7, номер декларации 80.3.
+COLUMN_WIDTHS = (65.2, 16.6, 138.8, 36.7, 20.3, 44.2, 42.8, 38.3, 58.5, 40.5, 30.8, 55.5,
+                 57.0, 39.8, 39.7, 80.3)
 
 
 class PrintFormError(ValueError):
@@ -115,18 +121,22 @@ class PrintFormError(ValueError):
 
 # ------------------------------------------------------------------ формат значений
 def money(value: float | None) -> str:
-    """16400.5 → «16 400,50»; пусто → «—» (в бумажной форме пустая графа — прочерк)."""
+    """16400.5 → «16 400.50»; пусто → «—» (в бумажной форме пустая графа — прочерк).
+
+    v1.73.6: разделитель дробной части — точка, как в PDF из ЭДО (там «155.74»,
+    «35 500.00»), а не запятая: бланк должен совпадать с эталоном один в один.
+    """
     if value is None:
         return "—"
-    return f"{value:,.2f}".replace(",", " ").replace(".", ",")
+    return f"{value:,.2f}".replace(",", " ")
 
 
 def qty(value: float | None) -> str:
-    """Количество до трёх знаков без хвостовых нулей: 1.25 → «1,25», 10 → «10»."""
+    """Количество до трёх знаков без хвостовых нулей: 1.25 → «1.25», 10 → «10»."""
     if value is None:
         return "—"
     text = f"{value:,.3f}".rstrip("0").rstrip(".") if value != int(value) else str(int(value))
-    return text.replace(",", " ").replace(".", ",")
+    return text.replace(",", " ")
 
 
 def date_words(day: date | None) -> str:
@@ -171,6 +181,11 @@ def auto_from(parsed: dict) -> dict:
     seller_print = parsed.get("seller_print") or {}
     buyer_print = parsed.get("buyer_print") or {}
     signer = parsed.get("signer") or {}
+    # v1.73.6: у УПД подписантов два — продавец («Товар передал») и покупатель («Товар получил»).
+    # В PDF из ЭДО правая половина блока подписей заполнена подписью получателя; берём второго
+    # подписанта, если он есть в файле, иначе поля остаются под рукописную подпись.
+    signers = [s for s in (parsed.get("signers") or []) if s.get("name")]
+    receiver = signers[1] if len(signers) > 1 else {}
     ogrnip, ogrnip_date = (seller_print.get("ogrnip") or ""), (seller_print.get("ogrnip_date") or "")
     subject_seller = ", ".join(p for p in (seller.get("name"), f"ИНН {seller['inn']}" if seller.get("inn") else "") if p)
     subject_buyer = ", ".join(p for p in (buyer.get("name"), f"ИНН {buyer['inn']}" if buyer.get("inn") else "") if p)
@@ -196,6 +211,10 @@ def auto_from(parsed: dict) -> dict:
         "transfer_date": date_short(parsed.get("date")),
         "accept_date": date_short(parsed.get("date")),
     }
+    if receiver:
+        out["accept_position"] = receiver.get("role") or ""
+        out["accept_name"] = receiver.get("name") or ""
+        out["accept_sign"] = "электронно"
     if seller.get("kind") == "ИП":
         out["signer_entrepreneur"] = signer.get("name") or seller.get("name", "").replace("ИП ", "", 1)
     return {k: v for k, v in out.items() if v}
@@ -375,13 +394,15 @@ def header_rows(doc: PrimaryDocument, values: dict) -> str:
         ("ИНН/КПП продавца", " / ".join(x for x in (doc.seller_inn, doc.seller_kpp) if x) or "—", "2б", False),
         ("Грузоотправитель и его адрес:", values.get("shipper", ""), "3", False),
         ("Грузополучатель и его адрес:", values.get("consignee", ""), "4", False),
-        ("К платежно-расчётному документу", values.get("payment_doc", ""), "5", False),
+        # v1.73.6: подписи строк (5) и (5б) — дословно как в PDF из ЭДО (там «расчетному»,
+        # «счетам-фактурам» — так печатает 1С), чтобы бланк совпадал с эталоном дословно
+        ("К платежно-расчетному документу", values.get("payment_doc", ""), "5", False),
     ]
     # v1.73.4: строка (5б) есть в бланке всегда — после (5а) и перед (6); пустая печатается
     # прочерком, как в PDF из ЭДО («-»), иначе нумерация строк шапки «прыгает».
     rows += [
         ("Документ об отгрузке:", values.get("shipment_doc", ""), "5а", False),
-        ("К счёту-фактуре (счетам-фактурам), выставленному (выставленным) при получении оплаты, "
+        ("К счету-фактуре (счетам-фактурам), выставленному (выставленным) при получении оплаты, "
          "частичной оплаты или иных платежей в счёт предстоящих поставок товаров (выполнения работ, "
          "оказания услуг), передачи имущественных прав",
          values.get("payment_advance", "") or "-", "5б", False),
@@ -479,11 +500,14 @@ def totals_row(doc: PrimaryDocument, values: dict) -> str:
     """«Всего к оплате»: графы 5, 6 («Х»), 8 и 9 — как в бланке; графа 7 не заполняется."""
     vat_empty = all((line.vat_rate or "none") == "none" for line in (doc.lines or []))
     vat_cell = "без НДС" if vat_empty else money(doc.vat_total)
+    # v1.73.6: в PDF из ЭДО строка «Всего к оплате» обрывается на графе 9 — справа от неё
+    # рамки нет (графы 10, 10а и 11 остаются только у строк товаров). Поэтому последняя
+    # ячейка занимает оставшиеся три графы (39.8 + 39.7 + 80.3 = 159.8 pt).
     return (f'<tr class="totals"><td class="l" colspan="8">Всего к оплате</td>'
             f'<td class="c">{_esc(money(doc.total_without_vat))}</td><td class="c">Х</td>'
             f'<td class="c"></td><td class="c">{_esc(vat_cell)}</td>'
             f'<td class="c">{_esc(money(doc.total_with_vat))}</td>'
-            f'<td class="c"></td><td class="c"></td><td class="c"></td></tr>')
+            f'<td class="c" colspan="3"></td></tr>')
 
 
 def _triple(values: dict, pos_key: str, sign_key: str, name_key: str, sign_default: str = "электронно") -> str:
@@ -513,16 +537,26 @@ def signatures(values: dict) -> str:
     # подпись руководителя в электронном документе ставится словами «электронно» — так же,
     # как в PDF из ЭДО; если ФИО не заполнено, остаётся пустая линия под рукописную подпись
     chief = values.get("signer_chief", "")
+    # v1.73.6: в PDF из ЭДО «электронно» и ФИО стоят НА ОДНОЙ строке с должностью подписанта
+    # («Руководитель группы  электронно  Мельникова Анна Валерьевна»), а не ниже неё.
+    role = values.get("signer_chief_role", "")
     left = (
-        '<div class="role">Руководитель организации<br>или иное уполномоченное лицо</div>'
-        f'<div class="pos">{_esc(values.get("signer_chief_role", ""))}</div>'
-        + lines("", chief, "электронно")
-        + '<div class="role ip">Индивидуальный предприниматель<br>или иное уполномоченное лицо</div>'
+        '<table class="roleline"><colgroup><col style="width:44%"><col style="width:22%"><col></colgroup>'
+        '<tbody><tr>'
+        '<td class="r"><div class="role">Руководитель организации<br>или иное уполномоченное лицо</div>'
+        f'<div class="pos">{_esc(role)}</div></td>'
+        f'<td class="c sgn">{_esc("электронно" if chief else "")}</td>'
+        f'<td class="c sgn">{_esc(chief)}</td>'
+        "</tr>"
+        '<tr class="cap"><td class="r"></td><td class="c">(подпись)</td><td class="c">(ф.и.о.)</td></tr>'
+        "</tbody></table>"
+        '<div class="role ip">Индивидуальный предприниматель<br>или иное уполномоченное лицо</div>'
         + lines("", values.get("signer_entrepreneur", ""), "электронно")
     )
+    accountant_role = values.get("signer_accountant_role", "")
     right = (
         '<div class="role">Главный бухгалтер<br>или иное уполномоченное лицо</div>'
-        f'<div class="pos">{_esc(values.get("signer_accountant_role", ""))}</div>'
+        f'<div class="pos">{_esc(accountant_role)}</div>'
         + lines("", values.get("signer_accountant", ""))
         + f'<div class="ogrnip">{_esc(values.get("seller_ogrnip", ""))}</div>'
         + '<div class="hint1">(основной государственный регистрационный номер индивидуального '
@@ -637,7 +671,7 @@ table.page > tbody > tr > td { padding: 14pt; vertical-align: top; }
 /* --- шапка (2)–(8): 14 строк, как в бланке --- */
 table.hdr { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: .8pt; }
 .hdr td { border-bottom: .6pt solid #000; padding: 0 2pt .5pt 0; vertical-align: bottom; }
-.hdr .hl { padding-left: 8pt; }
+.hdr .hl { padding-left: 5pt; }   /* снято с PDF: подписи шапки начинаются на 5 pt от рамки */
 /* v1.73.4: длинная подпись строки (5б — «К счёту-фактуре…») переносится по словам,
    как в бланке; остальные подписи остаются в одну строку */
 .hdr .hl-wrap { white-space: normal; line-height: 1.05; }
@@ -646,7 +680,7 @@ table.hdr { width: 100%; border-collapse: collapse; table-layout: fixed; margin-
 .hdr tr:last-child td { border-bottom: 0; }
 .b { font-weight: 700; }
 /* --- таблица товаров: 16 граф, ширины сняты с оригинала --- */
-table.grid { width: 813.2pt; border-collapse: collapse; table-layout: fixed; }
+table.grid { width: 805pt; border-collapse: collapse; table-layout: fixed; }
 .grid th, .grid td { border: .6pt solid #000; padding: .8pt 2pt; vertical-align: middle; font-weight: 400; }
 .grid th { text-align: center; font-size: 6.7pt; line-height: 1.08; overflow-wrap: anywhere;
            word-break: break-word; }
@@ -673,6 +707,14 @@ table.sgn td { border-bottom: .6pt solid #000; height: 9.4pt; vertical-align: bo
                padding: 0 1pt; }
 table.sgn tr.cap td { border-bottom: 0; height: 8pt; font-size: 6pt; vertical-align: top; }
 table.sgn td.c { text-align: center; }
+/* v1.73.6: строка подписи руководителя — должность слева, «электронно» и ФИО на одной
+   линии с ней, как в PDF из ЭДО; линия подписи проходит под всей строкой. */
+table.roleline { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 4.4pt; }
+table.roleline td { vertical-align: bottom; padding: 0 1pt; }
+table.roleline td.r { text-align: left; }
+table.roleline td.c { text-align: center; }
+table.roleline td.sgn { border-bottom: .6pt solid #000; height: 9.4pt; font-size: 6.9pt; }
+table.roleline tr.cap td { border-bottom: 0; height: 8pt; font-size: 6pt; padding-top: 1pt; }
 .signers .ogrnip { margin-top: 14pt; border-bottom: .6pt solid #000; font-size: 6.9pt; min-height: 9pt; }
 .signers .hint1 { font-size: 6pt; line-height: 1.15; }
 /* --- нижняя половина: основание, передача товара, реквизиты, ЭДО --- */

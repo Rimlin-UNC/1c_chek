@@ -224,6 +224,17 @@ def _signer(element) -> dict:
     return {"role": _attr(element, "Должн"), "name": name}
 
 
+def _signers(doc) -> list[dict]:
+    """Все подписанты документа в порядке бланка.
+
+    v1.73.6: у УПД их два — продавец («Товар передал») и покупатель («Товар получил»).
+    Раньше брался только первый, поэтому правая половина блока подписей в бланке оставалась
+    пустой, хотя в PDF из ЭДО там «ГЕНЕРАЛЬНЫЙ ДИРЕКТОР · ШПАКОВ РОМАН ВЛАДИМИРОВИЧ ·
+    электронно». Это подпись получателя в самом бланке, а не блок электронной подписи.
+    """
+    return [_signer(el) for el in _kids(doc, "Подписант")]
+
+
 def _line(element, index: int) -> dict:
     extra = _kid(element, "ДопСведТов")
     raw_rate = element.get("НалСт", "")
@@ -291,6 +302,7 @@ def parse(data: bytes) -> dict:
         "shipment_doc": _shipment_doc(_kid(info, "ДокПодтвОтгрНом")),
         "basis": _basis(doc),
         "signer": _signer(_kid(doc, "Подписант")),
+        "signers": _signers(doc),
         "lines": [_line(el, i) for i, el in enumerate(_kids(table, "СведТов"), 1)],
         "totals": {"without_vat": _num(_attr(totals, "СтТовБезНДСВсего")),
                    "with_vat": _num(_attr(totals, "СтТовУчНалВсего")),

@@ -57,12 +57,12 @@ def _doc(**kw) -> PrimaryDocument:
 
 # ------------------------------------------------------------------ формат значений
 def test_money_and_qty_like_paper_form():
-    assert printupd.money(6100.0) == "6 100,00"
-    assert printupd.money(105530.5) == "105 530,50"
+    assert printupd.money(6100.0) == "6 100.00"      # как в PDF из ЭДО
+    assert printupd.money(105530.5) == "105 530.50"
     assert printupd.money(None) == "—"
     assert printupd.qty(10.0) == "10"
-    assert printupd.qty(1.25) == "1,25"
-    assert printupd.qty(1234.5) == "1 234,5"
+    assert printupd.qty(1.25) == "1.25"      # разделитель как в PDF из ЭДО
+    assert printupd.qty(1234.5) == "1 234.5"
     assert printupd.qty(None) == "—"
 
 
@@ -70,7 +70,7 @@ def test_date_in_words_and_vat_labels():
     assert printupd.date_words(date(2026, 10, 14)) == "14 октября 2026 г."
     assert printupd.date_words(date(2026, 1, 31)) == "31 января 2026 г."
     assert printupd.vat_label("22") == "22%"
-    assert printupd.vat_label("22/122") == "22/122%"
+    assert printupd.vat_label("22/122") == "22/122"      # расчётная ставка — без знака %
     assert printupd.vat_label("none") == "без НДС"
     assert printupd.vat_label("") == "без НДС"
     assert printupd.currency_label("643") == "Российский рубль, код - 643"  # так печатает бланк ЭДО
@@ -121,7 +121,7 @@ def test_html_has_form_requisites_lines_and_totals():
     assert page.startswith("<!doctype html>")
     assert "<title>УПД № УТ-215 от 14.10.2026</title>" in page
     for needle in ("Универсальный передаточный документ", "(2а)", "(2б)", "(5а)", "(6б)", "(7)", "(8)",
-                   "Всего к оплате", "6 100,00", "1 830,00", "6 500,00", "1 430,00", "7 930,00", "22%",
+                   "Всего к оплате", "6 100.00", "1 830.00", "6 500.00", "1 430.00", "7 930.00", "22%",
                    "без акциза", "CEM-500", "Руководитель организации",
                    "или иное уполномоченное лицо", "Основание передачи (сдачи)/получения приемки",
                    "Товар (груз) передал/услуги, результаты работ, права сдал",
@@ -140,7 +140,8 @@ def test_table_has_sixteen_columns_of_approved_form():
     """В бланке 16 граф: раньше не хватало 10, 10а и 11 (страна происхождения и прослеживаемость)."""
     assert printupd.COLUMNS == ("А", "1", "1а", "1б", "2", "2а", "3", "4", "5", "6", "7", "8", "9",
                                 "10", "10а", "11")
-    assert len(printupd.COLUMN_WIDTHS) == 16 and abs(sum(printupd.COLUMN_WIDTHS) - 813.2) < 1
+    # v1.73.6: ширины сняты с PDF из ЭДО — таблица товаров там 805.0 pt внутри рамки 813.2 pt
+    assert len(printupd.COLUMN_WIDTHS) == 16 and abs(sum(printupd.COLUMN_WIDTHS) - 805.0) < 0.5
     page = printupd.html(_doc())
     for number in printupd.COLUMNS:
         assert f">{number}</th>" in page, number
@@ -349,7 +350,7 @@ def test_row_5b_is_always_on_the_blank_after_5a():
     """
     page = printupd.html(_doc())
     assert page.index(">(5а)<") < page.index(">(5б)<") < page.index(">(6)<")
-    assert "К счёту-фактуре (счетам-фактурам)" in page
+    assert "К счету-фактуре (счетам-фактурам)" in page   # дословно как в PDF из ЭДО (v1.73.6)
     filled = printupd.html(_doc(print_json=printupd.dump({"payment_advance": "№ 77 от 01.10.2026"})))
     assert "№ 77 от 01.10.2026" in filled and filled.count("(5б)") == 1
 
