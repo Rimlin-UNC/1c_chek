@@ -350,7 +350,7 @@ def test_row_5b_is_always_on_the_blank_after_5a():
     """
     page = printupd.html(_doc())
     assert page.index(">(5а)<") < page.index(">(5б)<") < page.index(">(6)<")
-    assert "К счету-фактуре (счетам-фактурам)" in page   # дословно как в PDF из ЭДО (v1.73.6)
+    assert "К счёту-фактуре (счетам-фактурам)" in page
     filled = printupd.html(_doc(print_json=printupd.dump({"payment_advance": "№ 77 от 01.10.2026"})))
     assert "№ 77 от 01.10.2026" in filled and filled.count("(5б)") == 1
 
