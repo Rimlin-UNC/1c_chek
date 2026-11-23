@@ -446,6 +446,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   // 5) Диалог «Собрать авансовый отчёт» ------------------------------------
   await sandbox.openAO1Modal();
   let aoSlot = root._cls['.modal-slot'];
+  ok(aoSlot.innerHTML.includes('id="ao-save" checked') &&
+     aoSlot.innerHTML.includes('Загрузки/АО/'),
+     'v1.73.7: автосохранение в «Загрузки/АО» включено и путь показан');
   aoSlot.querySelector('#ao-from').value = '2026-10-01';
   aoSlot.querySelector('#ao-to').value = '2026-10-31';
   aoSlot.querySelector('#ao-date').value = '2026-10-31';
@@ -458,6 +461,12 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'ao: payload период');
   ok(aoSlot.innerHTML.includes('Отчёт собран'), 'ao: предпросмотр');
   ok(aoSlot.innerHTML.includes('ИТОГО'), 'ao: итог в предпросмотре');
+  ok(aoSlot.innerHTML.includes('Загрузки/АО/ООО «Ямастер»') &&
+     aoSlot.innerHTML.includes('id="ao-folder"'),
+     'v1.73.7: папка компании и кнопка сохранения в предпросмотре');
+  await new Promise(r => setTimeout(r, 60));
+  await aoSlot.querySelector('#ao-folder').onclick();
+  ok(true, 'v1.73.7: повторное сохранение комплекта без крэша');
   // печать (один сотрудник → АО-1)
   await aoSlot.querySelector('#ao-print').onclick();
   ok(true, 'ao: печать АО-1 без крэша');

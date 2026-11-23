@@ -2103,13 +2103,16 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
     if cid:
         c = db.get(Company, cid)
         if c:
-            company = {"id": c.id, "name": c.name, "inn": c.inn}
+            # v1.73.7: сокращённое название — имя папки «Загрузки/АО/<компания>».
+            company = {"id": c.id, "name": c.name,
+                       "short_name": c.short_name or c.name, "inn": c.inn}
     if company is None and rows:
         cid = rows[0].company_id
         if cid:
             c = db.get(Company, cid)
             if c:
-                company = {"id": c.id, "name": c.name, "inn": c.inn}
+                company = {"id": c.id, "name": c.name,
+                           "short_name": c.short_name or c.name, "inn": c.inn}
     # v1.23.0: реквизиты для формы АО-1 — из КАРТОЧКИ ПРЕДПРИЯТИЯ (ЕГРЮЛ/ЕГРИП),
     # структура в стиле 1С (готовность к интеграции, см. docs/ao1-1c.md)
     requisites = {}

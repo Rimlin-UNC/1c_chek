@@ -6,18 +6,21 @@ const start = source.indexOf('function aoReportFilename(');
 const end = source.indexOf('// --- v1.14.0: CSV', start);
 const makePreview = new Function('esc', '$', 'aoCsvDownload', 'ao1Json', 'downloadBlob',
   'toast', 'aoMultiPrint', 'ao1Print', 'printReceiptsPDF', 'openAO1Modal',
+  'aoFolderDisplay', 'aoJsonDownload', 'aoSaveFromButton',
   `${source.slice(start, end)}; return aoShowPreview;`);
 
 function setup(rows, byAssignee = [{ name: 'Иван', sum: 10, count: rows.length }]) {
   document.body.innerHTML = '<div id="modal-root"><div id="slot"></div></div>';
   const printReceipt = vi.fn(); const standard = vi.fn(); const multi = vi.fn(); const toast = vi.fn();
+  const csv = vi.fn(); const json = vi.fn(); const saveFromButton = vi.fn();
   const preview = makePreview(x => String(x ?? ''), () => document.getElementById('modal-root'),
-    vi.fn(), vi.fn(), vi.fn(), toast, multi, standard, printReceipt, vi.fn());
+    csv, vi.fn(), vi.fn(), toast, multi, standard, printReceipt, vi.fn(),
+    () => 'Загрузки/АО/ООО «Ямастер»', json, saveFromButton);
   const rep = { rows, by_assignee: byAssignee, period: { from: '2026-10-01', to: '2026-10-31' },
     total: { count: rows.length, sum: 10 }, invalid_count: 0, truncated: false };
   const slot = document.getElementById('slot');
-  preview(slot, rep, {});
-  return { slot, rep, printReceipt, standard, multi, toast };
+  preview(slot, rep, { 'ao-num': 'АО-2026-10-46', 'ao-date': '2026-10-31' });
+  return { slot, rep, printReceipt, standard, multi, toast, csv, json, saveFromButton };
 }
 const row = (id, assignee = 'Иван', operation = 1, personal_sum = 0) => ({ id, assignee, operation, personal_sum });
 
@@ -56,6 +59,25 @@ describe('выбор печати авансового отчёта', () => {
     x.slot.querySelector('#ao-include').value = 'receipts';
     x.slot.querySelector('#ao-print').click();
     expect(x.printReceipt).not.toHaveBeenCalled(); expect(x.toast).toHaveBeenCalled();
+  });
+});
+
+
+describe('папка авансового отчёта в «Загрузках»', () => {
+  it('показывает путь «АО/компания» и сохраняет комплект по кнопке', () => {
+    const x = setup([row('a')]);
+    expect(x.slot.innerHTML).toContain('Загрузки/АО/ООО «Ямастер»');
+    expect(x.slot.querySelector('#ao-folder-status')).not.toBeNull();
+    x.slot.querySelector('#ao-folder').click();
+    expect(x.saveFromButton).toHaveBeenCalledWith(
+      x.rep, expect.objectContaining({ 'ao-num': 'АО-2026-10-46' }));
+  });
+  it('CSV и JSON для 1С получают параметры отчёта для имени файла', () => {
+    const x = setup([row('a')]);
+    x.slot.querySelector('#ao-csv').click();
+    x.slot.querySelector('#ao-json').click();
+    expect(x.csv).toHaveBeenCalledWith(x.rep, expect.objectContaining({ 'ao-num': 'АО-2026-10-46' }));
+    expect(x.json).toHaveBeenCalledWith(x.rep, expect.objectContaining({ 'ao-num': 'АО-2026-10-46' }));
   });
 });
 

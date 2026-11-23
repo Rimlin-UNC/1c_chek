@@ -185,3 +185,83 @@ class TestUiHarnessV1140:
         out = (r.stdout + r.stderr)
         assert "HARNESS_OK" in out, out[-2000:]
         assert "HARNESS FAIL" not in out, out[-2000:]
+
+
+class TestAdvanceReportFolder:
+    """v1.73.7: «Загрузки/АО/<сокращённое название компании>» — проверка контракта и архива."""
+
+    def test_short_name_is_returned_for_folder(self, client):
+        from app.database import SessionLocal
+        from app.models import Company
+
+        hdr = login(client, "admin", "admin123")
+        n = next(_SEQ)
+        comp = client.post("/api/v1/companies", json={
+            "name": f"Общество с ограниченной ответственностью Папка {n}"}, headers=hdr).json()
+        db = SessionLocal()
+        try:
+            row = db.get(Company, comp["id"])
+            row.short_name = "ООО «Папка»"
+            db.commit()
+        finally:
+            db.close()
+        rep = client.post("/api/v1/receipts/advance-report", headers=hdr,
+                          json={"date_from": "2026-01-01", "date_to": "2026-12-31",
+                                "company_id": comp["id"]}).json()
+        assert rep["company"]["short_name"] == "ООО «Папка»"
+        assert rep["requisites"]["Организация"]["НаименованиеСокращенное"] == "ООО «Папка»"
+
+    def test_zip_fallback_really_creates_folders(self):
+        import pathlib
+        import subprocess
+        import tempfile
+        import zipfile
+
+        if shutil.which("node") is None:
+            import pytest
+            pytest.skip("node недоступен")
+        root = pathlib.Path(__file__).resolve().parents[1]
+        js = (root / "app/static/js/ao_folder.js").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = pathlib.Path(tmp) / "ao_folder.mjs"
+            out = pathlib.Path(tmp) / "ao.zip"
+            mod.write_text(js, encoding="utf-8")
+            script = """
+const ao = await import('file://' + process.argv[1]);
+const rep = { requisites: { 'Организация': { 'НаименованиеСокращенное': 'ООО "Ромашка"' } } };
+const segments = ao.aoFolderSegments(rep);
+const base = 'АО-2026-11-01';
+const files = ao.aoBundleFiles({ base, csvText: '\\ufeff№;Сумма', jsonText: '{}',
+  htmlText: '<html>АО</html>' });
+const zip = ao.aoBuildZip(files, segments, ao.aoZipReadme(segments, base));
+await (await import('node:fs/promises')).writeFile(process.argv[2],
+  new Uint8Array(await zip.arrayBuffer()));
+"""
+            run = subprocess.run(["node", "--input-type=module", "-e", script,
+                                  str(mod), str(out)], capture_output=True, text=True,
+                                 timeout=60, cwd=str(root), check=False)
+            assert run.returncode == 0, run.stdout + run.stderr
+            with zipfile.ZipFile(out) as archive:
+                names = archive.namelist()
+                folder = "АО/ООО «Ромашка»/"
+                assert "ПРОЧТИТЕ.txt" in names
+                assert "АО/" in names and folder in names
+                for ext in ("html", "csv", "json"):
+                    assert f"{folder}АО-2026-11-01.{ext}" in names
+                assert archive.testzip() is None
+                assert archive.read(f"{folder}АО-2026-11-01.csv").startswith(b"\xef\xbb\xbf")
+                assert b"<html>" in archive.read(f"{folder}АО-2026-11-01.html")
+
+    def test_client_and_service_worker_know_about_folder(self):
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        js = (root / "app/static/js/app.js").read_text(encoding="utf-8")
+        mod = (root / "app/static/js/ao_folder.js").read_text(encoding="utf-8")
+        sw = (root / "app/static/sw.js").read_text(encoding="utf-8")
+        assert 'id="ao-save"' in js and 'id="ao-folder"' in js
+        assert "aoSaveReportToDownloads" in js and "aoFolderHandleForSave" in js
+        assert "Загрузки" in mod and "showDirectoryPicker" in mod
+        assert "startIn: 'downloads'" in mod and "0x0800" in mod
+        assert "aoAsciiFilename" in mod and "aoWriteBundle" in mod
+        assert "/js/ao_folder.js" in sw
