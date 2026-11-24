@@ -170,6 +170,13 @@ Projects токен интеграции создать не может (403).
   деплой `dpl_8huZqPCbF3Aq4PwQune9y11r8rwm` — `READY` за 26 с. Важная оговорка:
   шаблон `/data/` привязан к корню (так же, как в `.gitignore`), иначе из сборки
   пропадают справочники `app/pool/geo/data/`.
+- **Проверено 24.11.2026** (ветка `arena/391c7fd3-1c-chek`, коммит `adb3ad0`):
+  `xhtml2pdf`/ReportLab и `DejaVuSans.ttf` подняли бандл с 493,06 МБ (1.73.7)
+  до 500,60 МБ и снова вызвали `LAMBDA_SIZE_EXCEEDED`. `.vercelignore` дополнительно
+  отсёк корневые тексты и WebP-дубли с JPEG-фолбэком; отсечено 614 файлов,
+  `Bundle size (498.66 MB)`, деплой `dpl_51pTwGjGr7FtECUpqPp3ojEFEfJy` — `READY`
+  за ~22 с. Замок — `tests/test_v1738.py::TestRelease1738::test_vercel_demo_bundle_is_trimmed`.
+- **Проверено 24.11.2026** (полный Playwright в песочнице): `YM_PLAYWRIGHT_CHROMIUM=/tmp/ym-chromium/chrome.sh npx playwright test --workers=1` — **86 passed (44.0m)**; набор вырос с 83 до 86 после E2E 1.73.7/1.73.8. С `--workers=2` — 84 passed и 2 тайминг-флака на локальном Chromium 153; `--last-failed --workers=1` — 2 passed.
 - **Проверка новой сборки:** коннектором `list_deployments` (проект `1c-chek`) —
   последний деплой ветки в `READY`, затем `get_deployment_events` — в журнале
   «Bundle size (…MB)» и нет `LAMBDA_SIZE_EXCEEDED`.

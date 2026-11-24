@@ -40,6 +40,11 @@ pillow>=10.0
 # Чтение текстового слоя PDF-чеков (v1.65.0; лёгкая, без OCR)
 pypdf>=4.0
 
+# v1.73.8: настоящий PDF авансового отчёта с выделяемым кириллическим текстом.
+# Это pure-Python генератор (ReportLab внутри), без системных Pango/Cairo;
+# шрифт DejaVuSans.ttf и его лицензия лежат рядом в app/assets/fonts/.
+xhtml2pdf>=0.2.29
+
 # v1.70.38: защита разбора XML ФНС от сущностей («billion laughs»/XXE)
 defusedxml>=0.7
 

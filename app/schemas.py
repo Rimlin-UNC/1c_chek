@@ -87,6 +87,19 @@ class AdvanceReportBody(BaseModel):
                              description="Только чеки, подтверждённые ФНС")
 
 
+class AdvanceReportPdfBody(AdvanceReportBody):
+    """v1.73.8: настоящий текстовый PDF авансового отчёта.
+
+    Те же фильтры, что у `/advance-report`, плюс уже зарезервированный номер,
+    поля бланка и признак «включить копии чеков с QR». Сервер всё равно
+    пересобирает отчёт из БД в scope пользователя: клиент не задаёт суммы.
+    """
+    report_number: str = Field(default="", max_length=80)
+    report_date: str = Field(default="", max_length=10)
+    meta: dict[str, str] = Field(default_factory=dict)
+    include_receipts: bool = False
+
+
 class AdvanceReportNumberBody(BaseModel):
     company_id: str = Field(min_length=1, max_length=36)
     report_date: str = Field(min_length=10, max_length=10)

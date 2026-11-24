@@ -17,8 +17,11 @@ import * as outbox from './offline_outbox.js';
 import { createNavigationCounts } from './navigation_counts.js';
 import { createConnectionStatus } from './connection_status.js';
 import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from './printpack.js'; // v1.24.0: нарезка чеков на 3 колонки
+// v1.73.7: «Загрузки/АО/<сокращённое название компании>» — папка отчёта на ПК и телефоне.
+// v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
+import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.6';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.8';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6927,6 +6930,18 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.8': [
+    { icon: '📄', title: '«Печать / PDF» теперь сохраняет настоящий PDF',
+      text: 'Кнопка в предпросмотре авансового отчёта предлагает два действия: «💾 Сохранить PDF» и «🖨 Распечатать». PDF создаётся сервером сразу как файл с расширением .pdf, без меню браузера и без «Сохранить как PDF» из окна печати. Текст в файле выделяется и копируется: встроен кириллический шрифт DejaVuSans, а не снимок экрана.' },
+    { icon: '📱', title: 'На Android понятно, куда сохранился отчёт',
+      text: 'В Chrome и Edge готовый PDF попадает в уже знакомую папку «Загрузки/АО/<сокращённое название компании>»; точный путь показывается до и после сохранения. Если браузер не умеет создавать папки, приходит ZIP с той же структурой и настоящим PDF внутри, а кнопка «Скачать ещё раз» отдаёт сам файл. Печать на компьютере работает как раньше; из сохранённого PDF можно распечатать документ на телефоне.' },
+  ],
+  '1.73.7': [
+    { icon: '📁', title: 'Авансовый отчёт сохраняется в «Загрузки/АО/компания»',
+      text: 'При сборке отчёта программа создаёт в «Загрузках» папку «АО», а внутри — папку с сокращённым названием организации из карточки компании. Туда ложатся печатная форма (из неё можно сохранить PDF), CSV для Excel и JSON для 1С. В Chrome и Edge на компьютере и в Chrome на Android один раз нужно выбрать папку «Загрузки» — дальше папки создаются сами, а выбранный каталог запоминается.' },
+    { icon: '📦', title: 'Остальным браузерам — ZIP с готовой структурой папок',
+      text: 'Firefox и Safari не разрешают сайту создавать папки, поэтому для них отчёт скачивается архивом, внутри которого уже лежит «АО» и папка компании: распакуйте его в «Загрузки» — получится та же структура. Имя архива и одиночных CSV/JSON транслитерируется в латиницу, чтобы браузер не заменил его на «download»; внутри архива названия остаются кириллическими. Имя папки очищается от запрещённых символов, поэтому безопасно и на Windows, и на телефоне.' },
+  ],
   '1.73.6': [
     { icon: '📐', title: 'Бланк УПД сверен с PDF из ЭДО — один в один',
       text: 'Сверили печатную форму с вашими образцами PDF построчно и по линиям: ширины всех 16 граф сняты с эталона (совпадают по границам — 805 pt внутри рамки), строка «Всего к оплате» обрывается на графе 9, как в PDF, числа печатаются с точкой в дробной части («155.74», «35 500.00»), расчётные ставки — без знака процента («20/120»), подпись руководителя стоит на одной строке с должностью, а не ниже. Добавили пробелы в тысячах у количества и остальное по мелочи.' },
@@ -10158,11 +10173,31 @@ async function openAO1Modal(opts = {}) {
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ao-onlyvalid" style="width:auto">
         только подтверждённые ФНС</label>
     </div>
+    <div class="info-callout" style="margin:8px 0">
+      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+        <input type="checkbox" id="ao-save" checked style="width:auto;margin-top:3px">
+        <span><b>📁 Сразу сохранить отчёт в «Загрузки»</b><br>
+          <span class="form-hint">Путь: <b id="ao-folder-hint">Загрузки/АО/ООО «Компания»</b>.
+          Отчёт, CSV для Excel и JSON для 1С лягут в папку компании. В Chrome и Edge один раз
+          выберите папку «Загрузки» — дальше программа создаёт «АО» и папку компании сама;
+          в других браузерах придёт ZIP с готовой структурой папок, распакуйте его в «Загрузки».</span></span></label>
+    </div>
     <div class="modal-actions">
       <button type="button" class="btn" data-close>Отмена</button>
       <button type="button" class="btn btn-primary" id="ao-make">🧾 Собрать отчёт</button>
     </div>`);
   slot.querySelector('[data-close]').onclick = () => $('#modal-root').classList.add('hidden');
+  // v1.73.7: путь в «Загрузках» показываем заранее и обновляем при смене компании.
+  const aoHint = slot.querySelector('#ao-folder-hint');
+  const refreshAoHint = () => {
+    const chosen = (state.companies || []).find(c => c.id === slot.querySelector('#ao-company')?.value);
+    const rep = { company: chosen || { name: state.me?.organization || '' } };
+    aoHint.textContent = aoDownloadsPath(aoFolderSegments(rep));
+  };
+  refreshAoHint();
+  if (slot.querySelector('#ao-company')) {
+    slot.querySelector('#ao-company').addEventListener('change', refreshAoHint);
+  }
   slot.querySelector('#ao-make').onclick = async (e) => {
     const btn = e.target;
     const dFrom = slot.querySelector('#ao-from').value;
@@ -10174,6 +10209,10 @@ async function openAO1Modal(opts = {}) {
       return toast('Укажите дату отчёта и корректный последний номер', 'warn');
     }
     btn.disabled = true; btn.textContent = '…собираю';
+    // v1.73.7: выбор папки требует жеста пользователя — запускаем его сразу,
+    // пока клик ещё «свежий», а не после двух запросов к серверу.
+    const wantSave = !!slot.querySelector('#ao-save')?.checked;
+    const pendingHandle = wantSave ? aoFolderHandleForSave() : null;
     try {
       const body = {
         date_from: dFrom, date_to: dTo,
@@ -10197,7 +10236,7 @@ async function openAO1Modal(opts = {}) {
         request_id: crypto.randomUUID(), start_after: startAfter,
       });
       slot.querySelector('#ao-num').value = reservation.number;
-      aoShowPreview(slot, rep, {
+      const meta = {
         'ao-org': slot.querySelector('#ao-org').value,
         'ao-num': reservation.number,
         'ao-date': slot.querySelector('#ao-date').value,
@@ -10213,7 +10252,9 @@ async function openAO1Modal(opts = {}) {
         'ao-acc': slot.querySelector('#ao-acc') ? slot.querySelector('#ao-acc').value.trim() : '44.01',
         'ao-rko': slot.querySelector('#ao-rko') ? slot.querySelector('#ao-rko').value.trim() : '',   // v1.24.0
         'ao-pay': slot.querySelector('#ao-pay') ? slot.querySelector('#ao-pay').value.trim() : '',   // v1.24.0
-      });
+      };
+      aoShowPreview(slot, rep, meta);
+      if (wantSave) await aoSaveReportToDownloads(rep, meta, pendingHandle);
     } catch (err) {
       toast(err.message, 'err');
       btn.disabled = false; btn.textContent = '🧾 Собрать отчёт';
@@ -10242,8 +10283,8 @@ function printBlockedByBrowser() {
 
 function printWithHint() {
   if (printBlockedByBrowser()) {
-    toast('Печать в этом браузере открывается из меню: ⋮ → «Поделиться» → «Печать» '
-      + '(или «Сохранить как PDF»).', 'warn', '🖨');
+    toast('На Android сохраните готовый PDF кнопкой «💾 Сохранить PDF» и распечатайте файл. '
+      + 'Печать из самого браузера: ⋮ → «Поделиться» → «Печать».', 'warn', '🖨');
     return false;
   }
   window.print();
@@ -10276,6 +10317,8 @@ function aoShowPreview(slot, rep, meta) {
     <div class="form-hint">Номер: <b>${esc(meta['ao-num'] || '—')}</b> · Предлагаемое имя PDF: ${esc(aoReportFilename(rep, meta))}.pdf</div>
     <div class="form-hint">Период: ${esc(rep.period.from)} — ${esc(rep.period.to)} ·
       ${esc(rep.company ? rep.company.name : 'все компании')}</div>
+    <div class="form-hint" id="ao-folder-status">📁 Папка отчёта: <b>${esc(aoFolderDisplay(rep, meta))}</b> ·
+      туда сохраняются печатная форма, CSV для Excel, JSON для 1С и настоящий PDF.</div>
     <table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
       <thead><tr style="text-align:left;color:var(--text-faint)">
         <th style="padding:4px">Подотчётник</th><th>Чеков</th><th>Сумма, ₽</th></tr></thead>
@@ -10288,34 +10331,36 @@ function aoShowPreview(slot, rep, meta) {
     <label class="field"><span>Состав PDF</span>
       <select id="ao-include"><option value="report">${many ? 'Только сводная ведомость' : 'Только АО-1'}</option>
         <option value="receipts">${many ? 'Ведомость' : 'АО-1'} + чеки одним PDF</option></select></label>
-    <p class="form-hint">${many ? 'Сводная ведомость не заменяет отдельные отчёты подотчётных лиц. ' : 'АО-1 — проект отчёта; заполните и проверьте реквизиты и подписи. '}Копии чеков не заменяют обязательные подтверждающие документы. Проверьте операции возврата, личные расходы и требования бухгалтерии. Для комплекта с чеками используйте Chrome/Edge: в предпросмотре проверьте поля формы и ширину чеков 72 мм.</p>
+    <p class="form-hint">📄 Кнопка «Печать / PDF» предложит сохранить настоящий PDF с выделяемым текстом
+      или распечатать бланк. Путь сохранения: <b>${esc(aoFolderDisplay(rep, meta))}</b>.</p>
+    <p class="form-hint">${many ? 'Сводная ведомость не заменяет отдельные отчёты подотчётных лиц. ' : 'АО-1 — проект отчёта; заполните и проверьте реквизиты и подписи. '}Копии чеков не заменяют обязательные подтверждающие документы. Проверьте операции возврата, личные расходы и требования бухгалтерии. Для печати комплекта с чеками на ПК используйте Chrome/Edge: в предпросмотре проверьте поля формы и ширину чеков 72 мм.</p>
     <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
       <button type="button" class="btn" id="ao-back">← Изменить параметры</button>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button type="button" class="btn" id="ao-csv">⬇ CSV (Excel)</button>
         <button type="button" class="btn" id="ao-json" title="Структура документа в стиле 1С — для интеграции">⬇ JSON для 1С</button>
-        <button type="button" class="btn btn-primary" id="ao-print">🖨 Печать / PDF</button>
+        <button type="button" class="btn" id="ao-folder" title="Создать папку АО и папку компании в «Загрузках»">📁 В «Загрузки»</button>
+        <button type="button" class="btn btn-primary" id="ao-print" title="Сохранить настоящий PDF или распечатать бланк">🖨 Печать / PDF</button>
       </div>
     </div>`;
   slot.querySelector('#ao-back').onclick = () => { $('#modal-root').classList.add('hidden'); openAO1Modal(); };
-  slot.querySelector('#ao-csv').onclick = () => aoCsvDownload(rep);
+  slot.querySelector('#ao-csv').onclick = () => aoCsvDownload(rep, meta);
   // v1.23.0: JSON в стиле 1С (интеграция готова, поля «как в 1С»)
-  slot.querySelector('#ao-json').onclick = () => {
-    const meta2 = aoShowPreview._meta || {};
-    const j = ao1Json(rep, meta2, Number(meta2['ao-cash'] || 0), Number(meta2['ao-card'] || 0));
-    const blob = new Blob([JSON.stringify(j, null, 2)], { type: 'application/json;charset=utf-8' });
-    downloadBlob(blob, `avansovy-otchet-1c-${rep.period.from}_${rep.period.to}.json`);
-    toast('JSON для 1С скачан — структура готова к загрузке', 'ok', '⬇ 1С');
-  };
-  slot.querySelector('#ao-print').onclick = () => {
-    if (rep.truncated) return toast('Отчёт обрезан: сузьте выборку перед печатью', 'warn');
+  slot.querySelector('#ao-json').onclick = () => aoJsonDownload(rep, aoShowPreview._meta || {});
+  slot.querySelector('#ao-folder').onclick = () => aoSaveFromButton(rep, meta);
+  const check = () => {
+    if (rep.truncated) return 'Отчёт обрезан: сузьте выборку перед печатью';
     if (rep.rows.some(r => Number(r.operation) !== 1 || Number(r.personal_sum || 0) !== 0)) {
-      return toast('В выборке есть возврат, неизвестный тип операции или личные расходы. Сверьте и оформите отчёт в бухгалтерской системе.', 'warn');
+      return 'В выборке есть возврат, неизвестный тип операции или личные расходы. Сверьте и оформите отчёт в бухгалтерской системе.';
     }
     const companies = new Set(rep.rows.map(r => r.company_id).filter(Boolean));
     if (companies.size > 1 || (companies.size && rep.rows.some(r => !r.company_id))) {
-      return toast('В выборке несколько организаций или не указана организация чека. Сформируйте отдельный отчёт для каждой организации.', 'warn');
+      return 'В выборке несколько организаций или не указана организация чека. Сформируйте отдельный отчёт для каждой организации.';
     }
+    return '';
+  };
+  const doPrint = () => {
+    const issue = check(); if (issue) return toast(issue, 'warn');
     const include = slot.querySelector('#ao-include')?.value === 'receipts';
     const individual = { ...meta, assignee: rep.by_assignee[0]?.name || '', month: rep.period.from.slice(0, 7) };
     if (!include) {
@@ -10332,10 +10377,133 @@ function aoShowPreview(slot, rep, meta) {
     makeReport.filename = aoReportFilename(rep, meta);
     printReceiptsPDF(rows.map(r => r.id), makeReport);
   };
+  // v1.73.8: кнопка «Печать / PDF» больше не зависит от меню браузера:
+  // сначала предлагаем человеку сохранить настоящий PDF или распечатать бланк.
+  slot.querySelector('#ao-print').onclick = () => aoPrintChoice(slot, rep, meta, doPrint, check);
+}
+
+// --- v1.73.8: настоящий PDF авансового отчёта ------------------------------
+function aoPdfRequestBody(rep, meta, include) {
+  const body = {
+    date_from: rep.period?.from || '',
+    date_to: rep.period?.to || '',
+    receipt_ids: (rep.rows || []).map(r => r.id).filter(Boolean),
+    only_valid: false,
+    report_number: meta['ao-num'] || '',
+    report_date: meta['ao-date'] || '',
+    meta: { ...meta },
+    include_receipts: !!include,
+  };
+  if (rep.company?.id) body.company_id = rep.company.id;
+  return body;
+}
+
+/** Выбор места сохранения запускается СРАЗУ в клике, до запроса к серверу. */
+async function aoPdfTarget(filename) {
+  if (aoCanPickFolder()) {
+    const dir = await aoFolderHandleForSave();
+    if (dir === 'cancelled') return 'cancelled';
+    if (dir) return { kind: 'folder', handle: dir };
+    return null;   // системный выбор папки недоступен — честный ZIP-фолбэк
+  }
+  const file = await aoFileHandleForSave(filename);
+  if (file === 'cancelled') return 'cancelled';
+  if (file) return { kind: 'file', handle: file };
+  return null;
+}
+
+async function aoSavePdf(rep, meta, include, slot, pendingTarget, check) {
+  const btn = slot.querySelector('#ao-pdf-save');
+  const status = slot.querySelector('#ao-pdf-status');
+  const issue = check && check();
+  if (issue) { toast(issue, 'warn'); if (status) status.innerHTML = esc(issue); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Готовлю PDF…'; }
+  if (status) status.innerHTML = 'Собираю настоящий PDF на сервере…';
+  try {
+    const body = aoPdfRequestBody(rep, meta, include);
+    const { blob } = await api.download('/api/v1/receipts/advance-report/pdf', body);
+    const bytes = await aoBlobBytes(blob);
+    if (!bytes.length) throw new Error('Сервер вернул пустой PDF');
+    const target = await (pendingTarget || null);
+    const segments = aoFolderSegments(rep, meta);
+    const base = aoSafeSegment(aoReportFilename(rep, meta));
+    const pdfName = `${base}.pdf`;
+    const asciiName = aoAsciiFilename(`${aoFlatPrefix(segments)}_${pdfName}`);
+    const file = { name: pdfName, bytes, type: 'application/pdf' };
+    const result = await aoSaveFile({
+      file, segments, base, target,
+      readme: aoPdfZipReadme(segments, base, pdfName),
+    });
+    if (result.mode === 'cancelled') {
+      if (status) status.innerHTML = 'Выбор папки отменён — файл не сохранён. Нажмите «Сохранить PDF» ещё раз.';
+      toast('Сохранение отменено', 'warn');
+      return;
+    }
+    let message;
+    if (result.mode === 'folder') message = `PDF сохранён: ${result.path}`;
+    else if (result.mode === 'file') message = `PDF сохранён как «${result.filename}» в выбранной папке`;
+    else message = `PDF внутри архива ${result.filename}: распакуйте в «Загрузки» → ${result.path}`;
+    toast(message, 'ok', '📄');
+    if (status) {
+      status.innerHTML = `✅ ${esc(message)}<br><span class="form-hint">Файл с расширением .pdf, `
+        + `текст выделяется и копируется. Меню браузера не требуется.</span><br>`
+        + `<button type="button" class="btn" id="ao-pdf-again" style="margin-top:8px">🔁 Скачать ещё раз</button>`;
+      const again = slot.querySelector('#ao-pdf-again');
+      if (again) again.onclick = () => aoDownloadBlob(new Blob([bytes], { type: 'application/pdf' }), asciiName);
+    }
+  } catch (err) {
+    const text = `Ошибка: ${err.message || 'не удалось сохранить PDF'}`;
+    toast(text, 'err');
+    if (status) status.innerHTML = esc(text);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить PDF'; }
+  }
+}
+
+/** Кнопка «Печать / PDF»: человек явно выбирает «сохранить» или «печатать». */
+function aoPrintChoice(slot, rep, meta, doPrint, check) {
+  const issue = check && check();
+  if (issue) return toast(issue, 'warn');
+  const include = slot.querySelector('#ao-include')?.value === 'receipts';
+  const segments = aoFolderSegments(rep, meta);
+  const folder = aoDownloadsPath(segments);
+  const base = aoSafeSegment(aoReportFilename(rep, meta));
+  const pdfName = `${base}.pdf`;
+  const back = () => {
+    aoShowPreview(slot, rep, meta);
+    const select = slot.querySelector('#ao-include');
+    if (select) select.value = include ? 'receipts' : 'report';
+  };
+  slot.innerHTML = `
+    <div class="modal-title">📄 Сохранить или распечатать авансовый отчёт</div>
+    <p class="form-hint">«💾 Сохранить PDF» создаёт настоящий файл .pdf с выделяемым и копируемым
+      кириллическим текстом — без окна печати и меню браузера. «🖨 Распечатать» оставляет
+      привычную печатную форму на компьютере.</p>
+    <div class="info-callout">📁 Путь сохранения: <b>${esc(folder)}/${esc(pdfName)}</b>.
+      В Chrome/Edge папка создаётся сама; в Firefox, Safari и на iOS приходит ZIP с этой же
+      структурой, а кнопка повтора отдаёт сам PDF.</div>
+    <p class="form-hint">Состав: ${include
+      ? ((rep.by_assignee?.length > 1 ? 'сводная ведомость' : 'АО-1') + ' и копии чеков с QR')
+      : (rep.by_assignee?.length > 1 ? 'только сводная ведомость' : 'только АО-1')}.</p>
+    <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
+      <button type="button" class="btn" id="ao-pdf-back">← К отчёту</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary" id="ao-pdf-save">💾 Сохранить PDF</button>
+        <button type="button" class="btn" id="ao-pdf-print">🖨 Распечатать</button>
+      </div>
+    </div>
+    <div class="form-hint" id="ao-pdf-status" style="margin-top:10px"></div>`;
+  slot.querySelector('#ao-pdf-back').onclick = back;
+  slot.querySelector('#ao-pdf-print').onclick = () => { back(); doPrint(); };
+  slot.querySelector('#ao-pdf-save').onclick = () => {
+    const pendingTarget = aoPdfTarget(pdfName);
+    return aoSavePdf(rep, meta, include, slot, pendingTarget, check);
+  };
 }
 
 // --- v1.14.0: CSV авансового отчёта (Excel-совместимый, с BOM) -------------
-function aoCsvDownload(rep) {
+// v1.73.7: текст CSV нужен и для одиночного скачивания, и для комплекта в папке.
+function aoCsvText(rep) {
   const sum = (x) => (Math.round(x * 100) / 100).toFixed(2).replace('.', ',');
   const dt = (s) => s ? String(s).replace('T', ' ').slice(0, 16) : '';
   const fnsNames = { valid: 'Действителен', invalid: 'Недействителен',
@@ -10351,9 +10519,119 @@ function aoCsvDownload(rep) {
       q(ops[r.operation] || ''), q(fnsNames[r.fns_status] || ''), sum(r.total_sum)].join(';'));
   });
   lines.push(['', '', '', '', '', '', '', '', '', '', 'ИТОГО', sum(rep.total.sum)].join(';'));
-  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  downloadBlob(blob, `avansovy-otchet-${rep.period.from}_${rep.period.to}.csv`);
+  return '\ufeff' + lines.join('\r\n');
+}
+
+// Плоское имя без папок всё равно называет и «АО», и компанию: так файлы не
+// теряются в «Загрузках» у браузеров, где папку создать нельзя.
+function aoFlatFilename(rep, meta, ext) {
+  const name = `${aoFlatPrefix(aoFolderSegments(rep, meta))}_${aoReportFilename(rep, meta)}.${ext}`;
+  return aoAsciiFilename(name, `otchet.${ext}`);
+}
+
+function aoCsvDownload(rep, meta = {}) {
+  const blob = new Blob([aoCsvText(rep)], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(blob, aoFlatFilename(rep, meta, 'csv'));
   toast(`CSV отчёта скачан: ${rep.total.count} чек(ов)`, 'ok', '⬇');
+}
+
+function aoJsonDownload(rep, meta = {}) {
+  const j = ao1Json(rep, meta, Number(meta['ao-cash'] || 0), Number(meta['ao-card'] || 0));
+  const blob = new Blob([JSON.stringify(j, null, 2)], { type: 'application/json;charset=utf-8' });
+  downloadBlob(blob, aoFlatFilename(rep, meta, 'json'));
+  toast('JSON для 1С скачан — структура готова к загрузке', 'ok', '⬇ 1С');
+}
+
+// --------------------------------------------------------------------------
+//  v1.73.7: сохранение комплекта в «Загрузки/АО/<сокращённое название>».
+// --------------------------------------------------------------------------
+function aoFolderDisplay(rep, meta = {}) {
+  return aoDownloadsPath(aoFolderSegments(rep, meta));
+}
+
+function aoSaveFromButton(rep, meta) {
+  // Жест пользователя нужен здесь и сейчас: выбор папки запрашиваем до await.
+  const pending = aoFolderHandleForSave();
+  return aoSaveReportToDownloads(rep, meta, pending);
+}
+
+function aoSetFolderStatus(text, kind = '') {
+  const el = document.getElementById('ao-folder-status');
+  if (el) {
+    el.innerHTML = `📁 ${esc(text)}${kind ? `<b> ${esc(kind)}</b>` : ''}`;
+  }
+}
+
+async function aoSaveReportToDownloads(rep, meta, handle) {
+  const segments = aoFolderSegments(rep, meta);
+  const path = aoDownloadsPath(segments);
+  const base = aoReportFilename(rep, meta);
+  try {
+    const chosen = handle && typeof handle.then === 'function' ? await handle : handle;
+    if (chosen === 'cancelled') {
+      aoSetFolderStatus(`Папка не выбрана — отчёт собран. Чтобы сохранить его в «${path}», нажмите «📁 В «Загрузки»».`);
+      toast('Папку «Загрузки» не выбрали — отчёт собран, сохранение можно повторить кнопкой 📁', 'warn');
+      return { mode: 'cancelled' };
+    }
+    aoSetFolderStatus(`Сохраняю в ${path} …`);
+    const files = await aoReportBundle(rep, meta, base, path);
+    const result = await aoSaveBundle({ files, segments, base, handle: chosen });
+    if (result.mode === 'folder') {
+      aoSetFolderStatus(`Готово: ${result.path} — печатная форма, CSV и JSON для 1С.`);
+      toast(`Отчёт сохранён в ${result.path}`, 'ok', '📁');
+    } else {
+      aoSetFolderStatus(`Браузер не создаёт папки: скачан ${result.filename}. Распакуйте его в «Загрузки» — получится ${result.path}.`);
+      toast(`Скачан ZIP с папкой «АО»: распакуйте его в «Загрузки», получится ${result.path}`, 'ok', '📁');
+    }
+    return result;
+  } catch (err) {
+    aoSetFolderStatus('Не удалось сохранить отчёт. ', err?.message || 'Повторите кнопкой 📁');
+    toast(`Не удалось сохранить отчёт в папку: ${err?.message || 'неизвестная ошибка'}`, 'err');
+    return { mode: 'error', error: err?.message || '' };
+  }
+}
+
+async function aoReportBundle(rep, meta, base, folder) {
+  const jsonText = JSON.stringify(ao1Json(rep, meta, Number(meta['ao-cash'] || 0),
+    Number(meta['ao-card'] || 0)), null, 2);
+  const htmlText = await aoSelfContainedHtml(rep, meta, folder);
+  return aoBundleFiles({ base, csvText: aoCsvText(rep), jsonText, htmlText });
+}
+
+// Печатная форма АО-1/сводной ведомости как отдельный файл: открывается без
+// программы, печатается в PDF из меню браузера и на телефоне, и на ПК.
+async function aoSelfContainedHtml(rep, meta, folder) {
+  const many = rep.by_assignee.length > 1 ||
+    (rep.by_assignee.length === 1 && rep.by_assignee[0].name === '—');
+  const prevRoot = document.getElementById('print-root');
+  const prevHtml = prevRoot ? prevRoot.outerHTML : '';
+  const prevClass = document.body.className;
+  const pageStyle = document.getElementById('ym-page-style');
+  const prevPage = pageStyle ? pageStyle.textContent : '';
+  let root = null;
+  try {
+    const individual = { ...meta, assignee: rep.by_assignee[0]?.name || '',
+      month: (rep.period?.from || '').slice(0, 7) };
+    root = many ? aoMultiPrint(rep, meta, true) : ao1Print(null, rep, individual, true);
+    let css = '';
+    try {
+      const res = await fetch('/css/app.css?v=' + encodeURIComponent(state.appVersion || ''));
+      if (res.ok) css = await res.text();
+    } catch { /* офлайн — встроенных стилей достаточно для печати */ }
+    return aoPrintableDocument({ title: baseTitle(rep, meta), folder,
+      formHtml: root.innerHTML, cssText: css });
+  } finally {
+    root?.remove();
+    if (prevHtml && document.body && typeof document.body.insertAdjacentHTML === 'function') {
+      document.body.insertAdjacentHTML('beforeend', prevHtml);
+    }
+    document.body.className = prevClass;
+    if (pageStyle) pageStyle.textContent = prevPage;
+  }
+}
+
+function baseTitle(rep, meta) {
+  return `Авансовый отчёт ${meta['ao-num'] || ''} · ${aoReportFilename(rep, meta)}`;
 }
 
 // --- v1.14.0: сводная печать (несколько подотчётников) ----------------------

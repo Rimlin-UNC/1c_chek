@@ -15,6 +15,17 @@ brand/
 docs/
 integration_1c/
 deploy/
+# v1.73.8: xhtml2pdf/ReportLab + DejaVuSans добавили ≈7,5 МБ к бандлу,
+# который в 1.73.7 весил 493,06 МБ. Демо не нужны корневые тексты (~1,1 МБ)
+# и дубли `.webp` (~0,9 МБ) у картинок с JPEG-фолбэком: без них сборка
+# снова ниже потолка 500 МБ. Рабочий сервер берёт весь репозиторий.
+/CHANGELOG.md
+/README.md
+/AGENTS.md
+/LICENSE
+/app/static/img/blog/*.webp
+/app/static/img/pages/*.webp
+/app/static/img/manual/*.webp
 
 # Тесты и инструменты разработки
 tests/

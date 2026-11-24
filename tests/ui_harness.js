@@ -99,7 +99,16 @@ const sandbox = {
   requestAnimationFrame: (f) => setTimeout(f, 0),
   fetch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' }),
   URL: { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} },
-  Blob: function (parts, opts) { this.parts = parts; this.opts = opts; },
+  Blob: function (parts, opts) {
+    this.parts = parts; this.opts = opts;
+    this.text = async () => parts.map(p => String(p)).join('');
+    this.arrayBuffer = async () => {
+      const s = parts.map(p => String(p)).join('');
+      const bytes = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xff;
+      return bytes.buffer;
+    };
+  },
   console, Date, Math, JSON, Promise, Object, Array, String, Number, Boolean,
   URLSearchParams,   // v1.25.1: нужен load() страницы «Чеки»
   RegExp, Error, TypeError, Map, Set, parseInt, parseFloat, isNaN, encodeURIComponent,
@@ -197,6 +206,7 @@ function gate(key, fail = false, sticky = false) {
 }
 
 sandbox.fetch = async (url, opts) => {
+  const isPdf = String(url).includes('/advance-report/pdf');
   apiLog.push({ url: String(url), method: (opts && opts.method) || 'GET',
                 body: opts && opts.body ? JSON.parse(opts.body) : null,
                 headers: (opts && opts.headers) || {} });   // v1.70.100: заголовок выбранного клиента
@@ -368,8 +378,9 @@ sandbox.fetch = async (url, opts) => {
     payload = { total: 0, by_fns: {}, by_day: [], by_company: {}, by_source: {},
                 by_user: {}, by_status: {}, valid: 0, invalid: 0 };
   if (String(url).includes('/delete')) payload = { ok: true, message: 'Компания удалена' };
+  if (String(url).includes('/advance-report/pdf')) { specialPayload = true; payload = {}; }
   if (String(url).includes('/advance-report/number')) payload = { number: 'АО-2026-10-01' };
-  else if (String(url).includes('/advance-report'))
+  else if (String(url).includes('/advance-report') && !isPdf)
     payload = advancePayloads[advanceIdx++ % advancePayloads.length];
   if (String(url).includes('/settings/checko') && (opts && opts.method) === 'PUT')
     payload = { ok: true, key_masked: 'x•••000' };
@@ -377,8 +388,9 @@ sandbox.fetch = async (url, opts) => {
   return { ok: true, status: 200,
            json: async () => JSON.parse(json),
            text: async () => json,
-           blob: async () => new sandbox.Blob(['csv']),
-           headers: { get: () => 'application/json' } };
+           blob: async () => new sandbox.Blob([isPdf ? '%PDF-1.4 harness' : 'csv']),
+           headers: { get: (k = '') => isPdf && k.toLowerCase() === 'content-disposition'
+             ? 'attachment; filename="AO_harness.pdf"' : 'application/json' } };
 };
 
 vm.createContext(sandbox);
@@ -446,6 +458,9 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   // 5) Диалог «Собрать авансовый отчёт» ------------------------------------
   await sandbox.openAO1Modal();
   let aoSlot = root._cls['.modal-slot'];
+  ok(aoSlot.innerHTML.includes('id="ao-save" checked') &&
+     aoSlot.innerHTML.includes('Загрузки/АО/'),
+     'v1.73.7: автосохранение в «Загрузки/АО» включено и путь показан');
   aoSlot.querySelector('#ao-from').value = '2026-10-01';
   aoSlot.querySelector('#ao-to').value = '2026-10-31';
   aoSlot.querySelector('#ao-date').value = '2026-10-31';
@@ -458,8 +473,27 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'ao: payload период');
   ok(aoSlot.innerHTML.includes('Отчёт собран'), 'ao: предпросмотр');
   ok(aoSlot.innerHTML.includes('ИТОГО'), 'ao: итог в предпросмотре');
-  // печать (один сотрудник → АО-1)
+  ok(aoSlot.innerHTML.includes('Загрузки/АО/ООО «Ямастер»') &&
+     aoSlot.innerHTML.includes('id="ao-folder"'),
+     'v1.73.7: папка компании и кнопка сохранения в предпросмотре');
+  await new Promise(r => setTimeout(r, 60));
+  await aoSlot.querySelector('#ao-folder').onclick();
+  ok(true, 'v1.73.7: повторное сохранение комплекта без крэша');
+  // v1.73.8: «Печать / PDF» сначала предлагает сохранить настоящий PDF
   await aoSlot.querySelector('#ao-print').onclick();
+  ok(aoSlot.innerHTML.includes('id="ao-pdf-save"') &&
+     aoSlot.innerHTML.includes('💾 Сохранить PDF') &&
+     aoSlot.innerHTML.includes('Загрузки/АО/ООО «Ямастер»'),
+     'v1.73.8: выбор «Сохранить PDF / Распечатать» и точный путь');
+  await aoSlot.querySelector('#ao-pdf-save').onclick();
+  await new Promise(r => setTimeout(r, 30));
+  ok(apiLog.some(x => x.url.includes('/advance-report/pdf') && x.method === 'POST'),
+     'v1.73.8: за настоящим PDF ушёл POST на сервер');
+  const pdfStatus = aoSlot.querySelector('#ao-pdf-status').innerHTML;
+  ok(pdfStatus.includes('Скачать ещё раз') && pdfStatus.includes('.pdf') &&
+     pdfStatus.includes('Загрузки/АО/ООО «Ямастер»'),
+     'v1.73.8: путь, имя .pdf и повторное скачивание показаны');
+  await aoSlot.querySelector('#ao-pdf-print').onclick();
   ok(true, 'ao: печать АО-1 без крэша');
   // v1.24.0: официальный бланк — ФН/ФП в обороте и поля страницы 20/15/10/10
   const prAO1 = document.getElementById('print-root');
@@ -486,6 +520,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   await new Promise(r => setTimeout(r, 30));
   ok(aoSlot.innerHTML.includes('Недействителен'), 'ao: предупреждение invalid');
   await aoSlot.querySelector('#ao-print').onclick();
+  await aoSlot.querySelector('#ao-pdf-print').onclick();
   const pr = document.getElementById('print-root');
   ok(pr && pr.innerHTML.includes('сводный'), 'ao: сводная печатная форма');
   ok(pr && pr.innerHTML.includes('Подытог'), 'ao: подытоги по сотрудникам');
