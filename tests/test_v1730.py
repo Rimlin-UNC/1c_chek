@@ -105,7 +105,10 @@ class TestRelease:
         assert not [value for value in last if "," in value], "в полях реестра нет запятых"
         from app.config import settings
         assert last[0] == settings.APP_VERSION
-        assert last[2].startswith("требует уточнения"), last[2][:40]   # хеш уточняется после CI
+        # Хеш уточняется после CI: пока ждём — «требует уточнения»,
+        # после публикации реестра — уже 40-символьный SHA коммита выпуска.
+        assert (last[2].startswith("требует уточнения")
+                or re.fullmatch(r"[0-9a-f]{40}", last[2])), last[2][:40]
 
 
 # ====================================================================== код и маршруты

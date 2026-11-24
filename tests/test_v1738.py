@@ -102,3 +102,13 @@ class TestRelease1738:
         idx = read("app/static/index.html")
         assert re.search(r"<script(?![^>]*\bsrc=)", idx) is None
         assert "script-src 'self'" in read("app/security.py")
+
+    def test_vercel_demo_bundle_is_trimmed(self):
+        # xhtml2pdf/ReportLab приблизили демо-бандл к потолку 500 МБ.
+        # В сборку не кладём корневые тексты и WebP-дубли с JPEG-фолбэком.
+        ignore = read(".vercelignore")
+        for needle in ("/CHANGELOG.md", "/README.md", "/AGENTS.md", "/LICENSE",
+                       "/app/static/img/blog/*.webp",
+                       "/app/static/img/pages/*.webp",
+                       "/app/static/img/manual/*.webp"):
+            assert needle in ignore, needle
