@@ -21,7 +21,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.8';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.9';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6930,6 +6930,14 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.9': [
+    { icon: '📄', title: 'Авансовый отчёт печатается как форма АО-1',
+      text: 'Серверный PDF повторяет унифицированную форму АО-1/сводную ведомость: лицевая и оборотная стороны, реестр из 42 строк без наложений, расписка и расчёт. Перед сохранением настоящий бланк виден прямо в предпросмотре, без iframe и без меню браузера.' },
+    { icon: '🧾', title: 'В PDF теперь все чеки целиком',
+      text: 'Вместо первых 40 QR и метаданных сервер добавляет полные itemized копии каждого чека: позиции, количество, цены, НДС, итог, оплату, фискальные реквизиты, статус ФНС и QR. Длинные чеки аккуратно разрезаются по границам позиций с подписями продолжения.' },
+    { icon: '✅', title: 'Сохранение проверяется на настоящем PDF',
+      text: 'Браузерный тест больше не подменяет endpoint заглушкой: он получает реальный файл с встроенным DejaVuSans и сравнивает те же бинарные байты внутри ZIP. Версия и кэш статики синхронизированы.' },
+  ],
   '1.73.8': [
     { icon: '📄', title: '«Печать / PDF» теперь сохраняет настоящий PDF',
       text: 'Кнопка в предпросмотре авансового отчёта предлагает два действия: «💾 Сохранить PDF» и «🖨 Распечатать». PDF создаётся сервером сразу как файл с расширением .pdf, без меню браузера и без «Сохранить как PDF» из окна печати. Текст в файле выделяется и копируется: встроен кириллический шрифт DejaVuSans, а не снимок экрана.' },
