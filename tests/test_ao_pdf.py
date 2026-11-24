@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""v1.73.8: настоящий текстовый PDF авансового отчёта.
+"""v1.73.8 / v1.73.9 (этап 1): настоящий текстовый PDF авансового отчёта.
 
 Проверяем не «страницу, похожую на PDF», а файл, из которого pypdf достаёт
 кириллицу: серверный endpoint, встроенный шрифт, права, отказы на плохих
-выборках и бинарную целостность при сохранении.
+выборках, бинарную целостность при сохранении и читаемую вёрстку АО-1.
 """
 from __future__ import annotations
 
@@ -56,6 +56,79 @@ def _text(pdf: bytes) -> str:
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
+def _collisions(pdf: bytes) -> list[tuple[int, str, str]]:
+    """Грубая, но полезная проверка наложений текста: координаты pypdf
+    складываем из cm + tm (только tm даёт ложные тысячи пересечений).
+    """
+    out: list[tuple[int, str, str]] = []
+    identity = (1, 0, 0, 1, 0, 0)
+    for page_no, page in enumerate(PdfReader(io.BytesIO(pdf)).pages, 1):
+        frags: list[tuple[float, float, float, str]] = []
+
+        def visit(text, cm, tm, _font, size):
+            s = str(text or "").strip()
+            if s:
+                c = cm or identity
+                m = tm or identity
+                frags.append((c[4] + m[4], c[5] + m[5],
+                              float(size or 8), s))
+
+        page.extract_text(visitor_text=visit)
+        for i, (x1, y1, s1, t1) in enumerate(frags):
+            w1 = len(t1) * s1 * 0.48
+            for x2, y2, s2, t2 in frags[i + 1:]:
+                w2 = len(t2) * s2 * 0.48
+                overlap = min(x1 + w1, x2 + w2) - max(x1, x2)
+                if (abs(y1 - y2) < 0.8 and abs(x1 - x2) > 0.5
+                        and overlap > 0.3 * min(w1, w2)):
+                    out.append((page_no, t1[:30], t2[:30]))
+    return out
+
+
+def _many_report(count: int = 42) -> tuple[dict, dict, dict]:
+    """42 строки с длинными ФН/ФП и продавцом — тот случай, который ломал
+    старую таблицу «Реестр чеков» и давал почти пустую хвостовую страницу.
+    """
+    rows = []
+    for i in range(count):
+        rows.append({
+            "id": f"r{i + 1}", "receipt_date": f"2026-10-{1 + i % 30:02d}T09:08:00",
+            "assignee": "Шпаков Роман Владимирович",
+            "merchant_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ «СТРОЙТОРГОВЛЯ»",
+            "merchant_inn": "4703148343", "fn": "7384440900770272",
+            "fd": str(116386 + i), "fp": str(2895916071 + i),
+            "fns_status": "valid", "total_sum": 1974.0 + i,
+            "operation": 1, "personal_sum": 0, "category": "Хозрасходы",
+        })
+    total = sum(r["total_sum"] for r in rows)
+    rep = {
+        "period": {"from": "2026-10-01", "to": "2026-10-31"},
+        "company": {"id": "c1", "name": "ООО «Ямастер»",
+                    "short_name": "ООО «Ямастер»", "inn": "4712030034"},
+        "requisites": {"Организация": {
+            "НаименованиеПолное": "Общество с ограниченной ответственностью «Ямастер»",
+            "НаименованиеСокращенное": "ООО «Ямастер»",
+            "ИНН": "4712030034", "КПП": "471201001", "ОКПО": "44903513",
+            "Руководитель": "Шпаков Роман Владимирович",
+        }},
+        "person": {"ФИО": "Шпаков Роман Владимирович", "Должность": "Генеральный директор"},
+        "rows": rows, "total": {"sum": total, "count": count},
+        "by_assignee": [{"name": "Шпаков Роман Владимирович",
+                         "count": count, "sum": total}],
+        "invalid_count": 0, "truncated": False,
+    }
+    meta = {"ao-num": "АО-2026-11-07", "ao-date": "2026-11-24",
+            "ao-org": "ООО «Ямастер»", "ao-dept": "ИТР",
+            "ao-post": "Генеральный директор",
+            "ao-purpose": "На хозяйственные расходы",
+            "ao-buh": "Шпаков Роман Владимирович",
+            "ao-head": "Шпаков Роман Владимирович",
+            "attachmentPages": 22}
+    qr = {r["id"]: (f"t=20261001T0908&s=1974.00&fn={r['fn']}"
+                    f"&i={r['fd']}&fp={r['fp']}&n=1") for r in rows}
+    return rep, meta, qr
+
+
 class TestAoPdfService:
     def test_cyrillic_text_is_searchable_and_font_is_embedded(self):
         rep, meta = _report(), _meta()
@@ -65,9 +138,11 @@ class TestAoPdfService:
         assert b"/FontFile" in pdf and b"DejaVu" in pdf
         assert b"/Image" in pdf                       # QR как картинка
         text = _text(pdf)
-        for needle in ("АВАНСОВЫЙ ОТЧЁТ", "ООО «Ромашка»", "Иван Отчётный",
-                       "350,50", "Реестр чеков", "Приложения", "Сформировано"):
+        for needle in ("АВАНСОВЫЙ ОТЧЁТ", "Форма по ОКУД", "0302001",
+                       "Оборотная сторона", "ООО «Ромашка»", "Иван Отчётный",
+                       "350,50", "Расписка", "Приложения", "Сформировано"):
             assert needle in text, needle
+        assert "Реестр чеков" not in text             # старый упрощённый шаблон ушёл
         assert "■" not in text                       # не чёрные квадраты Helvetica
 
     def test_filenames_are_safe_and_predictable(self):
@@ -104,6 +179,39 @@ class TestAoPdfService:
             assert "DejaVuSans" in str(exc)
         else:
             raise AssertionError("PDF без встроенного кириллического шрифта не должен собираться")
+
+    def test_amount_in_words_matches_print_form(self):
+        assert ao_pdf._amount_in_words(201366.34) == (
+            "двести одна тысяча триста шестьдесят шесть рублей 34 коп.")
+        assert ao_pdf._amount_in_words(1000.01) == "одна тысяча рублей 01 коп."
+        assert ao_pdf._amount_in_words(0) == "ноль рублей 00 коп."
+
+
+class TestAoPdfLayout:
+    def test_ao1_front_back_and_column_widths(self):
+        rep, meta, _qr = _many_report(1)
+        source = ao_pdf._html(rep, meta, {}, False)
+        assert source.count("<colgroup>") >= 4
+        assert "overflow-wrap: anywhere" in source
+        assert "display: table-header-group" in source
+        assert "0302001" in source and "Расписка" in source
+        assert "Реестр чеков" not in source
+        assert "на <b>22</b> лист(ах)" in source
+
+    def test_42_rows_have_no_text_overlaps_or_empty_tail(self):
+        rep, meta, qr = _many_report(42)
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr, include_receipts=True)
+        reader = PdfReader(io.BytesIO(pdf))
+        assert len(reader.pages) <= 11
+        last = reader.pages[-1].extract_text() or ""
+        assert len(last.strip()) > 300, "хвостовая страница почти пустая"
+        assert _collisions(pdf) == []
+        text = _text(pdf)
+        assert "Оборотная сторона формы № АО-1" in text
+        assert "Документ, подтверждающий расходы" in text
+        assert "Показаны QR первых 40 чеков из 42" in text  # лимит снимется на этапе 2
+        assert "116427" in text                            # 42-й чек есть в реестре
+        assert "83769,00" in text
 
 
 class TestAoPdfEndpoint:

@@ -38,6 +38,9 @@ async function openAdvanceReport(page) {
   }
   await page.locator('a[href="#/receipts"]').click();
   await expect(page.locator('#btn-ao1')).toBeVisible({ timeout: 15000 });
+  // v1.73.9: кликаем только после навешивания обработчика — иначе на медленном
+  // CI #ao-save ещё не отрисован и исторический tests (3.12) падал.
+  await expect(page.locator('#btn-ao1')).toHaveAttribute('data-bound', '1');
   await page.click('#btn-ao1');
   await expect(page.locator('#ao-save')).toBeChecked();
   await expect(page.locator('#ao-folder-hint')).toContainText('Загрузки/АО/');
@@ -46,6 +49,14 @@ async function openAdvanceReport(page) {
   await page.fill('#ao-to', '2026-10-31');
   await page.fill('#ao-date', '2026-10-31');
   await page.fill('#ao-start-after', '0');
+}
+
+async function expectFormPreview(page) {
+  // v1.73.9: до сохранения и печати человек видит сам бланк, а не iframe/blob PDF.
+  await expect(page.locator('#ao-preview-scroll')).toBeVisible();
+  await expect(page.locator('#ao-preview-scroll .print-page').first()).toBeVisible();
+  await expect(page.locator('#ao-preview-scroll')).toContainText('АВАНСОВЫЙ ОТЧЁТ');
+  await expect(page.locator('#ao-preview-scroll iframe')).toHaveCount(0);
 }
 
 test.describe('авансовый отчёт: папка в «Загрузках»', () => {
@@ -95,6 +106,7 @@ test.describe('авансовый отчёт: папка в «Загрузках
     await expect(page.locator('#ao-folder-status')).toContainText('Готово:', { timeout: 30000 });
     await expect(page.locator('#ao-folder-status')).toContainText(
       'Загрузки/АО/ООО «E2E Согласование»');
+    await expectFormPreview(page);
 
     const state = await page.evaluate(() => ({
       options: window.__aoPickerOptions,
@@ -129,6 +141,7 @@ test.describe('авансовый отчёт: браузер без доступ
     expect(download.suggestedFilename()).toMatch(/^AO_OOO_E2E_Soglasovanie_.*\.zip$/);
     await expect(page.locator('#ao-folder-status')).toContainText(
       'Браузер не создаёт папки', { timeout: 30000 });
+    await expectFormPreview(page);
     const path = await download.path();
     const bytes = readFileSync(path);
     expect(bytes.subarray(0, 4).toString('hex')).toBe('504b0304');   // локальный заголовок ZIP
@@ -159,6 +172,7 @@ test.describe('авансовый отчёт: браузер без доступ
     await openAdvanceReport(page);
     await page.click('#ao-make');                    // прежний комплект 1.73.7
     await expect(page.locator('#ao-print')).toBeVisible();
+    await expectFormPreview(page);
     await page.click('#ao-print');
     await expect(page.locator('#ao-pdf-save')).toBeVisible();
     await expect(page.locator('body')).toContainText(

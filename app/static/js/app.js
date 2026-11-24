@@ -10301,6 +10301,41 @@ function printWithTitle(name) {
   catch (err) { window.removeEventListener('afterprint', restore); restore(); throw err; }
 }
 
+// v1.73.9 (этап 1): настоящий бланк в предпросмотре, без iframe/blob и без
+// изменений CSP. Строим ту же печатную форму, что уйдёт на «Распечатать»,
+// и аккуратно возвращаем #print-root / @page / класс body на место.
+function aoPreviewFormHtml(rep, meta) {
+  const prevRoot = document.getElementById('print-root');
+  const prevClass = document.body.className || '';
+  const pageStyle = document.getElementById('ym-page-style');
+  const hadPageStyle = !!pageStyle;
+  const prevPage = hadPageStyle ? pageStyle.textContent : '';
+  const many = rep.by_assignee.length > 1 ||
+    (rep.by_assignee.length === 1 && rep.by_assignee[0].name === '—');
+  const individual = { ...meta, assignee: rep.by_assignee[0]?.name || '',
+    month: (rep.period?.from || '').slice(0, 7) };
+  let root = null;
+  try {
+    root = many ? aoMultiPrint(rep, meta, true) : ao1Print(null, rep, individual, true);
+    return root ? root.innerHTML : '';
+  } catch {
+    return '';
+  } finally {
+    if (root) root.remove();
+    if (prevRoot && prevRoot.parentNode !== document.body) {
+      document.body.appendChild(prevRoot);
+    }
+    const curStyle = document.getElementById('ym-page-style');
+    if (hadPageStyle && curStyle) curStyle.textContent = prevPage;
+    else if (!hadPageStyle && curStyle && curStyle.remove) curStyle.remove();
+    document.body.className = prevClass;
+    if (document.body.classList && document.body.classList.toggle) {
+      document.body.classList.toggle('print-ao1',
+        prevClass.split(/\s+/).includes('print-ao1'));
+    }
+  }
+}
+
 // --- v1.14.0: предпросмотр собранного отчёта -------------------------------
 function aoShowPreview(slot, rep, meta) {
   aoShowPreview._meta = meta;   // v1.23.0: поля формы для JSON
@@ -10328,6 +10363,24 @@ function aoShowPreview(slot, rep, meta) {
         <tr><td style="padding:4px"><b>ИТОГО</b></td><td><b>${rep.total.count}</b></td>
         <td><b>${sum(rep.total.sum)}</b></td></tr></tbody>
     </table>
+    <style>
+      #ao-preview-scroll{max-height:44vh;overflow:auto;background:#f3f4f6;
+        border:1px solid #d7d7db;border-radius:8px;padding:10px;margin:0 0 10px}
+      #ao-preview-scroll .print-page{width:auto;height:auto;overflow:visible;
+        background:#fff;border:1px solid #d7d7db;padding:12px;margin:0 0 10px}
+      #ao-preview-scroll .ao1-approve{float:none;width:auto;margin:6px 0}
+      #ao-preview-scroll .ao1-title{margin:8px 0 4px}
+      #ao-preview-scroll .ao1-receipt{width:100%}
+      #ao-preview-scroll .ao1-back-table{font-size:10px}
+      #ao-preview-scroll .ao1-back-table th{font-size:9px}
+      #ao-preview-scroll .ao1-back-table td{padding:3px 4px;overflow-wrap:anywhere}
+      #ao-preview-scroll .ao1-sigline{width:90px}
+      #ao-preview-scroll .ao-foot{margin-top:6px}
+      #ao-preview-scroll .print-page:last-child{margin-bottom:0}
+    </style>
+    <div class="form-hint" style="margin:2px 0 4px">📄 Предпросмотр бланка —
+      проверьте реквизиты и состав до сохранения PDF или печати:</div>
+    <div id="ao-preview-scroll">${aoPreviewFormHtml(rep, meta)}</div>
     <label class="field"><span>Состав PDF</span>
       <select id="ao-include"><option value="report">${many ? 'Только сводная ведомость' : 'Только АО-1'}</option>
         <option value="receipts">${many ? 'Ведомость' : 'АО-1'} + чеки одним PDF</option></select></label>
@@ -10915,6 +10968,7 @@ function ruMoney(n) {
   if (th) out.push(tri(th, ['тысяча', 'тысячи', 'тысяч']));
   if (rest) out.push(tri(rest, ['рубль', 'рубля', 'рублей']));
   if (!rub) out.push('ноль рублей');
+  else if (rub % 1000 === 0) out.push('рублей');
   return out.join(' ').replace('один тысяча', 'одна тысяча').replace('два тысячи', 'две тысячи') +
     ' ' + String(kop).padStart(2, '0') + ' коп.';
 }

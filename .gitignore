@@ -42,3 +42,5 @@ htmlcov/
 .schemathesis/
 schemathesis-report/
 test-results/
+# Визуальные PDF/PNG-рендеры для ревью: в Git не кладём.
+.pdf_review/
