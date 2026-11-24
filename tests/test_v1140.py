@@ -9,6 +9,7 @@ import itertools
 import shutil
 import subprocess
 import os
+import uuid
 
 
 def worker_bundle_path():
@@ -22,7 +23,10 @@ def worker_bundle_path():
 from tests.conftest import login
 from tests.test_v1121 import worker_bundle_path
 
-_SEQ = itertools.count(300, 10)
+# v1.73.8: several test modules reuse this helper. A random start (not 300)
+# keeps generated ФН/ФД/ФП unique even if pytest/xdist loads the module under
+# two names in one worker; otherwise the second /receipts/scan is a duplicate.
+_SEQ = itertools.count((os.getpid() * 1000 + uuid.uuid4().int % 1000) % 1_000_000, 10)
 
 
 def _qr(sum_: str = "250.00") -> str:

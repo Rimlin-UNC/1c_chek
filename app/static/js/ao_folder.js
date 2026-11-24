@@ -1,5 +1,5 @@
 /* ======================================================================
-   Ямастер Чек — v1.73.7: папка авансовых отчётов в «Загрузках».
+   Ямастер Чек — v1.73.7 → v1.73.8: папка авансовых отчётов и настоящий PDF.
    ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
 
    Требование владельца: при сборке авансового отчёта на телефоне и на ПК
@@ -16,6 +16,9 @@
    2) Остальные браузеры (Firefox, Safari, iOS): скачивается ZIP, внутри
       которого УЖЕ лежит «АО/<ООО «Компания»>/…». Распаковка в «Загрузки»
       создаёт ровно ту структуру, которую просил владелец.
+
+   v1.73.8: тот же модуль умеет писать бинарный PDF (bytes, а не UTF-8 строки),
+   предлагать showSaveFilePicker и упаковывать готовый .pdf в ZIP с папками.
 
    Модуль без зависимостей: чистые функции имени/архива тестируются в
    Vitest, а работа с диском и ZIP проверяется и в Node, и в браузере.
@@ -178,6 +181,42 @@ export function aoBlobFromText(text, type = 'application/octet-stream') {
   return new Blob([aoUtf8(text)], { type });
 }
 
+/** v1.73.8: PDF — бинарный файл. Берём настоящие байты, а не UTF-8 от строки. */
+export async function aoBlobBytes(blob) {
+  if (!blob) return new Uint8Array(0);
+  if (typeof blob.arrayBuffer === 'function') return new Uint8Array(await blob.arrayBuffer());
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve) => {
+      try {
+        const reader = new FileReader();
+        if (typeof reader.readAsArrayBuffer !== 'function') return resolve(new Uint8Array(0));
+        reader.onload = () => resolve(new Uint8Array(reader.result || 0));
+        reader.onerror = () => resolve(new Uint8Array(0));
+        reader.readAsArrayBuffer(blob);
+      } catch { resolve(new Uint8Array(0)); }
+    });
+  }
+  return new Uint8Array(0);
+}
+
+/** Байты записи ZIP/FSA: `bytes` для PDF, `text` для HTML/CSV/JSON. */
+export function aoEntryBytes(file) {
+  const raw = file && file.bytes;
+  if (raw) {
+    if (typeof Uint8Array !== 'undefined' && raw instanceof Uint8Array) return raw;
+    if (typeof ArrayBuffer !== 'undefined' && raw instanceof ArrayBuffer) return new Uint8Array(raw);
+    if (Array.isArray(raw)) return new Uint8Array(raw);
+  }
+  return aoUtf8(file && file.text != null ? file.text : '');
+}
+
+/** Для записи на диск: сначала явные bytes, иначе Blob из ответа сервера. */
+export async function aoFileBytes(file) {
+  const direct = aoEntryBytes(file);
+  if (direct.length || !file || !file.blob) return direct;
+  return aoBlobBytes(file.blob);
+}
+
 let AO_CRC_TABLE = null;
 export function aoCrc32(bytes) {
   if (!AO_CRC_TABLE) {
@@ -215,7 +254,7 @@ export function aoBuildZip(files, segments, readmeText = '') {
   if (readmeText) entries.push({ name: 'ПРОЧТИТЕ.txt', bytes: aoUtf8(readmeText) });
   for (const dir of dirs) entries.push({ name: dir, bytes: new Uint8Array(0) });
   for (const file of files || []) {
-    entries.push({ name: prefix + aoSafeSegment(file.name), bytes: aoUtf8(file.text ?? '') });
+    entries.push({ name: prefix + aoSafeSegment(file.name), bytes: aoEntryBytes(file) });
   }
   const [dosTime, dosDate] = aoDosDateTime(new Date());
   const chunks = [];
@@ -287,9 +326,29 @@ export function aoZipReadme(segments, base) {
     '',
     `  Загрузки/${aoFolderPath(segments)}/`,
     '',
-    'Внутри: печатная форма (HTML, из неё можно сохранить PDF), CSV для Excel',
-    'и JSON для 1С. В браузерах Chrome и Edge на ПК и на Android программа',
-    'создаёт эту папку сама — один раз нужно выбрать «Загрузки».',
+    'Внутри: печатная форма HTML, CSV для Excel и JSON для 1С. Настоящий PDF',
+    'с выделяемым текстом создаётся кнопкой «💾 Сохранить PDF» в предпросмотре,',
+    'а в Chrome и Edge программа сама кладёт его в эту папку — один раз выберите «Загрузки».',
+    '',
+  ].join('\r\n');
+}
+
+/** v1.73.8: пояснение к ZIP, внутри которого лежит именно готовый PDF. */
+export function aoPdfZipReadme(segments, base, filename) {
+  return [
+    'Ямастер Чек — авансовый отчёт (PDF)',
+    '',
+    `Отчёт: ${base}`,
+    `Файл: ${filename}`,
+    '',
+    'Чтобы получить нужную структуру папок, распакуйте архив прямо в «Загрузки»',
+    '(«Извлечь здесь» / «Распаковать в текущую папку»). Появится:',
+    '',
+    `  Загрузки/${aoFolderPath(segments)}/${filename}`,
+    '',
+    'PDF содержит настоящий выделяемый и копируемый текст, а не картинку страницы.',
+    'Откройте файл и нажмите «Печать», если нужен бумажный экземпляр:',
+    'меню браузера для создания PDF больше не требуется.',
     '',
   ].join('\r\n');
 }
@@ -326,8 +385,8 @@ body { background: #f3f4f6; }
 <style>${cssText || fallback}\n${own}</style></head>
 <body class="print-ao1">
 <div class="ao-folder-banner">📁 Авансовый отчёт сохранён в <b>${escape(folder)}</b>.
-Этот файл — печатная форма: откройте меню браузера → «Печать» → «Сохранить как PDF»,
-если нужен PDF. Рядом лежат CSV для Excel и JSON для 1С.</div>
+Этот файл — печатная форма HTML. Настоящий PDF с выделяемым текстом создаётся кнопкой
+«💾 Сохранить PDF» в предпросмотре отчёта; рядом лежат CSV для Excel и JSON для 1С.</div>
 <div id="print-root">${formHtml}</div>
 </body></html>`;
 }
@@ -437,24 +496,75 @@ export async function aoFolderHandleForSave() {
   return aoPickFolder();
 }
 
+/** v1.73.8: если выбора ПАПКИ нет, просим сохранить один настоящий `.pdf`.
+    Вызывать тоже сразу в клике: `showSaveFilePicker` требует жеста пользователя. */
+export async function aoFileHandleForSave(filename) {
+  if (typeof window === 'undefined'
+      || typeof window.showSaveFilePicker !== 'function'
+      || window.isSecureContext === false) return null;
+  const suggestedName = aoAsciiFilename(filename, 'avansovy-otchet.pdf');
+  const opts = {
+    id: 'ymaster-ao-pdf', suggestedName,
+    types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
+  };
+  try {
+    try {
+      return await window.showSaveFilePicker({ ...opts, startIn: 'downloads' });
+    } catch (err) {
+      if (!err || err.name !== 'TypeError') throw err;
+      return await window.showSaveFilePicker(opts);
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return 'cancelled';
+    return null;
+  }
+}
+
 /** Забыть выбранную папку (пригодится, если человек сменил каталог загрузок). */
 export async function aoForgetFolder() {
   aoSessionHandle = null;
   await aoDeleteStoredHandle();
 }
 
-/** Создать «АО/<компания>» в выбранной папке и записать файлы отчёта. */
-export async function aoWriteBundle(handle, segments, files) {
+async function aoOpenFolder(handle, segments) {
   let dir = handle;
   for (const segment of segments || []) {
     dir = await dir.getDirectoryHandle(aoSafeSegment(segment), { create: true });
   }
-  for (const file of files || []) {
-    const fh = await dir.getFileHandle(aoSafeSegment(file.name), { create: true });
-    const writable = await fh.createWritable();
-    await writable.write(aoBlobFromText(file.text, file.type));
-    await writable.close();
+  return dir;
+}
+
+async function aoWriteToDir(dir, file) {
+  const bytes = await aoFileBytes(file);
+  const fh = await dir.getFileHandle(aoSafeSegment(file.name), { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(bytes);
+  await writable.close();
+}
+
+async function aoWriteToHandle(fileHandle, file) {
+  const bytes = await aoFileBytes(file);
+  const writable = await fileHandle.createWritable();
+  await writable.write(bytes);
+  await writable.close();
+}
+
+/** v1.73.8: записать ОДИН файл: в папку «АО/<компания>» или в выбранный файл. */
+export async function aoWriteFile(handle, segments, file) {
+  if (handle && typeof handle.createWritable === 'function'
+      && typeof handle.getDirectoryHandle !== 'function') {
+    await aoWriteToHandle(handle, file);
+    return handle;
   }
+  const dir = await aoOpenFolder(handle, segments);
+  await aoWriteToDir(dir, file);
+  return dir;
+}
+
+/** Создать «АО/<компания>» в выбранной папке и записать файлы отчёта. */
+export async function aoWriteBundle(handle, segments, files) {
+  const dir = await aoOpenFolder(handle, segments);
+  for (const file of files || []) await aoWriteToDir(dir, file);
   return dir;
 }
 
@@ -482,4 +592,31 @@ export async function aoSaveBundle({ files, segments, base, handle }) {
   const zip = aoBuildZip(files, segments, aoZipReadme(segments, base));
   aoDownloadBlob(zip, filename);
   return { mode: 'zip', filename, path: aoDownloadsPath(segments) };
+}
+
+/** v1.73.8: сохранить один бинарный PDF.
+    target: {kind:'folder', handle} | {kind:'file', handle} | 'cancelled' | null.
+    null → ZIP с готовой структурой «АО/<компания>/<отчёт>.pdf». */
+export async function aoSaveFile({ file, segments, base, target, readme }) {
+  if (target === 'cancelled') return { mode: 'cancelled' };
+  const safeName = aoSafeSegment(file && file.name, 'avansovy-otchet.pdf');
+  const bytes = await aoFileBytes(file);
+  const normalized = { name: safeName, bytes, type: (file && file.type) || 'application/pdf' };
+  if (target && target.kind === 'file' && target.handle) {
+    await aoWriteToHandle(target.handle, normalized);
+    return { mode: 'file', filename: target.handle.name || safeName,
+             path: target.handle.name || safeName };
+  }
+  const dirHandle = target && (target.handle || target);
+  if (dirHandle && typeof dirHandle.getDirectoryHandle === 'function') {
+    await aoWriteFile(dirHandle, segments, normalized);
+    return { mode: 'folder', filename: safeName,
+             path: `${aoDownloadsPath(segments, dirHandle.name)}/${safeName}` };
+  }
+  const filename = aoZipFileName(segments, base);
+  const zip = aoBuildZip([normalized], segments,
+    readme || aoPdfZipReadme(segments, base, safeName));
+  aoDownloadBlob(zip, filename);
+  return { mode: 'zip', filename, file: safeName,
+           path: `${aoDownloadsPath(segments)}/${safeName}` };
 }

@@ -26,6 +26,7 @@ import os
 import queue
 import threading
 import time
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -57,6 +58,7 @@ from ..models import Company, FnsLog, MappingSetting, MerchantRule, Receipt, Rec
 from ..schemas import (
     AdvanceReportBody,
     AdvanceReportNumberBody,
+    AdvanceReportPdfBody,
     AssignBulk,
     EnrichRequest,
     ExportRequest,
@@ -69,7 +71,7 @@ from ..schemas import (
     ScanRequest,
     VerifyRequest,
 )
-from ..services import appsettings, exporter, imaging
+from ..services import ao_pdf, appsettings, exporter, imaging
 from ..services.audit import log_action
 from ..services.events import broadcast
 from ..services.external import ExternalResult
@@ -2067,13 +2069,14 @@ def reserve_advance_number(body: AdvanceReportNumberBody,
     return result(record)
 
 
-@router.post("/advance-report", summary="Собрать авансовый отчёт за период (бухгалтер+)")
-def advance_report(body: AdvanceReportBody, user: User = Depends(require_accountant),
-                   db: Session = Depends(get_db)):
+def _build_advance_report(body: AdvanceReportBody, user: User,
+                          db: Session) -> dict:
     """v1.14.0: чеки периода → структура АО (строки, итоги, разрезы).
 
     Изоляция пространства через scope_receipts: бухгалтер собирает отчёт
     только по своей компании, админ — по любой или по всем сразу.
+    v1.73.8: общий источник данных и для JSON-предпросмотра, и для PDF —
+    клиент не может подсунуть серверу чужие чеки или другие суммы.
     """
     try:
         d_from = dt.datetime.strptime(body.date_from, "%Y-%m-%d")
@@ -2186,6 +2189,79 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
         "invalid_count": invalid_cnt,
         "truncated": len(items) >= 1000,
     }
+
+
+@router.post("/advance-report", summary="Собрать авансовый отчёт за период (бухгалтер+)")
+def advance_report(body: AdvanceReportBody, user: User = Depends(require_accountant),
+                   db: Session = Depends(get_db)):
+    return _build_advance_report(body, user, db)
+
+
+@router.post("/advance-report/pdf", summary="Настоящий текстовый PDF авансового отчёта (бухгалтер+)")
+def advance_report_pdf(body: AdvanceReportPdfBody,
+                       user: User = Depends(require_accountant),
+                       db: Session = Depends(get_db)):
+    """v1.73.8: сразу файл `.pdf`, а не `window.print()` / меню браузера.
+
+    PDF собирается сервером из того же набора чеков, что и JSON-предпросмотр.
+    Это выделяемый кириллический текст (встроенный DejaVuSans), QR чеков —
+    изображения. Права, scope компании и фильтры идентичны `/advance-report`.
+    """
+    rep = _build_advance_report(body, user, db)
+    rows = rep["rows"]
+    if not rows:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "За период чеков нет — измените фильтры")
+    if rep["truncated"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Отчёт обрезан: сузьте выборку перед PDF")
+    companies = {r.get("company_id") for r in rows}
+    if (len(companies) != 1 or None in companies or "" in companies
+            or not rep.get("company")
+            or next(iter(companies)) != rep["company"].get("id")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Сформируйте отдельный отчёт для каждой организации")
+    unsafe = any(
+        str(r.get("operation")) not in ("1", "1.0")
+        or float(r.get("personal_sum") or 0) != 0
+        for r in rows
+    )
+    if unsafe:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "В выборке есть возврат, неизвестный тип операции или личные расходы")
+
+    meta = dict(body.meta or {})
+    meta.setdefault("ao-num", body.report_number)
+    meta.setdefault("ao-date", body.report_date or rep["period"]["to"])
+    meta.setdefault("ao-org", rep["company"].get("short_name") or rep["company"].get("name") or "")
+    qr_by_id = {}
+    if body.include_receipts:
+        ids = [r["id"] for r in rows[:ao_pdf.PDF_QR_LIMIT]]
+        qr_by_id = {
+            rid: qr_data
+            for rid, qr_data in db.query(Receipt.id, Receipt.qr_data)
+                                 .filter(Receipt.id.in_(ids)).all()
+            if qr_data
+        }
+    try:
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr_by_id, body.include_receipts)
+    except Exception:
+        logging.getLogger("ymaster").exception("Не удалось собрать PDF авансового отчёта")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            "Не удалось сформировать PDF авансового отчёта") from None
+    log_action(user, "receipts_advance_report_pdf",
+               details={"count": len(rows), "include_receipts": body.include_receipts})
+    ascii_name = ao_pdf.ao_pdf_filename(rep, meta)
+    unicode_name = ao_pdf.ao_pdf_unicode_filename(rep, meta)
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{quote(unicode_name)}"
+        ),
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    return Response(content=pdf, media_type="application/pdf", headers=headers)
 
 
 @router.post("/export-csv", summary="Экспорт CSV для бухгалтерии (бухгалтер+)")

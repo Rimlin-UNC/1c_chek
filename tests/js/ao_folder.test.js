@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   AO_ROOT_FOLDER, aoSafeSegment, aoShortOpf, aoCompanyFolderName, aoFolderSegments,
   aoFolderPath, aoDownloadsPath, aoFlatPrefix, aoAsciiFilename, aoZipFileName, aoBundleFiles,
-  aoUtf8, aoCrc32, aoBuildZip, aoZipReadme, aoPrintableDocument, aoCanPickFolder,
-  aoFolderHandleForSave, aoForgetFolder, aoWriteBundle, aoSaveBundle,
+  aoUtf8, aoCrc32, aoBuildZip, aoZipReadme, aoPdfZipReadme, aoPrintableDocument,
+  aoBlobBytes, aoEntryBytes, aoFileBytes, aoCanPickFolder, aoFolderHandleForSave,
+  aoFileHandleForSave, aoForgetFolder, aoWriteBundle, aoWriteFile, aoSaveBundle, aoSaveFile,
 } from '../../app/static/js/ao_folder.js';
 
 const decode = (u8) => (typeof TextDecoder !== 'undefined'
@@ -87,6 +88,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   delete window.showDirectoryPicker;
+  delete window.showSaveFilePicker;
+  try { delete window.isSecureContext; } catch { /* свойство стенда может быть не настраиваемым */ }
   HTMLAnchorElement.prototype.click = anchorClick;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -268,5 +271,81 @@ describe('сохранение на диск (File System Access)', () => {
     expect(URL.createObjectURL).toHaveBeenCalledOnce();
     expect(await aoSaveBundle({ files, segments, base: 'АО-1', handle: 'cancelled' }))
       .toEqual({ mode: 'cancelled' });
+  });
+});
+
+
+describe('v1.73.8: настоящий PDF — бинарные байты, а не UTF-8 от строки', () => {
+  const segments = ['АО', 'ООО «Ямастер»'];
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x00, 0xff]);
+
+  it('aoBlobBytes/aoEntryBytes/aoFileBytes сохраняют нули и 0xff', async () => {
+    const blob = { arrayBuffer: async () => pdf.buffer.slice(0, pdf.length) };
+    expect(Array.from(await aoBlobBytes(blob))).toEqual(Array.from(pdf));
+    expect(Array.from(aoEntryBytes({ bytes: pdf }))).toEqual(Array.from(pdf));
+    expect(Array.from(await aoFileBytes({ bytes: pdf }))).toEqual(Array.from(pdf));
+    expect(Array.from(await aoFileBytes({ blob }))).toEqual(Array.from(pdf));
+    expect(Array.from(aoEntryBytes({ text: 'АО' }))).toEqual(Array.from(aoUtf8('АО')));
+  });
+
+  it('ZIP содержит PDF побайтово и пояснение про выделяемый текст', async () => {
+    const zip = aoBuildZip([{ name: 'АО-1.pdf', bytes: pdf }], segments,
+      aoPdfZipReadme(segments, 'АО-1', 'АО-1.pdf'));
+    const entries = zipEntries(await blobBytes(zip));
+    const entry = entries.find(e => e.name.endsWith('.pdf'));
+    expect(entry).toBeTruthy();
+    expect(Array.from(entry.data)).toEqual(Array.from(pdf));
+    expect(entry.crc).toBe(aoCrc32(pdf));
+    expect(decode(entries[0].data)).toContain('Загрузки/АО/ООО «Ямастер»/АО-1.pdf');
+    expect(decode(entries[0].data)).toContain('выделяемый');
+  });
+
+  it('пишет один PDF в выбранную папку и в выбранный файл', async () => {
+    const root = fakeDir('Загрузки');
+    const saved = await aoSaveFile({
+      file: { name: 'АО-1.pdf', bytes: pdf, type: 'application/pdf' },
+      segments, base: 'АО-1', target: { kind: 'folder', handle: root },
+    });
+    expect(saved.mode).toBe('folder');
+    expect(saved.path).toBe('Загрузки/АО/ООО «Ямастер»/АО-1.pdf');
+    const dir = root.dirs['АО'].dirs['ООО «Ямастер»'];
+    const writable = await dir.files['АО-1.pdf'].createWritable();
+    expect(Array.from(writable.write.mock.calls[0][0])).toEqual(Array.from(pdf));
+
+    const written = [];
+    const fileHandle = {
+      name: 'AO-1.pdf',
+      createWritable: vi.fn(async () => ({
+        write: vi.fn(async (data) => written.push(data)), close: vi.fn(async () => {}),
+      })),
+    };
+    await aoWriteFile(fileHandle, segments, { name: 'АО-1.pdf', bytes: pdf });
+    expect(Array.from(written[0])).toEqual(Array.from(pdf));
+  });
+
+  it('без системного выбора папки предлагает сохранить один .pdf', async () => {
+    const fileHandle = { name: 'AO-1.pdf' };
+    window.showSaveFilePicker = vi.fn(async () => fileHandle);
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true, writable: true });
+    expect(aoCanPickFolder()).toBe(false);
+    expect(await aoFileHandleForSave('АО «Ямастер».pdf')).toBe(fileHandle);
+    const opts = window.showSaveFilePicker.mock.calls[0][0];
+    expect(opts).toMatchObject({ id: 'ymaster-ao-pdf', startIn: 'downloads' });
+    expect(opts.suggestedName).toMatch(/^[A-Za-z0-9._-]+\.pdf$/);
+  });
+
+  it('ZIP-фолбэк сообщает точный путь и имя PDF', async () => {
+    let zipBlob = null;
+    URL.createObjectURL = vi.fn((blob) => { zipBlob = blob; return 'blob:ao-test'; });
+    const saved = await aoSaveFile({
+      file: { name: 'АО-1.pdf', bytes: pdf, type: 'application/pdf' },
+      segments, base: 'АО-1', target: null,
+    });
+    expect(saved.mode).toBe('zip');
+    expect(saved.file).toBe('АО-1.pdf');
+    expect(saved.filename).toMatch(/\.zip$/);
+    expect(saved.path).toBe('Загрузки/АО/ООО «Ямастер»/АО-1.pdf');
+    const entries = zipEntries(await blobBytes(zipBlob));
+    expect(entries.some(e => e.name === 'АО/ООО «Ямастер»/АО-1.pdf')).toBe(true);
   });
 });
