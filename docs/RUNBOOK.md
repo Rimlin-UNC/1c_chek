@@ -176,6 +176,7 @@ Projects токен интеграции создать не может (403).
   отсёк корневые тексты и WebP-дубли с JPEG-фолбэком; отсечено 614 файлов,
   `Bundle size (498.66 MB)`, деплой `dpl_51pTwGjGr7FtECUpqPp3ojEFEfJy` — `READY`
   за ~22 с. Замок — `tests/test_v1738.py::TestRelease1738::test_vercel_demo_bundle_is_trimmed`.
+- **Проверено 24.11.2026** (полный Playwright в песочнице): `YM_PLAYWRIGHT_CHROMIUM=/tmp/ym-chromium/chrome.sh npx playwright test --workers=1` — **86 passed (44.0m)**; набор вырос с 83 до 86 после E2E 1.73.7/1.73.8. С `--workers=2` — 84 passed и 2 тайминг-флака на локальном Chromium 153; `--last-failed --workers=1` — 2 passed.
 - **Проверка новой сборки:** коннектором `list_deployments` (проект `1c-chek`) —
   последний деплой ветки в `READY`, затем `get_deployment_events` — в журнале
   «Bundle size (…MB)» и нет `LAMBDA_SIZE_EXCEEDED`.
