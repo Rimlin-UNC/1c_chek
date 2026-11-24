@@ -38,6 +38,9 @@ async function openAdvanceReport(page) {
   }
   await page.locator('a[href="#/receipts"]').click();
   await expect(page.locator('#btn-ao1')).toBeVisible({ timeout: 15000 });
+  // v1.73.9: кликаем только после навешивания обработчика — иначе на медленном
+  // CI #ao-save ещё не отрисован и исторический tests (3.12) падал.
+  await expect(page.locator('#btn-ao1')).toHaveAttribute('data-bound', '1');
   await page.click('#btn-ao1');
   await expect(page.locator('#ao-save')).toBeChecked();
   await expect(page.locator('#ao-folder-hint')).toContainText('Загрузки/АО/');
@@ -46,6 +49,14 @@ async function openAdvanceReport(page) {
   await page.fill('#ao-to', '2026-10-31');
   await page.fill('#ao-date', '2026-10-31');
   await page.fill('#ao-start-after', '0');
+}
+
+async function expectFormPreview(page) {
+  // v1.73.9: до сохранения и печати человек видит сам бланк, а не iframe/blob PDF.
+  await expect(page.locator('#ao-preview-scroll')).toBeVisible();
+  await expect(page.locator('#ao-preview-scroll .print-page').first()).toBeVisible();
+  await expect(page.locator('#ao-preview-scroll')).toContainText('АВАНСОВЫЙ ОТЧЁТ');
+  await expect(page.locator('#ao-preview-scroll iframe')).toHaveCount(0);
 }
 
 test.describe('авансовый отчёт: папка в «Загрузках»', () => {
@@ -95,6 +106,7 @@ test.describe('авансовый отчёт: папка в «Загрузках
     await expect(page.locator('#ao-folder-status')).toContainText('Готово:', { timeout: 30000 });
     await expect(page.locator('#ao-folder-status')).toContainText(
       'Загрузки/АО/ООО «E2E Согласование»');
+    await expectFormPreview(page);
 
     const state = await page.evaluate(() => ({
       options: window.__aoPickerOptions,
@@ -129,13 +141,14 @@ test.describe('авансовый отчёт: браузер без доступ
     expect(download.suggestedFilename()).toMatch(/^AO_OOO_E2E_Soglasovanie_.*\.zip$/);
     await expect(page.locator('#ao-folder-status')).toContainText(
       'Браузер не создаёт папки', { timeout: 30000 });
+    await expectFormPreview(page);
     const path = await download.path();
     const bytes = readFileSync(path);
     expect(bytes.subarray(0, 4).toString('hex')).toBe('504b0304');   // локальный заголовок ZIP
     expect(bytes.length).toBeGreaterThan(500);
   });
 
-  test('v1.73.8: «Сохранить PDF» отдаёт настоящий .pdf внутри ZIP и показывает путь', async ({ page }) => {
+  test('v1.73.9: «Сохранить PDF» отдаёт настоящий .pdf сервера внутри ZIP и показывает путь', async ({ page }) => {
     await page.addInitScript(() => {
       for (const name of ['showDirectoryPicker', 'showSaveFilePicker']) {
         Object.defineProperty(window, name, {
@@ -143,22 +156,20 @@ test.describe('авансовый отчёт: браузер без доступ
         });
       }
     });
-    const pdf = Buffer.from('%PDF-1.4\n% Ямастер Чек — тестовый PDF\n%%EOF\n');
+    let realPdf = null;
+    // Маршрут только перехватывает РЕАЛЬНЫЙ ответ endpoint, чтобы сравнить
+    // байты в ZIP; FAKE %PDF-1.4 больше не подменяет серверный PDF.
     await page.route('**/api/v1/receipts/advance-report/pdf', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/pdf',
-        headers: {
-          'content-disposition': 'attachment; filename="AO_otchet.pdf"',
-          'cache-control': 'no-store',
-        },
-        body: pdf,
-      });
+      const response = await route.fetch();
+      const body = await response.body();
+      realPdf = Buffer.from(body);
+      await route.fulfill({ response, body });
     });
     await login(page);
     await openAdvanceReport(page);
     await page.click('#ao-make');                    // прежний комплект 1.73.7
     await expect(page.locator('#ao-print')).toBeVisible();
+    await expectFormPreview(page);
     await page.click('#ao-print');
     await expect(page.locator('#ao-pdf-save')).toBeVisible();
     await expect(page.locator('body')).toContainText(
@@ -169,9 +180,14 @@ test.describe('авансовый отчёт: браузер без доступ
     expect(download.suggestedFilename()).toMatch(/\.zip$/);
     await expect(page.locator('#ao-pdf-status')).toContainText('Скачать ещё раз', { timeout: 30000 });
     await expect(page.locator('#ao-pdf-status')).toContainText('Загрузки/АО/ООО «E2E Согласование»/');
+    expect(realPdf).not.toBeNull();
+    expect(realPdf.subarray(0, 4).toString()).toBe('%PDF');
+    expect(realPdf.includes(Buffer.from('/FontFile'))).toBe(true);
+    expect(realPdf.includes(Buffer.from('DejaVu'))).toBe(true);
+    expect(realPdf.length).toBeGreaterThan(1000);
     const bytes = readFileSync(await download.path());
     expect(bytes.subarray(0, 4).toString('hex')).toBe('504b0304');
-    expect(bytes.includes(pdf)).toBe(true);          // бинарные байты не испорчены UTF-8
+    expect(bytes.includes(realPdf)).toBe(true);     // бинарные байты не испорчены UTF-8
     expect(bytes.includes(Buffer.from('выделяемый', 'utf8'))).toBe(true);
   });
 });

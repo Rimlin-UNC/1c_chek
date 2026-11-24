@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""v1.73.8: настоящий текстовый PDF авансового отчёта.
+"""v1.73.8 / v1.73.9: настоящий текстовый PDF авансового отчёта.
 
 Проверяем не «страницу, похожую на PDF», а файл, из которого pypdf достаёт
 кириллицу: серверный endpoint, встроенный шрифт, права, отказы на плохих
-выборках и бинарную целостность при сохранении.
+выборках, бинарную целостность при сохранении, вёрстку АО-1 и полные
+itemized копии всех чеков в двух колонках с QR и разрезанием по позициям.
 """
 from __future__ import annotations
 
@@ -56,6 +57,116 @@ def _text(pdf: bytes) -> str:
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
+def _collisions(pdf: bytes) -> list[tuple[int, str, str]]:
+    """Грубая, но полезная проверка наложений текста: координаты pypdf
+    складываем из cm + tm (только tm даёт ложные тысячи пересечений).
+    """
+    out: list[tuple[int, str, str]] = []
+    identity = (1, 0, 0, 1, 0, 0)
+    for page_no, page in enumerate(PdfReader(io.BytesIO(pdf)).pages, 1):
+        frags: list[tuple[float, float, float, str]] = []
+
+        def visit(text, cm, tm, _font, size):
+            s = str(text or "").strip()
+            if s:
+                c = cm or identity
+                m = tm or identity
+                frags.append((c[4] + m[4], c[5] + m[5],
+                              float(size or 8), s))
+
+        page.extract_text(visitor_text=visit)
+        for i, (x1, y1, s1, t1) in enumerate(frags):
+            w1 = len(t1) * s1 * 0.48
+            for x2, y2, s2, t2 in frags[i + 1:]:
+                w2 = len(t2) * s2 * 0.48
+                overlap = min(x1 + w1, x2 + w2) - max(x1, x2)
+                if (abs(y1 - y2) < 0.8 and abs(x1 - x2) > 0.5
+                        and overlap > 0.3 * min(w1, w2)):
+                    out.append((page_no, t1[:30], t2[:30]))
+    return out
+
+
+def _many_report(count: int = 42) -> tuple[dict, dict, dict]:
+    """42 строки с длинными ФН/ФП и продавцом — тот случай, который ломал
+    старую таблицу «Реестр чеков» и давал почти пустую хвостовую страницу.
+    """
+    rows = []
+    for i in range(count):
+        rows.append({
+            "id": f"r{i + 1}", "receipt_date": f"2026-10-{1 + i % 30:02d}T09:08:00",
+            "assignee": "Шпаков Роман Владимирович",
+            "merchant_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ «СТРОЙТОРГОВЛЯ»",
+            "merchant_inn": "4703148343", "fn": "7384440900770272",
+            "fd": str(116386 + i), "fp": str(2895916071 + i),
+            "fns_status": "valid", "total_sum": 1974.0 + i,
+            "operation": 1, "personal_sum": 0, "category": "Хозрасходы",
+        })
+    total = sum(r["total_sum"] for r in rows)
+    rep = {
+        "period": {"from": "2026-10-01", "to": "2026-10-31"},
+        "company": {"id": "c1", "name": "ООО «Ямастер»",
+                    "short_name": "ООО «Ямастер»", "inn": "4712030034"},
+        "requisites": {"Организация": {
+            "НаименованиеПолное": "Общество с ограниченной ответственностью «Ямастер»",
+            "НаименованиеСокращенное": "ООО «Ямастер»",
+            "ИНН": "4712030034", "КПП": "471201001", "ОКПО": "44903513",
+            "Руководитель": "Шпаков Роман Владимирович",
+        }},
+        "person": {"ФИО": "Шпаков Роман Владимирович", "Должность": "Генеральный директор"},
+        "rows": rows, "total": {"sum": total, "count": count},
+        "by_assignee": [{"name": "Шпаков Роман Владимирович",
+                         "count": count, "sum": total}],
+        "invalid_count": 0, "truncated": False,
+    }
+    meta = {"ao-num": "АО-2026-11-07", "ao-date": "2026-11-24",
+            "ao-org": "ООО «Ямастер»", "ao-dept": "ИТР",
+            "ao-post": "Генеральный директор",
+            "ao-purpose": "На хозяйственные расходы",
+            "ao-buh": "Шпаков Роман Владимирович",
+            "ao-head": "Шпаков Роман Владимирович",
+            "attachmentPages": 22}
+    qr = {r["id"]: (f"t=20261001T0908&s=1974.00&fn={r['fn']}"
+                    f"&i={r['fd']}&fp={r['fp']}&n=1") for r in rows}
+    return rep, meta, qr
+
+
+def _cards_for(rep: dict, qr: dict) -> dict:
+    """Карточки в формате receipt_card.build_card для полных копий."""
+    cards = {}
+    for i, row in enumerate(rep["rows"], 1):
+        cards[row["id"]] = {"document": {
+            "operation_name": "Приход",
+            "date_time": row["receipt_date"],
+            "seller": {"name": row["merchant_name"], "inn": row["merchant_inn"],
+                       "address": "188760, Ленинградская область, г. Приозерск",
+                       "place": "Магазин стройматериалов"},
+            "kkt": {"fn": row["fn"], "fd": row["fd"], "fp": row["fp"],
+                    "shift": 42, "request": i, "reg_id": "0001234567890123",
+                    "ffd": "1.2"},
+            "cashier": {"name": "СИС. АДМИНИСТРАТОР", "inn": ""},
+            "money": {"total": row["total_sum"], "cash": row["total_sum"],
+                      "ecash": 0, "prepaid": 0, "credit": 0, "provision": 0},
+            "tax": {"taxation_name": "УСН",
+                    "nds": [{"rate_name": "22 %", "sum": 434.28}]},
+            "items": [
+                {"pos": 1, "name": "Плинтус напольный 70мм Деконика",
+                 "quantity": 3, "price": 259.0, "total": 777.0,
+                 "nds_name": "22 %", "nds_sum": 140.0, "measure": "шт"},
+                {"pos": 2, "name": "Порог-угол Д13 40х20мм алюминий",
+                 "quantity": 2, "price": 449.0, "total": 898.0,
+                 "nds_name": "22 %", "nds_sum": 161.0, "measure": "шт"},
+                {"pos": 3, "name": "Порог А5-37мм алюминированный",
+                 "quantity": 1, "price": 299.0, "total": 299.0,
+                 "nds_name": "22 %", "nds_sum": 54.0, "measure": "шт"},
+            ],
+            "properties": [],
+            "taxation_name": "УСН",
+            "receipt_note": {"fns_status": "valid"},
+            "qr": qr[row["id"]],
+        }}
+    return cards
+
+
 class TestAoPdfService:
     def test_cyrillic_text_is_searchable_and_font_is_embedded(self):
         rep, meta = _report(), _meta()
@@ -65,9 +176,11 @@ class TestAoPdfService:
         assert b"/FontFile" in pdf and b"DejaVu" in pdf
         assert b"/Image" in pdf                       # QR как картинка
         text = _text(pdf)
-        for needle in ("АВАНСОВЫЙ ОТЧЁТ", "ООО «Ромашка»", "Иван Отчётный",
-                       "350,50", "Реестр чеков", "Приложения", "Сформировано"):
+        for needle in ("АВАНСОВЫЙ ОТЧЁТ", "Форма по ОКУД", "0302001",
+                       "Оборотная сторона", "ООО «Ромашка»", "Иван Отчётный",
+                       "350,50", "Расписка", "Приложения", "Сформировано"):
             assert needle in text, needle
+        assert "Реестр чеков" not in text             # старый упрощённый шаблон ушёл
         assert "■" not in text                       # не чёрные квадраты Helvetica
 
     def test_filenames_are_safe_and_predictable(self):
@@ -91,9 +204,11 @@ class TestAoPdfService:
                     "../../../etc/passwd", "//example.org/a.png"):
             with pytest.raises(ValueError, match="запрещён"):
                 ao_pdf._link_callback(bad)
-        policy = ao_pdf._resource_policy()
+        policy = ao_pdf._resource_policy(96)
         assert policy.allow_remote is False
         assert policy.allow_private_networks is False
+        assert policy.max_resources == 96
+        assert policy.max_render_seconds >= 240
         assert ao_pdf.FONT_DIR.resolve() in policy.roots
 
     def test_missing_font_fails_loudly(self, monkeypatch):
@@ -104,6 +219,77 @@ class TestAoPdfService:
             assert "DejaVuSans" in str(exc)
         else:
             raise AssertionError("PDF без встроенного кириллического шрифта не должен собираться")
+
+    def test_amount_in_words_matches_print_form(self):
+        assert ao_pdf._amount_in_words(201366.34) == (
+            "двести одна тысяча триста шестьдесят шесть рублей 34 коп.")
+        assert ao_pdf._amount_in_words(1000.01) == "одна тысяча рублей 01 коп."
+        assert ao_pdf._amount_in_words(0) == "ноль рублей 00 коп."
+
+
+class TestAoPdfLayout:
+    def test_ao1_front_back_and_column_widths(self):
+        rep, meta, _qr = _many_report(1)
+        source = ao_pdf._html(rep, meta, {}, False)
+        assert source.count("<colgroup>") >= 4
+        assert "overflow-wrap: anywhere" in source
+        assert "display: table-header-group" in source
+        assert "0302001" in source and "Расписка" in source
+        assert "Реестр чеков" not in source
+        assert "на <b>22</b> лист(ах)" in source
+
+    def test_all_42_itemized_copies_qr_and_no_text_overlaps(self):
+        rep, meta, qr = _many_report(42)
+        cards = _cards_for(rep, qr)
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr, include_receipts=True,
+                                  cards_by_id=cards)
+        reader = PdfReader(io.BytesIO(pdf))
+        assert 8 <= len(reader.pages) <= 27
+        last = reader.pages[-1].extract_text() or ""
+        assert len(last.strip()) > 300, "хвостовая страница почти пустая"
+        assert _collisions(pdf) == []
+        text = _text(pdf)
+        assert "Оборотная сторона формы № АО-1" in text
+        assert "Документ, подтверждающий расходы" in text
+        assert "Показаны QR первых 40 чеков из 42" not in text
+        assert "Приложены полные копии всех 42 чеков с QR" in text
+        assert text.count("КАССОВЫЙ ЧЕК") == 42
+        assert text.count("Копия по данным системы") == 42
+        assert text.count("Плинтус напольный") == 42       # itemized позиции
+        assert "116427" in text                            # 42-й чек есть в реестре
+        assert "83769,00" in text
+        assert sum(len(page.images) for page in reader.pages) == 42
+        assert not hasattr(ao_pdf, "PDF_QR_LIMIT")
+
+    def test_long_receipt_is_split_between_items_with_continuations(self):
+        rep, meta, qr = _many_report(1)
+        cards = _cards_for(rep, qr)
+        doc = cards["r1"]["document"]
+        doc["items"] = [
+            {"pos": n, "name": f"Товар {n:03d}", "quantity": 2,
+             "price": 100.0 + n, "total": 200.0 + 2 * n,
+             "nds_name": "22 %", "nds_sum": 40.0 + n, "measure": "шт"}
+            for n in range(1, 41)
+        ]
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr, include_receipts=True,
+                                  cards_by_id=cards)
+        text = _text(pdf)
+        assert text.count("КАССОВЫЙ ЧЕК") == 1
+        assert "Товар 001" in text and "Товар 040" in text
+        assert "— продолжение приложения № 1" in text
+        assert "↓ продолжение — часть 2" in text
+        assert "Копия по данным системы" in text
+        assert sum(len(page.images) for page in
+                   PdfReader(io.BytesIO(pdf)).pages) == 1
+
+    def test_missing_card_renders_safe_fallback_copy(self):
+        rep, meta, qr = _many_report(2)
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr, include_receipts=True)
+        text = _text(pdf)
+        assert text.count("КАССОВЫЙ ЧЕК") == 2
+        assert text.count("Позиции недоступны — полный документ ФНС не получен.") == 2
+        assert sum(len(page.images) for page in
+                   PdfReader(io.BytesIO(pdf)).pages) == 2
 
 
 class TestAoPdfEndpoint:
@@ -147,8 +333,13 @@ class TestAoPdfEndpoint:
         assert pdf.startswith(b"%PDF") and b"/FontFile" in pdf
         text = _text(pdf)
         for needle in ("СВОДНАЯ ВЕДОМОСТЬ", "АВАНСОВЫМ ОТЧЁТАМ", "ООО «Папка»",
-                       "Иван Отчётный", "Пётр Готовый", "350,50", "Приложения"):
+                       "Иван Отчётный", "Пётр Готовый", "350,50", "Приложения",
+                       "КАССОВЫЙ ЧЕК", "Копия по данным системы",
+                       "Позиции недоступны — полный документ ФНС не получен."):
             assert needle in text, needle
+        assert text.count("КАССОВЫЙ ЧЕК") == 2
+        assert sum(len(page.images) for page in
+                   PdfReader(io.BytesIO(pdf)).pages) == 2
 
     def test_ordinary_user_is_forbidden(self, client):
         _hdr, hu, comp, ids = self._prepare(client)

@@ -473,6 +473,13 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'ao: payload период');
   ok(aoSlot.innerHTML.includes('Отчёт собран'), 'ao: предпросмотр');
   ok(aoSlot.innerHTML.includes('ИТОГО'), 'ao: итог в предпросмотре');
+  ok(aoSlot.innerHTML.includes('id="ao-preview-scroll"') &&
+     aoSlot.innerHTML.includes('Предпросмотр бланка') &&
+     !aoSlot.innerHTML.includes('<iframe'),
+     'v1.73.9: настоящий бланк виден в модалке до сохранения/печати, без iframe');
+  ok(aoSlot.innerHTML.includes('print-page') &&
+     aoSlot.innerHTML.includes('АВАНСОВЫЙ ОТЧЁТ'),
+     'v1.73.9: в предпросмотре присутствует печатная форма АО-1/сводная ведомость');
   ok(aoSlot.innerHTML.includes('Загрузки/АО/ООО «Ямастер»') &&
      aoSlot.innerHTML.includes('id="ao-folder"'),
      'v1.73.7: папка компании и кнопка сохранения в предпросмотре');

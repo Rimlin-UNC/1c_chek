@@ -6,6 +6,9 @@
  2. PDF текстовый, кириллический шрифт и лицензия в репозитории;
  3. бинарные байты доезжают до FSA/ZIP, а не перекодируются как UTF-8 строки;
  4. все точки версии и реестр выпусков синхронизированы.
+
+Проверки версии — структурные (>= 1.73.8), чтобы выпуск 1.73.9 не ломал
+исторический замок; актуальные пины смотри в `tests/test_v1739.py`.
 """
 from __future__ import annotations
 
@@ -59,15 +62,23 @@ class TestRelease1738:
         assert _ver(reg["Печать и выгрузка в 1С"]) >= _ver(VERSION)
         assert _ver(reg["Кабинет и отчёты"]) >= _ver(VERSION)
         changelog = read("CHANGELOG.md")
-        assert changelog.startswith("## [1.73.8]")
-        assert "## [1.73.7]" in changelog
-        assert "Последний выпуск — v1.73.8" in read("README.md")
-        assert "| Последний выпуск | **v1.73.8**" in read("docs/kb/README.md")
-        assert read("docs/ui_journal.md").startswith("## v1.73.8")
+        assert changelog.count("## [1.73.8]") == 1
+        assert changelog.index("## [1.73.8]") < changelog.index("## [1.73.7]")
+        match = re.search(r"## 🆕 Последний выпуск — v([\d.]+)",
+                          read("README.md"))
+        assert match and _ver(match.group(1)) >= _ver(VERSION)
+        assert (f"| Последний выпуск | **v{settings.APP_VERSION}**"
+                in read("docs/kb/README.md"))
+        journal = read("docs/ui_journal.md")
+        assert journal.count("## v1.73.8 —") == 1
+        assert journal.index("## v1.73.8 —") < journal.index("## v1.73.7 —")
         with (ROOT / "docs/kb/09_releases.csv").open(encoding="utf-8", newline="") as fh:
             rows = list(csv.DictReader(fh))
+        row = next(r for r in rows if r["Версия"] == VERSION)
+        assert row["Дата"] == "2026-11-24"
+        assert "PDF" in row["Суть"]
+        assert not [key for key, value in row.items() if "," in value]
         assert rows[-1]["Версия"] == settings.APP_VERSION
-        assert "PDF" in rows[-1]["Суть"]
 
     def test_text_pdf_assets_and_dependencies(self):
         assert "xhtml2pdf>=0.2.29" in read("requirements.txt")
@@ -80,12 +91,17 @@ class TestRelease1738:
         assert "DejaVuSans.ttf" in service and "qrcode.make" in service
         assert "ResourceAccessPolicy" in service and "allow_remote=False" in service
         assert "_link_callback" in service
+        assert "capacity=32 * 1024 * 1024" in service
+        assert "max_render_seconds=240" in service
+        assert "PDF_QR_LIMIT" not in service
         assert "ReportLab Helvetica" not in service
         schemas = read("app/schemas.py")
         assert "class AdvanceReportPdfBody" in schemas
         router = read("app/routers/receipts.py")
         assert '@router.post("/advance-report/pdf"' in router
         assert "require_accountant" in router
+        assert "_card.build_card(rec)" in router
+        assert "cards_by_id" in router
 
     def test_binary_pdf_save_helpers_exist(self):
         folder = read("app/static/js/ao_folder.js")

@@ -14,9 +14,13 @@ const makePreview = new Function('esc', '$', 'aoCsvDownload', 'ao1Json', 'downlo
   'aoPdfTarget', 'api', 'aoSavePdf',
   `${source.slice(start, end)}; aoPrintChoice = __choiceFn; return aoShowPreview;`);
 
-function setup(rows, byAssignee = [{ name: 'Иван', sum: 10, count: rows.length }]) {
+function setup(rows, byAssignee = [{ name: 'Иван', sum: 10, count: rows.length }], overrides = {}) {
   document.body.innerHTML = '<div id="modal-root"><div id="slot"></div></div>';
-  const printReceipt = vi.fn(); const standard = vi.fn(); const multi = vi.fn(); const toast = vi.fn();
+  document.body.className = '';
+  const printReceipt = vi.fn(); const toast = vi.fn();
+  // aoShowPreview теперь строит бланк заранее; эти вызовы не считаем печатью.
+  const standard = overrides.ao1Print || vi.fn();
+  const multi = overrides.aoMultiPrint || vi.fn();
   const csv = vi.fn(); const json = vi.fn(); const saveFromButton = vi.fn();
   // В рабочем приложении aoPrintChoice показывает выбор «Сохранить / Печать»;
   // в юнит-тесте сразу выполняем прежний путь печати, чтобы сохранить его контракт.
@@ -31,6 +35,7 @@ function setup(rows, byAssignee = [{ name: 'Иван', sum: 10, count: rows.leng
     total: { count: rows.length, sum: 10 }, invalid_count: 0, truncated: false };
   const slot = document.getElementById('slot');
   preview(slot, rep, { 'ao-num': 'АО-2026-10-46', 'ao-date': '2026-10-31' });
+  for (const spy of [printReceipt, standard, multi, toast]) spy.mockClear();
   return { slot, rep, printReceipt, standard, multi, toast, csv, json, saveFromButton };
 }
 const row = (id, assignee = 'Иван', operation = 1, personal_sum = 0) => ({ id, assignee, operation, personal_sum });
@@ -79,6 +84,10 @@ describe('папка авансового отчёта в «Загрузках»
     const x = setup([row('a')]);
     expect(x.slot.innerHTML).toContain('Загрузки/АО/ООО «Ямастер»');
     expect(x.slot.querySelector('#ao-folder-status')).not.toBeNull();
+    expect(x.slot.querySelector('#ao-preview-scroll')).not.toBeNull();
+    expect(x.slot.innerHTML).toContain('Предпросмотр бланка');
+    expect(x.slot.innerHTML).toContain('max-height:44vh');
+    expect(x.slot.querySelector('#ao-preview-scroll iframe')).toBeNull();
     x.slot.querySelector('#ao-folder').click();
     expect(x.saveFromButton).toHaveBeenCalledWith(
       x.rep, expect.objectContaining({ 'ao-num': 'АО-2026-10-46' }));
@@ -89,6 +98,55 @@ describe('папка авансового отчёта в «Загрузках»
     x.slot.querySelector('#ao-json').click();
     expect(x.csv).toHaveBeenCalledWith(x.rep, expect.objectContaining({ 'ao-num': 'АО-2026-10-46' }));
     expect(x.json).toHaveBeenCalledWith(x.rep, expect.objectContaining({ 'ao-num': 'АО-2026-10-46' }));
+  });
+});
+
+
+describe('предпросмотр настоящего бланка до сохранения и печати', () => {
+  const start = source.indexOf('function aoPreviewFormHtml');
+  const end = source.indexOf('// --- v1.14.0: предпросмотр', start);
+  const makeFormPreview = new Function('ao1Print', 'aoMultiPrint', 'document',
+    `${source.slice(start, end)}; return aoPreviewFormHtml;`);
+
+  it('строит АО-1 через prepareOnly, без iframe, blob и window.print', () => {
+    const removed = vi.fn();
+    const root = { innerHTML: '<div class="print-page ao1-page">АВАНСОВЫЙ ОТЧЁТ</div>', remove: removed };
+    const form = vi.fn(() => { document.body.classList.add('print-ao1'); return root; });
+    document.body.innerHTML = '<div id="print-root">предыдущая печать</div>';
+    document.body.className = 'app-shell';
+    const prevRoot = document.getElementById('print-root');
+    const preview = makeFormPreview(form, vi.fn(), document);
+    const rep = { rows: [row('a')], by_assignee: [{ name: 'Иван' }],
+      period: { from: '2026-10-01', to: '2026-10-31' } };
+    const html = preview(rep, { 'ao-num': 'АО-2026-10-46' });
+    expect(html).toContain('АВАНСОВЫЙ ОТЧЁТ');
+    expect(form).toHaveBeenCalledWith(null, rep,
+      expect.objectContaining({ assignee: 'Иван', month: '2026-10' }), true);
+    expect(removed).toHaveBeenCalledOnce();
+    expect(document.getElementById('print-root')).toBe(prevRoot);
+    expect(document.getElementById('print-root').innerHTML).toBe('предыдущая печать');
+    expect(document.body.className).toBe('app-shell');
+    expect(document.body.classList.contains('print-ao1')).toBe(false);
+    expect(source.slice(start, end)).not.toMatch(/<iframe|createObjectURL|blob:|window\.print\(/);
+  });
+
+  it('для нескольких подотчётников берёт сводную ведомость', () => {
+    const root = { innerHTML: '<div class="print-page ao-page">сводный</div>', remove: vi.fn() };
+    const multi = vi.fn(() => root);
+    const preview = makeFormPreview(vi.fn(), multi, document);
+    const rep = { rows: [row('a'), row('b')],
+      by_assignee: [{ name: 'А' }, { name: 'Б' }],
+      period: { from: '2026-10-01', to: '2026-10-31' } };
+    expect(preview(rep, {})).toContain('сводный');
+    expect(multi).toHaveBeenCalledWith(rep, {}, true);
+  });
+
+  it('не ломает последующую печать после показа бланка', () => {
+    const form = vi.fn(() => ({ innerHTML: '<div class="print-page">бланк</div>', remove: vi.fn() }));
+    const x = setup([row('a')], undefined, { ao1Print: form });
+    x.slot.querySelector('#ao-print').click();
+    expect(x.standard).toHaveBeenCalledOnce();
+    expect(x.printReceipt).not.toHaveBeenCalled();
   });
 });
 
