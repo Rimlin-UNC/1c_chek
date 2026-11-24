@@ -4,7 +4,7 @@
 - Stage 2: `POST /api/v1/receipts/advance-report/pdf` берёт `receipt_card.build_card` для всех чеков; полные копии с позициями, НДС, оплатой, фискальными реквизитами, статусом ФНС и QR идут в двух независимых колонках с best-fit раскроем и разрезанием по границам позиций.
 - Лимит «первые 40 QR» снят: `PDF_QR_LIMIT` удалён, `capacity=32 МБ`, `max_render_seconds=240`, E2E перехватывает реальный PDF endpoint вместо `%PDF-1.4`.
 - Точки версии переведены на `1.73.9`: `APP_VERSION`, `manifest.webmanifest`, `sw.js`, `index.html`, `b2b/index.html`, `maxapp/index.html`, `osm.js`, `app.js`, `blocks.py`, `WHATS_NEW`, CHANGELOG, README, база знаний, журнал и реестр выпусков.
-- Проверено: полный pytest 5914 passed / 87 skipped; targeted Playwright 3 passed; Vitest 433; `HARNESS_OK`; ESLint 0/127; CI Python 3.11 и 3.12 pass; Vercel pass. Synthetic 42-чековый PDF — 18 страниц, 42 копии, 42 QR, 0 наложений; визуально сверено с GOOD p6–p8.
+- Проверено: полный pytest 5915 passed / 87 skipped / 50 warnings; targeted pytest PDF/версии/OCR 30 passed; targeted Playwright 3 passed (до hotfix); Vitest 433; `HARNESS_OK`; ESLint 0/127; PR #115 перед merge: CI Python 3.11 и 3.12 pass; Vercel pass; PR #115 MERGED в main как `21570ce`; post-merge CI 3.11 выявил утечку `Image.MAX_IMAGE_PIXELS` — закрыта hotfix. Synthetic 42-чековый PDF — 18 страниц, 42 копии, 42 QR, 0 наложений; визуально сверено с GOOD p6–p8.
 
 ## v1.73.8 — «Печать / PDF»: сохранить настоящий PDF или распечатать АО
 

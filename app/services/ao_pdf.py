@@ -25,6 +25,7 @@ import html
 import io
 import math
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 import qrcode
@@ -912,6 +913,29 @@ def _resource_policy(max_resources: int = 128):
     )
 
 
+@contextmanager
+def _render_image_limit(policy: ResourceAccessPolicy):
+    """Не даём чужому глобальному лимиту Pillow выбросить QR из PDF.
+
+    xhtml2pdf открывает data:-QR через ``PIL.Image.open``; предел
+    ``MAX_IMAGE_PIXELS`` там глобальный на процесс. Если другой модуль
+    оставил его заниженным, безопасный 164×164 QR внезапно попадает под
+    «decompression bomb» и молча исчезает из документа. На время рендера
+    поднимаем лимит до собственного потолка политики и обязательно
+    возвращаем прежнее значение.
+    """
+    from PIL import Image
+
+    previous = Image.MAX_IMAGE_PIXELS
+    cap = policy.max_image_pixels
+    if cap is not None and previous is not None and previous < cap:
+        Image.MAX_IMAGE_PIXELS = cap
+    try:
+        yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
+
+
 def build_ao_pdf(report: dict, meta: dict, qr_by_id: dict | None = None,
                  include_receipts: bool = False,
                  cards_by_id: dict | None = None) -> bytes:
@@ -922,11 +946,13 @@ def build_ao_pdf(report: dict, meta: dict, qr_by_id: dict | None = None,
     rows = list(report.get("rows") or [])
     # По одному QR на чек + шрифт + запас на продолжения длинных чеков.
     resources = len(rows) * 2 + 8 if include_receipts else 8
+    policy = _resource_policy(resources)
     buf = io.BytesIO()
-    result = pisa.CreatePDF(source, dest=buf, path=str(FONT_PATH),
-                            link_callback=_link_callback,
-                            resource_policy=_resource_policy(resources),
-                            encoding="utf-8", capacity=32 * 1024 * 1024)
+    with _render_image_limit(policy):
+        result = pisa.CreatePDF(source, dest=buf, path=str(FONT_PATH),
+                                link_callback=_link_callback,
+                                resource_policy=policy,
+                                encoding="utf-8", capacity=32 * 1024 * 1024)
     pdf = buf.getvalue()
     if result.err or not pdf.startswith(b"%PDF") or b"/FontFile" not in pdf:
         raise RuntimeError("xhtml2pdf не смог встроить кириллический шрифт в PDF")

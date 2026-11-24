@@ -57,6 +57,39 @@ def _text(pdf: bytes) -> str:
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
+def _image_count(pdf: bytes) -> int:
+    """Считаем QR по XObject-ресурсам страниц, а не через `PageObject.images`.
+
+    Проверка должна видеть физические `/Subtype /Image`, включая картинки
+    внутри Form XObject, и не зависеть от того, как конкретная версия pypdf
+    материализует удобное свойство `page.images`.
+    """
+    def deref(obj):
+        return obj.get_object() if hasattr(obj, "get_object") else obj
+
+    total = 0
+    for page in PdfReader(io.BytesIO(pdf)).pages:
+        resources = deref(page.get("/Resources") or {})
+        xobjects = deref(resources.get("/XObject") or {})
+        stack = [deref(value) for value in xobjects.values()]
+        seen: set[int] = set()
+        while stack:
+            obj = stack.pop()
+            if id(obj) in seen:
+                continue
+            seen.add(id(obj))
+            subtype = str(obj.get("/Subtype") or "")
+            if subtype == "/Image":
+                total += 1
+                continue
+            if subtype != "/Form":
+                continue
+            sub_resources = deref(obj.get("/Resources") or {})
+            sub_xobjects = deref(sub_resources.get("/XObject") or {})
+            stack.extend(deref(value) for value in sub_xobjects.values())
+    return total
+
+
 def _collisions(pdf: bytes) -> list[tuple[int, str, str]]:
     """Грубая, но полезная проверка наложений текста: координаты pypdf
     складываем из cm + tm (только tm даёт ложные тысячи пересечений).
@@ -174,7 +207,7 @@ class TestAoPdfService:
         pdf = ao_pdf.build_ao_pdf(rep, meta, qr, include_receipts=True)
         assert pdf.startswith(b"%PDF")
         assert b"/FontFile" in pdf and b"DejaVu" in pdf
-        assert b"/Image" in pdf                       # QR как картинка
+        assert _image_count(pdf) > 0                # QR как картинка
         text = _text(pdf)
         for needle in ("АВАНСОВЫЙ ОТЧЁТ", "Форма по ОКУД", "0302001",
                        "Оборотная сторона", "ООО «Ромашка»", "Иван Отчётный",
@@ -258,7 +291,7 @@ class TestAoPdfLayout:
         assert text.count("Плинтус напольный") == 42       # itemized позиции
         assert "116427" in text                            # 42-й чек есть в реестре
         assert "83769,00" in text
-        assert sum(len(page.images) for page in reader.pages) == 42
+        assert _image_count(pdf) == 42
         assert not hasattr(ao_pdf, "PDF_QR_LIMIT")
 
     def test_long_receipt_is_split_between_items_with_continuations(self):
@@ -279,8 +312,7 @@ class TestAoPdfLayout:
         assert "— продолжение приложения № 1" in text
         assert "↓ продолжение — часть 2" in text
         assert "Копия по данным системы" in text
-        assert sum(len(page.images) for page in
-                   PdfReader(io.BytesIO(pdf)).pages) == 1
+        assert _image_count(pdf) == 1
 
     def test_missing_card_renders_safe_fallback_copy(self):
         rep, meta, qr = _many_report(2)
@@ -288,8 +320,20 @@ class TestAoPdfLayout:
         text = _text(pdf)
         assert text.count("КАССОВЫЙ ЧЕК") == 2
         assert text.count("Позиции недоступны — полный документ ФНС не получен.") == 2
-        assert sum(len(page.images) for page in
-                   PdfReader(io.BytesIO(pdf)).pages) == 2
+        assert _image_count(pdf) == 2
+
+    def test_qr_images_survive_low_global_pillow_limit(self, monkeypatch):
+        """OCR-воркер когда-то оставлял MAX_IMAGE_PIXELS=10_000 в общем процессе.
+
+        xhtml2pdf тогда молча выбрасывал 164×164 QR как «decompression bomb»;
+        PDF оставался без картинок, хотя текст и вёрстка проходили проверки.
+        """
+        from PIL import Image
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 10_000)
+        rep, meta, qr = _many_report(2)
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr, include_receipts=True)
+        assert _image_count(pdf) == 2
+        assert Image.MAX_IMAGE_PIXELS == 10_000
 
 
 class TestAoPdfEndpoint:
@@ -338,8 +382,7 @@ class TestAoPdfEndpoint:
                        "Позиции недоступны — полный документ ФНС не получен."):
             assert needle in text, needle
         assert text.count("КАССОВЫЙ ЧЕК") == 2
-        assert sum(len(page.images) for page in
-                   PdfReader(io.BytesIO(pdf)).pages) == 2
+        assert _image_count(pdf) == 2
 
     def test_ordinary_user_is_forbidden(self, client):
         _hdr, hu, comp, ids = self._prepare(client)
