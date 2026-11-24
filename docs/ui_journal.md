@@ -6,7 +6,7 @@
 - `ao_folder.js` научился писать бинарные `bytes` в File System Access и ZIP, пробовать `showSaveFilePicker` и готовить отдельный `ПРОЧТИТЕ.txt` для PDF. Старый комплект HTML/CSV/JSON и его тесты не изменились.
 - На Android подсказка `printWithHint()` больше не отправляет человека только в меню ⋮: сначала предлагается сохранить готовый PDF и распечатать уже файл. Путь на ПК через `window.print()` оставлен без изменений.
 - Точки версии переведены на `1.73.8`: `APP_VERSION`, `manifest.webmanifest`, `sw.js`, `index.html`, `b2b/index.html`, `maxapp/index.html`, `osm.js`, `app.js`, `blocks.py`, `WHATS_NEW`, CHANGELOG, README, база знаний и реестр выпусков.
-- `.vercelignore` урезал демо-бандл после добавления `xhtml2pdf`/ReportLab: корневые тексты и WebP-дубли с JPEG-фолбэком в сборку Vercel не попадают, рабочий сервер берёт весь репозиторий. Замок — `tests/test_v1738.py`.
+- `.vercelignore` урезал демо-бандл после добавления `xhtml2pdf`/ReportLab: корневые тексты и WebP-дубли с JPEG-фолбэком в сборку Vercel не попадают, рабочий сервер берёт весь репозиторий. Повторная сборка — 498,66 МБ и READY; замок — `tests/test_v1738.py`.
 
 ## v1.73.7 — авансовый отчёт в папке «Загрузки/АО/компания»
 
