@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Ямастер Чек — v1.73.8: настоящий PDF авансового отчёта.
+"""Ямастер Чек — v1.73.9: настоящий PDF авансового отчёта.
 
 Сервер собирает HTML-бланк и превращает его в PDF через xhtml2pdf/ReportLab.
 Важно: это НЕ картинка страницы. В PDF встроен DejaVuSans (ToUnicode CMap),
 поэтому кириллицу можно выделять, копировать и искать; QR чеков остаются
 картинками, как фискальные коды. Системных Pango/Cairo/браузера не нужно.
 
-v1.73.9 (этап 1): серверный бланк повторяет печатную форму АО-1
-(ОКУД 0302001) — лицевая сторона с расчётом и распиской, оборотная сторона
-с реестром документов. Ширины колонок заданы <colgroup>, длинные фискальные
-реквизиты разбиты по строкам, шапка таблицы повторяется на каждой странице:
-текст больше не наезжает на соседние ячейки, пустой хвостовой страницы нет.
+v1.73.9: серверный бланк повторяет печатную форму АО-1 (ОКУД 0302001) —
+лицевая сторона с расчётом и распиской, оборотная сторона с реестром
+документов, затем полные itemized копии ВСЕХ чеков из `receipt_card.build_card`.
+Ширины колонок заданы <colgroup>, длинные фискальные реквизиты разбиты по
+строкам, шапка таблицы повторяется на каждой странице; копии чеков идут в
+двух независимых колонках с best-fit раскроем и разрезаются по границам
+позиций, как в браузерной печати. Лимит «первые 40 QR» снят: в PDF попадают
+все приложения, все позиции и все QR.
 
 Данные приходят из того же `_build_advance_report`, что и JSON/CSV: клиент не
 может подсунуть серверу произвольные суммы или чужую компанию.
@@ -20,6 +23,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import math
 import re
 from pathlib import Path
 
@@ -29,9 +33,13 @@ from xhtml2pdf.config.resources import ResourceAccessPolicy
 
 FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 FONT_PATH = FONT_DIR / "DejaVuSans.ttf"
-# Этап 2 снимет это ограничение и заменит QR-карточки полными копиями чеков.
-PDF_QR_LIMIT = 40
-MAX_TEXT = 200
+MAX_TEXT = 300
+# Один кусок чека не должен быть выше страницы: длинные чеки режем по позициям.
+MAX_TICKET_PIECE_MM = 160
+# Две независимые колонки A4; запас учитывает бланк АО-1, заголовок и поля.
+TICKET_COL_H_MM = 255.0
+TICKET_FIRST_PAGE_RESERVE_MM = 18.0
+TICKET_PIECE_GAP_MM = 3.0
 
 _FNS = {
     "valid": "Действителен",
@@ -114,6 +122,29 @@ td.nb, th.nb { border: 0; }
 .back-table th { font-size: 6.2pt; }
 .back-table td.desc { font-size: 5.9pt; }
 .back-table .fiscal { font-size: 5pt; }
+/* Полные копии чеков: две колонки, как в браузерном «Сохранить как PDF». */
+.ticket-sheet { width: 100%; margin-top: 1mm; }
+.ticket-sheet > tbody > tr > td { width: 50%; border: 0; padding: 1.2mm;
+                                  vertical-align: top; }
+.ticket-piece { border: 0; padding: 1.8mm;
+                font-size: 5.8pt; line-height: 1.25; }
+.ticket-gap { height: 3mm; }
+.ticket-title { text-align: center; font-size: 7pt; font-weight: bold; }
+.ticket-sub { text-align: center; font-size: 5.3pt; color: #333; }
+.ticket-center { text-align: center; }
+.ticket-small { font-size: 5.1pt; color: #333; }
+.ticket-sep { border-top: 0.3pt dotted #777; margin: 1mm 0; }
+.ticket-item { margin: 1mm 0; }
+.ticket-item-name { font-size: 5.6pt; }
+.ticket-kv { width: 100%; }
+.ticket-kv td { border: 0; padding: 0; font-size: 5.4pt; }
+.ticket-kv td:first-child { width: 64%; }
+.ticket-kv td:last-child { width: 36%; text-align: right; }
+.ticket-kv.bold td { font-weight: bold; font-size: 6pt; }
+.ticket-qr { text-align: center; margin: 1mm 0; }
+.ticket-qr img { width: 24mm; height: 24mm; }
+.ticket-continuation { text-align: center; font-size: 5pt; color: #555;
+                       margin: 1mm 0; }
 """
 
 
@@ -145,6 +176,22 @@ def _num(value) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _money0(value) -> str:
+    """«1 974,00» — денежный формат полной копии чека."""
+    return f"{_num(value):,.2f}".replace(",", "\u00a0").replace(".", ",")
+
+
+def _qty(value) -> str:
+    n = _num(value)
+    if n.is_integer():
+        return str(int(n))
+    return f"{n:.3f}".rstrip("0").rstrip(".")
+
+
+def _ticket_dt(value) -> str:
+    return _text(value, 25).replace("T", " ")[:19]
 
 
 def _date(value) -> str:
@@ -492,34 +539,276 @@ def _summary_back(ctx: dict) -> str:
     """
 
 
-def _qr_section(rows: list[dict], qr_by_id: dict) -> str:
-    """Этап 1: те же QR-карточки, но примечание ПЕРЕД ними — пустая
-    хвостовая страница (была стр. 10) больше не создаётся."""
-    shown = rows[:PDF_QR_LIMIT]
-    cards = ""
-    for i, row in enumerate(shown, 1):
-        uri = _qr_uri(str((qr_by_id or {}).get(row.get("id")) or ""))
-        image = (f"<img class='qr' width='90' height='90' src='{uri}' alt='QR чека {i}'>"
-                 if uri else "<div class='small'>Фискальный QR не сохранён</div>")
-        cards += (
-            "<div class='receipt'>"
-            f"<table><colgroup><col style='width:25%'><col style='width:75%'></colgroup>"
-            f"<tr><td class='nb'>{image}</td><td class='nb'>"
-            f"<b>Приложение № {i}</b> · {_e(_receipt_dt(row.get('receipt_date')), 25)}<br>"
-            f"Продавец: {_e(row.get('merchant_name') or '—')}<br>"
-            f"ИНН: {_e(row.get('merchant_inn') or '—')} · ФН/ФД/ФП: {_fiscal_plain(row)}<br>"
-            f"Статус ФНС: {_e(_fns(row.get('fns_status')))} · "
-            f"Сумма: <b>{_money(row.get('total_sum', 0))} руб.</b>"
-            "</td></tr></table></div>")
-    note = (f"<p class='small'>Показаны QR первых {len(shown)} чеков из {len(rows)}; "
-            "все чеки перечислены в таблице выше. Копии не заменяют обязательные "
-            "подтверждающие документы.</p>" if len(rows) > len(shown) else
-            "<p class='small'>Копии чеков не заменяют обязательные подтверждающие документы.</p>")
-    return (f"<h2 style='page-break-before: auto; margin-top: 5mm'>Приложения: копии чеков</h2>"
-            f"{note}{cards}")
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
 
 
-def _html(report: dict, meta: dict, qr_by_id: dict, include_receipts: bool) -> str:
+def _qr_text(row: dict, qr_by_id: dict, doc: dict) -> str:
+    saved = (qr_by_id or {}).get(row.get("id")) or doc.get("qr") or ""
+    if saved:
+        return _text(saved, 1000)
+    fn, fd, fp = (_text(row.get("fn"), 30), _text(row.get("fd"), 20),
+                  _text(row.get("fp"), 20))
+    if not (fn and fd and fp):
+        return ""
+    dt = _ticket_dt(row.get("receipt_date") or doc.get("date_time"))
+    compact = re.sub(r"[^0-9]", "", dt)[:12].ljust(12, "0")
+    return (f"t={compact}&s={_num(row.get('total_sum')):.2f}"
+            f"&fn={fn}&i={fd}&fp={fp}&n=1")
+
+
+def _card_document(row: dict, cards_by_id: dict, qr_by_id: dict) -> dict:
+    """Полный документ из receipt_card.build_card; без карточки — безопасный
+    минимум по строке отчёта (как «позиции недоступны» в браузерной печати).
+    """
+    card = (cards_by_id or {}).get(row.get("id")) or {}
+    if not isinstance(card, dict):
+        card = {}
+    doc = card.get("document") if isinstance(card.get("document"), dict) else card
+    if doc and any(doc.get(k) for k in ("seller", "kkt", "money", "items")):
+        return doc
+    operation = str(row.get("operation") or 1)
+    return {
+        "operation_name": "Возврат прихода" if operation.startswith("2") else "Приход",
+        "date_time": row.get("receipt_date"),
+        "seller": {"name": row.get("merchant_name") or "",
+                   "inn": row.get("merchant_inn") or "",
+                   "address": "", "place": ""},
+        "kkt": {"fn": row.get("fn") or "", "fd": row.get("fd") or "",
+                "fp": row.get("fp") or ""},
+        "money": {"total": row.get("total_sum") or 0, "cash": 0, "ecash": 0,
+                  "prepaid": 0, "credit": 0, "provision": 0, "pay_type": ""},
+        "tax": {"taxation_name": "", "nds": []},
+        "cashier": {"name": "", "inn": ""},
+        "buyer": {"name": "", "contact": ""},
+        "items": [],
+        "properties": [],
+        "receipt_note": {"fns_status": row.get("fns_status") or "unknown"},
+        "qr": (qr_by_id or {}).get(row.get("id")) or "",
+    }
+
+
+def _ticket_line(left_html: str, right_html: str = "", bold: bool = False) -> str:
+    cls = "ticket-kv bold" if bold else "ticket-kv"
+    return (f"<table class='{cls}'><tr><td>{left_html}</td>"
+            f"<td>{right_html}</td></tr></table>")
+
+
+def _ticket_br(value, limit: int = 300) -> str:
+    return _e(value, limit).replace("\n", "<br>")
+
+
+def _receipt_header(doc: dict, row: dict, app_no: int) -> tuple[str, float]:
+    s, k = _dict(doc.get("seller")), _dict(doc.get("kkt"))
+    c, b = _dict(doc.get("cashier")), _dict(doc.get("buyer"))
+    parts = [
+        f"<div class='ticket-sub'>Приложение № {app_no} к отчёту</div>",
+        "<div class='ticket-title'>КАССОВЫЙ ЧЕК</div>",
+        f"<div class='ticket-sub'>{_e(doc.get('operation_name') or 'Приход', 60)}</div>",
+        "<div class='ticket-sep'></div>",
+    ]
+    if s.get("name"):
+        parts.append(f"<div class='ticket-center ticket-title'>{_ticket_br(s.get('name'), 300)}</div>")
+    if s.get("inn"):
+        parts.append(f"<div class='ticket-center ticket-sub'>ИНН {_e(s.get('inn'), 30)}</div>")
+    for key in ("address", "place"):
+        if s.get(key):
+            parts.append(f"<div class='ticket-center ticket-small'>{_ticket_br(s.get(key), 300)}</div>")
+    parts.append("<div class='ticket-sep'></div>")
+    parts.append(f"<div class='ticket-small'>{_e(_ticket_dt(doc.get('date_time') or row.get('receipt_date')), 25)}</div>")
+    if k.get("shift"):
+        parts.append(_ticket_line("СМЕНА", _e(k.get("shift"), 30)))
+    if k.get("request"):
+        parts.append(_ticket_line("ЧЕК ЗА СМЕНУ", _e(k.get("request"), 30)))
+    if c.get("name"):
+        parts.append(_ticket_line("КАССИР", _e(c.get("name"), 120)))
+    if c.get("inn"):
+        parts.append(_ticket_line("ИНН КАССИРА", _e(c.get("inn"), 30)))
+    if b.get("name"):
+        parts.append(_ticket_line("ПОКУПАТЕЛЬ", _e(b.get("name"), 120)))
+    if b.get("contact"):
+        parts.append(_ticket_line("КОНТАКТ ПОКУПАТЕЛЯ", _e(b.get("contact"), 120)))
+    parts.append("<div class='ticket-sep'></div>")
+    return "".join(parts), 38.0
+
+
+def _receipt_item_blocks(items) -> list[tuple[str, float]]:
+    out: list[tuple[str, float]] = []
+    if not isinstance(items, list):
+        items = []
+    for it in items[:200]:
+        if not isinstance(it, dict):
+            continue
+        name = _text(it.get("name"), 300)
+        qty = _qty(it.get("quantity")) or "1"
+        measure = _text(it.get("measure"), 20)
+        calc_left = f"{qty}{' ' + _e(measure) if measure else ''} × {_money0(it.get('price'))}"
+        parts = [
+            "<div class='ticket-item'>",
+            f"<div class='ticket-item-name'>{_e(name, 300)}</div>",
+            _ticket_line(calc_left, _money0(it.get("total"))),
+        ]
+        nds = _text(it.get("nds_name"), 80)
+        if nds:
+            nds_sum = _num(it.get("nds_sum"))
+            parts.append("<div class='ticket-small'>НДС "
+                         f"{_e(nds)}{': ' + _money0(nds_sum) if nds_sum else ''}</div>")
+        for key in ("payment_type_name", "product_type_name"):
+            value = _text(it.get(key), 80)
+            if value:
+                parts.append(f"<div class='ticket-small'>{_e(value, 80)}</div>")
+        parts.append("</div>")
+        mm = 8.0 + 3.0 * math.ceil(max(0, len(name) - 40) / 45.0)
+        if nds:
+            mm += 2.0
+        out.append(("".join(parts), mm))
+    if not out:
+        out.append(("<div class='ticket-small'>Позиции недоступны — полный документ ФНС не получен.</div>", 8.0))
+    return out
+
+
+def _receipt_footer(doc: dict, row: dict, qr_uri: str, app_no: int) -> tuple[str, float]:
+    m, t, k = _dict(doc.get("money")), _dict(doc.get("tax")), _dict(doc.get("kkt"))
+    note = _dict(doc.get("receipt_note"))
+    parts = ["<div class='ticket-sep'></div>"]
+    for tax in (t.get("nds") or []):
+        if isinstance(tax, dict) and _num(tax.get("sum")) > 0:
+            parts.append(_ticket_line(f"НДС {_e(tax.get('rate_name') or '', 30)}",
+                                      _money0(tax.get("sum"))))
+    total = m.get("total", row.get("total_sum"))
+    parts.append(_ticket_line("ИТОГ", _money0(total), bold=True))
+    parts.append("<div class='ticket-sep'></div>")
+    pays = [
+        ("НАЛИЧНЫМИ", m.get("cash")),
+        ("БЕЗНАЛИЧНЫМИ", m.get("ecash")),
+        ("ПРЕДОПЛАТА", m.get("prepaid")),
+        ("КРЕДИТ", m.get("credit")),
+        ("ВСТРЕЧНОЕ ПРЕДОСТАВЛЕНИЕ", m.get("provision")),
+    ]
+    has_pay = False
+    for label, value in pays:
+        if _num(value) > 0:
+            has_pay = True
+            parts.append(_ticket_line(label, _money0(value)))
+    if not has_pay:
+        parts.append("<div class='ticket-small'>Способ оплаты не указан</div>")
+    taxation = _text(doc.get("taxation_name") or t.get("taxation_name"), 100)
+    if taxation:
+        parts.append(f"<div class='ticket-small'>СНО: {_e(taxation, 100)}</div>")
+    parts.append("<div class='ticket-sep'></div>")
+    for label, key in (("ФН", "fn"), ("ФД", "fd"), ("ФПД", "fp")):
+        parts.append(_ticket_line(label, _e(k.get(key) or row.get(key) or "—", 40)))
+    if k.get("reg_id"):
+        parts.append(_ticket_line("РН ККТ", _e(k.get("reg_id"), 40)))
+    if k.get("ffd"):
+        parts.append(_ticket_line("ФФД", _e(k.get("ffd"), 40)))
+    for prop in (doc.get("properties") or []):
+        if isinstance(prop, dict) and prop.get("name"):
+            parts.append(_ticket_line(_e(prop.get("name"), 60),
+                                      _e(prop.get("value") or "", 80)))
+    status = note.get("fns_status") or row.get("fns_status") or "unknown"
+    parts.append(f"<div class='ticket-small'>Проверка ФНС: {_e(_fns(status), 40)}</div>")
+    if qr_uri:
+        parts.append(f"<div class='ticket-qr'><img width='90' height='90' "
+                     f"src='{qr_uri}' alt='QR приложения № {app_no}'></div>")
+    else:
+        parts.append("<div class='ticket-center ticket-small'>Фискальный QR не сохранён</div>")
+    parts.append("<div class='ticket-center ticket-small'>Копия по данным системы</div>")
+    return "".join(parts), 54.0
+
+
+def _receipt_pieces(row: dict, doc: dict, qr_uri: str,
+                    app_no: int) -> list[tuple[str, float]]:
+    header, header_mm = _receipt_header(doc, row, app_no)
+    footer, footer_mm = _receipt_footer(doc, row, qr_uri, app_no)
+    blocks: list[tuple[str, float]] = [(header, header_mm)]
+    blocks.extend(_receipt_item_blocks(doc.get("items")))
+    blocks.append((footer, footer_mm))
+    groups: list[tuple[list[str], float]] = []
+    current: list[str] = []
+    current_mm = 0.0
+    for block, mm in blocks:
+        if current and current_mm + mm > MAX_TICKET_PIECE_MM:
+            groups.append((current, current_mm))
+            current, current_mm = [], 0.0
+        current.append(block)
+        current_mm += mm
+    if current:
+        groups.append((current, current_mm))
+    total = len(groups)
+    fd = _text(_dict(doc.get("kkt")).get("fd") or row.get("fd"), 20) or "—"
+    out: list[tuple[str, float]] = []
+    for i, (htmls, mm) in enumerate(groups):
+        prefix = (f"<div class='ticket-continuation'>— продолжение приложения № {app_no}, "
+                  f"чека ФД {_e(fd, 20)} —</div>" if i else "")
+        suffix = (f"<div class='ticket-continuation'>↓ продолжение — часть {i + 2} "
+                  f"из {total} ↓</div>" if i < total - 1 else "")
+        html_piece = (f"<div class='ticket-piece'>{prefix}{''.join(htmls)}{suffix}</div>")
+        out.append((html_piece, mm + (3.0 if prefix else 0.0) + (3.0 if suffix else 0.0)))
+    return out
+
+
+def _pack_ticket_pages(pieces: list[tuple[str, float]]) -> list[list[list[str]]]:
+    """Best-fit раскрой кусков по двум колонкам (как printpack.packCut).
+
+    Оценки высот получены из блоков полной копии; xhtml2pdf сам не умеет
+    независимо заполнять col1/col2, поэтому маленькие продолжения заранее
+    укладываются в свободные места предыдущих страниц.
+    """
+    col_h = TICKET_COL_H_MM
+    gap = TICKET_PIECE_GAP_MM
+    # Первая страница ниже: перед таблицей идут заголовок и пояснение.
+    remainders: list[list[float]] = [[col_h - TICKET_FIRST_PAGE_RESERVE_MM] * 2]
+    used_mm: list[list[float]] = [[0.0, 0.0]]
+    columns: list[list[list[str]]] = [[[], []]]
+    for html_piece, mm in pieces:
+        h = min(col_h, max(1.0, float(mm)))
+        best: tuple[int, int] | None = None
+        for page_no, rests in enumerate(remainders):
+            candidates = [
+                (rest, col) for col, rest in enumerate(rests)
+                if rest + 1e-6 >= h + (gap if used_mm[page_no][col] else 0)
+            ]
+            if candidates:
+                best = (page_no, min(candidates, key=lambda item: (item[0], item[1]))[1])
+                break
+        if best is None:
+            remainders.append([col_h] * 2)
+            used_mm.append([0.0, 0.0])
+            columns.append([[], []])
+            best = (len(remainders) - 1, 0)
+        page_no, col = best
+        if columns[page_no][col]:
+            used_mm[page_no][col] += gap
+            columns[page_no][col].append("<div class='ticket-gap'></div>")
+        columns[page_no][col].append(html_piece)
+        used_mm[page_no][col] += h
+        remainders[page_no][col] = col_h - (
+            TICKET_FIRST_PAGE_RESERVE_MM if page_no == 0 else 0.0
+        ) - used_mm[page_no][col]
+    return columns
+
+
+def _receipt_section(rows: list[dict], cards_by_id: dict, qr_by_id: dict) -> str:
+    pieces: list[tuple[str, float]] = []
+    for i, row in enumerate(rows, 1):
+        doc = _card_document(row, cards_by_id, qr_by_id)
+        uri = _qr_uri(_qr_text(row, qr_by_id, doc))
+        pieces.extend(_receipt_pieces(row, doc, uri, i))
+    table_rows = []
+    for left_htmls, right_htmls in _pack_ticket_pages(pieces):
+        table_rows.append(
+            f"<tr><td>{''.join(left_htmls)}</td>"
+            f"<td>{''.join(right_htmls)}</td></tr>")
+    note = (f"<p class='small'>Приложены полные копии всех {len(rows)} чеков с QR. "
+            "Копии не заменяют обязательные подтверждающие документы.</p>")
+    return (f"<h2 style='page-break-before: auto; margin-top: 5mm'>"
+            f"Приложения: полные копии чеков</h2>{note}"
+            f"<table class='ticket-sheet'><tbody>{''.join(table_rows)}</tbody></table>")
+
+
+def _html(report: dict, meta: dict, qr_by_id: dict, include_receipts: bool,
+          cards_by_id: dict | None = None) -> str:
     rows = list(report.get("rows") or [])
     total = report.get("total") or {}
     company = report.get("company") or {}
@@ -586,7 +875,8 @@ def _html(report: dict, meta: dict, qr_by_id: dict, include_receipts: bool) -> s
     if report.get("invalid_count"):
         warning = (f"<div class='callout'>⚠ В отчёте {int(report['invalid_count'])} чек(ов) "
                    "со статусом «Недействителен» — исключите их из учёта или перепроверьте.</div>")
-    qr_html = _qr_section(rows, qr_by_id) if include_receipts else ""
+    receipt_html = (_receipt_section(rows, cards_by_id or {}, qr_by_id)
+                    if include_receipts else "")
 
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
@@ -596,7 +886,7 @@ def _html(report: dict, meta: dict, qr_by_id: dict, include_receipts: bool) -> s
 {warning}
 <div class="page-break"></div>
 {back}
-{qr_html}
+{receipt_html}
 </body></html>"""
 
 
@@ -610,29 +900,33 @@ def _link_callback(uri, _basepath=None):
     raise ValueError(f"В PDF запрещён внешний ресурс: {value[:120]}")
 
 
-def _resource_policy():
+def _resource_policy(max_resources: int = 128):
     """xhtml2pdf не должен читать ни URL, ни файлы вне каталога шрифта."""
     return ResourceAccessPolicy.server(
         base_dir=FONT_DIR,
         allow_remote=False,
         allow_private_networks=False,
         allow_local_outside_base=False,
-        max_resources=PDF_QR_LIMIT + 2,
-        max_render_seconds=90,
+        max_resources=max(16, int(max_resources)),
+        max_render_seconds=240,
     )
 
 
 def build_ao_pdf(report: dict, meta: dict, qr_by_id: dict | None = None,
-                 include_receipts: bool = False) -> bytes:
+                 include_receipts: bool = False,
+                 cards_by_id: dict | None = None) -> bytes:
     """Собрать PDF. Бросает RuntimeError, если шрифт не встроился."""
     if not FONT_PATH.is_file():
         raise RuntimeError("Не найден встроенный шрифт DejaVuSans.ttf")
-    source = _html(report, meta, qr_by_id or {}, include_receipts)
+    source = _html(report, meta, qr_by_id or {}, include_receipts, cards_by_id)
+    rows = list(report.get("rows") or [])
+    # По одному QR на чек + шрифт + запас на продолжения длинных чеков.
+    resources = len(rows) * 2 + 8 if include_receipts else 8
     buf = io.BytesIO()
     result = pisa.CreatePDF(source, dest=buf, path=str(FONT_PATH),
                             link_callback=_link_callback,
-                            resource_policy=_resource_policy(),
-                            encoding="utf-8", capacity=8 * 1024 * 1024)
+                            resource_policy=_resource_policy(resources),
+                            encoding="utf-8", capacity=32 * 1024 * 1024)
     pdf = buf.getvalue()
     if result.err or not pdf.startswith(b"%PDF") or b"/FontFile" not in pdf:
         raise RuntimeError("xhtml2pdf не смог встроить кириллический шрифт в PDF")

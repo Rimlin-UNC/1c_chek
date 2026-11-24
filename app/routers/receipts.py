@@ -2201,10 +2201,11 @@ def advance_report(body: AdvanceReportBody, user: User = Depends(require_account
 def advance_report_pdf(body: AdvanceReportPdfBody,
                        user: User = Depends(require_accountant),
                        db: Session = Depends(get_db)):
-    """v1.73.8: сразу файл `.pdf`, а не `window.print()` / меню браузера.
+    """v1.73.9: сразу файл `.pdf`, а не `window.print()` / меню браузера.
 
     PDF собирается сервером из того же набора чеков, что и JSON-предпросмотр.
-    Это выделяемый кириллический текст (встроенный DejaVuSans), QR чеков —
+    Это выделяемый кириллический текст (встроенный DejaVuSans), полные
+    itemized копии всех чеков из `receipt_card.build_card` и их QR как
     изображения. Права, scope компании и фильтры идентичны `/advance-report`.
     """
     rep = _build_advance_report(body, user, db)
@@ -2234,17 +2235,19 @@ def advance_report_pdf(body: AdvanceReportPdfBody,
     meta.setdefault("ao-num", body.report_number)
     meta.setdefault("ao-date", body.report_date or rep["period"]["to"])
     meta.setdefault("ao-org", rep["company"].get("short_name") or rep["company"].get("name") or "")
-    qr_by_id = {}
-    if body.include_receipts:
-        ids = [r["id"] for r in rows[:ao_pdf.PDF_QR_LIMIT]]
-        qr_by_id = {
-            rid: qr_data
-            for rid, qr_data in db.query(Receipt.id, Receipt.qr_data)
-                                 .filter(Receipt.id.in_(ids)).all()
-            if qr_data
-        }
     try:
-        pdf = ao_pdf.build_ao_pdf(rep, meta, qr_by_id, body.include_receipts)
+        # v1.73.9: без «первых 40» — полные карточки и QR для ВСЕХ строк.
+        from ..services import receipt_card as _card
+        qr_by_id: dict[str, str] = {}
+        cards_by_id: dict[str, dict] = {}
+        if body.include_receipts:
+            ids = [r["id"] for r in rows]
+            for rec in db.query(Receipt).filter(Receipt.id.in_(ids)).all():
+                if rec.qr_data:
+                    qr_by_id[rec.id] = rec.qr_data
+                cards_by_id[rec.id] = _card.build_card(rec)
+        pdf = ao_pdf.build_ao_pdf(rep, meta, qr_by_id,
+                                  body.include_receipts, cards_by_id)
     except Exception:
         logging.getLogger("ymaster").exception("Не удалось собрать PDF авансового отчёта")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,

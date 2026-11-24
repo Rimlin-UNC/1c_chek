@@ -61,9 +61,12 @@ class TestRelease1738:
         changelog = read("CHANGELOG.md")
         assert changelog.startswith("## [1.73.8]")
         assert "## [1.73.7]" in changelog
+        assert "Этап 2 — полные копии чеков без обрезки 40 QR" in changelog
         assert "Последний выпуск — v1.73.8" in read("README.md")
         assert "| Последний выпуск | **v1.73.8**" in read("docs/kb/README.md")
-        assert read("docs/ui_journal.md").startswith("## v1.73.8")
+        journal = read("docs/ui_journal.md")
+        assert journal.startswith("## v1.73.8")
+        assert "все фискальные QR" in journal
         with (ROOT / "docs/kb/09_releases.csv").open(encoding="utf-8", newline="") as fh:
             rows = list(csv.DictReader(fh))
         assert rows[-1]["Версия"] == settings.APP_VERSION
@@ -80,12 +83,17 @@ class TestRelease1738:
         assert "DejaVuSans.ttf" in service and "qrcode.make" in service
         assert "ResourceAccessPolicy" in service and "allow_remote=False" in service
         assert "_link_callback" in service
+        assert "capacity=32 * 1024 * 1024" in service
+        assert "max_render_seconds=240" in service
+        assert "PDF_QR_LIMIT" not in service
         assert "ReportLab Helvetica" not in service
         schemas = read("app/schemas.py")
         assert "class AdvanceReportPdfBody" in schemas
         router = read("app/routers/receipts.py")
         assert '@router.post("/advance-report/pdf"' in router
         assert "require_accountant" in router
+        assert "_card.build_card(rec)" in router
+        assert "cards_by_id" in router
 
     def test_binary_pdf_save_helpers_exist(self):
         folder = read("app/static/js/ao_folder.js")

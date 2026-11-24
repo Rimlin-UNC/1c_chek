@@ -148,7 +148,7 @@ test.describe('авансовый отчёт: браузер без доступ
     expect(bytes.length).toBeGreaterThan(500);
   });
 
-  test('v1.73.8: «Сохранить PDF» отдаёт настоящий .pdf внутри ZIP и показывает путь', async ({ page }) => {
+  test('v1.73.9: «Сохранить PDF» отдаёт настоящий .pdf сервера внутри ZIP и показывает путь', async ({ page }) => {
     await page.addInitScript(() => {
       for (const name of ['showDirectoryPicker', 'showSaveFilePicker']) {
         Object.defineProperty(window, name, {
@@ -156,17 +156,14 @@ test.describe('авансовый отчёт: браузер без доступ
         });
       }
     });
-    const pdf = Buffer.from('%PDF-1.4\n% Ямастер Чек — тестовый PDF\n%%EOF\n');
+    let realPdf = null;
+    // Маршрут только перехватывает РЕАЛЬНЫЙ ответ endpoint, чтобы сравнить
+    // байты в ZIP; FAKE %PDF-1.4 больше не подменяет серверный PDF.
     await page.route('**/api/v1/receipts/advance-report/pdf', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/pdf',
-        headers: {
-          'content-disposition': 'attachment; filename="AO_otchet.pdf"',
-          'cache-control': 'no-store',
-        },
-        body: pdf,
-      });
+      const response = await route.fetch();
+      const body = await response.body();
+      realPdf = Buffer.from(body);
+      await route.fulfill({ response, body });
     });
     await login(page);
     await openAdvanceReport(page);
@@ -183,9 +180,14 @@ test.describe('авансовый отчёт: браузер без доступ
     expect(download.suggestedFilename()).toMatch(/\.zip$/);
     await expect(page.locator('#ao-pdf-status')).toContainText('Скачать ещё раз', { timeout: 30000 });
     await expect(page.locator('#ao-pdf-status')).toContainText('Загрузки/АО/ООО «E2E Согласование»/');
+    expect(realPdf).not.toBeNull();
+    expect(realPdf.subarray(0, 4).toString()).toBe('%PDF');
+    expect(realPdf.includes(Buffer.from('/FontFile'))).toBe(true);
+    expect(realPdf.includes(Buffer.from('DejaVu'))).toBe(true);
+    expect(realPdf.length).toBeGreaterThan(1000);
     const bytes = readFileSync(await download.path());
     expect(bytes.subarray(0, 4).toString('hex')).toBe('504b0304');
-    expect(bytes.includes(pdf)).toBe(true);          // бинарные байты не испорчены UTF-8
+    expect(bytes.includes(realPdf)).toBe(true);     // бинарные байты не испорчены UTF-8
     expect(bytes.includes(Buffer.from('выделяемый', 'utf8'))).toBe(true);
   });
 });
