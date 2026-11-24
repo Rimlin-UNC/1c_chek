@@ -464,6 +464,8 @@ def test_worker_renders_scanned_pdf(tmp_path, fake_tesserocr):
 
 @pytest.mark.usefixtures("fake_tesserocr")
 def test_worker_limits(tmp_path, monkeypatch):
+    from PIL import Image
+    pillow_limit = Image.MAX_IMAGE_PIXELS
     junk = tmp_path / "junk.png"
     junk.write_bytes(b"\x89PNG not an image")
     with pytest.raises(ocr_worker.WorkerError, match="не открывается"):
@@ -473,9 +475,10 @@ def test_worker_limits(tmp_path, monkeypatch):
     big.write_bytes(_png(400, 400))
     with pytest.raises(ocr_worker.WorkerError, match="слишком большая"):
         ocr_worker.main([str(big), str(tmp_path), "rus", "5", "0"])
-    from PIL import Image
     assert max(ocr_worker.prepare(Image.new("L", (7000, 5000))).size) == ocr_worker.MAX_SIDE
     assert max(ocr_worker.prepare(Image.new("L", (600, 400))).size) == 1000
+    # Воркер не должен оставлять заниженный глобальный лимит Pillow другим тестам.
+    assert Image.MAX_IMAGE_PIXELS == pillow_limit
 
 
 def test_layout_rebuild_joins_label_and_value_columns():

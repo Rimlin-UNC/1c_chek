@@ -104,6 +104,10 @@ class TestRelease1739:
         assert "max_render_seconds=240" in service
         assert "_pack_ticket_pages" in service
         assert "_receipt_section" in service
+        assert "_render_image_limit" in service
+        ocr = read("app/primary/ocr_worker.py")
+        assert "_image_pixel_limit" in ocr
+        assert "Image.MAX_IMAGE_PIXELS = MAX_PIXELS" not in ocr
         router = read("app/routers/receipts.py")
         assert "_card.build_card(rec)" in router
         assert "cards_by_id" in router

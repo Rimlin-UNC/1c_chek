@@ -28,11 +28,34 @@ import subprocess
 import sys
 import time
 import warnings
+from contextlib import contextmanager
 
 MAX_SIDE = 3508            # длинная сторона A4 при 300 точках на дюйм: больше Tesseract не нужно
 MIN_SIDE = 1000            # совсем мелкую картинку увеличиваем: Tesseract нужно 20–30 точек на букву
 RENDER_DPI = 200
 MAX_PIXELS = 60_000_000    # защита от «бомбы распаковки»: картинка 60 Мп и больше — отказ
+
+
+@contextmanager
+def _image_pixel_limit(limit: int):
+    """Временно задать глобальный лимит Pillow и обязательно вернуть прежний.
+
+    Pillow хранит ``MAX_IMAGE_PIXELS`` в модуле, а не в объекте изображения.
+    Воркер обычно живёт отдельным процессом, но тесты вызывают ``main``
+    в общем процессе pytest-xdist: без восстановления заниженный лимит
+    потом глушит совсем другие картинки (например, QR в PDF авансового
+    отчёта) и роняет не связанные с OCR проверки.
+    """
+    from PIL import Image
+
+    previous = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = limit
+    try:
+        yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
+
+
 # Опорные слова печатной формы. На правильно повёрнутом листе их больше десяти, на перевёрнутом —
 # ноль-одно. Уверенность Tesseract тут обманчива: на повёрнутом листе он уверенно читает «зеркальные» буквы.
 ANCHORS = ("фактур", "продав", "покупат", "инн", "кпп", "всего", "оплат", "статус", "документ",
@@ -80,7 +103,6 @@ def _pdf_pages(path: str, max_pages: int) -> list:
 
 def _image_pages(path: str, max_pages: int) -> list:
     from PIL import Image, ImageOps
-    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         try:
@@ -324,7 +346,9 @@ def main(argv: list[str]) -> dict:
     started = time.time()
     with open(path, "rb") as fh:
         head = fh.read(5)
-    pages = _pdf_pages(path, max_pages) if head.startswith(b"%PDF") else _image_pages(path, max_pages)
+    with _image_pixel_limit(MAX_PIXELS):
+        pages = (_pdf_pages(path, max_pages) if head.startswith(b"%PDF")
+                 else _image_pages(path, max_pages))
     if not pages:
         raise WorkerError("В файле нет страниц")
     prepared = [prepare(p) for p in pages]
