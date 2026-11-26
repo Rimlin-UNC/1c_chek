@@ -42,7 +42,7 @@ sys.path.insert(0, os.getcwd())
 
 from app.services import adguard_setup as ag
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 HEALTH_SH = "deploy/adguard-vpn/tg-health.sh"
 README = "deploy/adguard-vpn/README.md"
 
@@ -181,7 +181,7 @@ def redirected(stubs, tmp_path):
     for d in (kit, etc, sbin):
         d.mkdir()
     for n in ("adguard-vpn-telegram.service", "tg-health.service",
-              "tg-health.timer", "tg-health.sh", "ymaster-adguard-setup.sh"):
+              "tg-health.timer", "tg-health.sh", "docver-adguard-setup.sh"):
         (kit / n).write_text("[Unit]\nDescription=kit\n", encoding="utf-8")
     src = _read(HELPER_SH)
     src = src.replace("/usr/local/share/ymaster-adguard", str(kit))
@@ -512,7 +512,7 @@ class TestInstallRuleRefresh:
         src = src.replace("/usr/local/sbin", str(sbin))
         src = src.replace("/etc/sudoers.d/ymaster-adguard",
                           str(tmp_path / (name + "-sudoers")))
-        script = appdir / "deploy" / "adguard-vpn" / "ymaster-adguard-setup.sh"
+        script = appdir / "deploy" / "adguard-vpn" / "docver-adguard-setup.sh"
         script.write_text(src, encoding="utf-8")
         marker = "[Unit]\nDescription=NEW-FROM-KIT\n"
         for n in ("adguard-vpn-telegram.service", "tg-health.service",
@@ -587,7 +587,7 @@ class TestPhaseSetAndDocs:
 
     def test_readme_lists_real_phases(self):
         line = [l for l in _read(README).splitlines()
-                if "ymaster-adguard-setup preflight" in l]
+                if "docver-adguard-setup preflight" in l]
         assert line
         assert "socks" not in line[0]
         for ph in ("tun", "off", "units", "autopilot"):

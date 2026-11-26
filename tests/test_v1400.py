@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.40.0: кнопка режима просмотра в списке
+# DocVer — тесты v1.40.0: кнопка режима просмотра в списке
 # пользователей (второй вход в режим «глазами сотрудника» из v1.18.0).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -15,7 +15,7 @@ class TestVersion1400:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

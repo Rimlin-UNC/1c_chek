@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты обмена с Открытыми API ФНС.
+# DocVer — тесты обмена с Открытыми API ФНС.
 #
 # v1.70.70: файл переписан. Раньше здесь закреплялась «рабочая схема»
 # стороннего сервиса проверки чеков (multipart, перебор форматов, code 5).
@@ -10,7 +10,7 @@
 #
 # Сеть не используется: httpx.post подменяется ответами по документации
 # «API 2.0.9 от 10.12.2024» (префиксы ns2:, вложенные Result/Ticket).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -250,7 +250,7 @@ class TestVersion1580:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

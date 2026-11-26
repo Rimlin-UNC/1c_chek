@@ -968,7 +968,7 @@ test.describe('переход к форме входа с главной', () =>
 test('проверка скачанного пакета не обещает восстановление', async ({ page }) => {
   await login(page);
   await page.getByRole('button', { name: 'Понятно, работаем' }).click();
-  const token = await page.evaluate(() => localStorage.getItem('ymaster_check_token'));
+  const token = await page.evaluate(() => localStorage.getItem('docver_token'));
   const headers = { Authorization: `Bearer ${token}` };
   const companies = await (await page.request.get('/api/v1/companies', { headers })).json();
   const company = companies.find(c => c.name.includes('Ямастер'));

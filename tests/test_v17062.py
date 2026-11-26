@@ -199,7 +199,7 @@ class TestRelease17062:
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
+        assert re.search(r"docver-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

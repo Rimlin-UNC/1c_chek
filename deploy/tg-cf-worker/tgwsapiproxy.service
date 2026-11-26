@@ -1,9 +1,9 @@
-# Ямастер Чек v1.70.68 — локальный прокси Telegram Bot API через
+# DocVer v1.70.68 — локальный прокси Telegram Bot API через
 # Cloudflare Worker (пакет tgwsapiproxy, https://github.com/winchanii/TgWsApiProxy).
 #
 # Служба поднимает два входа ТОЛЬКО на локальном интерфейсе:
 #   127.0.0.1:1080 — SOCKS5
-#   127.0.0.1:8080 — HTTP CONNECT (его использует «Ямастер Чек»)
+#   127.0.0.1:8080 — HTTP CONNECT (его использует «DocVer»)
 #
 # Установщик install.sh подставляет вместо __WORKER_HOST__ домен вашего
 # Worker вида имя-abc123.ваш-аккаунт.workers.dev.

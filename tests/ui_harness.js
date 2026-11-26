@@ -1,12 +1,12 @@
 // ======================================================================
-// Ямастер Чек — UI-harness v1.13.0/v1.14.0 (Node vm DOM-песочница): карточка
+// DocVer — UI-harness v1.13.0/v1.14.0 (Node vm DOM-песочница): карточка
 // компании (ЕГРЮЛ/Checko), диалог умного удаления (move/wipe).
 // Запуск: node tests/ui_harness.js  (бандл строит tests/test_v*.py)
-// ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+// ООО «Ямастер» | ymaster.ru | i@docver.ru
 // ======================================================================
 // ======================================================================
 // UI-harness v1.13.0/v1.14.0: карточка компании + диалог удаления (DOM-песочница)
-// ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+// ООО «Ямастер» | ymaster.ru | i@docver.ru
 // ======================================================================
 const fs = require('fs');
 const vm = require('vm');
@@ -73,7 +73,7 @@ const document = {
   documentElement: new El('html'),
 };
 
-const storage = { ymaster_check_token: 'harness-token' };   // v1.25.1: boot загрузит /auth/me
+const storage = { docver_token: 'harness-token' };   // v1.25.1: boot загрузит /auth/me
 const apiLog = [];
 const toasts = [];
 
@@ -282,7 +282,7 @@ sandbox.fetch = async (url, opts) => {
     specialPayload = true;
     payload = { banks: [{ id: 'tochka', title: 'Точка Банк' }], bank: 'tochka', method: 'oauth', status: 'active',
                 client_id: 'app-synthetic', secret_set: true, jwt_set: false, server_app: false,
-                redirect_uri: 'https://chek.ymaster.ru/api/v1/bank/tochka/callback', start_date: '2026-10-01',
+                redirect_uri: 'https://docver.ru/api/v1/bank/tochka/callback', start_date: '2026-10-01',
                 accounts: [{ tail: '0001', currency: 'RUB', loaded: true }], synced_until: '2026-11-04',
                 last_sync_at: '2026-11-04T09:05:00', last_error: '', pending: 0, awaiting: false,
                 last_result: { ok: true, operations: 9, saved: 3, matched: 2, open: 1 },
@@ -863,7 +863,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
      'v1.70.15: автоустановка AdGuard из карточки (ссылка входа + живой журнал)');
   ok(bundle.includes("'1.70.16':") && bundle.includes('ag-cmd') &&
      bundle.includes('ag-copy-cmd') && bundle.includes('ag-recheck') &&
-     bundle.includes('one_time_cmd') && bundle.includes('ymaster-adguard-setup') &&
+     bundle.includes('one_time_cmd') && bundle.includes('docver-adguard-setup') &&
      bundle.includes('/etc/sudoers.d/ymaster-adguard'),
      'v1.70.16: мастер AdGuard без пароля — одна команда для терминала и «Проверить снова»');
   // Пароль окна обновления (своя механика, v1.17.0) остаётся — проверяем,
@@ -1017,7 +1017,7 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
   // WHATS_NEW законно цитирует прежние значения, иначе проверка ловила бы свой
   // же текст (та же ошибка, что с литералами в комментариях CSS).
   const chartsFrom = bundle.indexOf('лёгкие SVG-графики');
-  const chartsTo = bundle.indexOf('Ямастер Чек —', chartsFrom + 10);
+  const chartsTo = bundle.indexOf('DocVer —', chartsFrom + 10);
   const charts = bundle.slice(chartsFrom, chartsTo > chartsFrom ? chartsTo : undefined);
   ok(chartsFrom > 0 && charts.length > 500,
      'v1.70.35: модуль графиков найден в бандле (иначе проверка пуста)');
@@ -1216,11 +1216,11 @@ vm.runInContext(bundle, sandbox, { filename: 'bundle.js' });
     vcP.querySelector('#cl-list').onclick({ target: { closest: (sel) => (sel === '[data-open]'
       ? { dataset: { company: 'c2', open: 'docreq' } } : null) } });
     await tickP(40);
-    ok(storage['ymaster-client'] === 'c2', 'v1.70.100: переход в компанию клиента — клиент выбран');
+    ok(storage['docver-client'] === 'c2', 'v1.70.100: переход в компанию клиента — клиент выбран');
     const meCall = apiLog.slice(fromSw).find((c) => c.url.startsWith('/api/v1/auth/me'));
     ok(meCall && meCall.headers['X-Ym-Company'] === 'c2', 'v1.70.100: запросы уходят с заголовком выбранного клиента');
     ok(sandbox.location.hash === '#/docreq', 'v1.70.100: открыт «Что нужно от клиента» этой компании');
-    delete storage['ymaster-client'];
+    delete storage['docver-client'];
     // v1.70.100 (T-68): пакет для других учётных систем — на экране «Выгрузка в 1С»
     sandbox.location.hash = '#/export';
     sandbox.route();

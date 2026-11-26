@@ -50,7 +50,7 @@ vi.mock('../../app/static/js/api.js', () => ({
       if (path === '/api/v1/companies/lookup-checko') return { name_full: 'ООО «РОМАШКА»', status: 'Действующая' };
       return {};
     }),
-    download: vi.fn(async (path) => { calls.download.push(path); return { blob: new Blob(['zip']), filename: 'ymaster-package-7701000001-2026-10.zip' }; }),
+    download: vi.fn(async (path) => { calls.download.push(path); return { blob: new Blob(['zip']), filename: 'docver-package-7701000001-2026-10.zip' }; }),
   },
   setClient: vi.fn((id) => { clientState = id; }),
 }));

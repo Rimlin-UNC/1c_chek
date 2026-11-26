@@ -1,7 +1,7 @@
 # ==============================================================================
-#  Ямастер Чек — тесты v1.70.19 «deploy.sh: --branch= больше не игнорируется»
+#  DocVer — тесты v1.70.19 «deploy.sh: --branch= больше не игнорируется»
 #  До фикса флаг --branch= писал значение прямо в BRANCH, а ниже по скрипту
-#  `source /etc/ymaster-check/deploy.conf` перезаписывал BRANCH запомненной
+#  `source /etc/docver/deploy.conf` перезаписывал BRANCH запомненной
 #  веткой; страховка ${OPT_BRANCH:-$BRANCH} не работала, потому что OPT_BRANCH
 #  никто не выставлял. На любом сервере, где деплой уже запускался, явная ветка
 #  молча подменялась старой. Проверяем:
@@ -12,7 +12,7 @@
 #      снимается ДО чтения конфига, deploy.conf перезаписывается разрешённым
 #      значением, --help печатает шапку целиком;
 #    • версии/журнал/What’s New/харнесс синхронны.
-#  ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+#  ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ==============================================================================
 import os
 import re
@@ -44,8 +44,8 @@ def _probe_script():
     sh = _read("deploy.sh")
     start = sh.index('REPO_URL="${REPO_URL:-')
     region = sh[start:sh.index(RESOLUTION) + len(RESOLUTION)]
-    assert 'CONF_DIR="/etc/ymaster-check"' in region
-    region = region.replace('CONF_DIR="/etc/ymaster-check"',
+    assert 'CONF_DIR="/etc/docver"' in region
+    region = region.replace('CONF_DIR="/etc/docver"',
                             'CONF_DIR="${PROBE_DIR:?}"')
     # захватываем и строку «Ветка задана явно» — она сразу за разрешением
     tail = sh[sh.index(RESOLUTION) + len(RESOLUTION):]
@@ -62,7 +62,7 @@ def _run(tmp_path, args=(), env_extra=None, conf=None):
     conf_dir.mkdir(exist_ok=True)
     if conf is not None:
         (conf_dir / "deploy.conf").write_text(
-            f'DOMAIN="chek.ymaster.ru"\nSSL_DOMAIN="chek.ymaster.ru"\n'
+            f'DOMAIN="docver.ru"\nSSL_DOMAIN="docver.ru"\n'
             f'BRANCH="{conf}"\n', encoding="utf-8")
     env = dict(os.environ, PROBE_DIR=str(conf_dir))
     if env_extra:
@@ -343,7 +343,7 @@ def _e2e_script(clone, conf_dir):
     sh = _read("deploy.sh")
     start = sh.index('REPO_URL="${REPO_URL:-')
     region = sh[start:sh.index(RESOLUTION) + len(RESOLUTION)]
-    region = region.replace('CONF_DIR="/etc/ymaster-check"',
+    region = region.replace('CONF_DIR="/etc/docver"',
                             'CONF_DIR="${PROBE_DIR:?}"')
     tail = sh[sh.index(RESOLUTION) + len(RESOLUTION):]
     tail = tail[:tail.index("\nfi\n") + len("\nfi\n")]
@@ -364,11 +364,11 @@ def _e2e_script(clone, conf_dir):
 
 
 def _run_e2e(tmp_path, clone, conf_branch, args=(), env_extra=None):
-    conf_dir = tmp_path / "etc-ymaster-check"
+    conf_dir = tmp_path / "etc-docver"
     conf_dir.mkdir(exist_ok=True)
     if conf_branch is not None:
         (conf_dir / "deploy.conf").write_text(
-            f'DOMAIN="chek.ymaster.ru"\nSSL_DOMAIN=""\n'
+            f'DOMAIN="docver.ru"\nSSL_DOMAIN=""\n'
             f'BRANCH="{conf_branch}"\n', encoding="utf-8")
     driver = tmp_path / "driver.sh"
     driver.write_text(_e2e_script(clone, conf_dir), encoding="utf-8")

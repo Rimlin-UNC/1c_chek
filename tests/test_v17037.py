@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# Ямастер Чек — тесты v1.70.37: регистрация через MAX, метка канала,
+# DocVer — тесты v1.70.37: регистрация через MAX, метка канала,
 # заполнение карточки и согласие на обработку персональных данных (152-ФЗ).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки:
 #  - участник, пришедший через мини-приложение MAX, помечается каналом
@@ -103,7 +103,7 @@ class TestConsentText:
         # а вот что в коде есть — только подтверждённое репозиторием
         assert 'OPERATOR_NAME = "ООО «Ямастер»"' in src
         assert 'OPERATOR_SITE = "https://ymaster.ru"' in src
-        assert 'CONSENT_CONTACT_DEFAULT = "chek@ymaster.ru"' in src
+        assert 'CONSENT_CONTACT_DEFAULT = "i@docver.ru"' in src
 
     def test_default_operator_line_is_honest(self):
         """Без реквизитов в настройках текст не придумывает адрес, а указывает
@@ -206,7 +206,7 @@ class TestOperatorRequisites:
             assert r.status_code == 422 and "chek@" in r.json()["detail"]
             # отказ ничего не записал
             st = client.get("/api/v1/settings/consent", headers=hdr).json()
-            assert st["inn"] == "" and st["contact"] == "chek@ymaster.ru"
+            assert st["inn"] == "" and st["contact"] == "i@docver.ru"
         finally:
             self._reset(client, hdr)
 
@@ -853,7 +853,7 @@ class TestFirstVisit:
     def test_bot_link_reuses_configured_nick(self):
         js = read(APP_JS)
         fn = js.split("function maxBotLink(", 1)[1][:220]
-        assert "window.MXBOT || 'chek.ymaster.bot'" in fn
+        assert "window.MXBOT || 'docver.bot'" in fn
         assert "encodeURIComponent(startParam)" in fn
 
     def test_wired_on_login_screen(self):

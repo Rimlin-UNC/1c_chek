@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — управление пользователями (ООО «Ямастер», ymaster.ru).
+DocVer — управление пользователями (ООО «Ямастер», ymaster.ru).
 
 Инвариант системы: АДМИНИСТРАТОР ВСЕГДА ОДИН.
   * Создать второго админа нельзя (ни приглашением, ни напрямую);
@@ -186,7 +186,7 @@ def max_bind_code(user: User = Depends(get_current_user),
     """v1.66.0: код привязки ассистента MAX (как у Telegram: /start КОД)."""
     from ..services import max_bot as mx
     code = mx.new_bind_code(db, user.id)
-    instruction = ("Откройте MAX, найдите бота «Ямастер Чек» "
+    instruction = ("Откройте MAX, найдите бота «DocVer» "
                    "(имя и ссылка — в настройках администратора) "
                    f"и отправьте ему: /start {code}")
     return {"code": code, "ttl": mx.BIND_TTL,

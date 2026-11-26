@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Конфигурация приложения (переменные окружения / файл .env).
 """
@@ -18,19 +18,38 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _env(key: str, default: str = "") -> str:
-    """Чтение переменной из окружения с приоритетом файла .env."""
-    val = os.environ.get(key)
-    if val is not None:
-        return val
-    env_file = BASE_DIR / ".env"
-    if env_file.exists():
+    """Чтение переменной из окружения с приоритетом файла .env.
+
+    Совместимость ребренда: для ключей YM_* также принимается DOCVER_* (и наоборот),
+    приоритет — у канонического имени, затем алиас.
+    """
+    aliases = [key]
+    if key.startswith("YM_"):
+        aliases.append("DOCVER_" + key[3:])
+    elif key.startswith("DOCVER_"):
+        aliases.append("YM_" + key[7:])
+
+    def _from_file(k: str):
+        env_file = BASE_DIR / ".env"
+        if not env_file.exists():
+            return None
         for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line.startswith("#") or "=" not in line:
                 continue
-            k, _, v = line.partition("=")
-            if k.strip() == key:
+            fk, _, v = line.partition("=")
+            if fk.strip() == k:
                 return v.strip().strip('"').strip("'")
+        return None
+
+    for k in aliases:
+        val = os.environ.get(k)
+        if val is not None:
+            return val
+    for k in aliases:
+        val = _from_file(k)
+        if val is not None:
+            return val
     return default
 
 
@@ -47,7 +66,7 @@ def _int_env(key: str, default: int, minimum: int = 1) -> int:
     raw = (_env(key, "") or "").strip()
     if not raw:
         return default
-    log = logging.getLogger("ymaster")
+    log = logging.getLogger("docver")
     try:
         val = int(raw)
     except ValueError:
@@ -62,9 +81,9 @@ def _int_env(key: str, default: int, minimum: int = 1) -> int:
 
 
 class Settings:
-    """Глобальные настройки системы «Ямастер Чек»."""
+    """Глобальные настройки системы «DocVer»."""
 
-    APP_NAME: str = "Ямастер Чек"
+    APP_NAME: str = "DocVer"
     APP_VERSION: str = "1.73.9"
     DEFAULT_BRANCH: str = "main"   # v1.70.18: канал обновлений из приложения — main
     # v1.17.0: самоперезапуск процесса после обновления (re-exec) — обновление
@@ -73,19 +92,24 @@ class Settings:
     SELF_REEXEC: bool = True
     VENDOR: str = "ООО «Ямастер»"
     VENDOR_SITE: str = "https://ymaster.ru"
-    VENDOR_EMAIL: str = "chek@ymaster.ru"
+    VENDOR_EMAIL: str = "i@docver.ru"
 
     # --- Безопасность -------------------------------------------------
-    SECRET_KEY: str = _env("SECRET_KEY", "ymaster-dev-secret-change-me-in-production")
+    SECRET_KEY: str = _env("SECRET_KEY", "docver-dev-secret-change-me-in-production")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = _int_env("ACCESS_TOKEN_EXPIRE_MINUTES", 720)  # 12 часов
 
     # --- База данных ----------------------------------------------------
     # SQLite по умолчанию (работает из коробки), PostgreSQL для production:
-    #   DATABASE_URL=postgresql+psycopg2://check:pass@localhost:5432/ymaster_check
+    #   DATABASE_URL=postgresql+psycopg2://docver:pass@localhost:5432/docver
+    # Обратная совместимость: существующие установки могут иметь ymaster_check.db.
+    _default_db = BASE_DIR / 'data' / 'docver.db'
+    _legacy_db = BASE_DIR / 'data' / 'ymaster_check.db'
+    if not _env("DATABASE_URL", "") and not _default_db.exists() and _legacy_db.exists():
+        _default_db = _legacy_db
     DATABASE_URL: str = _env(
         "DATABASE_URL",
-        f"sqlite:///{BASE_DIR / 'data' / 'ymaster_check.db'}",
+        f"sqlite:///{_default_db}",
     )
 
     # --- Supabase: отдельный демонстрационный контур ---------------------
@@ -111,13 +135,13 @@ class Settings:
                                          "1") not in ("0", "false", "")
     # v1.29.0: прокси для Telegram-бота (api.telegram.org часто заблокирован)
     TELEGRAM_PROXY: str = _env("TELEGRAM_PROXY", "")
-    FNS_CLIENT_APP_ID: str = _env("FNS_CLIENT_APP_ID", "YMASTER-CHECK")
+    FNS_CLIENT_APP_ID: str = _env("FNS_CLIENT_APP_ID", "DOCVER")
     FNS_CACHE_TTL_DAYS: int = _int_env("FNS_CACHE_TTL_DAYS", 30)
     FNS_TIMEOUT_SECONDS: int = _int_env("FNS_TIMEOUT_SECONDS", 15)
 
     # --- Интеграция с 1С ---------------------------------------------------
     # Токен, по которому 1С обращается к сервису выгрузки (endpoint /onec/v1/*)
-    ONEC_API_TOKEN: str = _env("ONEC_API_TOKEN", "ymaster-onec-token-change-me")
+    ONEC_API_TOKEN: str = _env("ONEC_API_TOKEN", "docver-onec-token-change-me")
     ONEC_BATCH_SIZE: int = _int_env("ONEC_BATCH_SIZE", 100)
 
     # --- Общие -----------------------------------------------------------

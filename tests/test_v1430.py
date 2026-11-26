@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.43.0: быстрый вход (WebAuthn / passkey).
+# DocVer — тесты v1.43.0: быстрый вход (WebAuthn / passkey).
 # Полная церемония выполняется программным аутентификатором (ES256,
 # fmt="none"): регистрация → вход → отвязка. Биометрия на сервер не
 # попадает — только публичный ключ (152-ФЗ).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import base64
 import datetime as dt
@@ -99,7 +99,7 @@ class TestVersion1430:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual_reqs(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

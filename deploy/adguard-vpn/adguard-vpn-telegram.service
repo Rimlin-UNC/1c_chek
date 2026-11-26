@@ -1,5 +1,5 @@
 # ======================================================================
-# Ямастер Чек — автозапуск AdGuard VPN CLI в режиме TUN (v1.70.24)
+# DocVer — автозапуск AdGuard VPN CLI в режиме TUN (v1.70.24)
 # Требования: adguardvpn-cli установлен (/usr/local/bin), вход выполнен
 # (`sudo adguardvpn-cli login`), режим задан (`adguardvpn-cli config
 # set-mode TUN` + `site-exclusions mode selective` с доменами Telegram).

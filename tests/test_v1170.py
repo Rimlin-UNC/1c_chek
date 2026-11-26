@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.17.0: обновление без пароля (re-exec), сброс
+# DocVer — тесты v1.17.0: обновление без пароля (re-exec), сброс
 # кэша клиентов, информативные блоки настроек (админ/бухгалтер/сотрудник).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import os
 import re
@@ -131,7 +131,7 @@ class TestVersion1170:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         from app.config import settings
         assert settings.APP_VERSION == ver
         assert settings.SELF_REEXEC is True

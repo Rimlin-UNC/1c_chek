@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — проверки свойств чистых функций (hypothesis), v1.70.38.
+DocVer — проверки свойств чистых функций (hypothesis), v1.70.38.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 ЗАЧЕМ ЭТОТ ФАЙЛ. Обычный тест проверяет несколько примеров; проверка свойств
 проверяет ПРАВИЛО на сотнях автоматически подобранных значений, включая те, до
@@ -269,7 +269,7 @@ def test_int_env_never_crashes(value, monkeypatch):
     from app.config import _int_env
     # предупреждений будет по одному на пример — приглушаем, чтобы не топить
     # вывод прогона (сам текст предупреждения проверяется в test_v17038.py)
-    monkeypatch.setattr(logging.getLogger("ymaster"), "level", logging.CRITICAL)
+    monkeypatch.setattr(logging.getLogger("docver"), "level", logging.CRITICAL)
     monkeypatch.setenv("YM_TEST_INT", value)
     got = _int_env("YM_TEST_INT", 7)
     assert isinstance(got, int)

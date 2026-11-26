@@ -13,7 +13,7 @@ import json
 from ..config import settings
 
 UNKNOWN_PARTICIPANT = "unknown"
-_DOMAIN = b"ymaster-pool-company-participant-v1:"
+_DOMAIN = b"docver-pool-company-participant-v1:"
 
 
 def participant_key(company_id: str, pool_user_id: str | None) -> str:

@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Ямастер Чек — тесты v1.70.21 «мастер AdGuard: устойчивость»
+#  DocVer — тесты v1.70.21 «мастер AdGuard: устойчивость»
 #  Проверка на стрессоустойчивость нашла четыре дефекта, ВСЕ доказаны
 #  экспериментом до правки и закрыты после:
 #    • B1 гонка start_setup: два одновременных запроса поднимали двух воркеров
@@ -13,7 +13,7 @@
 #  Попутно: _copy_kit() больше не игнорирует коды возврата, помощник не глушит
 #  вывод установщика AdGuard, маршрут отдаёт 409 вместо 500 при гонке.
 #  Сети нет: subprocess и воркер подменяются, живые процессы — только локальные.
-#  ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+#  ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ==============================================================================
 import inspect
 import os
@@ -33,7 +33,7 @@ from app.config import settings
 from app.services import adguard_setup as ag
 from tests.test_v1121 import login
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 APP_JS = "app/static/js/app.js"
 SERVICE = "app/services/adguard_setup.py"
 ROUTES = "app/routers/settings_routes.py"
@@ -409,7 +409,7 @@ class TestVersions17021:
         idx = _read("app/static/index.html")
         assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 3
         sw = _read("app/static/sw.js")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 5
         assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
         assert f"?v={ver}" in _read("app/static/maxapp/index.html")

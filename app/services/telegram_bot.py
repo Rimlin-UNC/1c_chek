@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — Telegram-бот (v1.16.0): уведомления и дисциплина
+# DocVer — Telegram-бот (v1.16.0): уведомления и дисциплина
 # подотчётников. Дизайн:
 #   • входящие — long-polling getUpdates в фоновом потоке (не нужен
 #     публичный webhook и белые IP: работает за NAT/прокси);
@@ -10,7 +10,7 @@
 #     secretbox), в логи не пишется, ошибки обезличены;
 #   • напоминания: раз в день в заданное время сотрудникам, у которых
 #     НЕСКОЛЬКО нет чеков за сегодня (собираемость чеков 60% → 90%+).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 import httpx
 from sqlalchemy.orm import Session
 
-log = logging.getLogger("ymaster.telegram")
+log = logging.getLogger("docver.telegram")
 
 API_BASE = "https://api.telegram.org/bot{token}/{method}"
 # v1.70.12: адрес Bot API можно заменить своим шлюзом/мостом (сервер в
@@ -50,7 +50,7 @@ PING_TIME = (15, 0)                      # автозамер в 15:00 МСК, �
 DIGEST_TIME = (8, 0)                     # v1.66.0: дайджест в 08:00
 DEFAULT_REMIND_TIME = "18:00"
 DEFAULT_REMIND_TEXT = ("👋 {name}, не забудьте сфотографировать чеки за сегодня — "
-                       "откройте «Ямастер Чек» и сканируйте. Бухгалтер скажет спасибо!")
+                       "откройте «DocVer» и сканируйте. Бухгалтер скажет спасибо!")
 
 
 class TelegramError(Exception):
@@ -265,7 +265,7 @@ def handle_update(db: Session, upd: dict) -> None:
             from ..pool import ingest as _pool
             if not code and _pool.pool_enabled(db):
                 _send(
-                    "👋 Это бот «Ямастер Чек».\n\n"
+                    "👋 Это бот «DocVer».\n\n"
                     "🎁 Пришлите строку QR чека (текстом) — проверим по "
                     "официальным источникам и начислим балл.\n"
                     f"📜 {ingest_offerta(db)}\n\n"
@@ -274,7 +274,7 @@ def handle_update(db: Session, upd: dict) -> None:
                     "затем /start КОД.")
                 return
             _send(
-                "❌ Код не найден или устарел. Откройте «Ямастер Чек» → "
+                "❌ Код не найден или устарел. Откройте «DocVer» → "
                 "Настройки → Telegram и получите новый код.")
             return
         user = db.get(User, uid)
@@ -306,7 +306,7 @@ def handle_update(db: Session, upd: dict) -> None:
         return
     # /help и всё остальное
     _send(
-                 "🤖 Бот «Ямастер Чек».\nКоманды:\n"
+                 "🤖 Бот «DocVer».\nКоманды:\n"
                  "/status — мои чеки за сегодня\n"
                  "/balance — баллы «Чек-Пула»\n"
                  "Чек в пул: пришлите строку QR текстом.\n"
@@ -470,7 +470,7 @@ def _pool_process_async(chat_id: str, from_id: str | None,
         finally:
             db.close()
 
-    threading.Thread(target=_run, daemon=True, name="ymaster-pool-ingest").start()
+    threading.Thread(target=_run, daemon=True, name="docver-pool-ingest").start()
 
 
 def _pool_balance_text(db: Session, from_id: str | None, chat_id: str) -> str | None:
@@ -698,7 +698,7 @@ def _send_digest(db: Session) -> None:
             .filter(Receipt.created_at >= day_start, Receipt.assignee != "")
             .group_by(Receipt.assignee)
             .order_by(_f.sum(Receipt.total_sum).desc()).limit(12).all())
-    lines = [f"📊 Дайджест «Ямастер Чек» на {now.strftime('%d.%m')}:"]  # noqa: E501
+    lines = [f"📊 Дайджест «DocVer» на {now.strftime('%d.%m')}:"]  # noqa: E501
     if not rows:
         lines.append("Сегодня чеков пока нет.")
     for name, cnt, total in rows:
@@ -798,7 +798,7 @@ def start_worker() -> bool:
                              # подхватятся в следующем цикле сами (без 409)
     _stop.clear()
     _worker = threading.Thread(target=_worker_loop, daemon=True,
-                               name="ymaster-telegram")
+                               name="docver-telegram")
     _worker.start()
     log.info("telegram worker started")
     return True

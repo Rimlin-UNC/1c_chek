@@ -1,7 +1,7 @@
 """SEO стартовой страницы (v1.70.103, T-74, ADR-33): индексация, robots.txt, sitemap.xml, коды подтверждения.
 
 Индексация решается по адресу сайта, а не по роботу. Режим «auto» (по умолчанию) разрешает поисковикам
-только рабочий адрес chek.ymaster.ru: копии программы у компаний, стенды и превью отвечают запретом
+только рабочий адрес docver.ru: копии программы у компаний, стенды и превью отвечают запретом
 (robots.txt «Disallow: /», тег и заголовок noindex) — иначе они попадали бы в выдачу дублями главной.
 Администратор может разрешить или запретить индексацию явно («Настройки» → «Поисковики»). Роботы и люди
 получают одну и ту же страницу — это не клоакинг (правила Яндекса и Google, docs/kb/12_seo.md).
@@ -20,12 +20,12 @@ from sqlalchemy.orm import Session
 
 from . import appsettings
 
-PRODUCTION_HOST = "chek.ymaster.ru"
+PRODUCTION_HOST = "docver.ru"
 KEY_MODE = "seo_indexing"
 KEY_YANDEX = "seo_yandex_verification"
 KEY_GOOGLE = "seo_google_verification"
 MODES = {
-    "auto": "Авто — только chek.ymaster.ru",
+    "auto": "Авто — только docver.ru",
     "on": "Разрешить на этом адресе",
     "off": "Запретить",
 }
@@ -93,7 +93,7 @@ BLOG_IMAGES: dict[str, tuple[str, str]] = {
 # Иллюстрации главной и кластерных страниц для Image Sitemap 1.1 (по 1–2 на страницу)
 CONTENT_IMAGES: dict[str, tuple[tuple[str, str], ...]] = {
     "/": (
-        ("/img/manual/hero.jpg", "Проверка кассового чека онлайн по QR-коду, баллы и выгрузка в 1С — Ямастер Чек"),
+        ("/img/manual/hero.jpg", "Проверка кассового чека онлайн по QR-коду, баллы и выгрузка в 1С — DocVer"),
     ),
     "/kak-proverit-chek": (
         ("/img/manual/scan.jpg", "Сканирование QR-кода кассового чека камерой смартфона"),
@@ -217,10 +217,10 @@ def render_index(template: str, cfg: dict, host_header: str | None, scheme: str 
 
 def robots_txt(cfg: dict, host_header: str | None, scheme: str | None) -> str:
     if not indexing_enabled(cfg, host_header):
-        return ("# Ямастер Чек: индексация выключена — это не рабочий адрес chek.ymaster.ru\n"
+        return ("# DocVer: индексация выключена — это не рабочий адрес docver.ru\n"
                 "# или так решил администратор («Настройки» → «Поисковики»)\n"
                 "User-agent: *\nDisallow: /\n")
-    lines = ["# Ямастер Чек — правила для поисковых роботов", "User-agent: *", "Allow: /"]
+    lines = ["# DocVer — правила для поисковых роботов", "User-agent: *", "Allow: /"]
     lines += [f"Disallow: {path}" for path in DISALLOW]
     # Документ API должен быть доступен роботу, чтобы тот прочитал noindex.
     lines.append("Allow: /api/v1/legal/offerta")

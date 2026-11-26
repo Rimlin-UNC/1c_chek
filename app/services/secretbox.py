@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — сейф для секретов (v1.15.0): шифрование API-ключей
+# DocVer — сейф для секретов (v1.15.0): шифрование API-ключей
 # (Checko, ФНС, внешние источники) в базе данных.
 #
 # Угроза: файл БД (data/app.db) скомпрометирован (бэкап уплыл, диск
@@ -9,7 +9,7 @@
 # (SHA-256, отдельная доменная строка). Значения в БД хранятся с
 # префиксом «enc:v1:»; старые (открытые) значения читаются как есть
 # и перешифровываются при следующем сохранении — миграция бесшовная.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _fernet():
     """Fernet из доменно-разделённого SECRET_KEY (не совпадает с JWT-ключом)."""
     from app.config import settings
     digest = hashlib.sha256(
-        b"ymaster-secretbox-v1:" + settings.SECRET_KEY.encode()).digest()
+        b"docver-secretbox-v1:" + settings.SECRET_KEY.encode()).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
 
 

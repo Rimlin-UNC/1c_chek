@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — ассистент MAX (v1.66.0, Фаза 1 концепции, п.6).
+# DocVer — ассистент MAX (v1.66.0, Фаза 1 концепции, п.6).
 # MAX Bot API: https://platform-api2.max.ru (сервер Минцифры — без
 # прокси). Токен — ТОЛЬКО в заголовке Authorization (query запрещён).
 # Приём сообщений — long-poll GET /updates (marker), отправка —
@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 import httpx
 from sqlalchemy.orm import Session
 
-log = logging.getLogger("ymaster.max")
+log = logging.getLogger("docver.max")
 
 API_BASE = "https://platform-api2.max.ru"
 # v1.70.8: API MAX использует сертификат Минцифры (Russian Trusted CA),
@@ -54,16 +54,16 @@ SETT = "max_enabled"
 SETT_TOKEN = "max_bot_token"             # секрет (appsettings.SECRET_KEYS)
 SETT_CHANNEL = "assistants_channel"      # telegram | max | both (общий)
 SETT_USERNAME = "max_bot_username"       # v1.70.1: фактический ник бота
-_DEFAULT_NICK = "chek.ymaster.bot"       # публичный ник по умолчанию
+_DEFAULT_NICK = "docver.bot"       # публичный ник по умолчанию
 SETT_TECH = "max_bot_tech"               # v1.70.3: чей токен (служебное имя)
-SITE_URL = "https://chek.ymaster.ru"     # v1.70.4: кнопка «Открыть сайт»
+SITE_URL = "https://docver.ru"     # v1.70.4: кнопка «Открыть сайт»
 _last_update_ago = None                  # v1.70.2: сек с последнего события
 SETT_TIME = "max_reminder_time"
 SETT_TEXT = "max_reminder_text"
 SETT_DIGEST = "digest_enabled"           # утренний дайджест (общий)
 DEFAULT_REMIND_TIME = "18:00"
 DEFAULT_REMIND_TEXT = ("👋 {name}, не забудьте сфотографировать чеки за сегодня — "
-                       "откройте «Ямастер Чек» и сканируйте. Бухгалтер скажет спасибо!")
+                       "откройте «DocVer» и сканируйте. Бухгалтер скажет спасибо!")
 
 _username_cache: str = ""
 
@@ -231,7 +231,7 @@ def note_update() -> None:
 
 def bot_username(db: Session, refresh: bool = False) -> str:
     """ПУБЛИЧНЫЙ ник бота для диплинков (max.ru/ник): настройка → кэш
-    get_me (если не служебный idNNNN_bot) → chek.ymaster.bot. Служебные
+    get_me (если не служебный idNNNN_bot) → docver.bot. Служебные
     обработчики зовут с refresh=False — без сетевых вызовов."""
     from . import appsettings
     u = (appsettings.get_setting(db, SETT_USERNAME, "") or "").strip()
@@ -277,7 +277,7 @@ def _send_welcome(token: str, user_id: int | str) -> None:
     open_app: штатный запуск мини-приложения бота прямо из сообщения
     (MAX Bot API, «Клавиатура»); не зависит от кнопки в шапке чата.
     Если API отверг open_app — повтор с диплинк-кнопкой, затем текст."""
-    text = ("👋 Это бот «Ямастер Чек».\n\n"
+    text = ("👋 Это бот «DocVer».\n\n"
             "📷 Пришлите строку QR-кода чека (t=…&s=…) — проверим и "
             "начислим баллы.\n"
             "🛡 Кнопка ниже открывает мини-приложение: сканер QR, баллы, "
@@ -377,7 +377,7 @@ def handle_update(db: Session, upd: dict) -> None:
         db.commit()
         send_message(token, user_id,
                      "✅ Готово! Теперь сюда будут приходить напоминания "
-                     "о чеках и уведомления «Ямастер Чек». Фото УПД или "
+                     "о чеках и уведомления «DocVer». Фото УПД или "
                      "накладной присылайте сюда — бухгалтер получит черновик.")
         return
     m_login = re.search(r"login_[A-Za-z0-9_-]{16,120}", text)
@@ -405,7 +405,7 @@ def handle_update(db: Session, upd: dict) -> None:
         _pool_process_async(user_id, sender.get("username"), text)
         return
     send_message(token, user_id,
-                 "Ямастер Чек: пришлите строку QR-кода чека (t=…&s=…&fn=…), "
+                 "DocVer: пришлите строку QR-кода чека (t=…&s=…&fn=…), "
                  "а для уведомлений привяжите чат кодом из «Настроек».")
 
 
@@ -426,7 +426,7 @@ def _pool_process_async(user_id: str, from_username: str | None,
             db.close()
 
     threading.Thread(target=_run, daemon=True,
-                     name="ymaster-max-pool").start()
+                     name="docver-max-pool").start()
 
 
 # --------------------------------------------------------------------------
@@ -445,7 +445,7 @@ def digest_text(db: Session) -> str:
             .group_by(Receipt.assignee)
             .order_by(_f.sum(Receipt.total_sum).desc())
             .limit(12).all())
-    lines = [f"📊 Дайджест «Ямастер Чек» за {yest.strftime('%d.%m')}–{now.strftime('%d.%m')}:"]  # noqa: E501
+    lines = [f"📊 Дайджест «DocVer» за {yest.strftime('%d.%m')}–{now.strftime('%d.%m')}:"]  # noqa: E501
     if not rows:
         lines.append("Пока нет чеков за сегодня и вчера.")
     for name, cnt, total in rows:
@@ -661,7 +661,7 @@ def start_worker() -> bool:
         return True
     _stop.clear()
     _worker = threading.Thread(target=_worker_loop, daemon=True,
-                               name="ymaster-max-bot")
+                               name="docver-max-bot")
     _worker.start()
     log.info("max worker started")
     return True

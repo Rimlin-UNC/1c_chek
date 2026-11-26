@@ -1,4 +1,4 @@
-# Ямастер Чек — тесты v1.63.0: самообучающийся маппинг
+# DocVer — тесты v1.63.0: самообучающийся маппинг
 # («запомнить для поставщика ИНН»). ООО «Ямастер» | ymaster.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.3):
@@ -30,7 +30,7 @@ class TestVersion1630:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.62.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

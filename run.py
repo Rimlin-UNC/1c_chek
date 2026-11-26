@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Точка входа для разработки:  python run.py [--port 8000] [--demo]
 """
@@ -14,7 +14,7 @@ import sys
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ямастер Чек — сервер (dev)")
+    parser = argparse.ArgumentParser(description="DocVer — сервер (dev)")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--demo", action="store_true",
@@ -27,7 +27,7 @@ def main() -> None:
         seed_main()
 
     import uvicorn
-    print(f"Ямастер Чек — ООО «Ямастер» (ymaster.ru) | http://{args.host}:{args.port}")
+    print(f"DocVer — ООО «Ямастер» (ymaster.ru) | http://{args.host}:{args.port}")
     uvicorn.run("app.main:app", host=args.host, port=args.port, reload=False)
 
 

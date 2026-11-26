@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — учёт суточного лимита запросов к Открытым API ФНС.
+# DocVer — учёт суточного лимита запросов к Открытым API ФНС.
 #
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 #
 # По условиям регистрации приложения в ФНС (Brand YmasterAPI, срок до
 # 29.10.2027) приложению разрешено 1000 запросов за 24 часа. Считаются
@@ -28,7 +28,7 @@ from sqlalchemy import select
 
 from ..config import settings
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 MSK = timezone(timedelta(hours=3))
 DAILY_LIMIT = 1000

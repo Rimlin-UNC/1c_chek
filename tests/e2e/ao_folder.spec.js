@@ -113,7 +113,7 @@ test.describe('авансовый отчёт: папка в «Загрузках
       dirs: window.__aoDirs,
       files: window.__aoFiles,
     }));
-    expect(state.options).toMatchObject({ id: 'ymaster-ao-downloads',
+    expect(state.options).toMatchObject({ id: 'docver-ao-downloads',
       startIn: 'downloads', mode: 'readwrite' });
     expect(state.dirs).toEqual(['АО/', 'АО/ООО «E2E Согласование»/']);
     expect(state.files.map(f => f.path.split('.').pop())).toEqual(['html', 'csv', 'json']);

@@ -24,7 +24,7 @@ def test_release_versions_and_cache():
     assert read("app/static/index.html").count(f"?v={current}") == 3
     assert read("app/static/sw.js").count(f"?v={current}") == 5
     assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
-    assert f"ymaster-check-v{current}" in read("app/static/sw.js")
+    assert f"docver-v{current}" in read("app/static/sw.js")
     block = updater.read_blocks(str(ROOT / "app/services/blocks.py"))["Рабочее место аутсорсера"]
     assert tuple(map(int, VERSION.split("."))) <= tuple(map(int, block.split("."))) <= tuple(map(int, current.split(".")))
 

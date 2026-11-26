@@ -41,7 +41,7 @@ from ..services.audit import log_action
 from . import clientcert, http, parser, providers, sber, service, tochka
 from .models import BankConnection, BankOperation, BankStatement
 
-log = logging.getLogger("ymaster.bank.connect")
+log = logging.getLogger("docver.bank.connect")
 
 BANKS = dict(providers.TITLES)        # v1.70.102: Точка, Т-Банк, Сбербанк, Альфа-Банк, Модульбанк
 METHODS = {"oauth": "OAuth 2.0", "jwt": "JWT-ключ", "token": "Ключ API", "refresh": "OAuth 2.0 — токены из кабинета"}

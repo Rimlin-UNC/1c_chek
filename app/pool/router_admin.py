@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — админ-роуты «Чек-Пула» (v1.30.0, Этап 1).
+# DocVer — админ-роуты «Чек-Пула» (v1.30.0, Этап 1).
 # Настройка вкл/выкл + минимальный дашборд. Только администратор.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -334,15 +334,15 @@ def get_smtp(db: Session = Depends(get_db), admin: User = Depends(require_admin)
     from .mailer import SET_BASE_URL, SET_SMTP_FROM, SET_SMTP_HOST, SET_SMTP_PORT, SET_SMTP_TLS, SET_SMTP_USER
     g = appsettings.get_setting
     # v1.58.4: значения по умолчанию из docs/knowledge/mail_timeweb.md —
-    # админу достаточно ввести пароль ящика chek@ymaster.ru и сохранить
+    # админу достаточно ввести пароль ящика i@docver.ru и сохранить
     return {
         "host": g(db, SET_SMTP_HOST) or "smtp.timeweb.ru",
         "port": g(db, SET_SMTP_PORT, "465"),
-        "user": g(db, SET_SMTP_USER) or "chek@ymaster.ru",
+        "user": g(db, SET_SMTP_USER) or "i@docver.ru",
         "has_password": bool(g(db, "smtp_pass")),
-        "sender": g(db, SET_SMTP_FROM) or "chek@ymaster.ru",
+        "sender": g(db, SET_SMTP_FROM) or "i@docver.ru",
         "tls": g(db, SET_SMTP_TLS, "1") == "1",
-        "base_url": g(db, SET_BASE_URL) or "https://chek.ymaster.ru",
+        "base_url": g(db, SET_BASE_URL) or "https://docver.ru",
         "configured": bool(g(db, SET_SMTP_HOST).strip()),
     }
 
@@ -372,7 +372,7 @@ def smtp_test(body: dict, db: Session = Depends(get_db),
     from ..services.audit import log_action
     from .mailer import send_mail
     to = ((body or {}).get("email") or "").strip()
-    ok, err = send_mail(db, to, "Ямастер Чек-Пул: тестовое письмо",
+    ok, err = send_mail(db, to, "DocVer-Пул: тестовое письмо",
                         "SMTP настроен верно — письма кабинета будут доходить.\n\nООО «Ямастер»")
     log_action(admin, "pool_smtp_test", details={"ok": ok})
     return {"ok": ok, "message": ("Письмо отправлено" if ok else f"Не отправлено: {err}")}

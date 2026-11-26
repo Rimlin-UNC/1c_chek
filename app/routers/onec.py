@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Push-режим интеграции с 1С: чеки забирает сервер 1С (HTTP-сервис ↔ HTTP-сервис).
 
@@ -61,7 +61,7 @@ def ping(x_api_token: str | None = Header(default=None, alias="X-API-Token"),
         query = query.filter(Receipt.company_id == scope)
     pending = query.count()
     return {
-        "service": "Ямастер Чек",
+        "service": "DocVer",
         "scope": "company" if scope else "all",
         "vendor": "ООО «Ямастер» (ymaster.ru)",
         "pending_receipts": pending,
@@ -181,7 +181,7 @@ def primary_pull(db: Db, x_api_token: Token = None,
         raise HTTPException(403, "Токен компании не даёт доступа к документам другой компании")
     docs = _primary_ordered(_primary_query(db, scope or company_id, include_errors), limit)
     log_action(None, "onec_primary_pull", details={"count": len(docs), "scope": scope or "all"})
-    return {"provider": "Ямастер Чек (ymaster.ru)", "format": "ymaster-primary-v1",
+    return {"provider": "DocVer (ymaster.ru)", "format": "docver-primary-v1",
             "documents": [export1c.pull_item(d) for d in docs], "count": len(docs), "has_more": len(docs) == limit}
 
 

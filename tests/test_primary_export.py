@@ -153,10 +153,10 @@ def test_enterprise_data_objects_for_upd_invoice_and_primary_only():
     objects = export1c.ed_objects(doc)
     assert [o["ИмяПКО"] for o in objects] == ["ПоступлениеТоваровУслуг", "СчетФактураПолученный"]
     receipt, invoice = objects
-    assert receipt["КлючевыеСвойства"]["Ссылка"] == f"ymaster-primary-{doc.id}"
+    assert receipt["КлючевыеСвойства"]["Ссылка"] == f"docver-primary-{doc.id}"
     assert receipt["КлючевыеСвойства"]["Контрагент"]["ИНН"] == SELLER_INN and receipt["СуммаДокумента"] == 7930.0
     assert [r["СтавкаНДС"] for r in receipt["Товары"]] == ["НДС22", "НДС22"]
-    assert invoice["ДокументОснование"] == {"ИмяПКО": "ПоступлениеТоваровУслуг", "Ссылка": f"ymaster-primary-{doc.id}"}
+    assert invoice["ДокументОснование"] == {"ИмяПКО": "ПоступлениеТоваровУслуг", "Ссылка": f"docver-primary-{doc.id}"}
     assert invoice["УПД"] is True and invoice["СуммаНДС"] == 1430.0 and invoice["КодВидаОперации"] == "01"
     assert [o["ИмяПКО"] for o in export1c.ed_objects(_doc(function="ДОП"))] == ["ПоступлениеТоваровУслуг"]
     only_invoice = export1c.ed_objects(_doc(function="СЧФ"))
@@ -262,7 +262,7 @@ def test_onec_primary_pull_ack_and_scope(client, firms):
     assert pulled.status_code == 200, pulled.text
     body = pulled.json()
     ids = [d["id"] for d in body["documents"]]
-    assert doc_a["id"] in ids and doc_b["id"] not in ids and body["format"] == "ymaster-primary-v1"
+    assert doc_a["id"] in ids and doc_b["id"] not in ids and body["format"] == "docver-primary-v1"
     item = next(d for d in body["documents"] if d["id"] == doc_a["id"])
     assert item["number"] == f"P-{tag}" and [ln["vat_1c"] for ln in item["lines"]] == ["НДС22", "НДС22"]
     assert item["upd_file"].startswith(f"ON_NSCHFDOPPR_{a['inn']}_")

@@ -9,9 +9,9 @@ test('потерянный ответ: скан сохраняется до от
   const legacy = JSON.stringify([{ qr_data: 'старый скан', source: 'web' }]);
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, legacy, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
-    localStorage.setItem('ymaster_check_offline_queue', legacy);
+    localStorage.setItem('docver_offline_queue', legacy);
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 1000 : ms, ...args);
   }, { token: freshToken, legacy, seen });
@@ -49,7 +49,7 @@ test('потерянный ответ: скан сохраняется до от
   const list = await request.get('/api/v1/receipts', { headers: { Authorization: `Bearer ${freshToken}` } });
   const receipts = (await list.json()).items.filter(r => r.fn === '8999909876543210');
   expect(receipts).toHaveLength(1);
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe(legacy);
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe(legacy);
 
   // После входа сканирование продолжается без сети, синхронизация при возврате.
   await page.context().setOffline(true);
@@ -60,7 +60,7 @@ test('потерянный ответ: скан сохраняется до от
   await page.context().setOffline(false);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect.poll(async () => page.evaluate(async id => (await import('/js/offline_outbox.js')).list(id), user.id), { timeout: 40000 }).toHaveLength(0);
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe(legacy);
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe(legacy);
 
   // Отклонённую запись нельзя молча удалить; ручной повтор после устранения ошибки.
   mode = 'invalid';

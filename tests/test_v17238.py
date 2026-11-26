@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.72.38: общая вёрстка под все устройства.
+# DocVer — тесты v1.72.38: общая вёрстка под все устройства.
 #
 # Сплошной обход 18 экранов на 1600 / 1280 / 1024 / 768 / 390 px дал три
 # класса дефектов вне «Настроек»:
@@ -12,7 +12,7 @@
 #
 # Замок проверяет правила CSS и разметку. Поведение на реальных ширинах
 # проверяет tests/e2e/responsive_layout.spec.js (Playwright).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 
 import glob
@@ -58,7 +58,7 @@ class TestVersion17238:
         mx = read("app/static/maxapp/index.html")
         mf = read("app/static/manifest.webmanifest")
         b2b = read("app/static/b2b/index.html")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert sw.count(f"?v={ver}") == 5
         assert idx.count(f"?v={ver}") == 3
         assert b2b.count(f"?v={ver}") == 2

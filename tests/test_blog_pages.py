@@ -22,7 +22,7 @@ import pytest
 from app.services import blog_pages, seo
 
 ROOT = Path(__file__).resolve().parent.parent
-PROD = "chek.ymaster.ru"
+PROD = "docver.ru"
 BLOG_INDEX = "/blog"
 BLOG_PATHS = (
     "/blog/proverka-cheka-onlajn",
@@ -148,10 +148,10 @@ def test_registry_and_sitemap_with_images():
     expected_images = sum(len(v) for v in seo.CONTENT_IMAGES.values()) + len(seo.BLOG_IMAGES)
     assert xml.count("<image:image>") == expected_images == 17
     for article in blog_pages.PAGES:
-        assert f"<loc>https://chek.ymaster.ru{article.path}</loc>" in xml
-        assert f"<image:loc>https://chek.ymaster.ru{article.cover.src}</image:loc>" in xml
+        assert f"<loc>https://docver.ru{article.path}</loc>" in xml
+        assert f"<image:loc>https://docver.ru{article.cover.src}</image:loc>" in xml
         assert not any(article.path.startswith(d) for d in seo.DISALLOW)
-    assert f"<loc>https://chek.ymaster.ru{BLOG_INDEX}</loc>" in xml
+    assert f"<loc>https://docver.ru{BLOG_INDEX}</loc>" in xml
     assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-08") is None
 
 
@@ -182,7 +182,7 @@ def test_blog_index_has_carousel_cards_seo_and_lists_all_articles(client):
     res = get(client, BLOG_INDEX)
     assert res.status_code == 200
     markup = res.text
-    assert f'<link rel="canonical" href="https://chek.ymaster.ru{BLOG_INDEX}">' in markup
+    assert f'<link rel="canonical" href="https://docver.ru{BLOG_INDEX}">' in markup
     assert 'content="index, follow, max-image-preview:large, max-snippet:-1"' in markup
     assert '<meta property="og:type" content="website">' in markup
     assert '<meta name="twitter:card" content="summary_large_image">' in markup
@@ -231,7 +231,7 @@ def test_metadata_is_unique_and_all_25_keys_are_distributed():
     for article in articles:
         assert 30 <= len(article.title) <= 70, article.title
         assert 100 <= len(article.description) <= 170, article.description
-        assert article.title.endswith(" — Ямастер Чек")
+        assert article.title.endswith(" — DocVer")
         assert article.title.lower().count(article.keywords[0]) == 1
         assert article.h1.lower().count(article.keywords[0]) == 1
         assert all(key in KEYWORDS_25 for key in article.keywords)
@@ -244,14 +244,14 @@ def test_article_structure_images_seo_cta_and_links(client, article):
     res = get(client, article.path)
     assert res.status_code == 200
     markup = res.text
-    assert f'<link rel="canonical" href="https://chek.ymaster.ru{article.path}">' in markup
+    assert f'<link rel="canonical" href="https://docver.ru{article.path}">' in markup
     assert 'content="index, follow, max-image-preview:large, max-snippet:-1"' in markup
-    assert f'<meta property="og:image" content="https://chek.ymaster.ru{article.cover.src}">' in markup
+    assert f'<meta property="og:image" content="https://docver.ru{article.cover.src}">' in markup
     assert f'<meta property="og:image:width" content="{blog_pages.IMG_WIDTH}">' in markup
     assert f'<meta property="og:image:height" content="{blog_pages.IMG_HEIGHT}">' in markup
     assert '<meta property="og:image:alt" content="' in markup
     assert '<meta name="twitter:card" content="summary_large_image">' in markup
-    assert f'<meta name="twitter:image" content="https://chek.ymaster.ru{article.cover.src}">' in markup
+    assert f'<meta name="twitter:image" content="https://docver.ru{article.cover.src}">' in markup
     assert "x-robots-tag" not in res.headers
     assert markup.count("<h1") == 1 and markup.count("<title>") == 1
     assert "<script" not in markup and "ld+json" not in markup and "style=" not in markup
@@ -288,7 +288,7 @@ def test_article_structure_images_seo_cta_and_links(client, article):
     for banned in ("№1", "лучший сервис", "гарантируем", "бесплатно навсегда", "₽", "руб/мес", "рейтинг", "отзывы"):
         assert banned not in raw, banned
     assert any(cta in markup for cta in (
-        "Проверьте чек на chek.ymaster.ru", "Для бизнеса — демо", "массовая проверка чеков и выгрузка в 1С"))
+        "Проверьте чек на docver.ru", "Для бизнеса — демо", "массовая проверка чеков и выгрузка в 1С"))
     links = dict(parsed.links)
     up, side, down = article.up, article.side, article.down
     assert up[0] in ("/", "/kak-proverit-chek")
@@ -322,7 +322,7 @@ def test_host_indexing_rules_survive_on_every_article(client):
     for path in BLOG_PATHS:
         prod = get(client, path)
         assert prod.status_code == 200 and "x-robots-tag" not in prod.headers
-        assert f'<link rel="canonical" href="https://chek.ymaster.ru{path}">' in prod.text
+        assert f'<link rel="canonical" href="https://docver.ru{path}">' in prod.text
         copy = get(client, path, host="localhost:8000", scheme="http")
         assert copy.status_code == 200 and copy.headers.get("x-robots-tag") == "noindex, nofollow"
         assert '<meta name="robots" content="noindex, nofollow">' in copy.text and 'rel="canonical"' not in copy.text

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.58.5 (часть 2): гигиена секретов.
+# DocVer — тесты v1.58.5 (часть 2): гигиена секретов.
 # Практики OWASP/ASVS: пароли и токены не возвращаются API в открытом
 # виде и не попадают в журнал (маскирование).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import logging
 
@@ -43,9 +43,9 @@ class TestSmtpPasswordNotLeaked:
         secret = "СуперСекретЯщика#42"
         r = client.put("/api/v1/pool-admin/smtp", headers=hdr, json={
             "host": "smtp.timeweb.ru", "port": 465,
-            "user": "chek@ymaster.ru", "password": secret,
-            "sender": "chek@ymaster.ru", "tls": True,
-            "base_url": "https://chek.ymaster.ru"})
+            "user": "i@docver.ru", "password": secret,
+            "sender": "i@docver.ru", "tls": True,
+            "base_url": "https://docver.ru"})
         assert r.status_code == 200, r.text
         for url in ("/api/v1/pool-admin/smtp", "/api/v1/mail-admin/config"):
             body = client.get(url, headers=hdr).text

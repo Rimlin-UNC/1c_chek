@@ -2,9 +2,9 @@
 <html lang="ru">
 <head>
 <!--
-  Ямастер Чек — веб-клиент системы сканирования кассовых чеков и интеграции с 1С
+  DocVer — веб-клиент системы сканирования кассовых чеков и интеграции с 1С
   Разработчик и владелец идеи: ООО «Ямастер»
-  Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+  Сайт: https://ymaster.ru | E-mail: i@docver.ru
 -->
 <meta charset="UTF-8">
 <!-- v1.25.0: тема одна — светлая («Ямастер»), переключатель и предустановка
@@ -15,16 +15,16 @@
 <!-- T-83 (issue #72): главная — коммерческий хаб под интент «проверка чека онлайн» и «сайт проверки чеков».
      Ключи распределены по кластерам: главная продаёт, три страницы объясняют и принимают B2B-трафик.
      Вместо метки seo:head сервер подставляет canonical или noindex и коды подтверждения (app/services/seo.py). -->
-<title>Проверка чека онлайн по QR-коду — Ямастер Чек</title>
-<meta name="description" content="Сайт проверки чеков: отсканируйте QR-код, сверим кассовый чек с данными ФНС и покажем результат. Баллы за чеки, авансовые отчёты и выгрузка в 1С.">
+<title>DocVer — Документальная верификация</title>
+<meta name="description" content="DocVer — Документальная верификация. Проверка чеков и документов, сверка с ФНС, выгрузка в 1С.">
 <!-- seo:head -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Ямастер Чек">
+<meta property="og:site_name" content="DocVer">
 <meta property="og:locale" content="ru_RU">
-<meta property="og:title" content="Проверка чека онлайн — от QR-кода до 1С | Ямастер Чек">
-<meta property="og:description" content="Сайт проверки чеков: QR-код, сверка с данными ФНС, баллы за чеки и выгрузка в 1С для компаний.">
-<meta property="og:url" content="https://chek.ymaster.ru/">
-<meta property="og:image" content="https://chek.ymaster.ru/img/manual/hero.jpg">
+<meta property="og:title" content="DocVer — Документальная верификация">
+<meta property="og:description" content="Проверка чеков и документов, сверка с ФНС, выгрузка в 1С. Разработчик: ООО «Ямастер».">
+<meta property="og:url" content="https://docver.ru/">
+<meta property="og:image" content="https://docver.ru/img/manual/hero.jpg">
 <meta property="og:image:width" content="1100">
 <meta property="og:image:height" content="613">
 <meta property="og:image:alt" content="Бухгалтер разбирает кассовые чеки за ноутбуком">
@@ -32,7 +32,9 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
 <link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
-<link rel="apple-touch-icon" href="/img/icon-192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/img/icon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/img/icon-16.png">
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 <!-- v1.70.103: шрифты — со своего сервера (шрифты Google запрещала политика CSP); основной — заранее -->
 <link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -48,7 +50,7 @@
 </head>
 <body>
   <a class="skip" href="#main">К содержимому</a>
-  <!-- v1.70.98: заставка загрузки «chek.ymaster.ru» — видна с первого кадра, таймлайн около 3 с (js/splash.js) -->
+  <!-- v1.70.98: заставка загрузки «docver.ru» — видна с первого кадра, таймлайн около 3 с (js/splash.js) -->
   <div id="ym-splash" class="ym-splash">
     <div class="ym-splash__stage">
       <div class="ym-splash__card">
@@ -66,7 +68,7 @@
             <div class="ym-splash__floor"></div>
           </div>
         </div>
-        <div class="ym-splash__brand"><span>chek.</span>ymaster.ru</div>
+        <div class="ym-splash__brand">docver<span>.ru</span></div>
         <div class="ym-splash__status" id="ym-splash-status" role="status" aria-live="polite">Подготовка…</div>
         <div class="ym-splash__progress">
           <progress class="ym-splash__native" id="ym-splash-progress" max="100" value="0" aria-label="Загрузка приложения">0 %</progress>
@@ -99,9 +101,8 @@
   <div id="login-screen" class="login-screen">
     <div class="home-shell">
       <header class="home-header" aria-label="Шапка главной страницы">
-        <a class="home-brand" href="/" aria-label="Ямастер Чек — главная">
-          <img src="/img/logo.svg" alt="Ямастер Чек" width="36" height="36" loading="eager">
-          <span>Ямастер <b>Чек</b></span>
+        <a class="home-brand" href="/" aria-label="DocVer — главная">
+          <img src="/img/brand/logo-horizontal.svg" alt="DocVer — Документальная верификация" class="home-brand-logo" loading="eager">
         </a>
         <nav class="home-nav" aria-label="Основная навигация">
           <a href="#land-how">Как это работает</a>
@@ -115,9 +116,9 @@
 
       <div class="land-wrap">
         <div class="land-left" itemscope itemtype="https://schema.org/WebSite">
-          <meta itemprop="name" content="Ямастер Чек">
-          <meta itemprop="alternateName" content="chek.ymaster.ru">
-          <link itemprop="url" href="https://chek.ymaster.ru/">
+          <meta itemprop="name" content="DocVer">
+          <meta itemprop="alternateName" content="docver.ru">
+          <link itemprop="url" href="https://docver.ru/">
           <main id="main" class="home-main">
             <section class="home-hero" aria-labelledby="home-title">
               <span class="land-badge" id="land-badge">Чек-Пул уже работает</span>
@@ -201,7 +202,7 @@
                   <a class="home-card-link" href="/dlya-buhgalterov">Для бухгалтеров и аутсорсинга →</a>
                 </div>
               </div>
-              <p class="home-business-cta">Нужно подключить компанию? <a href="mailto:chek@ymaster.ru">Напишите на chek@ymaster.ru</a> — обсудим доступ, роли и выгрузку.</p>
+              <p class="home-business-cta">Нужно подключить компанию? <a href="mailto:i@docver.ru">Напишите на i@docver.ru</a> — обсудим доступ, роли и выгрузку.</p>
             </section>
 
             <section class="home-section" id="land-facts" aria-labelledby="home-facts-title">
@@ -288,10 +289,10 @@
                 </ul>
               </section>
               <p class="land-note" itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
-                <link itemprop="logo" href="https://chek.ymaster.ru/img/icon-512.png">
+                <link itemprop="logo" href="https://docver.ru/img/icon-512.png">
                 <span itemprop="name">ООО «Ямастер»</span> ·
                 <a itemprop="url" href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-                <a href="mailto:chek@ymaster.ru"><span itemprop="email">chek@ymaster.ru</span></a></p>
+                <a href="mailto:i@docver.ru"><span itemprop="email">i@docver.ru</span></a></p>
             </section>
           </main>
         </div>
@@ -301,8 +302,7 @@
           <div class="land-right">
     <div class="login-card glass">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64" loading="eager">
-        <p class="login-name">Ямастер <span class="grad-text">Чек</span></p>
+        <img src="/img/brand/logo-stacked.svg" alt="DocVer — Документальная верификация" class="login-brand-stacked" loading="eager">
         <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
       </div>
       <!-- v1.70.37: первый визит — два способа сделать всё в MAX.
@@ -360,13 +360,13 @@
           <span class="alt-line"></span>
         </div>
         <button type="button" class="btn btn-block" id="login-max">🛡 Войти или зарегистрироваться через MAX</button>
-        <div class="form-hint hint-center">подтвердите вход у бота chek.ymaster.bot в приложении MAX — пароль не нужен</div>
+        <div class="form-hint hint-center">подтвердите вход у бота docver.bot в приложении MAX — пароль не нужен</div>
         <button type="button" class="btn btn-block" id="login-telegram">✈️ Войти или зарегистрироваться через Telegram</button>
         <div class="form-hint hint-center">подтвердите вход у бота в Telegram — пароль не нужен</div>
       </form>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a><br>
+        <a href="mailto:i@docver.ru">i@docver.ru</a><br>
         <a href="#/public">🧾 Сдать чек в Чек-Пул</a> — без входа в систему
       </div>
     </div>
@@ -375,8 +375,8 @@
       </div>
 
       <footer class="home-footer" aria-label="Подвал главной страницы">
-        <p>© ООО «Ямастер» · <a href="/oferta">Публичная оферта</a> · <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a></p>
-        <p><a href="/">Ямастер Чек</a> — проверка кассовых чеков, авансовые отчёты и выгрузка в 1С.</p>
+        <p>© ООО «Ямастер» · <a href="/oferta">Публичная оферта</a> · <a href="mailto:i@docver.ru">i@docver.ru</a></p>
+        <p><a href="/">DocVer</a> — проверка кассовых чеков, авансовые отчёты и выгрузка в 1С.</p>
       </footer>
     </div>
   </div>
@@ -385,8 +385,8 @@
   <div id="register-screen" class="login-screen hidden">
     <div class="login-card glass">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
-        <h2 class="screen-title">Приглашение в <span class="grad-text">Ямастер Чек</span></h2>
+        <img src="/img/brand/logo-stacked.svg" alt="DocVer" class="login-brand-stacked login-brand-stacked-sm" loading="eager">
+        <h2 class="screen-title">Приглашение в <span class="grad-text">DocVer</span></h2>
         <div id="reg-invite-badge" class="chip new badge-center"><span class="dot"></span>—</div>
       </div>
       <form id="register-form" autocomplete="on">
@@ -422,18 +422,18 @@
   <div id="public-screen" class="login-screen hidden">
     <div class="login-card glass login-card-wide">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <img src="/img/brand/logo-stacked.svg" alt="DocVer" class="login-brand-stacked login-brand-stacked-sm" loading="eager">
         <h2 class="screen-title">Сдать чек в <span class="grad-text">Чек-Пул</span></h2>
         <p class="screen-sub">Проверяем чек по официальным источникам и начисляем
         баллы. Регистрация не нужна.</p>
       </div>
       <div id="public-root"></div>
       <div class="form-foot">
-        <a class="form-link" href="#" id="public-to-login">Войти в Ямастер Чек →</a>
+        <a class="form-link" href="#" id="public-to-login">Войти в DocVer →</a>
       </div>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a>
+        <a href="mailto:i@docver.ru">i@docver.ru</a>
       </div>
     </div>
   </div>
@@ -442,18 +442,18 @@
   <div id="pool-account-screen" class="login-screen hidden">
     <div class="login-card glass login-card-wide">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <img src="/img/brand/logo-stacked.svg" alt="DocVer" class="login-brand-stacked login-brand-stacked-sm" loading="eager">
         <h2 class="screen-title">Кабинет <span class="grad-text">Чек-Пула</span></h2>
         <p class="screen-sub">Баллы, мои чеки и профиль участника открытой базы.</p>
       </div>
       <div id="pool-account-root"></div>
       <div class="form-foot">
         <a class="form-link form-link-gap" href="#" id="pool-to-public">🧾 Сдать чек</a>
-        <a class="form-link" href="#" id="pool-to-login">Войти в Ямастер Чек →</a>
+        <a class="form-link" href="#" id="pool-to-login">Войти в DocVer →</a>
       </div>
       <div class="login-footer">
         ООО «Ямастер» · <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a>
+        <a href="mailto:i@docver.ru">i@docver.ru</a>
       </div>
     </div>
   </div>
@@ -463,9 +463,8 @@
     <aside class="sidebar" id="sidebar" aria-label="Меню приложения">
       <div class="sidebar-brand">
         <button class="btn-icon sb-close" id="sb-close" aria-label="Закрыть меню" type="button">✕</button>
-        <img src="/img/logo.svg" alt="" width="36" height="36">
-        <div>
-          <div class="brand-name">Ямастер <span class="grad-text">Чек</span></div>
+        <div class="brand-text">
+          <img src="/img/brand/logo-horizontal.svg" alt="DocVer — Документальная верификация" class="brand-logo-text">
           <div class="brand-sub"><span id="brand-version">v—</span> · ООО «Ямастер»</div>
         </div>
       </div>
@@ -632,9 +631,10 @@
       </div>
       <section class="content" id="view-container" aria-label="Рабочая область"></section>
       <footer class="app-footer" aria-label="Подвал рабочего пространства">
-        Ямастер Чек <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
+        <img src="/img/brand/docver-logo-text-h28.png" alt="DocVer" class="footer-logo-text">
+        <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
         <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
-        <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a> ·
+        <a href="mailto:i@docver.ru">i@docver.ru</a> ·
         <a href="/oferta" target="_blank" rel="noopener">Публичная оферта</a> ·
         <a href="/api/docs" target="_blank" rel="noopener">API-документация</a>
       </footer>

@@ -12,7 +12,7 @@ const bootJs = fs.readFileSync(path.join(root, 'app/static/js/boot.js'), 'utf8')
 function run({ token = null, guests = null, url = '/' } = {}) {
   document.documentElement.className = '';
   localStorage.clear();
-  if (token !== null) localStorage.setItem('ymaster_check_token', token);
+  if (token !== null) localStorage.setItem('docver_token', token);
   if (guests !== null) localStorage.setItem('ym-splash-guests', guests);
   window.history.replaceState(null, '', url);
   (0, eval)(bootJs);

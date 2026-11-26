@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — письма «Чек-Пула» (v1.32.0, Этап 3): подтверждение e-mail
+# DocVer — письма «Чек-Пула» (v1.32.0, Этап 3): подтверждение e-mail
 # и magic link (вход по одноразовой ссылке). SMTP настраивает администратор
 # в Настройках → «🧩 Чек-Пул»; пароль SMTP хранится зашифрованным
 # (appsettings SECRET_KEYS). Пока SMTP не настроен, кабинет полностью
 # работает по паролю — письма лишь дополнительный удобный путь.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def smtp_config(db: Session) -> dict | None:
         "user": appsettings.get_setting(db, SET_SMTP_USER, "").strip(),
         "password": appsettings.get_setting(db, SET_SMTP_PASS, ""),
         "sender": (appsettings.get_setting(db, SET_SMTP_FROM, "").strip()
-                   or "chek@ymaster.ru"),
+                   or "i@docver.ru"),
         "tls": appsettings.get_setting(db, SET_SMTP_TLS, "1") == "1",
     }
 
@@ -51,7 +51,7 @@ def smtp_config(db: Session) -> dict | None:
 def base_url(db: Session) -> str:
     """Адрес сайта для ссылок в письмах (задаёт администратор)."""
     return (appsettings.get_setting(db, SET_BASE_URL, "").strip()
-            or "https://chek.ymaster.ru").rstrip("/")
+            or "https://docver.ru").rstrip("/")
 
 
 def send_mail(db: Session, to_email: str, subject: str, body: str,
@@ -74,7 +74,7 @@ def send_mail(db: Session, to_email: str, subject: str, body: str,
         if html:
             msg.add_alternative(html, subtype="html")
         # v1.44.2: порт 465 = SMTP_SSL — защита с первого байта (так работает
-        # почта Timeweb: smtp.timeweb.ru:465, ящик chek@ymaster.ru).
+        # почта Timeweb: smtp.timeweb.ru:465, ящик i@docver.ru).
         # Остальные порты — как в v1.44.0 (STARTTLS по флагу tls).
         if cfg["port"] == 465:
             conn = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=12)
@@ -95,8 +95,8 @@ def send_mail(db: Session, to_email: str, subject: str, body: str,
 
 def send_verify_email(db: Session, to_email: str, link: str) -> tuple[bool, str]:
     return send_mail(
-        db, to_email, "Ямастер Чек-Пул: подтвердите e-mail",
-        "Здравствуйте!\n\nПодтвердите e-mail для кабинета «Ямастер Чек-Пул» "
+        db, to_email, "DocVer-Пул: подтвердите e-mail",
+        "Здравствуйте!\n\nПодтвердите e-mail для кабинета «DocVer-Пул» "
         f"по ссылке (действительна 24 часа):\n{link}\n\n"
         "Если это были не вы — просто не открывайте ссылку.\n\n"
         "ООО «Ямастер» · https://ymaster.ru")
@@ -104,8 +104,8 @@ def send_verify_email(db: Session, to_email: str, link: str) -> tuple[bool, str]
 
 def send_magic_link(db: Session, to_email: str, link: str) -> tuple[bool, str]:
     return send_mail(
-        db, to_email, "Ямастер Чек-Пул: вход по ссылке",
-        "Здравствуйте!\n\nВойдите в кабинет «Ямастер Чек-Пул» по одноразовой "
+        db, to_email, "DocVer-Пул: вход по ссылке",
+        "Здравствуйте!\n\nВойдите в кабинет «DocVer-Пул» по одноразовой "
         f"ссылке (действительна 15 минут):\n{link}\n\n"
         "Если это были не вы — просто не открывайте ссылку.\n\n"
         "ООО «Ямастер» · https://ymaster.ru")

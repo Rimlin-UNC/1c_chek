@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ямастер Чек v1.70.68 — установка локального прокси tgwsapiproxy
+# DocVer v1.70.68 — установка локального прокси tgwsapiproxy
 # (Ubuntu 24.04, ТЗ §5.2). Запуск:
 #   sudo ./install.sh <ваш-домен>.workers.dev
 set -euo pipefail

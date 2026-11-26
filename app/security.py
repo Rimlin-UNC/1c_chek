@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — защита от злоупотреблений (ООО «Ямастер», ymaster.ru).
+DocVer — защита от злоупотреблений (ООО «Ямастер», ymaster.ru).
 
 Механизмы (все бесплатные, на стороне приложения):
   * Rate limiting — скользящее окно по IP на группы эндпоинтов (429 + Retry-After);
@@ -114,7 +114,7 @@ def real_client_ip(request) -> str:
 def secret_is_weak(secret: str) -> bool:
     """v1.67.1: дефолтный или слишком короткий ключ подписи токенов."""
     return (not secret
-            or secret == "ymaster-dev-secret-change-me-in-production"
+            or secret == "docver-dev-secret-change-me-in-production"
             or len(secret) < 32)
 
 

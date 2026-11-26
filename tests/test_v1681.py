@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.68.1: стресс-дожим (уведомления + пул).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.68.1: стресс-дожим (уведомления + пул).
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 import re
 import time
 
@@ -13,7 +13,7 @@ class TestVersion1681:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         ch = open("CHANGELOG.md", encoding="utf-8").read()

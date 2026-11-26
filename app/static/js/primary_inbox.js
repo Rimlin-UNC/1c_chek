@@ -80,7 +80,7 @@ export function inboxPanelHtml(state, log, opts = {}) {
     <div class="inbox-settings">
       <label class="field"><span>Каталог на сервере</span>
         <input id="inbox-path" type="text" maxlength="400" value="${esc(s.path || '')}"
-          placeholder="/var/lib/ymaster-check/inbox"></label>
+          placeholder="/var/lib/docver/inbox"></label>
       <label class="field"><span>Интервал, минут</span>
         <input id="inbox-interval" type="number" min="1" max="720" step="1" value="${Number(s.interval_minutes) || 10}"></label>
       <label class="field inbox-check"><span>Фоновый обход</span>

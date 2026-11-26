@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Формирование пакетов выгрузки чеков в 1С (формат EnterpriseData).
 Поддержка: JSON и XML, применение настраиваемого маппинга реквизитов.
@@ -157,7 +157,7 @@ def _ed_receipt_json(receipt: Receipt, target_object: str,
     return {
         "ИмяПКО": target_object,
         "КлючевыеСвойства": {
-            "Ссылка": f"ymaster-check-{receipt.id[:8]}-{receipt.fn}-{receipt.fd}",
+            "Ссылка": f"docver-{receipt.id[:8]}-{receipt.fn}-{receipt.fd}",
             "Номер": receipt.fd,
             "От": (receipt.receipt_date or receipt.created_at).strftime("%Y-%m-%dT%H:%M:%S"),
             "Дата": (receipt.receipt_date or receipt.created_at).strftime("%Y-%m-%dT%H:%M:%S"),
@@ -198,7 +198,7 @@ def build_enterprise_data_json(receipts: list[Receipt],
     """Полный пакет EnterpriseData в формате JSON."""
     return json.dumps({
         "ФорматВерсии": "1.3",
-        "ИмяПакета": "ЯмастерЧек",
+        "ИмяПакета": "DocVer",
         "Поставщик": "ООО «Ямастер» (ymaster.ru)",
         "ДатаФормирования": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
         "Данные": {
@@ -230,7 +230,7 @@ def build_enterprise_data_xml(receipts: list[Receipt],
                               target_object: str) -> str:
     """Полный пакет EnterpriseData в формате XML."""
     root = ET.Element("EnterpriseData", {
-        "ФорматВерсии": "1.3", "ИмяПакета": "ЯмастерЧек",
+        "ФорматВерсии": "1.3", "ИмяПакета": "DocVer",
         "Поставщик": "ООО «Ямастер» (ymaster.ru)",
     })
     container = ET.SubElement(root, "Данные")
@@ -239,7 +239,7 @@ def build_enterprise_data_xml(receipts: list[Receipt],
         obj = ET.SubElement(cont, "Object", {"ИмяПКО": target_object})
         ks = ET.SubElement(obj, "КлючевыеСвойства")
         for tag, val in (
-            ("Ссылка", f"ymaster-check-{r.id[:8]}-{r.fn}-{r.fd}"),
+            ("Ссылка", f"docver-{r.id[:8]}-{r.fn}-{r.fd}"),
             ("Номер", r.fd),
             ("Дата", (r.receipt_date or r.created_at).strftime("%Y-%m-%dT%H:%M:%S")),
             ("СуммаДокумента", f"{r.total_sum:.2f}"),
@@ -276,7 +276,7 @@ def build_push_payload(receipts: list[Receipt],
                        target_object: str) -> dict:
     """Компактный payload для вытягивания 1С (быстрый разбор на стороне 1С)."""
     return {
-        "provider": "Ямастер Чек (ymaster.ru)",
+        "provider": "DocVer (ymaster.ru)",
         "format": "ymaster-push-v1",
         "target_object": target_object,
         "receipts": [

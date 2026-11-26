@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.1: фиксы связи с MAX.
+# DocVer — тесты v1.70.1: фиксы связи с MAX.
 #  1) username бота — фактический (из MAX API → настройки), не хардкод;
 #  2) мини-приложение открывается по адресу без слэша (абсолютный ассет);
 #  3) воркер MAX живёт по «Включён + токен», без гейта канала уведомлений.
@@ -20,7 +20,7 @@ class TestVersions1701:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.0"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.0'" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.0'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         mapp = open("app/static/maxapp/index.html", encoding="utf-8").read()
@@ -70,7 +70,7 @@ class TestBotUsername:
 
         def fake_me(token):
             calls["n"] += 1
-            return {"username": "myshop_bot", "name": "chek.ymaster.ru"}
+            return {"username": "myshop_bot", "name": "docver.ru"}
 
         monkeypatch.setattr(max_bot, "get_me", fake_me)
         s = SessionLocal()
@@ -95,7 +95,7 @@ class TestBotUsername:
             # v1.70.39: «имя неизвестно» надо подготовить — соседний тест
             # (test_login_deep_link_uses_real_username) сохраняет в настройках
             # «myshop_bot», и на общем сеансе БД fallback не срабатывал:
-            # проверка получала чужое имя вместо «chek.ymaster.bot».
+            # проверка получала чужое имя вместо «docver.bot».
             saved = appsettings.get_setting(s, "max_bot_username", "") or ""
             saved_cache = getattr(max_bot, "_username_cache", "")
             appsettings.set_setting(s, "max_bot_username", "")
@@ -103,7 +103,7 @@ class TestBotUsername:
             s.commit()
             try:
                 # v1.70.2: служебный id-ник игнорируется — публичный по умолчанию
-                assert max_bot.bot_username(s, refresh=False) == "chek.ymaster.bot"
+                assert max_bot.bot_username(s, refresh=False) == "docver.bot"
             finally:
                 appsettings.set_setting(s, "max_bot_username", saved)
                 max_bot._username_cache = saved_cache
@@ -131,7 +131,7 @@ class TestBotUsername:
         from app.services import appsettings
         s = SessionLocal()
         try:
-            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
+            appsettings.set_setting(s, "max_bot_username", "docver.bot")
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
             appsettings.set_setting(s, "pool_enabled", "1")
         finally:
@@ -154,18 +154,18 @@ class TestBotUsername:
         h = {"Authorization": "Bearer " + r.json()["access_token"]}
         d = client.get("/api/v1/maxapp/summary", headers=h).json()
         assert d["ref_link"].startswith(
-            "https://max.ru/chek.ymaster.bot?startapp=ref_")
+            "https://max.ru/docver.bot?startapp=ref_")
 
     def test_about_exposes_bot_username(self, client):
         from app.database import SessionLocal
         from app.services import appsettings
         s = SessionLocal()
         try:
-            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
+            appsettings.set_setting(s, "max_bot_username", "docver.bot")
         finally:
             s.rollback(); s.close()
         d = client.get("/api/v1/about").json()
-        assert d["max_bot_username"] == "chek.ymaster.bot"
+        assert d["max_bot_username"] == "docver.bot"
 
 
 # ------------------------------------------------------------------ воркер

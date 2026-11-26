@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.7: собственная камера в мини-приложении
+# DocVer — тесты v1.70.7: собственная камера в мини-приложении
 # (getUserMedia + jsQR, как на сайте) и резервный путь регистрации
 # (код боту сообщением — кнопка копирования в окне входа).
 # ======================================================================
@@ -53,7 +53,7 @@ class TestVersions1707:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.6"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.6'" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.6'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         mapp = open("app/static/maxapp/index.html", encoding="utf-8").read()

@@ -48,7 +48,7 @@ class TestRelease:
         ver = read("app/config.py").split('APP_VERSION: str = "', 1)[1].split('"', 1)[0]
         sw = read("app/static/sw.js")
         idx = read("app/static/index.html")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert sw.count(f"?v={ver}") == 5
         assert idx.count(f"?v={ver}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={ver}") == 2

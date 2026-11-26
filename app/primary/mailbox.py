@@ -90,7 +90,7 @@ def today_msk() -> date:
 
 
 def private_hosts_allowed() -> bool:
-    return os.environ.get("YM_MAIL_PRIVATE_HOSTS", "") == "1"
+    return (os.environ.get("DOCVER_MAIL_PRIVATE_HOSTS") or os.environ.get("YM_MAIL_PRIVATE_HOSTS", "")) == "1"
 
 
 # ------------------------------------------------------------------ проверка полей

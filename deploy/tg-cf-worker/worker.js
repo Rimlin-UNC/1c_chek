@@ -1,5 +1,5 @@
 /*
- * Ямастер Чек — deploy/tg-cf-worker/worker.js (v1.70.68)
+ * DocVer — deploy/tg-cf-worker/worker.js (v1.70.68)
  *
  * Источник: https://github.com/winchanii/TgWsApiProxy (файл worker.js,
  * лицензия MIT), получен 2026-10-30 через api.github.com; код не изменён,

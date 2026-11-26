@@ -11,16 +11,16 @@ test('предупреждение о старых сканах видно, да
   const legacy = JSON.stringify([{ qr_data: 'старый скан', source: 'web' }]);
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, legacy, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
-    localStorage.setItem('ymaster_check_offline_queue', legacy);
+    localStorage.setItem('docver_offline_queue', legacy);
     const open = indexedDB.open.bind(indexedDB);
-    indexedDB.open = (name, ...args) => name === 'ymaster-check-outbox' ? {} : open(name, ...args);
+    indexedDB.open = (name, ...args) => name === 'docver-outbox' ? {} : open(name, ...args);
   }, { token, legacy, seen });
   await page.goto('/#/scan');
   await expect(page.locator('#btn-paste')).toBeVisible({ timeout: 20000 });
   await expect(page.getByText('Старые сканы без подтверждённого владельца:', { exact: false }))
     .toBeVisible({ timeout: 10000 });
   await expect(page.getByText('Проверяем локальную очередь.', { exact: false })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe(legacy);
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe(legacy);
 });

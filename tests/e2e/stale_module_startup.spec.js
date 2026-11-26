@@ -7,8 +7,8 @@ test('новый модуль локального мониторинга зап
   const errors = [], urls = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
-    localStorage.setItem('ymaster_check_token', 'invalid-test-token');
-    localStorage.setItem('ymaster_check_offline_queue', 'сохранить-старую-очередь');
+    localStorage.setItem('docver_token', 'invalid-test-token');
+    localStorage.setItem('docver_offline_queue', 'сохранить-старую-очередь');
   });
   await page.route('**/js/server_monitor.js*', async route => {
     const url = new URL(route.request().url());
@@ -21,7 +21,7 @@ test('новый модуль локального мониторинга зап
   expect(urls.every(url => new URL(url).searchParams.has('v'))).toBe(true);
   await expect(page.locator('html')).not.toHaveClass(/ym-hold/, { timeout: 20000 });
   expect(errors).toEqual([]);
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe('сохранить-старую-очередь');
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe('сохранить-старую-очередь');
 });
 
 for (const suffix of ['', '?v=1.72.18']) {
@@ -30,8 +30,8 @@ for (const suffix of ['', '?v=1.72.18']) {
     const errors = [], legacyRequests = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
-      localStorage.setItem('ymaster_check_token', 'invalid-test-token');
-      localStorage.setItem('ymaster_check_offline_queue', 'сохранить-старую-очередь');
+      localStorage.setItem('docver_token', 'invalid-test-token');
+      localStorage.setItem('docver_offline_queue', 'сохранить-старую-очередь');
     });
     await page.route('**/js/app.js*', async route => {
       const response = await route.fetch();
@@ -46,6 +46,6 @@ for (const suffix of ['', '?v=1.72.18']) {
     await expect.poll(() => legacyRequests.length, { timeout: 20000 }).toBeGreaterThan(0);
     await expect(page.locator('html')).not.toHaveClass(/ym-hold/, { timeout: 20000 });
     expect(errors).toEqual([]);
-    expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe('сохранить-старую-очередь');
+    expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe('сохранить-старую-очередь');
   });
 }

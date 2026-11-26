@@ -45,6 +45,7 @@ img { max-width: 100%; height: auto; display: block; }
   font-weight: 800; font-size: 1.125rem; letter-spacing: -.2px;
 }
 .brand span { color: var(--accent-text); }
+.brand-logo { display: block; height: 40px; width: auto; max-width: min(280px, 52vw); }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

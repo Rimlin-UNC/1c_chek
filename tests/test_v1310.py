@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.31.0: «Чек-Пул» этап 2 — приём чеков на сайте (без Telegram).
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.31.0: «Чек-Пул» этап 2 — приём чеков на сайте (без Telegram).
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки Этапа 2 (docs/dev_plan_checkpool.md):
 #  - чек с сайта (строка QR) попадает в пул С ПОЗИЦИЯМИ, источник «web»;
@@ -394,7 +394,7 @@ class TestVersion1310:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

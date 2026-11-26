@@ -1,8 +1,8 @@
 # ======================================================================
-# Ямастер Чек — тесты v1.25.2: жизненный цикл «полных данных» чека.
+# DocVer — тесты v1.25.2: жизненный цикл «полных данных» чека.
 # Проверенный ФНС чек с позициями = полные данные: без повторных
 # запросов (идемпотентность), backfill старых чеков, кнопки строк.
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -227,7 +227,7 @@ class TestVersion1252:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

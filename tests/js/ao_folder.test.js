@@ -213,7 +213,7 @@ describe('сохранение на диск (File System Access)', () => {
     expect(aoCanPickFolder()).toBe(true);
     expect(await aoFolderHandleForSave()).toBe(root);
     expect(window.showDirectoryPicker).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'ymaster-ao-downloads', startIn: 'downloads', mode: 'readwrite',
+      id: 'docver-ao-downloads', startIn: 'downloads', mode: 'readwrite',
     }));
     await aoForgetFolder();
     window.showDirectoryPicker = vi.fn(async () => { const e = new Error('отмена'); e.name = 'AbortError'; throw e; });
@@ -330,7 +330,7 @@ describe('v1.73.8: настоящий PDF — бинарные байты, а н
     expect(aoCanPickFolder()).toBe(false);
     expect(await aoFileHandleForSave('АО «Ямастер».pdf')).toBe(fileHandle);
     const opts = window.showSaveFilePicker.mock.calls[0][0];
-    expect(opts).toMatchObject({ id: 'ymaster-ao-pdf', startIn: 'downloads' });
+    expect(opts).toMatchObject({ id: 'docver-ao-pdf', startIn: 'downloads' });
     expect(opts.suggestedName).toMatch(/^[A-Za-z0-9._-]+\.pdf$/);
   });
 

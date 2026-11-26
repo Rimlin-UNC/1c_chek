@@ -50,7 +50,7 @@ PACKAGE_JSON = ROOT / "package.json"
 VITEST_CONFIG = ROOT / "vitest.config.mjs"
 PLAYWRIGHT_CONFIG = ROOT / "playwright.config.js"
 ESLINT_CONFIG = ROOT / "eslint.config.mjs"
-COLLECTION = ROOT / "qa" / "postman" / "ymaster_check.postman_collection.json"
+COLLECTION = ROOT / "qa" / "postman" / "docver.postman_collection.json"
 CHANGELOG = ROOT / "CHANGELOG.md"
 JOURNAL = ROOT / "docs" / "ui_journal.md"
 RELEASE_59_TESTS = ROOT / "tests" / "test_v17059.py"
@@ -248,7 +248,7 @@ class TestRelease17060:
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
+        assert re.search(r"docver-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

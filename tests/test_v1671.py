@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.67.1: исправления аудита безопасности.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.67.1: исправления аудита безопасности.
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # XFF только от доверенного прокси · безопасный 422 · кап QR ·
 # пул соединений и прагмы SQLite · воркеры без длинных сессий.
 import inspect
@@ -140,7 +140,7 @@ class TestWorkersShortSessions:
     def test_secret_weak_detector(self):
         from app.security import secret_is_weak
         assert secret_is_weak("")
-        assert secret_is_weak("ymaster-dev-secret-change-me-in-production")
+        assert secret_is_weak("docver-dev-secret-change-me-in-production")
         assert secret_is_weak("короткий")
         assert not secret_is_weak("x" * 48)
 

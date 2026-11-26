@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.72.36: раздел «Настройки».
+# DocVer — тесты v1.72.36: раздел «Настройки».
 #
 # Замок на адаптивный рефакторинг страницы (без изменения функций):
 #  • карточки собраны в разделы, «широкие» карточки занимают всю строку;
@@ -13,7 +13,7 @@
 #
 # Поведение раскладки проверяют tests/js/settings_layout.test.js (Vitest) и
 # tests/e2e/settings_layout.spec.js (Playwright, реальные ширины экрана).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 
 from app.config import settings
@@ -34,7 +34,7 @@ class TestVersion17236:
         idx = read("app/static/index.html")
         mx = read("app/static/maxapp/index.html")
         mf = read("app/static/manifest.webmanifest")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert f"/css/app.css?v={ver}" in sw and f"/js/app.js?v={ver}" in sw
         assert "'/js/settings_layout.js'" in sw
         assert f"/css/app.css?v={ver}" in idx and f"/js/app.js?v={ver}" in idx

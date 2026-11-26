@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.59.6: время — строго Московское.
+# DocVer — тесты v1.59.6: время — строго Московское.
 # 1) Журнал хода обновления (метки [ЧЧ:ММ:СС]) ставился наивным
 #    datetime.now() — на сервере с UTC отставал на 3 часа (карточки
 #    при этом верные: там UTC+«Z», браузер сам переводит в МСК).
@@ -10,7 +10,7 @@
 #    (работает без systemd-timedated), journald перезапускается.
 # 3) systemd-юнит: Environment=TZ=Europe/Moscow — время процесса
 #    Московское, даже если системный пояс применить не удалось.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 from datetime import datetime, timedelta, timezone
@@ -28,7 +28,7 @@ class TestVersion1596:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.59.5" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
@@ -88,6 +88,6 @@ class TestServerTimezone:
         assert "systemctl restart systemd-journald" in sh
 
     def test_unit_runs_in_moscow_tz(self):
-        unit = open("deploy/systemd/ymaster-check.service",
+        unit = open("deploy/systemd/docver.service",
                     encoding="utf-8").read()
         assert "Environment=TZ=Europe/Moscow" in unit

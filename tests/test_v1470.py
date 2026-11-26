@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.47.0: архивная система копий (день/неделя/месяц),
+# DocVer — тесты v1.47.0: архивная система копий (день/неделя/месяц),
 # верификация копий, манифест состава, расписание BackupGuard.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import datetime as dt
 
@@ -21,7 +21,7 @@ class TestVersion1470:
         assert "app.css?v=" in idx and "app.js?v=" in idx
         assert "?v=1.46" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert '"version":' in mf
 

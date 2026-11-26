@@ -40,7 +40,7 @@ OPERATOR_SITE = "https://ymaster.ru"
 
 #: Куда писать по вопросам персональных данных и для отзыва согласия.
 #: По умолчанию — почта из репозитория; владелец может задать отдельный ящик.
-CONSENT_CONTACT_DEFAULT = "chek@ymaster.ru"
+CONSENT_CONTACT_DEFAULT = "i@docver.ru"
 
 #: Ключи настроек с реквизитами оператора.
 KEY_INN = "consent_operator_inn"

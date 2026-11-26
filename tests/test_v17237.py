@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.72.37: раздел «Настройки» без переполнения.
+# DocVer — тесты v1.72.37: раздел «Настройки» без переполнения.
 #
 # Замок на второй проход по снимкам владельца 15.11.2026 («текст выходит
 # за рамки блока»):
@@ -15,7 +15,7 @@
 #
 # Поведение раскладки проверяют tests/js/settings_layout.test.js (Vitest)
 # и tests/e2e/settings_layout.spec.js (Playwright, реальные ширины экрана).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 
 import re
@@ -42,7 +42,7 @@ class TestVersion17237:
         mx = read("app/static/maxapp/index.html")
         mf = read("app/static/manifest.webmanifest")
         b2b = read("app/static/b2b/index.html")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert sw.count(f"?v={ver}") == 5
         assert idx.count(f"?v={ver}") == 3
         assert b2b.count(f"?v={ver}") == 2

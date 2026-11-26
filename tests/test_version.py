@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.3.0: единая версия по всей системе,
+# DocVer — тесты v1.3.0: единая версия по всей системе,
 # новые источники (OFD-ру «QR Cash», несколько своих источников).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import json
 import re
@@ -33,7 +33,7 @@ class TestVersion:
     def test_sw_cache_named_by_version(self):
         from app.config import settings
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{settings.APP_VERSION}" in sw
+        assert f"docver-v{settings.APP_VERSION}" in sw
 
     def test_index_shows_version_dynamically(self):
         html = open("app/static/index.html", encoding="utf-8").read()

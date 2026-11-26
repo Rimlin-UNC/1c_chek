@@ -19,7 +19,7 @@ from tests.conftest import login
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.70.103"
-PROD = "chek.ymaster.ru"
+PROD = "docver.ru"
 
 
 def read(rel: str) -> str:
@@ -38,7 +38,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
+        assert f"docver-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert "'/js/boot.js'," in sw and "'/fonts/inter-cyrillic-wght-normal.woff2'" in sw
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
@@ -56,7 +56,7 @@ class TestRelease:
         assert len(entry) <= 4000, len(entry)
         for needle in ("«проверка чека»", "резервная копия", "поверх 1.70.95–1.70.102 не меняются — шаг pip "
                        "пропускается", "откатится само", "Схема базы не меняется", "48 из 48", "1.70.82–1.70.102",
-                       "/robots.txt и /sitemap.xml", "отвечает «404»", "только на рабочем адресе chek.ymaster.ru",
+                       "/robots.txt и /sitemap.xml", "отвечает «404»", "только на рабочем адресе docver.ru",
                        "«Настройки → 🔎 Поисковики»", "Яндекс не читает JSON-LD", "без заставки", "лицензия OFL",
                        "не дробятся по буквам", "T-75", "T-63", "T-64", "T-71"):
             assert needle in entry, needle
@@ -76,7 +76,7 @@ class TestRelease:
         entry = journal.split(head, 1)[1].split("\n## v", 1)[0]
         for needle in ("«Проверка чека по QR-коду — баллы и кэшбэк за каждый чек»", "«Как проверить чек по QR-коду?»",
                        "«Показывать заставку и гостям на стартовой странице»", "«🔎 Поисковики»",
-                       "«Авто — только chek.ymaster.ru»", "«Закрыт / ь»", "USER_GUIDE §7.11",
+                       "«Авто — только docver.ru»", "«Закрыт / ь»", "USER_GUIDE §7.11",
                        "две карточки"):
             assert needle in entry, needle
 
@@ -118,7 +118,7 @@ class TestSeoService:
     def test_head_tags(self):
         cfg = {"mode": "auto", "yandex": "abc123def", "google": 'g-0_1"x'}
         tags = seo.head_tags(cfg, PROD, "http")
-        assert '<link rel="canonical" href="https://chek.ymaster.ru/">' in tags     # рабочий — всегда https
+        assert '<link rel="canonical" href="https://docver.ru/">' in tags     # рабочий — всегда https
         assert '<meta name="yandex-verification" content="abc123def">' in tags
         assert 'content="g-0_1&quot;x"' in tags                                      # экранирование
         other = seo.head_tags(dict(seo.DEFAULTS), "localhost:8000", "http")
@@ -134,12 +134,12 @@ class TestSeoService:
         for path in ("/api/", "/onec/", "/ws/", "/b2b/", "/maxapp/"):
             assert f"Disallow: {path}\n" in text, path
         assert "Clean-param: maxlogin&utm_source&utm_medium&utm_campaign&utm_content&utm_term /\n" in text
-        assert text.endswith("Sitemap: https://chek.ymaster.ru/sitemap.xml\n")
+        assert text.endswith("Sitemap: https://docver.ru/sitemap.xml\n")
         closed = seo.robots_txt(dict(seo.DEFAULTS), "localhost", "http")
         assert closed.endswith("User-agent: *\nDisallow: /\n") and "Sitemap" not in closed
         xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-05")
-        assert "<loc>https://chek.ymaster.ru/</loc><lastmod>2026-11-05</lastmod>" in xml
-        assert "<loc>https://chek.ymaster.ru/oferta</loc>" not in xml and xml.count("<url>") >= 2
+        assert "<loc>https://docver.ru/</loc><lastmod>2026-11-05</lastmod>" in xml
+        assert "<loc>https://docver.ru/oferta</loc>" not in xml and xml.count("<url>") >= 2
         assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-05") is None
 
     def test_verification_codes(self):
@@ -169,7 +169,7 @@ class TestRoutes:
     def test_main_page_by_address(self, client):
         prod = client.get("/", headers={"host": PROD})
         assert prod.status_code == 200 and "x-robots-tag" not in prod.headers
-        assert '<link rel="canonical" href="https://chek.ymaster.ru/">' in prod.text and seo.MARKER not in prod.text
+        assert '<link rel="canonical" href="https://docver.ru/">' in prod.text and seo.MARKER not in prod.text
         other = client.get("/", headers={"host": "localhost:8000"})
         assert other.status_code == 200 and other.headers["x-robots-tag"] == "noindex, nofollow"
         assert '<meta name="robots" content="noindex, nofollow">' in other.text
@@ -187,7 +187,7 @@ class TestRoutes:
     def test_robots_sitemap_favicon_fonts(self, client):
         robots = client.get("/robots.txt", headers={"host": PROD})
         assert robots.status_code == 200 and robots.headers["content-type"].startswith("text/plain")
-        assert "Sitemap: https://chek.ymaster.ru/sitemap.xml" in robots.text
+        assert "Sitemap: https://docver.ru/sitemap.xml" in robots.text
         assert client.get("/robots.txt", headers={"host": "localhost"}).text.endswith("Disallow: /\n")
         sitemap = client.get("/sitemap.xml", headers={"host": PROD})
         assert sitemap.status_code == 200 and sitemap.headers["content-type"].startswith("application/xml")
@@ -251,12 +251,12 @@ class TestLanding:
         html = read("app/static/index.html")
         head = html.split("</head>", 1)[0]
         title = re.search(r"<title>(.*?)</title>", head).group(1)
-        assert title == "Проверка чека онлайн по QR-коду — Ямастер Чек" and len(title) <= 70
+        assert title == "Проверка чека онлайн по QR-коду — DocVer" and len(title) <= 70
         desc = re.search(r'<meta name="description" content="([^"]+)">', head).group(1)
         assert desc.startswith("Сайт проверки чеков:") and len(desc) <= 160
         assert head.count(seo.MARKER) == 1 and "fonts.googleapis.com" not in html and "fonts.gstatic.com" not in html
-        for needle in ('<meta property="og:url" content="https://chek.ymaster.ru/">',
-                       '<meta property="og:image" content="https://chek.ymaster.ru/img/manual/hero.jpg">',
+        for needle in ('<meta property="og:url" content="https://docver.ru/">',
+                       '<meta property="og:image" content="https://docver.ru/img/manual/hero.jpg">',
                        '<meta name="twitter:card" content="summary_large_image">',
                        '<link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">',
                        '<link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" '
@@ -283,7 +283,7 @@ class TestLanding:
         assert '<div class="land-left" itemscope itemtype="https://schema.org/WebSite">' in html
         assert '<p class="land-lead" itemprop="description">Сканируйте чеки камерой телефона' in html
         assert 'itemprop="publisher" itemscope itemtype="https://schema.org/Organization"' in html
-        assert '<span itemprop="name">ООО «Ямастер»</span>' in html and '<span itemprop="email">chek@ymaster.ru</span>' in html
+        assert '<span itemprop="name">ООО «Ямастер»</span>' in html and '<span itemprop="email">i@docver.ru</span>' in html
         for faq in ("Как проверить чек по QR-коду?", "Как понять, что чек настоящий?", "Нужна ли регистрация?"):
             assert f"<summary>{faq}</summary>" in html, faq
 
@@ -305,7 +305,7 @@ class TestLanding:
 
     def test_boot_and_splash_wiring(self):
         boot = read("app/static/js/boot.js")
-        for needle in ("'ymaster_check_token'", "'ym-splash-guests'", "root.classList.add('ym-hold')",
+        for needle in ("'docver_token'", "'ym-splash-guests'", "root.classList.add('ym-hold')",
                        "root.classList.add('ym-guest')"):
             assert needle in boot, needle
         splash = read("app/static/js/splash.js")

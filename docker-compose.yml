@@ -1,6 +1,6 @@
 # ======================================================================
-# Ямастер Чек — Docker Compose (production-профиль)
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# DocVer — Docker Compose (production-профиль)
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | i@docver.ru
 #
 # Быстрый старт:  cp .env.example .env && docker compose up -d --build
 # Веб-клиент:     http://<адрес-сервера>:8000
@@ -9,16 +9,16 @@
 services:
   app:
     build: .
-    container_name: ymaster-check
+    container_name: docver
     restart: unless-stopped
     env_file: .env
     environment:
       # Внутри compose используется PostgreSQL:
-      DATABASE_URL: postgresql+psycopg2://ymaster:${POSTGRES_PASSWORD:-ymasterpass}@db:5432/ymaster_check
+      DATABASE_URL: postgresql+psycopg2://ymaster:${POSTGRES_PASSWORD:-ymasterpass}@db:5432/docver
     ports:
       - "8000:8000"
     volumes:
-      - app_data:/opt/ymaster-check/data
+      - app_data:/opt/docver/data
     depends_on:
       db:
         condition: service_healthy
@@ -30,16 +30,16 @@ services:
 
   db:
     image: postgres:17-alpine
-    container_name: ymaster-check-db
+    container_name: docver-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ymaster
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ymasterpass}
-      POSTGRES_DB: ymaster_check
+      POSTGRES_DB: docver
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ymaster -d ymaster_check"]
+      test: ["CMD-SHELL", "pg_isready -U ymaster -d docver"]
       interval: 10s
       timeout: 5s
       retries: 5

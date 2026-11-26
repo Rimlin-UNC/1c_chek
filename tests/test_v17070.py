@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.70: проверка чеков только через официальное
+# DocVer — тесты v1.70.70: проверка чеков только через официальное
 # API ФНС (комплект «API 2.0.9 от 10.12.2024»), учёт суточного лимита
 # 1000 запросов, очередь чеков при исчерпании лимита, удаление сторонних
 # провайдеров и демонстрационного источника.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import datetime as dt
 import re
@@ -51,7 +51,7 @@ class TestRelease17070:
         """Точки синхронизации идут за текущей версией (не отстают)."""
         ver = self._current()
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 70)
-        assert f"ymaster-check-v{ver}" in _read(SW)
+        assert f"docver-v{ver}" in _read(SW)
         assert f'"version": "{ver}"' in _read(MANIFEST)
         index = _read(INDEX)
         assert f"app.css?v={ver}" in index and f"app.js?v={ver}" in index

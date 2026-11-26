@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ======================================================================
-# Ямастер Чек — откат к последней рабочей версии (v1.46.0)
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# DocVer — откат к последней рабочей версии (v1.46.0)
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | i@docver.ru
 #
 # Главный инструмент, когда приложение НЕ ЗАПУСКАЕТСЯ после обновления:
 # работает из терминала, приложение для этого не нужно.
@@ -22,9 +22,9 @@
 set -u
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR" || exit 1
-SERVICE="ymaster-check"
+SERVICE="docver"
 REGISTRY="data/releases/known_good.json"
-DB="data/ymaster_check.db"
+DB="data/docver.db"
 PORT="${YM_PORT:-8000}"
 
 say()  { printf '%s\n' "$*"; }

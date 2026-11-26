@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.58.3: оранжевые кнопки во всей программе,
+# DocVer — тесты v1.58.3: оранжевые кнопки во всей программе,
 # московское время на сервере (deploy.sh), закрепление переключателя
 # вида в UI-харнессе.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 import os
@@ -28,7 +28,7 @@ class TestVersion1583:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.58.2" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

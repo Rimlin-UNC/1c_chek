@@ -10,7 +10,7 @@
   'use strict';
   var root = document.documentElement, token = '', guests = '';
   try {
-    token = window.localStorage.getItem('ymaster_check_token') || '';
+    token = window.localStorage.getItem('docver_token') || '';
     guests = window.localStorage.getItem('ym-splash-guests') || '';
   } catch (e) { void e; /* хранилище недоступно — считаем гостем */ }
   var hash = window.location.hash || '';

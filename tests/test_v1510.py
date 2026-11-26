@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.51.0: скан-механизм чека во всех местах сдачи
+# DocVer — тесты v1.51.0: скан-механизм чека во всех местах сдачи
 # (камера/фото/перетаскивание на «Сдать чек», сдача из кабинета пула).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -16,7 +16,7 @@ class TestVersion1510:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.50.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

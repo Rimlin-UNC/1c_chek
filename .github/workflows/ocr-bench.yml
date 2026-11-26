@@ -1,4 +1,4 @@
-# Ямастер Чек — замер движков распознавания (T-77, issue #61).
+# DocVer — замер движков распознавания (T-77, issue #61).
 #
 # Что делает: на синтетических документах сравнивает наш Tesseract (рабочий путь ocr_worker.py) с
 # кандидатами: RapidOCR + PP-OCRv6 Cyrillic (Apache-2.0), Indra OCR и Occular-OCR. С v1.70.109 (ADR-39)

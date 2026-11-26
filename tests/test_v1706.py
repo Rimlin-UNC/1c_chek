@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.6: диплинки по username бота из токена
+# DocVer — тесты v1.70.6: диплинки по username бота из токена
 # (в т.ч. служебному id…_bot) и фото-сканер мини-приложения (/scan-image).
 # ======================================================================
 import hashlib
@@ -89,15 +89,15 @@ class TestLinksFollowToken:
         from app.database import SessionLocal
         from app.services import appsettings, max_bot
         h = _admin(client)
-        # ник из токена id…_bot; в настройках вручную оставлен chek.ymaster.bot
+        # ник из токена id…_bot; в настройках вручную оставлен docver.bot
         monkeypatch.setattr(max_bot, "get_me",
                             lambda t: {"username": "id4712030034_bot"})
-        _setup(client, nick="chek.ymaster.bot")
+        _setup(client, nick="docver.bot")
         d = client.get("/api/v1/settings/max/check-token", headers=h).json()
         assert d["mismatch"] is True and d["bot"] == "id4712030034_bot"
         # ник очищен и совпадает с токен-ботом → нет несовпадения
         monkeypatch.setattr(max_bot, "get_me",
-                            lambda t: {"username": "chek.ymaster.bot"})
+                            lambda t: {"username": "docver.bot"})
         max_bot._username_cache = ""             # изоляция глобального кэша
         _setup(client, nick="")
         d2 = client.get("/api/v1/settings/max/check-token", headers=h).json()
@@ -191,7 +191,7 @@ class TestVersions1706:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.5"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.5'" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.5'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         mapp = open("app/static/maxapp/index.html", encoding="utf-8").read()
@@ -207,7 +207,7 @@ class TestVersions1706:
 
 class TestNoRegression1706:
     def test_login_flow_alive(self, client):
-        _setup(client, nick="chek.ymaster.bot")
+        _setup(client, nick="docver.bot")
         r = client.post("/api/v1/auth/max/start", json={})
         assert r.status_code == 200
         p = client.post("/api/v1/auth/max/poll",

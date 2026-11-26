@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.0: вход/регистрация через MAX на сайте
+# DocVer — тесты v1.70.0: вход/регистрация через MAX на сайте
 # (device-code: одноразовый код + подтверждение в MAX) и приглашения
 # через бота MAX (отправка по MAX-логину + принятие в мини-приложении).
 # Ноль реальных сетевых вызовов: отправка бота — monkeypatch send_rich.
@@ -101,7 +101,7 @@ class TestVersion1700:
         assert "?v=1.69.0" not in idx
         assert 'id="login-max"' in idx                    # форма входа через MAX
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "1.69.0" not in sw
+        assert f"docver-v{ver}" in sw and "1.69.0" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         mapp = open("app/static/maxapp/index.html", encoding="utf-8").read()
@@ -422,7 +422,7 @@ class TestNoRegression:
         r = client.post("/api/v1/auth/login",
                         json={"username": "admin", "password": "admin123"})
         assert r.status_code == 200
-        assert "ymaster_token" in r.cookies
+        assert "docver_token" in r.cookies
 
     def test_invite_standard_flow_alive(self, client):
         inv = _create_invite(client, company="ООО Классика")

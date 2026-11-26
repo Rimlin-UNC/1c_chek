@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — Почтовый центр: админ-API (v1.44.0).
-# Единый ящик отправителя (например chek@chek.ymaster.ru), пароль
+# DocVer — Почтовый центр: админ-API (v1.44.0).
+# Единый ящик отправителя (например i@docver.ru), пароль
 # (хранится зашифрованным), тексты писем (приветствие/подпись),
 # правила бота рассылок и журнал отправок.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -57,9 +57,9 @@ def get_config(db: Session = Depends(get_db),
         # v1.58.4: дефолты из docs/knowledge/mail_timeweb.md — только пароль
         "host": g(db, mailer.SET_SMTP_HOST) or "smtp.timeweb.ru",
         "port": g(db, mailer.SET_SMTP_PORT, "465"),
-        "user": g(db, mailer.SET_SMTP_USER) or "chek@ymaster.ru",
+        "user": g(db, mailer.SET_SMTP_USER) or "i@docver.ru",
         "has_password": bool(g(db, "smtp_pass")),
-        "sender": g(db, mailer.SET_SMTP_FROM) or "chek@ymaster.ru",
+        "sender": g(db, mailer.SET_SMTP_FROM) or "i@docver.ru",
         "tls": g(db, mailer.SET_SMTP_TLS, "1") == "1",
         "base_url": g(db, mailer.SET_BASE_URL),
         "configured": mailer.smtp_configured(db),
@@ -140,7 +140,7 @@ def test_mail(body: dict, db: Session = Depends(get_db),
                                                     {"name": to.split("@")[0]}),
                                  body_text, ident["signature"])
     from ..pool.mailer import send_mail
-    ok, err = send_mail(db, to, "Ямастер Чек: тестовое письмо", body_text,
+    ok, err = send_mail(db, to, "DocVer: тестовое письмо", body_text,
                         html=html, from_name=ident["from_name"])
     log_action(admin, "mail_center_test", details={"ok": ok})
     return {"ok": ok,
@@ -308,7 +308,7 @@ def public_unsub(e: str = "", s: str = "",
         "border-radius:14px;padding:28px;border:1px solid #e8ebf0'>"
         "<h2 style='margin-top:0'>\u2713 Вы отписаны</h2>"
         f"<p style='color:#5a6170'>Адрес <b>{_mask(e)}</b> исключён из "
-        "автоматических рассылок «Ямастер Чек».</p>"
+        "автоматических рассылок «DocVer».</p>"
         "<p style='color:#5a6170;font-size:13px'>Письма о безопасности "
         "(подтверждение e-mail, вход по ссылке) по-прежнему будут доходить."
         "</p></div></body>")

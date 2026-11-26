@@ -37,7 +37,7 @@
 
 ## Рабочая БД (SQLite, SQLAlchemy)
 
-- Расположение: `data/ymaster_check.db` (значение `DATABASE_URL` по умолчанию),
+- Расположение: `data/docver.db` (значение `DATABASE_URL` по умолчанию),
   режим WAL, `busy_timeout`, `foreign_keys=ON`. Источник:
   [app/database.py](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/app/database.py).
 - **Механизм миграций — без Alembic.** При каждом старте и в проверке

@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.69.0: мини-приложение MAX + вход через MAX.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.69.0: мини-приложение MAX + вход через MAX.
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки:
 #  - вход/регистрация через MAX: initData валидируется HMAC-SHA256
@@ -71,7 +71,7 @@ class TestVersion1690:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.68.1" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
@@ -347,7 +347,7 @@ class TestMaxAppStatic:
         assert r.status_code == 200
         assert "max-web-app.js" in r.text
         assert "openCodeReader" in client.get("/maxapp/maxapp.js").text
-        assert "Ямастер Чек" in r.text
+        assert "DocVer" in r.text
 
     def test_bridge_not_bundled_into_spa(self):
         """Наш бандл не должен тянуть Bridge MAX (он подключает страница)."""

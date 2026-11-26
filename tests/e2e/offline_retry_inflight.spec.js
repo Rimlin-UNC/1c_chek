@@ -8,7 +8,7 @@ test('ручной повтор во время отправки не теряе
   const { access_token: token, user } = await login.json();
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
   }, { token, seen });
   let received = 0, release;
@@ -40,7 +40,7 @@ test('отложенный ручной повтор не выполняется
   const { access_token: token, user } = await login.json();
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
   }, { token, seen });
   let received = 0, release;
@@ -59,7 +59,7 @@ test('отложенный ручной повтор не выполняется
   await expect.poll(() => received).toBe(1);
   await expect(page.locator('#btn-flush')).toBeVisible();
   await page.locator('#btn-flush').click();
-  await page.evaluate(() => localStorage.setItem('ymaster_check_token', 'другая-сессия'));
+  await page.evaluate(() => localStorage.setItem('docver_token', 'другая-сессия'));
   release();
   await expect.poll(async () => page.evaluate(async id => (await import('/js/offline_outbox.js')).list(id), user.id))
     .toMatchObject([{ state: 'attention' }]);

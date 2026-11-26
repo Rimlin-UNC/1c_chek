@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — резервное копирование (v1.5.0)
+# DocVer — резервное копирование (v1.5.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: i@docver.ru
 #
 # Уровни копий (data/backups): daily (7) / preupdate (5) / manual (10) /
 # archive-ГГГГММ — архив месяца (12). Копии вне git и вне git clean.
@@ -30,7 +30,7 @@ def _db_path() -> str:
     url = settings.DATABASE_URL
     if url.startswith("sqlite:///"):
         return url.replace("sqlite:///", "")
-    return os.path.join(_app_dir(), "data", "ymaster_check.db")
+    return os.path.join(_app_dir(), "data", "docver.db")
 
 
 def backups_dir() -> str:
@@ -95,10 +95,10 @@ def _manifest_write(name: str, entry: dict) -> None:
 def _mirror_offapp(dest: str) -> None:
     """v1.55.1: зеркалим копию ВНЕ каталога приложения — она переживает
     даже переустановку каталога (инцидент v1.55.0). Каталог создаёт и
-    отдаёт приложению deploy.sh (/var/backups/ymaster-check); для тестов
+    отдаёт приложению deploy.sh (/var/backups/docver); для тестов
     путь переопределяется переменной окружения YMASTER_BACKUP_EXTRA_DIR."""
     extra = os.environ.get("YMASTER_BACKUP_EXTRA_DIR",
-                           "/var/backups/ymaster-check")
+                           "/var/backups/docver")
     try:
         if not os.path.isdir(extra) or not os.access(extra, os.W_OK):
             return
@@ -238,7 +238,7 @@ def verify_backup(name: str) -> tuple[bool, str]:
 
 def import_backup(tmp_path: str, source_name: str) -> tuple[bool, str, str | None]:
     """v1.49.0: загрузка копии из внешнего источника (файл, скачанный
-    раньше кнопкой «⬇»). Файл проверяется как база Ямастер Чек
+    раньше кнопкой «⬇»). Файл проверяется как база DocVer
     (PRAGMA quick_check + наличие основных таблиц), получает имя
     db-imported-*.db, запись в манифесте (sha256, состав, источник) и
     хранится как отдельный тип «загруженная» (10) — архивная история
@@ -264,7 +264,7 @@ def import_backup(tmp_path: str, source_name: str) -> tuple[bool, str, str | Non
         return False, (f"База в файле повреждена "
                        f"(quick_check: {row[0] if row else 'нет ответа'})"), None
     if not {"users", "receipts"} <= tables:
-        return False, ("В файле нет таблиц Ямастер Чек (users, receipts) — "
+        return False, ("В файле нет таблиц DocVer (users, receipts) — "
                        "похоже, это база другой программы"), None
     d = backups_dir()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -343,7 +343,7 @@ def restore_backup(name: str) -> tuple[bool, str]:
     return True, ("База восстановлена из " + name +
                   f". Страховая копия прежней базы: {who}. "
                   "Перезапустите приложение, чтобы все данные подхватились: "
-                  "sudo systemctl restart ymaster-check")
+                  "sudo systemctl restart docver")
 
 
 def backup_path(name: str) -> str | None:
@@ -399,7 +399,7 @@ class DailyBackupGuard:
                 time.sleep(3600)
 
         import threading
-        threading.Thread(target=loop, daemon=True, name="ymaster-daily-backup").start()
+        threading.Thread(target=loop, daemon=True, name="docver-daily-backup").start()
 
 
 daily_backup = DailyBackupGuard()

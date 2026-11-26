@@ -1,5 +1,5 @@
-// Ямастер Чек — мини-приложение MAX (v1.69.0)
-// ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+// DocVer — мини-приложение MAX (v1.69.0)
+// ООО «Ямастер» | ymaster.ru | i@docver.ru
 // Bridge: st.max.ru/js/max-web-app.js → window.WebApp.
 // Авторизация: initData → POST /api/v1/maxapp/session → JWT (память).
 'use strict';
@@ -101,7 +101,7 @@ async function boot() {
       '<p style="margin-top:10px"><button type="button" class="btn" ' +
       'id="mx-site">Открыть сайт</button></p>';
     const sb = $('mx-site');
-    if (sb) sb.onclick = () => { location.href = 'https://chek.ymaster.ru/'; };
+    if (sb) sb.onclick = () => { location.href = 'https://docver.ru/'; };
   }
 }
 
@@ -409,8 +409,8 @@ if (oaBtn) oaBtn.onclick = () => openLink(location.origin + '/');
 
 $('btn-share').onclick = () => {
   const app = wa();
-  const link = ME.ref_link || 'https://max.ru/chek.ymaster.bot?startapp=ref_' + (ME.ref_code || '');
-  const text = 'Сдавай чеки в «Ямастер Чек» прямо в MAX — копи баллы! Мой код: ' + (ME.ref_code || '');
+  const link = ME.ref_link || 'https://max.ru/docver.bot?startapp=ref_' + (ME.ref_code || '');
+  const text = 'Сдавай чеки в «DocVer» прямо в MAX — копи баллы! Мой код: ' + (ME.ref_code || '');
   try {
     if (app && app.shareMaxContent) app.shareMaxContent({text, link});
     else if (app && app.shareContent) app.shareContent({text, link});
@@ -517,7 +517,7 @@ async function scanCamera() {
 
 async function showLoginConfirm(code) {
   showService('Вход на сайт',
-    '<p>Сайт <b>chek.ymaster.ru</b> запрашивает вход под вашим ' +
+    '<p>Сайт <b>docver.ru</b> запрашивает вход под вашим ' +
     'MAX-аккаунтом' + (ME.name ? ' (' + esc(ME.name) + ')' : '') + '.</p>' +
     '<p class="hint">Подтвердите — на сайте всё произойдёт автоматически. ' +
     'Если это не вы открывали сайт — просто закройте этот экран.</p>' +
@@ -567,7 +567,7 @@ async function showInvite(token) {
     const roleRu = {accountant: 'Бухгалтер', manager: 'Руководитель',
                     user: 'Пользователь'}[d.role] || d.role;
     $('service-body').innerHTML =
-      '<p>Вас пригласили в «Ямастер Чек»' +
+      '<p>Вас пригласили в «DocVer»' +
       (d.company_name ? ' — компания <b>' + esc(d.company_name) + '</b>' : '') +
       '.<br>Роль: <b>' + esc(roleRu) + '</b>' +
       (d.expires_at ? '<br><span class="hint">действует до ' +

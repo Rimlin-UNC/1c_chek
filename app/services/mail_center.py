@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — Почтовый центр (v1.44.0): единый отправитель
-# chek@chek.ymaster.ru, шаблоны писем (приветствие/подпись) и «бот
+# DocVer — Почтовый центр (v1.44.0): единый отправитель
+# i@docver.ru, шаблоны писем (приветствие/подпись) и «бот
 # рассылок» — автоматические письма по расписанию (день недели + время)
 # или по условию (e-mail не подтверждён N дней, участник не сдавал
 # чеки N дней), плюс адресные рассылки по списку.
@@ -9,7 +9,7 @@
 # (152-ФЗ/Google-Yahoo-2024 требование для массовых писем), суточный
 # антиспам-лимит на адрес, журнал с чисткой 90 дней, тёмная пауза
 # правила после ошибки SMTP, маскирование адреса в результатах.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ PER_ADDR_HOURS = 24                    # антиспам: не чаще 1 пи�
 DEFAULT_FROM_NAME = "Чек-Пул Ямастер"
 DEFAULT_GREETING = "Здравствуйте, {name}!"
 DEFAULT_SIGNATURE = ("С уважением,\nООО «Ямастер»\nhttps://ymaster.ru · "
-                     "chek@ymaster.ru")
+                     "i@docver.ru")
 
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_TITLES = {"daily": "ежедневно", "mon": "понедельник", "tue": "вторник",
@@ -93,14 +93,14 @@ def wrap_html(title: str, greeting: str, body: str, signature: str,
     return f"""<!doctype html><html lang="ru"><body style="margin:0;padding:0;background:#f4f6f9;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
 <div style="max-width:560px;margin:0 auto;padding:24px 16px">
   <div style="background:#ffffff;border-radius:14px;padding:28px 26px;border:1px solid #e8ebf0">
-    <div style="font-size:17px;font-weight:700;color:#20263b;margin-bottom:14px">\U0001F9EE Ямастер Чек</div>
+    <div style="font-size:17px;font-weight:700;color:#20263b;margin-bottom:14px">\U0001F9EE DocVer</div>
     <div style="font-size:15px;color:#20263b;margin-bottom:12px">{_esc(greeting)}</div>
     {body_html}
     <div style="font-size:13px;color:#5a6170;white-space:pre-line;margin-top:18px">{_esc(signature)}</div>
     {unsub_html}
   </div>
   <div style="text-align:center;font-size:11px;color:#a3a9b4;padding-top:12px">
-    {_esc(title)} · письмо отправлено системой «Ямастер Чек»
+    {_esc(title)} · письмо отправлено системой «DocVer»
   </div>
 </div>
 </body></html>"""
@@ -247,7 +247,7 @@ def run_rule(db: Session, rule) -> dict:
         body = render(rule.body or "", vv)
         # текстовая версия: приветствие + текст + подпись (как в HTML)
         full_text = f"{greet}\n\n{body}\n\n{ident['signature']}"
-        html = wrap_html(rule.name or "Ямастер Чек", greet, body,
+        html = wrap_html(rule.name or "DocVer", greet, body,
                          ident["signature"], unsub_link(db, email))
         ok, err = send_mail(db, email, rule.subject or rule.name, full_text,
                             html=html, from_name=ident["from_name"])

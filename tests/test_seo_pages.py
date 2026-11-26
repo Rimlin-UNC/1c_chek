@@ -23,7 +23,7 @@ from app.services import seo, seo_pages
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "app" / "static"
-PROD = "chek.ymaster.ru"
+PROD = "docver.ru"
 PATHS = ("/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov")
 HTML_VALIDATE = os.environ.get("HTML_VALIDATE_BIN", "/tmp/htmlval/node_modules/.bin/html-validate")
 
@@ -80,13 +80,13 @@ def test_registry_matches_sitemap_and_robots():
     xml = seo.sitemap_xml(dict(seo.DEFAULTS), PROD, "https", "2026-11-08")
     assert xml.count("<url>") == 15
     assert 'xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"' in xml
-    assert "<image:loc>https://chek.ymaster.ru/img/manual/hero.jpg</image:loc>" in xml
+    assert "<image:loc>https://docver.ru/img/manual/hero.jpg</image:loc>" in xml
     for page in seo_pages.PAGES:
-        assert f"<loc>https://chek.ymaster.ru{page.path}</loc><lastmod>2026-11-08</lastmod>" in xml
-        assert f"<image:loc>https://chek.ymaster.ru{page.hero.jpg}</image:loc>" in xml
-        assert f"<image:loc>https://chek.ymaster.ru{page.inline.jpg}</image:loc>" in xml
+        assert f"<loc>https://docver.ru{page.path}</loc><lastmod>2026-11-08</lastmod>" in xml
+        assert f"<image:loc>https://docver.ru{page.hero.jpg}</image:loc>" in xml
+        assert f"<image:loc>https://docver.ru{page.inline.jpg}</image:loc>" in xml
     for path in (*PATHS, seo.BLOG_INDEX, *seo.BLOG_PAGES):
-        assert f"<loc>https://chek.ymaster.ru{path}</loc>" in xml
+        assert f"<loc>https://docver.ru{path}</loc>" in xml
         assert not any(path.startswith(d) for d in seo.DISALLOW)
     assert xml.count("<image:image>") == 1 + 2 * len(PATHS) + len(seo.BLOG_PAGES)
     assert seo.sitemap_xml(dict(seo.DEFAULTS), "localhost", "http", "2026-11-08") is None
@@ -116,11 +116,11 @@ def test_page_on_production_host(client, path):
     assert res.status_code == 200 and res.headers["content-type"].startswith("text/html")
     assert "x-robots-tag" not in res.headers
     html = res.text
-    assert f'<link rel="canonical" href="https://chek.ymaster.ru{path}">' in html
+    assert f'<link rel="canonical" href="https://docver.ru{path}">' in html
     assert '<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">' in html
     assert "noindex" not in html
     # Open Graph + Twitter Card + LCP WebP preload
-    assert f'<meta property="og:image" content="https://chek.ymaster.ru{page.hero.jpg}">' in html
+    assert f'<meta property="og:image" content="https://docver.ru{page.hero.jpg}">' in html
     assert f'<meta property="og:image:width" content="{page.hero.width}">' in html
     assert f'<meta property="og:image:height" content="{page.hero.height}">' in html
     assert f'<meta property="og:image:alt" content="{page.hero.alt}">' in html
@@ -138,8 +138,8 @@ def test_page_on_production_host(client, path):
     assert '<ol itemscope itemtype="https://schema.org/BreadcrumbList">' in html
     assert html.count('itemtype="https://schema.org/ListItem"') == 2
     assert '<meta itemprop="position" content="1">' in html and '<meta itemprop="position" content="2">' in html
-    assert '<a itemprop="item" href="https://chek.ymaster.ru/">' in html
-    assert f'<link itemprop="url" href="https://chek.ymaster.ru/img/icon-512.png">' in html
+    assert '<a itemprop="item" href="https://docver.ru/">' in html
+    assert f'<link itemprop="url" href="https://docver.ru/img/icon-512.png">' in html
     assert html.count("<figcaption") >= 2
     # Проверка изображений <picture> и якорей оглавления
     parsed = parse(html)
@@ -167,13 +167,13 @@ def test_page_on_copy_is_noindex(client, path):
 
 
 def test_titles_descriptions_and_keys_without_spam():
-    titles = [p.title for p in seo_pages.PAGES] + ["Проверка чека онлайн по QR-коду — Ямастер Чек"]
+    titles = [p.title for p in seo_pages.PAGES] + ["Проверка чека онлайн по QR-коду — DocVer"]
     assert len(set(titles)) == len(titles)
     assert len({p.description for p in seo_pages.PAGES}) == 3 and len({p.h1 for p in seo_pages.PAGES}) == 3
     for page in seo_pages.PAGES:
         assert 30 <= len(page.title) <= 70, page.title                      # длиннее — обрезается в выдаче
         assert 100 <= len(page.description) <= 170, page.description
-        assert page.title.endswith(" — Ямастер Чек")
+        assert page.title.endswith(" — DocVer")
     keys = {"/kak-proverit-chek": "проверить", "/cheki-sotrudnikov-v-1c": "чеки сотрудников",
             "/dlya-buhgalterov": "бухгалтер"}
     for page in seo_pages.PAGES:

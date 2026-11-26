@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.8.1: обновление из приложения применяет себя
+# DocVer — тесты v1.8.1: обновление из приложения применяет себя
 # (sudoers-рестарт, маркер успеха), /update/status: last_success.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 from tests.conftest import login
 
@@ -59,8 +59,8 @@ class TestRestartFromApp:
 
     def test_sudoers_rule_in_deploy(self):
         d = open("deploy.sh", encoding="utf-8").read()
-        assert "sudoers.d/ymaster-check" in d
-        assert "NOPASSWD: /usr/bin/systemctl restart ymaster-check" in d
+        assert "sudoers.d/docver" in d
+        assert "NOPASSWD: /usr/bin/systemctl restart docver" in d
         assert "visudo -cf" in d                      # правило проверяется перед применением
 
     def test_version_bump(self):
@@ -69,7 +69,7 @@ class TestRestartFromApp:
         c = open("app/config.py", encoding="utf-8").read()
         ver = re.search(r'APP_VERSION: str = "([^"]+)"', c).group(1)
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw          # SW-кэш следует версии
+        assert f"docver-v{ver}" in sw          # SW-кэш следует версии
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert ver in mf
 

@@ -24,7 +24,7 @@
 
 ## 2. Как сейчас
 
-**Т1 — база уже одна.** Приложение работает с одной базой `data/ymaster_check.db` через один
+**Т1 — база уже одна.** Приложение работает с одной базой `data/docver.db` через один
 движок `DATABASE_URL` ([`app/config.py`](../app/config.py), [`app/database.py`](../app/database.py));
 файлы `db-*.db` — резервные копии ([`app/services/backups.py`](../app/services/backups.py)).
 Supabase — отдельный демо-контур с синтетикой, не рабочая база ([ADR-10](ARCHITECTURE.md#adr-10)).

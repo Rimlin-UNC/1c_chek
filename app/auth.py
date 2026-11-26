@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Аутентификация и авторизация: JWT (HS256), PBKDF2-хеширование паролей, RBAC.
 """
@@ -78,7 +78,7 @@ def create_access_token(user: User) -> str:
         "role": user.role,
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-        "iss": "ymaster-check",
+        "iss": "docver",
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
@@ -100,7 +100,7 @@ def create_print_ticket(user: User, doc_id: str, *, minutes: int = 30) -> str:
         "scope": "print",
         "iat": now,
         "exp": now + timedelta(minutes=minutes),
-        "iss": "ymaster-check",
+        "iss": "docver",
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
@@ -148,7 +148,7 @@ def create_impersonation_token(admin: User, target: User) -> str:
         "role": target.role,
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-        "iss": "ymaster-check",
+        "iss": "docver",
         "act": {"sub": admin.id, "username": admin.username},
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -169,7 +169,7 @@ def raw_bearer_token(
     """v1.18.0: сырой токен запроса (заголовок, иначе cookie) — для /stop."""
     if credentials and credentials.credentials:
         return credentials.credentials
-    return request.cookies.get("ymaster_token")
+    return request.cookies.get("docver_token") or request.cookies.get("ymaster_token")
 
 
 def cookie_secure(request: Request) -> bool:
@@ -191,7 +191,7 @@ def get_current_user(
     # (гарантирует работу даже если JS не смог передать заголовок).
     token = credentials.credentials if credentials and credentials.credentials else None
     if not token:
-        token = request.cookies.get("ymaster_token")
+        token = request.cookies.get("docver_token") or request.cookies.get("ymaster_token")
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется авторизация")
     payload = decode_token(token)
@@ -222,7 +222,7 @@ def current_user_optional(
     """
     token = credentials.credentials if credentials and credentials.credentials else None
     if not token:
-        token = request.cookies.get("ymaster_token")
+        token = request.cookies.get("docver_token") or request.cookies.get("ymaster_token")
     if not token:
         return None
     try:

@@ -16,7 +16,7 @@ from . import service
 from .models import UnifiedDocument, UnifiedOwnership
 
 router = APIRouter(prefix="/api/v1/unified", tags=["Единый реестр чеков"])
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 
 class MoveBody(BaseModel):

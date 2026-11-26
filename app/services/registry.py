@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — свежие данные ЕГРЮЛ/ЕГРИП: скачивание выписки (v1.22.0)
+# DocVer — свежие данные ЕГРЮЛ/ЕГРИП: скачивание выписки (v1.22.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 #
 # Механизм: кнопка в карточке компании «⬇ Скачать свежие данные».
 # Источники (по порядку):
@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 
 FNS_EGRUL_URL = "https://egrul.nalog.ru/"
-_UA = "YmasterCheck/1.22 (+https://ymaster.ru)"
+_UA = "DocVer/1.22 (+https://ymaster.ru)"
 
 # --------------------------------------------------------------------------
 #  1. Официальный сервис ФНС: PDF-выписка ЕГРЮЛ/ЕГРИП
@@ -146,14 +146,14 @@ def build_excerpt_html(card: dict, comp_name: str, comp_inn: str,
            color: #6b6b6b; font-size: 12px; }}
   @media print {{ body {{ margin: 0; }} }}
 </style></head><body>
-<div class="head"><div class="brand">Ямастер Чек · ООО «Ямастер» · ymaster.ru</div>
+<div class="head"><div class="brand">DocVer · ООО «Ямастер» · ymaster.ru</div>
 <h1>Сведения из ЕГР{'ИП' if is_ip else 'ЮЛ'}</h1>
 <div class="sub">по данным {source} · сформировано {today} ·
 компания в системе: «{_esc(comp_name)}»</div></div>
 <table>{rows}</table>
 {warn}
 {f'<p style="margin-top:10px"><b>Дополнительные ОКВЭД:</b><br>{extra}</p>' if extra else ''}
-<div class="foot">Документ сформирован системой «Ямастер Чек» по свежим данным
+<div class="foot">Документ сформирован системой «DocVer» по свежим данным
 реестра ({source}, ИНН {_esc(comp_inn or card.get('inn') or '—')}).
 Источники: egrul.nalog.ru (ФНС России), api.checko.ru.
 Выписка носит информационный характер; официальную выписку в форме PDF

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — мини-приложение MAX (v1.69.0).
+# DocVer — мини-приложение MAX (v1.69.0).
 # Валидация initData по документации dev.max.ru/docs/webapps/validation:
 #   1. initData → пары key=value (из #WebAppData или «сырые» из Bridge)
 #   2. hash встречается ровно один раз; исходное значение сохраняем
@@ -22,7 +22,7 @@ import logging
 import time
 import urllib.parse
 
-log = logging.getLogger("ymaster.maxapp")
+log = logging.getLogger("docver.maxapp")
 
 MAX_INITDATA_LEN = 8192          # initData ~ до 2 КБ; 8 КБ с запасом
 AUTH_TTL = 24 * 3600             # сек: максимум возраста auth_date

@@ -125,13 +125,13 @@ def main() -> int:
     st, p, hdrs = call("POST", "/api/v1/auth/telegram/poll", {"code": code})
     cookie = ""
     for raw in hdrs.get_all("Set-Cookie") or []:
-        if raw.startswith("ymaster_token="):
+        if raw.startswith("docver_token="):
             cookie = raw.split(";", 1)[0]
     check(st == 200 and p.get("status") == "ok" and p.get("access_token"),
           "после подтверждения — ok и токен", f"{st} {p}")
     check(p.get("user", {}).get("username") == USERNAME,
           "логин взят из имени в Telegram", str(p.get("user")))
-    check(cookie.startswith("ymaster_token="), "выдана HttpOnly-cookie сессии")
+    check(cookie.startswith("docver_token="), "выдана HttpOnly-cookie сессии")
     st, me, _ = call("GET", "/api/v1/auth/me", cookie=cookie)
     check(st == 200 and me.get("username") == USERNAME,
           "/auth/me отвечает по cookie", f"{st} {me}")

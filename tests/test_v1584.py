@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.58.4: Почтовый центр предзаполнен реквизитами
-# mail_timeweb.md (smtp.timeweb.ru:465 SSL, chek@ymaster.ru) — админ
+# DocVer — тесты v1.58.4: Почтовый центр предзаполнен реквизитами
+# mail_timeweb.md (smtp.timeweb.ru:465 SSL, i@docver.ru) — админ
 # вводит только пароль.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import pytest
 import re
@@ -24,7 +24,7 @@ class TestVersion1584:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.58.3" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
@@ -72,9 +72,9 @@ class TestMailDefaults:
         j = r.json()
         assert j["host"] == "smtp.timeweb.ru"
         assert str(j["port"]) == "465"
-        assert j["user"] == "chek@ymaster.ru"
-        assert j["sender"] == "chek@ymaster.ru"
-        assert j["base_url"] == "https://chek.ymaster.ru"
+        assert j["user"] == "i@docver.ru"
+        assert j["sender"] == "i@docver.ru"
+        assert j["base_url"] == "https://docver.ru"
         assert j["configured"] is False        # пароля ещё нет — не настроено
 
     def test_mail_admin_config_defaults(self, client):
@@ -84,8 +84,8 @@ class TestMailDefaults:
         j = r.json()
         assert j["host"] == "smtp.timeweb.ru"
         assert str(j["port"]) == "465"
-        assert j["user"] == "chek@ymaster.ru"
-        assert j["sender"] == "chek@ymaster.ru"
+        assert j["user"] == "i@docver.ru"
+        assert j["sender"] == "i@docver.ru"
 
     def test_save_with_password_only_flow(self, client):
         """Реальный сценарий: форма с предзаполненными полями + пароль →
@@ -93,9 +93,9 @@ class TestMailDefaults:
         hdr = _login(client)
         r = client.put("/api/v1/pool-admin/smtp", headers=hdr, json={
             "host": "smtp.timeweb.ru", "port": 465,
-            "user": "chek@ymaster.ru", "password": "СекретЯщика123",
-            "sender": "chek@ymaster.ru", "tls": True,
-            "base_url": "https://chek.ymaster.ru"})
+            "user": "i@docver.ru", "password": "СекретЯщика123",
+            "sender": "i@docver.ru", "tls": True,
+            "base_url": "https://docver.ru"})
         assert r.status_code == 200, r.text
         j = client.get("/api/v1/pool-admin/smtp", headers=hdr).json()
         assert j["configured"] is True and j["has_password"] is True
@@ -107,14 +107,14 @@ class TestFormHints:
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert 'id="mc-port" type="number" value="465"' in js
         assert 'placeholder="smtp.timeweb.ru"' in js
-        assert js.count('placeholder="chek@ymaster.ru"') >= 2
+        assert js.count('placeholder="i@docver.ru"') >= 2
         assert "для порта 465 не важен" in js
         assert "cfg.port || 465" in js
         # в ФОРМЕ почтового центра старых подсказок нет
         # (в исторических записях WHATS_NEW старый адрес — легитимен)
         form = js.split('id="mail-card"')[1].split('id="mc-save"')[0]
-        assert "mail.chek.ymaster.ru" not in form
-        assert "chek@chek.ymaster.ru" not in form
+        assert "mail.docver.ru" not in form
+        assert "i@docver.ru" not in form
 
     def test_pool_form_hint_updated(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

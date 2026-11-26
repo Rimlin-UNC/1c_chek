@@ -17,7 +17,7 @@ describe('токен сессии', () => {
   });
   it('токен живёт в localStorage кабинета', () => {
     setToken('xyz');
-    expect(localStorage.getItem('ymaster_check_token')).toBe('xyz');
+    expect(localStorage.getItem('docver_token')).toBe('xyz');
   });
 });
 

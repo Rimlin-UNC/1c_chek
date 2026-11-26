@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Живой прогон контура B2B на стенде (порт 8001, отдельная база load45.db).
 
-Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 
 Зачем живой прогон, если есть 255 тестов: тесты идут через TestClient и
 видят приложение «изнутри», а здесь проверяется то, что увидит настоящий
@@ -58,13 +58,13 @@ body = r.json()
 check("enabled=false из коробки", body.get("enabled") is False, str(body.get("enabled")))
 check("текст закрытия есть", bool(body.get("closed_text")))
 check("7 шагов в статусе", len(body.get("steps") or []) == 7, str(len(body.get("steps") or [])))
-check("почта поддержки chek@ymaster.ru", body.get("contact") == "chek@ymaster.ru", body.get("contact", ""))
+check("почта поддержки i@docver.ru", body.get("contact") == "i@docver.ru", body.get("contact", ""))
 
 r = c.post("/api/v1/b2b/register", json={
     "email": MAIL, "password": PASSWORD, "company_name": "ООО «Проба»",
     "inn": INN_UL, "consent": True, "form_ms": 5000, "hp": ""})
 check("регистрация при закрытом контуре → 403", r.status_code == 403, str(r.status_code))
-check("в отказе есть адрес поддержки", "chek@ymaster.ru" in r.text)
+check("в отказе есть адрес поддержки", "i@docver.ru" in r.text)
 check("содержимое без токена → 401", c.get("/api/v1/b2b/content").status_code == 401)
 with httpx.Client(base_url=BASE, timeout=30.0) as anon:
     check("сводка модерации без токена и без куки → 401",

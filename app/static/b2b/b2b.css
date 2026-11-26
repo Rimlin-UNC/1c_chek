@@ -1,5 +1,5 @@
 /* ======================================================================
-   Ямастер Чек — стили кабинета компаний «API для бизнеса» (v1.70.45).
+   DocVer — стили кабинета компаний «API для бизнеса» (v1.70.45).
 
    Страница отдельная (как /maxapp/), поэтому таблица стилей своя, но
    палитра и правила те же, что в основном приложении: фирменные токены,
@@ -9,30 +9,47 @@
    Тёмный текст #1a1a1a на оранжевом #ff7a00 даёт 6.66:1 — так же, как в
    мини-приложении MAX: один цвет не может быть и фоном кнопки со светлым
    текстом, и читаемым текстом на светлом фоне.
-   ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+   ООО «Ямастер» | https://ymaster.ru | i@docver.ru
    ====================================================================== */
 
+@font-face {
+  font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(/fonts/inter-cyrillic-wght-normal.woff2) format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(/fonts/inter-latin-ext-wght-normal.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url(/fonts/inter-latin-wght-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
-  --bg: #f5f5f5;
-  --bg-soft: #ececec;
+  --bg: #F3F4F6;
+  --bg-soft: #eceff3;
   --panel: #ffffff;
   --panel-strong: #ffffff;
-  --border: rgba(51, 51, 51, .12);
-  --border-strong: rgba(51, 51, 51, .22);
-  --text: #333333;
-  --text-dim: #5c5c5c;
-  --text-faint: #6b6b6b;
-  --accent: #ff7a00;
-  --accent-soft: #fff1e3;
-  --accent-text: #9a4a00;
-  --accent-fg: #1a1a1a;
-  --ok-text: #27764a;
-  --bad-text: #c22e2a;
+  --border: rgba(31, 41, 55, .10);
+  --border-strong: rgba(31, 41, 55, .20);
+  --text: #1F2937;
+  --text-dim: #6B7280;
+  --text-faint: #9CA3AF;
+  --accent: #F35D17;
+  --accent-soft: #FFF1EB;
+  --accent-text: #C2410C;
+  --accent-fg: #1F2937; /* тёмный текст на оранжевом акценте — контраст */
+  --ok-text: #15803D;
+  --bad-text: #B91C1C;
   --warn-text: #a24b08;
   --info-text: #217287;
   --radius: 16px;
   --radius-sm: 10px;
   --speed: .22s;
+  --font-main: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -41,7 +58,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.55 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: 16px/1.55 var(--font-main);
   -webkit-text-size-adjust: 100%;
 }
 
@@ -74,6 +91,13 @@ body {
   color: var(--accent-fg);
   font-size: 1.25rem;
   font-weight: 800;
+}
+
+.b2b-brand-logo {
+  display: block;
+  height: 40px;
+  width: auto;
+  max-width: min(280px, 42vw);
 }
 
 .b2b-brand-text {

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.12.2: ровная вёрстка на всех устройствах.
+# DocVer — тесты v1.12.2: ровная вёрстка на всех устройствах.
 # РЕГРЕССИЯ: селектор компаний в шапке выдавливал заголовок на телефоне,
 # а несоответствие HTML/CSS/JS после обновлений давало «кривую» вёрстку.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -55,6 +55,6 @@ class TestAssetVersionPinning:
 
     def test_sw_precache_matches_html(self):
         ver = _app_version()
-        assert f"ymaster-check-v{ver}" in SW, "кэш SW не переименован"
+        assert f"docver-v{ver}" in SW, "кэш SW не переименован"
         assert f"'/css/app.css?v={ver}'" in SW
         assert f"'/js/app.js?v={ver}'" in SW

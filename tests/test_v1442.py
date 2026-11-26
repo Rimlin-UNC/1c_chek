@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.44.2: почта Timeweb — порт 465 как SMTP_SSL
+# DocVer — тесты v1.44.2: почта Timeweb — порт 465 как SMTP_SSL
 # (точечный возврат поддержки из откатанной 1.45.0; остальное — 1.44.0).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import datetime as dt
 import re
@@ -16,7 +16,7 @@ class TestVersion1442:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert "?v=1.44.0" not in idx and "?v=1.45" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -66,9 +66,9 @@ class TestSmtpSsl465:
         db = SessionLocal()
         appsettings.set_setting(db, "smtp_host", "smtp.timeweb.ru")
         appsettings.set_setting(db, "smtp_port", "465")
-        appsettings.set_setting(db, "smtp_user", "chek@ymaster.ru")
+        appsettings.set_setting(db, "smtp_user", "i@docver.ru")
         appsettings.set_setting(db, "smtp_pass", "pw")
-        appsettings.set_setting(db, "smtp_from", "chek@ymaster.ru")
+        appsettings.set_setting(db, "smtp_from", "i@docver.ru")
         appsettings.set_setting(db, mail_center.SET_BOT_ON, "1")
         u = PoolUser(email="tw2@test.ru", email_verified=True)
         db.add(u)
@@ -92,7 +92,7 @@ class TestSmtpSsl465:
         assert any(x[0] == "SSL" and x[2] == 465 and x[1] == "smtp.timeweb.ru"
                    for x in sent), sent
         assert any(x[0] == "MSG" and x[1] == "tw2@test.ru" and
-                   "chek@ymaster.ru" in x[2] for x in sent), sent
+                   "i@docver.ru" in x[2] for x in sent), sent
 
     def test_non465_path_untouched(self, client, monkeypatch):
         """Порт 587 (не 465) — прежний путь: SMTP + STARTTLS по флагу."""

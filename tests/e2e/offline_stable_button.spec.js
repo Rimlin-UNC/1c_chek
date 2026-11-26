@@ -13,7 +13,7 @@ test('фоновая проверка неизменной очереди не �
   }, user.id);
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
     const original = window.setInterval;
     window.setInterval = (fn, ms, ...args) => original(fn, ms === 30000 ? 500 : ms, ...args);

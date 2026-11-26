@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # ======================================================================
-# Ямастер Чек — развёртывание на сервере Ubuntu 24.04 прямо из GitHub
+# DocVer — развёртывание на сервере Ubuntu 24.04 прямо из GitHub
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: i@docver.ru
 #
-# БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: chek.ymaster.ru; адрес сервера
+# БЫСТРЫЙ СТАРТ НА ЧИСТОМ СЕРВЕРЕ (боевой: docver.ru; адрес сервера
 # в публичном репозитории не публикуется — берите его у владельца):
 #   ssh root@<адрес рабочего сервера>
 #   curl -fsSL https://raw.githubusercontent.com/Rimlin-UNC/1c_chek/main/deploy.sh -o deploy.sh
 #   sudo bash deploy.sh                          # установка
-#   sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru  # + SSL
+#   sudo bash deploy.sh --domain=docver.ru --with-ssl=docver.ru  # + SSL
 #   sudo bash deploy.sh --update                 # обновление (домен/SSL запомнены
-#                                                #   в /etc/ymaster-check/deploy.conf
+#                                                #   в /etc/docver/deploy.conf
 #                                                #   и применяются автоматически)
 #   sudo bash deploy.sh --update --branch=main   # обновление с ЯВНОЙ веткой
 #                                                #   v1.70.19: приоритет ветки —
@@ -23,7 +23,7 @@
 #
 # Что делает:
 #   1) ставит пакеты: nginx, ufw, fail2ban, python3-venv, git, sqlite3, certbot*;
-#   2) клонирует ветку приложения с GitHub в /opt/ymaster-check;
+#   2) клонирует ветку приложения с GitHub в /opt/docver;
 #   3) создаёт пользователя ymaster, venv, генерирует секреты в .env;
 #   4) инициализирует БД, администратора (admin/admin123 → смена при входе);
 #   5) systemd-сервис с усиленной изоляцией;
@@ -40,9 +40,24 @@ REPO_URL="${REPO_URL:-https://github.com/Rimlin-UNC/1c_chek.git}"
 # затирает source deploy.conf ниже, и явный BRANCH= молча игнорировался.
 ENV_BRANCH="${BRANCH:-}"
 BRANCH="${ENV_BRANCH:-main}"
-APP_DIR="/opt/ymaster-check"
+APP_DIR="/opt/docver"
 APP_USER="ymaster"
-SERVICE="ymaster-check"
+SERVICE="docver"
+
+# Совместимость с установками до ребренда (ymaster-check -> docver):
+# если на сервере уже есть старый каталог/сервис/конфиг — работаем с ними,
+# чтобы обновление не разорвало прод. Миграцию имён делайте отдельным шагом.
+_LEGACY_APP_DIR="/opt/ymaster-check"
+_LEGACY_SERVICE="ymaster-check"
+_LEGACY_CONF_DIR="/etc/ymaster-check"
+if [[ -d "$_LEGACY_APP_DIR/.git" && ! -d "$APP_DIR/.git" ]]; then
+  APP_DIR="$_LEGACY_APP_DIR"
+  echo "  [совместимость] Обнаружена установка в $_LEGACY_APP_DIR — используем её."
+fi
+if systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${_LEGACY_SERVICE}\.service"    && ! systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${SERVICE}\.service"; then
+  SERVICE="$_LEGACY_SERVICE"
+  echo "  [совместимость] Обнаружен сервис $_LEGACY_SERVICE — используем его."
+fi
 
 DOMAIN=""
 SSL_DOMAIN=""
@@ -52,8 +67,13 @@ DIAGNOSE=0
 FIXSSL=0
 WITH_NGINX=1
 CERTBOT_BIN="$(command -v certbot || echo /snap/bin/certbot)"
-CONF_DIR="/etc/ymaster-check"
+CONF_DIR="/etc/docver"
 CONF_FILE="$CONF_DIR/deploy.conf"
+if [[ -d "$_LEGACY_CONF_DIR" && ! -d "$CONF_DIR" ]]; then
+  CONF_DIR="$_LEGACY_CONF_DIR"
+  CONF_FILE="$CONF_DIR/deploy.conf"
+  echo "  [совместимость] Обнаружен конфиг $_LEGACY_CONF_DIR — используем его."
+fi
 
 for arg in "$@"; do
   case "$arg" in
@@ -75,7 +95,7 @@ for arg in "$@"; do
 done
 
 # v1.6.1: параметры предыдущего запуска (домен, SSL, ветка) сохраняются в
-# /etc/ymaster-check/deploy.conf и автоматически применяются при --update.
+# /etc/docver/deploy.conf и автоматически применяются при --update.
 # Раньше повторный запуск без аргументов затирал домен и HTTPS-конфиг Nginx.
 if [[ -f "$CONF_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -97,12 +117,12 @@ fi
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 # v1.55.1: пути данных — для страховых копий и диагностики
-BACKUP_ROOT="/var/backups/ymaster-check"
-DB_FILE="$APP_DIR/data/ymaster_check.db"
+BACKUP_ROOT="/var/backups/docver"
+DB_FILE="$APP_DIR/data/docver.db"
 
 # Режим ремонта SSL: deploy.sh --fix-ssl — diagnos + выпуск/продление с полным выводом
 if [[ $FIXSSL -eq 1 ]]; then
-  echo "======== Починка SSL — Ямастер Чек ========"
+  echo "======== Починка SSL — DocVer ========"
   D="${SSL_DOMAIN:-$DOMAIN}"
   echo "-- сертификаты на сервере:"
   ls /etc/letsencrypt/live 2>/dev/null || echo "   (папка letsencrypt пуста/отсутствует)"
@@ -120,7 +140,7 @@ if [[ $FIXSSL -eq 1 ]]; then
     [[ "$DOMAIN_IP" != "$SERVER_IP" ]] && echo "   ⚠ DNS указывает не на этот сервер — Let's Encrypt не пройдёт!"
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
     "$CERTBOT_BIN" certonly --nginx -d "$D" --non-interactive --agree-tos \
-      -m chek@ymaster.ru ; RC=$?
+      -m i@docver.ru ; RC=$?
   fi
   if [[ ${RC:-1} -eq 0 ]]; then
     ok "SSL готов. Перезапускаю nginx и собираю HTTPS-конфиг: sudo bash deploy.sh --update"
@@ -134,7 +154,7 @@ fi
 
 # Режим диагностики: deploy.sh --diagnose — быстро понять, почему сайт недоступен
 if [[ $DIAGNOSE -eq 1 ]]; then
-  echo "======== Диагностика Ямастер Чек ========"
+  echo "======== Диагностика DocVer ========"
   echo "-- сервис:"; systemctl is-active "$SERVICE" || true
   journalctl -u "$SERVICE" -n 12 --no-pager 2>/dev/null | tail -12 || true
   echo "-- приложение напрямую (health):"
@@ -160,7 +180,7 @@ except Exception:
   else
     echo "   файл базы НЕ НАЙДЕН: $DB_FILE"
   fi
-  ls -1t "$BACKUP_ROOT"/ymaster_check-*.db 2>/dev/null | head -3 | sed 's/^/   копия: /' || true
+  ls -1t "$BACKUP_ROOT"/docver-*.db 2>/dev/null | head -3 | sed 's/^/   копия: /' || true
   echo "-- nginx:"; nginx -t 2>&1 || true
   systemctl is-active nginx || true
   echo "-- порты (80/443/8000):"
@@ -205,9 +225,9 @@ warn() { echo "  ⚠ $*"; }
 TS="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$BACKUP_ROOT"
 if [[ -f "$DB_FILE" ]]; then
-  cp -a "$DB_FILE" "$BACKUP_ROOT/ymaster_check-$TS.db"
-  ls -1t "$BACKUP_ROOT"/ymaster_check-*.db 2>/dev/null | tail -n +31 | xargs -r rm -f
-  echo "  ✔ страховая копия базы (вне каталога приложения): $BACKUP_ROOT/ymaster_check-$TS.db"
+  cp -a "$DB_FILE" "$BACKUP_ROOT/docver-$TS.db"
+  ls -1t "$BACKUP_ROOT"/docver-*.db 2>/dev/null | tail -n +31 | xargs -r rm -f
+  echo "  ✔ страховая копия базы (вне каталога приложения): $BACKUP_ROOT/docver-$TS.db"
 fi
 if [[ -f "$APP_DIR/.env" ]]; then
   cp -a "$APP_DIR/.env" "$BACKUP_ROOT/env-$TS.bak"
@@ -377,8 +397,8 @@ fi
 bold "6/9 База данных и администратор"
 # v1.55.1: файла базы нет, но страховые копии есть — восстанавливаем
 # последнюю целую (защита от «слетевшей базы» при переустановке каталога)
-if [[ ! -s "$DB_FILE" ]] && ls "$BACKUP_ROOT"/ymaster_check-*.db >/dev/null 2>&1; then
-  NEWEST_DB="$(ls -1t "$BACKUP_ROOT"/ymaster_check-*.db | head -1)"
+if [[ ! -s "$DB_FILE" ]] && ls "$BACKUP_ROOT"/docver-*.db >/dev/null 2>&1; then
+  NEWEST_DB="$(ls -1t "$BACKUP_ROOT"/docver-*.db | head -1)"
   mkdir -p "$APP_DIR/data"
   cp -a "$NEWEST_DB" "$DB_FILE"
   chown "$APP_USER:$APP_USER" "$DB_FILE"
@@ -389,7 +409,11 @@ ok "администратор: admin / admin123 (смените при перв
 
 # ------------------------------------------------------------------
 bold "7/9 Сервис systemd"
-cp "$APP_DIR/deploy/systemd/$SERVICE.service" /etc/systemd/system/
+# Выбор unit-файла: новый docver.service или legacy-имя; адаптация путей под APP_DIR.
+UNIT_SRC="$APP_DIR/deploy/systemd/$SERVICE.service"
+[ -f "$UNIT_SRC" ] || UNIT_SRC="$APP_DIR/deploy/systemd/docver.service"
+[ -f "$UNIT_SRC" ] || UNIT_SRC="$APP_DIR/deploy/systemd/ymaster-check.service"
+sed "s|/opt/docver|$APP_DIR|g" "$UNIT_SRC" > "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
 systemctl restart "$SERVICE"
@@ -420,10 +444,10 @@ fi
 # v1.8.1: разрешаем приложению (пользователь ymaster) перезапускать свой сервис
 # — без этого «Обновить из приложения» обновляло файлы, но не могло применить их
 # v1.8.3: блок защищён — любая ошибка здесь НЕ должна ронять весь деплой
-SUDOERS_FILE=/etc/sudoers.d/ymaster-check
+SUDOERS_FILE=/etc/sudoers.d/docver
 if (
   mkdir -p /etc/sudoers.d
-  echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart ymaster-check, /usr/bin/systemctl status ymaster-check" > "$SUDOERS_FILE"
+  echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart docver, /usr/bin/systemctl status docver" > "$SUDOERS_FILE"
   chmod 440 "$SUDOERS_FILE"
   visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1
 ) >/dev/null 2>&1; then
@@ -437,14 +461,14 @@ fi
 # привилегированного помощника (root:root) и узкое sudoers-правило на его
 # фиксированные фазы. Блок защищён: ошибка не должна ронять деплой —
 # без правила панель мастера покажет одну команду для терминала.
-AG_HELPER_SRC="$APP_DIR/deploy/adguard-vpn/ymaster-adguard-setup.sh"
+AG_HELPER_SRC="$APP_DIR/deploy/adguard-vpn/docver-adguard-setup.sh"
 # v1.70.20: вывод помощника больше НЕ глушим. Раньше `>/dev/null 2>&1` прятал
 # причину отказа, и в логе деплоя оставалось только общее «⚠ помощник AdGuard
 # не установлен» — так была скрыта настоящая ошибка install-rule
 # («app_dir: unbound variable»), из-за которой правило не ставилось вовсе.
 if [[ -f "$AG_HELPER_SRC" ]] \
    && AG_HELPER_OUT=$(bash "$AG_HELPER_SRC" install-rule "$APP_DIR" 2>&1); then
-  ok "sudoers: мастер AdGuard VPN работает без пароля (помощник ymaster-adguard-setup)"
+  ok "sudoers: мастер AdGuard VPN работает без пароля (помощник docver-adguard-setup)"
 else
   warn "помощник AdGuard не установлен — мастер покажет одну команду для терминала"
   if [[ -n "${AG_HELPER_OUT:-}" ]]; then
@@ -455,8 +479,8 @@ fi
 # ------------------------------------------------------------------
 bold "8/9 Nginx + файрвол UFW + fail2ban"
 if [[ $WITH_NGINX -eq 1 ]]; then
-  NGX_CONF=/etc/nginx/sites-available/ymaster-check
-  cp "$APP_DIR/deploy/nginx/ymaster-check.conf" "$NGX_CONF"
+  NGX_CONF=/etc/nginx/sites-available/docver
+  cp "$APP_DIR/deploy/nginx/docver.conf" "$NGX_CONF"
   if [[ -n "${SSL_DOMAIN:-$DOMAIN}" ]]; then
     sed -i "s/server_name _;/server_name ${SSL_DOMAIN:-$DOMAIN};/" "$NGX_CONF"
   fi
@@ -495,7 +519,9 @@ NGXEOF
     ok "HTTPS восстановлен из существующего сертификата ($D)"
   fi
   rm -f /etc/nginx/sites-enabled/default
-  ln -sf /etc/nginx/sites-available/ymaster-check /etc/nginx/sites-enabled/
+  # Убираем legacy-конфиг ребренда, чтобы не было дублирующих директив
+  rm -f /etc/nginx/sites-enabled/ymaster-check /etc/nginx/sites-enabled/ymaster_check
+  ln -sf /etc/nginx/sites-available/docver /etc/nginx/sites-enabled/docver
   # v1.8.3: ошибка конфига не роняет деплой — показываем её и продолжаем
   if nginx -t 2>/tmp/ymaster-nginx-test.log; then
     systemctl reload nginx || systemctl restart nginx || true
@@ -515,11 +541,11 @@ ufw allow 80/tcp >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
 systemctl enable --now fail2ban >/dev/null 2>&1 || true
-cp "$APP_DIR/deploy/fail2ban/ymaster-check.conf" /etc/fail2ban/filter.d/ymaster-check.conf
-cp "$APP_DIR/deploy/fail2ban/jail-ymaster.local" /etc/fail2ban/jail.d/ymaster.local
+cp "$APP_DIR/deploy/fail2ban/docver.conf" /etc/fail2ban/filter.d/docver.conf
+cp "$APP_DIR/deploy/fail2ban/jail-docver.local" /etc/fail2ban/jail.d/ymaster.local
 systemctl restart fail2ban 2>/dev/null || warn "fail2ban не перезапустился (проверьте: systemctl status fail2ban)"
 ufw status | grep -q "80/tcp" && ok "UFW: снаружи только 22 (limit), 80, 443. Порт 8000 закрыт."
-fail2ban-client status ymaster-check >/dev/null 2>&1 && ok "fail2ban: бан за перебор паролей активен"
+fail2ban-client status docver >/dev/null 2>&1 && ok "fail2ban: бан за перебор паролей активен"
 
 # ------------------------------------------------------------------
 bold "9/9 SSL (Let's Encrypt) — опционально"
@@ -559,7 +585,7 @@ elif [[ -n "$SSL_DOMAIN" ]]; then
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1 || true
     echo "  Выпускаю сертификат (вывод certbot ниже)…"
     if "$CERTBOT_BIN" --nginx -d "$SSL_DOMAIN" --non-interactive --agree-tos --redirect \
-        -m chek@ymaster.ru 2>&1 | tail -6; then
+        -m i@docver.ru 2>&1 | tail -6; then
       ok "сертификат выпущен, HTTPS включён, http -> https автоматически"
     else
       warn "certbot не смог выпустить сертификат (вывод выше — там точная причина)."
@@ -591,7 +617,7 @@ APP_VERSION=$(grep -oP 'APP_VERSION: str = "\K[^"]+' "$APP_DIR/app/config.py" 2>
 # v1.6.1: запоминаем параметры — следующий --update подхватит их сам
 mkdir -p "$CONF_DIR"
 cat > "$CONF_FILE" <<CFGEOF
-# Параметры развёртывания Ямастер Чек (используются при повторных запусках deploy.sh)
+# Параметры развёртывания DocVer (используются при повторных запусках deploy.sh)
 DOMAIN="$DOMAIN"
 SSL_DOMAIN="$SSL_DOMAIN"
 BRANCH="$BRANCH"
@@ -609,7 +635,7 @@ else
 fi
 echo ""
 echo "=============================================================="
-echo "  ✅ Ямастер Чек v$APP_VERSION развёрнут!"
+echo "  ✅ DocVer v$APP_VERSION развёрнут!"
 echo "  Веб-клиент:       $URL"
 [[ -n "$ALT" ]] && echo "  $ALT"
 [[ -n "${CERT_END:-}" ]] && echo "  Сертификат SSL:   действует до $CERT_END (продлевается автоматически)"
@@ -622,5 +648,5 @@ echo "  Логи:        journalctl -u $SERVICE -f"
 echo "  Безопасность: UFW + fail2ban + rate-limit активны"
 echo "  Диагностика: sudo bash deploy.sh --diagnose   (если сайт недоступен)"
 echo ""
-echo "  ООО «Ямастер» — https://ymaster.ru · chek@ymaster.ru"
+echo "  ООО «Ямастер» — https://ymaster.ru · i@docver.ru"
 echo "=============================================================="

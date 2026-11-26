@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.59.1: гостевые страницы Чек-Пула снова видны.
+# DocVer — тесты v1.59.1: гостевые страницы Чек-Пула снова видны.
 # Регресс: обёртки #public-screen и #pool-account-screen созданы в
 # вёрстке с классом hidden, но showPublicScreen/showPoolScreen заполняли
 # только #public-root/#pool-account-root и НИКТО не снимал hidden —
 # гость видел пустую страницу вместо «Сдать чек» и кабинета.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -22,7 +22,7 @@ class TestVersion1591:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.59.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

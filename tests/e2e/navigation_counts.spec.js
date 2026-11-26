@@ -19,7 +19,7 @@ test('счётчики меню на телефоне обновляются п�
   await page.setViewportSize({ width: 390, height: 844 });
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
   }, { token, seen });
   await page.goto('/#/dashboard');

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — аккаунты участников «Чек-Пула» (v1.32.0, Этап 3).
+# DocVer — аккаунты участников «Чек-Пула» (v1.32.0, Этап 3).
 # Контур пула полностью отделён от корпоративных пользователей ядра:
 # свой JWT (typ=pool), свои пароли (PBKDF2 ядра), своя таблица токенов.
 # Гостевая история (cookie vid) при регистрации/входе ПРИСОЕДИНЯЕТСЯ
 # к аккаунту — «сдал чеки без регистрации → зарегистрировался → всё на месте».
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from ..auth import hash_password, verify_password
 from ..config import settings
 from ..database import get_db
 
-log = logging.getLogger("ymaster.pool.accounts")
+log = logging.getLogger("docver.pool.accounts")
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 PASSWORD_MIN = 8

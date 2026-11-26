@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ======================================================================
-# Ямастер Чек — привилегированный помощник мастера AdGuard VPN (v1.70.16)
+# DocVer — привилегированный помощник мастера AdGuard VPN (v1.70.16)
 # Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru
 # ----------------------------------------------------------------------
 # Зачем: мастер «🛡 AdGuard VPN» в программе делает всё сам и БЕЗ пароля
@@ -8,7 +8,7 @@
 # командой сценарий с фиксированными фазами (никаких произвольных команд,
 # никакого пользовательского ввода в шелле):
 #
-#   sudo -n /usr/local/sbin/ymaster-adguard-setup <фаза>
+#   sudo -n /usr/local/sbin/docver-adguard-setup <фаза>
 #
 # Фазы: preflight | install | login | tun | off | units | autopilot |
 #       version | status | rights | install-rule | remove-rule
@@ -21,7 +21,7 @@
 # мастер покажет одну команду install-rule вместо «sudo: not allowed».
 #
 # Одноразовая установка правила (владелец в терминале, один раз):
-#   sudo bash /opt/ymaster-check/deploy/adguard-vpn/ymaster-adguard-setup.sh install-rule
+#   sudo bash /opt/docver/deploy/adguard-vpn/docver-adguard-setup.sh install-rule
 # deploy.sh выполняет этот же шаг сам при установке/обновлении.
 #
 # Безопасность:
@@ -37,11 +37,11 @@
 # ======================================================================
 set -u
 
-HELPER="/usr/local/sbin/ymaster-adguard-setup"
+HELPER="/usr/local/sbin/docver-adguard-setup"
 KIT_DIR="/usr/local/share/ymaster-adguard"
 SUDOERS_FILE="/etc/sudoers.d/ymaster-adguard"
-APP_UNIT="ymaster-check"
-DEFAULT_APP_DIR="/opt/ymaster-check"
+APP_UNIT="docver"
+DEFAULT_APP_DIR="/opt/docver"
 CLI_LINK="/usr/local/bin/adguardvpn-cli"
 CLI_REAL="/opt/adguardvpn_cli/adguardvpn-cli"
 TUNNEL_UNIT="adguard-vpn-telegram"
@@ -81,7 +81,7 @@ UNITS_ETC=("adguard-vpn-telegram.service" "tg-health.service" "tg-health.timer")
 UNITS_SBIN=("tg-health.sh")
 
 say() { printf '%s\n' "$*"; }
-die() { say "ymaster-adguard-setup: $*"; exit 1; }
+die() { say "docver-adguard-setup: $*"; exit 1; }
 
 cli_path() {
   if [ -x "$CLI_LINK" ]; then printf '%s' "$CLI_LINK"; return 0; fi
@@ -95,7 +95,7 @@ cli_path() {
 # «create a link in /usr/local/bin? [y/N]» — пустой ответ понимается как «нет»
 # и создаётся файл .nosymlink, отключающий вопрос навсегда; (2) /usr/local/bin
 # не входит в PATH — тогда create_symlink() молча делает return 0 (у юнита
-# программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin — его там нет).
+# программы PATH=/opt/docver/venv/bin:/usr/bin:/bin — его там нет).
 # Поэтому обеспечиваем ссылку сами и на пути «CLI уже установлен» тоже:
 # cli_path() находит и $CLI_REAL, и без этой страховки фаза units падала.
 ensure_link() {
@@ -135,21 +135,21 @@ phase_install_rule() {
   # падала с «app_dir: unbound variable» — фаза install-rule не работала вовсе.
   local app_dir="${1:-$DEFAULT_APP_DIR}"
   local src="$app_dir/deploy/adguard-vpn"
-  [ -d "$src" ] || die "каталог комплекта не найден: $src (укажите путь к программе: install-rule /путь/к/ymaster-check)"
-  [ -f "$src/$(basename "$0")" ] || [ -f "$src/ymaster-adguard-setup.sh" ] \
-    || die "в $src нет ymaster-adguard-setup.sh — обновите программу"
+  [ -d "$src" ] || die "каталог комплекта не найден: $src (укажите путь к программе: install-rule /путь/к/docver)"
+  [ -f "$src/$(basename "$0")" ] || [ -f "$src/docver-adguard-setup.sh" ] \
+    || die "в $src нет docver-adguard-setup.sh — обновите программу"
 
   # 1) комплект юнитов — в root-каталог (приложение его изменить не может)
   mkdir -p "$KIT_DIR" || die "не создать $KIT_DIR"
   local f
-  for f in "${UNITS_ETC[@]}" "${UNITS_SBIN[@]}" "ymaster-adguard-setup.sh"; do
+  for f in "${UNITS_ETC[@]}" "${UNITS_SBIN[@]}" "docver-adguard-setup.sh"; do
     [ -f "$src/$f" ] || die "в комплекте нет файла: $f"
     install -m 0644 -o root -g root "$src/$f" "$KIT_DIR/$f" \
       || die "не скопировать $f в $KIT_DIR"
   done
 
   # 2) сам помощник — в /usr/local/sbin (root:root, 0755)
-  install -m 0755 -o root -g root "$src/ymaster-adguard-setup.sh" "$HELPER" \
+  install -m 0755 -o root -g root "$src/docver-adguard-setup.sh" "$HELPER" \
     || die "не установить $HELPER"
 
   # 3) sudoers-правило: только фазы мастера, без install-rule/remove-rule
@@ -492,7 +492,7 @@ phase_off() {
 # ----------------------------------------------------------------------
 main() {
   local phase="${1:-}"
-  [ -n "$phase" ] || { say "использование: ymaster-adguard-setup <фаза>"; exit 2; }
+  [ -n "$phase" ] || { say "использование: docver-adguard-setup <фаза>"; exit 2; }
   shift || true
   case "$phase" in
     rights)       phase_rights ;;

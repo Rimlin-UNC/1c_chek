@@ -66,7 +66,7 @@ from .models import (
     UnifiedOrigin,
 )
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 # Документы с такими пометками сверка не трогает: расхождение уже ждёт разбора.
 # Неполная тройка — не спор (у такого документа одна копия), её сверяем.

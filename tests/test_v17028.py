@@ -48,7 +48,7 @@ sys.path.insert(0, os.getcwd())
 from app.config import settings
 from app.services import adguard_setup as ag
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 README = "deploy/adguard-vpn/README.md"
 APP_JS = "app/static/js/app.js"
 APP_CSS = "app/static/css/app.css"
@@ -522,7 +522,7 @@ class TestBackendCompatible:
 
     def test_helper_phases_used_by_backend_exist(self):
         js = _js()
-        assert "ymaster-adguard-setup" in js
+        assert "docver-adguard-setup" in js
 
 
 # ==============================================================================

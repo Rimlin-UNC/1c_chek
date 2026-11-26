@@ -66,7 +66,7 @@ function stubFetch(state) {
     const u = String(url);
     if (u.includes('/api/v1/about')) {
       return Promise.resolve(json({ version: '1.70.69',
-        max_bot_username: 'chek.ymaster.bot' }));
+        max_bot_username: 'docver.bot' }));
     }
     if (u.includes('/api/v1/auth/telegram/start')) {
       state.started += 1;

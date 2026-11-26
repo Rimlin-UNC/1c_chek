@@ -54,7 +54,7 @@ from .models import (
     UnifiedOwnership,
 )
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 CLAIM_NOTE = "Заявка передана администратору."
 # Действие администратора → статус заявки.

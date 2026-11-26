@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — модерация контура B2B (v1.70.45, только администратор).
+# DocVer — модерация контура B2B (v1.70.45, только администратор).
 #
 # Требование владельца: «Администратор может все это видеть, но с
 # пометкой "это не видит ни кто"». Поэтому КАЖДЫЙ ответ этого роутера
@@ -11,7 +11,7 @@
 # Здесь же переключаются режимы автоматизации: полная / частичная /
 # отмена (pipeline.MODE_*). Действия администратора пишутся и в аудит
 # контура (b2b_events), и в общий журнал ядра (log_action).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from .models import (
 )
 from .router_public import key_info
 
-log = logging.getLogger("ymaster.b2b.admin")
+log = logging.getLogger("docver.b2b.admin")
 
 router = APIRouter(prefix="/api/v1/b2b-admin", tags=["b2b-admin"],
                    dependencies=[Depends(require_admin)])

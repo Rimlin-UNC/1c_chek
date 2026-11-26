@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.66.0: Ассистенты (Telegram + MAX).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.66.0: Ассистенты (Telegram + MAX).
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.6):
 #  - напоминания «сдай чеки за сегодня» (18:00, настройка) и утренний
@@ -46,7 +46,7 @@ class TestVersion1660:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.65.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
@@ -102,12 +102,12 @@ class TestMaxApi:
         class _Resp:
             status_code = 200
             def json(self):
-                return {"user_id": 1, "name": "Ямастер Чек",
-                        "username": "ymaster_check_bot", "is_bot": True}
+                return {"user_id": 1, "name": "DocVer",
+                        "username": "docver_bot", "is_bot": True}
 
         monkeypatch.setattr(mx.httpx, "get", lambda *a, **k: _Resp())
         me = mx.get_me("T")
-        assert me["username"] == "ymaster_check_bot"
+        assert me["username"] == "docver_bot"
 
     def test_api_error_is_human(self, monkeypatch):
         import httpx as _httpx

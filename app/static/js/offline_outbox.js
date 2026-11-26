@@ -1,6 +1,6 @@
 // Устойчивая локальная очередь: только данные одного владельца, транзакции IndexedDB.
 // Это не резервная копия: браузер может очистить хранилище.
-const DB_NAME = 'ymaster-check-outbox';
+const DB_NAME = 'docver-outbox';
 const STORE = 'scans';
 
 function openDb() {

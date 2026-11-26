@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.62.0: «Политика расходов» (лимиты и комплаенс).
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.62.0: «Политика расходов» (лимиты и комплаенс).
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.2):
 #  - настройки: лимит ₽/чек и ₽/мес на сотрудника, запрещённые статьи расходов
@@ -35,7 +35,7 @@ class TestVersion1620:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.61.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — API мини-приложения MAX (v1.69.0).
+# DocVer — API мини-приложения MAX (v1.69.0).
 # Контур Чек-Пула (PoolUser/PoolReceipt/баллы) — движок приёма не
 # продублирован: precheck_ingest + фоновый ingest_parsed(source="max").
 # Вход: initData (подпись MAX по доке) → PoolUser(tg_user_id = MAX-id)
@@ -29,7 +29,7 @@ from ..pool import referral as pool_referral
 from ..pool.accounts import issue_pool_token, require_pool_user
 from ..services import consent, maxapp
 
-log = logging.getLogger("ymaster.maxapp")
+log = logging.getLogger("docver.maxapp")
 
 router = APIRouter(prefix="/api/v1/maxapp", tags=["Мини-приложение MAX"])
 
@@ -143,7 +143,7 @@ def session(body: SessionBody, db: Session = Depends(get_db)):
         # для входа на сайт не обязательна — человек не должен оставаться
         # без входа, если подпись по какой-то причине не сходится.
         bypass = ("Войти на сайт можно и без мини-приложения: кнопка "
-                  "«Войти через MAX» на chek.ymaster.ru — подтвердите вход "
+                  "«Войти через MAX» на docver.ru — подтвердите вход "
                   "кодом сообщением боту, подпись для этого не нужна")
         if err == "format":
             detail = ("MAX прислал initData в нераспознанном виде — "
@@ -289,7 +289,7 @@ def _launch_ingest(user, qr_raw: str, parsed, fast: bool, db=None) -> dict:
             s.close()
 
     threading.Thread(target=_bg, daemon=True,
-                     name="ymaster-maxapp-ingest").start()
+                     name="docver-maxapp-ingest").start()
     return res
 
 

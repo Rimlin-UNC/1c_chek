@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Главный модуль: FastAPI-приложение, WebSocket-канал статусов, раздача SPA.
 """
@@ -66,7 +66,7 @@ logging.basicConfig(
 _msk_fmt = _MskFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 for _h in logging.getLogger().handlers:
     _h.setFormatter(_msk_fmt)
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 
 @asynccontextmanager
@@ -200,7 +200,7 @@ async def lifespan(app: FastAPI):
 
     import asyncio as _asyncio
     _asyncio.get_running_loop().create_task(_mail_bot_loop())
-    if _os.environ.get("YM_DOCREQ_OFF") != "1":           # тесты вызывают тик сами, с подменёнными каналами
+    if (_os.environ.get("DOCVER_DOCREQ_OFF") or _os.environ.get("YM_DOCREQ_OFF")) != "1":           # тесты вызывают тик сами, с подменёнными каналами
         _asyncio.get_running_loop().create_task(_doc_requests_loop())
     if secret_is_weak(settings.SECRET_KEY):              # v1.67.1: аудит
         log.warning("SECRET_KEY не задан, дефолтный или короче 32 символов — "
@@ -228,7 +228,7 @@ app = FastAPI(
     description=(
         "REST API системы сканирования кассовых чеков и загрузки их в 1С.\n\n"
         "Разработчик и владелец идеи: **ООО «Ямастер»** — [ymaster.ru](https://ymaster.ru), "
-        "chek@ymaster.ru\n\n"
+        "i@docver.ru\n\n"
         "Разделы: Аутентификация · Чеки · Аналитика · Настройки · Пользователи · Интеграция 1С"
     ),
     lifespan=lifespan,
@@ -396,7 +396,7 @@ async def ws_status(ws: WebSocket):
     # Проверка до принятия: без Origin разрешены только проверенные токены.
     company_id, authed, ws_error, ws_user_id = None, False, "", ""
     expires = None
-    token = ws.query_params.get("token") or ws.cookies.get("ymaster_token")
+    token = ws.query_params.get("token") or ws.cookies.get("docver_token") or ws.cookies.get("ymaster_token")
     try:
         from .auth import ROLE_ADMIN, decode_token
         from .database import SessionLocal

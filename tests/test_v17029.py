@@ -47,7 +47,7 @@ from app.services import adguard_setup as ag
 APP_JS = "app/static/js/app.js"
 CHANGELOG = "CHANGELOG.md"
 README = "deploy/adguard-vpn/README.md"
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 VER = "1.70.29"
 PREV = "1.70.28"
 

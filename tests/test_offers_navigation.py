@@ -19,11 +19,11 @@ def test_offers_catalog_and_draft_are_public_but_not_indexed(client):
 
 
 def test_service_documents_are_not_in_sitemap_or_blocked_from_crawling():
-    xml = seo.sitemap_xml(dict(seo.DEFAULTS), 'chek.ymaster.ru', 'https', '2026-11-08')
+    xml = seo.sitemap_xml(dict(seo.DEFAULTS), 'docver.ru', 'https', '2026-11-08')
     for path in ('/oferta', '/oferty', '/oferta-proekt'):
-        assert f'<loc>https://chek.ymaster.ru{path}</loc>' not in xml
+        assert f'<loc>https://docver.ru{path}</loc>' not in xml
         assert not any(path.startswith(item) for item in seo.DISALLOW)
-    assert 'Allow: /api/v1/legal/offerta' in seo.robots_txt(dict(seo.DEFAULTS), 'chek.ymaster.ru', 'https')
+    assert 'Allow: /api/v1/legal/offerta' in seo.robots_txt(dict(seo.DEFAULTS), 'docver.ru', 'https')
 
 
 def test_home_and_content_link_to_login_and_offers(client):

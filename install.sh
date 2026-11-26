@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ======================================================================
-# Ямастер Чек — автоматическая установка на Ubuntu 24.04
+# DocVer — автоматическая установка на Ubuntu 24.04
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: i@docver.ru
 #
 # Запуск:  sudo bash install.sh [--with-nginx] [--with-ssl yourdomain.ru]
 #
 # Скрипт:
 #   1) ставит системные зависимости (python3, venv);
-#   2) создаёт пользователя ymaster и каталог /opt/ymaster-check;
+#   2) создаёт пользователя ymaster и каталог /opt/docver;
 #   3) разворачивает приложение в venv;
 #   4) инициализирует БД и администратора;
 #   5) ставит systemd-сервис (автозапуск);
@@ -16,9 +16,9 @@
 # ======================================================================
 set -euo pipefail
 
-APP_DIR="/opt/ymaster-check"
+APP_DIR="/opt/docver"
 APP_USER="ymaster"
-SERVICE_NAME="ymaster-check"
+SERVICE_NAME="docver"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 WITH_NGINX=0
@@ -40,7 +40,7 @@ bold() { echo -e "\e[1m$*\e[0m"; }
 ok()   { echo "  ✔ $*"; }
 
 echo "=============================================================="
-echo "  Ямастер Чек — установка (ООО «Ямастер», ymaster.ru)"
+echo "  DocVer — установка (ООО «Ямастер», ymaster.ru)"
 echo "=============================================================="
 
 [[ $EUID -ne 0 ]] && { echo "Запустите через sudo: sudo bash install.sh"; exit 1; }
@@ -95,15 +95,15 @@ systemctl is-active --quiet "$SERVICE_NAME" && ok "сервис $SERVICE_NAME з
 if [[ $WITH_NGINX -eq 1 ]]; then
   bold "Бонус: Nginx"
   apt-get install -y -qq nginx >/dev/null
-  cp "$APP_DIR/deploy/nginx/ymaster-check.conf" /etc/nginx/sites-available/ymaster-check
+  cp "$APP_DIR/deploy/nginx/docver.conf" /etc/nginx/sites-available/docver
   [[ -n "$DOMAIN" && "$DOMAIN" != "pending" ]] && \
-    sed -i "s/check.example.ru/$DOMAIN/g" /etc/nginx/sites-available/ymaster-check
-  ln -sf /etc/nginx/sites-available/ymaster-check /etc/nginx/sites-enabled/
+    sed -i "s/check.example.ru/$DOMAIN/g" /etc/nginx/sites-available/docver
+  ln -sf /etc/nginx/sites-available/docver /etc/nginx/sites-enabled/
   nginx -t && systemctl reload nginx
   ok "Nginx настроен"
   if [[ -n "$DOMAIN" && "$DOMAIN" != "pending" ]]; then
     apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m chek@ymaster.ru || \
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m i@docver.ru || \
       echo "  ⚠ certbot не смог выпустить сертификат — запустите вручную"
   fi
 fi
@@ -117,5 +117,5 @@ echo "  Логин: admin / admin123  (смените пароль!)"
 echo "  Статус: systemctl status $SERVICE_NAME"
 echo "  Данные: $APP_DIR/data"
 echo ""
-echo "  Поддержка: ООО «Ямастер» — https://ymaster.ru · chek@ymaster.ru"
+echo "  Поддержка: ООО «Ямастер» — https://ymaster.ru · i@docver.ru"
 echo "=============================================================="

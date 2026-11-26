@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.64.0: дашборд руководителя + роль «руководитель».
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.64.0: дашборд руководителя + роль «руководитель».
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.4):
 #  - новая роль manager: видит ВСЕ чеки своей компании, ТОЛЬКО просмотр
@@ -32,7 +32,7 @@ class TestVersion1640:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.63.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

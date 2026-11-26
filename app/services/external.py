@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — получение полных данных чека из внешних источников
+# DocVer — получение полных данных чека из внешних источников
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: i@docver.ru
 #
 # v1.70.70: источник ровно один — Открытые API ФНС (openapi.nalog.ru:8090).
 # Сторонние сервисы проверки чеков (proverkacheka.com и подобные) и
@@ -37,7 +37,7 @@ COOLDOWN_BASE_SECONDS = 600.0        # первый «остывание» — 1
 COOLDOWN_MAX_SECONDS = 6 * 3600.0    # максимум 6 часов
 MAX_SAME_PROVIDER_RETRIES = 2
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 @dataclass
 class ExternalItem:

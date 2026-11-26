@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Ямастер Чек — тесты v1.70.22 «мастер AdGuard: панель не застревает,
+#  DocVer — тесты v1.70.22 «мастер AdGuard: панель не застревает,
 #  причина отказа не теряется»
 #  Оба дефекта найдены ЖИВЫМ прогоном приложения (не только pytest):
 #    • B7 сохранённое `running: true` после перезапуска процесса отдавалось как
@@ -12,7 +12,7 @@
 #      с ПУСТЫМ хвостом (вывод установщика затирался результатом --version).
 #      `set -o pipefail` не решение: /bin/sh в Ubuntu/Debian — dash.
 #  Сети нет: недоступный источник — это 127.0.0.1:9 (мгновенный отказ).
-#  ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+#  ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ==============================================================================
 import json
 import os
@@ -28,7 +28,7 @@ sys.path.insert(0, os.getcwd())
 from app.config import settings
 from app.services import adguard_setup as ag
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 APP_JS = "app/static/js/app.js"
 VER = "1.70.22"
 DEAD_URL = "https://127.0.0.1:9/nope.sh"     # отказ мгновенный и оффлайн
@@ -294,7 +294,7 @@ class TestVersions17022:
         idx = _read("app/static/index.html")
         assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 3
         sw = _read("app/static/sw.js")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 5
         assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
         assert f"?v={ver}" in _read("app/static/maxapp/index.html")

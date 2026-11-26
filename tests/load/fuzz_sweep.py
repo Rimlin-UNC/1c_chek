@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — фазз-развёртка API (появилась в v1.70.38, аудит качества).
+DocVer — фазз-развёртка API (появилась в v1.70.38, аудит качества).
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 ЗАЧЕМ ЭТОТ ФАЙЛ. Готовый движок schemathesis проверяет контракт: сам обходит
 операции OpenAPI, генерирует значения по схеме и ловит 5xx и расхождения с
@@ -386,7 +386,7 @@ def sweep(client: Client, spec: dict, families: list[str],
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Фазз-развёртка API Ямастер Чек")
+    ap = argparse.ArgumentParser(description="Фазз-развёртка API DocVer")
     ap.add_argument("--base-url", default="",
                     help="адрес живого сервера (пусто — in-process)")
     ap.add_argument("--family", default="",

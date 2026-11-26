@@ -454,7 +454,7 @@ def _print_user(doc_id: str, ticket: str, user: User | None, db: Session) -> Use
     if not ticket:
         if user is None:
             raise PrintDenied(401, "Нужно войти в программу",
-                              "Вкладка печати открылась без входа. Войдите в «Ямастер Чек» и "
+                              "Вкладка печати открылась без входа. Войдите в «DocVer» и "
                               "нажмите «🖨 Печать / PDF» ещё раз.")
         if user.role not in PRINT_ROLES:
             raise PrintDenied(403, "Недостаточно прав для печати",

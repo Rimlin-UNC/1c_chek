@@ -177,7 +177,7 @@ def status() -> dict:
 def _fetch(url: str, headers: dict) -> bytes:
     import httpx
     with httpx.Client(timeout=60, follow_redirects=True) as client:
-        response = client.get(url, headers={"User-Agent": "ymaster-check", **headers})
+        response = client.get(url, headers={"User-Agent": "docver", **headers})
         response.raise_for_status()
         return response.content
 
@@ -299,7 +299,7 @@ def recognize(data: bytes, suffix: str, *, preview: bool = False, wait: float = 
         what = "Второе прочтение не настроено" if second else "Распознавание сканов не настроено"
         raise OcrUnavailable(f"{what}: {state['reason']}")
     tessdata = str(TESSDATA_DIR) if second else state["tessdata"]
-    with _one_at_a_time(wait), tempfile.TemporaryDirectory(prefix="ymaster-ocr-") as tmp:
+    with _one_at_a_time(wait), tempfile.TemporaryDirectory(prefix="docver-ocr-") as tmp:
         path = Path(tmp) / f"input{suffix}"
         path.write_bytes(data)
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "OMP_THREAD_LIMIT": "1",

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — замок выпуска v1.70.72
+# DocVer — замок выпуска v1.70.72
 # Полная карточка чека: все данные из документа ФНС, регион продавца,
 # отрасль покупки, фильтры пула и уведомление об итоге пакетной проверки.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import importlib.util
 import json
@@ -655,7 +655,7 @@ class TestRelease1710:
     def test_all_sync_points(self):
         ver = self._current()
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 72)
-        assert f"ymaster-check-v{ver}" in _read(SW)
+        assert f"docver-v{ver}" in _read(SW)
         assert f'"version": "{ver}"' in _read(MANIFEST)
         index = _read(INDEX)
         assert f"app.css?v={ver}" in index and f"app.js?v={ver}" in index

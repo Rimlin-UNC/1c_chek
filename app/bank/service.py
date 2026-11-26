@@ -36,7 +36,7 @@ from .models import (
     BankStatement,
 )
 
-log = logging.getLogger("ymaster.bank")
+log = logging.getLogger("docver.bank")
 CARD_BEFORE, CARD_AFTER = 3, 1           # чек — за 3 дня до списания … днём позже
 DOC_BEFORE, DOC_AFTER = 120, 60          # документ — до 120 дней до оплаты или до 60 дней после
 RECEIPT_DAYS = 5                         # чек продавца при оплате по счёту — ±5 дней

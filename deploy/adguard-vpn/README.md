@@ -304,38 +304,38 @@ sudo update-ca-certificates
 
 Мастер **не спрашивает пароль sudo** — ни в браузере, ни где-либо ещё.
 Привилегированные шаги выполняет один помощник
-`ymaster-adguard-setup.sh` из этого каталога, установленный в
-`/usr/local/sbin/ymaster-adguard-setup` (root:root, 0755) и разрешённый
+`docver-adguard-setup.sh` из этого каталога, установленный в
+`/usr/local/sbin/docver-adguard-setup` (root:root, 0755) и разрешённый
 узким правилом `/etc/sudoers.d/ymaster-adguard` на фиксированные фазы:
 
-    sudo -n /usr/local/sbin/ymaster-adguard-setup preflight|install|login|tun|off|units|autopilot|version|status|rights
+    sudo -n /usr/local/sbin/docver-adguard-setup preflight|install|login|tun|off|units|autopilot|version|status|rights
 
 `deploy.sh` ставит помощник и правило сам — при установке и при каждом
 `--update`. Если сервер развёрнут раньше (или правило сняли), панель
 мастера покажет **одну** команду: выполните её в SSH один раз и нажмите
 «Проверить снова»:
 
-    sudo bash /opt/ymaster-check/deploy/adguard-vpn/ymaster-adguard-setup.sh install-rule /opt/ymaster-check
+    sudo bash /opt/docver/deploy/adguard-vpn/docver-adguard-setup.sh install-rule /opt/docver
 
 Что делает команда: раскладывает комплект юнитов в root-каталог
 `/usr/local/share/ymaster-adguard`, ставит помощника в `/usr/local/sbin`,
 пишет правило NOPASSWD на перечисленные фазы для служебного пользователя
-программы (берётся из `User=` юнита `ymaster-check`, иначе — владелец
+программы (берётся из `User=` юнита `docver`, иначе — владелец
 каталога программы) и проверяет его через `visudo -c`. Служебный
 пользователь может помощник **запустить**, но не может изменить — поэтому
 правило не даёт ему произвольного root.
 
 Откат (убрать правило, помощника и root-копию комплекта):
 
-    sudo /usr/local/sbin/ymaster-adguard-setup remove-rule
+    sudo /usr/local/sbin/docver-adguard-setup remove-rule
 
 Проверка, что правило работает (от имени служебного пользователя):
 
-    sudo -u ymaster sudo -n /usr/local/sbin/ymaster-adguard-setup rights   # → ok
+    sudo -u ymaster sudo -n /usr/local/sbin/docver-adguard-setup rights   # → ok
 
 ## Как это работает
 
-    Ямастер Чек ──обычный HTTPS-запрос──▶ api.telegram.org
+    DocVer ──обычный HTTPS-запрос──▶ api.telegram.org
                      │ (selective-исключение AdGuard)
                      ▼
                  tun-интерфейс ──шифрованный туннель──▶ сеть AdGuard
@@ -461,7 +461,7 @@ DNS сервера**, и при отравлении DNS бот получал �
    сервере вместе с программой — берите из комплекта, это не зависит от
    доступности GitHub и от ветки:
    ```
-   K=/opt/ymaster-check/deploy/adguard-vpn
+   K=/opt/docver/deploy/adguard-vpn
    sudo install -m 0644 -o root -g root $K/adguard-vpn-telegram.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now adguard-vpn-telegram
@@ -523,7 +523,7 @@ DNS сервера**, и при отравлении DNS бот получал �
 - Токен бота остаётся зашифрованным в базе программы; VPN-сервис его не
   видит — он лишь транспорт.
 - Привилегированные шаги по-прежнему выполняет только помощник
-  `ymaster-adguard-setup` через узкое sudoers-правило на фиксированные
+  `docver-adguard-setup` через узкое sudoers-правило на фиксированные
   фазы; произвольных команд от root программа не запускает.
 
 ## Возврат на SOCKS5 (если selective-режим подвёл)
@@ -572,10 +572,10 @@ curl -x socks5h://127.0.0.1:1080 https://api.telegram.org/ -m 10
 
 **Установка (один раз).** Нужен root: файлы пишутся в `/usr/local/sbin`
 и `/etc/systemd/system`. Проще всего взять их из комплекта, который уже
-лежит на сервере вместе с программой (`/opt/ymaster-check/deploy/adguard-vpn/`)
+лежит на сервере вместе с программой (`/opt/docver/deploy/adguard-vpn/`)
 — тогда не зависит от доступности GitHub и от ветки:
 ```
-K=/opt/ymaster-check/deploy/adguard-vpn
+K=/opt/docver/deploy/adguard-vpn
 sudo install -m 0755 -o root -g root $K/tg-health.sh /usr/local/sbin/tg-health.sh
 sudo install -m 0644 -o root -g root $K/tg-health.service /etc/systemd/system/
 sudo install -m 0644 -o root -g root $K/tg-health.timer /etc/systemd/system/

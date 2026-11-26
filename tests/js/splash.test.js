@@ -10,7 +10,7 @@
    fetch, билет в адресе — и сверяет, что заставка снята, экран входа и
    модальное окно ожидания видимы. Три сценария: билет в запросе, билет
    во фрагменте, обычный вход без токена.
-   v1.70.98: заставка — «chek.ymaster.ru» (#ym-splash в index.html, js/splash.js).
+   v1.70.98: заставка — «docver.ru» (#ym-splash в index.html, js/splash.js).
    Здесь splash.js не выполняется — проверяется запасная ветка (разметка
    скрыта); четвёртый сценарий — с контроллером: app.js зовёт ymSplash.ready(). */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -71,7 +71,7 @@ function stubFetch() {
     const u = String(url);
     if (u.includes('/api/v1/about')) {
       return Promise.resolve(json({ version: '1.70.66',
-        max_bot_username: 'chek.ymaster.bot' }));
+        max_bot_username: 'docver.bot' }));
     }
     if (u.includes('/api/v1/auth/max/poll')) {
       // первый опрос — «ждём», второй — «билет устарел»: цикл поллинга
