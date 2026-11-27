@@ -49,6 +49,7 @@ BUMPED_BLOCKS = (
     "Проверка чеков (ФНС и источники)",
     "Чек-Пул",
     "Настройки",
+    "Обновления",
     "Единый реестр чеков",
     "Контрагенты",
 )
@@ -1003,3 +1004,101 @@ class TestFnsProtocolFloorAndMaxPersistence:
             srv.shutdown()
             fns.reset_shared_clients()
 
+
+class TestSystemdSelfUpdateAndPhaseProgress:
+    """Исправление самообновления под ProtectSystem=strict и прогресса фаз в окне обновления."""
+
+    def test_systemd_unit_allows_self_update_and_offapp_backups(self):
+        unit = read("deploy/systemd/ymaster-check.service")
+        assert "ProtectSystem=strict" in unit
+        assert "ProtectHome=true" in unit
+        assert "ReadWritePaths=/opt/ymaster-check -/var/backups/ymaster-check" in unit
+        assert "ReadWritePaths=/opt/ymaster-check/data\n" not in unit
+        assert "Environment=HOME=/opt/ymaster-check/data" in unit
+        assert "--no-cache-dir" in updater._pip_cmd()
+
+    def test_writable_check_preflight_and_apply_409_on_readonly_fs(
+        self, client, tmp_path, monkeypatch
+    ):
+        import errno as _errno
+
+        monkeypatch.setattr(updater, "APP_DIR", str(tmp_path))
+        (tmp_path / "data").mkdir(exist_ok=True)
+        (tmp_path / "data" / "ymaster_check.db").write_bytes(b"sqlite")
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+        # Штатный каталог доступен на запись
+        ok_w, err_w = updater._writable_check()
+        assert ok_w is True and err_w == ""
+
+        # Эмулируем EROFS (Read-only file system от старого systemd ReadWritePaths)
+        def fake_open_erofs(path, _flags, _mode=0o600):
+            raise OSError(_errno.EROFS, "Read-only file system", path)
+
+        monkeypatch.setattr(updater.os, "open", fake_open_erofs)
+        monkeypatch.setattr(updater, "_restart_mode", lambda: (True, "sudoers"))
+        monkeypatch.setattr(
+            updater,
+            "_remote_version",
+            lambda _repo, _branch: {"version": "9.9.9", "checked_at": "2026-11-28T00:00:00Z"},
+        )
+
+        hdr = login(client, "admin", "admin123")
+        pf = client.get("/api/v1/admin/update/preflight", headers=hdr).json()
+        assert pf["writable_ok"] is False
+        assert pf["ready"] is False
+        assert "deploy.sh --update" in pf["writable_error"]
+
+        resp = client.post("/api/v1/admin/update/apply", headers=hdr)
+        assert resp.status_code == 409
+        assert "deploy.sh --update" in resp.json()["detail"]
+
+    def test_fetch_error_marks_failed_phase_without_opening_install_or_fake_rollback(
+        self, tmp_path, monkeypatch
+    ):
+        """Регрессия скриншота 02:16:28: сбой на git fetch закрывает фазу с ✗ и не зажигает «Установка файлов»."""
+        monkeypatch.setattr(updater, "APP_DIR", str(tmp_path))
+        monkeypatch.setattr(updater, "_local_commit", lambda: "abc1234")
+        monkeypatch.setattr(updater, "_writable_check", lambda: (True, ""))
+        monkeypatch.setattr(updater, "_ensure_git_repo", lambda _repo, _branch: (True, "git-репозиторий в порядке"))
+        monkeypatch.setattr("app.services.backups.create_backup", lambda _kind: "")
+        monkeypatch.setattr(updater, "_append_history", lambda *a, **k: None)
+
+        fetch_calls = {"n": 0}
+
+        def fail_erofs_fetch(_branch):
+            fetch_calls["n"] += 1
+            return 1, "error: cannot open '.git/FETCH_HEAD': Read-only file system", 0
+
+        reset_calls = {"n": 0}
+
+        def track_git(args, _timeout=180):
+            if args and args[0] == "reset":
+                reset_calls["n"] += 1
+            return 1, "Read-only file system"
+
+        monkeypatch.setattr(updater, "_git_fetch_progress", fail_erofs_fetch)
+        monkeypatch.setattr(updater, "_git", track_git)
+
+        updater.job.prepare("update", to_version="1.73.10")
+        updater._do_apply("1.73.10", "Rimlin-UNC/1c_chek", "main")
+        st = updater.job.public()
+
+        assert st["finished"] is True and st["success"] is False
+        # При Read-only file system не делаем бесполезный второй fetch и не трогаем git reset
+        assert fetch_calls["n"] == 1
+        assert reset_calls["n"] == 0
+        assert st["rolled_back"] is False
+        assert "deploy.sh --update" in st["error"]
+        # Ни одна фаза не осталась «active», а «install» («Установка файлов») вообще не открывалась!
+        active_phases = [k for k, v in st["phases"].items() if v.get("status") == "active"]
+        assert active_phases == [], f"остались зависшие active-фазы: {active_phases}"
+        assert st["phases"]["fetch"]["status"] == "failed"
+        assert "install" not in st["phases"]
+        updater.job.reset()
+
+    def test_ui_update_modal_has_writable_chip_and_no_active_spinner_when_finished(self):
+        js = read("app/static/js/app.js")
+        assert "chip('Запись файлов'" in js
+        assert 'if (st.finished) return `<div class="form-error">✗ ${title}${dtxt}</div>`;' in js
+        assert "обновление до v${esc(st.to_version || '')} не применено" in js

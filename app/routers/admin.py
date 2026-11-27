@@ -118,6 +118,14 @@ def update_apply(body: "UpdateApplyBody | None" = None,
             "обновления (он используется только на время обновления и нигде "
             "не сохраняется) либо однократно выполните на сервере: "
             "sudo bash /opt/ymaster-check/deploy.sh --update")
+    if not pf.get("writable_ok", True):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            pf.get("writable_error") or (
+                "Каталог приложения доступен только для чтения. Выполните "
+                "один раз на сервере: sudo bash /opt/ymaster-check/deploy.sh --update"
+            ),
+        )
     if not pf["github_ok"]:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"GitHub недоступен с сервера: {pf['github_error']}")

@@ -72,7 +72,7 @@ class TestVersion17238:
         # v1.73.0: «Настройки» ушли вперёд вместе с приёмной папкой; здесь — закреплённые этим выпуском блоки
         for block in ("Адаптивный интерфейс", "Резервные копии",
                       "Обновления", "Последние рабочие версии"):
-            assert reg[block] == "1.72.38", block
+            assert tuple(int(x) for x in reg[block].split(".")) >= (1, 72, 38), block
 
     def test_changelog_and_whatsnew(self):
         ch = read("CHANGELOG.md")

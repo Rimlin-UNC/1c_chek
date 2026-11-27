@@ -6801,6 +6801,7 @@ function openUpdateProgress() {
       if (p.status === 'failed') return `<div class="form-error">✗ ${title}${dtxt}</div>`;
       // после успеха активных фаз не бывает: рестарт мог не успеть закрыться
       if (st.success) return `<div style="color:var(--ok-text)">✓ ${title}${dtxt}</div>`;
+      if (st.finished) return `<div class="form-error">✗ ${title}${dtxt}</div>`;
       const live = p.started_at
         ? ` · ${Math.max(1, Math.round((Date.now() - p.started_at * 1000) / 1000))} с` : '';
       return `<div style="color:var(--brand)"><span class="upd-active">●</span> ${title}${dtxt}${live}…</div>`;
@@ -6809,6 +6810,8 @@ function openUpdateProgress() {
   const finishUp = (st) => {
     clearInterval(state.updTimer); clearInterval(updTick);
     state.updModalOpen = false;
+    const phDone = slot.querySelector('#upd-phases');
+    if (phDone) phDone.innerHTML = phaseRows(st);
     // v1.53.0: перезагрузка страницы нужна, только если сменилась версия
     // интерфейса; пустой bootVersion — перезагружаемся (безопасно)
     const needsReload = !!(st.current_version
@@ -6821,12 +6824,16 @@ function openUpdateProgress() {
     if (stepEl) stepEl.textContent = st.success
       ? (st.needs_restart ? 'Файлы обновлены — нужен перезапуск сервиса'
                           : `Обновление установлено: работает v${st.to_version}`)
-      : 'Обновление не удалось — система возвращена к прежней версии';
+      : (st.rolled_back
+          ? 'Обновление не удалось — система возвращена к прежней версии'
+          : `Обновление не удалось — файлы не менялись, работает v${st.from_version || st.current_version || ''}`);
     // итоговый отчёт: что установилось
     const sum = slot.querySelector('#upd-summary');
     if (sum) {
       const rows = ['<dl class="kv" style="font-size:13px">'];
-      rows.push(`<dt>Версия</dt><dd>v${esc(st.from_version || '')} → <b>v${esc(st.to_version || '')}</b></dd>`);
+      rows.push(st.success
+        ? `<dt>Версия</dt><dd>v${esc(st.from_version || '')} → <b>v${esc(st.to_version || '')}</b></dd>`
+        : `<dt>Версия</dt><dd>осталась <b>v${esc(st.from_version || st.current_version || '')}</b> (обновление до v${esc(st.to_version || '')} не применено)</dd>`);
       rows.push(st.blocks_changed && st.blocks_changed.length
         ? `<dt>Блоки</dt><dd>${st.blocks_changed.map(b =>
             `${esc(b.name)}: v${esc(b.from || '—')} → v${esc(b.to)}`).join('<br>')}</dd>`
@@ -6935,8 +6942,10 @@ const WHATS_NEW = {
       text: 'Исправлен двойной запуск проверки при сканировании чека и подключён общий 40-минутный сессионный токен AuthService. Вместо 6 запросов на один чек программа расходует ровно 2 запроса асинхронного протокола ФНС (отправка + получение билета) при активном токене или 3 при обновлении токена раз в 40 минут.' },
     { icon: '🗄️', title: 'Сначала проверка в своей базе — потом в ФНС',
       text: 'Перед любым обращением к ФНС программа проверяет, не был ли этот чек уже подтверждён в нашей локальной базе (в реестре, единой базе, Чек-Пуле или журнале проверок). Если чек уже есть у нас — статус, продавец и позиции подставляются мгновенно при 0 запросах к ФНС и с очисткой контактных данных покупателя.' },
-    { icon: '↩️', title: 'Точная проверка чеков возврата (n=2)',
-      text: 'При обращении к ФНС теперь передаётся фактический признак расчёта из QR-кода (приход n=1 или возврат прихода n=2), чтобы возвратные чеки подтверждались с первого раза без ложного ответа «не найден».' },
+    { icon: '↩️', title: 'Все признаки расчёта (n=1..4) и 100 % данных ФФД 1.2 в БД',
+      text: 'При обращении к ФНС передаются все 4 признака расчёта ККТ, работает пакетный опрос GetMessagesRequest до 20 чеков за 1 вызов, а во все таблицы базы и справочник «Контрагенты» сохраняются НДС 22 %, КПП, ОФД, маркировка и поставщик позиции.' },
+    { icon: '🔄', title: 'Обновление из браузера под защитой systemd',
+      text: 'Исправлена ошибка «cannot open .git/FETCH_HEAD: Read-only file system» при ProtectSystem=strict (расширен ReadWritePaths в ymaster-check.service, добавлена предпроверка записи), а при сбое обновления упавший этап сразу отмечается крестиком ✗ без зависших индикаторов.' },
   ],
   '1.73.9': [
     { icon: '📄', title: 'Авансовый отчёт печатается как форма АО-1',
@@ -13391,12 +13400,19 @@ async function viewSettings(container, alive = routeGuard()) {
           chip('GitHub', pf.github_ok, 'Сервер может скачать обновление'),
           chip('Git-репозиторий', pf.git_ok !== false,
             pf.git_ok === false ? 'Будет восстановлен автоматически при обновлении' : 'git на месте'),
+          chip('Запись файлов', pf.writable_ok !== false,
+            pf.writable_ok === false
+              ? (pf.writable_error || 'Каталог только для чтения — выполните sudo bash deploy.sh --update')
+              : 'Каталог приложения доступен для записи'),
           chip('Перезапуск', pf.can_restart,
             pf.can_restart ? 'Режим: ' + rmode : 'Недоступен — sudo bash deploy.sh --update'),
           chip('Копия БД', pf.db_backup_ok, 'Перед обновлением будет сделана резервная копия'),
         ].join(' ') + (pf.ready
           ? '<span class="form-hint" style="margin-left:8px">готово к обновлению из приложения</span>'
-          : '<span class="form-hint" style="margin-left:8px">обновление из приложения недоступно</span>');
+          : '<span class="form-hint" style="margin-left:8px">обновление из приложения недоступно</span>')
+          + (pf.writable_ok === false && pf.writable_error
+              ? `<div class="form-error" style="margin-top:6px;font-size:12.5px">${esc(pf.writable_error)}</div>`
+              : '');
       }).catch(() => { const el = $('#upd-ready'); if (el) el.textContent = ''; });
       setUpdState('checking');
       try {
