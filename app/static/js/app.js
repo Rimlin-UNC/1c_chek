@@ -21,7 +21,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.9';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.10';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6930,6 +6930,14 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.10': [
+    { icon: '🛡️', title: 'Экономия лимита ФНС 1000 запросов в сутки',
+      text: 'Исправлен двойной запуск проверки при сканировании чека и подключён общий 40-минутный сессионный токен AuthService. Вместо 6 запросов на один чек программа расходует ровно 2 запроса асинхронного протокола ФНС (отправка + получение билета) при активном токене или 3 при обновлении токена раз в 40 минут.' },
+    { icon: '🗄️', title: 'Сначала проверка в своей базе — потом в ФНС',
+      text: 'Перед любым обращением к ФНС программа проверяет, не был ли этот чек уже подтверждён в нашей локальной базе (в реестре, единой базе, Чек-Пуле или журнале проверок). Если чек уже есть у нас — статус, продавец и позиции подставляются мгновенно при 0 запросах к ФНС и с очисткой контактных данных покупателя.' },
+    { icon: '↩️', title: 'Точная проверка чеков возврата (n=2)',
+      text: 'При обращении к ФНС теперь передаётся фактический признак расчёта из QR-кода (приход n=1 или возврат прихода n=2), чтобы возвратные чеки подтверждались с первого раза без ложного ответа «не найден».' },
+  ],
   '1.73.9': [
     { icon: '📄', title: 'Авансовый отчёт печатается как форма АО-1',
       text: 'Серверный PDF повторяет унифицированную форму АО-1/сводную ведомость: лицевая и оборотная стороны, реестр из 42 строк без наложений, расписка и расчёт. Перед сохранением настоящий бланк виден прямо в предпросмотре, без iframe и без меню браузера.' },
@@ -12116,8 +12124,9 @@ async function viewSettings(container, alive = routeGuard()) {
           <button type="button" class="btn btn-sm" id="fns-diag">🩺 Диагностика связи</button>
         </div>
         <div id="fns-diag-out" style="margin-top:10px"></div>
-        <p class="form-hint" style="margin-top:10px">Кэш проверок: ${fns.cache_ttl_days} дней — повторная проверка
-        того же чека лимит не расходует.</p>
+        <p class="form-hint" style="margin-top:10px">Сначала проверяется локальная база программы: если чек
+        уже подтверждён у нас — <b>0 запросов</b> к ФНС. На новый чек асинхронный протокол ФНС расходует
+        <b>2 запроса</b> (отправка + получение документа) и <b>+1 запрос</b> раз в 40 минут на временный токен.</p>
         ${fns.quota ? `<div class="info-callout" style="font-size:12.5px;margin-top:10px">
           📊 Лимит ФНС на ${esc(fns.quota.day)}: израсходовано <b>${fns.quota.used}</b> из
           ${fns.quota.limit} запросов (${fns.quota.percent} %), остаток ${fns.quota.remaining}.
@@ -12417,11 +12426,11 @@ async function viewSettings(container, alive = routeGuard()) {
         Сторонние сервисы проверки чеков из программы удалены. Запросы последовательные,
         с паузами 2–7 секунд; при сетевом сбое источник «остывает».</p>
         <div class="info-callout" style="font-size:12.5px;margin-bottom:10px">
-          Суточный лимит — 1000 запросов на приложение (считаются все обращения: токен,
-          запрос чека, опрос результата). При 80 % администратор получает предупреждение,
-          при исчерпании чеки остаются «ожидают проверки» и проверяются автоматически
-          после сброса лимита. Повторная проверка того же чека берётся из кэша и лимит
-          не расходует.</div>
+          Суточный лимит — 1000 запросов на приложение. Если чек уже есть в нашей локальной базе,
+          данные подставляются без обращения к ФНС (<b>0 запросов</b>). Для нового чека уходит
+          <b>2 запроса</b> (SendMessage + GetMessage) при действующем 40-минутном токене или <b>3</b>
+          при получении нового токена. При 80 % показывается предупреждение, при исчерпании чеки
+          остаются «ожидают проверки» и проверяются автоматически после сброса лимита.</div>
         ${ext && ext.quota ? `<div class="info-callout" style="font-size:12.5px;margin-bottom:10px">
           📊 Сегодня (${esc(ext.quota.day)}): <b>${ext.quota.used}</b> из ${ext.quota.limit}
           запросов (${ext.quota.percent} %), остаток ${ext.quota.remaining}.

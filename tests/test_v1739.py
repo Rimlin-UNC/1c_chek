@@ -64,7 +64,7 @@ class TestRelease1739:
 
     def test_changelog_whats_new_and_registry(self):
         changelog = read("CHANGELOG.md")
-        assert changelog.startswith(f"## [{VERSION}]")
+        assert changelog.count(f"## [{VERSION}]") == 1
         entry = changelog.split(f"## [{VERSION}]", 1)[1].split("\n## [", 1)[0]
         assert len(entry) <= 5000, len(entry)
         for needle in ("АО-1", "полные itemized копии", "PDF_QR_LIMIT",

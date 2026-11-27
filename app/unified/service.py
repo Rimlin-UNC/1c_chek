@@ -125,21 +125,61 @@ def _items(db: Session, row: Any, kind: str) -> list[dict]:
         return [_registry_item(pos, it) for pos, it in enumerate(rows)]
     rows = (db.query(PoolItem).filter(PoolItem.receipt_id == row.id)
             .order_by(PoolItem.id).all())
-    return [{
-        "position": pos,
-        "name": it.name or "",
-        "quantity": float(it.quantity or 0.0),
-        "price": float(it.price or 0.0),
-        "total": float(it.total or 0.0),
-        "vat_rate": it.vat_rate or "none",
-        "vat_sum": float(it.vat_sum or 0.0),
-        "product_type": None,
-        "payment_type": None,
-        "unit": "",
-        "product_group": "",
-        "industry": "",
-        "extra_json": "",
-    } for pos, it in enumerate(rows)]
+    norm_items: dict[int, dict] = {}
+    raw_txt = getattr(row, "raw", "") or ""
+    if raw_txt:
+        try:
+            raw_obj = json.loads(raw_txt)
+            if isinstance(raw_obj, dict):
+                from ..services import receipt_card
+                t_obj = (raw_obj.get("_fns_ticket")
+                         if isinstance(raw_obj.get("_fns_ticket"), dict)
+                         else (raw_obj if "items" in raw_obj or "receipt" in raw_obj
+                               else None))
+                if isinstance(t_obj, dict):
+                    ndoc = receipt_card.normalize_ticket(
+                        t_obj, getattr(row, "total_sum", None))
+                    for idx_it, dit in enumerate(ndoc.get("items") or []):
+                        norm_items[idx_it] = dit
+        except Exception:                                # noqa: BLE001
+            norm_items = {}
+    out_pool: list[dict] = []
+    for pos, it in enumerate(rows):
+        dit = norm_items.get(pos) or {}
+        pt_raw = dit.get("product_type")
+        pm_raw = dit.get("payment_type")
+        item_extra = {
+            k: v for k, v in (
+                ("marking", dit.get("marking")),
+                ("agent", dit.get("agent")),
+                ("supplier", dit.get("supplier")),
+                ("country", dit.get("country")),
+                ("customs", dit.get("customs")),
+                ("excise", dit.get("excise")),
+                ("industry_details", dit.get("industry_details")),
+                ("measure_code", dit.get("measure_code")),
+                ("vat_canonical", dit.get("nds_canonical")),
+                ("item_properties", dit.get("item_properties")),
+                ("fractional_quantity", dit.get("fractional_quantity")),
+                ("product_code", dit.get("product_code")),
+            ) if v not in (None, "", [], {}, 0, 0.0)
+        }
+        out_pool.append({
+            "position": pos,
+            "name": it.name or "",
+            "quantity": float(it.quantity or 0.0),
+            "price": float(it.price or 0.0),
+            "total": float(it.total or 0.0),
+            "vat_rate": it.vat_rate or "none",
+            "vat_sum": float(it.vat_sum or 0.0),
+            "product_type": int(pt_raw) if str(pt_raw).isdigit() else None,
+            "payment_type": int(pm_raw) if str(pm_raw).isdigit() else None,
+            "unit": str(dit.get("measure") or "")[:20],
+            "product_group": str(dit.get("group") or "")[:100],
+            "industry": str(dit.get("industry") or "")[:100],
+            "extra_json": json.dumps(item_extra, ensure_ascii=False) if item_extra else "",
+        })
+    return out_pool
 
 
 def _set_items(db: Session, doc: UnifiedDocument, items: list[dict]) -> None:
@@ -322,6 +362,13 @@ def register_source(db: Session, kind: str, row: Any, actor: User | None = None,
         if key is None:
             doc.review_flags |= REVIEW_INCOMPLETE_IDENTITY
     own = _ensure_ownership(db, doc)
+    if doc.deleted_at is not None:
+        doc.deleted_at = None
+        if not any(o.source_kind == POOL for o in doc.origins):
+            own.company_id = None
+            own.created_by = None
+            own.assigned_at = None
+            own.assigned_by = ""
     company_id = _company_id(row, kind)
     if company_id:
         if own.company_id is None and not (doc.review_flags & REVIEW_OWNERSHIP):
@@ -338,13 +385,6 @@ def register_source(db: Session, kind: str, row: Any, actor: User | None = None,
     status, checked = _fns_evidence(row, kind)
     _merge_fns(doc, status, checked)
     db.add(UnifiedOrigin(document_id=doc.id, source_kind=kind, source_id=row.id))
-    if doc.deleted_at is not None:
-        doc.deleted_at = None
-        if not any(o.source_kind == POOL for o in doc.origins):
-            own.company_id = None
-            own.created_by = None
-            own.assigned_at = None
-            own.assigned_by = ""
     doc.version += 1
     _add_event(db, doc, event_type, actor, to_company=own.company_id,
                details={"source_kind": kind, "created": created})

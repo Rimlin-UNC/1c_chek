@@ -222,11 +222,18 @@ def merge_cards(db: Session, user: User, primary_id: str, duplicate_id: str,
 
 
 def candidates(db: Session, user: User, company_id: str | None = None) -> list[dict]:
+    from ..models import Receipt
+
     scoped = scope_company(user, company_id)
     docs = list(db.scalars(select(PrimaryDocument)).all())
     ops = list(db.scalars(select(BankOperation)).all())
     incomes = list(db.scalars(select(BankIncome)).all())
-    return sources.collect_candidates(docs, ops, incomes, company_id=scoped)
+    r_stmt = select(Receipt).where(Receipt.merchant_inn != "")
+    if scoped:
+        r_stmt = r_stmt.where(Receipt.company_id == scoped)
+    receipts = list(db.scalars(r_stmt).all())
+    return sources.collect_candidates(
+        docs, ops, incomes, company_id=scoped, receipts=receipts)
 
 
 def verify_card(db: Session, user: User, card_id: str,

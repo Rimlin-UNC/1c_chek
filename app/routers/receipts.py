@@ -31,6 +31,7 @@ from urllib.parse import quote
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Depends,
     File,
     Form,
@@ -41,7 +42,6 @@ from fastapi import (
 )
 from fastapi.responses import Response
 from sqlalchemy import and_, func, or_
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, lazyload
 
 from ..auth import (
@@ -54,7 +54,7 @@ from ..auth import (
 )
 from ..config import settings
 from ..database import get_db
-from ..models import Company, FnsLog, MappingSetting, MerchantRule, Receipt, ReceiptItem, User
+from ..models import Company, MappingSetting, MerchantRule, Receipt, ReceiptItem, User
 from ..schemas import (
     AdvanceReportBody,
     AdvanceReportNumberBody,
@@ -165,6 +165,22 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         db.refresh(receipt)
         return receipt, created
 
+    # v1.73.10: если документ ранее уже был в единой базе (и удалён из
+    # реестра), сохраняем точное время с секундами из ФНС, если минута в QR
+    # совпадает — чтобы строгая регистрация не поднимала ложный флаг даты.
+    from ..unified import service as unified
+    from ..unified.models import UnifiedDocument
+    now_utc = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    effective_date = parsed.date_time or now_utc
+    ukey = unified.identity_key(parsed.fn, parsed.fd, parsed.fp)
+    if ukey and parsed.date_time is not None:
+        existing_doc = (db.query(UnifiedDocument)
+                        .filter(UnifiedDocument.identity_key == ukey).first())
+        if (existing_doc is not None and existing_doc.receipt_date is not None
+                and existing_doc.receipt_date.replace(second=0, microsecond=0)
+                == parsed.date_time.replace(second=0, microsecond=0)):
+            effective_date = existing_doc.receipt_date
+
     # v1.2.0: чек, присланный сотрудником, сразу помечается «от кого» —
     # бухгалтеру не нужно назначать вручную; меняют только бухгалтер/админ.
     auto_assignee = ""
@@ -174,7 +190,7 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
     receipt = Receipt(
         qr_data=parsed.qr_data,
         fn=parsed.fn, fd=parsed.fd, fp=parsed.fp,
-        receipt_date=parsed.date_time or dt.datetime.utcnow(),
+        receipt_date=effective_date,
         total_sum=parsed.total_sum,
         operation=parsed.operation if parsed.operation in (1, 2) else 1,
         source=source,
@@ -197,12 +213,70 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
         _mr.apply_rules(db, receipt)
     except Exception:                              # noqa: BLE001
         pass                                       # правила не ломают приём
-    from ..unified import service as unified
     unified.register_source(db, unified.REGISTRY, receipt, user,
                             strict=True, event_type="create")
+    _hydrate_receipt_from_local_db(db, receipt)
     db.commit()
     db.refresh(receipt)
     return receipt, True
+
+
+def _hydrate_receipt_from_local_db(db: Session, receipt: Receipt) -> bool:
+    """v1.73.10: мгновенно заполнить новый чек, если он уже проверен в нашей БД.
+
+    Экономит лимит 1000 запросов ФНС/сутки: когда чек уже подтверждён в единой
+    базе (например, был отсканирован и удалён ранее) или в журнале проверок,
+    переиспользуем проверенные фискальные реквизиты и позиции (без ПДн
+    покупателя) за 0 сетевых обращений к ФНС.
+    """
+    from ..services import fns as _fns
+    from ..unified import service as unified
+    cached = _fns.find_cached_in_db(
+        db, receipt.fn, receipt.fd, receipt.fp,
+        receipt.total_sum, receipt.receipt_date, receipt.operation,
+        exclude_receipt_id=receipt.id,
+    )
+    if cached is None:
+        return False
+    now_utc = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    receipt.fns_status = cached.status
+    receipt.fns_message = cached.message
+    receipt.fns_checked_at = now_utc
+    if cached.status == "valid":
+        receipt.status = "verified"
+        ticket = (cached.raw.get("ticket")
+                  if isinstance(cached.raw, dict) else None)
+        if isinstance(ticket, dict) and ticket:
+            try:
+                from ..services import receipt_card as _card
+                _card.apply_to_receipt(db, receipt, ticket)
+                receipt.details_fetched_at = now_utc
+            except Exception:                      # noqa: BLE001
+                logging.getLogger("ymaster").debug(
+                    "local db card apply", exc_info=True)
+        try:
+            from ..services import merchant_rules as _mr
+            _mr.apply_rules(db, receipt)
+        except Exception:                          # noqa: BLE001
+            logging.getLogger("ymaster").debug(
+                "local db merchant rules", exc_info=True)
+        try:
+            from ..services import policy as _pol
+            _pol.refresh_receipt(db, receipt)
+        except Exception:                          # noqa: BLE001
+            logging.getLogger("ymaster").debug(
+                "local db policy refresh", exc_info=True)
+    elif cached.status == "invalid":
+        receipt.status = "failed"
+    try:
+        raw = json.loads(receipt.raw_data or "{}")
+    except ValueError:
+        raw = {}
+    if isinstance(cached.raw, dict):
+        raw["fns"] = dict(cached.raw)
+    receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+    unified.sync_registry_safely(db, receipt)
+    return True
 
 
 def _foreign_duplicate(user: User, receipt: Receipt, company_id: str | None) -> bool:
@@ -306,7 +380,8 @@ def _scan_in_company(body: ScanRequest, background: BackgroundTasks, user: User,
         _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         auto = _maybe_auto_verify(background, db, receipt)
-        _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
+        if not auto and appsettings.auto_verify_enabled(db):
+            _maybe_auto_fetch(background, db, receipt)
     else:
         log_action(user, "receipt_duplicate", "receipt", receipt.id,
                    {"fn": receipt.fn, "fd": receipt.fd})
@@ -380,7 +455,8 @@ async def scan_image(background: BackgroundTasks, file: UploadFile = File(...),
         _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
         auto = _maybe_auto_verify(background, db, receipt)
-        _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
+        if not auto and appsettings.auto_verify_enabled(db):
+            _maybe_auto_fetch(background, db, receipt)
     else:
         auto = False
         if _foreign_duplicate(user, receipt, company_id):
@@ -442,8 +518,9 @@ async def scan_pdf(background: BackgroundTasks, file: UploadFile = File(...),
                        {"fn": receipt.fn, "fd": receipt.fd, "source": "pdf"})
             _notify_receipt_created(user, receipt)
             broadcast("receipt_created", receipt.to_dict())
-            _maybe_auto_verify(background, db, receipt)
-            _maybe_auto_fetch(background, db, receipt)
+            auto_i = _maybe_auto_verify(background, db, receipt)
+            if not auto_i and appsettings.auto_verify_enabled(db):
+                _maybe_auto_fetch(background, db, receipt)
         last = receipt
     message = ("Некоторые чеки из PDF приняты; другие уже зарегистрированы за другой организацией"
                if foreign_duplicate and created else
@@ -496,8 +573,9 @@ def manual(body: ManualReceipt, background: BackgroundTasks,
         log_action(user, "receipt_created", "receipt", receipt.id, {"source": "manual"})
         _notify_receipt_created(user, receipt)
         broadcast("receipt_created", receipt.to_dict())
-        _maybe_auto_verify(background, db, receipt)
-        _maybe_auto_fetch(background, db, receipt)      # v1.2.0: данные из сервисов
+        auto = _maybe_auto_verify(background, db, receipt)
+        if not auto and appsettings.auto_verify_enabled(db):
+            _maybe_auto_fetch(background, db, receipt)
     if not created and _foreign_duplicate(user, receipt, company_id):
         message = "Чек уже зарегистрирован в другой организации"
         if _claim_foreign(db, user, receipt, company_id, "manual"):   # v1.70.85
@@ -1445,6 +1523,8 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
         receipt.fns_status = "valid"
         receipt.fns_checked_at = dt.datetime.utcnow()
         receipt.fns_message = f"Данные получены ({res.source})"
+        if receipt.status in ("new", "failed"):
+            receipt.status = "verified"
         if res.items and not (human_edited and receipt.items):
             receipt.items.clear()
             for pos, it in enumerate(res.items):
@@ -1456,16 +1536,29 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
             # v1.70.101 (T-69): категории позиций — каскадом понимания чеков
             from ..goods import service as goods_service
             goods_service.classify_receipt(db, receipt)
-    if not human_edited:
+    elif isinstance(res.raw, dict) and res.raw.get("quota"):
+        receipt.fns_status = "pending"
+        receipt.fns_message = res.message
+        if receipt.status == "verifying":
+            receipt.status = "new"
+        from ..services import fns as _fns_hint
+        _fns_hint.apply_fn_merchant_hint(db, receipt)
+    if not human_edited and res.source:
         receipt.details_source = res.source or receipt.details_source
-    receipt.details_fetched_at = dt.datetime.utcnow()
+    receipt.details_fetched_at = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     # v1.70.72: полный документ ФНС → регион, отрасль, реквизиты позиций
+    _ticket = (
+        (res.raw.get("_fns_ticket") or res.raw.get("ticket"))
+        if isinstance(res.raw, dict) else None
+    )
     try:
         from ..services import receipt_card as _card
-        _ticket = (res.raw.get("ticket") if isinstance(res.raw, dict) else None)
         if isinstance(_ticket, dict) and _ticket:
-            _card.apply_to_receipt(db, receipt, _ticket,
-                                   force_items=bool(receipt.details_source != "manual_edit"))
+            _card.apply_to_receipt(
+                db, receipt, _ticket,
+                force_items=bool(receipt.details_source != "manual_edit"),
+                source=res.source or "fns_api",
+            )
     except Exception:                                  # noqa: BLE001
         logging.getLogger("ymaster").debug("receipt card apply",
                                            exc_info=True)
@@ -1500,13 +1593,55 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
         raw = json.loads(receipt.raw_data or "{}")
     except ValueError:
         raw = {}
-    raw["external"] = {"source": res.source, "message": res.message,
-                       "fetched_at": dt.datetime.utcnow().isoformat() + "Z"}
+    raw["external"] = {
+        "source": res.source,
+        "message": res.message,
+        "fetched_at": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat() + "Z",
+    }
+    if res.found and isinstance(_ticket, dict) and _ticket:
+        old_fns = raw.get("fns") if isinstance(raw.get("fns"), dict) else {}
+        merged_fns = dict(old_fns)
+        merged_fns.setdefault("provider", "fns")
+        merged_fns.setdefault("code", "200")
+        if isinstance(res.raw, dict) and res.raw.get("checked_fingerprint"):
+            merged_fns["checked_fingerprint"] = res.raw["checked_fingerprint"]
+        merged_fns["ticket"] = _ticket
+        raw["fns"] = merged_fns
     receipt.raw_data = json.dumps(raw, ensure_ascii=False)
     # v1.70.82: сбой единого реестра не отменяет полученные данные чека
     from ..unified import service as unified
     unified.sync_registry_safely(db, receipt)
     db.commit()
+
+    # Сохраняем реальный сетевой ответ ФНС в архивный журнал fns_log (без дублей из кэша)
+    is_real_fns_net = (
+        res.source == "fns_api"
+        and isinstance(res.raw, dict)
+        and not res.raw.get("cached")
+        and not res.raw.get("quota")
+        and not res.raw.get("preflight")
+    )
+    if is_real_fns_net:
+        from ..services import fns as _fns_log
+        _fns_log.record_fns_log(
+            db,
+            receipt_id=receipt.id,
+            fn=receipt.fn,
+            fd=receipt.fd,
+            fp=receipt.fp,
+            result=_fns_log.FnsResult(
+                "valid" if res.found else str(res.raw.get("status") or "unknown"),
+                res.message,
+                {
+                    "provider": "fns",
+                    "code": res.raw.get("code") or ("200" if res.found else ""),
+                    "ticket": _ticket if isinstance(_ticket, dict) else {},
+                    "checked_fingerprint": res.raw.get("checked_fingerprint", ""),
+                },
+                bool(res.ok),
+            ),
+            duration_ms=int(res.raw.get("duration_ms") or 0),
+        )
 
 
 # v1.67.1 (аудит/стресс): мок-источник спит 2–7 с на чек (антибан), реальная
@@ -1533,10 +1668,12 @@ def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
             _log.info("🔎 Чек %s: QR: %s", rid, (receipt.qr_data or "")[:140])
             # v1.57.5: поведение v1.25.1 — воркер берёт КАЖДЫЙ переданный
             # чек (решение о запросе принимает человек, нажав кнопку)
-            res = external_engine.fetch(
-                db, receipt.qr_data, receipt.fn, receipt.fd, receipt.fp,
-                receipt.total_sum, receipt.receipt_date)
-            _apply_external_result(db, receipt, res)
+            from ..services import fns as _fns
+            with _fns.inflight_lock(receipt.fn, receipt.fd, receipt.fp):
+                res = external_engine.fetch(
+                    db, receipt.qr_data, receipt.fn, receipt.fd, receipt.fp,
+                    receipt.total_sum, receipt.receipt_date)
+                _apply_external_result(db, receipt, res)
             db.refresh(receipt)
             _log.info("💾 Чек %s: результат=%s, источник=%s, ext_json=%d байт, "
                       "full_data=%s", rid, "ok" if res.ok else "НЕ получены",
@@ -1624,13 +1761,14 @@ def _limit_retry_tick() -> int:
     """Проверить чеки со статусом «ожидает проверки» → сколько поставлено."""
     from ..database import SessionLocal
     from ..services import fns_quota
-    if fns_quota.used_today() >= fns_quota.limit_value():
-        return 0                     # лимит ещё не сбросился — ждём
+    budget = fns_quota.background_budget()
+    if budget <= 0:
+        return 0                     # лимит ещё не сбросился или держим резерв
     db = SessionLocal()
     try:
         rows = db.query(Receipt).filter(
             Receipt.fns_status == "pending").order_by(
-            Receipt.created_at.asc()).limit(50).all()
+            Receipt.created_at.asc()).limit(min(20, budget)).all()
         ids = [r.id for r in rows]
     finally:
         db.close()
@@ -1782,11 +1920,14 @@ def delete_receipt(receipt_id: str, user: User = Depends(get_current_user),
 # --------------------------------------------------------------------------
 #  Проверка в ФНС (фоновая задача)
 # --------------------------------------------------------------------------
-def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
+def _verify_one_sync(receipt_id: str, job_id: str | None = None,
+                     force: bool = False) -> None:
     """Синхронное выполнение проверки (для фонового потока).
 
     v1.70.72: job_id — задание пакетной проверки, чтобы человек увидел итог
     «проверено N из M: подтверждено …, не найдено …».
+    v1.73.10: передаёт operation (1/2) и сессию db для предварительной проверки
+    по локальной БД (0 запросов к ФНС, если чек уже подтверждён).
     """
     from ..database import SessionLocal
     _VERIFY_SEM.acquire()                    # v1.67.1: ждём БЕЗ сессии
@@ -1799,111 +1940,136 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
         db.commit()
         broadcast("receipt_verifying", {"id": receipt.id, "status": "verifying"})
 
+        from ..services import fns as _fns
         t0 = time.monotonic()
-        result = check_receipt(receipt.fn, receipt.fd, receipt.fp,
-                               receipt.total_sum, receipt.receipt_date,
-                               receipt.fns_status, receipt.fns_checked_at)
-        duration = int((time.monotonic() - t0) * 1000)
+        with _fns.inflight_lock(receipt.fn, receipt.fd, receipt.fp):
+            result = check_receipt(
+                receipt.fn, receipt.fd, receipt.fp,
+                receipt.total_sum, receipt.receipt_date,
+                receipt.fns_status, receipt.fns_checked_at,
+                operation=receipt.operation or 1,
+                db=db,
+                force=force,
+            )
+            duration = int((time.monotonic() - t0) * 1000)
 
-        if result.status == "quota":
-            # v1.70.70: исчерпан суточный лимит ФНС — чек НЕ теряется:
-            # остаётся «ожидает проверки» и проверяется автоматически
-            # после сброса лимита (см. _limit_retry_worker).
-            receipt.status = "new"
-            receipt.fns_status = "pending"
-            receipt.fns_message = result.message
-            db.commit()
-            logging.getLogger("ymaster").warning(
-                "⏸ ЧЕК ОЖИДАЕТ ПРОВЕРКИ [%s]: лимит запросов к ФНС",
-                receipt.id)
-            broadcast("receipt_verified", receipt.to_dict())
-            from ..services.webhooks import enqueue_receipt_verified
-            enqueue_receipt_verified(db, receipt.id)
-            from ..services import verify_jobs as _jobs
-            _jobs.note(job_id, "quota")
-            return
-
-        receipt.fns_status = result.status
-        receipt.fns_message = result.message
-        receipt.fns_checked_at = dt.datetime.utcnow()
-        receipt.status = ("verified" if result.status in ("valid", "not_found")
-                          else ("failed" if result.status == "invalid" else receipt.status))
-        if result.status == "unknown":
-            receipt.status = "new"  # можно повторить проверку
-        items = result.raw.get("items") if isinstance(result.raw, dict) else None
-        if items and not receipt.items:
-            for i, it in enumerate(items[:200]):
-                db.add(ReceiptItem(
-                    receipt_id=receipt.id,
-                    name=str(it.get("name", "Позиция"))[:500],
-                    quantity=float(it.get("quantity", 1) or 1),
-                    price=float(it.get("price", 0) or 0),
-                    total=float(it.get("sum", 0) or 0),
-                    vat_rate=str(it.get("vat_rate", "none") or "none")[:10],
-                    vat_sum=float(it.get("vat_sum", 0) or 0),
-                    position=i,
-                ))
-        # v1.25.2: единый источник истины — проверенный ФНС чек, у которого
-        # есть позиции, считается «с полными данными»: повторный запрос не
-        # нужен, фильтр «Данные чека → полные» его показывает.
-        # Локальная items (не relationship): сессия кэширует коллекцию, а
-        # позиции добавлены выше по FK (autoflush выключен).
-        if result.status == "valid" and (items or receipt.items):
-            receipt.full_data = True
-
-        # v1.70.72: полный документ ФНС — регион, отрасль, налоги, реквизиты
-        raw = json.loads(receipt.raw_data or "{}")
-        old_fns = raw.get("fns") if isinstance(raw.get("fns"), dict) else {}
-        _ticket = (result.raw.get("ticket")
-                   if isinstance(result.raw, dict) else None)
-        # Ответ из кэша приходит без документа: берём сохранённый ранее,
-        # иначе повторная проверка «обнуляла» полные данные чека.
-        if not _ticket and isinstance(old_fns.get("ticket"), dict):
-            _ticket = old_fns["ticket"]
-        if result.status == "valid" and isinstance(_ticket, dict) and _ticket:
-            try:
-                from ..services import receipt_card as _card
-                _card.apply_to_receipt(db, receipt, _ticket)
-            except Exception:                          # noqa: BLE001
-                logging.getLogger("ymaster").debug("receipt card apply",
-                                                   exc_info=True)
-        merged = dict(old_fns)
-        if isinstance(result.raw, dict):
-            merged.update(result.raw)
-        if _ticket and not merged.get("ticket"):
-            merged["ticket"] = _ticket
-        raw["fns"] = merged
-        receipt.raw_data = json.dumps(raw, ensure_ascii=False)
-        # v1.70.82: ответ ФНС оплачен квотой — сбой единого реестра его не
-        # отменяет (откатывается только точка сохранения синхронизации)
-        from ..unified import service as unified
-        unified.sync_registry_safely(db, receipt)
-        db.commit()
-
-        # v1.18.0: id задаём явно (max+1) — на таблицах старой схемы SQLite
-        # не автоинкрементировал BigInteger PK и журнал ФНС молча не вёлся.
-        # v1.70.38: max+1 без повторов — это гонка (два одновременных чека
-        # получают один id, второй коммит падает, строка журнала теряется),
-        # поэтому при IntegrityError номер перечитывается и вставка идёт заново.
-        _req = json.dumps({"fn": receipt.fn, "fd": receipt.fd,
-                           "fp": receipt.fp}, ensure_ascii=False)
-        _resp = json.dumps(result.raw, ensure_ascii=False)[:4000]
-        _prov = (result.raw.get("provider", "fns")
-                 if isinstance(result.raw, dict) else "fns")
-        for _try in range(5):
-            _nid = (db.query(
-                func.coalesce(func.max(FnsLog.id), 0)).scalar() or 0) + 1
-            db.add(FnsLog(id=_nid,
-                          receipt_id=receipt.id,
-                          request_data=_req,
-                          response_data=_resp,
-                          provider=_prov,
-                          ok=result.ok, duration_ms=duration))
-            try:
+            if result.status == "quota":
+                # v1.70.70: исчерпан суточный лимит ФНС — чек НЕ теряется:
+                # остаётся «ожидает проверки» и проверяется автоматически
+                # после сброса лимита (см. _limit_retry_worker).
+                receipt.status = "new"
+                receipt.fns_status = "pending"
+                receipt.fns_message = result.message
+                _fns.apply_fn_merchant_hint(db, receipt)
                 db.commit()
-                break
-            except IntegrityError:
-                db.rollback()      # чек к этому моменту уже сохранён выше
+                logging.getLogger("ymaster").warning(
+                    "⏸ ЧЕК ОЖИДАЕТ ПРОВЕРКИ [%s]: лимит запросов к ФНС",
+                    receipt.id)
+                broadcast("receipt_verified", receipt.to_dict())
+                from ..services.webhooks import enqueue_receipt_verified
+                enqueue_receipt_verified(db, receipt.id)
+                from ..services import verify_jobs as _jobs
+                _jobs.note(job_id, "quota")
+                return
+
+            now_utc = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+            receipt.fns_status = result.status
+            receipt.fns_message = result.message
+            receipt.fns_checked_at = now_utc
+            receipt.status = ("verified" if result.status in ("valid", "not_found")
+                              else ("failed" if result.status == "invalid" else receipt.status))
+            if result.status == "unknown":
+                receipt.status = "new"  # можно повторить проверку
+
+            # v1.70.72+: полный документ ФНС — регион, отрасль, налоги, реквизиты
+            raw = json.loads(receipt.raw_data or "{}")
+            old_fns = raw.get("fns") if isinstance(raw.get("fns"), dict) else {}
+            _ticket = (result.raw.get("ticket")
+                       if isinstance(result.raw, dict) else None)
+            if not _ticket and isinstance(old_fns.get("ticket"), dict):
+                _ticket = old_fns["ticket"]
+            applied_doc = {}
+            if result.status == "valid" and isinstance(_ticket, dict) and _ticket:
+                try:
+                    from ..services import receipt_card as _card
+                    applied_doc = _card.apply_to_receipt(
+                        db, receipt, _ticket,
+                        force_items=bool(receipt.details_source != "manual_edit"),
+                    )
+                    receipt.details_fetched_at = now_utc
+                except Exception:                          # noqa: BLE001
+                    logging.getLogger("ymaster").debug("receipt card apply",
+                                                       exc_info=True)
+            items = result.raw.get("items") if isinstance(result.raw, dict) else None
+            if items and not applied_doc.get("items") and not receipt.items:
+                for i, it in enumerate(items[:200]):
+                    db.add(ReceiptItem(
+                        receipt_id=receipt.id,
+                        name=str(it.get("name", "Позиция"))[:500],
+                        quantity=float(it.get("quantity", 1) or 1),
+                        price=float(it.get("price", 0) or 0),
+                        total=float(it.get("sum", 0) or 0),
+                        vat_rate=str(it.get("vat_rate", "none") or "none")[:10],
+                        vat_sum=float(it.get("vat_sum", 0) or 0),
+                        position=i,
+                    ))
+            if result.status == "valid" and (
+                    applied_doc.get("items") or items or receipt.items):
+                receipt.full_data = True
+            if result.status == "valid":
+                if receipt.items and receipt.details_source != "manual_edit":
+                    try:
+                        from ..services.integrity import check_items
+                        _v = check_items(receipt.items, receipt.total_sum)
+                    except Exception:                      # noqa: BLE001
+                        _v = None
+                    if _v is not None and not _v.ok and receipt.status == "verified":
+                        receipt.status = "pending"
+                        receipt.fns_message = (f"Проверка данных чека: данные "
+                                               f"не сходятся — {_v.message}")[:500]
+                try:
+                    from ..services import merchant_rules as _mr
+                    _mr.apply_rules(db, receipt)
+                except Exception:                          # noqa: BLE001
+                    logging.getLogger("ymaster").debug(
+                        "verify merchant rules", exc_info=True)
+                try:
+                    from ..services import policy as _pol
+                    _pol.refresh_receipt(db, receipt)
+                except Exception:                          # noqa: BLE001
+                    logging.getLogger("ymaster").debug(
+                        "verify policy refresh", exc_info=True)
+            merged = dict(old_fns)
+            if isinstance(result.raw, dict):
+                merged.update(result.raw)
+            merged.setdefault(
+                "checked_fingerprint",
+                _fns.request_fingerprint(
+                    receipt.fn, receipt.fd, receipt.fp,
+                    receipt.total_sum, receipt.receipt_date,
+                    receipt.operation or 1,
+                ),
+            )
+            if _ticket and not merged.get("ticket"):
+                merged["ticket"] = _ticket
+            raw["fns"] = merged
+            receipt.raw_data = json.dumps(raw, ensure_ascii=False)
+            # v1.70.82: ответ ФНС оплачен квотой — сбой единого реестра его не
+            # отменяет (откатывается только точка сохранения синхронизации)
+            from ..unified import service as unified
+            unified.sync_registry_safely(db, receipt)
+            db.commit()
+
+        # В журнал fns_log пишем реальные обращения к источнику (полный JSON без обрезки 4 КБ)
+        _fns.record_fns_log(
+            db,
+            receipt_id=receipt.id,
+            fn=receipt.fn,
+            fd=receipt.fd,
+            fp=receipt.fp,
+            result=result,
+            duration_ms=duration,
+        )
         broadcast("receipt_verified", receipt.to_dict())
         from ..services import verify_jobs as _jobs
         _jobs.note(job_id, result.status)
@@ -1928,11 +2094,13 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
 
 
 def _run_verification(receipt_ids: list[str],
-                      job_id: str | None = None) -> None:
+                      job_id: str | None = None,
+                      force: bool = False) -> None:
     """Фоновое пакетное выполнение проверок (v1.70.72: с учётом задания)."""
     threads = []
     for rid in receipt_ids:
-        t = threading.Thread(target=_verify_one_sync, args=(rid, job_id),
+        t = threading.Thread(target=_verify_one_sync,
+                             args=(rid, job_id, force),
                              daemon=True)
         t.start()
         threads.append(t)
@@ -1958,9 +2126,10 @@ def verify(body: VerifyRequest, background: BackgroundTasks,
     # v1.70.72: задание — чтобы после пакетной проверки показать итог
     from ..services import verify_jobs as _jobs
     job = _jobs.create(len(ids), user.id)
-    background.add_task(_run_verification, ids, job["job_id"])
+    background.add_task(_run_verification, ids, job["job_id"], bool(body.force))
     log_action(user, "verify_queued", details={"count": len(ids),
-                                               "job_id": job["job_id"]})
+                                               "job_id": job["job_id"],
+                                               "force": bool(body.force)})
     return {"queued": len(ids), "job_id": job["job_id"],
             "message": f"Отправлено на проверку: {len(ids)} чеков"}
 
@@ -1986,11 +2155,15 @@ def verify_job(job_id: str,
 
 @router.post("/{receipt_id}/verify", summary="Проверить один чек в ФНС (бухгалтер+)")
 def verify_one(receipt_id: str, background: BackgroundTasks,
-               user: User = Depends(require_accountant), db: Session = Depends(get_db)):
+               force: bool = Query(False),
+               body: dict | None = Body(default=None),
+               user: User = Depends(require_accountant),
+               db: Session = Depends(get_db)):
     receipt = db.get(Receipt, receipt_id)
     if not receipt or not can_view_receipt(user, receipt):      # v1.11.0
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    background.add_task(_run_verification, [receipt.id])
+    do_force = bool(force or (isinstance(body, dict) and body.get("force")))
+    background.add_task(_run_verification, [receipt.id], None, do_force)
     return {"queued": 1, "message": "Чек отправлен на проверку в ФНС"}
 
 

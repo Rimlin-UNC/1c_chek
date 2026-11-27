@@ -183,12 +183,21 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
     # Между быстрым precheck и фоновой обработкой чек могли уже добавить
     # в реестр. Не тратим запрос ФНС на заведомый дубликат.
     from ..models import Receipt, utcnow
+    from ..unified import service as unified
+    from ..unified.models import UnifiedDocument
     from .models import PoolItem, PoolReceipt
-    if db.query(Receipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first():
+    key = unified.identity_key(parsed.fn, parsed.fd, parsed.fp)
+    pre_canon = (db.query(UnifiedDocument.id)
+                 .filter(UnifiedDocument.identity_key == key,
+                         UnifiedDocument.deleted_at.is_(None)).first()
+                 if key else None)
+    if (db.query(Receipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
+            or db.query(PoolReceipt.id).filter_by(fn=parsed.fn, fd=parsed.fd, fp=parsed.fp).first()
+            or pre_canon is not None):
         db.commit()
         return {"result": "duplicate", "message": "Этот чек уже зарегистрирован",
                 "points": 0, "user_points": user.points if user else 0}
-    # 4) данные чека из движка источников
+    # 4) данные чека из движка источников (сначала ищет в локальной БД — 0 запросов ФНС)
     try:
         ext = _fetch_details(db, qr_raw, parsed.fn, parsed.fd, parsed.fp,
                              parsed.total_sum, parsed.date_time)
@@ -218,6 +227,8 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
 
     anomaly = parsed.total_sum > ANOMALY_SUM
     has_data = bool(ext and ext.found and ext.items)
+    quota_deferred = bool(ext and isinstance(getattr(ext, "raw", None), dict)
+                          and ext.raw.get("quota"))
 
     receipt = PoolReceipt(
         pool_user_id=user.id,
@@ -227,7 +238,7 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         receipt_date=(ext.date_time if ext and ext.date_time else parsed.date_time),
         total_sum=(ext.total_sum if ext and ext.total_sum is not None
                    else parsed.total_sum),
-        operation=(ext.operation if ext and ext.operation in (1, 2)
+        operation=(ext.operation if ext and ext.operation in (1, 2, 3, 4)
                    else parsed.operation),
         merchant_name=(ext.merchant_name if ext else ""),
         merchant_inn=(ext.merchant_inn if ext else ""),
@@ -242,6 +253,10 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
 
     db.add(receipt)
     db.flush()                       # id чека нужен для позиций (FK)
+
+    if quota_deferred:
+        from ..services import fns as _fns_hint
+        _fns_hint.apply_fn_merchant_hint(db, receipt)
 
     # v1.33.0: гео (адрес → регион; fallback ИНН → Checko) и отрасль
     # (сеть/ключевые слова позиций) — офлайн-справочники, разметка
@@ -259,7 +274,7 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
             db.add(PoolItem(
                 receipt_id=receipt.id, name=normalize_item_name(it.name)[:500],
                 quantity=it.quantity or 1, price=it.price or 0,
-                total=it.total or 0, vat_rate=str(it.vat_rate or "none"),
+                total=it.total or 0, vat_rate=str(it.vat_rate or "none")[:8],
                 vat_sum=it.vat_sum or 0))
         # v1.61.0: «понимающий» конвейер правил — суммы/цены/дубли.
         # Только уже полученные данные, доп. запросов к источникам нет.
@@ -280,7 +295,11 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
             receipt.status_message = "Данные чека подтверждены источником"
             receipt.verified_at = utcnow()
     else:
-        if anomaly:
+        if quota_deferred:
+            receipt.status = "pending"
+            receipt.status_message = (ext.message or
+                                      "Суточный лимит ФНС исчерпан — чек ждёт проверки")[:500]
+        elif anomaly:
             receipt.status = "pending"
             receipt.status_message = "Сумма-аномалия — ручная проверка"
         else:
@@ -334,6 +353,34 @@ def ingest_parsed(db: Session, qr_raw: str, parsed, source: str, user,
         receipt.status_message = (receipt.status_message +
                                   " · сигнал: быстрая отправка формы")[:500]
     db.commit()
+
+    # Сохраняем реальный сетевой ответ ФНС в архив fns_log (чтобы даже при
+    # удалении записи не платить квотой ФНС за этот же чек повторно)
+    if (ext and ext.source == "fns_api" and isinstance(ext.raw, dict)
+            and not ext.raw.get("cached") and not ext.raw.get("quota")
+            and not ext.raw.get("preflight")):
+        from ..services import fns as _fns_log
+        _ticket_obj = ext.raw.get("_fns_ticket") or {"receipt": ext.raw}
+        _fns_log.record_fns_log(
+            db,
+            receipt_id=None,
+            fn=parsed.fn,
+            fd=parsed.fd,
+            fp=parsed.fp,
+            result=_fns_log.FnsResult(
+                "valid" if ext.found else str(ext.raw.get("status") or "unknown"),
+                ext.message,
+                {
+                    "provider": "fns",
+                    "code": ext.raw.get("code") or ("200" if ext.found else ""),
+                    "ticket": _ticket_obj if isinstance(_ticket_obj, dict) else {},
+                    "checked_fingerprint": ext.raw.get("checked_fingerprint", ""),
+                },
+                bool(ext.ok),
+            ),
+            duration_ms=int(ext.raw.get("duration_ms") or 0),
+        )
+
     return {"result": receipt.status, "message": receipt.status_message,
             "points": points, "user_points": user.points,
             "receipt_id": receipt.id}

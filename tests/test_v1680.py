@@ -35,7 +35,7 @@ class TestVersion1680:
     def test_blocks_bumped(self):
         from app.services import updater
         reg = updater.read_blocks("app/services/blocks.py")
-        assert reg["Проверка чеков (ФНС и источники)"] == "1.68.0"
+        assert tuple(int(x) for x in reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 68, 0)
         assert tuple(int(x) for x in reg["Роли и доступ"].split(".")) >= (1, 68, 0)
         assert tuple(int(x) for x in reg["Чек-Пул"].split(".")) >= (1, 56, 1)            # не менялся
 

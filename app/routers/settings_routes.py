@@ -129,12 +129,14 @@ def get_fns(db: Session = Depends(get_db), user: User = Depends(require_admin)):
 @router.put("/fns", summary="Сохранить настройки ФНС")
 def put_fns(body: FnsSettingsPatch, db: Session = Depends(get_db),
             user: User = Depends(require_admin)):
+    from ..services import fns
     if body.api_base:
         _set_setting(db, "fns_api_base", body.api_base.strip())
     if body.master_token is not None and "•" not in body.master_token:
         _set_setting(db, "fns_master_token", body.master_token.strip())
     if body.client_app_id:
         _set_setting(db, "fns_client_app_id", body.client_app_id.strip())
+    fns.reset_shared_clients()
     log_action(user, "fns_settings_updated", details={"provider": "fns"})
     return {"ok": True, "message": "Настройки ФНС сохранены"}
 
@@ -502,11 +504,13 @@ def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
     v1.70.70: настройки сторонних сервисов проверки чеков удалены — их
     больше нет ни в схеме, ни в интерфейсе.
     """
+    from ..services import fns
     if body.fns_master_token is not None and "•" not in body.fns_master_token:
         _set_setting(db, "fns_master_token", body.fns_master_token.strip())
     if getattr(body, "fns_client_app_id", None) is not None:
         _set_setting(db, "fns_client_app_id",
                      (body.fns_client_app_id or "").strip())
+    fns.reset_shared_clients()
     log_action(user, "external_settings_updated",
                details={"app_id": bool(getattr(body, "fns_client_app_id", ""))})
     return {"ok": True, "message": "Настройки проверки чеков сохранены"}
