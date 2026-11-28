@@ -5,21 +5,22 @@
 // Статика — cache-first; API-запросы — только сеть (данные всегда свежие).
 // ======================================================================
 
-const CACHE = 'ymaster-check-v1.73.10';
+const CACHE = 'ymaster-check-v1.73.11';
 // v1.8.0: полный и корректный список предзагрузки (URL /js/…, /css/… отдаются
 // SPA из app/static; ранее в списке был /js/printpack.js и битые пути —
 // addAll падал с 404 и Service Worker вовсе не устанавливался)
 const ASSETS = [
   '/', '/index.html',
-  '/css/app.css?v=1.73.10', '/css/home.css?v=1.73.10', '/js/app.js?v=1.73.10', '/js/counterparties.js?v=1.73.10',   // T-83: главная и приложение
+  '/css/app.css?v=1.73.11', '/css/home.css?v=1.73.11', '/js/app.js?v=1.73.11', '/js/counterparties.js?v=1.73.11',   // T-83: главная и приложение
   '/js/api.js', '/js/ui.js', '/js/offline_outbox.js', '/js/navigation_counts.js', '/js/connection_status.js',
   '/js/approvals.js', '/js/bank.js', '/js/card.js', '/js/clients.js',
-  '/js/counterparties.js', '/js/docreq.js', '/js/goods.js', '/js/server_monitor.js?v=1.73.10', '/js/settings_layout.js',
+  '/js/counterparties.js', '/js/docreq.js', '/js/goods.js', '/js/server_monitor.js?v=1.73.11', '/js/settings_layout.js',
   '/js/primary.js', '/js/primary_folder.js', '/js/primary_mail.js', '/js/primary_inbox.js',   // v1.73.3: приёмная папка
   '/js/ao_folder.js',                                 // v1.73.7: папка АО в «Загрузках»
   '/js/supabase_demo.js', '/js/unified_fill.js', '/js/unified_review.js',
   '/js/charts.js', '/js/icons.js', '/js/scanner.js', '/js/printpack.js',
-  '/js/vendor/jsQR.js', '/img/logo.svg', '/manifest.webmanifest',
+  '/js/vendor/jsQR.js', '/img/logo.svg', '/img/icon-192.png',
+  '/img/brand/logo-h-2x.webp', '/img/brand/logo-hero-2x.webp', '/manifest.webmanifest',
   '/css/splash.css', '/js/splash.js',                 // v1.70.98: заставка загрузки
   '/js/boot.js',                                      // v1.70.103: решения до первой отрисовки
   '/fonts/inter-cyrillic-wght-normal.woff2', '/fonts/inter-latin-wght-normal.woff2',   // v1.70.103: свои шрифты

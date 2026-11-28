@@ -31,8 +31,10 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/img/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/img/icon-64.png" sizes="64x64" type="image/png">
 <link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
-<link rel="apple-touch-icon" href="/img/icon-192.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
 <!-- v1.70.103: шрифты — со своего сервера (шрифты Google запрещала политика CSP); основной — заранее -->
 <link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -42,9 +44,9 @@
      выполняется после разбора страницы и до app.js -->
 <link rel="stylesheet" href="/css/splash.css">
 <script src="/js/splash.js" defer></script>
-<link rel="stylesheet" href="/css/app.css?v=1.73.10">
+<link rel="stylesheet" href="/css/app.css?v=1.73.11">
 <!-- T-83: стили публичной главной, после базовой темы приложения -->
-<link rel="stylesheet" href="/css/home.css?v=1.73.10">
+<link rel="stylesheet" href="/css/home.css?v=1.73.11">
 </head>
 <body>
   <a class="skip" href="#main">К содержимому</a>
@@ -99,9 +101,11 @@
   <div id="login-screen" class="login-screen">
     <div class="home-shell">
       <header class="home-header" aria-label="Шапка главной страницы">
-        <a class="home-brand" href="/" aria-label="Ямастер Чек — главная">
-          <img src="/img/logo.svg" alt="Ямастер Чек" width="36" height="36" loading="eager">
-          <span>Ямастер <b>Чек</b></span>
+        <a class="home-brand" href="/" aria-label="DocVer — Ямастер Чек — главная">
+          <picture>
+            <source type="image/webp" srcset="/img/brand/logo-h-1x.webp 1x, /img/brand/logo-h-2x.webp 2x, /img/brand/logo-h-3x.webp 3x">
+            <img src="/img/brand/logo-h-1x.png" srcset="/img/brand/logo-h-1x.png 1x, /img/brand/logo-h-2x.png 2x, /img/brand/logo-h-3x.png 3x" alt="DocVer — Документальная Верификация" width="141" height="44" loading="eager">
+          </picture>
         </a>
         <nav class="home-nav" aria-label="Основная навигация">
           <a href="#land-how">Как это работает</a>
@@ -301,8 +305,10 @@
           <div class="land-right">
     <div class="login-card glass">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="64" height="64" loading="eager">
-        <p class="login-name">Ямастер <span class="grad-text">Чек</span></p>
+        <picture>
+          <source type="image/webp" srcset="/img/brand/logo-hero-1x.webp 1x, /img/brand/logo-hero-2x.webp 2x, /img/brand/logo-hero-3x.webp 3x">
+          <img src="/img/brand/logo-hero-1x.png" srcset="/img/brand/logo-hero-1x.png 1x, /img/brand/logo-hero-2x.png 2x, /img/brand/logo-hero-3x.png 3x" alt="DocVer — Документальная Верификация" width="218" height="68" loading="eager">
+        </picture>
         <p class="login-sub">Сканирование кассовых чеков · загрузка в 1С</p>
       </div>
       <!-- v1.70.37: первый визит — два способа сделать всё в MAX.
@@ -385,7 +391,10 @@
   <div id="register-screen" class="login-screen hidden">
     <div class="login-card glass">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <picture>
+          <source type="image/webp" srcset="/img/brand/logo-hero-1x.webp 1x, /img/brand/logo-hero-2x.webp 2x, /img/brand/logo-hero-3x.webp 3x">
+          <img src="/img/brand/logo-hero-1x.png" srcset="/img/brand/logo-hero-1x.png 1x, /img/brand/logo-hero-2x.png 2x, /img/brand/logo-hero-3x.png 3x" alt="DocVer — Документальная Верификация" width="218" height="68" loading="lazy">
+        </picture>
         <h2 class="screen-title">Приглашение в <span class="grad-text">Ямастер Чек</span></h2>
         <div id="reg-invite-badge" class="chip new badge-center"><span class="dot"></span>—</div>
       </div>
@@ -422,7 +431,10 @@
   <div id="public-screen" class="login-screen hidden">
     <div class="login-card glass login-card-wide">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <picture>
+          <source type="image/webp" srcset="/img/brand/logo-hero-1x.webp 1x, /img/brand/logo-hero-2x.webp 2x, /img/brand/logo-hero-3x.webp 3x">
+          <img src="/img/brand/logo-hero-1x.png" srcset="/img/brand/logo-hero-1x.png 1x, /img/brand/logo-hero-2x.png 2x, /img/brand/logo-hero-3x.png 3x" alt="DocVer — Документальная Верификация" width="218" height="68" loading="lazy">
+        </picture>
         <h2 class="screen-title">Сдать чек в <span class="grad-text">Чек-Пул</span></h2>
         <p class="screen-sub">Проверяем чек по официальным источникам и начисляем
         баллы. Регистрация не нужна.</p>
@@ -442,7 +454,10 @@
   <div id="pool-account-screen" class="login-screen hidden">
     <div class="login-card glass login-card-wide">
       <div class="login-logo">
-        <img src="/img/logo.svg" alt="Ямастер Чек" width="56" height="56">
+        <picture>
+          <source type="image/webp" srcset="/img/brand/logo-hero-1x.webp 1x, /img/brand/logo-hero-2x.webp 2x, /img/brand/logo-hero-3x.webp 3x">
+          <img src="/img/brand/logo-hero-1x.png" srcset="/img/brand/logo-hero-1x.png 1x, /img/brand/logo-hero-2x.png 2x, /img/brand/logo-hero-3x.png 3x" alt="DocVer — Документальная Верификация" width="218" height="68" loading="lazy">
+        </picture>
         <h2 class="screen-title">Кабинет <span class="grad-text">Чек-Пула</span></h2>
         <p class="screen-sub">Баллы, мои чеки и профиль участника открытой базы.</p>
       </div>
@@ -463,9 +478,11 @@
     <aside class="sidebar" id="sidebar" aria-label="Меню приложения">
       <div class="sidebar-brand">
         <button class="btn-icon sb-close" id="sb-close" aria-label="Закрыть меню" type="button">✕</button>
-        <img src="/img/logo.svg" alt="" width="36" height="36">
-        <div>
-          <div class="brand-name">Ямастер <span class="grad-text">Чек</span></div>
+        <div class="sidebar-brand-body">
+          <picture>
+            <source type="image/webp" srcset="/img/brand/logo-h-1x.webp 1x, /img/brand/logo-h-2x.webp 2x, /img/brand/logo-h-3x.webp 3x">
+            <img src="/img/brand/logo-h-1x.png" srcset="/img/brand/logo-h-1x.png 1x, /img/brand/logo-h-2x.png 2x, /img/brand/logo-h-3x.png 3x" alt="DocVer — Документальная Верификация" class="sidebar-logo" width="141" height="44" decoding="async">
+          </picture>
           <div class="brand-sub"><span id="brand-version">v—</span> · ООО «Ямастер»</div>
         </div>
       </div>
@@ -632,6 +649,7 @@
       </div>
       <section class="content" id="view-container" aria-label="Рабочая область"></section>
       <footer class="app-footer" aria-label="Подвал рабочего пространства">
+        <img src="/img/brand/logo-sm-1x.webp" srcset="/img/brand/logo-sm-2x.webp 2x, /img/brand/logo-sm-3x.webp 3x" alt="DocVer" class="footer-logo" width="90" height="28" loading="lazy" decoding="async">
         Ямастер Чек <span id="footer-version"></span> © ООО «Ямастер» — разработка и идея ·
         <a href="https://ymaster.ru" target="_blank" rel="noopener">ymaster.ru</a> ·
         <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a> ·
@@ -646,6 +664,6 @@
   <div class="modal-root hidden" id="modal-root"><div class="modal-backdrop"></div><div class="modal-slot"></div></div>
 
   <script src="/js/vendor/jsQR.js"></script>
-  <script type="module" src="/js/app.js?v=1.73.10"></script>
+  <script type="module" src="/js/app.js?v=1.73.11"></script>
 </body>
 </html>

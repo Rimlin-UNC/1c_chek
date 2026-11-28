@@ -21,7 +21,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.10';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.11';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -6937,6 +6937,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.11': [
+    { icon: '✨', title: 'Новый фирменный логотип и иконки DocVer',
+      text: 'Во всех разделах веб-клиента, боковом меню, шапке главной страницы, карточках входа и Чек-Пула, кабинете B2B, мини-приложении MAX, блоге и SEO-страницах установлен новый фирменный знак DocVer («Документальная Верификация»).' },
+    { icon: '📱', title: 'Бритвенная чёткость 1x / 2x / 3x на телефонах и Retina-экранах',
+      text: 'Горизонтальные логотипы и знаки подготовлены с чистым прозрачным фоном без белого ореола в наборах 1x, 2x и 3x (WebP + PNG), а для установки на экран телефона и компьютера обновлены значки PWA, Apple Touch Icon 180×180 и адаптивные maskable-иконки Android.' },
+  ],
   '1.73.10': [
     { icon: '🛡️', title: 'Экономия лимита ФНС 1000 запросов в сутки',
       text: 'Исправлен двойной запуск проверки при сканировании чека и подключён общий 40-минутный сессионный токен AuthService. Вместо 6 запросов на один чек программа расходует ровно 2 запроса асинхронного протокола ФНС (отправка + получение билета) при активном токене или 3 при обновлении токена раз в 40 минут.' },

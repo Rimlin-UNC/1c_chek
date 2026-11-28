@@ -1,3 +1,9 @@
+## v1.73.11 — Адаптивный фирменный логотип и иконки DocVer (`1x` / `2x` / `3x` WebP + PNG)
+
+- Во всех поверхностях интерфейса (`index.html`: шапка `.home-brand`, карточки `#login-screen` / `#register-screen` / `#public-screen` / `#pool-account-screen`, боковое меню `#sidebar .sidebar-brand`, подвал `.app-footer`; `/b2b/index.html`; `/maxapp/index.html`; `/blog` и кластерные SEO-страницы) старый векторный «смайлик» заменён на адаптивные `<picture>` + `srcset` (`1x`, `2x`, `3x` WebP + PNG) с новым логотипом `DocVer — Документальная Верификация` без белого ореола на серой подложке `#EFEFEF`.
+- Обновлены системные и PWA-значки: `/img/logo.svg`, `/img/icon-16/32/64/192/512.png`, `/img/apple-touch-icon.png` (`180×180`), отдельные маскируемые `/img/icon-maskable-192/512.png` в `manifest.webmanifest`, а также комплект `brand/` (`brandbook.html`, `blank-a4.svg`, `icon-3d-master.png`, `brand/png/*`).
+- Все точки версии и кэша синхронизированы на `1.73.11` (`APP_VERSION`, `manifest.webmanifest`, `sw.js` `ymaster-check-v1.73.11`, `?v=1.73.11`, `WHATS_NEW['1.73.11']`, `blocks.py` блок «Адаптивный интерфейс»).
+
 ## v1.73.10 — Защита суточного лимита ФНС (1000/сутки), пакетный опрос и 100 % данных ФФД в БД
 
 - Устранён двойной параллельный запуск `_verify_one_sync` + `_maybe_auto_fetch` при приёме чека, подключены сессионный токен по `ExpireTime` (~53 мин, зашифрованно в `app_settings`), Keep-Alive, singleflight `inflight_lock`, сохранение оплаченного `MessageId` при таймауте/429 и пакетный `GetMessagesRequest` до 20 `MessageId` за 1 вызов (`1.05` запроса на чек вместо 6).

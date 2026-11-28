@@ -262,13 +262,11 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 }
 .login-screen > * { margin: auto; }
 .login-card { width: min(420px, 100%); padding: 40px 36px 24px; }
-.login-logo { text-align: center; margin-bottom: 28px; }
-.login-logo img { filter: drop-shadow(0 6px 18px rgba(255,122,0,.35));   /* v1.25.0 */
-  margin-inline: auto; }   /* v1.56.1: img теперь block — центрируем явно */
-/* v1.70.103: заголовок H1 на стартовой странице один — название в карточке входа и заголовки скрытых экранов
+.login-logo { text-align: center; margin-bottom: 24px; }
+.login-logo img { margin-inline: auto; width: 218px; height: auto; filter: drop-shadow(0 6px 16px rgba(255, 122, 0, .14)); }
+/* v1.70.103: заголовок H1 на стартовой странице один — заголовки скрытых экранов
    (h2) оформлены как прежний h1 */
-.login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.875rem; margin-top: 12px; letter-spacing: .3px; }
-.login-logo .login-name { font-weight: 700; color: var(--indigo); line-height: 1.2; }
+.login-logo h1, .login-logo .screen-title { font-size: 1.875rem; margin-top: 12px; letter-spacing: .3px; }
 /* v1.70.103: у вошедших и на особых адресах стартовая страница не мелькает до решения программы (js/boot.js) */
 .ym-hold #login-screen { display: none; }
 .login-sub { color: var(--text-dim); font-size: 0.84375rem; margin-top: 4px; }
@@ -287,9 +285,10 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
   z-index: 30; transition: margin-left .25s ease;
 }
 .sidebar.collapsed { margin-left: calc(-1 * var(--sidebar-w)); }
-.sidebar-brand { display: flex; gap: 12px; align-items: center; padding: 18px 16px; border-bottom: 1px solid var(--border); }
-.brand-name { font-weight: 800; font-size: 17px; letter-spacing: .2px; }
-.brand-sub { font-size: 11px; color: var(--text-faint); }
+.sidebar-brand { display: flex; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.sidebar-brand-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sidebar-logo { width: 141px; height: auto; }
+.brand-sub { font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .nav-item {
   display: flex; align-items: center; gap: 12px;
@@ -379,6 +378,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
      --panel: тот же текст даёт 5.33:1, разделитель сверху остался. */
   background: var(--panel);
 }
+.footer-logo { width: 80px; height: auto; display: inline-block; vertical-align: middle; margin-right: 6px; }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .view-enter { animation: viewIn .28s cubic-bezier(.2,.7,.3,1); }
@@ -1713,8 +1713,8 @@ body.settings-all .stg-tab.active { color: var(--text-dim); border-bottom-color:
   .login-screen { padding: 12px; }
   .login-card { padding: 24px 16px 16px; }
   .login-logo { margin-bottom: 18px; }
-  .login-logo img { width: 52px; height: 52px; }
-  .login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.5rem; }
+  .login-logo img { width: 176px; }
+  .login-logo h1, .login-logo .screen-title { font-size: 1.5rem; }
   .login-card input,
   .land-lead-form input[type="email"],
   .land-lead-form input[type="text"] { font-size: 16px; }

@@ -270,7 +270,7 @@ class TestLanding:
         assert html.count("<h1") == 1
         h1 = re.search(r"<h1[^>]*>(.*?)</h1>", html, re.S).group(1)
         assert re.sub(r"<[^>]+>", "", h1) == "Проверка чека онлайн —от QR-кода до 1С"
-        assert '<p class="login-name">Ямастер <span class="grad-text">Чек</span></p>' in html
+        assert 'src="/img/brand/logo-hero-1x.png"' in html
         assert html.count('<h2 class="screen-title">') == 3
         assert 'id="login-screen" class="login-screen">' in html                    # виден с первого кадра
         assert 'id="public-screen" class="login-screen hidden"' in html
@@ -327,7 +327,7 @@ class TestLanding:
         phone = css.split("/* --- Модалки на телефоне: нижняя шторка + sticky-кнопки --- */", 1)[1].split("@keyframes", 1)[0]
         assert ".modal-actions { flex-wrap: wrap; }" in phone
         assert ".modal-actions > .btn { overflow-wrap: break-word; }" in phone
-        assert ".login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.875rem;" in css
+        assert ".login-logo h1, .login-logo .screen-title { font-size: 1.875rem;" in css
         # обход разделов на 360 и 768 px: «↩ Откатиться» в «Последних рабочих версиях» тоже дробилась по буквам
         assert ".rb-table .btn { overflow-wrap: normal; }" in css
         # v1.72.36: таблица версий переехала в .table-scroll с фиксированными ширинами и

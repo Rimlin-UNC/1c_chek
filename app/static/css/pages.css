@@ -44,7 +44,7 @@ img { max-width: 100%; height: auto; display: block; }
   display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text);
   font-weight: 800; font-size: 1.125rem; letter-spacing: -.2px;
 }
-.brand span { color: var(--accent-text); }
+.brand img { width: 141px; height: auto; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

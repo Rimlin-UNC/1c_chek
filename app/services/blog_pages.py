@@ -212,7 +212,10 @@ def _head(
 <meta name="twitter:description" content="{_e(description)}">
 <meta name="twitter:image" content="{_e(og_image)}">
 <meta name="twitter:image:alt" content="{_e(cover.alt)}">
+<link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/img/icon-32.png" sizes="32x32" type="image/png">
 <link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
 <link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{_e(cover.webp)}" as="image" type="image/webp">
 <link rel="stylesheet" href="/css/pages.css?v={_e(settings.APP_VERSION)}">{script_tag}
@@ -229,7 +232,7 @@ def _shell_top(*, reading_bar: bool = False, wide: bool = False) -> str:
     return f"""<body>
 {bar}<a class="skip" href="#main">К тексту</a>
 <header class="{top_cls}">
-  <a class="brand" href="/"><img src="/img/logo.svg" alt="" width="32" height="32">Ямастер <span>Чек</span></a>
+  <a class="brand" href="/" aria-label="DocVer — Ямастер Чек"><picture><source type="image/webp" srcset="/img/brand/logo-h-1x.webp 1x, /img/brand/logo-h-2x.webp 2x, /img/brand/logo-h-3x.webp 3x"><img src="/img/brand/logo-h-1x.png" srcset="/img/brand/logo-h-1x.png 1x, /img/brand/logo-h-2x.png 2x, /img/brand/logo-h-3x.png 3x" alt="DocVer — Документальная Верификация" width="141" height="44" loading="eager"></picture></a>
   <div class="top__actions">
     {nav_blog}
     <a class="btn" href="/#land-login">Войти</a>
