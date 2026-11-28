@@ -11,7 +11,7 @@
 ## Как это работает
 
 ```
-Ямастер Чек ──HTTP CONNECT──▶ tgwsapiproxy ──WebSocket──▶ Cloudflare Worker ──TCP──▶ api.telegram.org
+DocVer ──HTTP CONNECT──▶ tgwsapiproxy ──WebSocket──▶ Cloudflare Worker ──TCP──▶ api.telegram.org
  (httpx, proxy=…)              127.0.0.1:8080              имя-abc.workers.dev          порт 443
 ```
 
@@ -76,7 +76,7 @@ sudo ./install.sh ВАШ-ДОМЕН.workers.dev
   (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`,
   `PrivateTmp`);
 * поднимает слушатели `127.0.0.1:1080` (SOCKS5) и `127.0.0.1:8080`
-  (HTTP CONNECT — его использует «Ямастер Чек»).
+  (HTTP CONNECT — его использует «DocVer»).
 
 ## Шаг 3. Настроить программу
 

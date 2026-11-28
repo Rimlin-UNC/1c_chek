@@ -396,7 +396,7 @@ def correct_item(db: Session, user, receipt, item, code: str, *, remember: bool 
         try:
             policy.refresh_receipt(db, r)
         except Exception:                                     # noqa: BLE001 — политика не отменяет правку
-            logging.getLogger("ymaster").debug("goods: policy refresh", exc_info=True)
+            logging.getLogger("docver").debug("goods: policy refresh", exc_info=True)
     title = names.readable(item.name)["display"] or item.name
     msg = f"«{title}» — {cat.title}"
     if remembered:

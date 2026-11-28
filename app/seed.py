@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Первичная инициализация: администратор по умолчанию, маппинг по умолчанию,
 демо-данные (только при явном вызове python -m app.seed --demo).
@@ -166,7 +166,7 @@ def make_demo_receipts(count: int = 36, days: int = 14) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Инициализация БД «Ямастер Чек»")
+    parser = argparse.ArgumentParser(description="Инициализация БД «DocVer»")
     parser.add_argument("--demo", action="store_true", help="добавить демо-чеки")
     parser.add_argument("--count", type=int, default=36)
     args = parser.parse_args()

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Ямастер Чек — v1.73.9: настоящий PDF авансового отчёта.
+"""DocVer — v1.73.9: настоящий PDF авансового отчёта.
 
 Сервер собирает HTML-бланк и превращает его в PDF через xhtml2pdf/ReportLab.
 Важно: это НЕ картинка страницы. В PDF встроен DejaVuSans (ToUnicode CMap),
@@ -421,7 +421,7 @@ def _ao1_face(ctx: dict) -> str:
       на сумму <b>{ctx['total_sum']}</b> руб., документов — <b>{ctx['count']}</b> на {ctx['attachment_pages']} листах.
       <div style="margin-top:2mm">Бухгалтер <span class="ao1-sigline">&nbsp;&nbsp;&nbsp;&nbsp;</span>
       подпись <span class="ao1-sigline">&nbsp;&nbsp;&nbsp;&nbsp;</span></div></div>
-    <p class="foot">Сформировано в «Ямастер Чек» · ymaster.ru · лицевая сторона</p>
+    <p class="foot">Сформировано в «DocVer» · ymaster.ru · лицевая сторона</p>
     """
 
 
@@ -468,7 +468,7 @@ def _ao1_back(ctx: dict) -> str:
           <td class="small">расшифровка</td></tr>
       <tr><td colspan="5" class="small">Дата составления: <b>{ctx['report_date']}</b></td></tr>
     </table>
-    <p class="foot">Сформировано в «Ямастер Чек» · ymaster.ru · оборотная сторона</p>
+    <p class="foot">Сформировано в «DocVer» · ymaster.ru · оборотная сторона</p>
     """
 
 
@@ -502,7 +502,7 @@ def _summary_face(ctx: dict) -> str:
           <td>{ctx['buh']}<br><span class="small">подпись / расшифровка</span></td>
           <td>{ctx['assignee']}<br><span class="small">подпись / расшифровка</span></td>
           <td><br><span class="small">подпись / расшифровка</span></td></tr></table>
-    <p class="foot">Сформировано в «Ямастер Чек» · ymaster.ru · сводная ведомость</p>
+    <p class="foot">Сформировано в «DocVer» · ymaster.ru · сводная ведомость</p>
     """
 
 
@@ -536,7 +536,7 @@ def _summary_back(ctx: dict) -> str:
       <tbody>{rows}</tbody>
       <tfoot><tr class="total"><td colspan="6">ИТОГО</td>
         <td class="num">{ctx['total_sum']}</td></tr></tfoot></table>
-    <p class="foot">Сформировано в «Ямастер Чек» · ymaster.ru · реестр документов</p>
+    <p class="foot">Сформировано в «DocVer» · ymaster.ru · реестр документов</p>
     """
 
 

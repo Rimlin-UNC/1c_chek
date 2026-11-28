@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — публичные маршруты «Чек-Пула» (v1.31.0, Этап 2).
-# Приём чеков на сайте chek.ymaster.ru БЕЗ регистрации: гость получает
+# DocVer — публичные маршруты «Чек-Пула» (v1.31.0, Этап 2).
+# Приём чеков на сайте docver.ru БЕЗ регистрации: гость получает
 # подписанную анонимную cookie pool_vid; чеки копятся до регистрации
 # (слияние с аккаунтом — Этап 3).
 #
@@ -9,7 +9,7 @@
 # лимиты, дедуп), проверка источников — в фоновом потоке; страница
 # опрашивает статус (live). Антифрод-минимум: honeypot, тайминг формы,
 # rate-limit на IP, суточный лимит из ядра пула.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -535,7 +535,7 @@ def receipt_email(body: MailBody, request: Request,
     _html = f"""<div style="max-width:520px;margin:0 auto;font-family:Arial,Segoe UI,sans-serif;color:#1c2333">
   <div style="background:#fff8f0;border:2px dashed #e8a24a;border-radius:14px;padding:18px 20px">
     <div style="text-align:center;font-weight:800;letter-spacing:2px;color:#b45309">ЭЛЕКТРОННЫЙ ЧЕК</div>
-    <div style="text-align:center;color:#666;font-size:13px;margin:6px 0 12px">Ямастер Чек-Пул · проверка по официальным источникам</div>
+    <div style="text-align:center;color:#666;font-size:13px;margin:6px 0 12px">DocVer-Пул · проверка по официальным источникам</div>
     <div style="font-size:15px"><b>{r.merchant_name or "Магазин уточняется"}</b></div>
     <div style="color:#666;font-size:13px;margin-bottom:10px">{r.merchant_address or ""}</div>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -558,13 +558,13 @@ def receipt_email(body: MailBody, request: Request,
       style="background:#e8890c;color:#fff;padding:9px 16px;border-radius:8px;
       text-decoration:none;font-weight:600">Открыть кабинет</a></div>
   </div>
-  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · chek@ymaster.ru<br>
+  <div style="color:#999;font-size:11.5px;margin-top:10px">ООО «Ямастер» · ymaster.ru · i@docver.ru<br>
   Письмо отправлено, потому что этот адрес указали при сканировании чека.
   Если это были не вы — просто не обращайте внимания.</div>
 </div>"""
     import re as _re
     lines = ["Здравствуйте!", "",
-             "Данные вашего чека из «Ямастер Чек-Пул»:", "",
+             "Данные вашего чека из «DocVer-Пул»:", "",
              f"ФН {r.fn} · ФД {r.fd} · ФП {r.fp}",
              f"Магазин: {r.merchant_name or 'уточняется'}",
              f"Сумма: {r.total_sum:.2f} руб.",
@@ -572,10 +572,10 @@ def receipt_email(body: MailBody, request: Request,
              f"Статус: {status_ru}",
              f"Баллы: {r.points_awarded}", "",
              f"Кабинет участника: {base_url(db)}/#/my", "",
-             "ООО «Ямастер» · ymaster.ru · chek@ymaster.ru", "",
+             "ООО «Ямастер» · ymaster.ru · i@docver.ru", "",
              "Письмо отправлено, потому что этот адрес указали при сканировании",
              "чека. Если это были не вы — просто не обращайте внимания."]
-    ok, err = send_mail(db, email, f"Электронный чек на {r.total_sum:.2f} руб. — Ямастер Чек-Пул",
+    ok, err = send_mail(db, email, f"Электронный чек на {r.total_sum:.2f} руб. — DocVer-Пул",
                         chr(10).join(lines), html=_html)
     if not ok:
         raise HTTPException(502, f"Письмо не ушло: {err}")

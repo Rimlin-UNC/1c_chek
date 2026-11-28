@@ -90,7 +90,7 @@ def allowed_roots() -> list[Path]:
     только каталог данных программы. Путь вне корней не принимается: иначе поле настроек превращается
     в чтение любого каталога сервера от имени службы.
     """
-    raw = (os.environ.get("YM_PRIMARY_INBOX_ROOTS") or "").strip()
+    raw = ((os.environ.get("DOCVER_PRIMARY_INBOX_ROOTS") or os.environ.get("YM_PRIMARY_INBOX_ROOTS")) or "").strip()
     items = [p for p in raw.replace("\n", ";").split(";") if p.strip()]
     roots: list[Path] = []
     for item in items:
@@ -175,7 +175,7 @@ def state(db: Session) -> dict:
     enabled = appsettings.get_setting(db, SETTING_ENABLED, "0") == "1"
     interval = min(MAX_INTERVAL, max(MIN_INTERVAL, _int_setting(db, SETTING_INTERVAL, DEFAULT_INTERVAL)))
     roots = [str(r) for r in allowed_roots()]
-    path = item.path or os.environ.get("YM_PRIMARY_INBOX_PATH", "") or str(_absolute(DEFAULT_SUBDIR) or "")
+    path = item.path or (os.environ.get("DOCVER_PRIMARY_INBOX_PATH") or os.environ.get("YM_PRIMARY_INBOX_PATH", "")) or str(_absolute(DEFAULT_SUBDIR) or "")
     problems: list[str] = []
     if not path:
         problems.append("Путь не задан")
@@ -186,14 +186,14 @@ def state(db: Session) -> dict:
             problems.append(str(exc))
     if path and Path(path).is_dir() and not writable(Path(path)):
         problems.append("Нет прав на запись: принятые файлы нельзя перенести в processed")
-    if os.environ.get("YM_PRIMARY_INBOX_OFF") == "1":
+    if (os.environ.get("DOCVER_PRIMARY_INBOX_OFF") or os.environ.get("YM_PRIMARY_INBOX_OFF")) == "1":
         problems.append("Фоновый обход выключен на сервере (YM_PRIMARY_INBOX_OFF=1)")
     return {
         "path": path, "enabled": enabled, "interval_minutes": interval, "roots": roots,
         "status": item.status, "last_error": item.last_error,
         "last_run_at": _iso(item.last_run_at), "last_ok_at": _iso(item.last_ok_at),
         "last_result": _loads(item.last_result_json), "problems": problems,
-        "off": os.environ.get("YM_PRIMARY_INBOX_OFF") == "1",
+        "off": (os.environ.get("DOCVER_PRIMARY_INBOX_OFF") or os.environ.get("YM_PRIMARY_INBOX_OFF")) == "1",
         "counters": counters(db),
     }
 
@@ -408,7 +408,7 @@ def run_once(db: Session, *, user: User | None = None, pause: float = 1.0, limit
     рядом с нашими УПД бывают титулы покупателя и чужие документы, и один «итог на архив» их бы спрятал.
     """
     item = row(db)
-    path_text = item.path or os.environ.get("YM_PRIMARY_INBOX_PATH", "") or str(_absolute(DEFAULT_SUBDIR) or "")
+    path_text = item.path or (os.environ.get("DOCVER_PRIMARY_INBOX_PATH") or os.environ.get("YM_PRIMARY_INBOX_PATH", "")) or str(_absolute(DEFAULT_SUBDIR) or "")
     if not path_text:
         raise InboxError("Приёмная папка не настроена", 409)
     root = check_path(db, path_text)
@@ -533,7 +533,7 @@ def log(db: Session, user: User, limit: int = 50, status: str = "") -> dict:
 
 def due(db: Session, now: datetime | None = None) -> bool:
     """Пора ли обходить папку по расписанию."""
-    if os.environ.get("YM_PRIMARY_INBOX_OFF") == "1":
+    if (os.environ.get("DOCVER_PRIMARY_INBOX_OFF") or os.environ.get("YM_PRIMARY_INBOX_OFF")) == "1":
         return False
     if appsettings.get_setting(db, SETTING_ENABLED, "0") != "1":
         return False

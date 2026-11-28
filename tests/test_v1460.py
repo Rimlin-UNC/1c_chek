@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.46.0:
+# DocVer — тесты v1.46.0:
 #   1) восстановление базы из резервных копий (UI-кнопка → API);
 #   2) «последние рабочие версии»: реестр known-good, откат из
 #      приложения и терминальный rollback.sh.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import os
 import re
@@ -26,7 +26,7 @@ class TestVersion1460:
         assert "app.css?v=" in idx and "app.js?v=" in idx
         assert "v=1.43.0" not in idx and "v=1.44.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert '"version":' in mf
 
@@ -208,7 +208,7 @@ class TestRollbackApiAndEngine:
                        check=True)
         # данные, которые откат трогать не должен
         (dst / "data").mkdir(exist_ok=True)
-        (dst / "data" / "ymaster_check.db").write_bytes(b"db-data-here")
+        (dst / "data" / "docver.db").write_bytes(b"db-data-here")
         (dst / "мусор.txt").write_text("лишний файл", encoding="utf-8")
 
         monkeypatch.setattr(up, "APP_DIR", str(dst))
@@ -225,7 +225,7 @@ class TestRollbackApiAndEngine:
         assert 'APP_VERSION: str = "0.0.1"' in cfg.read_text(encoding="utf-8")
         assert 'APP_VERSION: str = "0.0.2"' not in cfg.read_text(encoding="utf-8")
         # база не тронута, мусор вычищен
-        assert (dst / "data" / "ymaster_check.db").read_bytes() == b"db-data-here"
+        assert (dst / "data" / "docver.db").read_bytes() == b"db-data-here"
         assert not (dst / "мусор.txt").exists()
         # копия базы перед откатом создана
         assert any(n.startswith("db-preupdate-")

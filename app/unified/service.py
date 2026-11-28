@@ -41,7 +41,7 @@ from .models import (
 REGISTRY = "registry"
 POOL = "pool"
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 
 def _now() -> datetime:

@@ -608,7 +608,7 @@ class TestRelease17069:
         ver = self._current()
         assert tuple(int(x) for x in ver.split(".")) >= tuple(
             int(x) for x in self.VERSION.split("."))
-        assert f"ymaster-check-v{ver}" in _read(SW)
+        assert f"docver-v{ver}" in _read(SW)
         assert f'"version": "{ver}"' in _read(MANIFEST)
         index = _read(INDEX)
         assert f"app.css?v={ver}" in index

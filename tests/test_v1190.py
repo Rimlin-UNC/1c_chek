@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.19.0: человекочитаемый журнал действий
+# DocVer — тесты v1.19.0: человекочитаемый журнал действий
 # (фразы + комментарии в кавычках) и стиль «Ямастер» (дизайн-система).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 from tests.conftest import login
 
@@ -141,7 +141,7 @@ class TestVersion1190:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
 
     def test_whats_new(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

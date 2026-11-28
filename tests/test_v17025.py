@@ -34,7 +34,7 @@ from app.main import app
 from app.services import adguard_setup as ag
 from tests.test_v1121 import login
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 README = "deploy/adguard-vpn/README.md"
 APP_JS = "app/static/js/app.js"
 VER = "1.70.25"

@@ -1,4 +1,4 @@
-"""v1.70.98: банковская выписка (T-45) и новая заставка загрузки «chek.ymaster.ru».
+"""v1.70.98: банковская выписка (T-45) и новая заставка загрузки «docver.ru».
 
 Поведение проверяют tests/test_bank.py (разбор формата 1С, виды операций, сопоставление с чеками и УПД, запросы в
 «Что нужно от клиента» и их самозакрытие, чужая выписка, изоляция компаний, «к возмещению», срок хранения),
@@ -36,7 +36,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
+        assert f"docver-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -47,7 +47,7 @@ class TestRelease:
         entry = md.split(head, 1)[1].split("\n## [", 1)[0]
         assert len(head + entry) <= 4000, len(head + entry)
         for needle in ("(T-45)", "4 новые таблицы (bank_statements, bank_operations, bank_reimbursements, bank_settings)",
-                       "kl_to_1c.txt", "«🏦 платёж без документов»", "«К возмещению»", "заставка chek.ymaster.ru"):
+                       "kl_to_1c.txt", "«🏦 платёж без документов»", "«К возмещению»", "заставка docver.ru"):
             assert needle in entry, needle
 
     def test_whats_new_has_entry(self):
@@ -177,7 +177,7 @@ class TestSplash:
         assert head.index('<link rel="stylesheet" href="/css/splash.css">') < head.index('href="/css/app.css?v=')
         assert '<script src="/js/splash.js" defer></script>' in head
         # T-83: skip-link — первый фокусируемый элемент; splash сохраняет прежнюю разметку.
-        assert body.lstrip().startswith("<body>\n  <a class=\"skip\" href=\"#main\">К содержимому</a>\n  <!-- v1.70.98: заставка загрузки «chek.ymaster.ru»")
+        assert body.lstrip().startswith("<body>\n  <a class=\"skip\" href=\"#main\">К содержимому</a>\n  <!-- v1.70.98: заставка загрузки «docver.ru»")
         assert '<div id="ym-splash" class="ym-splash">' in body
         assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "встроенный скрипт — CSP его запретит"
         for needle in ('id="ym-splash-status" role="status" aria-live="polite"',

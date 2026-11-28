@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Журнал аудита: фиксация всех значимых действий пользователей.
 """
@@ -90,6 +90,6 @@ def log_action(user: User | None, action: str, entity_type: str = "",
             finally:
                 db.close()
     # журнал не должен ломать запрос пользователя, но и молчать нельзя
-    logging.getLogger("ymaster").warning(
+    logging.getLogger("docver").warning(
         "Аудит не записан (%s): %s", action, err)
     return False

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.9: страница настроек — иерархическое меню
+# DocVer — тесты v1.70.9: страница настроек — иерархическое меню
 # (5 разделов, подменю по карточкам, deep-link #/settings/<раздел>/<id>,
 # кнопка «Все настройки», адаптив ПК/планшет/телефон).
 # ======================================================================
@@ -30,7 +30,7 @@ class TestVersions1709:
         idx = open("app/static/index.html", encoding="utf-8").read()
         mx = open("app/static/maxapp/index.html", encoding="utf-8").read()
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert f"/css/app.css?v={ver}" in sw and f"/js/app.js?v={ver}" in sw
         assert f"/css/app.css?v={ver}" in idx and f"/js/app.js?v={ver}" in idx
         assert f"/maxapp/maxapp.js?v={ver}" in mx

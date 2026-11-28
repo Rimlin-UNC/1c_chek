@@ -20,8 +20,8 @@ from app.services import seo, seo_pages
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX = ROOT / "app" / "static" / "index.html"
-PROD = "chek.ymaster.ru"
-TITLE = "Проверка чека онлайн по QR-коду — Ямастер Чек"
+PROD = "docver.ru"
+TITLE = "Проверка чека онлайн по QR-коду — DocVer"
 DESCRIPTION = (
     "Сайт проверки чеков: отсканируйте QR-код, сверим кассовый чек с данными ФНС и покажем результат. "
     "Баллы за чеки, авансовые отчёты и выгрузка в 1С."
@@ -197,7 +197,7 @@ def test_microdata_describes_visible_page_only():
     assert 'itemprop="publisher" itemscope itemtype="https://schema.org/Organization"' in page
     assert '<p class="land-lead" itemprop="description">Сканируйте чеки камерой телефона' in page
     assert '<span itemprop="name">ООО «Ямастер»</span>' in page
-    assert '<span itemprop="email">chek@ymaster.ru</span>' in page
+    assert '<span itemprop="email">i@docver.ru</span>' in page
     for absent in ("ld+json", "FAQPage", "aggregateRating", "ratingValue", "price", "SoftwareApplication"):
         assert absent not in page, absent
 
@@ -205,7 +205,7 @@ def test_microdata_describes_visible_page_only():
 def test_host_indexing_rules_survive(client):
     prod = client.get("/", headers={"host": PROD, "x-forwarded-proto": "https"})
     assert prod.status_code == 200 and "x-robots-tag" not in prod.headers
-    assert '<link rel="canonical" href="https://chek.ymaster.ru/">' in prod.text
+    assert '<link rel="canonical" href="https://docver.ru/">' in prod.text
     assert seo.MARKER not in prod.text
     copy = client.get("/", headers={"host": "localhost:8000"})
     assert copy.headers["x-robots-tag"] == "noindex, nofollow"

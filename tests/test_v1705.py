@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.5: проверка токена в один клик + код входа
+# DocVer — тесты v1.70.5: проверка токена в один клик + код входа
 # не сгорает при неудачной регистрации.
 # ======================================================================
 import re
@@ -10,7 +10,7 @@ import pytest
 BOT_TOKEN = "700001.ABCDEF"
 
 
-def _setup(client, nick="chek.ymaster.bot"):
+def _setup(client, nick="docver.bot"):
     from app.database import SessionLocal
     from app.services import appsettings
     s = SessionLocal()
@@ -36,14 +36,14 @@ class TestCheckToken1705:
         ).json()["access_token"]}
         d = client.get("/api/v1/settings/max/check-token", headers=h).json()
         assert d["ok"] is True and d["bot"] == "id4712030034_bot"
-        assert d["public_nick"] == "chek.ymaster.bot"
+        assert d["public_nick"] == "docver.bot"
         assert d["mismatch"] is True
         # теперь токен «правильного» бота
         monkeypatch.setattr(max_bot, "get_me",
-                            lambda t: {"username": "chek.ymaster.bot"})
+                            lambda t: {"username": "docver.bot"})
         max_bot._username_cache = ""
         d2 = client.get("/api/v1/settings/max/check-token", headers=h).json()
-        assert d2["mismatch"] is False and d2["bot"] == "chek.ymaster.bot"
+        assert d2["mismatch"] is False and d2["bot"] == "docver.bot"
 
     def test_check_token_requires_admin(self, client):
         client.cookies.clear()   # client живёт на модуль — сбросим авторизацию
@@ -123,7 +123,7 @@ class TestVersions1705:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.4"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.4'" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.4'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

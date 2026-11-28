@@ -1,8 +1,8 @@
 # ======================================================================
-# Ямастер Чек — тесты v1.25.0: единая светлая тема.
+# DocVer — тесты v1.25.0: единая светлая тема.
 # Переключатели оформления удалены, карточка чека/тосты/подсказки —
 # светлые с тёмным текстом; «светлое на светлом» исключено.
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 CSS = "app/static/css/app.css"
 JS = "app/static/js/app.js"
@@ -139,7 +139,7 @@ class TestVersion1250:
         idx = open(IDX, encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

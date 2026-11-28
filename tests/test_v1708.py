@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.8: SSL к MAX Bot API через сертификат
+# DocVer — тесты v1.70.8: SSL к MAX Bot API через сертификат
 # Минцифры (Russian Trusted CA) + запасной путь без проверки.
 # ======================================================================
 import re
@@ -90,7 +90,7 @@ class TestVersions1708:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.7"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.7'" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.7'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

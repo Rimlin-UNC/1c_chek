@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.10.1: пункт меню выбирается в приложении (PWA).
+# DocVer — тесты v1.10.1: пункт меню выбирается в приложении (PWA).
 # РЕГРЕССИЯ 1.10.0: фон-затемнение (z-index 40) перекрывал меню (30) —
 # на телефоне тап по пункту закрывал меню, раздел не открывался.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -71,7 +71,7 @@ class TestVersion1101:
         import re as _re
         cfg = open("app/config.py", encoding="utf-8").read()
         ver = _re.search(r'APP_VERSION: str = "([^"]+)"', cfg).group(1)
-        assert f"ymaster-check-v{ver}" in open("app/static/sw.js", encoding="utf-8").read()
+        assert f"docver-v{ver}" in open("app/static/sw.js", encoding="utf-8").read()
         assert f'"version": "{ver}"' in open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f"'{ver}'" in JS                      # WHATS_NEW
         assert f"## [{ver}]" in open("CHANGELOG.md", encoding="utf-8").read()  # свежий раздел

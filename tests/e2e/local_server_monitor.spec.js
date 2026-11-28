@@ -8,7 +8,7 @@ test('локальный монитор работает без облачног
   const token = (await login.json()).access_token;
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
   }, { token, seen });
   const cloudRequests = [];

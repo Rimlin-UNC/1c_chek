@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — приглашения для регистрации (ООО «Ямастер», ymaster.ru).
+DocVer — приглашения для регистрации (ООО «Ямастер», ymaster.ru).
 
 Администратор создаёт приглашение с ролью (бухгалтер/пользователь); ссылка вида
   /#/register/<TOKEN>
@@ -168,7 +168,7 @@ def send_max(invite_id: str, body: SendMaxBody, request: Request,
     host = (request.headers.get("x-forwarded-host")
             or request.headers.get("host") or "localhost")
     web_url = f"{proto}://{host}/#/register/{inv.token}"
-    text = ("📩 Приглашение в «Ямастер Чек»\n"
+    text = ("📩 Приглашение в «DocVer»\n"
             + (f"Компания: {comp.name}\n" if comp else "")
             + f"Роль: {roles.get(inv.role, inv.role)}\n"
             + (f"Действует до: "

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 620" font-family="Segoe UI, Arial, sans-serif">
-  <!-- Ямастер Чек — платное API: путь запроса и лимиты. ООО «Ямастер», ymaster.ru -->
+  <!-- DocVer — платное API: путь запроса и лимиты. ООО «Ямастер», ymaster.ru -->
   <defs>
     <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#ff7a00"/><stop offset="1" stop-color="#22d3ee"/>
@@ -15,7 +15,7 @@
   <rect width="1180" height="620" fill="#0b1020" rx="14"/>
   <rect x="0" y="0" width="1180" height="5" fill="url(#hdr)"/>
   <text x="590" y="46" text-anchor="middle" fill="#e8ecf8" font-size="24" font-weight="700">Путь запроса: порядок проверок и коды ответов</text>
-  <text x="590" y="68" text-anchor="middle" fill="#6b7494" font-size="12.5">Разработчик: ООО «Ямастер» · ymaster.ru · chek@ymaster.ru</text>
+  <text x="590" y="68" text-anchor="middle" fill="#6b7494" font-size="12.5">Разработчик: ООО «Ямастер» · ymaster.ru · i@docver.ru</text>
 
   <!-- Колонка проверок -->
   <text x="286" y="106" text-anchor="middle" fill="#6b7494" font-size="12">ПРОВЕРКА</text>

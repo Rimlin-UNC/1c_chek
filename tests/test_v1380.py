@@ -1,6 +1,6 @@
-# Ямастер Чек — тесты v1.38.0: «Чек-Пул» этап 9 «Рост» — граф связей
+# DocVer — тесты v1.38.0: «Чек-Пул» этап 9 «Рост» — граф связей
 # антифрода и партнёрский кэшбэк с QR «на кассе».
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки Этапа 9 (docs/dev_plan_checkpool.md, выполненная часть):
 #  - граф-аналитика: /pool-fraud/graph отдаёт кластеры участников с рёбрами
@@ -193,7 +193,7 @@ class TestPartnerQr:
 const { execSync } = require('child_process');
 const svg = execSync(`python3 -c "
 from app.pool import partners
-print(partners.qr_svg('https://chek.ymaster.ru/#/pub'))"`).toString();
+print(partners.qr_svg('https://docver.ru/#/pub'))"`).toString();
 const n = +svg.match(/viewBox="0 0 (\d+) (\d+)"/)[1];
 const rects = [...svg.matchAll(/M(\d+) (\d+)h1v1h-1z/g)].map(r2 => [+r2[1], +r2[2]]);
 const size = n * 8;
@@ -205,7 +205,7 @@ for (const [x, y] of rects)
   }
 const jsQR = require('./app/static/js/vendor/jsQR.js');
 const res = jsQR(data, size, size);
-process.exit(res && res.data === 'https://chek.ymaster.ru/#/pub' ? 0 : 1);
+process.exit(res && res.data === 'https://docver.ru/#/pub' ? 0 : 1);
 """], capture_output=True, text=True, cwd=".")
         assert r.returncode == 0, f"QR не декодировался: {r.stderr[:200]}"
 
@@ -268,7 +268,7 @@ class TestVersion1380:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

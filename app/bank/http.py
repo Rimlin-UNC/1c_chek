@@ -27,7 +27,7 @@ from collections import OrderedDict
 
 import httpx
 
-log = logging.getLogger("ymaster.bank.http")
+log = logging.getLogger("docver.bank.http")
 
 TIMEOUT = 25.0
 _CA_RU = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs",

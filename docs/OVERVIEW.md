@@ -6,7 +6,7 @@
 
 ## Что это
 
-**«Ямастер Чек»** (репозиторий `Rimlin-UNC/1c_chek`) — веб-система учёта кассовых
+**«DocVer»** (репозиторий `Rimlin-UNC/1c_chek`) — веб-система учёта кассовых
 чеков. Сотрудник сканирует QR-код чека (54-ФЗ) камерой, фотографией, PDF или
 вручную. Система проверяет чек в ФНС, складывает его в базу своей компании и
 выгружает в 1С (push-режим или файл EnterpriseData). Разработчик и владелец
@@ -58,7 +58,7 @@ Python 3.11+.
 | Окружение | Что известно | Ссылка |
 |---|---|---|
 | Репозиторий | публичный; ветки `main`, `arena/01a0caaa-1c-chek` (PR #1), `arena/071f4163-1c-chek` (PR #2), `arena/c7f9d34a-1c-chek` (PR #3) | [GitHub](https://github.com/Rimlin-UNC/1c_chek) |
-| Рабочий сервер | VPS: `/opt/ymaster-check`, systemd-сервис `ymaster-check`, установка `deploy.sh`, обновление из программы. Домен, IP и ветку-источник агент проверить не может — **требует уточнения** | [docs/DEPLOYMENT.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/DEPLOYMENT.md) |
+| Рабочий сервер | VPS: `/opt/docver`, systemd-сервис `docver`, установка `deploy.sh`, обновление из программы. Домен, IP и ветку-источник агент проверить не может — **требует уточнения** | [docs/DEPLOYMENT.md](https://github.com/Rimlin-UNC/1c_chek/blob/cd769234ebfc4d5c533a1df25fce31e8a9605212/docs/DEPLOYMENT.md) |
 | Supabase | проект `chek.base` (`putddctwdskfdzichigx`, eu-west-1, PostgreSQL 17), только демо-контур | [Dashboard](https://supabase.com/dashboard/project/putddctwdskfdzichigx) |
 | Vercel | **демо-контур** (ADR-13): проект `1c-chek` (команда chek5, тариф Hobby), превью на каждый push и production из `main`, домен `1c-chek.vercel.app` за Vercel Authentication; рабочее окружение — сервер владельца, не Vercel; размер сборки держит `.vercelignore` | [Dashboard](https://vercel.com/chek5/1c-chek) |
 | GitHub Actions | CI на каждый push в `main` и `arena/**`: Python 3.11 и 3.12, PostgreSQL 17 (ADR-17) | [Actions](https://github.com/Rimlin-UNC/1c_chek/actions/workflows/ci.yml) |

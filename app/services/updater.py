@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — механизм самообновления (v1.4.0)
+# DocVer — механизм самообновления (v1.4.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: i@docver.ru
 #
 # Обновление «как в профессиональных программах»:
 #   1. Проверка: сравнение локальной версии (app/config.py) с версией
@@ -564,7 +564,7 @@ def _is_newer(remote: str, current: str) -> bool:
 def _gh_api_raw(repo: str, branch: str, path: str) -> str:
     url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
     resp = httpx.get(url, timeout=10, headers={
-        "User-Agent": "YmasterCheck-Updater",
+        "User-Agent": "DocVer-Updater",
         "Accept": "application/vnd.github.raw+json"})
     if resp.status_code != 200:
         raise FileNotFoundError(f"HTTP {resp.status_code}")   # 404 = нет файла
@@ -573,7 +573,7 @@ def _gh_api_raw(repo: str, branch: str, path: str) -> str:
 
 def _gh_raw(repo: str, branch: str, path: str) -> str:
     url = RAW_BASE.format(repo=repo, branch=branch, path=path)
-    resp = httpx.get(url, timeout=10, headers={"User-Agent": "YmasterCheck-Updater"})
+    resp = httpx.get(url, timeout=10, headers={"User-Agent": "DocVer-Updater"})
     if resp.status_code != 200:
         raise FileNotFoundError(f"HTTP {resp.status_code}")
     return resp.text
@@ -793,7 +793,7 @@ def _reexec_allowed() -> bool:
     """v1.17.0: разрешён ли самоперезапуск (re-exec). Запрещён в тестах
     (YM_NO_REEXEC=1) и при выключенном SELF_REEXEC в конфиге."""
     import sys as _sys
-    if os.environ.get("YM_NO_REEXEC") == "1":
+    if (os.environ.get("DOCVER_NO_REEXEC") or os.environ.get("YM_NO_REEXEC")) == "1":
         return False
     if "PYTEST_CURRENT_TEST" in os.environ:
         return False
@@ -830,10 +830,10 @@ def _restart_mode() -> tuple[bool, str]:
     """v1.9.1: есть ли право перезапустить сервис. Проверяем БЕЗВРЕДНОЙ командой
     `systemctl is-active` (разрешена sudoers-правилом вместе с restart):
     rc 0/3 — команда доступна (0=active, 3=inactive)."""
-    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", "ymaster-check"], timeout=15)
+    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", "docver"], timeout=15)
     if rc in (0, 3):
         return True, "sudoers"
-    rc, _o = _run(["systemctl", "is-active", "ymaster-check"], timeout=15)
+    rc, _o = _run(["systemctl", "is-active", "docver"], timeout=15)
     if rc in (0, 3):
         return True, "systemctl"
     return False, ""
@@ -845,7 +845,7 @@ def pre_flight(db) -> dict:
     can_restart, mode = _restart_mode()
     reexec_ok = _reexec_allowed()  # v1.17.0: самоперезапуск без прав root
     can_restart = can_restart or reexec_ok
-    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
+    db_path = os.path.join(APP_DIR, "data", "docver.db")
     db_ok = os.path.exists(db_path)
     git_ok = _git_ready()          # v1.16.0: иначе apply сам восстановит репозиторий
     github_ok, github_err = False, ""
@@ -878,7 +878,7 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
     Примечание к паролю: sudo проверяет пароль СЛУЖЕБНОГО пользователя
     приложения, а не администратора — поэтому пароль из терминала в
     приложении не срабатывает; re-exec решает это без пароля вовсе."""
-    rc, _o = _run(["sudo", "-n", "systemctl", "restart", "ymaster-check"], timeout=60)
+    rc, _o = _run(["sudo", "-n", "systemctl", "restart", "docver"], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен (sudoers) — новая версия уже работает"
     if _reexec_allowed():
@@ -888,7 +888,7 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
             return True, "Перезапущено (re-exec)"   # процесс уже заменён
     if sudo_password:
         rc, out = _run(["sudo", "-S", "-p", "", "systemctl", "restart",
-                        "ymaster-check"], timeout=60,
+                        "docver"], timeout=60,
                        input_text=sudo_password + "\n")
         if rc == 0:
             return True, "Сервис перезапущен (по паролю служебного пользователя)"
@@ -896,11 +896,11 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
             job.say("restart", 96,
                     "Пароль отклонён: приложение работает под другим "
                     "пользователем — включён самоперезапуск…")
-    rc, _o = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
+    rc, _o = _run(["systemctl", "restart", "docver"], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен — новая версия уже работает"
     return False, ("Автоперезапуск недоступен — выполните на сервере: "
-                   "sudo systemctl restart ymaster-check (данные сохранены)")
+                   "sudo systemctl restart docver (данные сохранены)")
 
 
 def _do_apply(target_version: str, repo: str, branch: str,
@@ -1119,7 +1119,7 @@ def start_apply(target_version: str, repo: str, branch: str,
         job.prepare("update", to_version=target_version)
     t = threading.Thread(target=_do_apply,
                          args=(target_version, repo, branch, sudo_password),
-                         daemon=True, name="ymaster-updater")
+                         daemon=True, name="docver-updater")
     t.start()
 
 
@@ -1227,5 +1227,5 @@ def start_rollback(target_version: str, commit: str) -> None:
             raise RuntimeError("Обновление/откат уже выполняется")
         job.prepare("rollback", to_version=target_version)
     t = threading.Thread(target=_do_rollback, args=(target_version, commit),
-                         daemon=True, name="ymaster-rollback")
+                         daemon=True, name="docver-rollback")
     t.start()

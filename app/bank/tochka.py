@@ -29,7 +29,7 @@ import httpx
 
 from .http import BankApiError
 
-log = logging.getLogger("ymaster.bank.tochka")
+log = logging.getLogger("docver.bank.tochka")
 
 AUTH_BASE = os.environ.get("TOCHKA_AUTH_BASE", "https://enter.tochka.com/connect").rstrip("/")
 API_BASE = os.environ.get("TOCHKA_API_BASE", "https://enter.tochka.com/uapi").rstrip("/")

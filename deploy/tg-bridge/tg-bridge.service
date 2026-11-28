@@ -1,5 +1,5 @@
 # ======================================================================
-# Ямастер Чек — systemd-юнит Telegram API-моста (v1.70.12)
+# DocVer — systemd-юнит Telegram API-моста (v1.70.12)
 # Установка (на машине, где Telegram доступен):
 #   sudo mkdir -p /opt/tg-bridge
 #   sudo cp tg_bridge.py /opt/tg-bridge/

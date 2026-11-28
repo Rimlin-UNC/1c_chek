@@ -1,6 +1,6 @@
-# 🟡 Интеграция «Ямастер Чек» ↔ 1С:Предприятие
+# 🟡 Интеграция «DocVer» ↔ 1С:Предприятие
 
-> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
+> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · i@docver.ru
 > Поддерживаемые конфигурации: **1С:Бухгалтерия 3.0**, **1С:ERP 2**, **1С:УТ 11** (платформа 8.3.10+)
 
 Два режима интеграции:
@@ -20,7 +20,7 @@
 
 ```bash
 curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/ping
-# {"service":"Ямастер Чек","vendor":"ООО «Ямастер» (ymaster.ru)","pending_receipts":12,...}
+# {"service":"DocVer","vendor":"ООО «Ямастер» (ymaster.ru)","pending_receipts":12,...}
 ```
 
 При необходимости перевыпустите токен («♻ Сгенерировать») — старый перестанет работать.
@@ -89,7 +89,7 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
 ### 2.4. Что происходит при каждом запуске
 
 ```
-1С ── GET /onec/v1/receipts/pull?limit=100&only_verified=true ──► Сервер Ямастер Чек
+1С ── GET /onec/v1/receipts/pull?limit=100&only_verified=true ──► Сервер DocVer
 1С ◄── JSON: массив receipts (ФН, ФД, ФП, дата, сумма, позиции, extra по маппингу)
 1С:  для каждого чека:  регистр говорит "уже загружен"? → пропустить
      иначе: создать и провести документ, записать в регистр
@@ -102,7 +102,7 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
 
 ```json
 {
-  "provider": "Ямастер Чек (ymaster.ru)",
+  "provider": "DocVer (ymaster.ru)",
   "format": "ymaster-push-v1",
   "target_object": "ПоступлениеТоваровУслуг",
   "count": 2,
@@ -153,12 +153,12 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
 ```json
 {
   "ФорматВерсии": "1.3",
-  "ИмяПакета": "ЯмастерЧек",
+  "ИмяПакета": "DocVer",
   "Данные": { "Контейнер": [
     {
       "ИмяПКО": "ПоступлениеТоваровУслуг",
       "КлючевыеСвойства": {
-        "Ссылка": "ymaster-check-ab12cd34-...",
+        "Ссылка": "docver-ab12cd34-...",
         "Номер": "54321",
         "Дата": "2025-09-01T14:30:00",
         "СуммаДокумента": 1520.50
@@ -197,7 +197,7 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
 
 | Метод | Что делает |
 |---|---|
-| `GET /onec/v1/primary/pull?limit=100&include_errors=false` | новые (ещё не выгруженные) документы, формат `ymaster-primary-v1`; с ошибками проверки — только при `include_errors=true` |
+| `GET /onec/v1/primary/pull?limit=100&include_errors=false` | новые (ещё не выгруженные) документы, формат `docver-primary-v1`; с ошибками проверки — только при `include_errors=true` |
 | `POST /onec/v1/primary/ack` `{"ids": [...]}` | отметить загруженными — больше не отдаются |
 | `GET /onec/v1/primary/enterprise-data?format=json\|xml&only_new=true` | пакет EnterpriseData: `ПоступлениеТоваровУслуг` (УПД, ДОП) и `СчетФактураПолученный` (СЧФ, СЧФДОП) |
 | `GET /onec/v1/primary/{id}/upd` | файл УПД 5.03 документа (422 с причиной, если файл честно не собрать) |
@@ -216,7 +216,7 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
             "sum_with_vat": 6100.0, "item_code": "CEM-500"}]}
 ```
 
-В EnterpriseData ключ объекта — `ymaster-primary-<id>` (счёт-фактура — с `-sf`), у счёта-фактуры к УПД —
+В EnterpriseData ключ объекта — `docver-primary-<id>` (счёт-фактура — с `-sf`), у счёта-фактуры к УПД —
 `ДокументОснование` со ссылкой на поступление. Расширение 1С с HTTP-сервисом и квитированием — T-52
 (нужна тестовая база 1С).
 
@@ -264,4 +264,4 @@ curl -H "X-API-Token: ВАШ_ТОКЕН" https://ваш-сервер/onec/v1/pin
 
 ---
 
-© 2026 **ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
+© 2026 **ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · i@docver.ru

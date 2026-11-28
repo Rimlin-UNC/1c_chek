@@ -1,6 +1,6 @@
-# Ямастер Чек — тесты v1.39.0: «Чек-Пул» этап 9.1 — платное API для
+# DocVer — тесты v1.39.0: «Чек-Пул» этап 9.1 — платное API для
 # внешних клиентов.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки Этапа 9.1 (docs/dev_plan_checkpool.md):
 #  - ключи партнёров: в БД только sha256 (полный ключ виден один раз),
@@ -331,7 +331,7 @@ class TestVersion1390:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

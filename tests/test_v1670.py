@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.67.0: исходящие webhooks (Фаза 1, п.7).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.67.0: исходящие webhooks (Фаза 1, п.7).
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки (docs/concept_roadmap_v160.md, Фаза 1 п.7):
 #  - событие «чек verified» → POST на URL компании с секретом и повторами;
@@ -32,7 +32,7 @@ class TestVersion1670:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.66.0" not in idx and "?v=1.65.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

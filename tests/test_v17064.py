@@ -74,7 +74,7 @@ def _read(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _setup(nick="chek.ymaster.bot"):
+def _setup(nick="docver.bot"):
     from app.database import SessionLocal
     from app.services import appsettings
     s = SessionLocal()
@@ -150,7 +150,7 @@ class TestMaxReturnFlow:
         # форма диплинка в ведении test_v17067, здесь — присутствие ссылок
         assert "maxBotLink('back')" in js
         assert js.count("'https://max.ru/' + (window.MXBOT || "
-                        "'chek.ymaster.bot')") >= 2
+                        "'docver.bot')") >= 2
 
     def test_ticket_hash_cleaned_after_login(self):
         js = _read(APP_JS)
@@ -236,7 +236,7 @@ class TestRelease17064:
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
+        assert re.search(r"docver-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

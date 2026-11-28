@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Ямастер Чек — типовые сценарии API",
-    "_postman_id": "ymaster-check-api-v17060",
+    "name": "DocVer — типовые сценарии API",
+    "_postman_id": "docver-api-v17060",
     "description": "v1.70.60: коллекция Newman (Postman) покрывает типовые сценарии API: вход, отказ входа, доступ с токеном и без, SPA-фолбэк, манифест, service worker, неизвестный маршрут API. Запуск: npm run test:api (сервер на порту 8002 поднимает тест-замок). Переменная baseUrl задаётся окружением или --env-var.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -257,7 +257,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('статус 200', () => pm.response.to.have.status(200));",
-              "pm.test('HTML с заголовком кабинета', () => pm.expect(pm.response.text()).to.include('Ямастер Чек'));",
+              "pm.test('HTML с заголовком кабинета', () => pm.expect(pm.response.text()).to.include('DocVer'));",
               "pm.test('страница быстрее 2 секунд', () => pm.expect(pm.response.responseTime).to.be.below(2000));"
             ]
           }
@@ -312,7 +312,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('статус 200', () => pm.response.to.have.status(200));",
-              "pm.test('имя кэша версии на месте', () => pm.expect(pm.response.text()).to.include('ymaster-check-v'));"
+              "pm.test('имя кэша версии на месте', () => pm.expect(pm.response.text()).to.include('docver-v'));"
             ]
           }
         }
@@ -340,7 +340,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('статус 404 (v1.70.103: без мягких 404)', () => pm.response.to.have.status(404));",
-              "pm.test('оболочка кабинета', () => pm.expect(pm.response.text()).to.include('Ямастер Чек'));",
+              "pm.test('оболочка кабинета', () => pm.expect(pm.response.text()).to.include('DocVer'));",
               "pm.test('не для индекса', () => pm.expect(pm.response.headers.get('X-Robots-Tag')).to.include('noindex'));"
             ]
           }

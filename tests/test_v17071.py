@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — замок выпуска v1.70.71: проверка ФНС после сохранения
+# DocVer — замок выпуска v1.70.71: проверка ФНС после сохранения
 # настроек (расшифровка мастер-токена) и пошаговая диагностика связи.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 from pathlib import Path
@@ -35,7 +35,7 @@ class TestRelease17071:
     def test_all_sync_points(self):
         ver = self._current()
         assert tuple(int(x) for x in ver.split(".")) >= (1, 70, 71)
-        assert f"ymaster-check-v{ver}" in _read(SW)
+        assert f"docver-v{ver}" in _read(SW)
         assert f'"version": "{ver}"' in _read(MANIFEST)
         index = _read(INDEX)
         assert f"app.css?v={ver}" in index and f"app.js?v={ver}" in index

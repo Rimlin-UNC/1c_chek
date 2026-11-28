@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — расширенные действия администратора (v1.4.0)
+# DocVer — расширенные действия администратора (v1.4.0)
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru | E-mail: i@docver.ru
 #
 #   • Обновление системы из приложения: проверка / применение / статус /
 #     история версий (CHANGELOG) — без терминала.
@@ -117,7 +117,7 @@ def update_apply(body: "UpdateApplyBody | None" = None,
             "Нет права на перезапуск сервиса: укажите пароль сервера в диалоге "
             "обновления (он используется только на время обновления и нигде "
             "не сохраняется) либо однократно выполните на сервере: "
-            "sudo bash /opt/ymaster-check/deploy.sh --update")
+            "sudo bash /opt/docver/deploy.sh --update")
     if not pf["github_ok"]:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"GitHub недоступен с сервера: {pf['github_error']}")
@@ -226,7 +226,7 @@ def backup_db(db: Session = Depends(get_db), user: User = Depends(require_admin)
         content=content,
         media_type="application/x-sqlite3",
         headers={"Content-Disposition":
-                 f'attachment; filename="ymaster-backup-{stamp}.db"'})
+                 f'attachment; filename="docver-backup-{stamp}.db"'})
 
 
 @router.get("/backups", summary="Список резервных копий (админ)")
@@ -287,7 +287,7 @@ async def backups_import(file: UploadFile = File(...),
                 size += len(chunk)
                 if size > MAX_MB << 20:
                     raise HTTPException(
-                        413, f"Файл больше {MAX_MB} МБ — это не копия Ямастер Чек")
+                        413, f"Файл больше {MAX_MB} МБ — это не копия DocVer")
                 out.write(chunk)
     except Exception:
         try:
@@ -393,12 +393,12 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
     import time as _time
     import getpass as _getpass
     from ..services.updater import _local_commit, _reexec_allowed
-    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
+    db_path = os.path.join(APP_DIR, "data", "docver.db")
     from ..services.backups import list_backups
     backups = [b["name"] for b in list_backups()[:8]]
     _repo, _branch = _repo_branch(db)
     # v1.17.0: имя юнита и служебного пользователя — для готовых команд
-    unit = "ymaster-check"
+    unit = "docver"
     unit_user = ""
     try:
         upath = f"/etc/systemd/system/{unit}.service"

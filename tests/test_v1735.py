@@ -138,7 +138,7 @@ class TestRelease1735:
         cur = settings.APP_VERSION
         sw = read("app/static/sw.js")
         assert f'APP_VERSION: str = "{cur}"' in read("app/config.py")
-        assert f"ymaster-check-v{cur}" in sw and sw.count(f"?v={cur}") == 5
+        assert f"docver-v{cur}" in sw and sw.count(f"?v={cur}") == 5
         assert read("app/static/index.html").count(f"?v={cur}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={cur}") == 2
         assert f"/maxapp/maxapp.js?v={cur}" in read("app/static/maxapp/index.html")

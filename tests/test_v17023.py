@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Ямастер Чек — тесты v1.70.23 «мастер AdGuard: ссылка /usr/local/bin
+#  DocVer — тесты v1.70.23 «мастер AdGuard: ссылка /usr/local/bin
 #  создаётся всегда, установщику передаётся правильный флаг»
 #
 #  Дефекты найдены сверкой с ИСХОДНИКОМ официального установщика
@@ -12,7 +12,7 @@
 #      установщик создаёт ${output_dir}/.nosymlink и ссылку НЕ делает —
 #      причём .nosymlink отключает вопрос и при всех последующих запусках;
 #    • B10 create_symlink() сразу делает return 0, если /usr/local/bin не входит
-#      в PATH. У юнита программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin
+#      в PATH. У юнита программы PATH=/opt/docver/venv/bin:/usr/bin:/bin
 #      — его там нет, поэтому в режиме root ссылка не появлялась вовсе.
 #      А страховка в _step_cli срабатывала только при rc != 0 от --version:
 #      _find_cli() находит и /opt/adguardvpn_cli/adguardvpn-cli, проверка
@@ -23,7 +23,7 @@
 #  Сети нет: логика установщика воспроизводится локальной копией ask_user() и
 #  create_symlink() (строки 187-196 и 330-365 исходника) — это делает тест
 #  независимым от доступности GitHub.
-#  ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+#  ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ==============================================================================
 import os
 import re
@@ -37,14 +37,14 @@ sys.path.insert(0, os.getcwd())
 from app.config import settings
 from app.services import adguard_setup as ag
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 README = "deploy/adguard-vpn/README.md"
 TUNNEL_UNIT = "deploy/adguard-vpn/adguard-vpn-telegram.service"
 TG_HEALTH = "deploy/adguard-vpn/tg-health.sh"
 APP_JS = "app/static/js/app.js"
 VER = "1.70.23"
 
-SERVICE_PATH = "/opt/ymaster-check/venv/bin:/usr/bin:/bin"   # из юнита
+SERVICE_PATH = "/opt/docver/venv/bin:/usr/bin:/bin"   # из юнита
 ROOTISH_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Копия логики официального установщика: ask_user() (187-196) +
@@ -390,7 +390,7 @@ class TestVersions17023:
         idx = _read("app/static/index.html")
         assert len(re.findall(r"\?v=" + re.escape(ver), idx)) == 3
         sw = _read("app/static/sw.js")
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert len(re.findall(r"\?v=" + re.escape(ver), sw)) == 5
         assert f'"version": "{ver}"' in _read("app/static/manifest.webmanifest")
         assert f"?v={ver}" in _read("app/static/maxapp/index.html")

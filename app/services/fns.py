@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — единственный источник проверки чеков: Открытые API ФНС.
+# DocVer — единственный источник проверки чеков: Открытые API ФНС.
 #
 # Разработчик и владелец идеи: ООО «Ямастер»
-# Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+# Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 #
 # v1.70.70: сторонние провайдеры удалены — чек проверяется ТОЛЬКО в ФНС.
 # Контракт сверен с официальным комплектом «API 2.0.9 от 10.12.2024»
@@ -53,7 +53,7 @@ import httpx
 
 from ..config import settings
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 # --- Адреса и пространства имён (строго по документации ФНС) -------------
 FNS_BASE_DEFAULT = "https://openapi.nalog.ru:8090"
@@ -282,13 +282,13 @@ class FnsClient:
             "SOAPAction": f'"urn:{action}"',
             "FNS-OpenApi-Token": token,
             "FNS-OpenApi-UserToken": base64.b64encode(
-                (user_id or "ymaster-check").encode("utf-8")).decode("ascii"),
+                (user_id or "docver").encode("utf-8")).decode("ascii"),
         }
 
     # --- 2. проверка чека = GetTicket ------------------------------------
     def get_ticket(self, fn: str, fd: str, fp: str, total_sum: float,
                    receipt_date: datetime, operation: int = 1,
-                   user_id: str = "ymaster-check") -> FnsResult:
+                   user_id: str = "docver") -> FnsResult:
         """Полный документ чека из ФНС (единственный официальный метод).
 
         Успех означает: чек существует в базе ФНС и реквизиты совпали —

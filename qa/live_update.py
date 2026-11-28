@@ -93,7 +93,7 @@ def fingerprint(db: Path) -> dict:
 
 
 class Server:
-    """Сервер программы — та же команда, что в deploy/systemd/ymaster-check.service."""
+    """Сервер программы — та же команда, что в deploy/systemd/docver.service."""
 
     def __init__(self, app_dir: Path, env: dict, log_path: Path):
         self.port = free_port()
@@ -186,7 +186,7 @@ def run(args: argparse.Namespace, work: Path, checks: list) -> dict:
     git(app_dir, "checkout", "-q", "-B", args.branch, "FETCH_HEAD")
     (app_dir / "venv").symlink_to(ROOT / ".venv")
     (app_dir / "data").mkdir()
-    db = app_dir / "data" / "ymaster_check.db"
+    db = app_dir / "data" / "docver.db"
 
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("SUPABASE_", "DATABASE_URL", "PYTEST_", "YM_NO_REEXEC", "PYTHONPATH"))}

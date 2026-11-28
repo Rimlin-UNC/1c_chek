@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Настройки: маппинг реквизитов, параметры ФНС и 1С, справочники полей.
 """
@@ -361,7 +361,7 @@ def put_consent_settings(body: ConsentRequisitesPatch,
         if contact and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "Почта для связи по персональным данным: "
-                                "адрес вида chek@ymaster.ru")
+                                "адрес вида i@docver.ru")
         appsettings.set_setting(db, consent.KEY_CONTACT, contact)
     log_action(user, "consent_requisites_updated", details={
         "inn": body.inn, "ogrn": body.ogrn,
@@ -744,7 +744,7 @@ def test_max(db: Session = Depends(get_db), admin: User = Depends(require_admin)
                             "Сначала привяжите MAX: блок «MAX — личное» ниже")
     try:
         mx.send_message(mx.get_token(db), admin.max_user_id,
-                        "🧪 Тест: уведомления «Ямастер Чек» работают!")
+                        "🧪 Тест: уведомления «DocVer» работают!")
     except mx.MaxError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
     return {"ok": True, "message": "Отправлено — проверьте MAX"}
@@ -853,7 +853,7 @@ def test_telegram(db: Session = Depends(get_db), admin: User = Depends(require_a
                             "Сначала привяжите свой чат: блок «Telegram — личное» ниже")
     try:
         tg.send_message(tg.get_token(db), admin.telegram_chat_id,
-                        "🧪 Тест: уведомления «Ямастер Чек» работают!")
+                        "🧪 Тест: уведомления «DocVer» работают!")
     except tg.TelegramError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
     return {"ok": True, "message": "Отправлено — проверьте Telegram"}

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.61.0: «понимающий» конвейер правил (Фаза 1).
+# DocVer — тесты v1.61.0: «понимающий» конвейер правил (Фаза 1).
 # После получения полных данных чека (движок источников) работает новый
 # сервис integrity.py: суммы позиций vs итог, цены×количество vs сумма
 # позиции, дубли позиций. Нарушения → чек уходит на ручную проверку
 # (pending) с человеческой причиной. Существующие статусы НЕ понижаются;
 # ручные правки бухгалтера (manual_edit) не трогаются; лишних запросов
 # к внешним источникам конвейер не порождает.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 from types import SimpleNamespace
@@ -41,7 +41,7 @@ class TestVersion1610:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.60.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

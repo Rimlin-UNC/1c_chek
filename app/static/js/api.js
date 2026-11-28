@@ -1,14 +1,14 @@
 // ======================================================================
-// Ямастер Чек — API-клиент
+// DocVer — API-клиент
 // Разработчик и владелец идеи: ООО «Ямастер»
-// Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+// Сайт: https://ymaster.ru | E-mail: i@docver.ru
 //
 // Надёжность: сетевые сбои (просыпающийся прокси/офлайн) автоматически
 // повторяются с нарастающей паузой; токен НЕ стирается при сбоях сети —
 // только при настоящем 401 от сервера.
 // ======================================================================
 
-const TOKEN_KEY = 'ymaster_check_token';
+const TOKEN_KEY = 'docver_token';
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 export function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
@@ -17,7 +17,7 @@ export function clearToken() { localStorage.removeItem(TOKEN_KEY); setClient('')
 // v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер — активный клиент. Заголовок X-Ym-Company уходит со
 // всеми запросами; сервер проверяет, что компания назначена бухгалтеру администратором. Доступ отозван
 // (403 «… компании клиента …») — выбор сбрасывается и запрос один раз повторяется в своей компании.
-const CLIENT_KEY = 'ymaster-client';
+const CLIENT_KEY = 'docver-client';
 export function getClient() {
   try { return localStorage.getItem(CLIENT_KEY) || ''; } catch { return ''; }
 }

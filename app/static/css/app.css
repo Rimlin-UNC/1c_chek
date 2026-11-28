@@ -1,7 +1,7 @@
 /* ======================================================================
-   Ямастер Чек — веб-клиент
+   DocVer — веб-клиент
    Разработчик и владелец идеи: ООО «Ямастер»
-   Сайт: https://ymaster.ru | E-mail: chek@ymaster.ru
+   Сайт: https://ymaster.ru | E-mail: i@docver.ru
    v1.25.0: ЕДИНАЯ СВЕТЛАЯ тема («Ямастер»): белые карточки, текст #333,
    фирменный оранжевый #FF7A00 дозированно. Переключателей темы нет —
    стиль фиксированный, читаемость проверена на контраст (WCAG AA).
@@ -56,27 +56,27 @@
 
 :root {
   color-scheme: light;
-  --bg: #f5f5f5;                       /* нейтральный фон-подложка #F5F5F5 */
-  --bg-soft: #ececec;
+  --bg: #F3F4F6;                       /* брендбук: фоновый/разделители #F3F4F6 */
+  --bg-soft: #eceff3;
   --panel: #ffffff;                    /* рабочие области — белые карточки */
   --panel-strong: #ffffff;
-  --border: rgba(51, 51, 51, 0.12);
-  --border-strong: rgba(51, 51, 51, 0.22);
-  --text: #333333;                     /* основной текст #333333 */
-  --text-dim: #5c5c5c;
-  --text-faint: #6b6b6b;
-  --accent: #ff7a00;                   /* корпоративный оранжевый #FF7A00 */
-  --accent-soft: #fff1e3;              /* v1.58.3: мягкая оранжевая подложка кнопок */
+  --border: rgba(31, 41, 55, 0.10);
+  --border-strong: rgba(31, 41, 55, 0.20);
+  --text: #1F2937;                     /* брендбук: графитовый — заголовки/основной текст */
+  --text-dim: #6B7280;                 /* брендбук: серый — основной/вспомогательный текст */
+  --text-faint: #9CA3AF;               /* брендбук: светло-серый — подписи */
+  --accent: #F35D17;                   /* брендбук: акцент — ссылки, кнопки */
+  --accent-soft: #FFF1EB;              /* мягкая акцентная подложка */
   /* v1.72.36: единые отступы карточек настроек — объявлены здесь, в корневом
      блоке токенов (контракт test_v17035: токен должен быть объявлен в нём) */
   --card-pad: 24px;
   --card-gap: 24px;
-  --accent-text: #9a4a00;              /* v1.58.3: тёмно-оранжевый текст кнопок */
-  --accent-2: #4b0082;
-  --grad: linear-gradient(135deg, #ff7a00 0%, #ff9a3d 55%, #4b0082 160%);
-  --ok: #2e8b57;                       /* морская зелень #2E8B57 — успех */
+  --accent-text: #C2410C;              /* тёмный акцент для текста/фокуса, контраст AA */
+  --accent-2: #1F2937;                 /* ссылки — графитовый, читаемый */
+  --grad: linear-gradient(135deg, #F35D17 0%, #FF8A4C 55%, #1B8F5A 160%);
+  --ok: #16A34A;                       /* брендбук: успех/подтверждение */
   --warn: #b45309;
-  --bad: #d9534f;                      /* терракота #D9534F — ошибки */
+  --bad: #DC2626;                      /* ошибка */
   --info: #237a90;                     /* голубой, читаемый как текст */
   /* v1.70.32: ОТДЕЛЬНЫЕ токены для МЕЛКОГО ТЕКСТА. Фирменные --ok/--bad/
      --warn/--info выше дают 3.35–4.25:1 на самом тёмном фоне темы (#ececec),
@@ -87,16 +87,16 @@
      фонах темы, но и на собственной подкраске (color-mix 9–14%), наложенной
      на --bg, — то есть на худшей реальной подложке, включая полупрозрачную
      стеклянную карточку входа. */
-  --ok-text: #27764a;                        /* ≥4.5:1 на всех подложках темы, включая собственную подкраску */
-  --bad-text: #c22e2a;                       /* ≥4.5:1 на всех подложках темы, включая собственную подкраску */
+  --ok-text: #15803D;                        /* ≥4.5:1 на светлых подложках */
+  --bad-text: #B91C1C;                       /* ≥4.5:1 на светлых подложках */
   --warn-text: #a24b08;                      /* ≥4.5:1 на всех подложках темы, включая собственную подкраску */
   --info-text: #217287;                      /* ≥4.5:1 на всех подложках темы, включая собственную подкраску */
-  --shadow: 0 10px 34px -14px rgba(51, 51, 51, 0.28);
-  --overlay-1: rgba(245, 245, 245, 0.92);  /* сайдбар, плотные подложки */
-  --overlay-2: rgba(245, 245, 245, 0.78);  /* топбар */
-  --hover-bg: rgba(51, 51, 51, 0.06);
-  --hover-border: rgba(255, 122, 0, 0.55);
-  --scroll-thumb: rgba(51, 51, 51, 0.22);
+  --shadow: 0 10px 34px -14px rgba(31, 41, 55, 0.18);
+  --overlay-1: rgba(243, 244, 246, 0.94);  /* сайдбар, плотные подложки */
+  --overlay-2: rgba(243, 244, 246, 0.82);  /* топбар */
+  --hover-bg: rgba(31, 41, 55, 0.05);
+  --hover-border: rgba(243, 93, 23, 0.45);
+  --scroll-thumb: rgba(31, 41, 55, 0.20);
   --radius: 16px;
   --radius-sm: 10px;
   --sidebar-w: 248px;
@@ -114,7 +114,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-main);       /* v1.70.34: был тот же стек литералом */
-  font-size: 15px;
+  font-size: 16px; /* брендбук: основной текст 16px */
   line-height: 1.5;
   /* v1.70.35: было overflow: hidden — сокращение переопределяло стоящее выше
      overflow-x: hidden (v1.56.0). Заменено на overflow-y: вычисленное значение
@@ -122,11 +122,11 @@ body {
   overflow-y: hidden;
   -webkit-font-smoothing: antialiased;
 }
-a { color: var(--accent-2); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; color: var(--accent-text); }
 .hidden { display: none !important; }
 
-::selection { background: rgba(255, 122, 0, 0.25); }   /* v1.25.0: оранжевая подсветка */
+::selection { background: rgba(243, 93, 23, 0.20); }   /* брендбук: акцент */
 /* v1.70.33: ЕДИНСТВЕННАЯ глобальная фокус-индикация.
    Цвет --accent-2 здесь перебивался правилом из блока v1.21.0, и действующим
    оказывался оранжевый --accent: 2.21:1 на --bg и 2.61:1 на --panel — ниже
@@ -265,6 +265,8 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .login-logo { text-align: center; margin-bottom: 28px; }
 .login-logo img { filter: drop-shadow(0 6px 18px rgba(255,122,0,.35));   /* v1.25.0 */
   margin-inline: auto; }   /* v1.56.1: img теперь block — центрируем явно */
+.login-brand-stacked { display: block; width: min(220px, 70vw); height: auto; margin: 0 auto 8px; filter: drop-shadow(0 6px 18px rgba(255,122,0,.18)); }
+.login-brand-stacked-sm { width: min(170px, 60vw); margin-bottom: 4px; }
 /* v1.70.103: заголовок H1 на стартовой странице один — название в карточке входа и заголовки скрытых экранов
    (h2) оформлены как прежний h1 */
 .login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.875rem; margin-top: 12px; letter-spacing: .3px; }
@@ -289,7 +291,9 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .sidebar.collapsed { margin-left: calc(-1 * var(--sidebar-w)); }
 .sidebar-brand { display: flex; gap: 12px; align-items: center; padding: 18px 16px; border-bottom: 1px solid var(--border); }
 .brand-name { font-weight: 800; font-size: 17px; letter-spacing: .2px; }
+.brand-logo-text { display: block; height: 36px; width: auto; max-width: 180px; object-fit: contain; }
 .brand-sub { font-size: 11px; color: var(--text-faint); }
+.footer-logo-text { height: 22px; width: auto; vertical-align: middle; margin-right: 4px; object-fit: contain; }
 .sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .nav-item {
   display: flex; align-items: center; gap: 12px;
@@ -1713,7 +1717,9 @@ body.settings-all .stg-tab.active { color: var(--text-dim); border-bottom-color:
   .login-screen { padding: 12px; }
   .login-card { padding: 24px 16px 16px; }
   .login-logo { margin-bottom: 18px; }
-  .login-logo img { width: 52px; height: 52px; }
+  .login-logo img:not(.login-brand-stacked) { width: 52px; height: 52px; }
+  .login-brand-stacked { width: min(180px, 66vw); }
+  .login-brand-stacked-sm { width: min(150px, 58vw); }
   .login-logo h1, .login-logo .login-name, .login-logo .screen-title { font-size: 1.5rem; }
   .login-card input,
   .land-lead-form input[type="email"],
@@ -2464,7 +2470,7 @@ table.data.gd-table { min-width: 0; }   /* перебивает table.data { min
 
 /* ==========================================================================
    v1.72.36 — «Настройки»: каркас сетки, карточки, таблицы, меню и состояния.
-   ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+   ООО «Ямастер» | ymaster.ru | i@docver.ru
 
    Что и почему (по снимку владельца от 15.11.2026):
    • таблица «Копия / Тип / В копии / Размер» шириной 720 px стояла прямо в

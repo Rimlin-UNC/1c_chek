@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — быстрый вход (WebAuthn / passkey): v1.43.0.
+# DocVer — быстрый вход (WebAuthn / passkey): v1.43.0.
 # Отпечаток пальца, распознавание лица или PIN устройства вместо пароля.
 # Биометрия НЕ покидает устройство (проверяется в защищённом чипе) —
 # на сервере хранится только публичный ключ ключа-пароля (152-ФЗ).
 # Каждый ключ привязан к устройству: одно устройство — один ключ,
 # разных устройств может быть несколько (Настройки → «Быстрый вход»).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _raw_id(cred_id: str) -> bytes:
 
 # --------------------------------------------------------------------------
 #  Привязка к домену: RP ID = хост браузера без порта, origin — схема+хост.
-#  Работает везде одинаково: localhost, IP:8000 и chek.ymaster.ru (за
+#  Работает везде одинаково: localhost, IP:8000 и docver.ru (за
 #  reverse-proxy схема берётся из X-Forwarded-Proto, как в client_ip).
 # --------------------------------------------------------------------------
 def _rp_id(request: Request) -> str:
@@ -120,7 +120,7 @@ def register_options(request: Request, db: Session = Depends(get_db),
                   .filter(WebauthnCredential.user_id == user.id).all())
     opts = generate_registration_options(
         rp_id=_rp_id(request),
-        rp_name="Ямастер Чек",
+        rp_name="DocVer",
         user_name=user.username,
         user_id=user.id.encode(),
         user_display_name=(user.full_name or user.username),

@@ -1,6 +1,6 @@
-# 🛠 Развёртывание «Ямастер Чек» на сервере Ubuntu 24.04
+# 🛠 Развёртывание «DocVer» на сервере Ubuntu 24.04
 
-> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
+> **Разработчик и владелец идеи: ООО «Ямастер»** · [ymaster.ru](https://ymaster.ru) · i@docver.ru
 
 Варианты установки — выберите свой:
 
@@ -35,7 +35,7 @@ sudo bash deploy.sh
 | Шаг | Действие |
 |---|---|
 | 1 | Устанавливает пакеты: `python3-venv, git, nginx, ufw, fail2ban, sqlite3` |
-| 2 | Создаёт системного пользователя `ymaster`, каталог `/opt/ymaster-check` |
+| 2 | Создаёт системного пользователя `ymaster`, каталог `/opt/docver` |
 | 3 | **Клонирует ветку `main` с GitHub** (для приватного репозитория: `GITHUB_TOKEN=ghp_xxx sudo -E bash deploy.sh`) |
 | 4 | Разворачивает venv, ставит зависимости из `requirements.txt` |
 | 5 | Генерирует `SECRET_KEY` и токен 1С в `.env` (права 600) |
@@ -76,11 +76,11 @@ sudo bash deploy.sh --update
 ### 1.6. Управление и диагностика
 
 ```bash
-systemctl status ymaster-check        # статус
-journalctl -u ymaster-check -f        # логи приложения
-sudo fail2ban-client status ymaster-check   # кто забанен
+systemctl status docver        # статус
+journalctl -u docver -f        # логи приложения
+sudo fail2ban-client status docver   # кто забанен
 sudo ufw status                       # файрвол
-sqlite3 /opt/ymaster-check/data/ymaster_check.db ".tables"   # БД
+sqlite3 /opt/docver/data/docver.db ".tables"   # БД
 ```
 
 ---
@@ -93,7 +93,7 @@ cd 1c_chek && cp .env.example .env    # заполните SECRET_KEY
 docker compose up -d --build
 ```
 
-Состав: `app` (FastAPI) + `db` (PostgreSQL 17). Данные — в volumes. Операции — `docker compose logs -f app`, бэкап — `docker compose exec db pg_dump -U ymaster ymaster_check > backup.sql`.
+Состав: `app` (FastAPI) + `db` (PostgreSQL 17). Данные — в volumes. Операции — `docker compose logs -f app`, бэкап — `docker compose exec db pg_dump -U ymaster docver > backup.sql`.
 
 ---
 
@@ -136,7 +136,7 @@ python3 run.py --port 8000
    ОС **Ubuntu 24.04**, 1 CPU / 2 ГБ RAM / NVMe 20 ГБ, локация РФ.
 2. Дождаться письма с IP и паролем root (или добавить свой SSH-ключ).
 3. Одна команда установки (см. «Способ 1» выше):
-   `sudo bash deploy.sh --domain=chek.ymaster.ru --with-ssl=chek.ymaster.ru`
+   `sudo bash deploy.sh --domain=docver.ru --with-ssl=docver.ru`
 4. DNS: в разделе «Домены» Timeweb (или у регистратора) A-запись
    `chek` → IP сервера. Сертификат Let's Encrypt выпустится автоматически.
 
@@ -155,7 +155,7 @@ python3 run.py --port 8000
 
 ### Требования (одинаковы для всех вариантов)
 - Python 3.11+ (Ubuntu 24.04 содержит), 1 ГБ RAM достаточно;
-- постоянный диск под `data/ymaster_check.db` (файл БД);
+- постоянный диск под `data/docver.db` (файл БД);
 - снаружи: 80/443 (HTTP/HTTPS), 22 (SSH) — всё остальное закрыто;
 - для камеры на телефонах обязателен HTTPS.
 
@@ -197,4 +197,4 @@ python3 run.py --port 8000
 
 ---
 
-© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · chek@ymaster.ru
+© 2026 **ООО «Ямастер»** — разработка и идея · [ymaster.ru](https://ymaster.ru) · i@docver.ru

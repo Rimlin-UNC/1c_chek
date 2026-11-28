@@ -1,10 +1,10 @@
 # ==============================================================================
-#  Ямастер Чек — автоустановка AdGuard VPN из программы (v1.70.15, v1.70.16)
+#  DocVer — автоустановка AdGuard VPN из программы (v1.70.15, v1.70.16)
 #  Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru
 # ==============================================================================
 #  v1.70.16 — мастер БЕЗ пароля: пароль сервера (sudo) из браузера больше не
 #  спрашивается вовсе. Привилегированные шаги делает один помощник
-#  /usr/local/sbin/ymaster-adguard-setup (deploy/adguard-vpn), разрешённый
+#  /usr/local/sbin/docver-adguard-setup (deploy/adguard-vpn), разрешённый
 #  узким sudoers-правилом /etc/sudoers.d/ymaster-adguard на фиксированные фазы.
 #  Правило ставит deploy.sh при установке/обновлении; на сервере, где его ещё
 #  нет, панель мастера показывает ОДНУ готовую команду для терминала (копируется
@@ -68,7 +68,7 @@ INSTALL_TMP = os.path.join(INSTALL_TMP_DIR, "adguard-install.sh")
 # `read -r response < /dev/tty`; у службы tty нет → ответ пустой → установщик
 # создаёт файл .nosymlink и ссылка НЕ появляется. Кроме того, create_symlink()
 # сразу делает return 0, если /usr/local/bin не входит в PATH (у юнита
-# программы PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin — его там нет).
+# программы PATH=/opt/docver/venv/bin:/usr/bin:/bin — его там нет).
 INSTALL_CMD = (f"mkdir -p {INSTALL_TMP_DIR} && chmod 700 {INSTALL_TMP_DIR} "
                f"&& rm -f {INSTALL_TMP} "
                f"&& curl -fsSL {INSTALL_URL} -o {INSTALL_TMP} "
@@ -89,9 +89,9 @@ UNIT_MAP = {  # комплект -> (каталог назначения, пра
 DEST_DIRS = {"etc": ETC_DIR, "sbin": SBIN_DIR}
 # v1.70.16: привилегированный помощник — единственная команда, которую
 # разрешает sudoers-правило; фазы фиксированные, аргументов из приложения нет.
-HELPER_NAME = "ymaster-adguard-setup"
+HELPER_NAME = "docver-adguard-setup"
 HELPER_PATH = "/usr/local/sbin/" + HELPER_NAME
-HELPER_SRC = "ymaster-adguard-setup.sh"          # в deploy/adguard-vpn
+HELPER_SRC = "docver-adguard-setup.sh"          # в deploy/adguard-vpn
 HELPER_RULE = "/etc/sudoers.d/ymaster-adguard"   # правило NOPASSWD
 HELPER_PHASES = ("preflight", "rights", "install", "login", "tun", "off",
                  "units", "autopilot", "version", "status")
@@ -822,7 +822,7 @@ def _detect_rights() -> tuple[str, str]:
     except Exception:                                        # noqa: BLE001
         pass
     if helper_allowed():
-        return "helper", ("Права: помощник ymaster-adguard-setup "
+        return "helper", ("Права: помощник docver-adguard-setup "
                           "(sudoers-правило) — пароль не нужен.")
     return "", ""
 
@@ -897,7 +897,7 @@ def preflight() -> dict:
            "one_time_cmd": cmd}
     if ready:
         out["hint"] = ("Мастер работает без пароля: привилегированные шаги "
-                       "делает помощник ymaster-adguard-setup (режим «"
+                       "делает помощник docver-adguard-setup (режим «"
                        + mode + "»).")
     else:
         out["hint"] = (NO_RIGHTS_ERROR + " " + cmd)

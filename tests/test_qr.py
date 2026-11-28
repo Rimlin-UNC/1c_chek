@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — тесты. ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+DocVer — тесты. ООО «Ямастер» | ymaster.ru | i@docver.ru
 
 Запуск:  python3 -m pytest tests/ -v
 """

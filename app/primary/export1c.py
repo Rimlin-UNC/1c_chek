@@ -39,7 +39,7 @@ KND = "1115131"
 FILE_PREFIX = "ON_NSCHFDOPPR"
 # Наименование документа по факту хозяйственной жизни — общая формулировка УПД со статусом 1 и 2
 DOC_NAME = "Документ об отгрузке товаров (выполнении работ), передаче имущественных прав (документ об оказании услуг)"
-SIGNER_NOTE = "Подписант не указан: файл собран программой «Ямастер Чек» из реестра первички для загрузки в 1С"
+SIGNER_NOTE = "Подписант не указан: файл собран программой «DocVer» из реестра первички для загрузки в 1С"
 VAT_XML = {"0": "0%", "5": "5%", "7": "7%", "10": "10%", "18": "18%", "20": "20%", "22": "22%",
            "5/105": "5/105", "7/107": "7/107", "10/110": "10/110", "18/118": "18/118", "20/120": "20/120",
            "22/122": "22/122", "none": "без НДС", "agent": "НДС исчисляется налоговым агентом"}
@@ -195,7 +195,7 @@ def upd_xml(doc: PrimaryDocument, now: datetime | None = None) -> tuple[str, byt
     stamp = (now or datetime.now(MSK)).astimezone(MSK)
     name = file_id(doc)
     root = ET.Element("Файл", {"ИдФайл": name, "ВерсФорм": "5.03",
-                               "ВерсПрог": f"Ямастер Чек {settings.APP_VERSION}"[:40]})
+                               "ВерсПрог": f"DocVer {settings.APP_VERSION}"[:40]})
     attrs = {"КНД": KND, "Функция": doc.function}
     if doc.function != "СЧФ":
         attrs.update({"ПоФактХЖ": DOC_NAME, "НаимДокОпр": DOC_NAME})
@@ -281,7 +281,7 @@ def _iso(value: date | None) -> str:
 
 def ed_objects(doc: PrimaryDocument) -> list[dict]:
     """Документ реестра → объекты EnterpriseData: поступление (УПД, ДОП) и счёт-фактура (СЧФ, СЧФДОП)."""
-    ref = f"ymaster-primary-{doc.id}"
+    ref = f"docver-primary-{doc.id}"
     seller = _party_ed(doc.seller_name, doc.seller_inn, doc.seller_kpp)
     buyer = {"Наименование": doc.buyer_name, "ИНН": doc.buyer_inn, "КПП": doc.buyer_kpp}
     money = {"Код": doc.currency or "643", "Наименование": CURRENCIES.get(doc.currency or "643", "")}
@@ -321,7 +321,7 @@ def ed_objects(doc: PrimaryDocument) -> list[dict]:
 
 
 def _package_head() -> dict:
-    return {"ФорматВерсии": "1.3", "ИмяПакета": "ЯмастерЧек.Первичка", "Поставщик": "ООО «Ямастер» (ymaster.ru)",
+    return {"ФорматВерсии": "1.3", "ИмяПакета": "DocVer.Первичка", "Поставщик": "ООО «Ямастер» (ymaster.ru)",
             "ДатаФормирования": datetime.now(MSK).strftime("%Y-%m-%dT%H:%M:%S")}
 
 

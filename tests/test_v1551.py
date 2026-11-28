@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.55.1 (ООО «Ямастер»)
+# DocVer — тесты v1.55.1 (ООО «Ямастер»)
 # 1) Адаптив главной: страница прокручивается целиком, форма входа не
 #    обрезается (телефон и браузер).
 # 2) Сохранность данных: страховые копии базы ВНЕ каталога приложения,
@@ -21,7 +21,7 @@ class TestVersion1551:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.55.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
@@ -76,9 +76,9 @@ class TestLandingAdaptive:
 class TestDeployDataSafety:
     def test_offapp_backup_before_anything(self):
         d = open("deploy.sh", encoding="utf-8").read()
-        assert 'BACKUP_ROOT="/var/backups/ymaster-check"' in d
-        assert 'DB_FILE="$APP_DIR/data/ymaster_check.db"' in d
-        assert 'cp -a "$DB_FILE" "$BACKUP_ROOT/ymaster_check-$TS.db"' in d
+        assert 'BACKUP_ROOT="/var/backups/docver"' in d
+        assert 'DB_FILE="$APP_DIR/data/docver.db"' in d
+        assert 'cp -a "$DB_FILE" "$BACKUP_ROOT/docver-$TS.db"' in d
         assert 'cp -a "$APP_DIR/.env" "$BACKUP_ROOT/env-$TS.bak"' in d
         assert "tail -n +31" in d                    # хранить 30 копий
 

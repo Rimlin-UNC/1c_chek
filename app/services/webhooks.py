@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — исходящие webhooks (v1.67.0, Фаза 1 концепции, п.7).
+# DocVer — исходящие webhooks (v1.67.0, Фаза 1 концепции, п.7).
 # Событие «чек verified» → POST JSON на URL администратора: во внешнюю
 # таблицу, 1С-шлюз или посредника — «интеграции без границ» без
 # тяжёлых коннекторов на нашем железе.
@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 import httpx
 from sqlalchemy.orm import Session
 
-log = logging.getLogger("ymaster.webhooks")
+log = logging.getLogger("docver.webhooks")
 
 SETT_URL = "webhook_url"
 SETT_SECRET = "webhook_secret"       # секрет (appsettings.SECRET_KEYS)
@@ -299,7 +299,7 @@ def start_worker() -> bool:
     _stop.clear()
     _wake.clear()
     _worker = threading.Thread(target=_worker_loop, daemon=True,
-                               name="ymaster-webhooks")
+                               name="docver-webhooks")
     _worker.start()
     log.info("webhooks worker started")
     return True
@@ -326,7 +326,7 @@ def send_test(db: Session) -> tuple[int, str]:
         raise WebhookError("Сначала задайте URL приёмника")
     body = json.dumps({
         "event": "test",
-        "app": "Ямастер Чек",
+        "app": "DocVer",
         "occurred_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }, ensure_ascii=False)
     ts = int(time.time())

@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.68.0: устойчивость (рекомендации аудита).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.68.0: устойчивость (рекомендации аудита).
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # Очередь автозагрузки · правый край XFF · мониторинг вебхуков ·
 # статус SECRET_KEY · runbook восстановления.
 import re
@@ -21,7 +21,7 @@ class TestVersion1680:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.67.1" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
@@ -146,7 +146,7 @@ class TestSystemIndicators:
         # индикатора проверяем юнитом на обоих концах; глобальный ключ не
         # трогаем: его подмена инвалидировала бы уже выданный токен.
         from app.security import secret_is_weak
-        assert secret_is_weak("ymaster-dev-secret-change-me-in-production")
+        assert secret_is_weak("docver-dev-secret-change-me-in-production")
         assert secret_is_weak("короткий")
         assert not secret_is_weak("K" * 48)
 

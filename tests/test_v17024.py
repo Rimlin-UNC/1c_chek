@@ -35,7 +35,7 @@ sys.path.insert(0, os.getcwd())
 from app.config import settings
 from app.services import adguard_setup as ag
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 README = "deploy/adguard-vpn/README.md"
 TUNNEL_UNIT = "deploy/adguard-vpn/adguard-vpn-telegram.service"
 TG_HEALTH = "deploy/adguard-vpn/tg-health.sh"

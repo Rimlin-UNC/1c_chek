@@ -3,25 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ямастер Чек — фирменный стиль «чек-смайлик» (v1.26.1)</title>
-<!-- Ямастер Чек — ООО «Ямастер», https://ymaster.ru, chek@ymaster.ru -->
+<title>DocVer — брендбук</title>
 <style>
-  :root{ --orange:#FF7A00; --navy:#0E2A47; --ink:#1f2430; --mut:#5b6472;
-         --bg:#f6f7f9; --card:#fff; --line:#e3e6ec; }
+  :root{ --orange:#F26522; --orange-light:#FFB347; --green:#1B8F5A; --green-light:#6EE7B7;
+         --ink:#1F2937; --mut:#5B6472; --bg:#F6F7F9; --card:#fff; --line:#E3E6EC; }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:32px 20px 64px}
-  header.top{background:var(--navy);color:#fff;border-radius:16px;padding:26px 30px;margin-bottom:26px}
-  header.top h1{margin:0 0 6px;font-size:25px}
-  header.top p{margin:0;color:#c6d2e0}
-  .brand{color:var(--orange);font-weight:700}
-  h2{font-size:19px;margin:32px 0 12px;color:var(--navy)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:16px}
+  header.top{background:linear-gradient(135deg,#FFB347,#F26522);color:#fff;border-radius:16px;padding:28px 30px;margin-bottom:26px}
+  header.top h1{margin:0 0 6px;font-size:28px}
+  header.top p{margin:0;color:rgba(255,255,255,.92)}
+  h2{font-size:19px;margin:32px 0 12px;color:var(--ink)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:12px;align-items:center}
   .card p{margin:0;color:var(--mut);font-size:13.5px;text-align:center}
   .card h3{margin:0;font-size:15px}
-  .demo{display:flex;gap:18px;align-items:center;justify-content:center;flex-wrap:wrap}
-  .dark{background:#0E2A47;border-radius:10px;padding:14px}
+  .dark{background:#1F2937;border-radius:10px;padding:14px}
   .file{font:12px/1.4 ui-monospace,Consolas,monospace;background:#eef1f6;border-radius:8px;padding:6px 10px;color:#445;align-self:stretch;text-align:center}
   .colors{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
   .sw{border-radius:12px;overflow:hidden;border:1px solid var(--line)}
@@ -30,105 +27,97 @@
   .sw b{display:block;font-size:13px}
   table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:14px}
   th,td{padding:9px 14px;border-bottom:1px solid var(--line);text-align:left}
-  th{background:#eef1f6;color:var(--navy)}
+  th{background:#eef1f6;color:var(--ink)}
   footer{margin-top:36px;color:#98a1ad;font-size:13px;text-align:center}
-
-/* v1.70.33: размеры иллюстраций и цвета фирменных свотчей — классами, а не
-   инлайн-стилем. Документ бренда обязан проходить ту же валидацию, что и
-   интерфейс приложения; заодно цвета свотчей теперь ссылаются на токены
-   --orange/--navy/--line из этого же :root, а не дублируют их hex-ом. */
-.logo-h{max-width:100%;width:280px}
-.logo-v{max-width:170px}
-.blank-a4{max-width:420px;width:100%;border:1px solid var(--line);border-radius:8px}
-.card-center{align-items:center}
-.sw-orange{background:var(--orange)}
-.sw-navy{background:var(--navy)}
-.sw-grad{background:linear-gradient(135deg,#6366F1,#8B5CF6,#22D3EE)}
-.sw-white{background:#FFFFFF;border-bottom:1px solid var(--line)}
+  .logo-h{max-width:100%;width:320px;height:auto}
+  .logo-v{max-width:180px;height:auto}
+  .logo-m{width:140px;height:140px;object-fit:contain}
+  .preview{max-width:100%;height:auto;border-radius:10px;border:1px solid var(--line)}
 </style>
 </head>
 <body>
 <div class="wrap">
-
 <header class="top">
-  <h1><span class="brand">Ямастер Чек</span> — фирменный стиль «чек-смайлик»</h1>
-  <p>Знак: чек с глазами-QR и улыбкой «всё сошлось» · бейдж «проверено» · домен chek.ymaster.ru · v1.26.1</p>
+  <h1>DocVer — брендбук</h1>
+  <p>Документальная верификация · docver.ru · i@docver.ru · ООО «Ямастер»</p>
 </header>
 
-<h2>Знак и версии логотипа</h2>
+<h2>Логотипы и знаки</h2>
 <div class="grid">
   <div class="card">
-    <img src="png/mark-192.png" width="140" alt="Знак">
-    <h3>Знак (плитка приложения)</h3>
-    <p>Основной знак: чек-смайлик + бейдж «проверено». Иконка приложения, аватары, фавиконка.</p>
-    <div class="file">logo-mark.svg · png/mark-1024…48 · favicon.svg</div>
+    <img src="logo-mark.svg" class="logo-m" alt="Знак DocVer">
+    <h3>Знак</h3>
+    <p>Основной знак для иконок, аватаров, PWA.</p>
+    <div class="file">brand/logo-mark.svg</div>
   </div>
   <div class="card">
-    <img src="png/icon3d-192.png" width="140" alt="Иконка приложения">
-    <h3>Иконка приложения («мягкий 3D»)</h3>
-    <p>Чек с настоящим QR, глянцевая галочка и домен — для витрин, сторов, соцсетей (v1.26.2).</p>
-    <div class="file">icon-3d-master.png (2048) · png/icon3d-512…64</div>
-  </div>
-  <div class="card">
-    <img src="png/logo-horizontal-whitebg.png" class="logo-h" alt="Горизонтальный логотип">
+    <img src="logo-horizontal.svg" class="logo-h" alt="Горизонтальный логотип">
     <h3>Горизонтальный</h3>
-    <p>Шапка сайта, бланки, документы в строку.</p>
-    <div class="file">logo-horizontal.svg</div>
+    <p>Для шапки, документов, презентаций.</p>
+    <div class="file">brand/logo-horizontal.svg</div>
   </div>
   <div class="card">
-    <img src="png/logo-stacked-whitebg.png" class="logo-v" alt="Вертикальный логотип">
+    <img src="logo-stacked.svg" class="logo-v" alt="Вертикальный логотип">
     <h3>Вертикальный</h3>
-    <p>Центральные дистрибутивы: обложки, презентации, вывеска.</p>
-    <div class="file">logo-stacked.svg</div>
+    <p>Для заставок, печатей, квадратных носителей.</p>
+    <div class="file">brand/logo-stacked.svg</div>
   </div>
   <div class="card">
-    <img src="png/mono-512.png" width="120" alt="Монохром тёмный">
-    <h3>Монохром (печати)</h3>
-    <p>Печати, факсы, штампы, ч/б-полиграфия — тёмный на светлом.</p>
-    <div class="file">logo-mono.svg</div>
-  </div>
-  <div class="card">
-    <div class="dark"><img src="png/mono-white-512.png" width="120" alt="Монохром белый"></div>
+    <div class="dark"><img src="logo-mono-white.svg" class="logo-m" alt="Моно белый"></div>
     <h3>Монохром белый</h3>
-    <p>Тёмные фоны, футеры, тёмная тема, мерч.</p>
-    <div class="file">logo-mono-white.svg</div>
+    <p>Для тёмных фонов.</p>
+    <div class="file">brand/logo-mono-white.svg</div>
+  </div>
+  <div class="card">
+    <img src="logo-mono.svg" class="logo-m" alt="Моно тёмный">
+    <h3>Монохром тёмный</h3>
+    <p>Для печати и одноцветных носителей.</p>
+    <div class="file">brand/logo-mono.svg</div>
+  </div>
+  <div class="card">
+    <img src="icon-app.svg" class="logo-m" alt="Иконка приложения">
+    <h3>Иконка приложения</h3>
+    <p>PWA/мобильная иконка.</p>
+    <div class="file">brand/icon-app.svg</div>
   </div>
 </div>
 
-<h2>Фирменные цвета</h2>
+<h2>Цвета</h2>
 <div class="colors">
-  <div class="sw"><div class="c sw-orange"></div><div class="t"><b>#FF7A00</b>оранжевый «Ямастер» — действие, галочки, акценты</div></div>
-  <div class="sw"><div class="c sw-navy"></div><div class="t"><b>#0E2A47</b>navy — текст логотипа, глаза-QR, доверие</div></div>
-  <div class="sw"><div class="c sw-grad"></div><div class="t"><b>#6366F1→#8B5CF6→#22D3EE</b>градиент плитки приложения</div></div>
-  <div class="sw"><div class="c sw-white"></div><div class="t"><b>#FFFFFF</b>чек, фон документов</div></div>
+  <div class="sw"><div class="c" style="background:#F26522"></div><div class="t"><b>Оранжевый</b>#F26522 · основной</div></div>
+  <div class="sw"><div class="c" style="background:#FFB347"></div><div class="t"><b>Светлый оранжевый</b>#FFB347 · градиент</div></div>
+  <div class="sw"><div class="c" style="background:#1B8F5A"></div><div class="t"><b>Зелёный</b>#1B8F5A · подтверждение</div></div>
+  <div class="sw"><div class="c" style="background:#6EE7B7"></div><div class="t"><b>Светлый зелёный</b>#6EE7B7 · акцент</div></div>
+  <div class="sw"><div class="c" style="background:#1F2937"></div><div class="t"><b>Графитовый</b>#1F2937 · текст</div></div>
+  <div class="sw"><div class="c" style="background:#F6F7F9;border-bottom:1px solid #E3E6EC"></div><div class="t"><b>Фон</b>#F6F7F9</div></div>
 </div>
 
-<h2>Фирменный бланк А4</h2>
-<div class="card card-center">
-  <img src="png/blank-a4-preview.png" class="blank-a4" alt="Бланк А4">
-  <p>Шаблон для писем и актов: шапка со знаком и доменом, оранжевая линейка, подвал с реквизитами. Открывается в браузере и печатается из любого редактора SVG/PDF.</p>
-  <div class="file">blank-a4.svg · 2100×2970 (A4, 254 dpi)</div>
+<h2>Референсы стиля</h2>
+<div class="grid">
+  <div class="card" style="grid-column:span 2">
+    <img src="reference/Max_a_Подбери_мне_стиль_те.png" class="preview" alt="Стиль приложения">
+    <h3>Стиль приложения</h3>
+    <div class="file">brand/reference/Max_a_Подбери_мне_стиль_те.png</div>
+  </div>
+  <div class="card">
+    <img src="reference/Max_a_Подумай_как_должен_в.png" class="preview" alt="Мобильная иконка">
+    <h3>Мобильная иконка</h3>
+    <div class="file">brand/reference/Max_a_Подумай_как_должен_в.png</div>
+  </div>
 </div>
 
-<h2>Правила использования</h2>
+<h2>Идентичность</h2>
 <table>
-  <!-- v1.70.33: <tr> не должен лежать прямо в <table> — браузеры сами вставляют
-       tbody, из-за чего селекторы :nth-child и стили «зебры» съезжают.
-       Строка заголовков — в <thead>, данные — в <tbody>. -->
-  <thead>
-  <tr><th>Ситуация</th><th>Версия</th></tr>
-  </thead>
-  <tbody>
-  <tr><td>Сайт, интерфейс, PWA-иконка</td><td>интерфейс — logo-mark.svg (смайлик); иконка приложения/PWA — «мягкий 3D» (icon-512/192/64); в шапке — горизонтальный</td></tr>
-  <tr><td>Документы, акты, письма</td><td>горизонтальный в шапке бланка А4</td></tr>
-  <tr><td>Печати, штампы, факс</td><td>logo-mono (тёмный), без градиентов</td></tr>
-  <tr><td>Тёмные фоны, тёмная тема</td><td>logo-mono-white</td></tr>
-  <tr><td>Мелкие размеры (16–48 px)</td><td>favicon.svg / png 32–48 — улыбка читается</td></tr>
-  <tr><td>Оранжевый</td><td>только акценты и «проверено» — не заливать фон (исключение: промо-материалы)</td></tr>
-  </tbody>
+  <tr><th>Элемент</th><th>Значение</th></tr>
+  <tr><td>Название</td><td>DocVer</td></tr>
+  <tr><td>Подзаголовок</td><td>Документальная Верификация</td></tr>
+  <tr><td>Домен</td><td>docver.ru</td></tr>
+  <tr><td>Почта</td><td>i@docver.ru</td></tr>
+  <tr><td>Компания</td><td>ООО «Ямастер» (https://ymaster.ru)</td></tr>
+  <tr><td>Тональность</td><td>Профессионально, уверенно, без канцеляризма</td></tr>
 </table>
 
-<footer>Ямастер Чек v1.26.1 · ООО «Ямастер» · https://ymaster.ru · chek@ymaster.ru · файлы: brand/</footer>
+<footer>DocVer · ООО «Ямастер» · ymaster.ru · i@docver.ru · brand/</footer>
 </div>
 </body>
 </html>

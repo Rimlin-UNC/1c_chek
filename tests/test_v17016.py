@@ -1,7 +1,7 @@
 # ==============================================================================
-#  Ямастер Чек — тесты v1.70.16 «Мастер AdGuard без пароля»
+#  DocVer — тесты v1.70.16 «Мастер AdGuard без пароля»
 #  Пароль сервера (sudo) исключён из мастера как класс: привилегированные шаги
-#  делает один помощник deploy/adguard-vpn/ymaster-adguard-setup.sh,
+#  делает один помощник deploy/adguard-vpn/docver-adguard-setup.sh,
 #  разрешённый узким sudoers-правилом на фиксированные фазы. Проверяем:
 #    • версии/журнал/What’s New синхронны;
 #    • ни в сервисе, ни в маршруте, ни в UI пароля больше нет;
@@ -12,7 +12,7 @@
 #    • deploy.sh ставит помощник и правило (блок защищён);
 #    • живой прогон помощника: rights/неизвестная фаза/без root.
 #  Сетевых вызовов нет: subprocess и логин подменяются.
-#  ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+#  ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ==============================================================================
 import inspect
 import json
@@ -35,7 +35,7 @@ from app.services import adguard_setup as ag
 from app.services import telegram_bot as tg
 from tests.test_v1121 import login
 
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 APP_JS = "app/static/js/app.js"
 
 
@@ -120,7 +120,7 @@ class TestVersions17016:
         assert ch.index("## [1.70.16]") < ch.index("## [1.70.15]")
         block = ch[ch.index("## [1.70.16]"):ch.index("## [1.70.15]")]
         assert "без пароля" in block.lower()
-        assert "ymaster-adguard-setup" in block
+        assert "docver-adguard-setup" in block
         assert "/etc/sudoers.d/ymaster-adguard" in block
 
     def test_whatsnew(self):
@@ -199,7 +199,7 @@ class TestNoPasswordAnywhere:
         js = _read(APP_JS)
         for token in ('id="ag-rule-row"', 'id="ag-cmd"', 'id="ag-copy-cmd"',
                       'id="ag-recheck"', "one_time_cmd", "agNeedRule",
-                      "ymaster-adguard-setup",
+                      "docver-adguard-setup",
                       "/etc/sudoers.d/ymaster-adguard", "Проверить снова"):
             assert token in js, token
 
@@ -299,7 +299,7 @@ class TestHelperScript:
         sh = _read(HELPER_SH)
         body = sh[sh.index("phase_units()"):]
         assert "$KIT_DIR" in body and "install -m 0644" in body
-        assert "ymaster-adguard-setup" not in body.split("phase_autopilot")[0]
+        assert "docver-adguard-setup" not in body.split("phase_autopilot")[0]
 
     @pytest.mark.skipif(shutil.which("bash") is None, reason="bash недоступен")
     def test_run_rights_phase(self):
@@ -543,7 +543,7 @@ class TestRunHelper:
         cmd = ag.one_time_cmd()
         assert cmd.startswith("sudo bash ")
         assert ag.HELPER_SRC in cmd and "install-rule" in cmd
-        assert "ymaster-adguard-setup.sh" in cmd
+        assert "docver-adguard-setup.sh" in cmd
         assert "\n" not in cmd and ";" not in cmd and "|" not in cmd
 
 
@@ -784,10 +784,10 @@ class TestStepsInHelperMode:
 class TestDeployAndDocs:
     def test_deploy_sh_installs_helper(self):
         sh = _read("deploy.sh")
-        assert "ymaster-adguard-setup.sh" in sh
+        assert "docver-adguard-setup.sh" in sh
         assert "install-rule" in sh
         assert "/etc/sudoers.d/ymaster-adguard" in sh or \
-            "ymaster-adguard-setup" in sh
+            "docver-adguard-setup" in sh
 
     def test_deploy_block_is_guarded(self):
         """Ошибка блока не должна ронять деплой (как у sudoers v1.8.3)."""
@@ -813,7 +813,7 @@ class TestDeployAndDocs:
     def test_manual_updated(self):
         m = _read("app/services/manual_content.py")
         assert "v1.70.16" in m and "без пароля" in m
-        assert "ymaster-adguard-setup" in m
+        assert "docver-adguard-setup" in m
 
     def test_kit_files_still_complete(self):
         for name in ag.UNIT_MAP:

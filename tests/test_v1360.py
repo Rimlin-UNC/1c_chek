@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.36.0: «Чек-Пул» этап 7 — вовлечение.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.36.0: «Чек-Пул» этап 7 — вовлечение.
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки Этапа 7 (docs/dev_plan_checkpool.md):
 #  - лидерборд: топ-10 по чекам за месяц, публично (только маски, без ПДн)
@@ -467,7 +467,7 @@ class TestVersion1360:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

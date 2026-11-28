@@ -29,7 +29,7 @@ from ..models import Company, Receipt, User, utcnow
 from ..primary.models import PrimaryDocument
 from .models import DocRequest, DocRequestEvent, DocRequestSettings
 
-log = logging.getLogger("ymaster.docreq")
+log = logging.getLogger("docver.docreq")
 MSK = timezone(timedelta(hours=3))            # Москва без перехода на летнее время с 2014 года
 REMIND_AT = time(10, 0)                       # плановые напоминания — в 10:00 по Москве
 WINDOW = timedelta(hours=20)                  # не отправлено в срок (сервер стоял) — ещё 20 часов
@@ -472,7 +472,7 @@ def _send_max(db: Session, target: str, text: str, _subject: str) -> tuple[bool,
 
 def _send_email(db: Session, target: str, text: str, subject: str) -> tuple[bool, str]:
     from ..pool import mailer
-    return mailer.send_mail(db, target, subject, text, from_name="Ямастер Чек")
+    return mailer.send_mail(db, target, subject, text, from_name="DocVer")
 
 
 SENDERS = {"telegram": _send_telegram, "max": _send_max, "email": _send_email}
@@ -496,7 +496,7 @@ def message(company: Company, period: str, due: datetime, items: list[DocRequest
     if len(items) > MAX_ITEMS:
         lines.append(f"…и ещё {len(items) - MAX_ITEMS}: полный список — у бухгалтера.")
     lines.append("Документы можно прислать бухгалтеру фото, сканом или файлом из ЭДО; чеки — через сканер "
-                 "в программе. Это автоматическое напоминание «Ямастер Чек».")
+                 "в программе. Это автоматическое напоминание «DocVer».")
     return "\n".join(lines)
 
 

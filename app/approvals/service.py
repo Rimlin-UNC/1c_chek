@@ -27,7 +27,7 @@ from ..config import settings as app_settings
 from ..models import Company, Receipt, User, iso_z, uid, utcnow
 from .models import AdvanceApproval, AdvanceApprovalEvent, ApprovalSettings
 
-log = logging.getLogger("ymaster.approvals")
+log = logging.getLogger("docver.approvals")
 
 STAGES = ("employee", "manager", "accountant")
 STAGE_TITLES = {"employee": "сотрудник", "manager": "руководитель", "accountant": "бухгалтер"}

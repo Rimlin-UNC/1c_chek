@@ -9,7 +9,7 @@ test('отложенное обновление дашборда не затир
   const { access_token: token } = await login.json();
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
     const OriginalWebSocket = window.WebSocket;
     window.WebSocket = class extends OriginalWebSocket {

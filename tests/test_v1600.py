@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.60.0: единая работа со временем.
+# DocVer — тесты v1.60.0: единая работа со временем.
 # Сервер отдаёт все моменты времени в UTC с меткой «Z» (браузер показывает
 # местную зону пользователя — приложение работает из любой страны/города).
 # Бизнес-времена (дата чека с кассы) остаются без «Z» намеренно.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -21,7 +21,7 @@ class TestVersion1600:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.59.6" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

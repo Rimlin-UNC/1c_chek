@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.41.0: просмотр ЛЮБОЙ роли — участники Чек-Пула.
+# DocVer — тесты v1.41.0: просмотр ЛЮБОЙ роли — участники Чек-Пула.
 # Инвентаризация ролей: админ/бухгалтер/сотрудник (ядро), участник пула
 # (отдельный контур), гость (vid, без аккаунта), партнёр API (ключ).
 # Только администратор открывает любую роль; участники — через
 # /pool-admin/impersonate-pool/* + раздел #/poolpeople.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -38,7 +38,7 @@ class TestVersion1410:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

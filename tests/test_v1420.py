@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.42.0: иерархия ролей.
+# DocVer — тесты v1.42.0: иерархия ролей.
 # 1) Меню переключения ролей — только у администратора (не-админ его
 #    не видит вовсе). 2) В режиме просмотра права строго равны правам
 #    роли: сотрудник правит только уведомление/комментарий своего чека,
 #    бухгалтер — любые поля чека компании; админ-эндпоинты недоступны.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 from datetime import datetime
@@ -61,7 +61,7 @@ class TestVersion1420:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

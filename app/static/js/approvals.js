@@ -185,7 +185,7 @@ ${esc(approvalsReceipts(d.receipts_count))}; к учёту ${esc(fmtSum(d.total)
 ${signs.map((e) => `<tr><td>${esc(e.stage_title || '—')}</td><td>${esc(APPROVALS_ACTIONS[e.action] || e.action)}${e.pep
     ? ' (ПЭП)' : ''}${e.comment ? `<br><small>${esc(e.comment)}</small>` : ''}</td><td>${esc(e.actor_name || 'программа')}</td>
 <td>${esc(approvalsWhen(e.created_at))}</td><td>${esc(e.ip || '—')}</td></tr>`).join('')}
-</tbody></table><p><small>Документ подписан простой электронной подписью в программе «Ямастер Чек» (63-ФЗ, ст. 9):
+</tbody></table><p><small>Документ подписан простой электронной подписью в программе «DocVer» (63-ФЗ, ст. 9):
 вход под учётной записью, подтверждение действия и запись в журнале с печатью целостности. Порядок — по
 внутреннему положению компании об электронной подписи.</small></p></body></html>`;
 }

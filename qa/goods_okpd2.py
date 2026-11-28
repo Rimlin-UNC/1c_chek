@@ -110,7 +110,7 @@ def main() -> int:
     rows = build(Path(sys.argv[1]))
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(OUT, "wt", encoding="utf-8", compresslevel=9) as fh:
-        fh.write("# ОКПД2 (ОК 034-2014, Росстат, редакция 01.10.2026) → категории товаров Ямастер Чек\n")
+        fh.write("# ОКПД2 (ОК 034-2014, Росстат, редакция 01.10.2026) → категории товаров DocVer\n")
         for code, cat, name in rows:
             fh.write(f"{code}\t{cat}\t{name}\n")
     counts: dict[str, int] = {}

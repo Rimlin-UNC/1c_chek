@@ -8,7 +8,7 @@
 чтобы комар носа не подточил».
 
 Скрины владельца: лист Credential Manager «Ключи доступа не найдены — на
-этом устройстве нет ключей доступа для приложения chek.ymaster.ru» при
+этом устройстве нет ключей доступа для приложения docver.ru» при
 живом ключе (Chrome 156, Android 14, WebAPK), затем «Вход отменён».
 Перепривязка устройства не помогала — история повторялась.
 
@@ -202,7 +202,7 @@ class TestRelease17063:
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
+        assert re.search(r"docver-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

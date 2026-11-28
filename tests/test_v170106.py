@@ -30,7 +30,7 @@ class TestRelease:
         current = settings.APP_VERSION
         assert self._ver(current) >= self._ver(VERSION)
         sw = read("app/static/sw.js")
-        assert f"ymaster-check-v{current}" in sw and sw.count(f"?v={current}") == 5
+        assert f"docver-v{current}" in sw and sw.count(f"?v={current}") == 5
         assert read("app/static/index.html").count(f"?v={current}") == 3
         assert read("app/static/b2b/index.html").count(f"?v={current}") == 2
 
@@ -48,7 +48,7 @@ class TestRelease:
         for needle in ("Три страницы для поисковиков", "резервная копия", "поверх 1.70.95–1.70.105 не меняются — шаг "
                        "pip пропускается", "откатится само", "Схема базы не меняется", "48 из 48", "1.70.82–1.70.105",
                        "/kak-proverit-chek", "/cheki-sotrudnikov-v-1c", "/dlya-buhgalterov", "без JavaScript",
-                       "микроданными", "только на chek.ymaster.ru", "5 адресов", "«Полезное»", "Без дорвеев",
+                       "микроданными", "только на docver.ru", "5 адресов", "«Полезное»", "Без дорвеев",
                        "без цен", "T-71"):
             assert needle in entry, needle
 

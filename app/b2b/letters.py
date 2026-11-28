@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — письма контура B2B (v1.70.45).
+# DocVer — письма контура B2B (v1.70.45).
 #
 # Отправка через app/pool/mailer.py: те же SMTP-настройки, что задаёт
-# администратор, тот же адрес отправителя и подпись chek@ymaster.ru.
+# администратор, тот же адрес отправителя и подпись i@docver.ru.
 # Сбой почты не поднимает исключений — регистрация и заявки должны
 # проходить даже без настроенного SMTP (письмо можно выслать повторно).
 #
@@ -11,7 +11,7 @@
 # ссылку на кабинет, где ключ показывается один раз после одобрения.
 # Письмо может быть переслано или попасть в чужой ящик — ключ так
 # передавать нельзя.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ from sqlalchemy.orm import Session
 from ..pool import mailer
 from .models import TARIFF_TITLES, B2bApplication, B2bCompany
 
-log = logging.getLogger("ymaster.b2b.letters")
+log = logging.getLogger("docver.b2b.letters")
 
-FROM_NAME = "Ямастер Чек — API для бизнеса"
-SUPPORT = "chek@ymaster.ru"
+FROM_NAME = "DocVer — API для бизнеса"
+SUPPORT = "i@docver.ru"
 
 
 def _wrap(title: str, body_html: str) -> str:
@@ -72,7 +72,7 @@ def send_verify(db: Session, company: B2bCompany, token: str) -> bool:
     """Подтверждение корпоративной почты: одноразовая ссылка на 24 часа."""
     link = verify_link(db, token)
     name = company.company_name or "коллеги"
-    subject = "Ямастер Чек — подтвердите корпоративную почту для доступа к API"
+    subject = "DocVer — подтвердите корпоративную почту для доступа к API"
     text = (
         f"Здравствуйте, {name}!\n\n"
         "Вы запросили доступ к разделу «API для бизнеса» — обезличенным\n"
@@ -115,7 +115,7 @@ def send_status(db: Session, company: B2bCompany, approved: bool) -> bool:
     """Итог проверки статуса компании: подтверждён или отклонён с причиной."""
     link = cabinet_url(db)
     if approved:
-        subject = "Ямастер Чек — статус компании подтверждён, раздел API открыт"
+        subject = "DocVer — статус компании подтверждён, раздел API открыт"
         text = (
             f"{company.company_name or 'Здравствуйте'}!\n\n"
             "Статус вашей компании подтверждён: корпоративная почта и\n"
@@ -139,7 +139,7 @@ def send_status(db: Session, company: B2bCompany, approved: bool) -> bool:
         return _send(db, company.email, subject, text, html)
 
     reason = company.reject_reason or "проверки не пройдены"
-    subject = "Ямастер Чек — доступ к разделу API пока не подтверждён"
+    subject = "DocVer — доступ к разделу API пока не подтверждён"
     text = (
         f"{company.company_name or 'Здравствуйте'}!\n\n"
         f"Мы не смогли подтвердить статус компании: {reason}\n\n"
@@ -170,7 +170,7 @@ def send_approved(db: Session, company: B2bCompany,
     """Заявка одобрена: ключ ждёт в кабинете (в письме ключа нет)."""
     link = cabinet_url(db) + "#/cabinet"
     tariff = TARIFF_TITLES.get(rec.tariff, rec.tariff)
-    subject = "Ямастер Чек — заявка одобрена, ключ API в кабинете"
+    subject = "DocVer — заявка одобрена, ключ API в кабинете"
     text = (
         f"{company.company_name or 'Здравствуйте'}!\n\n"
         f"Заявка на подключение одобрена, тариф «{tariff}».\n\n"
@@ -200,7 +200,7 @@ def send_application_rejected(db: Session, company: B2bCompany,
     """Отказ по заявке с причиной (статус компании при этом сохраняется)."""
     reason = rec.reject_reason or "не указано"
     link = cabinet_url(db) + "#/contact"
-    subject = "Ямастер Чек — по заявке на подключение принято решение"
+    subject = "DocVer — по заявке на подключение принято решение"
     text = (
         f"{company.company_name or 'Здравствуйте'}!\n\n"
         f"Заявка на подключение к API отклонена.\nПричина: {reason}\n\n"
@@ -220,7 +220,7 @@ def send_application_rejected(db: Session, company: B2bCompany,
 def send_reset(db: Session, company: B2bCompany, token: str) -> bool:
     """Восстановление доступа: одноразовая ссылка на 1 час."""
     link = cabinet_url(db) + "#/newpass?token=" + token
-    subject = "Ямастер Чек — ссылка для входа в кабинет API"
+    subject = "DocVer — ссылка для входа в кабинет API"
     text = (
         f"{company.company_name or 'Здравствуйте'}!\n\n"
         f"Ссылка для входа в кабинет (действует 1 час):\n{link}\n\n"

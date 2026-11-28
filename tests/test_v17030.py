@@ -60,7 +60,7 @@ from app.services import adguard_setup as ag
 APP_JS = "app/static/js/app.js"
 CHANGELOG = "CHANGELOG.md"
 README = "deploy/adguard-vpn/README.md"
-HELPER_SH = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER_SH = "deploy/adguard-vpn/docver-adguard-setup.sh"
 UNIT_FILE = "deploy/adguard-vpn/adguard-vpn-telegram.service"
 VER = "1.70.30"
 PREV = "1.70.29"

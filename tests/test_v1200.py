@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.20.0: фишки стиля «Ямастер» — умный фокус,
+# DocVer — тесты v1.20.0: фишки стиля «Ямастер» — умный фокус,
 # тепловая карта сроков, настройка оформления, спокойный час, иллюстрации.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import datetime as dt
 
@@ -132,6 +132,6 @@ class TestVersion1200:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         js = open("app/static/js/app.js", encoding="utf-8").read()
         assert f"'{ver}':" in js

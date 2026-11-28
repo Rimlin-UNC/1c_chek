@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.8.0: личные суммы, срок авансового отчёта,
+# DocVer — тесты v1.8.0: личные суммы, срок авансового отчёта,
 # E2E-конвейер обновления (реальный git), анти-мерцание, стандарты HTML.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import os
 import subprocess
@@ -146,7 +146,7 @@ class TestUpdatePipelineE2E:
         subprocess.run(["git", "-C", str(dst), "commit", "-qam", "old"], check=True)
         # заглушка БД — чтобы preupdate-копия создалась как в бою
         (dst / "data").mkdir(exist_ok=True)
-        (dst / "data" / "ymaster_check.db").write_bytes(b"fake-db-for-test")
+        (dst / "data" / "docver.db").write_bytes(b"fake-db-for-test")
         # В клоне нет окружения (venv не в git), поэтому конвейер уходил на
         # системный python3: на Debian/Ubuntu 24.04 установка зависимостей
         # падала по PEP 668 (externally-managed-environment), а проверка

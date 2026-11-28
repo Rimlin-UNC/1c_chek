@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.4: меню команд и надёжный запуск мини-приложения.
+# DocVer — тесты v1.70.4: меню команд и надёжный запуск мини-приложения.
 #  1) /start без кода → приветствие с кнопкой open_app (штатный запуск
 #     мини-приложения из сообщения, по документации MAX Bot API);
 #  2) при отказе API на open_app — откат на диплинк-кнопку;
@@ -40,7 +40,7 @@ class TestStartMenu1704:
         btns = rich[0]
         assert btns[0]["type"] == "open_app"
         assert btns[1]["type"] == "link" and \
-            btns[1]["url"].startswith("https://chek.ymaster.ru")
+            btns[1]["url"].startswith("https://docver.ru")
 
     def test_start_with_garbage_arg_welcome(self, client, monkeypatch):
         from app.services import max_bot
@@ -117,7 +117,7 @@ class TestVersions1704:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.3"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.3'" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.3'" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

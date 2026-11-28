@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.59.0: приём чеков Чек-Пула включается при
+# DocVer — тесты v1.59.0: приём чеков Чек-Пула включается при
 # обновлении (одноразовая миграция по решению владельца 11.10.2026),
 # сданный донором чек попадает в базу пула и остаётся доступным
 # (модерация → баллы → «Подбор для компании»).
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import time as _t
 
@@ -125,7 +125,7 @@ class TestVersion1590:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.58.4" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

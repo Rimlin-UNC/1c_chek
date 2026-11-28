@@ -2,7 +2,7 @@
 
 Задача владельца (дословно, существенная часть): «Не работает после
 последовательных действий зависает как на скрине разберись, проведи
-тесты». Скрин: заставка загрузки (логотип «Ямастер Чек» + спиннер) поверх
+тесты». Скрин: заставка загрузки (логотип «DocVer» + спиннер) поверх
 всего интерфейса в Chrome/WebAPK после последовательности «подтвердить
 вход в MAX → открыть сайт».
 
@@ -166,7 +166,7 @@ class TestRelease17066:
 
     def test_sw_cache_name_is_versioned(self):
         sw = SW.read_text(encoding="utf-8")
-        assert re.search(r"ymaster-check-v1\.(?:7[0-9])\.\d+", sw)
+        assert re.search(r"docver-v1\.(?:7[0-9])\.\d+", sw)
 
     def test_no_placeholder_left(self):
         for path in (CHANGELOG, JOURNAL):

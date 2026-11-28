@@ -212,7 +212,7 @@ def refunds_of(db: Session, company_id: str, start: date, end: date) -> list[dic
 # ------------------------------------------------------------------ сборка пакета
 def file_name(company: Company, period: str) -> str:
     inn = "".join(ch for ch in (company.inn or "") if ch.isdigit()) or "company"
-    return f"ymaster-package-{inn}-{period}.zip"
+    return f"docver-package-{inn}-{period}.zip"
 
 
 def build(db: Session, company: Company, period: str, user: User, now: datetime | None = None) -> tuple[str, bytes, dict]:
@@ -274,7 +274,7 @@ def format_text() -> str:
     def table(columns: list[tuple[str, str]]) -> str:
         return "\n".join(f"| `{key}` | {title} |" for key, title in columns)
 
-    return f"""# Пакет «Ямастер Чек» для других учётных систем
+    return f"""# Пакет «DocVer» для других учётных систем
 
 Формат `{FORMAT}`, версия {FORMAT_VERSION}. Один архив — одна компания и один отчётный месяц.
 

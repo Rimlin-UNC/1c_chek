@@ -50,7 +50,7 @@ class TestRelease1733:
         mx = read("app/static/maxapp/index.html")
         mf = read("app/static/manifest.webmanifest")
         assert f'APP_VERSION: str = "{cur}"' in read("app/config.py")
-        assert f"ymaster-check-v{cur}" in sw and sw.count(f"?v={cur}") == 5
+        assert f"docver-v{cur}" in sw and sw.count(f"?v={cur}") == 5
         assert idx.count(f"?v={cur}") == 3
         assert b2b.count(f"?v={cur}") == 2
         assert f"/maxapp/maxapp.js?v={cur}" in mx

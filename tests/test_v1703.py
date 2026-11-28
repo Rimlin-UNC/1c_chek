@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.3: диагностика несовпадения токена бота.
+# DocVer — тесты v1.70.3: диагностика несовпадения токена бота.
 #  1) подпись проверяется и в доковском формате, и с двойным энкодом;
 #  2) ошибка сессии называет бота, чей токен сохранён (диагностика);
 #  3) в карточке MAX видно, чей токен (token_bot/token_mismatch).
@@ -95,7 +95,7 @@ class TestDiag1703:
         s = SessionLocal()
         try:
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
-            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
+            appsettings.set_setting(s, "max_bot_username", "docver.bot")
             max_bot.refresh_username(s)
             # служебное имя сохранено отдельно (диагностика)
             assert appsettings.get_setting(s, "max_bot_tech", "") == \
@@ -116,11 +116,11 @@ class TestDiag1703:
         from app.database import SessionLocal
         from app.services import appsettings, max_bot
         monkeypatch.setattr(max_bot, "get_me",
-                            lambda t: {"username": "chek.ymaster.bot"})
+                            lambda t: {"username": "docver.bot"})
         s = SessionLocal()
         try:
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
-            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
+            appsettings.set_setting(s, "max_bot_username", "docver.bot")
             max_bot.refresh_username(s)
             st = max_bot.bot_settings(s)
             assert st["token_mismatch"] is False
@@ -162,7 +162,7 @@ class TestVersions1703:
         assert set(re.findall(r"\?v=([0-9.]+)", idx)) == {ver}, \
             "в index.html есть ?v= не текущей версии"
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         assert set(re.findall(r"\?v=([0-9.]+)", sw)) <= {ver}, \
             "в sw.js есть ?v= не текущей версии"
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()

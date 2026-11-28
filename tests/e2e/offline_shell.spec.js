@@ -10,7 +10,7 @@ test('офлайн после первой установки: скрипты н
     }
   });
   await page.evaluate(async () => {
-    localStorage.setItem('ymaster_check_offline_queue', 'защищённая-старая-очередь');
+    localStorage.setItem('docver_offline_queue', 'защищённая-старая-очередь');
     const box = await import('/js/offline_outbox.js');
     await box.enqueue({ ownerId: 'offline-test', companyId: null, clientId: null, qrData: 'test-qr', source: 'web' });
   });
@@ -36,7 +36,7 @@ test('офлайн после первой установки: скрипты н
   await page.reload();
   await expect(page.locator('#land-login')).toBeAttached();
   await page.waitForFunction(() => typeof document.querySelector('#login-form').onsubmit === 'function');
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe('защищённая-старая-очередь');
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe('защищённая-старая-очередь');
   expect(await page.evaluate(async () => (await import('/js/offline_outbox.js')).list('offline-test')))
     .toMatchObject([{ qrData: 'test-qr' }]);
 });
@@ -53,13 +53,13 @@ test('потеря сети при перезапуске не удаляет т
     if (!navigator.serviceWorker.controller) {
       await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
     }
-    localStorage.setItem('ymaster_check_token', 'synthetic-token');
+    localStorage.setItem('docver_token', 'synthetic-token');
   });
   await context.setOffline(true);
   await page.reload();
   await page.waitForFunction(() => typeof document.querySelector('#login-form').onsubmit === 'function');
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_token'))).toBe('synthetic-token');
+  expect(await page.evaluate(() => localStorage.getItem('docver_token'))).toBe('synthetic-token');
   await context.setOffline(false);
   await page.reload();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('ymaster_check_token'))).toBe(null);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('docver_token'))).toBe(null);
 });

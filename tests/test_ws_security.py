@@ -21,12 +21,12 @@ def _token(firms, lifetime=60, **claims):
 
 def test_foreign_origin_cannot_use_cookie(client, firms):
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect('/ws/status', headers={'origin': 'https://attacker.example', 'cookie': f'ymaster_token={_token(firms)}'}):
+        with client.websocket_connect('/ws/status', headers={'origin': 'https://attacker.example', 'cookie': f'docver_token={_token(firms)}'}):
             pass
 
 
 def test_same_origin_cookie_and_anonymous_browser(client, firms):
-    for cookie in (f'ymaster_token={_token(firms)}', ''):
+    for cookie in (f'docver_token={_token(firms)}', ''):
         with client.websocket_connect('/ws/status', headers={'origin': 'http://testserver', 'cookie': cookie}) as ws:
             assert ws.receive_json()['type'] == 'connected'
 

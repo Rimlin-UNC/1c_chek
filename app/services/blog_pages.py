@@ -197,7 +197,7 @@ def _head(
 {robots}
 <meta name="theme-color" content="#f5f5f5">
 <meta property="og:type" content="{_e(og_type)}">
-<meta property="og:site_name" content="Ямастер Чек">
+<meta property="og:site_name" content="DocVer">
 <meta property="og:locale" content="ru_RU">
 <meta property="og:title" content="{_e(title)}">
 <meta property="og:description" content="{_e(description)}">
@@ -229,7 +229,7 @@ def _shell_top(*, reading_bar: bool = False, wide: bool = False) -> str:
     return f"""<body>
 {bar}<a class="skip" href="#main">К тексту</a>
 <header class="{top_cls}">
-  <a class="brand" href="/"><img src="/img/logo.svg" alt="" width="32" height="32">Ямастер <span>Чек</span></a>
+  <a class="brand" href="/"><img src="/img/brand/logo-horizontal.svg" alt="DocVer — Документальная верификация" class="brand-logo"></a>
   <div class="top__actions">
     {nav_blog}
     <a class="btn" href="/#land-login">Войти</a>
@@ -244,7 +244,7 @@ def _shell_bottom(*, wide: bool = False) -> str:
      <a href="/cheki-sotrudnikov-v-1c">Чеки в 1С</a> · <a href="/dlya-buhgalterov">Бухгалтерам</a> ·
      <a href="/oferta">Оферта</a></p>
   <p>ООО «Ямастер» · <a href="https://ymaster.ru" rel="noopener">ymaster.ru</a> ·
-     <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a></p>
+     <a href="mailto:i@docver.ru">i@docver.ru</a></p>
 </footer>
 </body>
 </html>"""
@@ -254,7 +254,7 @@ def _crumbs(base: str, crumb: str) -> str:
     return f"""<nav class="crumbs" aria-label="Вы здесь">
   <ol itemscope itemtype="https://schema.org/BreadcrumbList">
     <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
-      <a itemprop="item" href="{_e(base)}/"><span itemprop="name">Ямастер Чек</span></a>
+      <a itemprop="item" href="{_e(base)}/"><span itemprop="name">DocVer</span></a>
       <meta itemprop="position" content="1"></li>
     <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
       <a itemprop="item" href="{_e(base)}{BLOG_INDEX}"><span itemprop="name">Блог</span></a>
@@ -289,7 +289,7 @@ def _publisher_line(base: str) -> str:
     <a itemprop="url" href="https://ymaster.ru" rel="noopener"><span itemprop="name">ООО «Ямастер»</span></a>
   </span>
   <span itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
-    <meta itemprop="name" content="Ямастер Чек">
+    <meta itemprop="name" content="DocVer">
     <link itemprop="url" href="{_e(base)}/">
     <link itemprop="logo" href="{_e(base)}/img/icon-512.png">
   </span>
@@ -304,7 +304,7 @@ def _cta_and_links(article: Article, base: str) -> str:
   <p class="blog-cta__text">{_e(article.cta)}</p>
   <p class="blog-cta__actions">
     <a class="btn btn-primary" href="/#/public?cam=1">📸 Проверить чек онлайн</a>
-    <a class="btn" href="mailto:chek@ymaster.ru?subject=%D0%94%D0%B5%D0%BC%D0%BE%20%D0%B4%D0%BB%D1%8F%20%D0%B1%D0%B8%D0%B7%D0%BD%D0%B5%D1%81%D0%B0">Для бизнеса — демо</a>
+    <a class="btn" href="mailto:i@docver.ru?subject=%D0%94%D0%B5%D0%BC%D0%BE%20%D0%B4%D0%BB%D1%8F%20%D0%B1%D0%B8%D0%B7%D0%BD%D0%B5%D1%81%D0%B0">Для бизнеса — демо</a>
   </p>
 </section>
 <nav class="blog-links" aria-label="Перелинковка">
@@ -508,7 +508,7 @@ def render_index(cfg: dict | None = None, host_header: str | None = None,
 
     return (
         _head(
-            "Блог о проверке чеков: инструкции, ФНС и 1С — Ямастер Чек",
+            "Блог о проверке чеков: инструкции, ФНС и 1С — DocVer",
             "Десять статей о проверке кассовых чеков: QR-код, ручной код, ФНС, ОФД, налоговая, чеки сотрудников и массовая сверка для бухгалтеров.",
             url,
             base,
@@ -521,7 +521,7 @@ def render_index(cfg: dict | None = None, host_header: str | None = None,
         + f"""<nav class="crumbs crumbs--wide" aria-label="Вы здесь">
   <ol itemscope itemtype="https://schema.org/BreadcrumbList">
     <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
-      <a itemprop="item" href="{_e(base)}/"><span itemprop="name">Ямастер Чек</span></a>
+      <a itemprop="item" href="{_e(base)}/"><span itemprop="name">DocVer</span></a>
       <meta itemprop="position" content="1"></li>
     <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem" aria-current="page">
       <span itemprop="name">Блог</span>
@@ -594,7 +594,7 @@ def render_index(cfg: dict | None = None, host_header: str | None = None,
 PAGES: tuple[Article, ...] = (
     Article(
         path="/blog/proverka-cheka-onlajn",
-        title="Проверка чека онлайн: подлинность за 30 секунд — Ямастер Чек",
+        title="Проверка чека онлайн: подлинность за 30 секунд — DocVer",
         description="Проверка чека онлайн по QR-коду: сканируйте камерой телефона, сверяйте сумму и дату с ФНС, узнавайте результат без регистрации для первого чека.",
         h1="Проверка чека онлайн: как за 30 секунд узнать подлинность",
         keywords=("проверка чека онлайн", "проверка чеков онлайн", "сайт проверки чека"),
@@ -645,12 +645,12 @@ PAGES: tuple[Article, ...] = (
         ),
         up=("/kak-proverit-chek", "проверка чека онлайн"),
         side=("/blog/proverka-cheka-po-qr-kodu", "подробная инструкция по QR-коду"),
-        down=("/", "проверить чек на chek.ymaster.ru"),
-        cta="Проверьте чек на chek.ymaster.ru",
+        down=("/", "проверить чек на docver.ru"),
+        cta="Проверьте чек на docver.ru",
     ),
     Article(
         path="/blog/proverka-cheka-po-qr-kodu",
-        title="Проверка чека по QR: пошаговая инструкция — Ямастер Чек",
+        title="Проверка чека по QR: пошаговая инструкция — DocVer",
         description="Проверка чека по QR: что зашифровано в квадратном коде, как отсканировать его телефоном и почему повреждённый код не мешает сверить реквизиты вручную.",
         h1="Проверка чека по QR: пошаговая инструкция",
         keywords=("проверка чека по qr", "проверка чеков по qr", "проверка чека онлайн по qr"),
@@ -703,11 +703,11 @@ PAGES: tuple[Article, ...] = (
         up=("/kak-proverit-chek", "проверка чека по qr"),
         side=("/blog/proverka-cheka-po-kodu", "подробнее о ручном коде"),
         down=("/", "проверить чек онлайн"),
-        cta="Проверьте чек на chek.ymaster.ru",
+        cta="Проверьте чек на docver.ru",
     ),
     Article(
         path="/blog/proverka-cheka-po-kodu",
-        title="Проверка чека по коду: где взять реквизиты — Ямастер Чек",
+        title="Проверка чека по коду: где взять реквизиты — DocVer",
         description="Проверка чека по коду: какие цифры напечатаны под QR, как перенести ФН, ФД и ФП в форму и не перепутать номер документа с фискальным признаком.",
         h1="Проверка чека по коду: где взять код и что вводить",
         keywords=("проверка чека по коду", "проверка чеков по коду"),
@@ -761,7 +761,7 @@ PAGES: tuple[Article, ...] = (
     ),
     Article(
         path="/blog/proverka-cheka-na-sajte-nalogovoj",
-        title="Проверка чека на сайте налоговой: порядок — Ямастер Чек",
+        title="Проверка чека на сайте налоговой: порядок — DocVer",
         description="Проверка чека на сайте налоговой: какие реквизиты запрашивает официальный сервис, чем отличается государственная проверка от нашего сценария и когда нужна копия чека.",
         h1="Проверка чека на сайте налоговой: порядок и ограничения",
         keywords=("проверка чека на сайте налоговой", "проверка чеков налоговая"),
@@ -816,7 +816,7 @@ PAGES: tuple[Article, ...] = (
     ),
     Article(
         path="/blog/proverka-cheka-fns-rossii",
-        title="Проверка чека ФНС России: что сверяют — Ямастер Чек",
+        title="Проверка чека ФНС России: что сверяют — DocVer",
         description="Проверка чека ФНС России: как налоговый реестр подтверждает фискальный признак, сумму и дату, почему данные приходят через ОФД и какие поля видит бухгалтер.",
         h1="Проверка чека ФНС России: что проверяет налоговая",
         keywords=("проверка чека фнс", "проверка чеков фнс", "проверка чека фнс россии"),
@@ -870,7 +870,7 @@ PAGES: tuple[Article, ...] = (
     ),
     Article(
         path="/blog/ofd-i-proverka-chekov",
-        title="Проверка чека ОФД: кто подтверждает документ — Ямастер Чек",
+        title="Проверка чека ОФД: кто подтверждает документ — DocVer",
         description="Проверка чека ОФД и ФН: как оператор фискальных данных передаёт чек в налоговую, почему ФН хранит подпись документа и что видит компания в своём реестре.",
         h1="Проверка чека ОФД: кто подтверждает документ",
         keywords=("проверка чека офд", "проверка чеков офд"),
@@ -924,7 +924,7 @@ PAGES: tuple[Article, ...] = (
     ),
     Article(
         path="/blog/chek-ne-prohodit-proverku-v-fns",
-        title="Проверка чеков ФНС России: 7 причин отказа — Ямастер Чек",
+        title="Проверка чеков ФНС России: 7 причин отказа — DocVer",
         description="Проверка чеков ФНС России не находит документ? Семь причин: опечатка в ФП, задержка ОФД, возврат, неверная дата, копия, сбой кассы и спорный продавец.",
         h1="Проверка чеков ФНС России: 7 причин отказа",
         keywords=("проверка чеков фнс россии",),
@@ -978,11 +978,11 @@ PAGES: tuple[Article, ...] = (
         up=("/kak-proverit-chek", "проверка чеков фнс россии"),
         side=("/blog/proverka-cheka-fns-rossii", "подробнее о реестре"),
         down=("/", "проверить чек повторно"),
-        cta="Проверьте чек на chek.ymaster.ru",
+        cta="Проверьте чек на docver.ru",
     ),
     Article(
         path="/blog/proverka-kassovyh-chekov-dlya-biznesa",
-        title="Проверка кассовых чеков для бизнеса: контроль — Ямастер Чек",
+        title="Проверка кассовых чеков для бизнеса: контроль — DocVer",
         description="Проверка кассовых чеков для компании: сотрудники сканируют авансовые и командировочные документы, бухгалтер видит дубли, лимиты и выгружает принятые чеки в 1С.",
         h1="Проверка кассовых чеков для бизнеса: контроль сотрудников",
         keywords=("проверка кассовых чеков", "проверка кассового чека"),
@@ -1038,7 +1038,7 @@ PAGES: tuple[Article, ...] = (
     ),
     Article(
         path="/blog/proverka-chekov-dlya-buhgaltera",
-        title="Проверка чеков для бухгалтера: массовая сверка — Ямастер Чек",
+        title="Проверка чеков для бухгалтера: массовая сверка — DocVer",
         description="Проверка чеков для бухгалтера и аутсорсинга: несколько компаний, сайт проверки чеков, пакетная сверка с налоговой, выписки банков по API, УПД из ЭДО и выгрузка в 1С.",
         h1="Проверка чеков для бухгалтера: массовая сверка с ФНС",
         keywords=("проверка чеков", "сайт проверки чеков", "проверка чеков на сайте налоговой"),
@@ -1094,7 +1094,7 @@ PAGES: tuple[Article, ...] = (
     ),
     Article(
         path="/blog/qr-kod-ili-ruchnoj-kod",
-        title="Проверка чека: QR-код или ручной код — Ямастер Чек",
+        title="Проверка чека: QR-код или ручной код — DocVer",
         description="Проверка чека: QR-код или ручной ввод? Сравниваем скорость, ошибки, повреждённую термобумагу, проверку чека по QR коду и массовые сценарии для компании.",
         h1="Проверка чека: QR-код или ручной код",
         keywords=("проверка чека", "проверка чеков онлайн по qr", "проверка чека по qr коду", "проверка чеков по qr коду"),
@@ -1146,7 +1146,7 @@ PAGES: tuple[Article, ...] = (
         up=("/kak-proverit-chek", "проверка чека"),
         side=("/blog/proverka-cheka-po-qr-kodu", "подробнее про QR"),
         down=("/", "проверить чек двумя способами"),
-        cta="Проверьте чек на chek.ymaster.ru",
+        cta="Проверьте чек на docver.ru",
     ),
 )
 

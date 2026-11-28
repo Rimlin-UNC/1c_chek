@@ -31,7 +31,7 @@ from ..pool.models import PoolReceipt
 from . import service
 from .models import REVIEW_OWNERSHIP, UnifiedDocument, UnifiedOrigin, UnifiedOwnership
 
-log = logging.getLogger("ymaster")
+log = logging.getLogger("docver")
 
 
 def _dangling_origins(db: Session) -> list[UnifiedOrigin]:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — тесты ролевой модели, приглашений и защиты.
-ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+DocVer — тесты ролевой модели, приглашений и защиты.
+ООО «Ямастер» | ymaster.ru | i@docver.ru
 """
 import time
 
@@ -228,7 +228,7 @@ class TestSessionCookie:
         r = client.post("/api/v1/auth/login",
                         json={"username": "admin", "password": "admin123"})
         assert r.status_code == 200
-        assert "ymaster_token" in r.cookies, "cookie сессии не установлена"
+        assert "docver_token" in r.cookies, "cookie сессии не установлена"
 
     def test_requests_work_via_cookie_only(self, client):
         # Без заголовка Authorization — только cookie: не должно быть 401

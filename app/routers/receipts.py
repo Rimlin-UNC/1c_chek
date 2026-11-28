@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — роутер чеков (ООО «Ямастер», ymaster.ru).
+DocVer — роутер чеков (ООО «Ямастер», ymaster.ru).
 
 Права по ролям:
   * Пользователь  — сканирует, видит ТОЛЬКО свои чеки; удаление — свои не выгруженные.
@@ -1467,7 +1467,7 @@ def _apply_external_result(db: Session, receipt: Receipt, res: ExternalResult) -
             _card.apply_to_receipt(db, receipt, _ticket,
                                    force_items=bool(receipt.details_source != "manual_edit"))
     except Exception:                                  # noqa: BLE001
-        logging.getLogger("ymaster").debug("receipt card apply",
+        logging.getLogger("docver").debug("receipt card apply",
                                            exc_info=True)
     # v1.61.0: «понимающий» конвейер правил — если машинные данные
     # противоречивы (суммы позиций ≠ итог и т.п.), чек уходит на ручную
@@ -1520,7 +1520,7 @@ _VERIFY_SEM = threading.Semaphore(4)
 def _run_external_fetch(receipt_ids: list[str], force: bool = False) -> None:
     """Фоновый воркер: последовательно, с встроенными паузами движка."""
     import logging
-    _log = logging.getLogger("ymaster")
+    _log = logging.getLogger("docver")
     from ..database import SessionLocal
     _FETCH_SEM.acquire()                     # v1.67.1: ждём БЕЗ сессии
     db = SessionLocal()
@@ -1571,7 +1571,7 @@ def _enqueue_fetch(receipt_id: str) -> bool:
     except queue.Full:
         with _FETCHQ_LOCK:
             _FETCHQ_IDS.discard(receipt_id)
-        logging.getLogger("ymaster").warning(
+        logging.getLogger("docver").warning(
             "очередь загрузки переполнена — чек %s отложен (есть ручная "
             "кнопка «получить данные»)", receipt_id)
         return False
@@ -1586,14 +1586,14 @@ def _fetchq_worker() -> None:
         try:
             _run_external_fetch([rid])
         except Exception:                                # noqa: BLE001
-            logging.getLogger("ymaster").exception("fetch queue worker")
+            logging.getLogger("docver").exception("fetch queue worker")
         finally:
             _FETCHQ.task_done()
 
 
 def start_fetch_workers(n: int = 2) -> int:
     """Запустить демонов очереди (идемпотентно). → сколько ДОзапущено."""
-    if os.environ.get("YM_FETCHQ_OFF") == "1":   # тесты: детерминизм
+    if (os.environ.get("DOCVER_FETCHQ_OFF") or os.environ.get("YM_FETCHQ_OFF")) == "1":   # тесты: детерминизм
         return 0
     alive = sum(1 for w in _FETCH_WORKERS if w.is_alive())
     if alive >= n:
@@ -1601,11 +1601,11 @@ def start_fetch_workers(n: int = 2) -> int:
     spawned = 0
     for i in range(n - alive):
         t = threading.Thread(target=_fetchq_worker, daemon=True,
-                             name=f"ymaster-fetchq-{i}")
+                             name=f"docver-fetchq-{i}")
         t.start()
         _FETCH_WORKERS.append(t)
         spawned += 1
-    logging.getLogger("ymaster").info("fetch queue workers: %d", n)
+    logging.getLogger("docver").info("fetch queue workers: %d", n)
     return spawned
 
 
@@ -1638,7 +1638,7 @@ def _limit_retry_tick() -> int:
         threading.Thread(target=_verify_one_sync, args=(rid,),
                          daemon=True).start()
     if ids:
-        logging.getLogger("ymaster").info(
+        logging.getLogger("docver").info(
             "♻️ лимит ФНС сброшен — поставлено на проверку чеков: %d",
             len(ids))
     return len(ids)
@@ -1650,7 +1650,7 @@ def _limit_retry_worker() -> None:
             if fns_quota_exhausted():
                 _limit_retry_tick()
         except Exception:                                # noqa: BLE001
-            logging.getLogger("ymaster").debug(
+            logging.getLogger("docver").debug(
                 "limit retry worker", exc_info=True)
         time.sleep(LIMIT_RETRY_INTERVAL_S)
 
@@ -1671,12 +1671,12 @@ def fns_quota_exhausted() -> bool:
 def start_limit_retry_worker() -> bool:
     """Запустить фоновую достройку очереди (идемпотентно)."""
     global _LIMIT_WORKER
-    if os.environ.get("YM_FETCHQ_OFF") == "1":      # тесты: детерминизм
+    if (os.environ.get("DOCVER_FETCHQ_OFF") or os.environ.get("YM_FETCHQ_OFF")) == "1":      # тесты: детерминизм
         return False
     if _LIMIT_WORKER is not None and _LIMIT_WORKER.is_alive():
         return False
     _LIMIT_WORKER = threading.Thread(target=_limit_retry_worker, daemon=True,
-                                     name="ymaster-fns-limit-retry")
+                                     name="docver-fns-limit-retry")
     _LIMIT_WORKER.start()
     return True
 
@@ -1813,7 +1813,7 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
             receipt.fns_status = "pending"
             receipt.fns_message = result.message
             db.commit()
-            logging.getLogger("ymaster").warning(
+            logging.getLogger("docver").warning(
                 "⏸ ЧЕК ОЖИДАЕТ ПРОВЕРКИ [%s]: лимит запросов к ФНС",
                 receipt.id)
             broadcast("receipt_verified", receipt.to_dict())
@@ -1865,7 +1865,7 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None) -> None:
                 from ..services import receipt_card as _card
                 _card.apply_to_receipt(db, receipt, _ticket)
             except Exception:                          # noqa: BLE001
-                logging.getLogger("ymaster").debug("receipt card apply",
+                logging.getLogger("docver").debug("receipt card apply",
                                                    exc_info=True)
         merged = dict(old_fns)
         if isinstance(result.raw, dict):
@@ -2029,7 +2029,7 @@ def export_receipts(body: ExportRequest, user: User = Depends(require_accountant
     log_action(user, "receipts_exported", details={
         "count": len(receipts), "format": body.format, "target": body.target_object})
 
-    filename = f"ymaster-check-export-{now.strftime('%Y%m%d-%H%M')}.{ext}"
+    filename = f"docver-export-{now.strftime('%Y%m%d-%H%M')}.{ext}"
     return Response(content=content, media_type=f"{media}; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
@@ -2249,7 +2249,7 @@ def advance_report_pdf(body: AdvanceReportPdfBody,
         pdf = ao_pdf.build_ao_pdf(rep, meta, qr_by_id,
                                   body.include_receipts, cards_by_id)
     except Exception:
-        logging.getLogger("ymaster").exception("Не удалось собрать PDF авансового отчёта")
+        logging.getLogger("docver").exception("Не удалось собрать PDF авансового отчёта")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
                             "Не удалось сформировать PDF авансового отчёта") from None
     log_action(user, "receipts_advance_report_pdf",
@@ -2312,6 +2312,6 @@ def export_csv(body: VerifyRequest | None = None,
     log_action(user, "receipts_exported_csv", details={"count": len(receipts)})
     now = dt.datetime.utcnow()
     content = "\ufeff" + buf.getvalue()  # BOM для Excel
-    filename = f"ymaster-check-{now.strftime('%Y%m%d-%H%M')}.csv"
+    filename = f"docver-{now.strftime('%Y%m%d-%H%M')}.csv"
     return Response(content=content, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})

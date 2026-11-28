@@ -198,8 +198,8 @@ def test_read_warns_about_gap_before_next_collector_and_backwards_clock(tmp_path
 def test_static_systemd_example_parses_and_launches_only_opt_in_collector():
     from pathlib import Path
 
-    service = Path('deploy/systemd/ymaster-monitor-history.service').read_text()
-    timer = Path('deploy/systemd/ymaster-monitor-history.timer').read_text()
+    service = Path('deploy/systemd/docver-monitor-history.service').read_text()
+    timer = Path('deploy/systemd/docver-monitor-history.timer').read_text()
     assert 'User=ymaster' in service and '-m app.services.server_history collect' in service
     assert 'Persistent=false' in timer and 'OnCalendar=*-*-* *:*:00' in timer
 

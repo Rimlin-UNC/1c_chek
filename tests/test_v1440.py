@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.44.0: Почтовый центр (SMTP-ящик, шаблоны,
+# DocVer — тесты v1.44.0: Почтовый центр (SMTP-ящик, шаблоны,
 # бот рассылок по расписанию/условию, отписка, лимиты, журнал 90 дней).
 # SMTP подменяется фейковым сервером: письма перехватываются, контент
-# и получатели проверяются. ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# и получатели проверяются. ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import datetime as dt
 import re
@@ -48,11 +48,11 @@ def _install_fake(monkeypatch):
 def _enable_smtp(db):
     from app.services import appsettings
     from app.pool import mailer
-    appsettings.set_setting(db, mailer.SET_SMTP_HOST, "mail.chek.ymaster.ru")
+    appsettings.set_setting(db, mailer.SET_SMTP_HOST, "mail.docver.ru")
     appsettings.set_setting(db, mailer.SET_SMTP_PORT, "587")
-    appsettings.set_setting(db, mailer.SET_SMTP_USER, "chek@chek.ymaster.ru")
+    appsettings.set_setting(db, mailer.SET_SMTP_USER, "i@docver.ru")
     appsettings.set_setting(db, "smtp_pass", "secret-password")
-    appsettings.set_setting(db, mailer.SET_SMTP_FROM, "chek@chek.ymaster.ru")
+    appsettings.set_setting(db, mailer.SET_SMTP_FROM, "i@docver.ru")
     db.close()
 
 
@@ -68,7 +68,7 @@ class TestVersion1440:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert "v=1.43.0" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()
@@ -102,7 +102,7 @@ class TestMailConfig:
         d = client.get("/api/v1/mail-admin/config", headers=adm).json()
         assert d["configured"] is True
         assert d["has_password"] is True and "password" not in d
-        assert d["sender"] == "chek@chek.ymaster.ru"
+        assert d["sender"] == "i@docver.ru"
         r = client.put("/api/v1/mail-admin/config", headers=adm, json={
             "from_name": "Чек-Пул Ямастер",
             "greeting": "Добрый день, {name}!",
@@ -171,7 +171,7 @@ class TestMailBot:
         assert len(SENT) == 1
         msg: EmailMessage = SENT[0]
         assert msg["To"] == "inactive@test.ru"
-        assert msg["From"] == "Чек-Пул Ямастер <chek@chek.ymaster.ru>"
+        assert msg["From"] == "Чек-Пул Ямастер <i@docver.ru>"
         body = next(p for p in msg.walk()
                     if p.get_content_type() == "text/plain").get_content()
         assert "30" in body and "inactive" in body

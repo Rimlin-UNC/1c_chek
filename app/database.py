@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Подключение к базе данных (SQLAlchemy).
 """
@@ -442,7 +442,7 @@ def _backfill_full_data() -> None:
              .update({R.full_data: True}, synchronize_session=False))
         db.commit()
         if n:
-            logging.getLogger("ymaster").info(
+            logging.getLogger("docver").info(
                 "Проверенные чеки с позициями помечены как полные данные: %s", n)
     except Exception:
         db.rollback()
@@ -469,7 +469,7 @@ def _backfill_assignee_lc() -> None:
             r.assignee_lc = (r.assignee or "").strip().casefold()[:200]
         db.commit()
         if rows:
-            logging.getLogger("ymaster").info("Назначено assignee_lc: %s чек(ов)", len(rows))
+            logging.getLogger("docver").info("Назначено assignee_lc: %s чек(ов)", len(rows))
     except Exception:
         db.rollback()
         raise

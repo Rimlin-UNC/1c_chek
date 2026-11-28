@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.45: контур B2B (доступ компаний и ИП к
+# DocVer — тесты v1.70.45: контур B2B (доступ компаний и ИП к
 # платному API) и закрытие раздела от посторонних.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки (указания владельца):
 #  1. публичный лендинг больше не показывает раздел и ссылку на него;
@@ -12,7 +12,7 @@
 #     почтой и проверки карточки ЕГРЮЛ/ЕГРИП по ИНН;
 #  4. администратор видит всё, каждая поверхность помечена
 #     «Это не видит никто»;
-#  5. почта chek@ymaster.ru везде, старого адреса в репозитории нет;
+#  5. почта i@docver.ru везде, старого адреса в репозитории нет;
 #  6. формы и конвейер автоматизации с тремя режимами: полная, частичная
 #     (по умолчанию), отмена;
 #  7. содержимое страниц строится из кода сервиса и не может с ним
@@ -645,7 +645,7 @@ class TestRegistration:
         assert body["closed_text"], "при выключенном контуре нужен текст"
         assert len(body["requirements"]) >= 4
         assert len(body["steps"]) == 7
-        assert body["contact"] == "chek@ymaster.ru"
+        assert body["contact"] == "i@docver.ru"
         assert not body["steps"][0]["text"].startswith(" ")
 
     def test_register_creates_company_and_sends_letter(self, client,
@@ -659,7 +659,7 @@ class TestRegistration:
         assert body["registered"] is True and body["letter_sent"] is True
         assert body["company"]["status"] == ST_EMAIL_PENDING
         assert body["company"]["email"] == CORP_MAIL
-        assert "chek@ymaster.ru" not in body["company"]["email"]
+        assert "i@docver.ru" not in body["company"]["email"]
         assert len(letters_box) == 1
         assert letters_box[0]["to"] == CORP_MAIL
         assert "подтвердите" in letters_box[0]["subject"].lower()
@@ -978,7 +978,7 @@ class TestLogin:
         body = r.json()
         assert body["token"] and body["company"]["status"] == ST_VERIFIED
         assert body["checks"], "в состоянии кабинета нет результатов проверок"
-        assert body["contact"] == "chek@ymaster.ru"
+        assert body["contact"] == "i@docver.ru"
 
     def test_wrong_password_is_401(self, client, letters_box):
         db = _db()
@@ -1399,7 +1399,7 @@ class TestContentIsBuiltFromCode:
             assert needle in low, f"в шагах нет «{needle}»"
         assert len(page["requirements"]) >= 4
         assert len(page["not_accepted"]) >= 3
-        assert page["contact"] == "chek@ymaster.ru"
+        assert page["contact"] == "i@docver.ru"
 
     def test_individuals_are_addressed_too(self):
         text = json.dumps(content.hub(), ensure_ascii=False)
@@ -1439,7 +1439,7 @@ class TestContentIsBuiltFromCode:
         assert [t["code"] for t in page["tariffs"]] == \
             ["start", "business", "analytics"]
         assert "20 символов" in page["task_hint"]
-        assert page["email"] == "chek@ymaster.ru"
+        assert page["email"] == "i@docver.ru"
 
     def test_diagram_reader_refuses_foreign_files(self):
         assert content.diagram("../models.py") == ("", "")
@@ -1675,7 +1675,7 @@ class TestAdminConfig:
     def test_notify_email_defaults_to_vendor(self, client, admin_hdr):
         cfg = client.get("/api/v1/b2b-admin/overview",
                          headers=admin_hdr).json()["config"]
-        assert cfg["notify_email"] == "chek@ymaster.ru"
+        assert cfg["notify_email"] == "i@docver.ru"
 
 
 class TestAdminCompanies:
@@ -2099,7 +2099,7 @@ class TestLetters:
         assert "24 часа" in letter["body"]
         assert "ЕГРЮЛ" in letter["body"]
         assert "Обсудить подключение" in letter["body"]
-        assert "chek@ymaster.ru" in letter["body"]
+        assert "i@docver.ru" in letter["body"]
         assert letter["html"].startswith("<div")
         assert letter["from_name"], "письмо без имени отправителя"
 
@@ -2147,7 +2147,7 @@ class TestLetters:
         notices = [item for item in letters_box[before:]
                    if "Новая заявка" in item["subject"]]
         assert notices, "администратор не уведомлён о новой заявке"
-        assert notices[0]["to"] == "chek@ymaster.ru"
+        assert notices[0]["to"] == "i@docver.ru"
         assert INN_UL in notices[0]["body"]
 
     def test_admin_notice_can_be_switched_off(self, client, letters_box):
@@ -2399,7 +2399,7 @@ class TestAdminSectionInSpa:
 
 
 # ======================================================================
-# 12. Почта chek@ymaster.ru — везде, старого адреса нет
+# 12. Почта i@docver.ru — везде, старого адреса нет
 # ======================================================================
 class TestCorporateEmail:
     def test_no_old_address_in_tracked_files(self):
@@ -2413,22 +2413,22 @@ class TestCorporateEmail:
             f"старый адрес остался: {out.stdout.strip()}"
 
     def test_new_address_is_used_in_the_contour(self):
-        assert content.CONTACT_EMAIL == "chek@ymaster.ru"
-        assert letters.SUPPORT == "chek@ymaster.ru"
-        assert "chek@ymaster.ru" in _read(ROOT / "app/b2b/letters.py")
-        assert "chek@ymaster.ru" in _read(CABINET)
+        assert content.CONTACT_EMAIL == "i@docver.ru"
+        assert letters.SUPPORT == "i@docver.ru"
+        assert "i@docver.ru" in _read(ROOT / "app/b2b/letters.py")
+        assert "i@docver.ru" in _read(CABINET)
 
     def test_vendor_email_setting_is_updated(self):
         from app.config import settings
-        assert settings.VENDOR_EMAIL == "chek@ymaster.ru"
+        assert settings.VENDOR_EMAIL == "i@docver.ru"
 
     def test_consent_contact_default_is_updated(self):
         from app.services.consent import CONSENT_CONTACT_DEFAULT
-        assert CONSENT_CONTACT_DEFAULT == "chek@ymaster.ru"
+        assert CONSENT_CONTACT_DEFAULT == "i@docver.ru"
 
     def test_documents_use_the_new_address(self):
         for path in (DOC, MECH_DOC, README):
-            assert "chek@ymaster.ru" in _read(path), path.name
+            assert "i@docver.ru" in _read(path), path.name
             assert "info@ymaster.ru" not in _read(path)
 
 
@@ -2441,7 +2441,7 @@ class TestDocuments:
         assert len(text) > 4000
         for needle in ("full", "partial", "off", "b2b_companies",
                        "b2b_applications", "b2b_checks", "b2b_tokens",
-                       "b2b_events", MARKER, "chek@ymaster.ru",
+                       "b2b_events", MARKER, "i@docver.ru",
                        "app/b2b/", "checko_api_key"):
             assert needle in text, f"в документе механизма нет «{needle}»"
 
@@ -2512,7 +2512,7 @@ class TestPipelineUnits:
         cfg = pipeline.get_config(db)
         assert cfg["enabled"] is False
         assert cfg["auto_mode"] == "partial"
-        assert cfg["notify_email"] == "chek@ymaster.ru"
+        assert cfg["notify_email"] == "i@docver.ru"
         db.close()
 
     def test_broken_mode_value_falls_back_to_partial(self, client):
@@ -2599,7 +2599,7 @@ class TestStabilityGuards:
                         json={"tariff": "business", "task": task})
         assert r.status_code == 422, r.text[:200]
         assert "в очереди" in r.json()["detail"]
-        assert "chek@ymaster.ru" in r.json()["detail"]
+        assert "i@docver.ru" in r.json()["detail"]
 
     def test_limit_frees_up_after_a_decision(self, client, letters_box,
                                              admin_hdr):
@@ -3305,14 +3305,14 @@ class TestRelease17045:
         block = self._block()
         assert block.count("{ icon:") == 10, "в записи выпуска не десять пунктов"
         for needle in ("закрыт от посторонних", "корпоративную почту", "ЕГРЮЛ",
-                       "автоматизации", "один раз", "chek@ymaster.ru",
+                       "автоматизации", "один раз", "i@docver.ru",
                        "остаток лимита", "эпохи сессий", "полосами",
                        "Динамика по дням"):
             assert needle in block, f"в «Что нового» нет «{needle}»"
 
     def test_whats_new_has_no_foreign_letters(self):
         """Проза для владельца — русская; латиница только в имени API и в
-        адресах почты (chek@ymaster.ru, прежний info@ymaster.ru)."""
+        адресах почты (i@docver.ru, прежний info@ymaster.ru)."""
         prose = re.sub(r"\{ icon:|\btitle:|\btext:", "", self._block())
         for ch in prose:
             assert ord(ch) < 0x2100 or not str.isalpha(ch), \
@@ -3326,7 +3326,7 @@ class TestRelease17045:
         assert f"## [{self.VERSION}]" in text
         section = text.split(f"## [{self.VERSION}]", 1)[1].split(
             f"## [{self.PREVIOUS}]", 1)[0]
-        for needle in ("app/b2b/", "docs/b2b_access.md", "chek@ymaster.ru",
+        for needle in ("app/b2b/", "docs/b2b_access.md", "i@docver.ru",
                        MARKER, "/b2b/", "b2b_auto_mode", "app/b2b/assets",
                        "autoflush", "land-api", "search_key"):
             assert needle in section, f"в CHANGELOG нет «{needle}»"
@@ -3341,7 +3341,7 @@ class TestRelease17045:
         flat = re.sub(r"\s+", " ", section).lower()
         for needle in ("пока убрать скрыть от посторонних глаз",
                        "это не видит ни кто",
-                       "электронную почту поменять на chek@ymaster.ru",
+                       "электронную почту поменять на i@docver.ru",
                        "полной автоматизации частичная автоматизация либо отмена"):
             assert needle in flat, f"в цитате владельца нет «{needle}»"
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Тесты v1.46.1: блок отката рабочий и информативный, реестр без дублей.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 import json
 import re
 
@@ -14,7 +14,7 @@ class TestVersion1461:
         assert "app.css?v=" in idx and "app.js?v=" in idx
         assert "?v=1.46.0" not in idx and "?v=1.45" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert '"version":' in mf
 

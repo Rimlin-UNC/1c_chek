@@ -11,9 +11,9 @@ test('старый сервер не принимает новую очеред�
   const legacy = JSON.stringify([{ qr_data: 'анонимный старый скан', source: 'web' }]);
   const seen = await seenVersion(page);
   await page.addInitScript(({ token, legacy, seen }) => {
-    localStorage.setItem('ymaster_check_token', token);
+    localStorage.setItem('docver_token', token);
     localStorage.setItem('ymaster_seen_version', seen);
-    localStorage.setItem('ymaster_check_offline_queue', legacy);
+    localStorage.setItem('docver_offline_queue', legacy);
   }, { token, legacy, seen });
   let oldServer = true;
   let fallbackCalls = 0;
@@ -37,13 +37,13 @@ test('старый сервер не принимает новую очеред�
   await expect.poll(async () => page.evaluate(async id => (await import('/js/offline_outbox.js')).list(id), user.id), { timeout: 30000 })
     .toMatchObject([{ state: 'attention', qrData: qr }]);
   expect(fallbackCalls).toBe(0);
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe(legacy);
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe(legacy);
 
   oldServer = false;
   await page.locator('#btn-flush').click();
   await expect.poll(async () => page.evaluate(async id => (await import('/js/offline_outbox.js')).list(id), user.id), { timeout: 30000 }).toHaveLength(0);
   expect(fallbackCalls).toBe(0);
-  expect(await page.evaluate(() => localStorage.getItem('ymaster_check_offline_queue'))).toBe(legacy);
+  expect(await page.evaluate(() => localStorage.getItem('docver_offline_queue'))).toBe(legacy);
   const receipts = await request.get('/api/v1/receipts', { headers: { Authorization: `Bearer ${token}` } });
   expect((await receipts.json()).items.filter(r => r.fn === '8999909876543221')).toHaveLength(1);
 });

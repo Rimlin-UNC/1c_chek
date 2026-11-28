@@ -1,6 +1,6 @@
 /* ======================================================================
-   Ямастер Чек — v1.73.7 → v1.73.8: папка авансовых отчётов и настоящий PDF.
-   ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+   DocVer — v1.73.7 → v1.73.8: папка авансовых отчётов и настоящий PDF.
+   ООО «Ямастер» | ymaster.ru | i@docver.ru
 
    Требование владельца: при сборке авансового отчёта на телефоне и на ПК
    создавать «Загрузки/АО/<сокращённое название компании>» и складывать
@@ -25,7 +25,7 @@
    ====================================================================== */
 
 export const AO_ROOT_FOLDER = 'АО';
-export const AO_FOLDER_DB = 'ymaster-check-ao';
+export const AO_FOLDER_DB = 'docver-ao';
 export const AO_FOLDER_STORE = 'handles';
 export const AO_FOLDER_KEY = 'downloads';
 const AO_MAX_SEGMENT = 90;
@@ -317,7 +317,7 @@ export function aoBuildZip(files, segments, readmeText = '') {
 
 export function aoZipReadme(segments, base) {
   return [
-    'Ямастер Чек — авансовый отчёт',
+    'DocVer — авансовый отчёт',
     '',
     `Отчёт: ${base}`,
     '',
@@ -336,7 +336,7 @@ export function aoZipReadme(segments, base) {
 /** v1.73.8: пояснение к ZIP, внутри которого лежит именно готовый PDF. */
 export function aoPdfZipReadme(segments, base, filename) {
   return [
-    'Ямастер Чек — авансовый отчёт (PDF)',
+    'DocVer — авансовый отчёт (PDF)',
     '',
     `Отчёт: ${base}`,
     `Файл: ${filename}`,
@@ -466,12 +466,12 @@ async function aoPickFolder() {
   try {
     try {
       handle = await window.showDirectoryPicker({
-        id: 'ymaster-ao-downloads', startIn: 'downloads', mode: 'readwrite',
+        id: 'docver-ao-downloads', startIn: 'downloads', mode: 'readwrite',
       });
     } catch (err) {
       // Старый Chrome не знает startIn — повторяем без подсказки каталога.
       if (!err || err.name !== 'TypeError') throw err;
-      handle = await window.showDirectoryPicker({ id: 'ymaster-ao-downloads', mode: 'readwrite' });
+      handle = await window.showDirectoryPicker({ id: 'docver-ao-downloads', mode: 'readwrite' });
     }
     aoSessionHandle = handle;
     await aoIdbValue('readwrite', handle);
@@ -504,7 +504,7 @@ export async function aoFileHandleForSave(filename) {
       || window.isSecureContext === false) return null;
   const suggestedName = aoAsciiFilename(filename, 'avansovy-otchet.pdf');
   const opts = {
-    id: 'ymaster-ao-pdf', suggestedName,
+    id: 'docver-ao-pdf', suggestedName,
     types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
   };
   try {

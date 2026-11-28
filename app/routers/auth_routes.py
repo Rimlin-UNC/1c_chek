@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — аутентификация (ООО «Ямастер», ymaster.ru).
+DocVer — аутентификация (ООО «Ямастер», ymaster.ru).
 
 Модель доступа:
   * Регистрация — ТОЛЬКО по приглашению от администратора (ссылка с токеном);
@@ -62,7 +62,7 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     # Дублируем токен в HttpOnly-cookie: браузер передаёт её автоматически,
     # поэтому «вход успешен → следующий запрос 401» невозможен в принципе.
     resp.set_cookie(
-        "ymaster_token", token,
+        "docver_token", token,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
         secure=cookie_secure(request),          # v1.70.11: только по HTTPS
@@ -103,7 +103,7 @@ def max_login_poll(body: MaxPollBody, request: Request,
     resp = JSONResponse({"status": "ok", "access_token": r["access_token"],
                          "token_type": "bearer", "user": r["user"]})
     resp.set_cookie(
-        "ymaster_token", r["access_token"],
+        "docver_token", r["access_token"],
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
         secure=cookie_secure(request),          # v1.70.11: только по HTTPS
@@ -141,7 +141,7 @@ def telegram_login_poll(body: TelegramPollBody, request: Request,
     resp = JSONResponse({"status": "ok", "access_token": r["access_token"],
                          "token_type": "bearer", "user": r["user"]})
     resp.set_cookie(
-        "ymaster_token", r["access_token"],
+        "docver_token", r["access_token"],
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
         secure=cookie_secure(request),          # v1.70.11: только по HTTPS
@@ -202,7 +202,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
     resp = JSONResponse({"access_token": token, "token_type": "bearer",
                          "user": user.to_dict()})
     resp.set_cookie(
-        "ymaster_token", token,
+        "docver_token", token,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
         secure=cookie_secure(request),          # v1.70.11: только по HTTPS
@@ -268,7 +268,7 @@ def change_password(body: PasswordChange, request: Request,
     resp = JSONResponse({"ok": True, "message": "Пароль изменён",
                          "access_token": token, "token_type": "bearer"})
     resp.set_cookie(
-        "ymaster_token", token,
+        "docver_token", token,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         httponly=True, samesite="lax", path="/",
         secure=cookie_secure(request),          # v1.70.11: только по HTTPS
@@ -278,5 +278,6 @@ def change_password(body: PasswordChange, request: Request,
 
 @router.post("/logout", summary="Выход (очистка cookie сессии)")
 def logout(response: Response):
+    response.delete_cookie("docver_token", path="/")
     response.delete_cookie("ymaster_token", path="/")
     return {"ok": True, "message": "Вы вышли из системы"}

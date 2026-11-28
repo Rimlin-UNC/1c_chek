@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.70.2: CSP пропускает Bridge MAX (st.max.ru),
+# DocVer — тесты v1.70.2: CSP пропускает Bridge MAX (st.max.ru),
 # технический ник бота (idNNNN_bot) не попадает в диплинки, публичный
 # ник настраивается в карточке MAX, мини-приложение дожидается Bridge.
 # ======================================================================
@@ -45,10 +45,10 @@ class TestBotNick1702:
         from app.services import appsettings, max_bot
         s = SessionLocal()
         try:
-            appsettings.set_setting(s, "max_bot_username", "chek.ymaster.bot")
+            appsettings.set_setting(s, "max_bot_username", "docver.bot")
         finally:
             s.rollback(); s.close()
-        assert max_bot.bot_username(s) == "chek.ymaster.bot"
+        assert max_bot.bot_username(s) == "docver.bot"
 
     def test_refresh_skips_tech_nick(self, client, monkeypatch):
         from app.database import SessionLocal
@@ -71,14 +71,14 @@ class TestBotNick1702:
         from app.database import SessionLocal
         from app.services import appsettings, max_bot
         monkeypatch.setattr(max_bot, "get_me",
-                            lambda t: {"username": "chek.ymaster.bot"})
+                            lambda t: {"username": "docver.bot"})
         s = SessionLocal()
         try:
             appsettings.set_setting(s, "max_bot_token", "700001.ABCDEF")
             appsettings.set_setting(s, "max_bot_username", "")
             max_bot.refresh_username(s)
             assert appsettings.get_setting(
-                s, "max_bot_username", "") == "chek.ymaster.bot"
+                s, "max_bot_username", "") == "docver.bot"
         finally:
             s.rollback(); s.close()
 
@@ -99,14 +99,14 @@ class TestBotNick1702:
                         json={"username": "admin", "password": "admin123"})
         hh = {"Authorization": "Bearer " + h.json()["access_token"]}
         r = client.put("/api/v1/settings/max", headers=hh,
-                       json={"bot_nick": "chek.ymaster.bot"})
+                       json={"bot_nick": "docver.bot"})
         assert r.status_code == 200, r.text
         from app.database import SessionLocal
         from app.services import appsettings
         s = SessionLocal()
         try:
             assert appsettings.get_setting(
-                s, "max_bot_username", "") == "chek.ymaster.bot"
+                s, "max_bot_username", "") == "docver.bot"
         finally:
             s.rollback(); s.close()
         bad = client.put("/api/v1/settings/max", headers=hh,
@@ -117,7 +117,7 @@ class TestBotNick1702:
         r = client.post("/api/v1/auth/max/start", json={})
         assert r.status_code == 200
         assert r.json()["max_link"].startswith(
-            "https://max.ru/chek.ymaster.bot?startapp=login_")
+            "https://max.ru/docver.bot?startapp=login_")
 
 
 # ------------------------------------------------------------------ воркер/мини-апп
@@ -148,7 +148,7 @@ class TestVersions1702:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.js?v={ver}" in idx and '?v=1.70.1"' not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and "-v1.70.1';" not in sw
+        assert f"docver-v{ver}" in sw and "-v1.70.1';" not in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
         mapp = open("app/static/maxapp/index.html", encoding="utf-8").read()
@@ -175,4 +175,4 @@ class TestNoRegression1702:
         r = client.post("/api/v1/auth/login",
                         json={"username": "admin", "password": "admin123"})
         assert r.status_code == 200
-        assert "ymaster_token" in r.cookies
+        assert "docver_token" in r.cookies

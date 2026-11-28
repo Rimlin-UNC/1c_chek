@@ -182,10 +182,10 @@ def _simple_page(title: str, body: str) -> HTMLResponse:
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>{_e(title)} · Ямастер Чек</title>
+<title>{_e(title)} · DocVer</title>
 <link rel="stylesheet" href="/legal/oferta.css?v={settings.APP_VERSION}">
 </head><body><a class="skip" href="#doc">К тексту</a>
-<header class="head"><p class="product">Ямастер Чек</p><h1>{_e(title)}</h1>
+<header class="head"><p class="product">DocVer</p><h1>{_e(title)}</h1>
 <p><a href="/">На главную</a> · <a href="/oferty">Раздел оферт</a></p></header>
 <main id="doc" class="doc">{body}</main></body></html>'''
     return HTMLResponse(page, headers=NOINDEX)

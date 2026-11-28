@@ -1,17 +1,17 @@
 # ======================================================================
-# Ямастер Чек — Docker-образ
-# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# DocVer — Docker-образ
+# Разработчик и владелец идеи: ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 FROM python:3.12-slim
 
 LABEL vendor="ООО «Ямастер» (ymaster.ru)" \
-      description="Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С"
+      description="DocVer — система сканирования кассовых чеков и интеграции с 1С"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-WORKDIR /opt/ymaster-check
+WORKDIR /opt/docver
 
 # Системные зависимости (OpenCV headless не требует GUI-библиотек)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,8 +26,8 @@ COPY run.py ./
 COPY tests ./tests
 
 # Данные монтируются как volume
-VOLUME ["/opt/ymaster-check/data"]
-ENV DATABASE_URL=sqlite:////opt/ymaster-check/data/ymaster_check.db
+VOLUME ["/opt/docver/data"]
+ENV DATABASE_URL=sqlite:////opt/docver/data/docver.db
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

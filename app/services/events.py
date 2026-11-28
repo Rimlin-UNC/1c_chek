@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Ямастер Чек — система сканирования кассовых чеков и интеграции с 1С.
+DocVer — система сканирования кассовых чеков и интеграции с 1С.
 
 Разработчик и владелец идеи: ООО «Ямастер»
-Сайт: https://ymaster.ru  |  E-mail: chek@ymaster.ru
+Сайт: https://ymaster.ru  |  E-mail: i@docver.ru
 
 Центр событий (WebSocket hub): широковещательная рассылка статусов обработки.
 """
@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Any
 
-log = logging.getLogger("ymaster.events")
+log = logging.getLogger("docver.events")
 
 # v1.11.0: подписчик = (очередь, компания|None, аутентифицирован?)
 #   компания None + аутентифицирован  → администратор: все события;

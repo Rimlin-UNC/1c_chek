@@ -8,7 +8,7 @@
 
 Как устроено: страница целиком собирается на сервере — текст виден без JavaScript, скриптов на странице нет
 (их запрещает и CSP). Индексация — по тем же правилам, что у главной (services/seo.py, ADR-33): на рабочем адресе
-chek.ymaster.ru — canonical и max-image-preview:large, на копиях программы и стендах — noindex в теге и в заголовке
+docver.ru — canonical и max-image-preview:large, на копиях программы и стендах — noindex в теге и в заголовке
 X-Robots-Tag. Один H1, свои title и description, по две фирменные иллюстрации в <picture> (WebP + JPEG) с точными
 width/height, alt, title и видимой подписью <figcaption>, микроразметка Article, ImageObject, Organization и
 BreadcrumbList (Яндекс читает микроданные, а не JSON-LD). Страницы и их иллюстрации входят в /sitemap.xml
@@ -144,7 +144,7 @@ HOW_TO = Page(
     badge="Пошаговая инструкция",
     badge_key="qr",
     read_min=4,
-    title="Как проверить чек по QR-коду: пошаговая инструкция — Ямастер Чек",
+    title="Как проверить чек по QR-коду: пошаговая инструкция — DocVer",
     description="Как проверить кассовый чек по QR-коду с телефона: что зашифровано в коде, как понять, что чек "
                 "настоящий, и что делать, если чек не найден в ФНС.",
     h1="Как проверить кассовый чек по QR-коду",
@@ -259,7 +259,7 @@ EMPLOYEES = Page(
     badge="Компаниям и 1С",
     badge_key="b2b",
     read_min=4,
-    title="Чеки сотрудников и авансовые отчёты в 1С — Ямастер Чек",
+    title="Чеки сотрудников и авансовые отчёты в 1С — DocVer",
     description="Сотрудники сканируют авансовые и командировочные чеки телефоном, программа сверяет их с ФНС, отсеивает "
                 "дубли и выгружает в 1С — авансовый отчёт заполняется сам.",
     h1="Чеки сотрудников — в 1С без ручного ввода",
@@ -325,7 +325,7 @@ EMPLOYEES = Page(
 <p>Сотрудник видит только свои чеки, бухгалтер — чеки своей компании; регистрация — только по приглашению. Программа
 работает в облаке или ставится на сервер компании; обновления устанавливаются из самой программы с резервной копией
 базы и откатом.</p>
-<p>Подключить компанию — напишите на <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a>.</p>
+<p>Подключить компанию — напишите на <a href="mailto:i@docver.ru">i@docver.ru</a>.</p>
 
 <section class="blog-faq" id="sec-faq">
 <h2>Частые вопросы</h2>
@@ -383,7 +383,7 @@ ACCOUNTANTS = Page(
     badge="Аутсорсинг и УПД",
     badge_key="fns",
     read_min=5,
-    title="Программа для бухгалтера на аутсорсинге: выписки и УПД — Ямастер Чек",
+    title="Программа для бухгалтера на аутсорсинге: выписки и УПД — DocVer",
     description="Все компании клиентов в одном окне: срок сдачи и что нужно от клиента, чеки сотрудников, выписки "
                 "банков по API, УПД из ЭДО, почты и с объектов — с выгрузкой в 1С.",
     h1="Для бухгалтеров и аутсорсинга: все клиенты в одном окне",
@@ -481,7 +481,7 @@ ACCOUNTANTS = Page(
 
 <h2 id="sec-start">Как начать</h2>
 <p>Программа работает в облаке или на вашем сервере. Подключить компании и задать вопросы —
-<a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a>.</p>
+<a href="mailto:i@docver.ru">i@docver.ru</a>.</p>
 """,
     related=(
         RelatedArticle(
@@ -545,7 +545,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 {robots}
 <meta name="theme-color" content="#f5f5f5">
 <meta property="og:type" content="article">
-<meta property="og:site_name" content="Ямастер Чек">
+<meta property="og:site_name" content="DocVer">
 <meta property="og:locale" content="ru_RU">
 <meta property="og:title" content="{_e(page.h1)}">
 <meta property="og:description" content="{_e(page.description)}">
@@ -569,7 +569,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 <div class="read-progress"></div>
 <a class="skip" href="#main">К тексту</a>
 <header class="top">
-  <a class="brand" href="/"><img src="/img/logo.svg" alt="" width="32" height="32">Ямастер <span>Чек</span></a>
+  <a class="brand" href="/"><img src="/img/brand/logo-horizontal.svg" alt="DocVer — Документальная верификация" class="brand-logo"></a>
   <div class="top__actions">
     <a class="top__blog" href="/blog">Блог</a>
     <a class="btn" href="/#land-login">Войти</a>
@@ -578,7 +578,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 <nav class="crumbs" aria-label="Вы здесь">
   <ol itemscope itemtype="https://schema.org/BreadcrumbList">
     <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
-      <a itemprop="item" href="{_e(base)}/"><span itemprop="name">Ямастер Чек</span></a>
+      <a itemprop="item" href="{_e(base)}/"><span itemprop="name">DocVer</span></a>
       <meta itemprop="position" content="1"></li>
     <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem" aria-current="page">
       <span itemprop="name">{_e(page.crumb)}</span>
@@ -608,7 +608,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
   {_related_block(page.related)}
   <p class="blog-byline">Материал подготовила редакция
     <span itemprop="author" itemscope itemtype="https://schema.org/Organization">
-      <a itemprop="url" href="{_e(base)}/"><span itemprop="name">Ямастер Чек</span></a>
+      <a itemprop="url" href="{_e(base)}/"><span itemprop="name">DocVer</span></a>
     </span> · Издатель:
     <span itemprop="publisher" itemscope itemtype="https://schema.org/Organization">
       <span itemprop="name">ООО «Ямастер»</span>
@@ -634,7 +634,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 <footer class="foot">
   <p>{nav} · <a href="/oferta">Оферта</a></p>
   <p>ООО «Ямастер» · <a href="https://ymaster.ru" rel="noopener">ymaster.ru</a> ·
-     <a href="mailto:chek@ymaster.ru">chek@ymaster.ru</a></p>
+     <a href="mailto:i@docver.ru">i@docver.ru</a></p>
 </footer>
 </body>
 </html>

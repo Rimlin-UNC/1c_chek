@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.32.0: «Чек-Пул» этап 3 — кабинет и регистрация.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.32.0: «Чек-Пул» этап 3 — кабинет и регистрация.
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки Этапа 3 (docs/dev_plan_checkpool.md):
 #  - гость, сдавший чеки БЕЗ регистрации, после создания кабинета видит
@@ -424,7 +424,7 @@ class TestMailerAndAdmin:
         r = c.put("/api/v1/pool-admin/smtp", headers=H, json={
             "host": "smtp.test.ru", "port": 465, "user": "chek@test.ru",
             "password": "secret-pass", "sender": "chek@test.ru",
-            "tls": True, "base_url": "https://chek.ymaster.ru"})
+            "tls": True, "base_url": "https://docver.ru"})
         assert r.status_code == 200
         g = c.get("/api/v1/pool-admin/smtp", headers=H).json()
         assert g["host"] == "smtp.test.ru" and g["has_password"] is True
@@ -460,7 +460,7 @@ class TestVersion1320:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

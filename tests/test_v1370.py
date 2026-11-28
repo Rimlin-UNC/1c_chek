@@ -1,5 +1,5 @@
-# Ямастер Чек — тесты v1.37.0: «Чек-Пул» этап 8 — подбор из пула для компаний.
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.37.0: «Чек-Пул» этап 8 — подбор из пула для компаний.
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Критерии приёмки Этапа 8 (docs/dev_plan_checkpool.md):
 #  - раздел бухгалтера «Подбор из пула»: фильтры период/регион/отрасль/сумма/
@@ -373,7 +373,7 @@ class TestVersion1370:
         cfg = open("app/config.py", encoding="utf-8").read()
         assert 'APP_VERSION: str = "' in cfg
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert "ymaster-check-v" in sw and "?v=" in sw
+        assert "docver-v" in sw and "?v=" in sw
 
     def test_whats_new_changelog_manual(self):
         js = open("app/static/js/app.js", encoding="utf-8").read()

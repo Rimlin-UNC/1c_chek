@@ -1,10 +1,10 @@
-# Ямастер Чек — тесты v1.26.1: фирменный стиль «чек-смайлик».
-# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# DocVer — тесты v1.26.1: фирменный стиль «чек-смайлик».
+# Разработчик и владелец идеи: ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 #
 # Проверяем:
 #  - система логотипа в brand/ (знак, горизонтальный, вертикальный, монохром, бланк А4, иконка с доменом);
 #  - знак действительно «смайлик» (глаза-QR + улыбка) и фирменные цвета;
-#  - иконка приложения содержит домен chek.ymaster.ru;
+#  - иконка приложения содержит домен docver.ru;
 #  - статика приложения переведена на новый знак;
 #  - версии синхронны (пин текущей версии — здесь).
 import re
@@ -47,14 +47,14 @@ class TestBrandSystem:
 
     def test_icon_app_contains_domain(self):
         s = open("brand/icon-app.svg", encoding="utf-8").read()
-        assert "chek.ymaster.ru" in s
+        assert "docver.ru" in s
         assert "q53 56" in s  # тот же знак-смайлик
 
     def test_logo_versions_contain_domain(self):
         for p in ("brand/logo-horizontal.svg", "brand/logo-stacked.svg"):
             s = open(p, encoding="utf-8").read()
-            assert "chek.ymaster.ru" in s, p
-            assert "Ямастер Чек" in s, p
+            assert "docver.ru" in s, p
+            assert "DocVer" in s, p
 
     def test_mono_versions(self):
         dark = open("brand/logo-mono.svg", encoding="utf-8").read()
@@ -65,7 +65,7 @@ class TestBrandSystem:
     def test_blank_a4(self):
         s = open("brand/blank-a4.svg", encoding="utf-8").read()
         assert 'viewBox="0 0 2100 2970"' in s  # пропорции A4
-        assert "chek.ymaster.ru" in s and "ООО «Ямастер»" in s
+        assert "docver.ru" in s and "ООО «Ямастер»" in s
 
     def test_png_sets_rendered(self):
         assert _png_size("brand/png/icon-app-512.png") == (512, 512)
@@ -99,7 +99,7 @@ class TestVersion1261:
         idx = open("app/static/index.html", encoding="utf-8").read()
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — содержимое закрытых страниц контура B2B (v1.70.45).
+# DocVer — содержимое закрытых страниц контура B2B (v1.70.45).
 #
 # Принцип: страница не может разойтись с сервисом. Состав методов
 # берётся из роутера app/pool/router_api.py, лимиты тарифов — из его же
@@ -9,7 +9,7 @@
 #
 # Раздел администратора (docs/API.md, §10) в клиентские страницы НЕ
 # входит: это внутренняя поверхность сервиса.
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .pipeline import TARIFF_LIMITS
 # Пометка владельца на внутренних поверхностях администратора
 ADMIN_MARKER = "Это не видит никто"
 
-CONTACT_EMAIL = "chek@ymaster.ru"
+CONTACT_EMAIL = "i@docver.ru"
 BASE_PATH = "/api/v1/pool-api"
 ASSETS = Path(__file__).resolve().parent / "assets"
 DIAGRAMS = ("api-access.svg", "api-request-path.svg", "api-data-boundary.svg")

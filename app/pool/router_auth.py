@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — аутентификация кабинета «Чек-Пула» (v1.32.0, Этап 3).
+# DocVer — аутентификация кабинета «Чек-Пула» (v1.32.0, Этап 3).
 # Регистрация e-mail+пароль, вход, magic link (если настроен SMTP),
 # подтверждение e-mail. Контур пула: JWT typ=pool, пользователи ядра
 # компании не затрагиваются. Защита: rate-limit по IP, единые сообщения
 # об ошибках (без перечисления существующих e-mail в magic link).
-# ООО «Ямастер» | https://ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | https://ymaster.ru | i@docver.ru
 # ======================================================================
 from __future__ import annotations
 
@@ -83,8 +83,8 @@ def register(body: AuthBody, request: Request, response: Response,
     db.commit()
     if moved and mailer.smtp_configured(db):
         # приветственное письмо не критично: сбой не мешает регистрации
-        mailer.send_mail(db, user.email, "Ямастер Чек-Пул: добро пожаловать",
-                         "Здравствуйте!\n\nКабинет «Ямастер Чек-Пула» создан. "
+        mailer.send_mail(db, user.email, "DocVer-Пул: добро пожаловать",
+                         "Здравствуйте!\n\nКабинет «DocVer-Пула» создан. "
                          f"Перенесено чеков из гостевого режима: {moved}.\n\n"
                          "ООО «Ямастер» · https://ymaster.ru")
     return {"token": accounts.issue_pool_token(user.id), "user": _user_payload(user),

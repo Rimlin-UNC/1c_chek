@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Ямастер Чек — тесты v1.70.20 «install-rule падал на unbound variable»
+#  DocVer — тесты v1.70.20 «install-rule падал на unbound variable»
 #  Найдено на боевом сервере: помощник AdGuard не устанавливался вовсе.
 #  Проверяем:
 #    • живой прогон НАСТОЯЩЕЙ фазы install-rule: комплект скопирован, помощник
@@ -12,7 +12,7 @@
 #      _do_apply апдейтера) + сквозная проверка на живом git: после смены канала
 #      `rev-parse --abbrev-ref HEAD` = новая ветка, а не прежняя;
 #    • версии/журнал/What’s New/харнесс синхронны.
-#  ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+#  ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ==============================================================================
 import json
 import os
@@ -29,7 +29,7 @@ sys.path.insert(0, os.getcwd())
 from app.config import settings
 from app.services import adguard_setup as ag
 
-HELPER = "deploy/adguard-vpn/ymaster-adguard-setup.sh"
+HELPER = "deploy/adguard-vpn/docver-adguard-setup.sh"
 RESOLUTION = 'BRANCH="${OPT_BRANCH:-${ENV_BRANCH:-$BRANCH}}"'
 ALLOWED = ("preflight", "rights", "install", "login", "tun", "off",
            "units", "autopilot", "version", "status")
@@ -52,7 +52,7 @@ def _sh(args, cwd=None, check=True, env=None):
 def _version_markers(ver: str) -> tuple:
     """Строки, которыми версия «прошита» в статику, — именно их наличие или
     отсутствие проверяют тесты версий."""
-    return (f"?v={ver}", f"ymaster-check-v{ver}", f'"version": "{ver}"', ver)
+    return (f"?v={ver}", f"docver-v{ver}", f'"version": "{ver}"', ver)
 
 
 def _pins_that_are_substrings_of_current_version() -> list:
@@ -124,7 +124,7 @@ class TestVersions17020:
             f"index.html: {sorted(set(re.findall(r'?v=([0-9.]+)', idx)))} != {ver}"
         sw = _read("app/static/sw.js")
         assert set(re.findall(r"\?v=([0-9.]+)", sw)) <= {ver}, sw
-        assert f"ymaster-check-v{ver}" in sw
+        assert f"docver-v{ver}" in sw
         mf = _read("app/static/manifest.webmanifest")
         assert f'"version": "{ver}"' in mf
 
@@ -238,7 +238,7 @@ def _helper_driver(tmp_path, app_dir, visudo_rc=0, stub_visudo=True):
         "set -u\n"                                  # как в помощнике
         f"source {tmp_path / 'helper_body.sh'}\n"
         # пути боевой системы → песочница (после source, чтобы перебить константы)
-        f'HELPER="{tmp_path / "sbin" / "ymaster-adguard-setup"}"\n'
+        f'HELPER="{tmp_path / "sbin" / "docver-adguard-setup"}"\n'
         f'KIT_DIR="{tmp_path / "kit"}"\n'
         f'SUDOERS_FILE="{tmp_path / "sudoers.d" / "ymaster-adguard"}"\n'
         'need_root() { :; }\n'                      # uid != 0 в песочнице
@@ -270,7 +270,7 @@ def _helper_driver(tmp_path, app_dir, visudo_rc=0, stub_visudo=True):
 def app_dir_like_server(tmp_path):
     """Каталог программы как на сервере: нужен только deploy/adguard-vpn
     с комплектом — берём настоящий из репозитория."""
-    d = tmp_path / "ymaster-check"
+    d = tmp_path / "docver"
     (d / "deploy").mkdir(parents=True)
     _sh(["cp", "-r", "deploy/adguard-vpn", str(d / "deploy" / "adguard-vpn")])
     return d
@@ -289,11 +289,11 @@ class TestInstallRuleLive:
         kit = tmp_path / "kit"
         for f in ("adguard-vpn-telegram.service", "tg-health.service",
                   "tg-health.timer", "tg-health.sh",
-                  "ymaster-adguard-setup.sh"):
+                  "docver-adguard-setup.sh"):
             assert (kit / f).is_file(), f"в комплекте нет {f}"
 
         # помощник установлен и исполняем (0755)
-        helper = tmp_path / "sbin" / "ymaster-adguard-setup"
+        helper = tmp_path / "sbin" / "docver-adguard-setup"
         assert helper.is_file(), "помощник не установлен"
         assert helper.stat().st_mode & 0o777 == 0o755, \
             oct(helper.stat().st_mode & 0o777)
@@ -303,9 +303,9 @@ class TestInstallRuleLive:
             encoding="utf-8")
         assert "NOPASSWD:" in rule
         for ph in ALLOWED:
-            assert f"ymaster-adguard-setup {ph}" in rule, ph
+            assert f"docver-adguard-setup {ph}" in rule, ph
         for ph in FORBIDDEN_IN_RULE:
-            assert f"ymaster-adguard-setup {ph}" not in rule, \
+            assert f"docver-adguard-setup {ph}" not in rule, \
                 f"{ph} не должен быть в sudoers-правиле"
         assert (tmp_path / "sudoers.d" / "ymaster-adguard").stat().st_mode \
             & 0o777 == 0o440
@@ -513,12 +513,12 @@ class TestBranchLabelLive:
         sh = _read("deploy.sh")
         start = sh.index('REPO_URL="${REPO_URL:-')
         region = sh[start:sh.index(RESOLUTION) + len(RESOLUTION)]
-        region = region.replace('CONF_DIR="/etc/ymaster-check"',
+        region = region.replace('CONF_DIR="/etc/docver"',
                                 'CONF_DIR="${PROBE_DIR:?}"')
         upd_start = sh.index('if [[ -d "$APP_DIR/.git" ]]; then')
         upd = sh[upd_start:sh.index('ok "обновлено из GitHub', upd_start)]
         upd = upd.split("\n", 1)[1]
-        conf_dir = tmp_path / "etc-ymaster-check"
+        conf_dir = tmp_path / "etc-docver"
         conf_dir.mkdir(exist_ok=True)
         if conf_branch:
             (conf_dir / "deploy.conf").write_text(

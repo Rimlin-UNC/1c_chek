@@ -240,7 +240,7 @@ class TestMaxSignature:
         «Открыть сайт» и пояснение про вход кодом."""
         js = MAXAPP_JS.read_text(encoding="utf-8")
         assert 'id="mx-site"' in js
-        assert "location.href = 'https://chek.ymaster.ru/'" in js
+        assert "location.href = 'https://docver.ru/'" in js
         assert "кодом — сообщением этому боту в чате" in js
 
     def test_router_bypass_text_in_source(self):

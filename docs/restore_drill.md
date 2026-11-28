@@ -1,4 +1,4 @@
-# Квартальная тренировка восстановления — Ямастер Чек
+# Квартальная тренировка восстановления — DocVer
 
 **Зачем:** бэкап без пройденного восстановления — это надежда, а не
 защита. Раз в квартал (январь/апрель/июль/октябрь) — 20 минут по этому
@@ -13,20 +13,20 @@
    SQLite (integrity_check) и совместимость схемы. Ожидаём «OK».
 3. **Восстановление на тестовой копии** (не трогая прод):
    ```bash
-   sudo systemctl stop ymaster-check
-   sudo -u ymaster sqlite3 /opt/ymaster-check/data/ymaster_check.db \
+   sudo systemctl stop docver
+   sudo -u ymaster sqlite3 /opt/docver/data/docver.db \
      "PRAGMA integrity_check;"
    # скопировать проверенную копию поверх рабочей базы
-   sudo cp /opt/ymaster-check/data/backups/<имя.копии>.db \
-           /opt/ymaster-check/data/ymaster_check.db
-   sudo systemctl start ymaster-check
+   sudo cp /opt/docver/data/backups/<имя.копии>.db \
+           /opt/docver/data/docver.db
+   sudo systemctl start docver
    ```
 4. **Проверки после запуска (5 пунктов):**
    - `/api/v1/about` отдаёт версию и `receipts_total` совпадает с
      ожидаемым;
    - вход админом работает; чек-лист: скан QR создаёт чек;
    - «Настройки → Система»: сборка/коммит верные, бэкапы видны;
-   - журнал: `sudo journalctl -u ymaster-check -n 50` без ошибок
+   - журнал: `sudo journalctl -u docver -n 50` без ошибок
      миграций; варнинга SECRET_KEY нет;
    - время последнего чека в списке — корректное (часовой пояс не
      съехал).

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 # ======================================================================
-# Ямастер Чек — тесты v1.59.4: карточка «Новое приглашение».
+# DocVer — тесты v1.59.4: карточка «Новое приглашение».
 # 1) Выпадающий список компаний из базы (свежий, не из кэша) + вариант
 #    «своя компания» с полем ввода (раньше — datalist из пустого кэша).
 # 2) Список приглашённых: дублирующая колонка «Компания» убрана (8→6),
 #    кнопки — единым блоком .row-actions с переносом строк, на мобильном
 #    больше не наезжают друг на друга.
-# ООО «Ямастер» | ymaster.ru | chek@ymaster.ru
+# ООО «Ямастер» | ymaster.ru | i@docver.ru
 # ======================================================================
 import re
 
@@ -23,7 +23,7 @@ class TestVersion1594:
         assert f"app.css?v={ver}" in idx and f"app.js?v={ver}" in idx
         assert "?v=1.59.3" not in idx
         sw = open("app/static/sw.js", encoding="utf-8").read()
-        assert f"ymaster-check-v{ver}" in sw and f"?v={ver}" in sw
+        assert f"docver-v{ver}" in sw and f"?v={ver}" in sw
         mf = open("app/static/manifest.webmanifest", encoding="utf-8").read()
         assert f'"version": "{ver}"' in mf
 
