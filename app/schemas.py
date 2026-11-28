@@ -71,6 +71,7 @@ class OfflineScanRequest(ScanRequest):
 
 class VerifyRequest(BaseModel):
     receipt_ids: list[str] = Field(default_factory=list, max_length=500)
+    force: bool = False
 
 
 class AdvanceReportBody(BaseModel):

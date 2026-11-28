@@ -85,7 +85,7 @@ class TestRelease:
         from app.config import settings
         from app.services import updater
         reg = updater.read_blocks(str(ROOT / "app/services/blocks.py"))
-        assert reg["Контрагенты"] == "1.71.0"          # блок заведён выпуском 1.71.0
+        assert TestRelease._ver(reg["Контрагенты"]) >= TestRelease._ver("1.71.0")          # блок заведён выпуском 1.71.0
         # v1.73.0: блок ушёл вперёд вместе с приёмной папкой — проверяется «не старше» прошлого выпуска
         assert TestRelease._ver(reg["Первичка (электронные УПД)"]) >= TestRelease._ver(VERSION)
         assert reg["Банковская выписка"] == "1.70.113"

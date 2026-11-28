@@ -717,7 +717,7 @@ export function clientsCreateDialog(opts = {}) {
       close();
       if (typeof opts.onCreated === 'function') opts.onCreated(company);
     } catch (e) {
-      toast(clientsCreateError(e.status, e.message), 'err', 6000);
+      toast(clientsCreateError(e.status, e.message), 'err', '🏢 Клиенты');
     }
     saveBtn.disabled = false;
   };

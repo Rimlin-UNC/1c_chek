@@ -281,4 +281,34 @@ test.describe('настройки: состояния и телефонные с
       expect(box.x + box.width).toBeLessThanOrEqual(390 + 1);
     }
   });
+
+  test('переключатель организации в Политике расходов сохраняет выбранную компанию', async ({ page, request }) => {
+    const authRes = await request.post('/api/v1/auth/login', {
+      data: { username: 'admin', password },
+    });
+    expect(authRes.ok()).toBeTruthy();
+    const { access_token: token } = await authRes.json();
+    const authHeaders = { Authorization: `Bearer ${token}` };
+    const listRes = await request.get('/api/v1/companies', { headers: authHeaders });
+    const existing = listRes.ok() ? await listRes.json() : [];
+    const inns = ['7707083893', '7736207543'];
+    for (let i = existing.length; i < 2; i += 1) {
+      await request.post('/api/v1/companies', {
+        headers: authHeaders,
+        data: { name: `ООО Политика E2E ${i + 1}`, inn: inns[i] },
+      });
+    }
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+    await page.locator('#settings-nav .stg-tab[data-sec="checks"]').click();
+    const sel = page.locator('#pol-company');
+    await expect(sel).toBeVisible({ timeout: 10000 });
+    const optCount = await sel.locator('option').count();
+    expect(optCount).toBeGreaterThanOrEqual(2);
+    const secondVal = await sel.locator('option').nth(1).getAttribute('value');
+    await sel.selectOption(secondVal);
+    await expect(page.locator('#pol-company')).toHaveValue(secondVal, { timeout: 10000 });
+  });
 });
+

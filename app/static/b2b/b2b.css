@@ -63,17 +63,10 @@ body {
   gap: 10px;
 }
 
-.b2b-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: 1.25rem;
-  font-weight: 800;
+.b2b-logo-img {
+  width: 128px;
+  height: auto;
+  display: block;
 }
 
 .b2b-brand-text {

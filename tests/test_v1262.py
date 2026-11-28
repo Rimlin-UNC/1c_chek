@@ -43,10 +43,11 @@ class TestIcon3D:
         assert _sha("app/static/img/icon-512.png") == _sha("brand/png/icon3d-512.png")
 
     def test_smiley_logo_untouched(self):
+        # v1.73.11: векторные обёртки logo.svg и brand/logo-mark.svg несут новый знак DocVer
         s = open("app/static/img/logo.svg", encoding="utf-8").read()
-        assert "q53 56" in s and "#FF7A00" in s  # смайлик на месте
+        assert "DocVer" in s and "#FF7A00" in s
         mark = open("brand/logo-mark.svg", encoding="utf-8").read()
-        assert "q53 56" in mark
+        assert "DocVer" in mark and "#FF7A00" in mark
 
 
 class TestVersion1262:

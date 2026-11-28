@@ -252,5 +252,8 @@ def detach_company(db: Session, company_id: str, *, target_company_id: str | Non
         AccountantClient.__table__.c.company_id == company_id))
     if res.rowcount:
         summary["deleted"]["accountant_clients"] = int(res.rowcount)
+    if not target_company_id:
+        from ..billing import service as billing_svc
+        billing_svc.cleanup_company_billing(db, company_id)
     db.flush()
     return summary

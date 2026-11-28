@@ -129,12 +129,14 @@ def get_fns(db: Session = Depends(get_db), user: User = Depends(require_admin)):
 @router.put("/fns", summary="Сохранить настройки ФНС")
 def put_fns(body: FnsSettingsPatch, db: Session = Depends(get_db),
             user: User = Depends(require_admin)):
+    from ..services import fns
     if body.api_base:
         _set_setting(db, "fns_api_base", body.api_base.strip())
     if body.master_token is not None and "•" not in body.master_token:
         _set_setting(db, "fns_master_token", body.master_token.strip())
     if body.client_app_id:
         _set_setting(db, "fns_client_app_id", body.client_app_id.strip())
+    fns.reset_shared_clients()
     log_action(user, "fns_settings_updated", details={"provider": "fns"})
     return {"ok": True, "message": "Настройки ФНС сохранены"}
 
@@ -393,6 +395,7 @@ def _default_company(db: Session) -> Company | None:
 def get_policy(company_id: str | None = Query(None, max_length=36),
                db: Session = Depends(get_db),
                user: User = Depends(require_accountant)):
+    from ..clients import service as clients_svc
     comp = None
     if user.role == "admin":
         if company_id:
@@ -403,7 +406,21 @@ def get_policy(company_id: str | None = Query(None, max_length=36),
         else:
             comp = _default_company(db)
     else:
-        comp = db.get(Company, user.company_id) if user.company_id else None
+        allowed = clients_svc.allowed_company_ids(db, user) or []
+        req = (company_id or "").strip()
+        if req:
+            if req not in allowed:
+                raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                    "Нет доступа к выбранной компании")
+            comp = db.get(Company, req)
+        elif user.company_id:
+            comp = db.get(Company, user.company_id)
+        else:
+            for cid in allowed:
+                cand = db.get(Company, cid)
+                if cand is not None and cand.is_active:
+                    comp = cand
+                    break
     flagged = 0
     if comp:
         flagged = (db.query(func.count(Receipt.id))
@@ -502,11 +519,13 @@ def put_external(body: ExternalSettingsPatch, db: Session = Depends(get_db),
     v1.70.70: настройки сторонних сервисов проверки чеков удалены — их
     больше нет ни в схеме, ни в интерфейсе.
     """
+    from ..services import fns
     if body.fns_master_token is not None and "•" not in body.fns_master_token:
         _set_setting(db, "fns_master_token", body.fns_master_token.strip())
     if getattr(body, "fns_client_app_id", None) is not None:
         _set_setting(db, "fns_client_app_id",
                      (body.fns_client_app_id or "").strip())
+    fns.reset_shared_clients()
     log_action(user, "external_settings_updated",
                details={"app_id": bool(getattr(body, "fns_client_app_id", ""))})
     return {"ok": True, "message": "Настройки проверки чеков сохранены"}
@@ -1021,9 +1040,12 @@ def app_summary(db: Session = Depends(get_db),
     """Информативные блоки настроек (v1.17.0): срок авансовых отчётов,
     авто-проверка ФНС — видно бухгалтеру и сотруднику (только чтение)."""
     from ..services import appsettings
+    try:
+        deadline = int(appsettings.get_setting(db, "advance_deadline_days", "10") or 10)
+    except ValueError:
+        deadline = 10
     return {
-        "advance_deadline_days": int(
-            appsettings.get_setting(db, "advance_deadline_days", "10") or 10),
+        "advance_deadline_days": deadline,
         "auto_verify": appsettings.get_setting(db, "auto_verify", "1") == "1",
         "version": cfg.APP_VERSION,
     }

@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <title>Ямастер Чек — мини-приложение</title>
+<link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
 <script src="https://st.max.ru/js/max-web-app.js"></script>
 <script src="/maxapp/jsQR.js"></script>
 <style>
@@ -26,6 +29,9 @@
 body { font: 16px/1.45 -apple-system, 'Segoe UI', Roboto, sans-serif;
        background: var(--bg); color: var(--fg); padding: 14px 14px 90px; }
 h1 { font-size: 20px; margin: 4px 0 12px; }
+.ma-brand { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.ma-brand h1 { margin: 0; }
+.ma-brand-logo { width: 32px; height: 32px; flex-shrink: 0; display: block; }
 .card { background: var(--card); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
 .big { font-size: 34px; font-weight: 800; }
 .hint { color: var(--hint); font-size: 13px; }
@@ -179,7 +185,13 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
 </div>
 
 <div id="view-app" class="hidden">
-  <h1>Ямастер Чек</h1>
+  <div class="ma-brand">
+    <picture>
+      <source type="image/webp" srcset="/img/brand/mark-1x.webp 1x, /img/brand/mark-2x.webp 2x, /img/brand/mark-3x.webp 3x">
+      <img src="/img/brand/mark-1x.png" srcset="/img/brand/mark-1x.png 1x, /img/brand/mark-2x.png 2x, /img/brand/mark-3x.png 3x" alt="DocVer" class="ma-brand-logo" width="32" height="32">
+    </picture>
+    <h1>Ямастер Чек</h1>
+  </div>
 
   <section id="tab-scan">
     <div class="card text-center">
@@ -292,6 +304,6 @@ code { font-size: 20px; letter-spacing: 1px; font-weight: 800; }
   <button type="button" data-tab="profile">⭐ Профиль</button>
 </nav>
 
-<script src="/maxapp/maxapp.js?v=1.73.9"></script>
+<script src="/maxapp/maxapp.js?v=1.74.1"></script>
 </body>
 </html>

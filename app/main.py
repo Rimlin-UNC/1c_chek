@@ -32,6 +32,7 @@ from .counterparties.router import router as counterparties_router  # v1.71.0: �
 from .exportpkg import router as exportpkg_router
 from .goods import router as goods_router
 from .docreq import router as docreq_router
+from .billing import router as billing_router  # v1.74.0: платные подписки, тарифы и счета
 from .primary import inbox_router as primary_inbox_router  # v1.73.0: приёмная папка (T-109)
 from .primary import mail_router as primary_mail_router
 from .primary import router as primary_router
@@ -615,6 +616,8 @@ app.include_router(counterparties_router)  # v1.71.0: контрагенты (T-
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)
+app.include_router(invites.company_router)
+app.include_router(billing_router.router)  # v1.74.0: корпоративный биллинг и тарифы
 app.include_router(onec.router)
 app.include_router(admin.router)
 from .routers import manual as manual_routes  # v1.21.0: инструкция

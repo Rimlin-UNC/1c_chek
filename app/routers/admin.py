@@ -118,6 +118,14 @@ def update_apply(body: "UpdateApplyBody | None" = None,
             "обновления (он используется только на время обновления и нигде "
             "не сохраняется) либо однократно выполните на сервере: "
             "sudo bash /opt/ymaster-check/deploy.sh --update")
+    if not pf.get("writable_ok", True):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            pf.get("writable_error") or (
+                "Каталог приложения доступен только для чтения. Выполните "
+                "один раз на сервере: sudo bash /opt/ymaster-check/deploy.sh --update"
+            ),
+        )
     if not pf["github_ok"]:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"GitHub недоступен с сервера: {pf['github_error']}")
@@ -392,13 +400,15 @@ def system_info(db: Session = Depends(get_db), user: User = Depends(require_admi
     import sys
     import time as _time
     import getpass as _getpass
-    from ..services.updater import _local_commit, _reexec_allowed
-    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
+    from ..services.updater import (
+        _local_commit, _reexec_allowed, _service_unit_name, _sqlite_db_path,
+    )
+    db_path = _sqlite_db_path()
     from ..services.backups import list_backups
     backups = [b["name"] for b in list_backups()[:8]]
     _repo, _branch = _repo_branch(db)
     # v1.17.0: имя юнита и служебного пользователя — для готовых команд
-    unit = "ymaster-check"
+    unit = _service_unit_name()
     unit_user = ""
     try:
         upath = f"/etc/systemd/system/{unit}.service"

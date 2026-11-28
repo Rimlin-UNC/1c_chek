@@ -140,6 +140,8 @@ def overview(user: Accountant, db: Db, company_id: CompanyId = None,
 async def upload(user: Accountant, db: Db, file: Annotated[UploadFile, File()],
                  company_id: Annotated[str | None, Form()] = None) -> dict:
     company = _company(db, user, company_id)
+    from ..services import entitlements
+    entitlements.require_company_module(db, user, company.id, "upd")
     raw = await file.read(parser.MAX_BYTES + 1)
     try:
         result = service.import_statement(db, company, raw, user)

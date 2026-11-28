@@ -132,8 +132,29 @@ if [[ $FIXSSL -eq 1 ]]; then
   exit ${RC:-1}
 fi
 
+# v1.73.10: автоопределение действующего имени systemd-юнита (поддержка
+# ymaster-check.service и docver.service при обновлении без смены порта 8000).
+SYSTEMD_ETC_DIR="${SYSTEMD_ETC_DIR:-/etc/systemd/system}"
+detect_active_service() {
+  if command -v systemctl >/dev/null 2>&1 \
+     && systemctl is-active --quiet docver 2>/dev/null \
+     && ! systemctl is-active --quiet ymaster-check 2>/dev/null; then
+    echo "docver"
+  elif [[ -e "$SYSTEMD_ETC_DIR/multi-user.target.wants/docver.service" \
+       && ! -e "$SYSTEMD_ETC_DIR/multi-user.target.wants/ymaster-check.service" ]]; then
+    echo "docver"
+  elif [[ -f "$SYSTEMD_ETC_DIR/docver.service" \
+       && ! -f "$SYSTEMD_ETC_DIR/ymaster-check.service" ]]; then
+    echo "docver"
+  else
+    echo "ymaster-check"
+  fi
+}
+
 # Режим диагностики: deploy.sh --diagnose — быстро понять, почему сайт недоступен
 if [[ $DIAGNOSE -eq 1 ]]; then
+  SERVICE="$(detect_active_service)"
+  [[ ! -f "$DB_FILE" && -f "$APP_DIR/data/docver.db" ]] && DB_FILE="$APP_DIR/data/docver.db"
   echo "======== Диагностика Ямастер Чек ========"
   echo "-- сервис:"; systemctl is-active "$SERVICE" || true
   journalctl -u "$SERVICE" -n 12 --no-pager 2>/dev/null | tail -12 || true
@@ -389,20 +410,35 @@ ok "администратор: admin / admin123 (смените при перв
 
 # ------------------------------------------------------------------
 bold "7/9 Сервис systemd"
-cp "$APP_DIR/deploy/systemd/$SERVICE.service" /etc/systemd/system/
+SERVICE="$(detect_active_service)"
+OTHER_SERVICE="docver"
+[[ "$SERVICE" == "docver" ]] && OTHER_SERVICE="ymaster-check"
+if [[ "$SERVICE" != "ymaster-check" ]]; then
+  echo "  ℹ Обнаружен действующий юнит $SERVICE.service — обновляю его без конфликта портов"
+fi
+if systemctl is-active --quiet "$OTHER_SERVICE" 2>/dev/null \
+   || systemctl is-enabled --quiet "$OTHER_SERVICE" 2>/dev/null; then
+  systemctl stop "$OTHER_SERVICE" 2>/dev/null || true
+  systemctl disable "$OTHER_SERVICE" >/dev/null 2>&1 || true
+fi
+cp "$APP_DIR/deploy/systemd/ymaster-check.service" "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
 systemctl restart "$SERVICE"
 sleep 2
-systemctl is-active --quiet "$SERVICE" && ok "сервис запущен" || {
+systemctl is-active --quiet "$SERVICE" && ok "сервис запущен ($SERVICE.service)" || {
   echo "  ✘ Сервис не запустился. Журнал:"; journalctl -u "$SERVICE" -n 25 --no-pager; exit 1; }
 
-# v1.8.3: проверяем ЖИВОСТЬ приложения по HTTP — «systemctl is-active» не
-# видит падение импорта (например, забыли зависимость), а nginx тогда отдаёт 502
+# v1.8.3 / v1.73.10: проверяем ЖИВОСТЬ приложения по HTTP до 45 с — холодный
+# старт uvicorn + init_db() + фоновых воркеров на боевой базе занимает >10 с,
+# поэтому прежнее окно из 8 попыток давало ложный сбой при исправном запуске.
 HEALTH_OK=0
-for i in 1 2 3 4 5 6 7 8; do
+for _ in $(seq 1 45); do
   if curl -fs --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; then
     HEALTH_OK=1; break
+  fi
+  if ! systemctl is-active --quiet "$SERVICE"; then
+    break
   fi
   sleep 1
 done
@@ -423,7 +459,7 @@ fi
 SUDOERS_FILE=/etc/sudoers.d/ymaster-check
 if (
   mkdir -p /etc/sudoers.d
-  echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart ymaster-check, /usr/bin/systemctl status ymaster-check" > "$SUDOERS_FILE"
+  echo "ymaster ALL=(root) NOPASSWD: /usr/bin/systemctl restart ymaster-check, /usr/bin/systemctl status ymaster-check, /usr/bin/systemctl is-active ymaster-check, /usr/bin/systemctl restart docver, /usr/bin/systemctl status docver, /usr/bin/systemctl is-active docver" > "$SUDOERS_FILE"
   chmod 440 "$SUDOERS_FILE"
   visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1
 ) >/dev/null 2>&1; then

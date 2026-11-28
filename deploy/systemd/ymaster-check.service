@@ -18,6 +18,7 @@ User=ymaster
 Group=ymaster
 WorkingDirectory=/opt/ymaster-check
 Environment=PATH=/opt/ymaster-check/venv/bin:/usr/bin:/bin
+Environment=HOME=/opt/ymaster-check/data
 # v1.59.6: время процесса — строго Московское (журнал обновления,
 # имена страховых копий, границы суток), даже если сменить системный
 # пояс на сервере не удалось
@@ -27,11 +28,13 @@ ExecStart=/opt/ymaster-check/venv/bin/uvicorn app.main:app --host 127.0.0.1 --po
 Restart=always
 RestartSec=5
 
-# Безопасность
+# Безопасность: ProtectSystem=strict закрывает всю ОС (/usr, /etc, /var, /boot),
+# а /opt/ymaster-check открыт для штатного обновления из приложения (git + pip + data);
+# -/var/backups/ymaster-check разрешает внешнее зеркало страховых копий БД (v1.55.1)
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/ymaster-check/data
+ReadWritePaths=/opt/ymaster-check -/var/backups/ymaster-check
 PrivateTmp=true
 
 [Install]

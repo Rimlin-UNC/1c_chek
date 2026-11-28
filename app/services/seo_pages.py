@@ -560,7 +560,10 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 <meta name="twitter:description" content="{_e(page.description)}">
 <meta name="twitter:image" content="{_e(hero_jpg_url)}">
 <meta name="twitter:image:alt" content="{_e(page.hero.alt)}">
+<link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/img/icon-32.png" sizes="32x32" type="image/png">
 <link rel="icon" href="/img/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
 <link rel="preload" href="/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{_e(page.hero.webp)}" as="image" type="image/webp" fetchpriority="high">
 <link rel="stylesheet" href="/css/pages.css?v={_e(settings.APP_VERSION)}">
@@ -569,7 +572,7 @@ def render(page: Page, cfg: dict, host_header: str | None, scheme: str | None) -
 <div class="read-progress"></div>
 <a class="skip" href="#main">К тексту</a>
 <header class="top">
-  <a class="brand" href="/"><img src="/img/logo.svg" alt="" width="32" height="32">Ямастер <span>Чек</span></a>
+  <a class="brand" href="/" aria-label="DocVer — Ямастер Чек"><picture><source type="image/webp" srcset="/img/brand/logo-h-1x.webp 1x, /img/brand/logo-h-2x.webp 2x, /img/brand/logo-h-3x.webp 3x"><img src="/img/brand/logo-h-1x.png" srcset="/img/brand/logo-h-1x.png 1x, /img/brand/logo-h-2x.png 2x, /img/brand/logo-h-3x.png 3x" alt="DocVer — Документальная Верификация" width="141" height="44" loading="eager"></picture></a>
   <div class="top__actions">
     <a class="top__blog" href="/blog">Блог</a>
     <a class="btn" href="/#land-login">Войти</a>

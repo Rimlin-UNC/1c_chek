@@ -173,6 +173,8 @@ async def upload(user: Accountant, db: Db, files: Annotated[list[UploadFile], Fi
     продавца (продажа) среди доступных пользователю; company_id тогда не нужен."""
     if not files:
         raise HTTPException(400, "Выберите файлы УПД (XML или ZIP)")
+    from ..services import entitlements
+    entitlements.require_company_module(db, user, company_id, "upd", check_quota=True)
     items: list[tuple[str, bytes | None, str]] = []
     for upload_file in files:
         data = await upload_file.read(MAX_ZIP_BYTES + 1)
@@ -243,6 +245,8 @@ def recognize(user: Accountant, db: Db, file: Annotated[UploadFile, File()],
 
 @router.post("/confirm")
 def confirm(user: Accountant, db: Db, body: ConfirmIn) -> dict:
+    from ..services import entitlements
+    entitlements.require_company_module(db, user, body.company_id, "upd", check_quota=True)
     try:
         return service.confirm(db, user, body.model_dump())
     except service.RecognizeError as exc:

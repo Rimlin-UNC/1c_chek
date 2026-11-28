@@ -34,13 +34,8 @@
 }
 
 .home-brand img {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-}
-
-.home-brand b {
-  color: var(--accent-text);
+  width: 141px;
+  height: auto;
 }
 
 .home-nav {
@@ -847,4 +842,5 @@
   }
   .home-header__login { min-height: 44px; }
   .home-brand { min-height: 44px; }
+  .home-brand img { width: 122px; }
 }

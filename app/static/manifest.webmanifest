@@ -1,7 +1,7 @@
 {
-  "name": "Ямастер Чек — сканирование чеков и загрузка в 1С",
-  "short_name": "Ямастер Чек",
-  "description": "Сканирование QR-кодов кассовых чеков (54-ФЗ), проверка в ФНС и выгрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)",
+  "name": "DocVer · Ямастер Чек — сканирование чеков и загрузка в 1С",
+  "short_name": "DocVer",
+  "description": "Документальная верификация: сканирование QR-кодов кассовых чеков (54-ФЗ), проверка в ФНС и выгрузка в 1С. Разработчик: ООО «Ямастер» (ymaster.ru)",
   "lang": "ru",
   "start_url": "/",
   "display": "standalone",
@@ -12,16 +12,28 @@
       "src": "/img/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/img/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/img/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/img/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
-  "version": "1.73.9",
+  "version": "1.74.1",
   "display_override": [
     "standalone",
     "minimal-ui"

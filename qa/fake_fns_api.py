@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 AUTH_PATH = "/open-api/AuthService/0.1"
@@ -137,6 +139,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_message(body)
             if action == "urn:GetMessageRequest":
                 return self._get_message(body)
+            if action == "urn:GetMessagesRequest":
+                return self._get_messages(body)
             return self._send(500, _fault(
                 "UnmarshallingFailureException: unexpected SOAPAction"))
         return self._send(404, _fault("MessageNotFoundException: путь"))
@@ -146,12 +150,14 @@ class Handler(BaseHTTPRequestHandler):
         if MASTER_TOKEN not in body:
             return self._send(500, _fault(
                 "Отказ в доступе: не верное значение master-токена"))
+        exp = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
         payload = _envelope(
             '<ns2:GetMessageResponse xmlns:ns2="urn://x-artefacts-gnivc-ru/'
             'inplat/servin/OpenApiMessageConsumerService/types/1.0">'
             "<ns2:Message><ns2:Result>"
             f"<ns2:Token>{TOKEN}</ns2:Token>"
-            "<ns2:ExpireTime>2026-10-31T18:40:00+03:00</ns2:ExpireTime>"
+            f"<ns2:ExpireTime>{exp}</ns2:ExpireTime>"
             "</ns2:Result></ns2:Message></ns2:GetMessageResponse>")
         self._send(200, payload.encode("utf-8"))
         return None
@@ -225,6 +231,59 @@ class Handler(BaseHTTPRequestHandler):
             f"<ns2:ProcessingStatus>{status}</ns2:ProcessingStatus>"
             f"<ns2:Result>{code}{extra}</ns2:Result>"
             "</ns2:Message></ns2:GetMessageResponse>")
+        self._send(200, payload.encode("utf-8"))
+        return None
+
+    def _get_messages(self, body: str):
+        """Пакетный опрос до 20 MessageId по OpenApiAsyncMessageConsumerService."""
+        if self.headers.get("FNS-OpenApi-Token") != TOKEN:
+            return self._send(401, _fault("Отказ в доступе: token"))
+        mids = re.findall(r"MessageId>\s*(msg-\d+)\s*<", body)
+        items_xml = []
+        with STATE.lock:
+            for mid in mids[:20]:
+                if mid not in STATE.messages:
+                    items_xml.append(
+                        f"<ns2:Message><ns2:MessageId>{mid}</ns2:MessageId>"
+                        "<ns2:Fault><ns2:Message>MessageNotFoundException: "
+                        "Сообщение не найдено</ns2:Message></ns2:Fault>"
+                        "</ns2:Message>"
+                    )
+                    continue
+                left = STATE.messages[mid]
+                if left > 0:
+                    STATE.messages[mid] = left - 1
+                    items_xml.append(
+                        f"<ns2:Message><ns2:MessageId>{mid}</ns2:MessageId>"
+                        "<ns2:ProcessingStatus>PROCESSING</ns2:ProcessingStatus>"
+                        "</ns2:Message>"
+                    )
+                elif left in (0, -2):
+                    STATE.messages[mid] = -2
+                    t_json = json.dumps(TICKET_OK, ensure_ascii=False)
+                    items_xml.append(
+                        f"<ns2:Message><ns2:MessageId>{mid}</ns2:MessageId>"
+                        "<ns2:ProcessingStatus>COMPLETED</ns2:ProcessingStatus>"
+                        "<ns2:Result>"
+                        '<ns3:Code xmlns:ns3="urn://x-artefacts-gnivc-ru/ais3/kkt/KktTicketService/types/1.0">200</ns3:Code>'
+                        f'<ns3:Ticket xmlns:ns3="urn://x-artefacts-gnivc-ru/ais3/kkt/KktTicketService/types/1.0">{t_json}</ns3:Ticket>'
+                        "</ns2:Result></ns2:Message>"
+                    )
+                else:
+                    STATE.messages[mid] = -3
+                    items_xml.append(
+                        f"<ns2:Message><ns2:MessageId>{mid}</ns2:MessageId>"
+                        "<ns2:ProcessingStatus>COMPLETED</ns2:ProcessingStatus>"
+                        "<ns2:Result>"
+                        '<ns3:Code xmlns:ns3="urn://x-artefacts-gnivc-ru/ais3/kkt/KktTicketService/types/1.0">404</ns3:Code>'
+                        '<ns3:Message xmlns:ns3="urn://x-artefacts-gnivc-ru/ais3/kkt/KktTicketService/types/1.0">Чек не найден</ns3:Message>'
+                        "</ns2:Result></ns2:Message>"
+                    )
+        payload = _envelope(
+            '<ns2:GetMessagesResponse xmlns:ns2="urn://x-artefacts-gnivc-ru/'
+            'inplat/servin/OpenApiAsyncMessageConsumerService/types/1.0">'
+            f"<ns2:Messages>{''.join(items_xml)}</ns2:Messages>"
+            "</ns2:GetMessagesResponse>")
         self._send(200, payload.encode("utf-8"))
         return None
 

@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import json
+
 from ..services.companies_util import normalize_inn
 
 
@@ -17,9 +19,19 @@ def _candidate(name: str, inn: str, kpp: str, source: str, company_id: str) -> d
             "source": source, "company_id": company_id}
 
 
-def collect_candidates(documents, operations, incomes, company_id: str | None = None) -> list[dict]:
+def collect_candidates(documents, operations, incomes,
+                       company_id: str | None = None,
+                       receipts=None) -> list[dict]:
     out: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
+
+    def _push(cand: dict | None) -> None:
+        if not cand:
+            return
+        key = (cand["inn"], cand["name"], cand["source"])
+        if key not in seen:
+            seen.add(key)
+            out.append(cand)
 
     def add(item) -> None:
         if company_id and getattr(item, "company_id", None) not in (None, "", company_id):
@@ -29,23 +41,46 @@ def collect_candidates(documents, operations, incomes, company_id: str | None = 
             _candidate(getattr(item, "seller_name", ""), getattr(item, "seller_inn", ""),
                        getattr(item, "seller_kpp", ""), "upd", cid),
             _candidate(getattr(item, "buyer_name", ""), getattr(item, "buyer_inn", ""),
-                       getattr(item, "buyer_kpp", ""), "upd", cid),
+                       getattr(item, "buyer_kpp", ""), "buyer_upd" if False else "upd", cid),
         ):
-            key = (cand["inn"], cand["name"], cand["source"]) if cand else ()
-            if cand and key not in seen:
-                seen.add(key)
-                out.append(cand)
+            _push(cand)
 
     for doc in documents or []:
         add(doc)
     for item in list(operations or []) + list(incomes or []):
         if company_id and getattr(item, "company_id", None) not in (None, "", company_id):
             continue
-        cand = _candidate(getattr(item, "counterparty_name", ""),
-                          getattr(item, "counterparty_inn", ""), "", "bank",
-                          getattr(item, "company_id", None) or company_id or "")
-        key = (cand["inn"], cand["name"], cand["source"]) if cand else ()
-        if cand and key not in seen:
-            seen.add(key)
-            out.append(cand)
+        _push(_candidate(getattr(item, "counterparty_name", ""),
+                         getattr(item, "counterparty_inn", ""), "", "bank",
+                         getattr(item, "company_id", None) or company_id or ""))
+
+    for rec in receipts or []:
+        r_cid = getattr(rec, "company_id", None)
+        if company_id and r_cid != company_id:
+            continue
+        cid = r_cid or company_id or ""
+        seller_kpp = ""
+        ext_raw = getattr(rec, "ext_json", "") or ""
+        if ext_raw:
+            try:
+                ext_obj = json.loads(ext_raw)
+                if isinstance(ext_obj, dict):
+                    seller_kpp = str(ext_obj.get("seller_kpp") or "")
+            except ValueError:
+                seller_kpp = ""
+        _push(_candidate(getattr(rec, "merchant_name", ""),
+                         getattr(rec, "merchant_inn", ""),
+                         seller_kpp, "receipt", cid))
+        for r_item in getattr(rec, "items", None) or []:
+            extra_raw = getattr(r_item, "extra_json", "") or ""
+            if not extra_raw:
+                continue
+            try:
+                it_extra = json.loads(extra_raw)
+            except ValueError:
+                continue
+            sup = it_extra.get("supplier") if isinstance(it_extra, dict) else None
+            if isinstance(sup, dict):
+                _push(_candidate(sup.get("name", ""), sup.get("inn", ""),
+                                 "", "receipt", cid))
     return out

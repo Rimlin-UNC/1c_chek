@@ -37,30 +37,27 @@ class TestBrandSystem:
             assert "Ямастер" in s and "ymaster.ru" in s, p  # заголовок с разработчиком
 
     def test_mark_is_smiley_with_brand_colors(self):
+        # v1.73.11: знак переведён со «смайлика» на DocVer (объёмная литера D + галочка)
         s = open("brand/logo-mark.svg", encoding="utf-8").read()
-        # улыбка «всё сошлось» (фирменный оранжевый)
-        assert "q53 56" in s and "#FF7A00" in s
-        # глаза-QR (два уголка наведения)
-        assert s.count('fill-rule="evenodd"') >= 2
-        # плитка в фирменном градиенте
-        assert "#6366F1" in s and "#8B5CF6" in s and "#22D3EE" in s
+        assert "DocVer" in s and "#FF7A00" in s and "#16A34A" in s
+        assert 'data:image/png;base64,' in s
 
     def test_icon_app_contains_domain(self):
         s = open("brand/icon-app.svg", encoding="utf-8").read()
         assert "chek.ymaster.ru" in s
-        assert "q53 56" in s  # тот же знак-смайлик
+        assert "DocVer" in s and "#FF7A00" in s
 
     def test_logo_versions_contain_domain(self):
         for p in ("brand/logo-horizontal.svg", "brand/logo-stacked.svg"):
             s = open(p, encoding="utf-8").read()
             assert "chek.ymaster.ru" in s, p
-            assert "Ямастер Чек" in s, p
+            assert "Ямастер Чек" in s and "DocVer" in s, p
 
     def test_mono_versions(self):
         dark = open("brand/logo-mono.svg", encoding="utf-8").read()
         white = open("brand/logo-mono-white.svg", encoding="utf-8").read()
-        assert "#0E2A47" in dark and "#FF7A00" not in dark   # ч/б тёмная
-        assert white.count('#FFFFFF') >= 4 and "#FF7A00" not in white  # белая контурная
+        assert "#1F2937" in dark and "#FF7A00" not in dark   # ч/б тёмная (графит DocVer)
+        assert "#FFFFFF" in white and "#FF7A00" not in white  # белая выворотка
 
     def test_blank_a4(self):
         s = open("brand/blank-a4.svg", encoding="utf-8").read()
@@ -76,8 +73,9 @@ class TestBrandSystem:
 
 class TestStaticSwitchedToNewBrand:
     def test_app_logo_is_smiley(self):
+        # v1.73.11: логотип приложения обновлён на фирменный знак DocVer
         s = open("app/static/img/logo.svg", encoding="utf-8").read()
-        assert "q53 56" in s and "#FF7A00" in s
+        assert "DocVer" in s and "#FF7A00" in s
         assert "Ямастер" in s
 
     def test_app_icons_replaced(self):

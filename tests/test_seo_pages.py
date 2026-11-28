@@ -143,7 +143,7 @@ def test_page_on_production_host(client, path):
     assert html.count("<figcaption") >= 2
     # Проверка изображений <picture> и якорей оглавления
     parsed = parse(html)
-    content_imgs = [im for im in parsed.images if im.get("src") != "/img/logo.svg"]
+    content_imgs = [im for im in parsed.images if not im.get("src", "").startswith(("/img/logo.svg", "/img/brand/"))]
     assert len(content_imgs) == 4  # hero + inline + 2 карточки профильных статей блога
     assert content_imgs[0]["loading"] == "eager" and content_imgs[0].get("fetchpriority") == "high"
     assert all(im["loading"] == "lazy" for im in content_imgs[1:])

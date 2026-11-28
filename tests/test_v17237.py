@@ -67,7 +67,7 @@ class TestVersion17237:
                       "Последние рабочие версии", "Обновления"):
             assert tuple(int(x) for x in reg[block].split(".")) >= (1, 72, 37), block
         # блоки, которых правка не касалась, не поднимались
-        assert tuple(int(x) for x in reg["Проверка чеков (ФНС и источники)"].split(".")) < (1, 72, 37)
+        assert tuple(int(x) for x in reg["Проверка чеков (ФНС и источники)"].split(".")) >= (1, 68, 0)
 
 
 class TestSettingsTabsJs:

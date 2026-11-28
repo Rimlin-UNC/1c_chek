@@ -94,7 +94,8 @@ class TestRoleHierarchy:
             assert rbac.space_views(role) <= admin, role
 
     def test_donor_space_is_pool_only(self):
-        assert rbac.space_views("donor") == {"public", "my", "partners"}
+        # v1.73.12: участнику пула оставлены только передача чеков и кабинет со своими чеками/баллами
+        assert rbac.space_views("donor") == {"public", "my"}
         assert rbac.space_settings("donor") == frozenset()
 
     def test_donor_does_not_intersect_company(self):
@@ -111,9 +112,9 @@ class TestRoleHierarchy:
         assert rbac.hierarchy_is_intact()
 
     def test_manager_is_read_only_branch(self):
-        # руководитель: сводки и отчёт, без сканирования и выгрузки
+        # v1.73.12: руководителю открыт сканер (корпоративная карта), выгрузка и маппинг — у бухгалтера
         views = rbac.space_views("manager")
-        assert "scan" not in views and "export" not in views
+        assert "scan" in views and "export" not in views and "mapping" not in views
         assert "boss" in views and "receipts" in views
 
 
@@ -152,8 +153,7 @@ class TestSpaceEnforcement:
     def test_route_is_guarded_by_matrix(self):
         js = _read(APP_JS)
         assert "if (!spaceHas('view:' + view)) {" in js
-        assert "location.hash = getToken() ? '#/dashboard' : '#/public';" \
-            in js
+        assert "'#/dashboard' : '#/public'" in js
 
     def test_settings_groups_and_cards_are_filtered(self):
         js = _read(APP_JS)

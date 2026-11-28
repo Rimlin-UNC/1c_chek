@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -80,15 +81,27 @@ def summary(db: Session = Depends(get_db),
     }
 
 
-@router.get("/receipts", summary="Чек-Пул: мои чеки (пагинация)")
-def receipts(status: str = Query("", max_length=16),
-             page: int = Query(1, ge=1, le=settings.PAGE_MAX),
-             page_size: int = Query(20, ge=1, le=100),
-             db: Session = Depends(get_db),
-             user=Depends(accounts.require_pool_user)):
+@router.get("/receipts", summary="Чек-Пул: мои чеки (пагинация и поиск)")
+def receipts(db: Annotated[Session, Depends(get_db)],
+             user: Annotated[PoolUser, Depends(accounts.require_pool_user)],
+             status: Annotated[str, Query(max_length=16)] = "",
+             q_text: Annotated[str, Query(alias="q", max_length=120)] = "",
+             page: Annotated[int, Query(ge=1, le=settings.PAGE_MAX)] = 1,
+             page_size: Annotated[int, Query(ge=1, le=100)] = 20):
+    from sqlalchemy import or_
     q = db.query(PoolReceipt).filter(PoolReceipt.pool_user_id == user.id)
     if status:
         q = q.filter(PoolReceipt.status == status)
+    term = (q_text or "").strip()
+    if term:
+        like = f"%{term}%"
+        q = q.filter(or_(
+            PoolReceipt.merchant_name.ilike(like),
+            PoolReceipt.merchant_inn.ilike(like),
+            PoolReceipt.fn.ilike(like),
+            PoolReceipt.fd.ilike(like),
+            PoolReceipt.fp.ilike(like),
+        ))
     total = q.count()
     rows = (q.order_by(PoolReceipt.created_at.desc())
             .offset((page - 1) * page_size).limit(page_size).all())
@@ -136,6 +149,45 @@ def receipt_detail(receipt_id: str, db: Session = Depends(get_db),
                    "total": i.total, "vat_rate": i.vat_rate,
                    "vat_sum": i.vat_sum} for i in items],
     }
+
+
+@router.get("/receipt/{receipt_id}/card",
+            summary="Чек-Пул: полная карточка моего чека (как у бухгалтера)")
+def receipt_full_card(receipt_id: str,
+                      db: Annotated[Session, Depends(get_db)],
+                      user: Annotated[PoolUser, Depends(accounts.require_pool_user)]):
+    from ..services import receipt_card
+    r = (db.query(PoolReceipt)
+         .filter(PoolReceipt.id == receipt_id,
+                 PoolReceipt.pool_user_id == user.id).first())
+    if r is None:
+        raise HTTPException(404, "Чек не найден")
+    items = (db.query(PoolItem).filter(PoolItem.receipt_id == r.id)
+             .order_by(PoolItem.total.desc()).all())
+    return receipt_card.build_pool_card(r, items)
+
+
+@router.get("/receipt/{receipt_id}/qr.png",
+            summary="Чек-Пул: QR-код моего чека для кассового представления (PNG)")
+def receipt_qr_png(receipt_id: str,
+                   db: Annotated[Session, Depends(get_db)],
+                   user: Annotated[PoolUser, Depends(accounts.require_pool_user)]):
+    import qrcode
+    r = (db.query(PoolReceipt)
+         .filter(PoolReceipt.id == receipt_id,
+                 PoolReceipt.pool_user_id == user.id).first())
+    if r is None:
+        raise HTTPException(404, "Чек не найден")
+    qr_str = (r.qr_data or "").strip()
+    if not qr_str and r.fn and r.fd and r.fp:
+        dt_part = r.receipt_date.strftime("%Y%m%dT%H%M") if r.receipt_date else ""
+        qr_str = (f"t={dt_part}&s={(r.total_sum or 0):.2f}"
+                  f"&fn={r.fn}&i={r.fd}&fp={r.fp}&n={r.operation or 1}")
+    img = qrcode.make(qr_str or f"fn={r.fn}&i={r.fd}&fp={r.fp}", box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/export.csv", summary="Чек-Пул: экспорт моих чеков (CSV, Excel)")

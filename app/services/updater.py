@@ -22,6 +22,7 @@
 # ======================================================================
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -99,11 +100,14 @@ class UpdateJob:
         flush = False
         with self._lock:
             phase = PHASE_ALIAS.get(step, step)
-            if phase in PHASE_ORDER and phase != self.step:
-                self._phase_enter(phase, message, time.time())
-            elif phase in self.phases and message:
-                self.phases[phase]["message"] = message
-            self.step = step
+            if phase in PHASE_ORDER:
+                if phase != self.step:
+                    self._phase_enter(phase, message, time.time())
+                elif phase in self.phases and message:
+                    self.phases[phase]["message"] = message
+                self.step = phase
+            else:
+                self.step = step
             if progress is not None:
                 self.progress = max(self.progress, min(100, progress))
             if message:
@@ -118,12 +122,17 @@ class UpdateJob:
             _state_write()   # v1.50.0: состояние переживает рестарт
 
     def note_failure(self) -> None:
-        """v1.50.0: текущая фаза помечается как упавшая (для отчёта)."""
+        """v1.50.0/v1.73.10: активная фаза помечается как упавшая (для отчёта)."""
+        now = time.time()
         with self._lock:
             cur = self.phases.get(self.step)
             if isinstance(cur, dict) and cur.get("status") == "active":
                 cur["status"] = "failed"
-                cur["finished_at"] = time.time()
+                cur["finished_at"] = now
+            for p in self.phases.values():
+                if isinstance(p, dict) and p.get("status") == "active":
+                    p["status"] = "failed"
+                    p["finished_at"] = now
         _state_write()
 
     def prepare(self, action: str = "update", to_version: str = "") -> None:
@@ -172,7 +181,7 @@ job = UpdateJob()
 # ==========================================================================
 PHASE_ORDER = ["prepare", "backup", "fetch", "download", "install", "deps",
                "verify", "restart", "done"]
-PHASE_ALIAS = {"checkout": "install", "rollback": "install", "error": ""}
+PHASE_ALIAS = {"checkout": "install", "rollback": "", "error": ""}
 STATE_FLUSH_S = 1.0          # троттлинг записи на диск (не грузим сервер)
 
 
@@ -514,8 +523,8 @@ def _pip_cmd() -> list[str]:
     for name in ("venv", ".venv"):
         pip_exe = os.path.join(APP_DIR, name, "bin", "pip")
         if os.path.exists(pip_exe):
-            return [pip_exe, "install", "--quiet", "-r", req]
-    return ["python3", "-m", "pip", "install", "--quiet", "-r", req]
+            return [pip_exe, "install", "--no-cache-dir", "--quiet", "-r", req]
+    return ["python3", "-m", "pip", "install", "--no-cache-dir", "--quiet", "-r", req]
 
 
 def _file_sha256(path: str) -> str:
@@ -826,17 +835,133 @@ def _self_reexec() -> bool:
         return False
 
 
+SYSTEMD_ETC_DIR = "/etc/systemd/system"
+
+
+def _service_unit_name() -> str:
+    """Определяет имя установленного systemd-юнита без запуска подпроцессов.
+
+    Поддерживает и штатный ymaster-check.service, и docver.service (если сервер
+    ранее переключался на ветку ребрендинга и работает под docver.service).
+    """
+    wants_dir = os.path.join(SYSTEMD_ETC_DIR, "multi-user.target.wants")
+    ym_want = os.path.lexists(os.path.join(wants_dir, "ymaster-check.service"))
+    dv_want = os.path.lexists(os.path.join(wants_dir, "docver.service"))
+    if dv_want and not ym_want:
+        return "docver"
+    if ym_want and not dv_want:
+        return "ymaster-check"
+    ym_unit = os.path.exists(os.path.join(SYSTEMD_ETC_DIR, "ymaster-check.service"))
+    dv_unit = os.path.exists(os.path.join(SYSTEMD_ETC_DIR, "docver.service"))
+    if dv_unit and not ym_unit:
+        return "docver"
+    return "ymaster-check"
+
+
+def _sqlite_db_path() -> str:
+    """Путь к файлу SQLite БД (поддержка ymaster_check.db и docver.db)."""
+    default_app_dir = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    app_dir_abs = os.path.abspath(APP_DIR)
+    if app_dir_abs == default_app_dir:
+        url = settings.DATABASE_URL or ""
+        if url.startswith("sqlite:///"):
+            configured = url.replace("sqlite:///", "", 1)
+            if os.path.exists(configured):
+                return configured
+    for filename in ("ymaster_check.db", "docver.db"):
+        candidate = os.path.join(APP_DIR, "data", filename)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(APP_DIR, "data", "ymaster_check.db")
+
+
+def _sqlite_db_exists() -> bool:
+    """Готовность БД для предпроверки обновления (SQLite оба имени или внешняя СУБД)."""
+    default_app_dir = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    if os.path.abspath(APP_DIR) == default_app_dir:
+        url = settings.DATABASE_URL or ""
+        if url and not url.startswith("sqlite:///"):
+            return True
+    return os.path.exists(_sqlite_db_path())
+
+
 def _restart_mode() -> tuple[bool, str]:
     """v1.9.1: есть ли право перезапустить сервис. Проверяем БЕЗВРЕДНОЙ командой
     `systemctl is-active` (разрешена sudoers-правилом вместе с restart):
     rc 0/3 — команда доступна (0=active, 3=inactive)."""
-    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", "ymaster-check"], timeout=15)
+    unit = _service_unit_name()
+    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", unit], timeout=15)
     if rc in (0, 3):
         return True, "sudoers"
-    rc, _o = _run(["systemctl", "is-active", "ymaster-check"], timeout=15)
+    rc, _o = _run(["systemctl", "is-active", unit], timeout=15)
     if rc in (0, 3):
         return True, "systemctl"
     return False, ""
+
+
+READONLY_FS_HINT = (
+    "Каталог приложения смонтирован только для чтения "
+    "(ограничение systemd ProtectSystem=strict / ReadWritePaths). "
+    "Выполните один раз на сервере: "
+    "sudo bash /opt/ymaster-check/deploy.sh --update — "
+    "после этого обновления из браузера будут работать автоматически."
+)
+PERMISSION_FS_HINT = (
+    "Нет прав на запись в каталог приложения (/opt/ymaster-check). "
+    "Выполните на сервере: sudo chown -R ymaster:ymaster /opt/ymaster-check "
+    "или sudo bash /opt/ymaster-check/deploy.sh --update"
+)
+
+
+def _is_fs_write_blocked(msg: str) -> bool:
+    low = (msg or "").lower()
+    return ("read-only file system" in low
+            or ("permission denied" in low
+                and (".git" in low or "fetch_head" in low or "ymaster-check" in low)))
+
+
+def _format_fs_error(raw: str) -> str:
+    low = (raw or "").lower()
+    if "read-only file system" in low:
+        return READONLY_FS_HINT
+    if "permission denied" in low:
+        return PERMISSION_FS_HINT
+    return raw
+
+
+def _writable_check() -> tuple[bool, str]:
+    """v1.73.10: реальная проверка возможности записи в APP_DIR и .git/.
+
+    Под ProtectSystem=strict со старым ReadWritePaths=/opt/ymaster-check/data
+    копия БД проходила, а git fetch падал с Read-only file system (.git/FETCH_HEAD).
+    Пробная запись ловит и EROFS от systemd, и сбитого владельца файлов (EACCES).
+    """
+    probe_dirs = [APP_DIR]
+    git_dir = os.path.join(APP_DIR, ".git")
+    if os.path.isdir(git_dir):
+        probe_dirs.append(git_dir)
+    suffix = f".ymaster-write-probe-{os.getpid()}-{threading.get_ident()}"
+    for target_dir in probe_dirs:
+        if not os.path.isdir(target_dir):
+            continue
+        probe = os.path.join(target_dir, suffix)
+        try:
+            fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+        except OSError as e:
+            low = str(e).lower()
+            if e.errno == errno.EROFS or "read-only file system" in low:
+                return False, READONLY_FS_HINT
+            if e.errno == errno.EACCES or isinstance(e, PermissionError):
+                return False, PERMISSION_FS_HINT
+            return False, f"Каталог приложения недоступен для записи: {e}"
+        finally:
+            try:
+                if os.path.exists(probe):
+                    os.unlink(probe)
+            except OSError:
+                pass
+    return True, ""
 
 
 def pre_flight(db) -> dict:
@@ -845,9 +970,9 @@ def pre_flight(db) -> dict:
     can_restart, mode = _restart_mode()
     reexec_ok = _reexec_allowed()  # v1.17.0: самоперезапуск без прав root
     can_restart = can_restart or reexec_ok
-    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
-    db_ok = os.path.exists(db_path)
+    db_ok = _sqlite_db_exists()
     git_ok = _git_ready()          # v1.16.0: иначе apply сам восстановит репозиторий
+    writable_ok, writable_err = _writable_check()
     github_ok, github_err = False, ""
     try:
         from . import appsettings
@@ -862,10 +987,12 @@ def pre_flight(db) -> dict:
         "restart_mode": mode or ("reexec" if reexec_ok else ""),
         "reexec_ok": reexec_ok,
         "db_backup_ok": db_ok,
+        "writable_ok": writable_ok,
+        "writable_error": writable_err,
         "github_ok": github_ok,
         "github_error": github_err,
         "git_ok": git_ok,
-        "ready": can_restart and db_ok and github_ok,
+        "ready": can_restart and db_ok and github_ok and writable_ok,
     }
 
 
@@ -878,7 +1005,8 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
     Примечание к паролю: sudo проверяет пароль СЛУЖЕБНОГО пользователя
     приложения, а не администратора — поэтому пароль из терминала в
     приложении не срабатывает; re-exec решает это без пароля вовсе."""
-    rc, _o = _run(["sudo", "-n", "systemctl", "restart", "ymaster-check"], timeout=60)
+    unit = _service_unit_name()
+    rc, _o = _run(["sudo", "-n", "systemctl", "restart", unit], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен (sudoers) — новая версия уже работает"
     if _reexec_allowed():
@@ -888,7 +1016,7 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
             return True, "Перезапущено (re-exec)"   # процесс уже заменён
     if sudo_password:
         rc, out = _run(["sudo", "-S", "-p", "", "systemctl", "restart",
-                        "ymaster-check"], timeout=60,
+                        unit], timeout=60,
                        input_text=sudo_password + "\n")
         if rc == 0:
             return True, "Сервис перезапущен (по паролю служебного пользователя)"
@@ -896,16 +1024,17 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
             job.say("restart", 96,
                     "Пароль отклонён: приложение работает под другим "
                     "пользователем — включён самоперезапуск…")
-    rc, _o = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
+    rc, _o = _run(["systemctl", "restart", unit], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен — новая версия уже работает"
-    return False, ("Автоперезапуск недоступен — выполните на сервере: "
-                   "sudo systemctl restart ymaster-check (данные сохранены)")
+    return False, (f"Автоперезапуск недоступен — выполните на сервере: "
+                   f"sudo systemctl restart {unit} (данные сохранены)")
 
 
 def _do_apply(target_version: str, repo: str, branch: str,
               sudo_password: str | None = None) -> None:
     """Основной конвейер обновления (выполняется в фоновом потоке)."""
+    files_touched = False
     try:
         # v1.50.0: задание подготовлено в start_apply (под лока́)
         job.old_commit = _local_commit()
@@ -934,20 +1063,30 @@ def _do_apply(target_version: str, repo: str, branch: str,
             job.say("backup", 15, f"Бэкап: {job.backup_file}")
 
         job.say("fetch", 20, "Проверка git-репозитория…")
+        w_ok, w_err = _writable_check()
+        if not w_ok:
+            raise RuntimeError(w_err)
         git_ok, git_msg = _ensure_git_repo(repo, branch)
         job.say("fetch", 22, git_msg)
         if not git_ok:
-            raise RuntimeError(git_msg)
+            raise RuntimeError(
+                _format_fs_error(git_msg) if _is_fs_write_blocked(git_msg) else git_msg
+            )
 
         job.say("fetch", 25, "Получение изменений с GitHub (только дельта)…")
         rc, out, nbytes = _git_fetch_progress(branch)
+        if rc != 0 and _is_fs_write_blocked(out):
+            raise RuntimeError(_format_fs_error(out))
         if rc != 0:
             # второй шанс: восстановить репозиторий и повторить
             _ensure_git_repo(repo, branch)
             job.say("download", 30, "Повторная загрузка изменений…")
             rc, out, nbytes = _git_fetch_progress(branch)
         if rc != 0:
-            raise RuntimeError(f"git fetch: {out}")
+            raise RuntimeError(
+                _format_fs_error(out) if _is_fs_write_blocked(out)
+                else f"git fetch: {out}"
+            )
         job.downloaded_bytes = nbytes
         job.say("download", 40, (f"Загружено изменений: {nbytes // 1024} КБ"
                                  if nbytes else "Загрузка изменений завершена"))
@@ -969,6 +1108,7 @@ def _do_apply(target_version: str, repo: str, branch: str,
                    if job.restart_required else
                    "только документация, перезапуск не потребуется"))
 
+        files_touched = True
         job.say("checkout", 45, f"Обновление файлов до {target_version}…")
         rc, out = _git(["reset", "--hard", target_ref], timeout=60)
         if rc != 0:
@@ -1082,26 +1222,33 @@ def _do_apply(target_version: str, repo: str, branch: str,
     except Exception as e:                                   # noqa: BLE001
         job.error = str(e)
         job.finished = True
-        job.say("error", None, f"ОШИБКА: {e}")
         job.note_failure()
+        job.say("error", None, f"ОШИБКА: {e}")
         job.finished_at = time.time()
         job.elapsed_s = max(1, int(job.finished_at - job.started_at))
         _state_write()
-        # Автоматический откат на предыдущий коммит — система продолжает работать
-        if job.old_commit and job.old_commit != "unknown":
+        # Автоматический откат нужен только если рабочие файлы уже менялись
+        if files_touched and job.old_commit and job.old_commit != "unknown":
             rc, out = _git(["reset", "--hard", job.old_commit], timeout=60)
             job.rolled_back = (rc == 0)
-            job.say("rollback", None,
-                    "Откат на предыдущую версию выполнен — система работает как прежде")
+            if job.rolled_back:
+                job.say("rollback", None,
+                        "Откат на предыдущую версию выполнен — система работает как прежде")
+            else:
+                job.say("rollback", None,
+                        f"Не удалось автоматически откатить файлы: {out[:160]}")
         else:
             job.rolled_back = False
+            job.say("rollback", None,
+                    f"Файлы приложения не менялись — продолжает работать v{job.from_version}")
+        _state_write()
         from ..database import SessionLocal
         db = SessionLocal()
         try:
             _append_history(db, {
                 "action": "apply_failed", "target": job.to_version,
-                "error": str(e)[:500], "rolled_back": True,
-                "at": datetime.utcnow().isoformat() + "Z"})
+                "error": str(e)[:500], "rolled_back": bool(job.rolled_back),
+                "at": _utc_stamp()})
         finally:
             db.close()
     finally:
@@ -1201,20 +1348,22 @@ def _do_rollback(target_version: str, commit: str) -> None:
     except Exception as e:                                   # noqa: BLE001
         job.error = str(e)
         job.finished = True
+        job.note_failure()
         job.say("error", None, f"ОШИБКА ОТКАТА: {e}")
         # возвращаем ровно то состояние, что было до попытки отката
         if old_commit and old_commit != "unknown":
             rc, _o = _git(["reset", "--hard", old_commit], timeout=60)
             job.rolled_back = (rc == 0)
-            job.say("rollback", None,
-                    "Состояние до отката восстановлено — ничего не изменилось")
+            if job.rolled_back:
+                job.say("rollback", None,
+                        "Состояние до отката восстановлено — ничего не изменилось")
         from ..database import SessionLocal
         db = SessionLocal()
         try:
             _append_history(db, {
                 "action": "rollback_failed", "target": target_version,
-                "error": str(e)[:500], "rolled_back": True,
-                "at": datetime.utcnow().isoformat() + "Z"})
+                "error": str(e)[:500], "rolled_back": bool(job.rolled_back),
+                "at": _utc_stamp()})
         finally:
             db.close()
     finally:

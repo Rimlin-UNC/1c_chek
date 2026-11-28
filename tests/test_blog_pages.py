@@ -210,7 +210,7 @@ def test_blog_index_has_carousel_cards_seo_and_lists_all_articles(client):
     assert blog_imgs[0].get("loading") == "eager" and blog_imgs[0].get("fetchpriority") == "high"
     assert all(img.get("loading") == "lazy" for img in blog_imgs[1:])
     assert all(img.get("alt") and img.get("title") for img in blog_imgs)
-    assert len([s for s in parsed.sources if s.get("type") == "image/webp"]) == 20
+    assert len([s for s in parsed.sources if s.get("type") == "image/webp" and "/img/blog/" in s.get("srcset", "")]) == 20
     assert len(parsed.words) >= 200
     raw = markup.lower()
     for banned in ("№1", "лучший сервис", "гарантируем", "бесплатно навсегда", "₽", "руб/мес", "рейтинг", "отзывы"):

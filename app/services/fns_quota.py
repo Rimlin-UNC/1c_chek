@@ -89,6 +89,60 @@ def remaining(db=None) -> int:
     return max(0, limit_value() - used_today(db))
 
 
+def interactive_reserve() -> int:
+    """Резерв суточной квоты для живых пользователей (5 %, но не более 50).
+
+    При тестовых малых лимитах (< 20) резерв равен 0, чтобы отладочные
+    прогоны расходовали лимит без искусственного порога.
+    """
+    limit = limit_value()
+    if limit < 20:
+        return 0
+    return min(50, limit // 20)
+
+
+def background_budget(db=None) -> int:
+    """Сколько запросов может взять фоновая достройка, не трогая резерв."""
+    return max(0, remaining(db) - interactive_reserve())
+
+
+def mark_exhausted_today(db=None) -> None:
+    """Синхронизировать локальный счётчик, когда сама ФНС вернула отказ по квоте.
+
+    Если на стороне ФНС суточный лимит 1000 запросов исчерпан раньше нашего
+    счётчика (например, после параллельного инстанса или ручной диагностики),
+    немедленно фиксируем исчерпание до 00:00 МСК, чтобы воркеры не тратили
+    сетевые вызовы впустую.
+    """
+    from ..models import FnsUsage
+    if not getattr(settings, "FNS_DAILY_LIMIT_ENABLED", True):
+        return
+    own = db is None
+    with _lock():
+        db = db or _db()
+        try:
+            day = msk_day()
+            limit = limit_value()
+            row = db.execute(select(FnsUsage).where(
+                FnsUsage.day == day)).scalar_one_or_none()
+            before = int(row.count) if row else 0
+            if row is None:
+                row = FnsUsage(day=day, count=limit, updated_at=_now())
+                db.add(row)
+            elif int(row.count) < limit:
+                row.count = limit
+                row.updated_at = _now()
+            db.commit()
+            _maybe_warn(before, limit, db)
+        except Exception:                                # noqa: BLE001
+            log.debug("fns_quota: фиксация исчерпания лимита не удалась",
+                      exc_info=True)
+            db.rollback()
+        finally:
+            if own:
+                db.close()
+
+
 def spend(amount: int = 1, db=None) -> bool:
     """Учесть запрос к ФНС. → False, если лимит уже исчерпан.
 

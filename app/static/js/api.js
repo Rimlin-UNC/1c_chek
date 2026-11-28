@@ -10,9 +10,14 @@
 
 const TOKEN_KEY = 'ymaster_check_token';
 
-export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
-export function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
-export function clearToken() { localStorage.removeItem(TOKEN_KEY); setClient(''); }
+export function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+}
+export function setToken(t) {
+  try { localStorage.setItem(TOKEN_KEY, t); } catch { /* приватный режим */ }
+}
+export function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch { /* приватный режим */ } setClient(''); }
 
 // v1.70.100 (T-50, ADR-30): бухгалтер-аутсорсер — активный клиент. Заголовок X-Ym-Company уходит со
 // всеми запросами; сервер проверяет, что компания назначена бухгалтеру администратором. Доступ отозван
@@ -92,6 +97,11 @@ async function once(method, path, body, options = {}) {
         : (data.detail?.message || JSON.stringify(data.detail || data));
     } catch { /* не JSON */ }
     const err = new ApiError(resp.status, msg, data);
+    if (resp.status === 402) {
+      window.dispatchEvent(new CustomEvent('ymaster:payment-required', {
+        detail: (data && typeof data.detail === 'object') ? data.detail : { message: msg },
+      }));
+    }
     if (!options.noClientFallback && resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
       setClient('');                       // клиент отозван или отключён — назад в свою компанию
       window.dispatchEvent(new CustomEvent('ymaster:client-reset', { detail: { message: msg } }));
