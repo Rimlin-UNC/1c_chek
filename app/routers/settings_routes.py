@@ -395,6 +395,7 @@ def _default_company(db: Session) -> Company | None:
 def get_policy(company_id: str | None = Query(None, max_length=36),
                db: Session = Depends(get_db),
                user: User = Depends(require_accountant)):
+    from ..clients import service as clients_svc
     comp = None
     if user.role == "admin":
         if company_id:
@@ -405,7 +406,21 @@ def get_policy(company_id: str | None = Query(None, max_length=36),
         else:
             comp = _default_company(db)
     else:
-        comp = db.get(Company, user.company_id) if user.company_id else None
+        allowed = clients_svc.allowed_company_ids(db, user) or []
+        req = (company_id or "").strip()
+        if req:
+            if req not in allowed:
+                raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                    "Нет доступа к выбранной компании")
+            comp = db.get(Company, req)
+        elif user.company_id:
+            comp = db.get(Company, user.company_id)
+        else:
+            for cid in allowed:
+                cand = db.get(Company, cid)
+                if cand is not None and cand.is_active:
+                    comp = cand
+                    break
     flagged = 0
     if comp:
         flagged = (db.query(func.count(Receipt.id))
@@ -1025,9 +1040,12 @@ def app_summary(db: Session = Depends(get_db),
     """Информативные блоки настроек (v1.17.0): срок авансовых отчётов,
     авто-проверка ФНС — видно бухгалтеру и сотруднику (только чтение)."""
     from ..services import appsettings
+    try:
+        deadline = int(appsettings.get_setting(db, "advance_deadline_days", "10") or 10)
+    except ValueError:
+        deadline = 10
     return {
-        "advance_deadline_days": int(
-            appsettings.get_setting(db, "advance_deadline_days", "10") or 10),
+        "advance_deadline_days": deadline,
         "auto_verify": appsettings.get_setting(db, "auto_verify", "1") == "1",
         "version": cfg.APP_VERSION,
     }

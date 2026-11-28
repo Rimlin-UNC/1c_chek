@@ -37,14 +37,33 @@ def _fail(exc: service.GoodsError) -> HTTPException:
 
 
 def _company_of(db: Session, user: User, company_id: str | None) -> str:
-    """Компания запроса: администратор — любая (по параметру), бухгалтер — активная своя."""
-    if user.role == "admin" and company_id:
-        if db.get(Company, company_id[:36]) is None:
-            raise HTTPException(404, "Компания не найдена")
-        return company_id[:36]
-    if not user.company_id:
+    """Компания запроса: администратор — любая (по параметру или активная), бухгалтер — своя или назначенная."""
+    from ..clients import service as clients_svc
+    req = (company_id or "").strip()[:36]
+    if user.role == "admin":
+        if req:
+            if db.get(Company, req) is None:
+                raise HTTPException(404, "Компания не найдена")
+            return req
+        if user.company_id:
+            return user.company_id
+        first = (db.query(Company).filter(Company.is_active.is_(True))
+                 .order_by(Company.created_at).first())
+        if first is not None:
+            return first.id
         raise HTTPException(400, "Не выбрана компания")
-    return user.company_id
+    allowed = clients_svc.allowed_company_ids(db, user) or []
+    if req:
+        if req not in allowed:
+            raise HTTPException(403, "Нет доступа к выбранной компании")
+        return req
+    if user.company_id:
+        return user.company_id
+    for cid in allowed:
+        cand = db.get(Company, cid)
+        if cand is not None and cand.is_active:
+            return cand.id
+    raise HTTPException(400, "Не выбрана компания")
 
 
 @router.get("/catalog", summary="Категории товаров, источники и профили компании",

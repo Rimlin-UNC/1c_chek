@@ -21,7 +21,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.74.0';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.74.1';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { adminBillingCardShellHTML, bindAdminBillingCard, mountClientBillingBox, openPaymentRequiredModal } from './billing.js';
@@ -4730,7 +4730,7 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
             toast('Приглашение отправлено в MAX', 'ok', '📨');
           } catch (e2) {
             toast('Ссылка создана, но бот не смог отправить: ' + e2.message,
-                  'err', 6000);
+                  'err', '📨 MAX');
           }
         }
         $('#modal-root').classList.add('hidden');
@@ -7115,6 +7115,12 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.74.1': [
+    { icon: '⚙️', title: 'Изолированная и быстрая работа раздела «Настройки» для всех ролей',
+      text: 'Все карточки настроек теперь загружаются независимо и параллельно: сбой одного внешнего контура больше не скрывает остальные карточки. Исправлены переключение организации в политике расходов, память товаров и правила поставщиков у мультикомпанийных и внешних бухгалтеров, очистка глобальных слушателей и первый открываемый таб у сотрудников.' },
+    { icon: '🛡️', title: 'Точность пакетной проверки ФНС, вебхуков и изоляции контрагентов',
+      text: 'Исходящие вебхуки отправляются строго для подтверждённых чеков, пакетная проверка не зависает при удалении чека и защищена проверкой владельца задания, а карточки и кандидаты контрагентов строго изолированы по организациям и назначенным клиентам.' },
+  ],
   '1.74.0': [
     { icon: '💳', title: 'Корпоративные платные подписки, тарифы и центр коммерции администратора',
       text: 'В разделе «Настройки → Личное и доступ» добавлен единый блок администратора для управления ценами модулей, пакетными тарифами, квотами, пробным и льготным периодами, промокодами, счетами и метриками MRR/ARR.' },
@@ -12271,30 +12277,68 @@ function bindCompanyTeamCard(container, initialTeam, me, appSum) {
 // ==========================================================================
 //  ЭКРАН: Настройки
 // ==========================================================================
+let _settingsNavAbort = null;
+
 async function viewSettings(container, alive = routeGuard()) {
-  let fns = null, onec = null, appSet = null, ext = null, checkoSet = null, tgSet = null, poolSet = null, smtpSet = null, me = null, maxSet = null, whSet = null, consentSet = null;   // v1.66.0: + MAX, v1.67.0: + webhooks, v1.70.37: + реквизиты оператора в согласии
-  let pol = null, companies = null, mrules = null;   // v1.62.0/v1.63.0
-  try { me = await api.get('/api/v1/auth/me'); } catch {}
-  try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); whSet = await api.get('/api/v1/settings/webhooks'); consentSet = await api.get('/api/v1/settings/consent'); } }   // v1.66.0: + MAX, v1.67.0: + webhooks
-  catch { /* ignore */ }
-  const about = await api.get('/api/v1/about');
-  let appSum = null, sysInfo = null, clientsInfo = null, teamInfo = null;
-  try { appSum = await api.get('/api/v1/settings/app/summary'); } catch {}
-  if (!isAdmin()) { try { teamInfo = await api.get('/api/v1/company-team'); } catch {} }
-  if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
-  // v1.70.50: клиенты приложения и передача данных — один запрос на две карточки
-  if (isAdmin()) { try { clientsInfo = await api.get('/api/v1/admin/clients'); } catch {} }
-  // v1.62.0: политика расходов — бухгалтер и админ
-  if (isAccountant()) { try { pol = await api.get('/api/v1/settings/policy'); } catch {} }
-  // v1.70.101 (T-69): память исправлений категорий товаров — по компании политики
-  let gmem = null;
-  if (isAccountant()) {
-    const q = isAdmin() && pol && pol.company_id ? `?company_id=${encodeURIComponent(pol.company_id)}` : '';
-    try { gmem = await api.get('/api/v1/goods/memory' + q); } catch {}
+  const safeGet = async (fn, fallback = null) => {
+    try { return await fn(); } catch { return fallback; }
+  };
+  const aboutFallback = {
+    app: 'Ямастер Чек',
+    version: '—',
+    vendor: 'ООО «Ямастер»',
+    site: 'https://ymaster.ru',
+    email: 'chek@ymaster.ru',
+    receipts_total: 0,
+  };
+  const reqPolComp = isAdmin() ? (state._settingsPolicyCompany || '') : '';
+  const polInitQ = reqPolComp ? `?company_id=${encodeURIComponent(reqPolComp)}` : '';
+
+  const [
+    me, about, appSum, teamInfo, pol,
+    adminBundle,
+  ] = await Promise.all([
+    safeGet(() => api.get('/api/v1/auth/me')),
+    safeGet(() => api.get('/api/v1/about'), aboutFallback),
+    safeGet(() => api.get('/api/v1/settings/app/summary')),
+    !isAdmin() ? safeGet(() => api.get('/api/v1/company-team')) : Promise.resolve(null),
+    isAccountant() ? safeGet(() => api.get('/api/v1/settings/policy' + polInitQ)) : Promise.resolve(null),
+    isAdmin() ? Promise.all([
+      safeGet(() => api.get('/api/v1/settings/fns')),
+      safeGet(() => api.get('/api/v1/settings/onec')),
+      safeGet(() => api.get('/api/v1/settings/app')),
+      safeGet(() => api.get('/api/v1/settings/external')),
+      safeGet(() => api.get('/api/v1/settings/checko')),
+      safeGet(() => api.get('/api/v1/settings/telegram')),
+      safeGet(() => api.get('/api/v1/pool-admin/overview')),
+      safeGet(() => api.get('/api/v1/pool-admin/smtp')),
+      safeGet(() => api.get('/api/v1/settings/max')),
+      safeGet(() => api.get('/api/v1/settings/webhooks')),
+      safeGet(() => api.get('/api/v1/settings/consent')),
+      safeGet(() => api.get('/api/v1/admin/system')),
+      safeGet(() => api.get('/api/v1/admin/clients')),
+      safeGet(() => api.get('/api/v1/companies')),
+    ]) : Promise.resolve([]),
+  ]);
+
+  const [
+    fns = null, onec = null, appSet = null, ext = null, checkoSet = null,
+    tgSet = null, poolSet = null, smtpSet = null, maxSet = null, whSet = null,
+    consentSet = null, sysInfo = null, clientsInfo = null, companies = null,
+  ] = adminBundle || [];
+
+  if (isAdmin() && pol && pol.company_id) {
+    state._settingsPolicyCompany = pol.company_id;
   }
-  if (isAdmin()) { try { companies = await api.get('/api/v1/companies'); } catch {} }
-  // v1.63.0: правила поставщиков — бухгалтер и админ
-  if (isAccountant()) { try { mrules = await api.get('/api/v1/receipts/merchant-rules'); } catch {} }
+  const polCompQ = isAdmin() && pol && pol.company_id
+    ? `?company_id=${encodeURIComponent(pol.company_id)}`
+    : '';
+  const [gmem, mrules] = isAccountant()
+    ? await Promise.all([
+      safeGet(() => api.get('/api/v1/goods/memory' + polCompQ)),
+      safeGet(() => api.get('/api/v1/receipts/merchant-rules' + polCompQ)),
+    ])
+    : [null, null];
   if (!alive()) return;   // v1.70.87 (#25): пользователь уже в другом разделе
 
   // v1.70.9: страница настроек — меню с разделами и подменю;
@@ -12304,11 +12348,13 @@ async function viewSettings(container, alive = routeGuard()) {
     const p = (state.routeParam || '').split('/').filter(Boolean);
     return { group: p[0] || '', card: p[1] || '' };
   })();
+  let allSaved = false;
+  try { allSaved = localStorage.getItem('settings_all') === '1'; } catch (e) { allSaved = false; }
   if (_cur.group) {
     // v1.70.10: явный заход по ссылке на карточку — режим «все» не держим
     document.body.classList.remove('settings-all');
     try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
-  } else if (localStorage.getItem('settings_all') === '1') {
+  } else if (allSaved) {
     document.body.classList.add('settings-all');
   }
   container.innerHTML = `
@@ -12447,20 +12493,20 @@ async function viewSettings(container, alive = routeGuard()) {
       <div class="glass card" id="st-goods" data-sec="checks" style="order:25">${goodsMemoryHTML(gmem.items, true)}</div>` : ''}
 
       ${isAccountant() && mrules ? `
-      <div class="glass card" id="st-mrules" data-sec="checks" style="order:25">
+      <div class="glass card" id="st-mrules" data-sec="checks" style="order:25" data-wide>
         <div class="card-title">🧠 Правила поставщиков
           <span class="form-hint">самообучающийся маппинг (v1.63+)</span></div>
         <p class="form-hint" style="margin-bottom:8px">Правило = поставщик (ИНН) + поле.
         Будущие чеки этого поставщика получают значение в ПУСТОЕ поле,
         существующие данные правилами не затираются.</p>
-        ${mrules.length ? `<div class="table-wrap"><table class="data"><thead><tr>
-          <th>Поставщик</th><th>Поле</th><th>Значение</th><th>Применили</th><th></th></tr></thead><tbody>
+        ${mrules.length ? `<div class="table-scroll"><table class="data settings-table settings-cards-table"><thead><tr>
+          <th>Поставщик</th><th>Поле</th><th>Значение</th><th>Применили</th><th>Действие</th></tr></thead><tbody>
           ${mrules.map((m) => `<tr>
-            <td>${esc(m.merchant_name || '—')}<div class="form-hint">ИНН ${esc(m.merchant_inn)}</div></td>
-            <td>${({ category: 'Статья', assignee: 'Сотрудник', comment: 'Комментарий' })[m.field] || esc(m.field)}</td>
-            <td title="${esc(m.value)}">${esc((m.value || '').slice(0, 55))}${(m.value || '').length > 55 ? '…' : ''}</td>
-            <td>${m.applied_count || 0}</td>
-            <td style="white-space:nowrap">
+            <td data-label="Поставщик"><span class="td-k">Поставщик</span><span class="td-v">${esc(m.merchant_name || '—')}<div class="form-hint">ИНН ${esc(m.merchant_inn)}</div></span></td>
+            <td data-label="Поле"><span class="td-k">Поле</span><span class="td-v">${({ category: 'Статья', assignee: 'Сотрудник', comment: 'Комментарий' })[m.field] || esc(m.field)}</span></td>
+            <td data-label="Значение" title="${esc(m.value)}"><span class="td-k">Значение</span><span class="td-v">${esc((m.value || '').slice(0, 55))}${(m.value || '').length > 55 ? '…' : ''}</span></td>
+            <td data-label="Применили"><span class="td-k">Применили</span><span class="td-v">${m.applied_count || 0}</span></td>
+            <td data-label="Действие" style="white-space:nowrap">
               <button type="button" class="btn btn-sm mr-backfill" data-id="${m.id}" title="Заполнить пустые поля у старых чеков этого поставщика">⏪ к старым</button>
               <button type="button" class="btn btn-sm mr-del" data-id="${m.id}" title="Удалить правило">🗑</button></td>
           </tr>`).join('')}</tbody></table></div>`
@@ -12496,7 +12542,7 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>
       ` : ''}
 
-      ${isAdmin() && fns ? `
+      ${isAdmin() && checkoSet ? `
       <div class="glass card" id="st-checko" data-sec="integr" style="order:31">
         <div class="card-title">🗂 ЕГРЮЛ/ЕГРИП — Checko.ru <span class="form-hint">(v1.13+)</span></div>
         <p class="form-hint" style="margin-bottom:10px">Ключ заполняет карточки компаний
@@ -13170,7 +13216,8 @@ async function viewSettings(container, alive = routeGuard()) {
     if (!nav) return '';
     const allMode = document.body.classList.contains('settings-all');
     const tabs = Array.from(nav.querySelectorAll('.stg-tab'));
-    const model = tabsModel(tabs.map((t) => ({
+    const visibleTabs = tabs.filter((t) => !t.hidden);
+    const model = tabsModel(visibleTabs.map((t) => ({
       key: t.getAttribute('data-sec'),
       title: (t.querySelector('.stg-tab-label') || {}).textContent || '',
       items: [{ id: '__tab__' }],
@@ -13182,11 +13229,12 @@ async function viewSettings(container, alive = routeGuard()) {
     const active = allMode ? '' : tabForRoute(model, cur.group || hashSec);
     const bAll = $('#snav-all');
     if (bAll) bAll.textContent = allMode ? '☰ Меню настроек' : '🔍 Все настройки';
+    const firstVisIdx = tabs.findIndex((t) => !t.hidden);
     tabs.forEach((tab, i) => {
       const on = !!active && tab.getAttribute('data-sec') === active;
       tab.classList.toggle('active', on);
       tab.setAttribute('aria-selected', on ? 'true' : 'false');
-      tab.tabIndex = on || (!active && i === 0) ? 0 : -1;
+      tab.tabIndex = on || (!active && i === (firstVisIdx >= 0 ? firstVisIdx : 0)) ? 0 : -1;
     });
     nav.querySelectorAll('.stg-panel .snav-item').forEach((b) => {
       const on = !!cur.card && b.getAttribute('data-open') === cur.card;
@@ -13216,7 +13264,12 @@ async function viewSettings(container, alive = routeGuard()) {
   const snav = $('#settings-nav');
   if (snav) {
     // карточки раздела -> пункты выпадающей панели таба
-    const cardsAll = Array.from(container.querySelectorAll('.settings-grid > .glass.card'));
+    const cardsAll = Array.from(container.querySelectorAll('.settings-grid > .glass.card'))
+      .filter((c) => !c.classList.contains('hidden'));
+    snav.querySelectorAll('.stg-tab').forEach((tab) => {
+      const key = tab.getAttribute('data-sec');
+      tab.hidden = !cardsAll.some((c) => c.getAttribute('data-sec') === key);
+    });
     snav.querySelectorAll('.stg-panel').forEach((panel) => {
       const key = panel.getAttribute('data-sec');
       const items = cardsAll
@@ -13243,7 +13296,7 @@ async function viewSettings(container, alive = routeGuard()) {
           const id = btn.getAttribute('data-open');
           if (!id) return;
           document.body.classList.remove('settings-all');
-          localStorage.setItem('settings_all', '');
+          try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
           settingsApply(snav, { group: key, card: id });
           try { history.replaceState(null, '', '#/settings/' + key + '/' + id); } catch (e) { /* no history */ }
           closeSettingsPanels();
@@ -13255,12 +13308,12 @@ async function viewSettings(container, alive = routeGuard()) {
 
     // клик по табу: переключить раздел и открыть/закрыть его панель
     const tabs = Array.from(snav.querySelectorAll('.stg-tab'));
-    tabs.forEach((tab, i) => {
+    tabs.forEach((tab) => {
       tab.onclick = () => {
         const key = tab.getAttribute('data-sec');
         const wasOpen = tab.getAttribute('aria-expanded') === 'true';
         document.body.classList.remove('settings-all');
-        localStorage.setItem('settings_all', '');
+        try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
         settingsApply(snav, { group: key, card: '' });
         try { history.replaceState(null, '', '#/settings/' + key); } catch (e) { /* no history */ }
         // v1.72.38: на телефоне панель таба не открывается сама. Она
@@ -13271,18 +13324,21 @@ async function viewSettings(container, alive = routeGuard()) {
         if (phoneTabs || wasOpen) closeSettingsPanels(); else openSettingsPanel(key);
         scrollSettingsTop();
       };
-      // стрелки ←/→ переключают табы, Home/End — на края
+      // стрелки ←/→ переключают только видимые табы, Home/End — на края
       tab.onkeydown = (ev) => {
+        const vis = tabs.filter((t) => !t.hidden);
+        if (!vis.length) return;
+        const curIdx = Math.max(0, vis.indexOf(tab));
         const keys = { ArrowRight: 1, ArrowLeft: -1 };
         let next = null;
-        if (ev.key in keys) next = (i + keys[ev.key] + tabs.length) % tabs.length;
+        if (ev.key in keys) next = (curIdx + keys[ev.key] + vis.length) % vis.length;
         else if (ev.key === 'Home') next = 0;
-        else if (ev.key === 'End') next = tabs.length - 1;
+        else if (ev.key === 'End') next = vis.length - 1;
         else if (ev.key === 'Escape') { closeSettingsPanels(); return; }
         if (next === null) return;
         ev.preventDefault();
-        tabs[next].focus();
-        tabs[next].click();
+        vis[next].focus();
+        vis[next].click();
       };
     });
 
@@ -13301,7 +13357,7 @@ async function viewSettings(container, alive = routeGuard()) {
     if (bAll) bAll.onclick = () => {
       const on = !document.body.classList.contains('settings-all');
       document.body.classList.toggle('settings-all', on);
-      localStorage.setItem('settings_all', on ? '1' : '');
+      try { localStorage.setItem('settings_all', on ? '1' : ''); } catch (e) { /* приватный режим */ }
       moreMenu.hidden = true;
       moreBtn.setAttribute('aria-expanded', 'false');
       closeSettingsPanels();
@@ -13317,8 +13373,13 @@ async function viewSettings(container, alive = routeGuard()) {
       try { snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* старые браузеры */ }
     };
 
-    // клик мимо и Esc закрывают выпадающие панели
+    if (_settingsNavAbort) _settingsNavAbort.abort();
+    _settingsNavAbort = new AbortController();
+    const navSig = _settingsNavAbort.signal;
+
+    // клик мимо и Esc закрывают выпадающие панели; слушатели очищаются через AbortController
     document.addEventListener('click', (ev) => {
+      if (!document.body.contains(snav)) { _settingsNavAbort.abort(); return; }
       if (!snav.contains(ev.target)) {
         closeSettingsPanels();
         if (moreMenu && !moreMenu.hidden) {
@@ -13326,16 +13387,16 @@ async function viewSettings(container, alive = routeGuard()) {
           moreBtn.setAttribute('aria-expanded', 'false');
         }
       }
-    });
-    // смена ширины (поворот телефона, окно рядом) закрывает выпадающие панели:
-    // иначе на телефоне остаётся развёрнутый аккордеон во весь экран
+    }, { signal: navSig });
+    // смена ширины (поворот телефона, окно рядом) закрывает выпадающие панели
     window.addEventListener('resize', () => {
+      if (!document.body.contains(snav)) { _settingsNavAbort.abort(); return; }
       closeSettingsPanels();
-      // и активный таб снова подводим в видимую часть полосы
       const onTab = snav.querySelector('.stg-tab.active');
       settingsApply(snav, { group: onTab ? onTab.getAttribute('data-sec') : '', card: '' });
-    });
+    }, { signal: navSig });
     document.addEventListener('keydown', (ev) => {
+      if (!document.body.contains(snav)) { _settingsNavAbort.abort(); return; }
       if (ev.key !== 'Escape') return;
       closeSettingsPanels();
       if (moreMenu && !moreMenu.hidden) {
@@ -13343,13 +13404,17 @@ async function viewSettings(container, alive = routeGuard()) {
         moreBtn.setAttribute('aria-expanded', 'false');
         moreBtn.focus();
       }
-    });
+    }, { signal: navSig });
 
     settingsApply(snav, _cur);
     // первая загрузка без маршрута: показываем первый доступный раздел
     if (!_cur.group && !document.body.classList.contains('settings-all')) {
-      const first = tabs[0];
-      if (first) settingsApply(snav, { group: first.getAttribute('data-sec'), card: '' });
+      const visTabs = tabs.filter((t) => !t.hidden);
+      if (visTabs.length) {
+        const tabs = visTabs;
+        const first = tabs[0];
+        settingsApply(snav, { group: first.getAttribute('data-sec'), card: '' });
+      }
     }
   }
 
@@ -13544,17 +13609,11 @@ async function viewSettings(container, alive = routeGuard()) {
       try {
         const fd = new FormData();
         fd.append('file', f, f.name);
-        const resp = await fetch('/api/v1/admin/backups/import', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + getToken() },
-          body: fd,
-        });
-        const r = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(r.detail || 'Загрузка не удалась');
+        const r = await api.post('/api/v1/admin/backups/import', fd);
         toast(r.message, 'ok', '⬆ Загрузка копии');
         flashBtn(bif, 'ok');
         renderBkFilters(r.items); renderBackups(r.items);
-      } catch (e) { toast(e.message, 'err', '⬆ Загрузка копии'); flashBtn(bif, 'err'); }
+      } catch (e) { toast(e.message || 'Загрузка не удалась', 'err', '⬆ Загрузка копии'); flashBtn(bif, 'err'); }
       setBtnBusy(bif, false);
     };
   }
@@ -13565,7 +13624,7 @@ async function viewSettings(container, alive = routeGuard()) {
   document.querySelectorAll('#settings-nav .stg-tab').forEach((tab) => {
     const key = tab.getAttribute('data-sec');
     const has = Array.from(container.querySelectorAll('.settings-grid > .glass.card'))
-      .some((c) => c.getAttribute('data-sec') === key);
+      .some((c) => !c.classList.contains('hidden') && c.getAttribute('data-sec') === key);
     tab.hidden = !has;
   });
   const snavFinal = $('#settings-nav');
@@ -14061,34 +14120,8 @@ async function viewSettings(container, alive = routeGuard()) {
     };
   }
 
-  // v1.16.0: Telegram — сохранение/тест/личная привязка
-  if (isAdmin() && tgSet) {
-    const tts = $('#tg-save');
-    if (tts) tts.onclick = async () => {
-      tts.disabled = true;
-      try {
-        const body = {
-          enabled: $('#tg-enabled').checked,
-          reminder_time: $('#tg-time').value.trim(),
-          reminder_text: $('#tg-text').value.trim(),
-        };
-        const tok = $('#tg-token').value.trim();
-        if (tok) body.bot_token = tok;
-        const prx = $('#tg-proxy').value.trim();          // v1.29.0
-        if (prx) body.proxy = prx;
-        const apb = $('#tg-apibase').value.trim();         // v1.70.12: адрес API
-        if (apb) body.api_base = apb;
-        const chSel = $('#tg-channel');                    // v1.66.0: канал
-        if (chSel) body.channel = chSel.value;
-        const r = await api.put('/api/v1/settings/telegram', body);
-        toast(r.message, r.worker_running ? 'ok' : 'warn', '🔔');
-        route(true);
-      } catch (e) { toast(e.message, 'err'); }
-      tts.disabled = false;
-    };
-    // v1.70.28: управление AdGuard VPN переехало в собственный блок
-    // «🛡 AdGuard VPN на сервере» (раздел «Устройство и служебное») — в
-    // карточке Telegram-бота ему больше не место.
+  // v1.70.28: управление AdGuard VPN живёт независимо в блоке #st-adguard
+  if (isAdmin() && $('#st-adguard')) {
     let agTimer = 0;
     const AG_ICONS = { done: '\u2705', active: '\u23f3', failed: '\u274c', skip: '\u2796', pending: '\u00b7' };
     function agRender(st) {
@@ -14101,11 +14134,6 @@ async function viewSettings(container, alive = routeGuard()) {
         '<span style="width:20px;text-align:center;flex:none">' + (AG_ICONS[s.status] || '\u00b7') + '</span>' +
         '<span>' + esc(s.title) + (s.message ? ' — <span class="form-hint">' + esc(s.message) + '</span>' : '') + '</span></div>'
       ).join('');
-      // v1.70.28: ссылка для регистрации сервера живёт В БЛОКЕ AdGuard VPN и
-      // показывается сразу, как только CLI её выдал. Раньше её скрывало
-      // условие «login_url && running»: стоило заданию остановиться (ошибка,
-      // отмена, перезапуск страницы) — и владелец терял ссылку, хотя она живёт
-      // ещё около 30 минут. Прячем только после успешного завершения.
       const lbox = $('#ag-link-box'), link = $('#ag-link'),
             lurl = $('#ag-link-url');
       if (lbox && link) {
@@ -14117,35 +14145,21 @@ async function viewSettings(container, alive = routeGuard()) {
       }
       const log = $('#ag-setup-log');
       if (log) { log.textContent = (st.log || []).join('\n'); log.scrollTop = log.scrollHeight; }
-      const state = $('#ag-state');
-      if (state) state.textContent = st.running
+      const stEl = $('#ag-state');
+      if (stEl) stEl.textContent = st.running
         ? ('идёт установка\u2026 ' + (st.progress || 0) + '%')
         : (st.success ? '\u2705 Установка завершена успешно' : '\u274c Ошибка: ' + (st.error || 'неизвестно'));
       if (st.finished && st.success) {
-        // v1.70.24: режим TUN + selective — трафик до Telegram уходит в
-        // туннель прозрачно, локального SOCKS-слушателя 127.0.0.1:1080 нет.
-        // Раньше сюда подставлялся socks5://127.0.0.1:1080: сохранив его,
-        // владелец отправил бы бота в несуществующий прокси и бот замолчал.
-        // Мастер сам очистил настройку, поэтому поле приводим к пустому
-        // («пусто — не менять») и убираем за собой возможное старое значение.
         const prx = $('#tg-proxy');
         if (prx) prx.value = '';
         agHideRule();
       }
-      // v1.70.16: остановились на правах — показываем одну команду (без пароля)
       if (st.finished && !st.success && st.one_time_cmd) {
         agNeedRule({ one_time_cmd: st.one_time_cmd }, '');
       }
       const cancel = $('#ag-cancel');
       if (cancel) cancel.classList.toggle('hidden', !st.running);
     }
-    // v1.70.28: трёхпозиционный переключатель вместо кнопки. Среднее
-    // положение — состояние неизвестно или операция идёт; влево — VPN
-    // выключен (нажатие выключает), вправо — VPN включён (нажатие включает:
-    // первый раз — со ссылкой регистрации сервера прямо в этом блоке).
-    // Положение берётся из ФАКТИЧЕСКОГО состояния юнита туннеля, а не из
-    // факта «установка когда-то завершилась успешно»: туннель могли
-    // остановить руками или он мог упасть.
     let agVpnOn = false;
     function agPaint(vpn, busy) {
       const sw = $('#ag-switch');
@@ -14167,24 +14181,23 @@ async function viewSettings(container, alive = routeGuard()) {
             : '\ud83d\udd34 VPN <b>выключен</b>: трафик сервера идёт напрямую. Переключите вправо, чтобы включить \u2014 при первом включении здесь появится ссылка для регистрации сервера.')
           : '\u26aa состояние VPN неизвестно (сервер не ответил или туннель ещё не ставили). Переключение вправо запустит установку.');
     }
+    function agStop() { if (agTimer) { clearInterval(agTimer); agTimer = 0; } }
     async function agPoll() {
+      if (!document.getElementById('st-adguard')) { agStop(); return; }
       try {
         const r = await api.get('/api/v1/settings/telegram/adguard/setup');
         const st = r.job || {};
         agRender(st);
         agPaint(r.vpn, !!st.running);
-        if (!st.running && agTimer) { clearInterval(agTimer); agTimer = 0; }
+        if (!st.running) agStop();
       } catch (e) { /* страница ушла — тишина */ }
     }
-    function agStop() { if (agTimer) { clearInterval(agTimer); agTimer = 0; } }
     const agCancel = $('#ag-cancel');
     if (agCancel) agCancel.onclick = async () => {
       try { await api.post('/api/v1/settings/telegram/adguard/setup', { action: 'cancel' }); toast('Останавливаю установку\u2026', 'ok', '\ud83d\udee1'); } catch (e) { toast(e.message, 'err'); }
     };
     const agClose = $('#ag-close');
     if (agClose) agClose.onclick = () => { agStop(); const b = $('#ag-setup'); if (b) b.classList.add('hidden'); };
-    // v1.70.16: мастер БЕЗ пароля — никаких полей пароля, только одна
-    // команда для терминала (её ставит deploy.sh) и кнопка «Проверить снова».
     async function agLaunch() {
       const r = await api.post('/api/v1/settings/telegram/adguard/setup',
         { action: 'start' });
@@ -14207,8 +14220,8 @@ async function viewSettings(container, alive = routeGuard()) {
       if (inp) inp.value = cmd;
       const box = $('#ag-setup');
       if (box) box.classList.remove('hidden');
-      const state = $('#ag-state');
-      if (state) state.textContent = 'нужно правило помощника: выполните команду в SSH один раз и нажмите «Проверить снова» (пароль сервера мастер не спрашивает)';
+      const stEl = $('#ag-state');
+      if (stEl) stEl.textContent = 'нужно правило помощника: выполните команду в SSH один раз и нажмите «Проверить снова» (пароль сервера мастер не спрашивает)';
       toast(msg || 'Нужна одна команда в терминале — после неё мастер работает без пароля', 'warn', '\ud83d\udd13');
     }
     const agCopy = $('#ag-copy-cmd');
@@ -14222,18 +14235,6 @@ async function viewSettings(container, alive = routeGuard()) {
         toast('Команда скопирована — выполните её в SSH один раз', 'ok', '\ud83d\udccb');
       } catch (e) { toast('Скопируйте команду вручную (выделите поле)', 'warn'); }
     };
-    // v1.70.25: одна кнопка на два действия. VPN включён — выключаем,
-    // выключен — запускаем мастер (первый раз он покажет ссылку регистрации
-    // сервера). Состояние берём из фактического состояния юнита, а не из
-    // журнала установки: туннель могли остановить руками.
-    // v1.70.25: перечитать ФАКТИЧЕСКОЕ состояние VPN с сервера и покрасить
-    // кнопку по нему. Нужно после любой неудачи выключения: угадывать
-    // состояние нельзя. Отказ может быть частичным (автопилот погашен, туннель
-    // выжил — помощник в этом случае честно падает с «туннель не
-    // остановился»), а может быть и полным (нет правила помощника). В обоих
-    // случаях VPN остаётся включённым, и кнопка обязана продолжать предлагать
-    // «выключить»: стань она красной «включить», следующий клик запустил бы
-    // мастер поверх работающего туннеля.
     async function agRefreshVpn() {
       try {
         const r = await api.get('/api/v1/settings/telegram/adguard/setup');
@@ -14247,7 +14248,6 @@ async function viewSettings(container, alive = routeGuard()) {
           { action: 'off' });
         if (r && r.need_rule) { agNeedRule(r, r.message); await agRefreshVpn(); return; }
         toast(r.message || 'VPN выключен', 'ok', '\ud83d\udee1 AdGuard');
-        // ответ мог прийти без vpn (старый сервер) — тогда перечитываем сами
         if (r && r.vpn) agPaint(r.vpn, false); else await agRefreshVpn();
       } catch (e) {
         if (/root|sudo|парол|правил|помощник/i.test(e.message || '')) agNeedRule(null, e.message);
@@ -14255,9 +14255,6 @@ async function viewSettings(container, alive = routeGuard()) {
         await agRefreshVpn();
       }
     }
-    // v1.70.28: вправо — включить (мастер установки), влево — выключить.
-    // Состояние «неизвестно» не блокирует включение: мастер сам разберётся,
-    // а вот выключать несуществующий туннель нечего.
     const agOn = $('#ag-sw-on'), agOff = $('#ag-sw-off');
     if (agOn) agOn.onclick = async () => {
       if (agOn.disabled) return;
@@ -14291,10 +14288,6 @@ async function viewSettings(container, alive = routeGuard()) {
       } catch (e) { toast(e.message, 'err'); }
       agRecheck.disabled = false;
     };
-    // v1.70.15: панель восстанавливается после перерисовки (как у обновления)
-    // v1.70.25: здесь же красим кнопку-переключатель по фактическому
-    // состоянию VPN — иначе до первого опроса она показывала бы «выключен»
-    // на работающем туннеле.
     api.get('/api/v1/settings/telegram/adguard/setup').then(r => {
       const st = r.job || {};
       agPaint(r.vpn, !!st.running);
@@ -14303,6 +14296,33 @@ async function viewSettings(container, alive = routeGuard()) {
         if (st.running) { agStop(); agTimer = setInterval(agPoll, 1500); }
       }
     }).catch(() => { agPaint(null, false); });
+  }
+
+  // v1.16.0: Telegram — сохранение/тест/диагностика
+  if (isAdmin() && tgSet) {
+    const tts = $('#tg-save');
+    if (tts) tts.onclick = async () => {
+      tts.disabled = true;
+      try {
+        const body = {
+          enabled: $('#tg-enabled').checked,
+          reminder_time: $('#tg-time').value.trim(),
+          reminder_text: $('#tg-text').value.trim(),
+        };
+        const tok = $('#tg-token').value.trim();
+        if (tok) body.bot_token = tok;
+        const prx = $('#tg-proxy').value.trim();          // v1.29.0
+        if (prx) body.proxy = prx;
+        const apb = $('#tg-apibase').value.trim();         // v1.70.12: адрес API
+        if (apb) body.api_base = apb;
+        const chSel = $('#tg-channel');                    // v1.66.0: канал
+        if (chSel) body.channel = chSel.value;
+        const r = await api.put('/api/v1/settings/telegram', body);
+        toast(r.message, r.worker_running ? 'ok' : 'warn', '🔔');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+      tts.disabled = false;
+    };
     const tgp = $('#tg-ping');                        // v1.70.14: замер пинга
     if (tgp) tgp.onclick = async () => {
       const out = $('#tg-ping-out');
@@ -14335,7 +14355,16 @@ async function viewSettings(container, alive = routeGuard()) {
         toast(r.message, 'ok', '🔔'); }
       catch (e) { toast(e.message, 'err'); }
     };
-    // v1.67.0: вебхуки — сохранение и тест
+    const tgr = $('#tg-refresh');
+    if (tgr) tgr.onclick = async () => {
+      try { const r = await api.post('/api/v1/settings/telegram/refresh-bot', {});
+        toast('Бот: @' + r.bot_username, 'ok', '🔔'); route(true); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // v1.67.0: вебхуки — собственный блок #st-webhooks
+  if (isAdmin() && whSet) {
     const whSave = $('#wh-save');
     if (whSave) whSave.onclick = async () => {
       const events = [];
@@ -14358,8 +14387,12 @@ async function viewSettings(container, alive = routeGuard()) {
         toast(r.message, 'ok', '🪝'); }
       catch (e) { toast(e.message, 'err'); }
     };
-    if ($('#st-server-monitor')) localServerWire();
-    // v1.66.0: сохранение настроек MAX
+  }
+
+  if ($('#st-server-monitor')) localServerWire();
+
+  // v1.66.0: сохранение настроек MAX — собственный блок #st-max
+  if (isAdmin() && maxSet) {
     const mxSave = $('#mx-save');
     if (mxSave) mxSave.onclick = async () => {
       const body = {
@@ -14377,13 +14410,12 @@ async function viewSettings(container, alive = routeGuard()) {
         route(true);
       } catch (e) { toast(e.message, 'err'); }
     };
-    // v1.70.5: живая проверка — чей токен сохранён
     const mxWho = $('#mx-who');
     if (mxWho) mxWho.onclick = async () => {
       mxWho.disabled = true;
       try {
         const r = await api.get('/api/v1/settings/max/check-token');
-        if (!r.ok) { toast(r.error, 'err', 6000); return; }   // текст уже с префиксом
+        if (!r.ok) { toast(r.error, 'err', '🛡 MAX'); return; }
         if (r.mismatch) {
           openModal(`<div class="modal-title">🪪 Ник в настройках не совпадает с токеном</div>
             <div class="info-callout">Токен принадлежит боту
@@ -14411,9 +14443,10 @@ async function viewSettings(container, alive = routeGuard()) {
         toast(r.message, 'ok', '🛡'); }
       catch (e) { toast(e.message, 'err'); }
     };
-    // v1.70.37: реквизиты оператора для текста согласия 152-ФЗ. Сохранение
-    // перерисовывает экран: сразу видны новая строка «Оператор» и пометка
-    // полноты (п. 2 ч. 4 ст. 9). Программа не подставляет значения за владельца.
+  }
+
+  // v1.70.37: реквизиты оператора для текста согласия 152-ФЗ — собственный блок #st-consent
+  if (isAdmin() && consentSet) {
     const csSave = $('#cs-save');
     if (csSave) csSave.onclick = async () => {
       try {
@@ -14451,12 +14484,6 @@ async function viewSettings(container, alive = routeGuard()) {
       } catch (e) {
         toast(e.message || 'Не удалось показать текст', 'err', '⚖️ Согласие 152-ФЗ');
       }
-    };
-    const tgr = $('#tg-refresh');
-    if (tgr) tgr.onclick = async () => {
-      try { const r = await api.post('/api/v1/settings/telegram/refresh-bot', {});
-        toast('Бот: @' + r.bot_username, 'ok', '🔔'); route(true); }
-      catch (e) { toast(e.message, 'err'); }
     };
   }
   if (me) {
@@ -14608,13 +14635,18 @@ async function viewSettings(container, alive = routeGuard()) {
       } catch (e) { toast(e.message, 'err'); }
     };
     const polSel = $('#pol-company');
-    if (polSel) polSel.onchange = () => { viewSettings(container); };
+    if (polSel) polSel.onchange = () => {
+      state._settingsPolicyCompany = polSel.value || '';
+      viewSettings(container);
+    };
     goodsBindProfile(document.querySelector('#st-policy'), pol);
     const polReset = $('#pol-goods-reset');
     if (polReset) polReset.onclick = async () => {
       const sel = $('#pol-company');
+      const targetComp = (sel && sel.value) || pol.company_id;
       try {
-        const r = await api.put('/api/v1/settings/policy', { reset_goods: true, company_id: (sel && sel.value) || pol.company_id });
+        const r = await api.put('/api/v1/settings/policy', { reset_goods: true, company_id: targetComp });
+        state._settingsPolicyCompany = targetComp || '';
         toast(r.message || 'Запреты — снова по профилю', 'ok', '⚖️');
         viewSettings(container);
       } catch (e) { toast(e.message, 'err'); }
@@ -14623,7 +14655,9 @@ async function viewSettings(container, alive = routeGuard()) {
   // v1.70.101 (T-69): «Память товаров» — забыть исправление
   if (gmem) {
     goodsBindMemory(document.querySelector('#st-goods'), {
-      companyId: isAdmin() && pol ? pol.company_id : '', onChange: () => viewSettings(container) });
+      companyId: (pol && pol.company_id) || (gmem && gmem.company_id) || '',
+      onChange: () => viewSettings(container),
+    });
   }
 
   // v1.63.0: правила поставщиков — «к старым» и удаление
@@ -14644,7 +14678,8 @@ async function viewSettings(container, alive = routeGuard()) {
 
   if (isAdmin() && fns) {
     // v1.70.70: источник один — ФНС, выбора «демо/реальное» больше нет
-    $('#fns-diag').onclick = async () => {
+    const fnsDiag = $('#fns-diag');
+    if (fnsDiag) fnsDiag.onclick = async () => {
       const box = $('#fns-diag-out');
       box.innerHTML = '<div class="form-hint">Проверяю: настройки → DNS → порт → шифрование → токен…</div>';
       try {
@@ -14660,7 +14695,8 @@ async function viewSettings(container, alive = routeGuard()) {
         box.innerHTML = `<div class="form-error">Ошибка диагностики: ${esc(e.message)}</div>`;
       }
     };
-    $('#fns-save').onclick = async () => {
+    const fnsSave = $('#fns-save');
+    if (fnsSave) fnsSave.onclick = async () => {
       try {
         await api.put('/api/v1/settings/fns', {
           master_token: $('#fns-token').value.trim() || undefined,
@@ -14669,19 +14705,29 @@ async function viewSettings(container, alive = routeGuard()) {
         toast('Настройки ФНС сохранены', 'ok');
         route(true);
       } catch (e) { toast(e.message, 'err'); }
-    }
-    $('#onec-regen').onclick = async () => {
-      if (!confirm('Сгенерировать новый токен? Старый в 1С перестанет работать.')) return;
-      await api.put('/api/v1/settings/onec', { regen_token: true });
-      toast('Токен обновлён', 'ok');
-      route(true);
-    };
-    $('#onec-reveal').onclick = async () => {
-      const s = await api.get('/api/v1/settings/onec/reveal');
-      $('#onec-token').value = s.api_token;
     };
   }
-  $('#p-save').onclick = async () => {
+
+  if (isAdmin() && onec) {
+    const onecRegen = $('#onec-regen');
+    if (onecRegen) onecRegen.onclick = async () => {
+      if (!confirm('Сгенерировать новый токен? Старый в 1С перестанет работать.')) return;
+      try {
+        await api.put('/api/v1/settings/onec', { regen_token: true });
+        toast('Токен обновлён', 'ok');
+        route(true);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const onecReveal = $('#onec-reveal');
+    if (onecReveal) onecReveal.onclick = async () => {
+      try {
+        const s = await api.get('/api/v1/settings/onec/reveal');
+        $('#onec-token').value = s.api_token;
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+  const pSave = $('#p-save');
+  if (pSave) pSave.onclick = async () => {
     try {
       await api.post('/api/v1/auth/change-password', {
         old_password: $('#p-old').value,
@@ -14864,13 +14910,13 @@ async function bindMailCenter() {
       document.getElementById('mc-log').innerHTML = d.items.length ? `
         <div class="card-title" style="margin-top:10px">Журнал отправок
           <span class="form-hint">хранение 90 дней (152-ФЗ)</span></div>
-        <div class="table-wrap"><table class="data"><thead><tr>
+        <div class="table-scroll"><table class="data settings-table settings-cards-table"><thead><tr>
           <th>Когда</th><th>Кому</th><th>Тема</th><th>Статус</th></tr></thead><tbody>
           ${d.items.map((l, i) => `<tr style="cursor:default">
-            <td class="cell-date">${fmtDate(l.created_at)}</td>
-            <td>${esc(d.masked[i] || l.to_email)}</td>
-            <td>${esc(l.subject || '—')}</td>
-            <td>${st(l.status)}${l.error ? `<div class="form-hint">${esc(l.error)}</div>` : ''}</td>
+            <td class="cell-date" data-label="Когда"><span class="td-k">Когда</span><span class="td-v">${fmtDate(l.created_at)}</span></td>
+            <td data-label="Кому"><span class="td-k">Кому</span><span class="td-v">${esc(d.masked[i] || l.to_email)}</span></td>
+            <td data-label="Тема"><span class="td-k">Тема</span><span class="td-v">${esc(l.subject || '—')}</span></td>
+            <td data-label="Статус"><span class="td-k">Статус</span><span class="td-v">${st(l.status)}${l.error ? `<div class="form-hint">${esc(l.error)}</div>` : ''}</span></td>
           </tr>`).join('')}</tbody></table></div>`
         : '';
     } catch (e) { /* журнал не критичен */ }

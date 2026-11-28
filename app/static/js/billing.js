@@ -231,7 +231,7 @@ export async function bindAdminBillingCard(container, focusCompanyId = '') {
       <p class="form-hint" style="margin-bottom:10px">${row.inn ? 'ИНН ' + esc(row.inn) + ' · ' : ''}Текущий расход за ${esc(sub.usage?.period || '')}: чеков ${sub.usage?.receipts || 0}, УПД ${sub.usage?.upd || 0}, контрагентов ${sub.usage?.counterparties || 0}</p>
       <div class="form-grid" style="margin:8px 0">
         <label class="field"><span>Статус подписки</span>
-          <select id="cs-status">
+          <select id="csub-status">
             <option value="active" ${sub.status === 'active' ? 'selected' : ''}>Активна (оплачена)</option>
             <option value="trial" ${sub.status === 'trial' ? 'selected' : ''}>Пробный период (Trial)</option>
             <option value="partner" ${sub.status === 'partner' ? 'selected' : ''}>Партнёрский / VIP бессрочно</option>
@@ -240,64 +240,64 @@ export async function bindAdminBillingCard(container, focusCompanyId = '') {
             <option value="suspended" ${sub.status === 'suspended' ? 'selected' : ''}>Приостановлена</option>
           </select></label>
         <label class="field"><span>Базовый тарифный план</span>
-          <select id="cs-plan">
+          <select id="csub-plan">
             <option value="">Помодульный набор (без пакета)</option>
             ${plans.map((p) => `<option value="${esc(p.code)}" ${sub.plan_code === p.code ? 'selected' : ''}>${esc(p.title)} (${fmtKop(p.monthly_kop)}/мес)</option>`).join('')}
           </select></label>
         <label class="field"><span>Расчётный период</span>
-          <select id="cs-cycle">
+          <select id="csub-cycle">
             <option value="monthly" ${sub.billing_cycle === 'monthly' ? 'selected' : ''}>1 месяц</option>
             <option value="quarterly" ${sub.billing_cycle === 'quarterly' ? 'selected' : ''}>3 месяца (квартал)</option>
             <option value="yearly" ${sub.billing_cycle === 'yearly' ? 'selected' : ''}>12 месяцев (год)</option>
           </select></label>
         <label class="field"><span>Оплачено до даты</span>
-          <input id="cs-end" type="date" value="${esc(endDateVal)}"></label>
+          <input id="csub-end" type="date" value="${esc(endDateVal)}"></label>
       </div>
       <div class="bil-box">
         <div class="card-section-title">Дополнительные модули сверх тарифа (Add-ons)</div>
         <div class="bil-checks">${mods.map((m) => `
           <label class="check-row">
-            <input type="checkbox" data-cs-addon="${esc(m.code)}" ${(sub.addon_modules || []).includes(m.code) ? 'checked' : ''} style="width:auto">
+            <input type="checkbox" data-csub-addon="${esc(m.code)}" ${(sub.addon_modules || []).includes(m.code) ? 'checked' : ''} style="width:auto">
             <span>${esc(m.title)} (+${fmtKop(m.monthly_kop)}/мес)</span>
           </label>`).join('')}
         </div>
       </div>
       <div class="form-grid" style="margin:10px 0">
         <label class="field"><span>Индивидуальная скидка, %</span>
-          <input id="cs-disc" type="number" min="0" max="100" value="${Number(sub.custom_discount_pct || 0)}"></label>
+          <input id="csub-disc" type="number" min="0" max="100" value="${Number(sub.custom_discount_pct || 0)}"></label>
         <label class="field"><span>Фиксированная цена по договору, ₽ (пусто = авто)</span>
-          <input id="cs-price" type="number" min="0" step="1" value="${sub.locked_price_kop ? esc(kopToRubInput(sub.locked_price_kop)) : ''}" placeholder="авторасчёт по прайсу"></label>
+          <input id="csub-price" type="number" min="0" step="1" value="${sub.locked_price_kop ? esc(kopToRubInput(sub.locked_price_kop)) : ''}" placeholder="авторасчёт по прайсу"></label>
         <label class="field"><span>Номер договора</span>
-          <input id="cs-cnum" value="${esc(sub.contract_number || '')}" placeholder="Договор №"></label>
+          <input id="csub-cnum" value="${esc(sub.contract_number || '')}" placeholder="Договор №"></label>
         <label class="field"><span>Дата договора</span>
-          <input id="cs-cdate" type="date" value="${esc(sub.contract_date || '')}"></label>
+          <input id="csub-cdate" type="date" value="${esc(sub.contract_date || '')}"></label>
       </div>
       <label class="check-row" style="margin-bottom:8px">
-        <input type="checkbox" id="cs-lock" ${sub.price_locked !== false ? 'checked' : ''} style="width:auto">
+        <input type="checkbox" id="csub-lock" ${sub.price_locked !== false ? 'checked' : ''} style="width:auto">
         <span>Зафиксировать цену за клиентом (Grandfathering — не менять при росте прайса)</span>
       </label>
       <label class="field" style="margin-bottom:10px"><span>Служебная заметка администратора</span>
-        <input id="cs-note" value="${esc(sub.admin_note || '')}" placeholder="Спецусловия, контакты ЛПР, договорённости"></label>
+        <input id="csub-note" value="${esc(sub.admin_note || '')}" placeholder="Спецусловия, контакты ЛПР, договорённости"></label>
       <div class="modal-actions">
-        <button type="button" class="btn" data-cs-cancel>Отмена</button>
-        <button type="button" class="btn btn-primary" id="cs-save">💾 Сохранить подписку</button>
+        <button type="button" class="btn" data-csub-cancel>Отмена</button>
+        <button type="button" class="btn btn-primary" id="csub-save">💾 Сохранить подписку</button>
       </div>`);
-    slot.querySelector('[data-cs-cancel]').onclick = () => closeModal();
-    slot.querySelector('#cs-save').onclick = async () => {
-      const priceRaw = slot.querySelector('#cs-price').value.trim();
-      const addons = Array.from(slot.querySelectorAll('[data-cs-addon]:checked')).map((el) => el.dataset.csAddon);
+    slot.querySelector('[data-csub-cancel]').onclick = () => closeModal();
+    slot.querySelector('#csub-save').onclick = async () => {
+      const priceRaw = slot.querySelector('#csub-price').value.trim();
+      const addons = Array.from(slot.querySelectorAll('[data-csub-addon]:checked')).map((el) => el.dataset.csubAddon);
       const body = {
-        status: slot.querySelector('#cs-status').value,
-        plan_code: slot.querySelector('#cs-plan').value,
-        billing_cycle: slot.querySelector('#cs-cycle').value,
+        status: slot.querySelector('#csub-status').value,
+        plan_code: slot.querySelector('#csub-plan').value,
+        billing_cycle: slot.querySelector('#csub-cycle').value,
         addon_modules: addons,
-        custom_discount_pct: parseInt(slot.querySelector('#cs-disc').value, 10) || 0,
+        custom_discount_pct: parseInt(slot.querySelector('#csub-disc').value, 10) || 0,
         locked_price_kop: priceRaw !== '' ? rubInputToKop(priceRaw) : null,
-        price_locked: slot.querySelector('#cs-lock').checked,
-        period_end: slot.querySelector('#cs-end').value || null,
-        contract_number: slot.querySelector('#cs-cnum').value.trim(),
-        contract_date: slot.querySelector('#cs-cdate').value.trim(),
-        admin_note: slot.querySelector('#cs-note').value.trim(),
+        price_locked: slot.querySelector('#csub-lock').checked,
+        period_end: slot.querySelector('#csub-end').value || null,
+        contract_number: slot.querySelector('#csub-cnum').value.trim(),
+        contract_date: slot.querySelector('#csub-cdate').value.trim(),
+        admin_note: slot.querySelector('#csub-note').value.trim(),
       };
       try {
         await api.put(`/api/v1/billing/admin/companies/${encodeURIComponent(row.company_id)}/subscription`, body);

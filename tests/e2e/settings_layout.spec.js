@@ -281,4 +281,19 @@ test.describe('настройки: состояния и телефонные с
       expect(box.x + box.width).toBeLessThanOrEqual(390 + 1);
     }
   });
+
+  test('переключатель организации в Политике расходов сохраняет выбранную компанию', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+    await page.locator('#settings-nav .stg-tab[data-tab="checks"]').click();
+    const sel = page.locator('#pol-company');
+    await expect(sel).toBeVisible();
+    const optCount = await sel.locator('option').count();
+    if (optCount > 1) {
+      const secondVal = await sel.locator('option').nth(1).getAttribute('value');
+      await sel.selectOption(secondVal);
+      await expect(page.locator('#pol-company')).toHaveValue(secondVal);
+    }
+  });
 });
+

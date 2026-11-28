@@ -88,6 +88,18 @@ def get(job_id: str) -> dict | None:
         return job.snapshot() if job else None
 
 
+def get_for_user(job_id: str, user_id: str = "",
+                 is_admin: bool = False) -> dict | None:
+    """Снимок задания с проверкой владельца (администратор видит все)."""
+    with _LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return None
+        if not is_admin and job.user_id and job.user_id != user_id:
+            return None
+        return job.snapshot()
+
+
 def latest(user_id: str = "") -> dict | None:
     """Последнее задание пользователя (для восстановления окна после F5)."""
     with _LOCK:

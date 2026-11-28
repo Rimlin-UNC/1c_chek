@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timezone
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ADMIN
@@ -30,15 +31,44 @@ def _json(value) -> str:
     return json.dumps(value or {}, ensure_ascii=False, separators=(",", ":"))
 
 
+def _allowed_for_user(db: Session, user: User) -> list[str]:
+    ids: list[str] = [user.company_id] if user.company_id else []
+    if not user.id:
+        return ids
+    try:
+        from ..clients import service as clients_svc
+        for cid in (clients_svc.allowed_company_ids(db, user) or []):
+            if cid and cid not in ids:
+                comp = db.get(Company, cid)
+                if comp is None or comp.is_active:
+                    ids.append(cid)
+    except SQLAlchemyError as exc:
+        _ = exc
+    return ids
+
+
 def scope_company(user: User, requested: str | None = None) -> str | None:
     if user.role == ROLE_ADMIN:
-        return requested or None
-    return user.company_id
+        return (requested or "").strip() or None
+    return user.company_id or "__none__"
 
 
-def _scoped_query(user: User, company_id: str | None = None):
+def resolve_scope_company(db: Session, user: User,
+                          requested: str | None = None) -> str | None:
+    req = (requested or "").strip()
+    if user.role == ROLE_ADMIN:
+        return req or None
+    allowed = _allowed_for_user(db, user)
+    if req:
+        return req if req in allowed else "__forbidden__"
+    if user.company_id:
+        return user.company_id
+    return allowed[0] if allowed else "__none__"
+
+
+def _scoped_query(db: Session, user: User, company_id: str | None = None):
     query = select(Counterparty)
-    scoped = scope_company(user, company_id)
+    scoped = resolve_scope_company(db, user, company_id)
     if scoped is not None:
         query = query.where(Counterparty.company_id == scoped)
     return query
@@ -71,8 +101,20 @@ def _require_card(db: Session, user: User, card_id: str,
     row = db.get(Counterparty, card_id)
     if row is None:
         raise LookupError("Карточка не найдена")
-    scoped = scope_company(user, company_id)
-    if scoped is not None and row.company_id != scoped:
+    if user.role == ROLE_ADMIN:
+        scoped = resolve_scope_company(db, user, company_id)
+        if scoped is not None and row.company_id != scoped:
+            raise LookupError("Карточка не найдена")
+        return row
+    allowed = _allowed_for_user(db, user)
+    req = (company_id or "").strip()
+    if req and req not in allowed:
+        raise LookupError("Карточка не найдена")
+    target = req or user.company_id
+    if target:
+        if row.company_id != target:
+            raise LookupError("Карточка не найдена")
+    elif row.company_id not in allowed:
         raise LookupError("Карточка не найдена")
     return row
 
@@ -89,8 +131,13 @@ def create_card(db: Session, user: User, payload: dict) -> dict:
     inn = normalize_inn(payload.get("inn"))
     if not inn_is_valid(inn):
         raise ValueError("Некорректный ИНН — проверьте контрольные цифры")
-    company_id = scope_company(user, payload.get("company_id")) or payload.get("company_id") \
-        or user.company_id or ""
+    if user.role == ROLE_ADMIN:
+        company_id = str(payload.get("company_id") or user.company_id or "").strip()
+    else:
+        scoped = resolve_scope_company(db, user, payload.get("company_id"))
+        if not scoped or scoped in ("__none__", "__forbidden__"):
+            raise ValueError("Не выбрана доступная компания для карточки контрагента")
+        company_id = scoped
     name = str(payload.get("name") or payload.get("name_full") or "").strip()
     if not name:
         raise ValueError("Укажите наименование контрагента")
@@ -118,7 +165,7 @@ def create_card(db: Session, user: User, payload: dict) -> dict:
 
 def list_cards(db: Session, user: User, company_id: str | None = None,
                search: str = "") -> list[dict]:
-    query = _scoped_query(user, company_id)
+    query = _scoped_query(db, user, company_id)
     needle = (search or "").strip().casefold()
     if needle:
         query = query.where(or_(
@@ -224,7 +271,9 @@ def merge_cards(db: Session, user: User, primary_id: str, duplicate_id: str,
 def candidates(db: Session, user: User, company_id: str | None = None) -> list[dict]:
     from ..models import Receipt
 
-    scoped = scope_company(user, company_id)
+    scoped = resolve_scope_company(db, user, company_id)
+    if scoped in ("__none__", "__forbidden__"):
+        return []
     docs = list(db.scalars(select(PrimaryDocument)).all())
     ops = list(db.scalars(select(BankOperation)).all())
     incomes = list(db.scalars(select(BankIncome)).all())

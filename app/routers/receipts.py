@@ -1036,15 +1036,43 @@ _CLEARABLE_FIELDS = ("merchant_name", "merchant_inn", "merchant_address", "cashi
                      "industry", "region_code")
 
 
+def _merchant_rule_company_allowed(db: Session, user: User,
+                                   rule_company_id: str | None) -> bool:
+    if user.role == ROLE_ADMIN:
+        return True
+    if user.company_id is not None:
+        return rule_company_id == user.company_id
+    from ..clients import service as clients_svc
+    allowed = clients_svc.allowed_company_ids(db, user) or []
+    return bool(rule_company_id and rule_company_id in allowed)
+
+
 @router.get("/merchant-rules", summary="Правила поставщиков (бухгалтер+)")
 def list_merchant_rules(user: User = Depends(get_current_user),
-                        db: Session = Depends(get_db)):
+                        db: Session = Depends(get_db),
+                        company_id: Annotated[str | None, Query(max_length=36)] = None):
     if user.role not in (ROLE_ADMIN, ROLE_ACCOUNTANT):
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Правила поставщиков — бухгалтеру и администратору")
+    req_cid = (company_id or "").strip()
     q = db.query(MerchantRule)
-    if user.role != ROLE_ADMIN:
-        q = q.filter(MerchantRule.company_id == user.company_id)
+    if user.role == ROLE_ADMIN:
+        if req_cid:
+            q = q.filter(MerchantRule.company_id == req_cid)
+    else:
+        from ..clients import service as clients_svc
+        allowed = clients_svc.allowed_company_ids(db, user) or []
+        if req_cid:
+            if req_cid not in allowed:
+                raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                    "Нет доступа к выбранной компании")
+            q = q.filter(MerchantRule.company_id == req_cid)
+        elif user.company_id is not None:
+            q = q.filter(MerchantRule.company_id == user.company_id)
+        elif allowed:
+            q = q.filter(MerchantRule.company_id.in_(allowed))
+        else:
+            q = q.filter(MerchantRule.company_id.is_(None))
     rows = q.order_by(MerchantRule.created_at.desc()).limit(200).all()
     return [r.to_dict() for r in rows]
 
@@ -1058,8 +1086,7 @@ def backfill_merchant_rule(rule_id: str,
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Правила поставщиков — бухгалтеру и администратору")
     rule = db.get(MerchantRule, rule_id)
-    if not rule or (user.role != ROLE_ADMIN
-                    and rule.company_id != user.company_id):
+    if not rule or not _merchant_rule_company_allowed(db, user, rule.company_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Правило не найдено")
     from ..services import merchant_rules as mr
     updated = mr.backfill(db, rule)
@@ -1082,8 +1109,7 @@ def delete_merchant_rule(rule_id: str,
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Правила поставщиков — бухгалтеру и администратору")
     rule = db.get(MerchantRule, rule_id)
-    if not rule or (user.role != ROLE_ADMIN
-                    and rule.company_id != user.company_id):
+    if not rule or not _merchant_rule_company_allowed(db, user, rule.company_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Правило не найдено")
     db.delete(rule)
     db.commit()
@@ -1938,6 +1964,8 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None,
     try:
         receipt = db.get(Receipt, receipt_id)
         if not receipt:
+            from ..services import verify_jobs as _jobs
+            _jobs.note(job_id, "unknown")
             return
         receipt.status = "verifying"
         db.commit()
@@ -1969,8 +1997,6 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None,
                     "⏸ ЧЕК ОЖИДАЕТ ПРОВЕРКИ [%s]: лимит запросов к ФНС",
                     receipt.id)
                 broadcast("receipt_verified", receipt.to_dict())
-                from ..services.webhooks import enqueue_receipt_verified
-                enqueue_receipt_verified(db, receipt.id)
                 from ..services import verify_jobs as _jobs
                 _jobs.note(job_id, "quota")
                 return
@@ -2076,9 +2102,10 @@ def _verify_one_sync(receipt_id: str, job_id: str | None = None,
         broadcast("receipt_verified", receipt.to_dict())
         from ..services import verify_jobs as _jobs
         _jobs.note(job_id, result.status)
-        # v1.67.0: событие наружу — исходящий webhook (очередь + повторы)
-        from ..services.webhooks import enqueue_receipt_verified
-        enqueue_receipt_verified(db, receipt.id)
+        # v1.67.0: событие наружу — исходящий webhook только для подтверждённых чеков
+        if receipt.status == "verified":
+            from ..services.webhooks import enqueue_receipt_verified
+            enqueue_receipt_verified(db, receipt.id)
     except Exception as e:  # не роняем воркер
         from ..services import verify_jobs as _jobs
         _jobs.note(job_id, "error")
@@ -2150,7 +2177,7 @@ def verify_latest(user: Annotated[User, Depends(require_accountant)]):
 def verify_job(job_id: str,
               user: Annotated[User, Depends(require_accountant)]):
     from ..services import verify_jobs as _jobs
-    snap = _jobs.get(job_id)
+    snap = _jobs.get_for_user(job_id, user.id, is_admin=(user.role == ROLE_ADMIN))
     if not snap:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
     return {"job": snap, "message": _jobs.summary_text(snap)}
