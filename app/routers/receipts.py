@@ -47,6 +47,7 @@ from sqlalchemy.orm import Session, lazyload
 from ..auth import (
     ROLE_ACCOUNTANT,
     ROLE_ADMIN,
+    ROLE_MANAGER,
     ROLE_USER,
     get_current_user,
     require_accountant,
@@ -181,10 +182,10 @@ def _upsert_receipt(db: Session, parsed: ParsedQR, source: str,
                 == parsed.date_time.replace(second=0, microsecond=0)):
             effective_date = existing_doc.receipt_date
 
-    # v1.2.0: чек, присланный сотрудником, сразу помечается «от кого» —
-    # бухгалтеру не нужно назначать вручную; меняют только бухгалтер/админ.
+    # v1.2.0 / v1.73.12: чек, присланный сотрудником или руководителем (корп. карта),
+    # сразу помечается «от кого» — бухгалтеру не нужно назначать вручную.
     auto_assignee = ""
-    if user is not None and user.role == ROLE_USER:
+    if user is not None and user.role in (ROLE_USER, ROLE_MANAGER):
         auto_assignee = (user.full_name or user.username or "")[:200]
 
     receipt = Receipt(

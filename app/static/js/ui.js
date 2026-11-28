@@ -52,8 +52,8 @@ const STATUS_LABELS = {
 export function statusLabel(s) { return STATUS_LABELS[s] || s || '—'; }
 
 export const ROLE_LABELS = {
-  admin: 'Администратор', accountant: 'Бухгалтер', user: 'Пользователь',
-  manager: 'Руководитель',                      // v1.64.0: только просмотр
+  admin: 'Администратор', accountant: 'Бухгалтер', user: 'Сотрудник',
+  manager: 'Руководитель', donor: 'Участник Чек-Пула',
 };
 export function roleLabel(r) { return ROLE_LABELS[r] || r || '—'; }
 

@@ -21,7 +21,7 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.11';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.12';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
@@ -165,18 +165,29 @@ const ROLE_SPACE = {
                 secs: ['data', 'checks', 'integr', 'personal', 'device'] },
   accountant: { views: ['dashboard', 'scan', 'receipts', 'export', 'mapping',
                         'poolpick', 'supabase', 'approvals', 'primary', 'docreq', 'bank', 'clients', 'counterparties', 'settings'],
-                secs: ['checks', 'personal'] },
-  manager:    { views: ['dashboard', 'receipts', 'boss', 'approvals', 'settings'],
-                secs: ['personal'] },
+                secs: ['checks', 'personal', 'device'] },
+  manager:    { views: ['dashboard', 'scan', 'receipts', 'boss', 'approvals', 'settings'],
+                secs: ['personal', 'device'] },
   user:       { views: ['dashboard', 'scan', 'receipts', 'approvals', 'settings'],
-                secs: ['personal'] },
-  donor:      { views: ['public', 'my', 'partners'], secs: [] },
+                secs: ['personal', 'device'] },
+  donor:      { views: ['public', 'my'], secs: [] },
 };
-const roleSpace = () => ROLE_SPACE[(state.me && state.me.role) || 'donor'] || ROLE_SPACE.donor;
+const roleSpace = () => {
+  if (typeof isViewingPool === 'function' && isViewingPool()) return ROLE_SPACE.donor;
+  return ROLE_SPACE[(state.me && state.me.role) || 'donor'] || ROLE_SPACE.donor;
+};
+const entitlementAllowsView = (view) => {
+  if (!state.me || state.me.role === 'admin') return true;
+  const ent = state.me.entitlements;
+  if (!ent || !ent.view_module || !Array.isArray(ent.enabled)) return true;
+  const mod = ent.view_module[view];
+  return !mod || ent.enabled.includes(mod);
+};
 const spaceHas = (key) => {
   const kind = key.slice(0, key.indexOf(':')), name = key.slice(key.indexOf(':') + 1);
   const space = roleSpace();
-  return (kind === 'view' ? space.views : space.secs).includes(name);
+  if (kind === 'view') return space.views.includes(name) && entitlementAllowsView(name);
+  return space.secs.includes(name);
 };
 
 // --------------------------------------------------------------------------
@@ -1810,41 +1821,69 @@ function poolAuthHTML() {
 
 function poolDashHTML() {
   return `
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-    <button type="button" class="btn btn-primary btn-sm" id="pool-submit-open"
-            title="Камера, фото или строка QR — как на странице «Сдать чек»">📸 Сдать чек сканером</button>
-    <span class="form-hint">камера, фото или вставка строки — баллы зачисляются автоматически</span>
-  </div>
   <div id="pool-summary" class="form-hint">Загружаем…</div>
-  <div class="form-grid" style="margin:10px 0">
-    <label class="field"><span>Баллы</span><input id="pool-pts" value="—" disabled></label>
-    <label class="field"><span>Мои чеки</span><input id="pool-cnt" value="—" disabled></label>
-    <label class="field"><span>Сегодня сдано</span><input id="pool-today" value="—" disabled></label>
+  <div class="pool-pts-hero">
+    <div>
+      <div class="pool-pts-lbl">Накоплено баллов в Чек-Пуле</div>
+      <div class="pool-pts-val" id="pool-pts-big">0</div>
+    </div>
+    <button type="button" class="btn btn-primary btn-sm" id="pool-submit-open"
+            title="Камера, фото или строка QR">📸 Сдать чек сканером</button>
   </div>
-  <div id="pool-receipts"></div>
-  <div class="card-title" style="margin-top:14px">🎁 Приглашайте — баллы вам и друзьям
-    <span class="form-hint">(v1.35.0)</span></div>
-  <div id="pool-invite" class="form-hint" style="margin:6px 0">Загружаем…</div>
-  <div class="card-title" style="margin-top:14px">🏆 Ачивки, лидерборд и вывод баллов
-    <span class="form-hint">(Этап 7 · v1.36.0)</span></div>
-  <div id="pool-engage" class="form-hint" style="margin:6px 0">Загружаем…</div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
-    <button type="button" class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
-    <button type="button" class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
+  <div class="pool-cab-tabs" role="tablist" aria-label="Разделы кабинета участника">
+    <button type="button" class="btn btn-sm btn-primary pool-cab-tab" data-ptab="receipts">🧾 Мои чеки</button>
+    <button type="button" class="btn btn-sm pool-cab-tab" data-ptab="submit">📷 Передать чек</button>
+    <button type="button" class="btn btn-sm pool-cab-tab" data-ptab="points">⭐ Баллы и профиль</button>
   </div>
-  <div class="card-title" style="margin-top:14px">Профиль</div>
-  <div class="form-grid" style="margin:8px 0">
-    <label class="field"><span>Старый пароль</span><input id="pool-oldp" type="password" autocomplete="current-password"></label>
-    <label class="field"><span>Новый пароль (мин. 8 символов)</span><input id="pool-newp" type="password" autocomplete="new-password"></label>
+
+  <div data-ppane="receipts">
+    <div class="pool-filter-bar">
+      <label class="field" style="flex:1;min-width:180px"><span>Поиск по чекам</span>
+        <input id="pool-f-q" type="search" placeholder="Магазин, ИНН, ФН или ФД"></label>
+      <label class="field" style="max-width:190px"><span>Статус</span>
+        <select id="pool-f-status">
+          <option value="">Все чеки</option>
+          <option value="verified">Принят в пул</option>
+          <option value="pending">На проверке</option>
+          <option value="rejected">Отклонён</option>
+        </select></label>
+      <button type="button" class="btn btn-sm btn-primary" id="pool-f-go">Найти</button>
+    </div>
+    <div id="pool-receipts"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+      <button type="button" class="btn btn-sm" id="pool-csv">⬇️ CSV (Excel)</button>
+      <button type="button" class="btn btn-sm" id="pool-print">🖨 Печать / PDF</button>
+    </div>
   </div>
-  <button type="button" class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
-  <div class="form-grid" style="margin:8px 0">
-    <label class="field"><span>Новый e-mail</span><input id="pool-newemail" type="email"></label>
+
+  <div data-ppane="submit" class="hidden">
+    <div class="info-callout" style="margin-bottom:12px">
+      Отсканируйте QR-код камерой телефона или загрузите фото бумажного чека — чек проверится в ФНС,
+      появится во вкладке «Мои чеки» со всеми позициями, а баллы зачислятся автоматически.
+    </div>
+    <button type="button" class="btn btn-primary" id="pool-submit-open-2">📸 Открыть сканер чека</button>
   </div>
-  <button type="button" class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
-  <div style="display:flex;gap:8px;margin-top:16px">
-    <button type="button" class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
-    <button type="button" class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
+
+  <div data-ppane="points" class="hidden">
+    <div class="form-grid" style="margin:10px 0">
+      <label class="field"><span>Накоплено баллов</span><input id="pool-pts" value="—" disabled></label>
+      <label class="field"><span>Всего сдано чеков</span><input id="pool-cnt" value="—" disabled></label>
+      <label class="field"><span>Сегодня сдано</span><input id="pool-today" value="—" disabled></label>
+    </div>
+    <div class="card-title" style="margin-top:14px">Настройки профиля</div>
+    <div class="form-grid" style="margin:8px 0">
+      <label class="field"><span>Старый пароль</span><input id="pool-oldp" type="password" autocomplete="current-password"></label>
+      <label class="field"><span>Новый пароль (мин. 8 символов)</span><input id="pool-newp" type="password" autocomplete="new-password"></label>
+    </div>
+    <button type="button" class="btn btn-sm" id="pool-pass-save">Сменить пароль</button>
+    <div class="form-grid" style="margin:8px 0">
+      <label class="field"><span>Новый e-mail</span><input id="pool-newemail" type="email"></label>
+    </div>
+    <button type="button" class="btn btn-sm" id="pool-email-save">Сменить e-mail</button>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button type="button" class="btn btn-sm" id="pool-logout">Выйти из кабинета</button>
+      <button type="button" class="btn btn-sm" id="pool-delete" style="color:#b3261e">Удалить аккаунт</button>
+    </div>
   </div>
   <div id="pool-msg" class="form-error hidden" style="margin-top:8px"></div>`;
 }
@@ -1877,6 +1916,8 @@ async function poolLoadSummary(root) {
       try { toast((await poolApi('POST', '/api/v1/pool-my/resend-verification')).message, 'ok', 'Чек-Пул'); }
       catch (err) { toast(err.message, 'err', 'Чек-Пул'); }
     };
+    const ptsBig = root.querySelector('#pool-pts-big');
+    if (ptsBig) ptsBig.textContent = fmtInt(d.points);
     const pts = root.querySelector('#pool-pts');
     if (pts) pts.value = fmtInt(d.points);
     const cnt = root.querySelector('#pool-cnt');
@@ -1892,21 +1933,27 @@ async function poolLoadSummary(root) {
 
 async function poolLoadReceipts(root, page) {
   try {
-    const d = await poolApi('GET', `/api/v1/pool-my/receipts?page=${page}&page_size=10`);
+    const qEl = root.querySelector('#pool-f-q');
+    const stEl = root.querySelector('#pool-f-status');
+    const qs = new URLSearchParams({ page: String(page), page_size: '10' });
+    if (qEl && qEl.value.trim()) qs.set('q', qEl.value.trim());
+    if (stEl && stEl.value) qs.set('status', stEl.value);
+    const d = await poolApi('GET', `/api/v1/pool-my/receipts?${qs.toString()}`);
     const box = root.querySelector('#pool-receipts');
     if (!box) return;
     const pages = Math.max(1, Math.ceil(d.total / d.page_size));
     box.innerHTML = `<div class="card-title" style="font-size:15px">Мои чеки
-        <span class="form-hint">(всего ${fmtInt(d.total)})</span></div>
-      ${d.items.length ? `<div class="table-wrap"><table style="width:100%">
-      <thead><tr><th>Сдан</th><th>Магазин</th><th>Сумма</th><th>Статус</th><th>Баллы</th></tr></thead>
+        <span class="form-hint">(найдено ${fmtInt(d.total)})</span></div>
+      ${d.items.length ? `<div class="table-wrap"><table class="data">
+      <thead><tr><th>Дата</th><th>Магазин</th><th>Сумма</th><th>Статус</th><th>Баллы</th><th></th></tr></thead>
       <tbody>${d.items.map(r => `<tr data-rid="${r.id}" style="cursor:pointer">
-        <td class="num">${esc((r.created_at || '').slice(0, 16).replace('T', ' '))}</td>
-        <td>${esc(r.merchant_name || '—')}</td>
+        <td class="num">${esc((r.receipt_date || r.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+        <td>${esc(r.merchant_name || '—')}<div class="form-hint">ФН ${esc(r.fn || '—')} · ФД ${esc(r.fd || '—')}</div></td>
         <td class="num">${fmtSum(r.total_sum)}</td>
         <td>${poolStatusChip(r.status)}</td>
-        <td class="num">${r.points ? '+' + r.points : '—'}</td></tr>`).join('')}</tbody></table></div>`
-      : '<p class="form-hint">Пока пусто — сдайте первый чек на странице «Сдать чек».</p>'}
+        <td class="num">${r.points ? '+' + r.points : '—'}</td>
+        <td><button type="button" class="btn btn-sm" data-open-rid="${r.id}">🧾 Чек</button></td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="form-hint">Чеки не найдены — передайте первый чек сканером или измените фильтр.</p>'}
       ${pages > 1 ? `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
         <button type="button" class="btn btn-sm" id="pool-prev" ${page <= 1 ? 'disabled' : ''}>← Назад</button>
         <span class="form-hint">стр. ${page} из ${pages}</span>
@@ -1923,20 +1970,55 @@ async function poolLoadReceipts(root, page) {
 
 async function poolShowReceipt(id) {
   try {
-    const r = await poolApi('GET', '/api/v1/pool-my/receipt/' + id);
-    const rows = (r.items || []).map(i => `<tr>
-      <td>${esc(i.name)}</td><td class="num">${i.quantity}</td>
-      <td class="num">${fmtSum(i.price)}</td><td class="num">${fmtSum(i.total)}</td></tr>`).join('');
-    const { slot } = openModal(`
-      <div class="modal-title">${esc(r.merchant_name || 'Чек')} · ${fmtSum(r.total_sum)}</div>
-      <div class="form-hint" style="margin-bottom:8px">${poolStatusChip(r.status)}
-        ${r.receipt_date ? ' · ' + esc(r.receipt_date.slice(0, 16).replace('T', ' ')) : ''}
-        ${r.fn ? ' · ФН ' + esc(r.fn) : ''}
-        ${r.merchant_address ? '<br>' + esc(r.merchant_address) : ''}</div>
-      ${rows ? `<div class="table-wrap"><table style="width:100%">
-        <thead><tr><th>Позиция</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`
-        : '<p class="form-hint">Позиции появятся после проверки официальными источниками.</p>'}`);
+    const card = await poolApi('GET', `/api/v1/pool-my/receipt/${encodeURIComponent(id)}/card`);
+    const d = card.document || {};
+    d.receipt_id = id;
+    const tabs = [
+      ['shop', '🧾 Чек как в магазине', () => shopReceiptHTML(d)],
+      ['details', '📋 Все реквизиты', () => fullCardDetailsHTML(d)],
+      ['items', `📦 Товары (${(d.items || []).length})`, () => fullCardItemsHTML(d)],
+    ];
+    const body = openModal(`
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h3 style="margin:0">Чек участника Чек-Пула</h3>
+        ${poolStatusChip(card.pool_status || 'pending')}
+        <span class="badge-soft">${fmtSum(d.money ? d.money.total : 0)}</span>
+        ${card.points_awarded ? `<span class="chip exported"><span class="dot"></span>+${card.points_awarded} б.</span>` : ''}
+        <button type="button" class="btn btn-sm" id="fcard-pool-print" style="margin-left:auto">🖨 Напечатать</button>
+      </div>
+      <div class="fcard-note">${esc((d.seller || {}).name || 'Продавец не указан')} ·
+        ${esc((d.region || {}).name || (d.region || {}).city || 'регион не определён')}</div>
+      <div class="fcard-tabs">${tabs.map((t, i) => `<button type="button"
+        class="btn btn-sm ${i === 0 ? 'active' : ''}" data-ftab="${t[0]}">${t[1]}</button>`).join('')}</div>
+      <div id="fcard-pool-body"></div>`, {});
+    const slot = body.slot;
+    const pane = slot.querySelector('#fcard-pool-body');
+    const hydratePoolQr = async () => {
+      const img = slot.querySelector('#shop-ticket img');
+      if (!img || img.dataset.ready) return;
+      try {
+        const resp = await fetch(`/api/v1/pool-my/receipt/${encodeURIComponent(id)}/qr.png`, {
+          headers: pGet() ? { Authorization: 'Bearer ' + pGet() } : {},
+        });
+        if (!resp.ok) return;
+        const blob = await resp.blob();
+        img.src = URL.createObjectURL(blob);
+        img.dataset.ready = '1';
+      } catch { /* текстовая строка QR остаётся ниже */ }
+    };
+    const show = (key) => {
+      const tab = tabs.find(t => t[0] === key) || tabs[0];
+      slot.querySelectorAll('[data-ftab]').forEach(b =>
+        b.classList.toggle('active', b.dataset.ftab === tab[0]));
+      pane.innerHTML = tab[2]();
+      if (tab[0] === 'shop') hydratePoolQr();
+    };
+    slot.querySelectorAll('[data-ftab]').forEach(b => {
+      b.onclick = () => show(b.dataset.ftab);
+    });
+    const pr = slot.querySelector('#fcard-pool-print');
+    if (pr) pr.onclick = () => window.print();
+    show('shop');
     return slot;
   } catch (e) { toast(e.message, 'err', 'Чек-Пул'); }
 }
@@ -2631,10 +2713,9 @@ function bindPoolDashboard(root) {
 
   // v1.51.0: сдать чек прямо из кабинета — та же форма и тот же сканер
   // (камера / фото / перетаскивание / строка), что на странице «Сдать чек»
-  const pso = root.querySelector('#pool-submit-open');
-  if (pso) pso.onclick = () => {
+  const openSubmitModal = () => {
     const { slot, close } = openModal(`
-      <div class="modal-title">🧾 Сдать чек в Чек-Пул</div>
+      <div class="modal-title">🧾 Передать чек в Чек-Пул</div>
       <div id="pool-submit-form"></div>`);
     const box = slot.querySelector('#pool-submit-form');
     box.innerHTML = publicFormHTML();
@@ -2644,15 +2725,38 @@ function bindPoolDashboard(root) {
     if (mine) mine.remove();                // «мои чеки» — прямо в кабинете
     bindPoolForm(box, { onDone: () => {
       poolLoadSummary(root); poolLoadReceipts(root, 1);
-      toast('Чек принят — статус виден в кабинете', 'ok', '🧾 Чек-Пул');
+      toast('Чек принят — статус и баллы видны в кабинете', 'ok', '🧾 Чек-Пул');
       setTimeout(close, 2500);
     } });
   };
+  const pso = root.querySelector('#pool-submit-open');
+  if (pso) pso.onclick = openSubmitModal;
+  const pso2 = root.querySelector('#pool-submit-open-2');
+  if (pso2) pso2.onclick = openSubmitModal;
+
+  const switchPoolTab = (tabKey) => {
+    root.querySelectorAll('[data-ptab]').forEach((b) => {
+      b.classList.toggle('btn-primary', b.dataset.ptab === tabKey);
+    });
+    root.querySelectorAll('[data-ppane]').forEach((p) => {
+      p.classList.toggle('hidden', p.dataset.ppane !== tabKey);
+    });
+  };
+  root.querySelectorAll('[data-ptab]').forEach((b) => {
+    b.onclick = () => switchPoolTab(b.dataset.ptab);
+  });
+
+  const fgo = root.querySelector('#pool-f-go');
+  if (fgo) fgo.onclick = () => poolLoadReceipts(root, 1);
+  const fq = root.querySelector('#pool-f-q');
+  if (fq) fq.addEventListener('keydown', (e) => { if (e.key === 'Enter') poolLoadReceipts(root, 1); });
+  const fst = root.querySelector('#pool-f-status');
+  if (fst) fst.onchange = () => poolLoadReceipts(root, 1);
 
   poolLoadSummary(root);
   poolLoadReceipts(root, 1);
-  poolLoadInvite(root);
-  poolLoadEngage(root);              // v1.36.0: ачивки, лидерборд, вывод
+  if (root.querySelector('#pool-invite')) poolLoadInvite(root);
+  if (root.querySelector('#pool-engage')) poolLoadEngage(root);
   const csv = root.querySelector('#pool-csv');
   if (csv) csv.onclick = poolDownloadCsv;
   const pr = root.querySelector('#pool-print');
@@ -3346,6 +3450,60 @@ async function showRegister(token) {
   };
 }
 
+function setNavItemText(view, label) {
+  const link = document.querySelector(`#main-nav .nav-item[data-view="${view}"]`);
+  if (!link) return;
+  for (const node of link.childNodes) {
+    if (node.nodeType === 3 && node.textContent.trim()) {
+      node.textContent = label;
+      return;
+    }
+  }
+}
+
+function syncSidebarSpace() {
+  const poolV = typeof isViewingPool === 'function' && isViewingPool();
+  const role = (state.me && state.me.role) || 'donor';
+  setNavItemText('receipts', role === 'user' ? 'Мои чеки' : 'Чеки');
+  setNavItemText('settings', role === 'user' ? 'Личный кабинет' : 'Настройки');
+  setNavItemText('public', 'Передать чек');
+  setNavItemText('my', 'Мои чеки и баллы');
+
+  if (poolV) {
+    $$('#main-nav .nav-item').forEach((a) => {
+      const v = a.dataset.view || '';
+      a.classList.toggle('hidden', !spaceHas('view:' + v));
+    });
+  } else {
+    $$('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
+    $$('.accountant-only').forEach(el => el.classList.toggle('hidden', !isAccountant()));
+    $$('.boss-only').forEach(el => el.classList.toggle('hidden', !(isAdmin() || isManager())));
+    $$('.pool-only').forEach(el => el.classList.toggle('hidden', !state.poolEnabled));
+    $$('.nav-item').forEach(a => {
+      if (a.dataset.view && !spaceHas('view:' + a.dataset.view)) a.classList.add('hidden');
+    });
+  }
+
+  // Скрываем заголовки групп меню (.nav-group), под которыми нет ни одного видимого пункта
+  const nav = $('#main-nav');
+  if (nav) {
+    const kids = Array.from(nav.children);
+    for (let i = 0; i < kids.length; i++) {
+      if (!kids[i].classList.contains('nav-group')) continue;
+      let hasVisible = false;
+      for (let j = i + 1; j < kids.length && !kids[j].classList.contains('nav-group'); j++) {
+        if (kids[j].classList.contains('nav-item') && !kids[j].classList.contains('hidden')) {
+          hasVisible = true;
+          break;
+        }
+      }
+      kids[i].classList.toggle('hidden', !hasVisible);
+    }
+  }
+  const cf = $('#company-filter');
+  if (cf && poolV) cf.classList.add('hidden');
+}
+
 // --------------------------------------------------------------------------
 //  Оболочка приложения
 // --------------------------------------------------------------------------
@@ -3367,11 +3525,13 @@ function enterApp() {
   // берётся из списка «Ждут меня»: после входа state.me — ответ входа, в нём нет флагов компании. Значок — сколько
   // отчётов ждут именно этого человека.
   $$('.approvals-only').forEach(el => el.classList.toggle('hidden', !isAdmin()));
+  syncSidebarSpace();
   if (['user', 'manager', 'accountant'].includes(state.me.role)) {
     api.get('/api/v1/approvals?box=todo&limit=1').then((r) => {
       const counts = (r && r.counts) || {};
       const on = !!(r && r.enabled) || !!(counts.todo || counts.mine);
       $$('.approvals-only').forEach(el => el.classList.toggle('hidden', !on || !spaceHas('view:approvals')));
+      syncSidebarSpace();
     }).catch(() => {});
   }
   // v1.70.82: демо-контур Supabase — пункт меню только там, где контур
@@ -3382,6 +3542,7 @@ function enterApp() {
     api.get('/api/v1/supabase-demo/config').then((cfg) => {
       const show = !!(cfg && (cfg.enabled || cfg.error)) && spaceHas('view:supabase');
       $$('.supabase-only').forEach(el => el.classList.toggle('hidden', !show));
+      syncSidebarSpace();
     }).catch(() => {});
   }
   // v1.58.1: страницы Чек-Пула — только когда пул включён (на проде он
@@ -3395,6 +3556,7 @@ function enterApp() {
     $$('.nav-item').forEach(a => {
       if (a.dataset.view && !spaceHas('view:' + a.dataset.view)) a.classList.add('hidden');
     });
+    syncSidebarSpace();
   }).catch(() => {});
   applyViewAsMode();               // v1.18.0: полоса режима просмотра + меню профиля
   connectWS();
@@ -3563,6 +3725,7 @@ function applyViewAsMode() {
   const chipActive = isAdmin() || viewing;
   chip.disabled = !chipActive;
   chip.onclick = chipActive ? () => togglePersonaMenu() : null;
+  syncSidebarSpace();
 }
 
 function closePersonaMenu() {
@@ -4093,11 +4256,11 @@ function route(silent = false) {
   if (view in guard && !guard[view]) { location.hash = '#/dashboard'; return; }
   // v1.58.1: пул выключен → страницы пула недоступны, меню их скрывает
   if ((view === 'public' || view === 'my' || view === 'partners') &&
-      state.poolEnabled === false) { location.hash = '#/dashboard'; return; }
+      state.poolEnabled === false && !isViewingPool()) { location.hash = '#/dashboard'; return; }
   // v1.70.61: матрица пространств — раздел вне роли недоступен даже
   // прямой ссылкой: компания уходит на дашборд, гость — на сдачу чека.
   if (!spaceHas('view:' + view)) {
-    location.hash = getToken() ? '#/dashboard' : '#/public';
+    location.hash = (getToken() && !isViewingPool()) ? '#/dashboard' : '#/public';
     return;
   }
 
@@ -4507,8 +4670,8 @@ async function inviteDialog(companyIdPref = '', companyName = '') {
         <label class="field"><span>Роль нового пользователя</span>
           <select id="iv-role">
             <option value="accountant">Бухгалтер (расширенные права)</option>
-            <option value="manager">Руководитель (только просмотр своей компании)</option>
-            <option value="user">Пользователь (сканирование)</option>
+            <option value="manager">Руководитель (управление и корп. карта)</option>
+            <option value="user">Сотрудник (сканирование и свои чеки)</option>
           </select></label>
         <label class="field"><span>Срок действия, часов</span>
           <input id="iv-hours" type="number" value="72" min="1" max="8760"></label>
@@ -5124,10 +5287,11 @@ async function viewDashboard(container, alive = routeGuard()) {
       ${kpiCard('kpi-total', 'Чеков в системе', 'всё время')}
       ${kpiCard('kpi-sum', 'Общая сумма', 'все чеки')}
       ${kpiCard('kpi-fns', 'Проверено ФНС', 'действительных')}
-      ${kpiCard('kpi-export', 'Выгружено в 1С', 'ждут выгрузки')}
+      ${isAccountant() ? kpiCard('kpi-export', 'Выгружено в 1С', 'ждут выгрузки') : ''}
       ${isAccountant() ? `
       ${kpiCard('kpi-attention', '⏳ Требуют внимания', 'не обработаны > 3 дней').replace('class="glass kpi"', 'class="glass kpi ym-focus-target"')}
-      ${kpiCard('kpi-notified', '🔔 Уведомления', 'от сотрудников')}
+      ${kpiCard('kpi-notified', '🔔 Уведомления', 'от сотрудников')}` : ''}
+      ${(isAccountant() || isManager()) ? `
       ${kpiCard('kpi-vat', 'НДС за месяц', 'сумма к учёту')}
       ${kpiCard('kpi-policy', '⚖️ Политика', 'чеки с нарушениями')}` : ''}
     </div>
@@ -5176,11 +5340,13 @@ async function viewDashboard(container, alive = routeGuard()) {
   bindSmartFocus();
   animateNumber($('#kpi-total .kpi-value'), stats.total);
   animateNumber($('#kpi-sum .kpi-value'), stats.total_sum, fmtSum);
+  if (isAccountant() || isManager()) {
+    animateNumber($('#kpi-vat .kpi-value'), stats.vat_month || 0, fmtSum);
+    animateNumber($('#kpi-policy .kpi-value'), stats.policy_flagged || 0);
+  }
   if (isAccountant()) {
     animateNumber($('#kpi-attention .kpi-value'), stats.attention_count || 0);
     animateNumber($('#kpi-notified .kpi-value'), stats.notified_count || 0);
-    animateNumber($('#kpi-vat .kpi-value'), stats.vat_month || 0, fmtSum);
-    animateNumber($('#kpi-policy .kpi-value'), stats.policy_flagged || 0);
     const bs = $('#btn-statement');
     if (bs) bs.onclick = () => openStatementModal();
     const az = $('#dash-assignee');
@@ -5218,8 +5384,10 @@ async function viewDashboard(container, alive = routeGuard()) {
   animateNumber($('#kpi-fns .kpi-value'), validCount);
   $('#kpi-fns .kpi-sub').textContent =
     `из ${Object.values(stats.by_fns).reduce((a, b) => a + b, 0)} проверок · ${stats.duplicates_blocked} дублей отсеяно`;
-  animateNumber($('#kpi-export .kpi-value'), stats.exported);
-  $('#kpi-export .kpi-sub').textContent = `ожидают выгрузки: ${stats.pending_export}`;
+  if ($('#kpi-export .kpi-value')) {
+    animateNumber($('#kpi-export .kpi-value'), stats.exported);
+    $('#kpi-export .kpi-sub').textContent = `ожидают выгрузки: ${stats.pending_export}`;
+  }
 
   barChart($('#chart-daily'), stats.daily);
   donutChart($('#chart-fns'), [
@@ -6937,6 +7105,14 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.73.12': [
+    { icon: '🧭', title: 'Персональные пространства и чистые меню для каждой роли',
+      text: 'Сотрудник, руководитель, бухгалтер и участник Чек-Пула видят только разделы своей задачи без пустых заголовков и лишних интеграционных индикаторов. Руководителю открыт сканер чеков корпоративной карты, а всем ролям — настройки установки на устройство и уведомлений.' },
+    { icon: '🧾', title: 'Кассовый чек, реквизиты и товары — одинаково подробно у всех ролей',
+      text: 'Сотрудник организации и участник Чек-Пула теперь открывают свои чеки с тем же полным кассовым представлением, QR-кодом, реквизитами ФНС и расшифровкой позиций, что и бухгалтер.' },
+    { icon: '🏢', title: 'Приглашение команды с учётом нескольких компаний и задел под подписки',
+      text: 'Бухгалтер приглашает сотрудников, руководителей и коллег-бухгалтеров в любую из своих и закреплённых компаний, руководитель — сотрудников и бухгалтера в свою организацию. В ядро добавлен модульный реестр подписок по компаниям.' },
+  ],
   '1.73.11': [
     { icon: '✨', title: 'Новый фирменный логотип и иконки DocVer',
       text: 'Во всех разделах веб-клиента, боковом меню, шапке главной страницы, карточках входа и Чек-Пула, кабинете B2B, мини-приложении MAX, блоге и SEO-страницах установлен новый фирменный знак DocVer («Документальная Верификация»).' },
@@ -9639,11 +9815,11 @@ async function viewReceipts(container) {
         <th style="width:34px"><input type="checkbox" id="sel-all" style="width:auto" title="Выбрать все на странице"></th>
         <th>Дата чека</th><th>Сумма</th><th>ФН</th><th>ФД</th><th>ФП</th>
         ${acc ? '<th>Сотрудник</th>' : ''}
-        <th>Статус</th><th>ФНС</th><th>1С</th><th style="width:86px"></th></tr></thead>
+        <th>Статус</th><th>ФНС</th>${acc ? '<th>1С</th>' : ''}<th style="width:110px"></th></tr></thead>
         <tbody>${data.items.map(r => receiptRow(r)).join('')}</tbody></table>`;
       $$('tbody tr', el).forEach(tr => {
         tr.onclick = (e) => {
-          if (e.target.tagName === 'INPUT' || e.target.tagName === 'A') return;
+          if (e.target.tagName === 'INPUT' || e.target.tagName === 'A' || e.target.closest('button')) return;
           receiptDrawer(tr.dataset.id);
         };
       });
@@ -9698,24 +9874,30 @@ async function viewReceipts(container) {
     const isOwner = r.created_by_id === state.me.id;
     const notifiedMark = r.notified ? ' <span title="Сотрудник уведомляет бухгалтерию">🔔</span>' : '';
     const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' || r.details_source === 'fns' ? 'ФНС' : '✎'}</span>` : '';
+    const fullBtn = `<button type="button" class="btn btn-sm r-fullcard" data-act="fullcard" data-id="${r.id}"
+      title="Открыть чек как в магазине, все реквизиты и товары">🧾</button>`;
     // v1.23.0: полные данные получены → запрос не нужен, только изменение
     // v1.25.2: полные данные есть → только «изменить»; запрос показывается,
     // только если чек ещё НЕ получил данные полностью
     const actions = acc
       ? `<td class="cell-actions" style="white-space:nowrap">
+           ${fullBtn}
            ${r.full_data
              ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
              : `<button type="button" class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
                 title="Получить полные данные чека из сервиса проверки">📥</button>`}
            <button type="button" class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}" title="Изменить чек и позиции">✏️</button>
          </td>`
-      : (isOwner ? `<td><button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
-            title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button></td>` : '<td></td>');
+      : `<td class="cell-actions" style="white-space:nowrap">${fullBtn}${isOwner
+          ? ` <button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+                title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button>`
+          : ''}</td>`;
     return `<tr data-id="${r.id}">
       <td><input type="checkbox" class="row-sel" data-id="${r.id}" style="width:auto"
         ${state.receiptsSelected.has(r.id) ? 'checked' : ''}></td>
       <td class="cell-date" data-label="Дата чека">${fmtDate(r.receipt_date)}${notifiedMark}
         ${acc ? advanceBadge(r) : ''}
+        ${r.merchant_name ? `<div class="form-hint">${esc(r.merchant_name)}</div>` : ''}
         ${(r.region_name || r.region_city) ? `<div class="form-hint">${esc([r.region_name, r.region_city].filter(Boolean).join(' · '))}</div>` : ''}
         ${(r.industry || r.product_group) ? `<div class="form-hint" title="Основная отрасль и группа чека">${esc([r.industry, r.product_group].filter(Boolean).join(' · '))}</div>` : ''}</td>
       <td class="cell-sum" data-label="Сумма">${fmtSum(r.total_sum)}${acc && r.personal_sum > 0
@@ -9725,7 +9907,7 @@ async function viewReceipts(container) {
         <div class="rcpt-added" title="Кто добавил чек">＋ ${esc(r.created_by_name || r.created_by || '—')}</div></td>` : ''}
       <td data-label="Статус">${chip(r.status)}${policyChip(r.policy_flags)}${orgCountChip(r.companies_count, isAdmin())}</td>
       <td data-label="ФНС">${chip(r.fns_status)} ${detailsMark}</td>
-      <td data-label="1С">${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>
+      ${acc ? `<td data-label="1С">${r.exported ? '<span class="chip exported"><span class="dot"></span>да</span>' : '<span class="chip unknown"><span class="dot"></span>нет</span>'}</td>` : ''}
       ${actions}
     </tr>`;
   }
@@ -9735,21 +9917,25 @@ async function viewReceipts(container) {
   function receiptCard(r, acc) {
     const isOwner = r.created_by_id === state.me.id;
     const detailsMark = r.details_source ? `<span class="form-hint" title="Источник данных: ${esc(r.details_source)}">${r.details_source === 'fns_api' || r.details_source === 'fns' ? 'ФНС' : '✎'}</span>` : '';
+    const fullBtn = `<button type="button" class="btn btn-sm r-fullcard" data-act="fullcard" data-id="${r.id}"
+      title="Открыть чек как в магазине, все реквизиты и товары">🧾 Чек</button>`;
     const act = acc
-      ? `${r.full_data
+      ? `${fullBtn}
+         ${r.full_data
           ? '<span class="form-hint" title="Полные данные получены; «Обновить данные» — в карточке чека (✏️)">📥✓</span>'
           : `<button type="button" class="btn btn-sm r-fetch" data-act="fetch" data-id="${r.id}"
               title="Получить полные данные чека из сервиса проверки">📥 Данные</button>`}
          <button type="button" class="btn btn-sm r-edit" data-act="edit" data-id="${r.id}"
            title="Изменить чек и позиции (ручное заполнение)">✏️ Заполнить</button>`
-      : (isOwner ? `<button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
-            title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button>` : '');
+      : `${fullBtn} ${isOwner ? `<button type="button" class="btn btn-sm r-notify" data-act="notify" data-id="${r.id}"
+            title="Уведомить бухгалтерию (замена, возврат, комментарий)">🔔${r.notified ? '✓' : ''}</button>` : ''}`;
     return `<div class="rc-card" data-id="${r.id}">
       <div class="rc-head"><span class="rc-date">${fmtDate(r.receipt_date)}${r.notified ? ' 🔔' : ''}</span>
         <span class="rc-sum">${fmtSum(r.total_sum)}</span></div>
+      ${r.merchant_name ? `<div class="form-hint">${esc(r.merchant_name)}</div>` : ''}
       <div class="rc-ids">ФН ${r.fn} · ФД ${r.fd} · ФП ${r.fp}</div>
       <div class="rc-chips">${chip(r.status)} ${chip(r.fns_status)} ${detailsMark} ${policyChip(r.policy_flags)}${orgCountChip(r.companies_count, isAdmin())}
-        ${r.exported ? '<span class="chip exported"><span class="dot"></span>1С</span>' : ''}</div>
+        ${acc && r.exported ? '<span class="chip exported"><span class="dot"></span>1С</span>' : ''}</div>
       ${acc ? `<div class="rc-meta">👤 ${r.assignee ? esc(r.assignee) : '—'} · ＋ ${esc(r.created_by_name || r.created_by || '—')}${r.company_id ? ' ' + companyChip(r.company_id) : ''}</div>` : ''}
       <div class="rc-actions">${act}</div>
     </div>`;
@@ -9946,6 +10132,8 @@ async function viewReceipts(container) {
         if (row) openEditReceipt(row, () => load());
       } else if (btn.dataset.act === 'notify') {
         if (row) openNotifyDialog(row, () => load());
+      } else if (btn.dataset.act === 'fullcard') {
+        receiptFullCard(id);
       }
     };
   }
@@ -11176,7 +11364,7 @@ async function receiptDrawer(id) {
         ${r.company_name ? `<dt>Компания</dt><dd>${esc(r.company_name)}${companyChip(r.company_id)}</dd>` : ''}
         ${orgCountRow(r.companies_count, isAdmin())}
         <dt>Принят в систему</dt><dd>${fmtDate(r.created_at)}</dd>
-        <dt>Выгружен в 1С</dt><dd>${r.exported ? 'да · ' + fmtDate(r.exported_at) : 'нет'}</dd>
+        ${acc ? `<dt>Выгружен в 1С</dt><dd>${r.exported ? 'да · ' + fmtDate(r.exported_at) : 'нет'}</dd>` : ''}
         <dt>Ответ ФНС</dt><dd>${esc(r.fns_message || '—')}</dd>
       </dl>
       ${acc ? `
@@ -11192,7 +11380,7 @@ async function receiptDrawer(id) {
       ${r.items.length ? `<div class="gd-wrap">${goodsItemsHTML(r.items, { editable: acc, goods: r.goods })}</div>`
         : (fillItemsTable(r) || emptyState('📦', 'Позиции недоступны (из QR их получить нельзя — приходят от ФНС/ОФД)'))}
       <div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap">
-        <button type="button" class="btn btn-sm" id="d-fullcard">📄 Полная информация по чеку</button>
+        <button type="button" class="btn ${acc ? '' : 'btn-primary'} btn-sm" id="d-fullcard">🧾 Чек как в магазине и все реквизиты</button>
         ${acc ? '<button type="button" class="btn btn-primary btn-sm" id="d-save">💾 Сохранить</button>' : ''}
         ${acc ? '<button type="button" class="btn btn-ok btn-sm" id="d-verify">✓ Проверить в ФНС</button>' : ''}
         ${canDel ? '<button type="button" class="btn btn-bad btn-sm" id="d-delete">🗑 Удалить</button>' : ''}
@@ -11580,7 +11768,7 @@ async function viewUsers(container, alive = routeGuard()) {
         ? '<span class="chip new"><span class="dot"></span>Бухгалтер</span>'
         : (role === 'manager'
           ? '<span class="chip unknown"><span class="dot"></span>Руководитель</span>'
-          : '<span class="chip unknown"><span class="dot"></span>Пользователь</span>'));
+          : '<span class="chip unknown"><span class="dot"></span>Сотрудник</span>'));
   }
 
   // --- Приглашения ---
@@ -11616,9 +11804,9 @@ async function viewUsers(container, alive = routeGuard()) {
     const { slot } = openModal(`<div class="modal-title">↕ Роль: ${esc(btn.dataset.name)}</div>
       <label class="field"><span>Новая роль</span>
         <select id="ur-role">
-          <option value="user">Пользователь — только свои чеки</option>
+          <option value="user">Сотрудник — свои чеки</option>
           <option value="accountant">Бухгалтер — расширенный доступ</option>
-          <option value="manager">Руководитель — только просмотр своей компании</option>
+          <option value="manager">Руководитель — контроль и корпоративная карта</option>
         </select></label>
       <div class="modal-actions">
         <button type="button" class="btn" id="ur-cancel">Отмена</button>
@@ -11675,7 +11863,7 @@ async function viewUsers(container, alive = routeGuard()) {
         <label class="field"><span>Логин</span><input id="u-username" value="${esc(u?.username || '')}" ${u ? 'disabled' : ''}></label>
         <label class="field"><span>Роль</span>
           <select id="u-role" ${u && u.role === 'admin' ? 'disabled' : ''}>
-            <option value="user" ${u?.role === 'user' ? 'selected' : ''}>Пользователь</option>
+            <option value="user" ${u?.role === 'user' ? 'selected' : ''}>Сотрудник</option>
             <option value="accountant" ${u?.role === 'accountant' ? 'selected' : ''}>Бухгалтер</option>
             <option value="manager" ${u?.role === 'manager' ? 'selected' : ''}>Руководитель</option>
             ${u && u.role === 'admin' ? '<option value="admin" selected>Администратор</option>' : ''}
@@ -11925,6 +12113,139 @@ async function viewAudit(container, alive = routeGuard()) {
     </div>`;
 }
 
+function bindCompanyTeamCard(container, initialTeam, me, appSum) {
+  const host = container.querySelector('#st-mycompany-body');
+  if (!host) return;
+  const roleNames = { user: 'Сотрудник', manager: 'Руководитель', accountant: 'Бухгалтер' };
+
+  const render = (t) => {
+    const comp = (t && t.company) || { name: me.company_name || '—', inn: me.company_inn || '' };
+    const dl = (t && t.advance_deadline_days) || (appSum && appSum.advance_deadline_days) || 10;
+    const accs = (t && t.accountants) || [];
+    const mgrs = (t && t.managers) || [];
+    const mcomps = (t && t.manageable_companies) || [];
+    const invRoles = (t && t.invitable_roles) || [];
+    const invites = (t && t.invites) || [];
+    const canInvite = !!(t && t.can_invite && invRoles.length);
+
+    host.innerHTML = `
+      ${canInvite && mcomps.length > 1 ? `
+      <label class="field" style="max-width:360px;margin-bottom:10px">
+        <span>Активная компания (${mcomps.length})</span>
+        <select id="team-comp-sel">${mcomps.map((c) => `
+          <option value="${esc(c.id)}" ${comp.id === c.id ? 'selected' : ''}>
+            ${esc(c.name)}${c.inn ? ' · ИНН ' + esc(c.inn) : ''}</option>`).join('')}
+        </select>
+      </label>` : ''}
+      <dl class="kv" style="font-size:13px">
+        <dt>Организация</dt><dd><b>${esc(comp.full_name || comp.name || '—')}</b></dd>
+        <dt>ИНН</dt><dd>${esc(comp.inn || 'не указан')}</dd>
+        <dt>Бухгалтер</dt><dd>${accs.length
+          ? accs.map((a) => esc(a.name) + (a.is_outsource ? ' <span class="form-hint">(внешний бухгалтер)</span>' : '')).join(', ')
+          : '<span class="form-hint">не назначен</span>'}</dd>
+        <dt>Руководитель</dt><dd>${mgrs.length
+          ? mgrs.map((m) => esc(m.name)).join(', ')
+          : '<span class="form-hint">не назначен</span>'}</dd>
+        <dt>Срок сдачи авансового отчёта</dt><dd>${dl} дн. от даты чека</dd>
+      </dl>
+      ${!canInvite ? `<p class="form-hint" style="margin-top:8px">Отсканированный чек сразу попадает к бухгалтеру вашей организации, а в разделе «Мои чеки» он виден со всеми товарами и кассовым чеком.</p>` : `
+      <div class="team-box">
+        <div class="card-title" style="font-size:14px">Пригласить в компанию «${esc(comp.name || '—')}»</div>
+        <div class="team-inv-form">
+          <label class="field" style="min-width:170px"><span>Роль</span>
+            <select id="team-inv-role">${invRoles.map((r) => `
+              <option value="${esc(r)}">${esc(roleNames[r] || r)}</option>`).join('')}
+            </select></label>
+          <label class="field" style="flex:1;min-width:170px"><span>Пометка / отдел</span>
+            <input id="team-inv-note" placeholder="например: отдел снабжения"></label>
+          <label class="field" style="max-width:110px"><span>Лимит входов</span>
+            <input id="team-inv-uses" type="number" min="1" max="50" value="1"></label>
+          <button type="button" class="btn btn-primary btn-sm" id="team-inv-create">+ Создать приглашение</button>
+        </div>
+        ${invites.length ? `<div class="team-inv-list">${invites.map((inv) => {
+          const url = `${location.origin}/#/register/${inv.token}`;
+          return `<div class="team-inv-row">
+            <span class="chip new"><span class="dot"></span>${esc(roleNames[inv.role] || inv.role)}</span>
+            <span>${esc(inv.note || 'без пометки')} · входов ${inv.used_count}/${inv.max_uses}</span>
+            <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+              <button type="button" class="btn btn-sm" data-tinv-copy="${esc(url)}">📋 Ссылка</button>
+              <button type="button" class="btn btn-sm" data-tinv-qr="${esc(inv.id)}" data-tinv-url="${esc(url)}">📱 QR</button>
+              <button type="button" class="btn btn-sm btn-bad" data-tinv-rev="${esc(inv.id)}">✕ Отозвать</button>
+            </span>
+          </div>`;
+        }).join('')}</div>` : '<div class="form-hint">Активных ссылок-приглашений для этой компании сейчас нет.</div>'}
+      </div>`}`;
+
+    const sel = host.querySelector('#team-comp-sel');
+    if (sel) sel.onchange = async () => {
+      try {
+        const fresh = await api.get(`/api/v1/company-team?company_id=${encodeURIComponent(sel.value)}`);
+        render(fresh);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    const btnCreate = host.querySelector('#team-inv-create');
+    if (btnCreate) btnCreate.onclick = async () => {
+      btnCreate.disabled = true;
+      try {
+        const role = host.querySelector('#team-inv-role').value;
+        const note = host.querySelector('#team-inv-note').value.trim();
+        const maxUses = Math.max(1, parseInt(host.querySelector('#team-inv-uses').value, 10) || 1);
+        const created = await api.post('/api/v1/company-invites', {
+          role, note, max_uses: maxUses, expires_hours: 72, company_id: comp.id,
+        });
+        const link = `${location.origin}/#/register/${created.token}`;
+        try { await navigator.clipboard.writeText(link); } catch {}
+        toast('Приглашение создано, ссылка скопирована', 'ok', '📩');
+        const fresh = await api.get(`/api/v1/company-team?company_id=${encodeURIComponent(comp.id)}`);
+        render(fresh);
+      } catch (e) {
+        toast(e.message, 'err');
+      } finally {
+        btnCreate.disabled = false;
+      }
+    };
+
+    host.querySelectorAll('[data-tinv-copy]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(b.dataset.tinvCopy);
+          toast('Ссылка приглашения скопирована', 'ok');
+        } catch { toast('Скопируйте ссылку из окна QR', 'info'); }
+      };
+    });
+
+    host.querySelectorAll('[data-tinv-qr]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          const { blob } = await api.download(`/api/v1/company-invites/${encodeURIComponent(b.dataset.tinvQr)}/qr`);
+          const qrUrl = URL.createObjectURL(blob);
+          openModal(`
+            <div class="modal-title">📱 QR-код приглашения в «${esc(comp.name || '')}»</div>
+            <div style="text-align:center;margin:12px 0">
+              <img src="${qrUrl}" alt="QR приглашения" style="max-width:220px;border-radius:8px">
+            </div>
+            <input readonly value="${esc(b.dataset.tinvUrl)}" style="width:100%">
+            <p class="form-hint" style="margin-top:6px">Наведите камеру телефона — откроется регистрация сразу в вашей компании.</p>`);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+
+    host.querySelectorAll('[data-tinv-rev]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await api.post(`/api/v1/company-invites/${encodeURIComponent(b.dataset.tinvRev)}/revoke`, {});
+          toast('Приглашение отозвано', 'ok');
+          const fresh = await api.get(`/api/v1/company-team?company_id=${encodeURIComponent(comp.id)}`);
+          render(fresh);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
+  };
+
+  render(initialTeam);
+}
+
 // ==========================================================================
 //  ЭКРАН: Настройки
 // ==========================================================================
@@ -11935,8 +12256,9 @@ async function viewSettings(container, alive = routeGuard()) {
   try { if (isAdmin()) { fns = await api.get('/api/v1/settings/fns'); onec = await api.get('/api/v1/settings/onec'); appSet = await api.get('/api/v1/settings/app'); ext = await api.get('/api/v1/settings/external'); checkoSet = await api.get('/api/v1/settings/checko'); tgSet = await api.get('/api/v1/settings/telegram'); poolSet = await api.get('/api/v1/pool-admin/overview'); smtpSet = await api.get('/api/v1/pool-admin/smtp'); maxSet = await api.get('/api/v1/settings/max'); whSet = await api.get('/api/v1/settings/webhooks'); consentSet = await api.get('/api/v1/settings/consent'); } }   // v1.66.0: + MAX, v1.67.0: + webhooks
   catch { /* ignore */ }
   const about = await api.get('/api/v1/about');
-  let appSum = null, sysInfo = null, clientsInfo = null;
+  let appSum = null, sysInfo = null, clientsInfo = null, teamInfo = null;
   try { appSum = await api.get('/api/v1/settings/app/summary'); } catch {}
+  if (!isAdmin()) { try { teamInfo = await api.get('/api/v1/company-team'); } catch {} }
   if (isAdmin()) { try { sysInfo = await api.get('/api/v1/admin/system'); } catch {} }
   // v1.70.50: клиенты приложения и передача данных — один запрос на две карточки
   if (isAdmin()) { try { clientsInfo = await api.get('/api/v1/admin/clients'); } catch {} }
@@ -12570,20 +12892,8 @@ async function viewSettings(container, alive = routeGuard()) {
 
       ${!isAdmin() && me ? `
       <div class="glass card" id="st-mycompany" data-sec="personal" style="order:43">
-        <div class="card-title">${state.me.role === 'accountant' ? '🏢 Ваша компания' : '👤 Мои чеки'} <span class="form-hint">(v1.17.0)</span></div>
-        ${state.me.role === 'accountant' ? `
-        <dl class="kv" style="font-size:13px">
-          <dt>Компания</dt><dd>${esc(me.company_name || '—')}</dd>
-          <dt>ИНН</dt><dd>${esc(me.company_inn || 'не задан — попросите администратора указать ИНН в карточке компании')}</dd>
-          <dt>Срок авансового отчёта</dt><dd>${appSum ? appSum.advance_deadline_days + ' дн. от даты чека (п. 6.3 Указания ЦБ 3210-У)' : '—'}</dd>
-          <dt>Проверка ФНС сразу</dt><dd>${appSum && appSum.auto_verify ? 'включена' : 'по кнопке'}</dd>
-        </dl>` : `
-        <dl class="kv" style="font-size:13px">
-          <dt>Срок авансового отчёта</dt><dd>${appSum ? appSum.advance_deadline_days + ' дн. от даты чека' : '—'}</dd>
-          <dt>Проверка чеков</dt><dd>${appSum && appSum.auto_verify ? 'автоматическая (ФНС)' : 'по кнопке «Проверить»'}</dd>
-        </dl>
-        <p class="form-hint">Сфотографируйте чек сразу после покупки — он сам попадёт
-        к бухгалтеру. Если забыли — Telegram напомнит (привяжите чат ниже).</p>`}
+        <div class="card-title">${(teamInfo && teamInfo.can_invite) ? '🏢 Ваша компания и команда' : '🏢 Ваша компания'}</div>
+        <div id="st-mycompany-body"></div>
       </div>` : ''}
 
       <div class="glass card" id="st-devclean" data-sec="device" style="order:52">
@@ -13659,6 +13969,7 @@ async function viewSettings(container, alive = routeGuard()) {
   // и видимость раздела уже после сборки <section class="stg-section">
   if (snavFinal) settingsApply(snavFinal, _cur);
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
+  if (!isAdmin() && me) bindCompanyTeamCard(container, teamInfo, me, appSum);
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();
 

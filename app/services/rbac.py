@@ -55,27 +55,27 @@ _ROLE_VIEWS: dict[str, frozenset[str]] = {
         "primary", "docreq", "bank", "clients", "counterparties", "approvals", "settings",
     }),
     ROLE_MANAGER: frozenset({
-        "dashboard", "receipts", "boss", "approvals", "settings",
+        "dashboard", "scan", "receipts", "boss", "approvals", "settings",
     }),
     ROLE_USER: frozenset({
         "dashboard", "scan", "receipts", "approvals", "settings",
     }),
-    ROLE_DONOR: frozenset({"public", "my", "partners"}),
-    ROLE_GUEST: frozenset({"public", "my", "partners"}),
+    ROLE_DONOR: frozenset({"public", "my"}),
+    ROLE_GUEST: frozenset({"public", "my"}),
 }
 
 # Разделы настроек (data-sec карточек и группы меню настроек).
 _ROLE_SETTINGS: dict[str, frozenset[str]] = {
     ROLE_ADMIN: frozenset(
         {"data", "checks", "integr", "personal", "device"}),
-    ROLE_ACCOUNTANT: frozenset({"checks", "personal"}),
-    ROLE_MANAGER: frozenset({"personal"}),
-    ROLE_USER: frozenset({"personal"}),
+    ROLE_ACCOUNTANT: frozenset({"checks", "personal", "device"}),
+    ROLE_MANAGER: frozenset({"personal", "device"}),
+    ROLE_USER: frozenset({"personal", "device"}),
     ROLE_DONOR: frozenset(),
     ROLE_GUEST: frozenset(),
 }
 
-_POOL_VIEWS = frozenset({"public", "my", "partners"})
+_POOL_VIEWS = frozenset({"public", "my"})
 
 
 def space_views(role: str) -> frozenset[str]:

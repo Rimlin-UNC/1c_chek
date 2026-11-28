@@ -3193,3 +3193,40 @@ table.data td { text-wrap: pretty; }
 /* Заглушка в пустой таблице — не данные: держим её по ширине карточки,
    чтобы длинная подсказка не растягивала таблицу. */
 table.data:has(td .empty-state) { width: 100%; }
+
+/* --- 8. Кабинет ролей и Чек-Пула (v1.73.12) ---------------------------- */
+.pool-cab-tabs {
+  display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 14px;
+  border-bottom: 1px solid var(--border); padding-bottom: 8px;
+}
+.pool-cab-tab {
+  font-weight: 600;
+}
+.pool-pts-hero {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 14px 16px; margin: 8px 0 12px;
+  border-radius: 12px; background: var(--bg-soft); border: 1px solid var(--border);
+}
+.pool-pts-val {
+  font-size: 28px; font-weight: 800; line-height: 1.1; color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+.pool-pts-lbl {
+  font-size: 13px; color: var(--text-dim);
+}
+.pool-filter-bar {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin: 8px 0 10px;
+}
+.team-box {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.team-inv-form {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin: 10px 0;
+}
+.team-inv-list {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 8px;
+}
+.team-inv-row {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 8px 10px; border-radius: 8px; background: var(--bg-soft); font-size: 13px;
+}

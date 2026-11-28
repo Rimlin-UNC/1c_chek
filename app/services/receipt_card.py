@@ -852,3 +852,66 @@ def build_card(receipt) -> dict:
         },
         "has_fns_document": bool(doc.get("raw")),
     }
+
+
+def build_pool_card(pool_receipt, pool_items) -> dict:
+    """Полная карточка чека участника Чек-Пула в едином формате build_card()."""
+    from types import SimpleNamespace
+
+    adapted_items = [
+        SimpleNamespace(
+            name=it.name or "",
+            quantity=it.quantity or 1.0,
+            price=it.price or 0.0,
+            total=it.total or 0.0,
+            vat_rate=it.vat_rate or "none",
+            vat_sum=it.vat_sum or 0.0,
+            unit="",
+            product_type=None,
+            payment_type=None,
+            industry="",
+            product_group="",
+            readable_name="",
+            category_code="",
+            category_source="",
+            extra_json="",
+        )
+        for it in (pool_items or [])
+    ]
+    fns_status = ("valid" if getattr(pool_receipt, "fns_confirmed", False)
+                  or pool_receipt.status == "verified"
+                  else ("invalid" if pool_receipt.status == "rejected" else "pending"))
+    proxy = SimpleNamespace(
+        id=pool_receipt.id,
+        raw_data=pool_receipt.raw or "",
+        ext_json=pool_receipt.extra_json or "",
+        qr_data=pool_receipt.qr_data or "",
+        fn=pool_receipt.fn or "",
+        fd=pool_receipt.fd or "",
+        fp=pool_receipt.fp or "",
+        receipt_date=pool_receipt.receipt_date,
+        total_sum=pool_receipt.total_sum or 0.0,
+        cash_sum=0.0,
+        ecash_sum=pool_receipt.total_sum or 0.0,
+        operation=pool_receipt.operation or 1,
+        merchant_name=pool_receipt.merchant_name or "",
+        merchant_inn=pool_receipt.merchant_inn or "",
+        merchant_address=pool_receipt.merchant_address or "",
+        cashier=pool_receipt.cashier or "",
+        region_code=pool_receipt.region_code or "",
+        region_name="",
+        region_city=pool_receipt.city or "",
+        details_source="fns_api" if getattr(pool_receipt, "full_data", False) else "",
+        fns_status=fns_status,
+        fns_message=pool_receipt.status_message or "",
+        fns_checked_at=pool_receipt.fns_checked_at or pool_receipt.verified_at,
+        taxation="",
+        taxation_name="",
+        pay_type="",
+        items=adapted_items,
+    )
+    card = build_card(proxy)
+    card["document"]["qr_png"] = f"/api/v1/pool-my/receipt/{pool_receipt.id}/qr.png"
+    card["points_awarded"] = pool_receipt.points_awarded or 0
+    card["pool_status"] = pool_receipt.status
+    return card

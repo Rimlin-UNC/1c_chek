@@ -615,6 +615,7 @@ app.include_router(counterparties_router)  # v1.71.0: контрагенты (T-
 app.include_router(settings_routes.router)
 app.include_router(users.router)
 app.include_router(invites.router)
+app.include_router(invites.company_router)
 app.include_router(onec.router)
 app.include_router(admin.router)
 from .routers import manual as manual_routes  # v1.21.0: инструкция

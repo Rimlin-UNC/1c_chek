@@ -220,7 +220,11 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db),
     d["is_platform_admin"] = (user.role == "admin")
     # v1.70.61: пространство роли — экраны и разделы настроек, которые
     # роль действительно вправе видеть (иерархия app/services/rbac.py)
+    from ..services import entitlements as ent_svc
     d["space"] = rbac_space.space_payload(user.role)
+    d["entitlements"] = ent_svc.payload_for_user(db, user)
+    d["space"]["active_views"] = ent_svc.allowed_views_for_company(
+        db, user.company_id, d["space"]["views"], is_admin=(user.role == "admin"))
     # v1.16.0: Telegram-привязка для личного кабинета настроек
     d["telegram_bound"] = bool(user.telegram_chat_id)
     # v1.66.0: привязка ассистента MAX
