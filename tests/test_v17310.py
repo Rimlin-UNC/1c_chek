@@ -1102,3 +1102,86 @@ class TestSystemdSelfUpdateAndPhaseProgress:
         assert "chip('Запись файлов'" in js
         assert 'if (st.finished) return `<div class="form-error">✗ ${title}${dtxt}</div>`;' in js
         assert "обновление до v${esc(st.to_version || '')} не применено" in js
+
+    def test_service_unit_and_db_autodetect_supports_docver_and_ymaster(
+        self, tmp_path, monkeypatch
+    ):
+        from app.services import backups, updater
+
+        etc = tmp_path / "systemd"
+        wants = etc / "multi-user.target.wants"
+        wants.mkdir(parents=True)
+        monkeypatch.setattr(updater, "SYSTEMD_ETC_DIR", str(etc))
+
+        # Без юнитов по умолчанию выбирается штатный ymaster-check
+        assert updater._service_unit_name() == "ymaster-check"
+
+        # На сервере с активным симлинком docver.service выбирается docver
+        (etc / "docver.service").write_text("[Service]\nUser=ymaster\n", encoding="utf-8")
+        (wants / "docver.service").symlink_to(etc / "docver.service")
+        assert updater._service_unit_name() == "docver"
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            updater, "_run", lambda cmd, **_kw: (calls.append(cmd), (0, ""))[1]
+        )
+        ok_mode, mode = updater._restart_mode()
+        assert ok_mode is True and mode == "sudoers"
+        assert calls[-1] == ["sudo", "-n", "systemctl", "is-active", "docver"]
+
+        ok_restart, _ = updater._restart_service()
+        assert ok_restart is True
+        assert calls[-1] == ["sudo", "-n", "systemctl", "restart", "docver"]
+
+        # Поддержка и ymaster_check.db, и docver.db в APP_DIR/data
+        app_root = tmp_path / "app"
+        (app_root / "data").mkdir(parents=True)
+        monkeypatch.setattr(updater, "APP_DIR", str(app_root))
+        assert updater._sqlite_db_exists() is False
+        docver_db = app_root / "data" / "docver.db"
+        docver_db.write_bytes(b"SQLite format 3\x00")
+        assert updater._sqlite_db_exists() is True
+        assert updater._sqlite_db_path() == str(docver_db)
+        monkeypatch.setattr(backups.settings, "DATABASE_URL", "")
+        assert backups._db_path() == str(docver_db)
+
+    def test_deploy_sh_supports_docver_unit_and_45s_health_wait(self, tmp_path):
+        import os
+        import subprocess
+
+        sh = read("deploy.sh")
+        assert "for _ in $(seq 1 45); do" in sh
+        assert 'if ! systemctl is-active --quiet "$SERVICE"; then' in sh
+        assert "/usr/bin/systemctl restart docver" in sh
+        assert "/usr/bin/systemctl is-active ymaster-check" in sh
+        assert subprocess.run(["bash", "-n", "deploy.sh"], check=False).returncode == 0
+
+        # Проверяем живую функцию detect_active_service из deploy.sh
+        fn_start = sh.index('SYSTEMD_ETC_DIR="${SYSTEMD_ETC_DIR:-/etc/systemd/system}"')
+        fn_end = sh.index("# Режим диагностики:")
+        snippet = sh[fn_start:fn_end] + '\ndetect_active_service\n'
+        etc = tmp_path / "etc_systemd"
+        wants = etc / "multi-user.target.wants"
+        wants.mkdir(parents=True)
+        # Заглушка systemctl (не активен ни один) — выбор по симлинку wants
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake_sc = fake_bin / "systemctl"
+        fake_sc.write_text("#!/usr/bin/env bash\nexit 3\n", encoding="utf-8")
+        fake_sc.chmod(0o755)
+        env = dict(
+            os.environ,
+            SYSTEMD_ETC_DIR=str(etc),
+            PATH=f"{fake_bin}:{os.environ.get('PATH', '')}",
+        )
+        r_default = subprocess.run(
+            ["bash", "-c", snippet], capture_output=True, text=True, env=env, check=True
+        )
+        assert r_default.stdout.strip() == "ymaster-check"
+
+        (etc / "docver.service").write_text("[Unit]\n", encoding="utf-8")
+        (wants / "docver.service").symlink_to(etc / "docver.service")
+        r_docver = subprocess.run(
+            ["bash", "-c", snippet], capture_output=True, text=True, env=env, check=True
+        )
+        assert r_docver.stdout.strip() == "docver"

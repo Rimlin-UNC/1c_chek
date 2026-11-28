@@ -835,14 +835,65 @@ def _self_reexec() -> bool:
         return False
 
 
+SYSTEMD_ETC_DIR = "/etc/systemd/system"
+
+
+def _service_unit_name() -> str:
+    """Определяет имя установленного systemd-юнита без запуска подпроцессов.
+
+    Поддерживает и штатный ymaster-check.service, и docver.service (если сервер
+    ранее переключался на ветку ребрендинга и работает под docver.service).
+    """
+    wants_dir = os.path.join(SYSTEMD_ETC_DIR, "multi-user.target.wants")
+    ym_want = os.path.lexists(os.path.join(wants_dir, "ymaster-check.service"))
+    dv_want = os.path.lexists(os.path.join(wants_dir, "docver.service"))
+    if dv_want and not ym_want:
+        return "docver"
+    if ym_want and not dv_want:
+        return "ymaster-check"
+    ym_unit = os.path.exists(os.path.join(SYSTEMD_ETC_DIR, "ymaster-check.service"))
+    dv_unit = os.path.exists(os.path.join(SYSTEMD_ETC_DIR, "docver.service"))
+    if dv_unit and not ym_unit:
+        return "docver"
+    return "ymaster-check"
+
+
+def _sqlite_db_path() -> str:
+    """Путь к файлу SQLite БД (поддержка ymaster_check.db и docver.db)."""
+    default_app_dir = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    app_dir_abs = os.path.abspath(APP_DIR)
+    if app_dir_abs == default_app_dir:
+        url = settings.DATABASE_URL or ""
+        if url.startswith("sqlite:///"):
+            configured = url.replace("sqlite:///", "", 1)
+            if os.path.exists(configured):
+                return configured
+    for filename in ("ymaster_check.db", "docver.db"):
+        candidate = os.path.join(APP_DIR, "data", filename)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(APP_DIR, "data", "ymaster_check.db")
+
+
+def _sqlite_db_exists() -> bool:
+    """Готовность БД для предпроверки обновления (SQLite оба имени или внешняя СУБД)."""
+    default_app_dir = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    if os.path.abspath(APP_DIR) == default_app_dir:
+        url = settings.DATABASE_URL or ""
+        if url and not url.startswith("sqlite:///"):
+            return True
+    return os.path.exists(_sqlite_db_path())
+
+
 def _restart_mode() -> tuple[bool, str]:
     """v1.9.1: есть ли право перезапустить сервис. Проверяем БЕЗВРЕДНОЙ командой
     `systemctl is-active` (разрешена sudoers-правилом вместе с restart):
     rc 0/3 — команда доступна (0=active, 3=inactive)."""
-    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", "ymaster-check"], timeout=15)
+    unit = _service_unit_name()
+    rc, _o = _run(["sudo", "-n", "systemctl", "is-active", unit], timeout=15)
     if rc in (0, 3):
         return True, "sudoers"
-    rc, _o = _run(["systemctl", "is-active", "ymaster-check"], timeout=15)
+    rc, _o = _run(["systemctl", "is-active", unit], timeout=15)
     if rc in (0, 3):
         return True, "systemctl"
     return False, ""
@@ -919,8 +970,7 @@ def pre_flight(db) -> dict:
     can_restart, mode = _restart_mode()
     reexec_ok = _reexec_allowed()  # v1.17.0: самоперезапуск без прав root
     can_restart = can_restart or reexec_ok
-    db_path = os.path.join(APP_DIR, "data", "ymaster_check.db")
-    db_ok = os.path.exists(db_path)
+    db_ok = _sqlite_db_exists()
     git_ok = _git_ready()          # v1.16.0: иначе apply сам восстановит репозиторий
     writable_ok, writable_err = _writable_check()
     github_ok, github_err = False, ""
@@ -955,7 +1005,8 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
     Примечание к паролю: sudo проверяет пароль СЛУЖЕБНОГО пользователя
     приложения, а не администратора — поэтому пароль из терминала в
     приложении не срабатывает; re-exec решает это без пароля вовсе."""
-    rc, _o = _run(["sudo", "-n", "systemctl", "restart", "ymaster-check"], timeout=60)
+    unit = _service_unit_name()
+    rc, _o = _run(["sudo", "-n", "systemctl", "restart", unit], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен (sudoers) — новая версия уже работает"
     if _reexec_allowed():
@@ -965,7 +1016,7 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
             return True, "Перезапущено (re-exec)"   # процесс уже заменён
     if sudo_password:
         rc, out = _run(["sudo", "-S", "-p", "", "systemctl", "restart",
-                        "ymaster-check"], timeout=60,
+                        unit], timeout=60,
                        input_text=sudo_password + "\n")
         if rc == 0:
             return True, "Сервис перезапущен (по паролю служебного пользователя)"
@@ -973,11 +1024,11 @@ def _restart_service(sudo_password: str | None = None) -> tuple[bool, str]:
             job.say("restart", 96,
                     "Пароль отклонён: приложение работает под другим "
                     "пользователем — включён самоперезапуск…")
-    rc, _o = _run(["systemctl", "restart", "ymaster-check"], timeout=60)
+    rc, _o = _run(["systemctl", "restart", unit], timeout=60)
     if rc == 0:
         return True, "Сервис перезапущен — новая версия уже работает"
-    return False, ("Автоперезапуск недоступен — выполните на сервере: "
-                   "sudo systemctl restart ymaster-check (данные сохранены)")
+    return False, (f"Автоперезапуск недоступен — выполните на сервере: "
+                   f"sudo systemctl restart {unit} (данные сохранены)")
 
 
 def _do_apply(target_version: str, repo: str, branch: str,

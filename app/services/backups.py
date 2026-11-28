@@ -29,6 +29,14 @@ def _app_dir() -> str:
 def _db_path() -> str:
     url = settings.DATABASE_URL
     if url.startswith("sqlite:///"):
+        configured = url.replace("sqlite:///", "")
+        if os.path.exists(configured):
+            return configured
+    for filename in ("ymaster_check.db", "docver.db"):
+        candidate = os.path.join(_app_dir(), "data", filename)
+        if os.path.exists(candidate):
+            return candidate
+    if url.startswith("sqlite:///"):
         return url.replace("sqlite:///", "")
     return os.path.join(_app_dir(), "data", "ymaster_check.db")
 
