@@ -82,6 +82,10 @@ def candidates(user: Accountant, db: Db, company_id: str | None = None):
 
 @router.post("", status_code=201)
 def create_card(body: CardIn, user: Accountant, db: Db):
+    from ..services import entitlements
+    entitlements.require_company_module(
+        db, user, body.company_id or user.company_id, "counterparties", check_quota=True
+    )
     try:
         card = service.create_card(db, user, body.model_dump())
     except (LookupError, FileExistsError, ValueError) as exc:

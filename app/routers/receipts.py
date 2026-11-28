@@ -369,6 +369,8 @@ def scan(body: ScanRequest, background: BackgroundTasks,
 
 def _scan_in_company(body: ScanRequest, background: BackgroundTasks, user: User,
                      db: Session, company_id: str | None):
+    from ..services import entitlements
+    entitlements.require_company_module(db, user, company_id, "receipts", check_quota=True)
     try:
         parsed = parse_qr(body.qr_data)
     except QRParseError as e:

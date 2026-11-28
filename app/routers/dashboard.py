@@ -165,6 +165,10 @@ def breakdown(days: int = Query(30, ge=7, le=365),
     по сотрудникам и статьям расходов за период. Drill-down до чека
     делает клиент (список чеков по сотруднику/статье). Пространство —
     как везде: руководитель видит свою компанию, админ — всё/выбор."""
+    from ..auth import ROLE_MANAGER
+    if user.role == ROLE_MANAGER:
+        from ..services import entitlements
+        entitlements.require_company_module(db, user, user.company_id, "manager_cabinet")
     start = dt.datetime.utcnow() - dt.timedelta(days=days)
     accountable = (func.coalesce(Receipt.total_sum, 0.0)
                    - func.coalesce(Receipt.personal_sum, 0.0))

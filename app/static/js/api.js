@@ -92,6 +92,11 @@ async function once(method, path, body, options = {}) {
         : (data.detail?.message || JSON.stringify(data.detail || data));
     } catch { /* не JSON */ }
     const err = new ApiError(resp.status, msg, data);
+    if (resp.status === 402) {
+      window.dispatchEvent(new CustomEvent('ymaster:payment-required', {
+        detail: (data && typeof data.detail === 'object') ? data.detail : { message: msg },
+      }));
+    }
     if (!options.noClientFallback && resp.status === 403 && headers['X-Ym-Company'] && CLIENT_DENIED.test(msg)) {
       setClient('');                       // клиент отозван или отключён — назад в свою компанию
       window.dispatchEvent(new CustomEvent('ymaster:client-reset', { detail: { message: msg } }));

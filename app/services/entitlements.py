@@ -1,27 +1,25 @@
-# -*- coding: utf-8 -*-
-"""Модули подписки компании (архитектурное зерно тарификации, v1.73.12).
+"""Модули подписки компании и проверка прав на модули (v1.73.12 → v1.74.0).
 
-Назначение модуля: заложить чистое разделение функциональных контуров компании,
-чтобы при введении платных подписок каждый блок включался и выключался отдельно
-для конкретной организации без переделки ролей и экранов:
+Назначение модуля: разделение функциональных контуров компании, чтобы каждый
+блок включался, тарифицировался и контролировался отдельно для конкретной
+организации без переделки ролей и экранов:
 
   - ``receipts``         — работа с кассовыми чеками, авансовыми отчётами и 1С;
   - ``upd``              — электронная первичка (УПД), банковская выписка и запросы клиенту;
   - ``manager_cabinet``  — кабинет, сводка и аналитика руководителя организации;
   - ``counterparties``   — проверка контрагентов по ИНН и карточки подписантов;
-  - ``contracts``        — подготовка договоров (задел под будущий платный модуль).
+  - ``contracts``        — подготовка договоров (модуль с переключателем готовности в админке).
 
-На первом этапе (бесплатный режим) все действующие модули включены по умолчанию.
-Переопределение для отдельной компании хранится в ``app_settings`` по ключу
-``company_modules:<company_id>`` (JSON-список кодов подключённых модулей) — без
-миграций схемы БД. Администратор системы всегда видит все разделы независимо от
-подписки конкретной компании.
+С версии v1.74.0 модуль интегрирован с корпоративным биллингом ``app.billing.service``
+(тарифы, помодульные цены, Grandfathering, пробный и льготный периоды, режим чтения архива).
+Администратор системы всегда видит все разделы независимо от подписки конкретной компании.
 """
 from __future__ import annotations
 
 import json
 from typing import Final
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ADMIN
@@ -85,23 +83,31 @@ VIEW_MODULE: Final[dict[str, str]] = {
 
 
 def enabled_modules_for_company(db: Session, company_id: str | None) -> list[str]:
-    """Список активных модулей подписки компании (по умолчанию — все действующие)."""
-    if not company_id:
-        return list(DEFAULT_ENABLED)
-    row = db.get(AppSetting, f"{SETTING_PREFIX}{company_id}")
-    if row is None or not (row.value or "").strip():
-        return list(DEFAULT_ENABLED)
-    try:
-        raw = json.loads(row.value)
-    except ValueError:
-        return list(DEFAULT_ENABLED)
-    if not isinstance(raw, list):
-        return list(DEFAULT_ENABLED)
-    return [str(code) for code in raw if str(code) in MODULES]
+    """Список активных модулей подписки компании с учётом живой подписки и явных настроек."""
+    from ..billing import service as billing_svc
+
+    sub_row = db.get(AppSetting, f"{billing_svc.SUB_PREFIX}{company_id}") if company_id else None
+    cfg = billing_svc.get_config(db)
+    if sub_row is not None or cfg["billing_mode"] == "strict":
+        sub = billing_svc.get_company_subscription(db, company_id)
+        return list(sub.get("enabled_modules") or [])
+
+    if company_id:
+        row = db.get(AppSetting, f"{SETTING_PREFIX}{company_id}")
+        if row is not None and (row.value or "").strip():
+            try:
+                raw = json.loads(row.value)
+                if isinstance(raw, list):
+                    return [str(code) for code in raw if str(code) in MODULES]
+            except ValueError:
+                pass
+
+    mod_prices = billing_svc.get_module_prices(db)
+    return [code for code, m in mod_prices.items() if m.get("available", True)]
 
 
 def set_company_modules(db: Session, company_id: str, modules: list[str]) -> list[str]:
-    """Сохранить набор подключённых модулей для компании (задел для тарифного управления)."""
+    """Сохранить набор подключённых модулей для компании."""
     clean: list[str] = []
     for code in modules:
         c = str(code).strip()
@@ -118,9 +124,13 @@ def set_company_modules(db: Session, company_id: str, modules: list[str]) -> lis
     return clean
 
 
-def allowed_views_for_company(db: Session, company_id: str | None,
-                              base_views: list[str] | set[str],
-                              *, is_admin: bool = False) -> list[str]:
+def allowed_views_for_company(
+    db: Session,
+    company_id: str | None,
+    base_views: list[str] | set[str],
+    *,
+    is_admin: bool = False,
+) -> list[str]:
     """Отфильтровать экраны роли по активным модулям подписки компании."""
     if is_admin:
         return list(base_views)
@@ -129,14 +139,26 @@ def allowed_views_for_company(db: Session, company_id: str | None,
 
 
 def payload_for_user(db: Session, user: User | None) -> dict:
-    """Сводка модулей подписки для ответа /api/v1/auth/me."""
+    """Сводка модулей и подписки компании для ответа /api/v1/auth/me."""
     if user is None:
         return {"plan": "free_stage1", "enabled": [], "catalog": []}
+    from ..billing import service as billing_svc
+
     is_adm = user.role == ROLE_ADMIN
     cid = getattr(user, "company_id", None)
+    mod_prices = billing_svc.get_module_prices(db)
+    sub = billing_svc.get_company_subscription(db, cid)
     enabled = list(MODULES.keys()) if is_adm else enabled_modules_for_company(db, cid)
     return {
-        "plan": "free_stage1",
+        "plan": sub.get("plan_code") or ("admin" if is_adm else "free_stage1"),
+        "plan_title": "Полный доступ администратора" if is_adm else sub.get("plan_title", ""),
+        "status": "active" if is_adm else sub.get("status", "free"),
+        "status_title": "Активна" if is_adm else sub.get("status_title", ""),
+        "billing_mode": sub.get("billing_mode", "free_all"),
+        "read_only": False if is_adm else bool(sub.get("read_only")),
+        "period_end": sub.get("period_end"),
+        "days_left": sub.get("days_left"),
+        "warnings": [] if is_adm else list(sub.get("warnings") or []),
         "company_id": cid,
         "enabled": enabled,
         "view_module": dict(VIEW_MODULE),
@@ -146,9 +168,38 @@ def payload_for_user(db: Session, user: User | None) -> dict:
                 "title": m["title"],
                 "description": m["description"],
                 "views": list(m["views"]),
-                "available": bool(m["available"]),
+                "available": bool((mod_prices.get(m["code"]) or {}).get("available", m["available"])),
+                "monthly_kop": int((mod_prices.get(m["code"]) or {}).get("monthly_kop") or 0),
+                "yearly_kop": int((mod_prices.get(m["code"]) or {}).get("yearly_kop") or 0),
                 "active": m["code"] in enabled,
             }
             for m in MODULES.values()
         ],
     }
+
+
+def require_company_module(
+    db: Session,
+    user: User | None,
+    company_id: str | None,
+    module_code: str,
+    *,
+    check_quota: bool = False,
+) -> None:
+    """Выбросить HTTP 402 Payment Required, если в режиме strict модуль недоступен или лимит исчерпан."""
+    from ..billing import service as billing_svc
+
+    try:
+        billing_svc.check_company_module_access(
+            db, user, company_id, module_code, check_quota=check_quota
+        )
+    except billing_svc.SubscriptionRequiredError as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "message": exc.message,
+                "code": exc.code,
+                "module": exc.module,
+                "upgrade_hash": "#/settings/personal/st-mycompany",
+            },
+        ) from exc

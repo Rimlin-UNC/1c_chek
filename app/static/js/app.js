@@ -21,9 +21,10 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.73.12';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.74.0';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
 import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
+import { adminBillingCardShellHTML, bindAdminBillingCard, mountClientBillingBox, openPaymentRequiredModal } from './billing.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
 import { applyFill, fillCallout, fillFields, fillItemsTable, fillMark, sellerRows } from './unified_fill.js'; // v1.70.91: шаг 4в
@@ -180,6 +181,7 @@ const entitlementAllowsView = (view) => {
   if (!state.me || state.me.role === 'admin') return true;
   const ent = state.me.entitlements;
   if (!ent || !ent.view_module || !Array.isArray(ent.enabled)) return true;
+  if (ent.read_only && ['receipts', 'export', 'primary', 'bank', 'counterparties'].includes(view)) return true;
   const mod = ent.view_module[view];
   return !mod || ent.enabled.includes(mod);
 };
@@ -3574,6 +3576,7 @@ function enterApp() {
   if (!window.__ymasterLogoutBound) {
     window.__ymasterLogoutBound = true;
     window.addEventListener('ymaster:logout', () => logout());
+    window.addEventListener('ymaster:payment-required', (e) => openPaymentRequiredModal((e && e.detail) || {}));
     // v1.70.100: доступ к клиенту отозван или компания отключена — назад в свою компанию
     window.addEventListener('ymaster:client-reset', (e) => {
       navigationCounts.schedule();
@@ -4790,6 +4793,7 @@ async function viewCompanies(container, alive = routeGuard()) {
       <td>${c.last_activity ? fmtDate(c.last_activity) : '—'}</td>
       <td style="white-space:nowrap">
         <button type="button" class="btn btn-sm cp-card" data-id="${c.id}" title="Карточка компании: ЕГРЮЛ, сотрудники, удаление">🗂</button>
+        <button type="button" class="btn btn-sm cp-billing" data-id="${c.id}" title="Подписка, тариф и лимиты организации">💳</button>
         <button type="button" class="btn btn-sm cp-open" data-id="${c.id}" title="Смотреть данные только этой компании">🔓 Открыть</button>
         <button type="button" class="btn btn-sm cp-invite" data-id="${c.id}" title="Пригласить сотрудника в компанию">✉️</button>
         <button type="button" class="btn btn-sm cp-edit" data-id="${c.id}" title="Переименовать / архив">✏️</button>
@@ -4831,6 +4835,12 @@ async function viewCompanies(container, alive = routeGuard()) {
     inviteDialog(b.dataset.id, c ? c.name : '');
   });
   $$('.cp-card').forEach(b => b.onclick = () => openCompanyCard(b.dataset.id));
+  $$('.cp-billing').forEach((b) => {
+    b.onclick = () => {
+      state._focusBillingCompany = b.dataset.id;
+      location.hash = '#/settings/personal/st-billing';
+    };
+  });
   $$('.cp-edit').forEach(b => b.onclick = () => companyDialog(comps.find(x => x.id === b.dataset.id)));
 }
 
@@ -7105,6 +7115,14 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.74.0': [
+    { icon: '💳', title: 'Корпоративные платные подписки, тарифы и центр коммерции администратора',
+      text: 'В разделе «Настройки → Личное и доступ» добавлен единый блок администратора для управления ценами модулей, пакетными тарифами, квотами, пробным и льготным периодами, промокодами, счетами и метриками MRR/ARR.' },
+    { icon: '🔒', title: 'Защита цены действующих клиентов (Grandfathering) и сохранность архива',
+      text: 'При изменении прайс-листа администратор выбирает, сохранять ли прежнюю цену за действующими договорами или переводить со следующего продления. При истечении подписки все ранее загруженные документы остаются доступны для чтения и выгрузки.' },
+    { icon: '🧾', title: 'Витрина модулей и автоматический счёт для бухгалтера и руководителя',
+      text: 'Бухгалтер (включая работу с несколькими организациями) и руководитель видят текущий тариф, расход месячных лимитов, подбирают модули и в один клик формируют печатный счёт на оплату.' },
+  ],
   '1.73.12': [
     { icon: '🧭', title: 'Персональные пространства и чистые меню для каждой роли',
       text: 'Сотрудник, руководитель, бухгалтер и участник Чек-Пула видят только разделы своей задачи без пустых заголовков и лишних интеграционных индикаторов. Руководителю открыт сканер чеков корпоративной карты, а всем ролям — настройки установки на устройство и уведомлений.' },
@@ -12241,6 +12259,10 @@ function bindCompanyTeamCard(container, initialTeam, me, appSum) {
         } catch (e) { toast(e.message, 'err'); }
       };
     });
+
+    if (canInvite && comp.id) {
+      mountClientBillingBox(host, comp.id);
+    }
   };
 
   render(initialTeam);
@@ -12316,6 +12338,7 @@ async function viewSettings(container, alive = routeGuard()) {
       </div>
     </nav>
     <div class="settings-grid">
+      ${isAdmin() ? adminBillingCardShellHTML() : ''}
       <div class="glass card" id="wa-card" data-sec="personal" style="order:40">
         <div class="card-title">🔑 Быстрый вход
           <span class="form-hint">отпечаток / лицо / PIN устройства</span></div>
@@ -13969,6 +13992,10 @@ async function viewSettings(container, alive = routeGuard()) {
   // и видимость раздела уже после сборки <section class="stg-section">
   if (snavFinal) settingsApply(snavFinal, _cur);
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
+  if (isAdmin()) {
+    bindAdminBillingCard(container, state._focusBillingCompany || '');
+    state._focusBillingCompany = '';
+  }
   if (!isAdmin() && me) bindCompanyTeamCard(container, teamInfo, me, appSum);
   const bcr = $('#btn-cache-reset');
   if (bcr) bcr.onclick = () => hardReset();

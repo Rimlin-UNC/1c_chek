@@ -33,7 +33,7 @@
       "purpose": "maskable"
     }
   ],
-  "version": "1.73.12",
+  "version": "1.74.0",
   "display_override": [
     "standalone",
     "minimal-ui"
