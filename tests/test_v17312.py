@@ -23,6 +23,14 @@ def _uid() -> str:
     return uuid.uuid4().hex[:8]
 
 
+def _unique_inn10() -> str:
+    """Уникальный валидный 10-значный ИНН для параллельного прогона pytest-xdist без коллизий."""
+    weights = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+    body = f"77{uuid.uuid4().int % 10_000_000:07d}"
+    ctrl = sum(int(d) * w for d, w in zip(body, weights)) % 11 % 10
+    return f"{body}{ctrl}"
+
+
 def test_version_17312_synced():
     """Версия 1.73.12 синхронна во всех точках кэша, манифеста, блоков и журналов."""
     ver = settings.APP_VERSION
@@ -60,11 +68,11 @@ def test_multi_company_accountant_and_manager_invites_and_employee_card(client):
     tag = _uid()
 
     c1 = client.post("/api/v1/companies", headers=h_adm,
-                     json={"name": f"ООО Альфа {tag}", "inn": "7707083893"}).json()
+                     json={"name": f"ООО Альфа {tag}", "inn": _unique_inn10()}).json()
     c2 = client.post("/api/v1/companies", headers=h_adm,
-                     json={"name": f"ООО Бета Клиент {tag}", "inn": "7814148471"}).json()
+                     json={"name": f"ООО Бета Клиент {tag}", "inn": _unique_inn10()}).json()
     c3 = client.post("/api/v1/companies", headers=h_adm,
-                     json={"name": f"ООО Чужая {tag}", "inn": "7721546864"}).json()
+                     json={"name": f"ООО Чужая {tag}", "inn": _unique_inn10()}).json()
 
     # Создаём бухгалтера в C1 и назначаем ей на ведение клиентскую компанию C2
     inv_acc = client.post("/api/v1/invites", headers=h_adm, json={
