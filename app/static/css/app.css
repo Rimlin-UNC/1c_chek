@@ -2686,7 +2686,7 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
 }
 .stg-tabs-row {
   display: flex; align-items: stretch; gap: 2px;
-  flex: 1 1 auto; min-width: 0;
+  flex: 1 1 0; min-width: 0;
   overflow-x: auto; overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -2719,14 +2719,19 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
   .stg-tab { padding: 12px 8px; font-size: 13.5px; }
 }
 .stg-tabs-tools { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
-.stg-tabs-tools .btn { min-height: 36px; }
+.stg-tabs-tools .btn { min-height: 36px; white-space: nowrap; }
 .stg-more {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 32;
-  display: flex; flex-direction: column; min-width: 235px; padding: 6px;
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 36;
+  display: flex; flex-direction: column;
+  min-width: 248px; max-width: calc(100vw - 24px);
+  padding: 6px;
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: var(--shadow);
 }
 .stg-more[hidden] { display: none; }
+.stg-more-sep {
+  height: 1px; margin: 4px 6px; background: var(--border);
+}
 .stg-more-item {
   display: flex; align-items: center; gap: 8px;
   min-height: 44px; padding: 10px 12px; border: 0; border-radius: 8px;
@@ -2734,6 +2739,49 @@ table.data.settings-table { width: 100%; table-layout: fixed; min-width: 0; }
   color: var(--text-dim); text-align: left; cursor: pointer;
 }
 .stg-more-item:hover { background: var(--bg-soft); color: var(--text); }
+.stg-find-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: min(56vh, 420px); overflow-y: auto;
+  margin-top: 10px; padding-right: 2px;
+}
+.stg-find-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 46px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-soft); color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.stg-find-item:hover,
+.stg-find-item.is-active {
+  border-color: var(--accent); background: var(--accent-soft);
+}
+.stg-find-ico { flex: 0 0 auto; font-size: 16px; line-height: 1; }
+.stg-find-body {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0; flex: 1 1 auto;
+}
+.stg-find-title {
+  font-weight: 700; font-size: 13.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stg-find-hint {
+  font-size: 12px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stg-find-sec {
+  flex: 0 0 auto; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel);
+  font-size: 11.5px; font-weight: 600; color: var(--accent-text);
+  white-space: nowrap;
+}
+.stg-find-empty {
+  padding: 14px 12px; border-radius: 10px; background: var(--bg-soft);
+  font-size: 13px; color: var(--text-dim); text-align: center;
+}
+.glass.card.card-flash {
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow);
+  transition: box-shadow .25s ease;
+}
 .stg-panels { position: relative; }
 .stg-panel {
   position: absolute; left: 0; right: 0; top: 100%; z-index: 30;

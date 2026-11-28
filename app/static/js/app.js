@@ -21,9 +21,9 @@ import { packCut, splitBlocks, COL_H, columnX, SCALE, RCPT_W, MARGIN_Y } from '.
 // v1.73.8: кнопка «Печать / PDF» сохраняет туда настоящий текстовый PDF или печатает бланк.
 import { aoFolderSegments, aoFlatPrefix, aoAsciiFilename, aoSafeSegment, aoBundleFiles, aoPrintableDocument, aoFolderHandleForSave, aoFileHandleForSave, aoSaveBundle, aoSaveFile, aoDownloadBlob, aoBlobBytes, aoPdfZipReadme, aoCanPickFolder, aoDownloadsPath } from './ao_folder.js';
 import { shopReceiptHTML, fullCardDetailsHTML, fullCardItemsHTML, fullCardRawHTML } from './card.js';   // v1.70.72: полная карточка чека
-import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.74.1';
+import { localServerCardHtml, localServerWire, localServerStop } from './server_monitor.js?v=1.74.2';
 // v1.72.36: раскладка настроек — чистые функции (тесты: tests/js/settings_layout.test.js)
-import { layoutPlan, tabsModel, tabForRoute, pageSlice } from './settings_layout.js';
+import { layoutPlan, tabsModel, tabForRoute, pageSlice, filterSettingsCards } from './settings_layout.js';
 import { adminBillingCardShellHTML, bindAdminBillingCard, mountClientBillingBox, openPaymentRequiredModal } from './billing.js';
 import { viewSupabaseDemo } from './supabase_demo.js'; // отдельный read-only Supabase контур
 import { badgeCount, blockedMoveSummary, orgCountChip, orgCountRow, setConflictsBadge, viewUnifiedReview } from './unified_review.js'; // v1.70.83: разбор конфликтов; v1.70.85: + заявки; v1.70.86: число организаций, отказ перемещения
@@ -5456,6 +5456,24 @@ function foldState() {
   try { return JSON.parse(localStorage.getItem('ymaster-fold') || '{}'); }
   catch (e) { return {}; }
 }
+function setSettingsCardCollapsed(card, collapsed) {
+  if (!card || !card.classList.contains('foldable')) return false;
+  const next = Boolean(collapsed);
+  card.classList.toggle('collapsed', next);
+  const title = card.querySelector('.card-title');
+  if (title) title.setAttribute('aria-expanded', String(!next));
+  const s = foldState();
+  s[foldKey(card)] = next;
+  try { localStorage.setItem('ymaster-fold', JSON.stringify(s)); } catch (e) { /* приватный режим */ }
+  return next;
+}
+function flashSettingsCard(card) {
+  if (!card) return;
+  card.classList.remove('card-flash');
+  void card.offsetWidth;
+  card.classList.add('card-flash');
+  setTimeout(() => card.classList.remove('card-flash'), 1400);
+}
 function makeSettingsCollapsible(container) {
   const st = foldState();
   container.querySelectorAll('.settings-grid > .glass.card, .settings-grid .glass.card').forEach(card => {
@@ -5487,10 +5505,7 @@ function makeSettingsCollapsible(container) {
     const key = foldKey(card);
     if (st[key]) card.classList.add('collapsed');
     const apply = () => {
-      const collapsed = card.classList.toggle('collapsed');
-      const s = foldState();
-      s[key] = collapsed;
-      try { localStorage.setItem('ymaster-fold', JSON.stringify(s)); } catch (e) {}
+      setSettingsCardCollapsed(card, !card.classList.contains('collapsed'));
     };
     title.setAttribute('role', 'button');
     title.setAttribute('tabindex', '0');
@@ -7115,6 +7130,10 @@ function updLogLine(l) {
 }
 
 const WHATS_NEW = {
+  '1.74.2': [
+    { icon: '⋯', title: 'Меню «⋯ Ещё» в настройках на телефоне и компьютере',
+      text: 'Кнопка «⋯ Ещё» вынесена из прокручиваемой полосы табов и больше не обрезается на телефоне. В меню добавлены быстрый поиск любой настройки, оглавление карточек текущего раздела, массовое сворачивание и разворачивание карточек, показ всех разделов подряд и копирование прямой ссылки на раздел.' },
+  ],
   '1.74.1': [
     { icon: '⚙️', title: 'Изолированная и быстрая работа раздела «Настройки» для всех ролей',
       text: 'Все карточки настроек теперь загружаются независимо и параллельно: сбой одного внешнего контура больше не скрывает остальные карточки. Исправлены переключение организации в политике расходов, память товаров и правила поставщиков у мультикомпанийных и внешних бухгалтеров, очистка глобальных слушателей и первый открываемый таб у сотрудников.' },
@@ -12361,21 +12380,27 @@ async function viewSettings(container, alive = routeGuard()) {
     <div class="settings-layout">
     <nav class="settings-nav settings-tabs" id="settings-nav" aria-label="Разделы настроек">
       <div class="stg-tabs-bar">
-      <div class="stg-tabs-row" role="tablist" aria-label="Разделы настроек">${
-        SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
-        <button type="button" role="tab" class="stg-tab" id="stg-tab-${g.key}" data-sec="${g.key}"
-                aria-controls="stg-panel-${g.key}" aria-selected="false" aria-expanded="false" tabindex="-1">
-          <span class="stg-tab-ico" aria-hidden="true">${g.icon}</span><span class="stg-tab-label">${g.title}</span>
-        </button>`).join('')}
+        <div class="stg-tabs-row" role="tablist" aria-label="Разделы настроек">${
+          SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
+          <button type="button" role="tab" class="stg-tab" id="stg-tab-${g.key}" data-sec="${g.key}"
+                  aria-controls="stg-panel-${g.key}" aria-selected="false" aria-expanded="false" tabindex="-1">
+            <span class="stg-tab-ico" aria-hidden="true">${g.icon}</span><span class="stg-tab-label">${g.title}</span>
+          </button>`).join('')}
+        </div>
         <div class="stg-tabs-tools">
-          <button type="button" class="btn btn-sm" id="snav-more" aria-expanded="false"
-                  aria-controls="snav-more-menu" title="Все настройки, свернуть меню">⋯ Ещё</button>
-          <div class="stg-more" id="snav-more-menu" hidden>
-            <button type="button" class="stg-more-item" id="snav-all">🔍 Все настройки</button>
-            <button type="button" class="stg-more-item" id="snav-collapse">✕ Свернуть</button>
+          <button type="button" class="btn btn-sm" id="snav-more" aria-haspopup="menu" aria-expanded="false"
+                  aria-controls="snav-more-menu" title="Поиск, карточки раздела, сворачивание и все настройки">⋯ Ещё</button>
+          <div class="stg-more" id="snav-more-menu" role="menu" aria-labelledby="snav-more" hidden>
+            <button type="button" class="stg-more-item" role="menuitem" id="snav-search">🔎 Найти настройку…</button>
+            <button type="button" class="stg-more-item" role="menuitem" id="snav-toc">📑 Карточки раздела</button>
+            <button type="button" class="stg-more-item" role="menuitem" id="snav-all">🔍 Все настройки</button>
+            <div class="stg-more-sep" role="separator"></div>
+            <button type="button" class="stg-more-item" role="menuitem" id="snav-expand">▼ Развернуть карточки</button>
+            <button type="button" class="stg-more-item" role="menuitem" id="snav-collapse">✕ Свернуть карточки</button>
+            <div class="stg-more-sep" role="separator"></div>
+            <button type="button" class="stg-more-item" role="menuitem" id="snav-copy-link">🔗 Скопировать ссылку</button>
           </div>
         </div>
-      </div>
       </div>
       <div class="stg-panels">${
         SETTINGS_GROUPS.filter((g) => spaceHas('sec:' + g.key)).map((g) => `
@@ -13212,6 +13237,7 @@ async function viewSettings(container, alive = routeGuard()) {
     if (box) box.scrollTo({ top: 0, behavior: 'smooth' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  let lastActiveSec = _cur.group || '';
   const settingsApply = (nav, cur) => {
     if (!nav) return '';
     const allMode = document.body.classList.contains('settings-all');
@@ -13227,6 +13253,7 @@ async function viewSettings(container, alive = routeGuard()) {
     // открывал первый таб. Хвост адреса страхует.
     const hashSec = (String(location.hash || '').match(/^#\/settings\/([a-z]+)/) || [])[1] || '';
     const active = allMode ? '' : tabForRoute(model, cur.group || hashSec);
+    if (active) lastActiveSec = active;
     const bAll = $('#snav-all');
     if (bAll) bAll.textContent = allMode ? '☰ Меню настроек' : '🔍 Все настройки';
     const firstVisIdx = tabs.findIndex((t) => !t.hidden);
@@ -13263,6 +13290,118 @@ async function viewSettings(container, alive = routeGuard()) {
 
   const snav = $('#settings-nav');
   if (snav) {
+    const moreBtn = $('#snav-more');
+    const moreMenu = $('#snav-more-menu');
+    const closeMoreMenu = () => {
+      if (moreMenu) moreMenu.hidden = true;
+      if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
+    };
+    const extractSettingsCardMeta = (c) => {
+      const ttl = c.querySelector('.card-title');
+      const ct = ttl ? ttl.querySelector('.ct-text') : null;
+      const raw = (ct ? ct.textContent
+                   : (ttl && ttl.childNodes[0] ? ttl.childNodes[0].textContent
+                      : (ttl ? ttl.textContent : ''))).replace(/▼\s*$/, '').trim();
+      const cp0 = raw.codePointAt(0) || 0;
+      const ico = cp0 >= 0x2190 ? String.fromCodePoint(cp0) : '';
+      const label = (ico ? raw.slice(String.fromCodePoint(cp0).length).trim() : raw) || raw;
+      const sub = ttl ? ttl.querySelector('.form-hint') : null;
+      const hint = (sub ? sub.textContent : '').replace(/\s+/g, ' ').trim();
+      return { id: c.id || '', ico, label, hint };
+    };
+    const visibleSettingsCards = () => Array.from(container.querySelectorAll('.settings-grid .glass.card[data-sec]'))
+      .filter((c) => {
+        if (!c.classList.contains('foldable') || c.classList.contains('hidden') || c.hidden) return false;
+        const sec = c.closest('.stg-section');
+        return !sec || !sec.hidden;
+      });
+    const jumpToSettingsCard = (key, id) => {
+      if (!id) return;
+      closeMoreMenu();
+      closeSettingsPanels();
+      document.body.classList.remove('settings-all');
+      try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
+      settingsApply(snav, { group: key, card: id });
+      try { history.replaceState(null, '', '#/settings/' + key + '/' + id); } catch (e) { /* no history */ }
+      const el = document.getElementById(id);
+      if (el) {
+        setSettingsCardCollapsed(el, false);
+        flashSettingsCard(el);
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    const openSettingsSearchModal = () => {
+      const secTitles = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.key, g.title]));
+      const catalog = Array.from(container.querySelectorAll('.settings-grid .glass.card[data-sec]'))
+        .filter((c) => !c.classList.contains('hidden') && !c.hidden && c.id)
+        .map((c) => {
+          const meta = extractSettingsCardMeta(c);
+          const sec = c.getAttribute('data-sec') || '';
+          return { ...meta, sec, secTitle: secTitles[sec] || sec };
+        });
+      const { slot, close } = openModal(`
+        <div class="card-title" style="margin-bottom:8px">🔎 Найти настройку</div>
+        <input type="search" id="stg-find-input" class="input"
+               placeholder="Тема, быстрый вход, токен, 1С, подписка, копии…" autocomplete="off">
+        <div class="stg-find-list" id="stg-find-list" role="listbox" aria-label="Результаты поиска настроек"></div>
+      `);
+      const inp = slot.querySelector('#stg-find-input');
+      const listBox = slot.querySelector('#stg-find-list');
+      let curMatches = catalog.slice();
+      let activeIdx = 0;
+      const renderList = () => {
+        curMatches = filterSettingsCards(catalog, inp ? inp.value : '');
+        if (activeIdx >= curMatches.length) activeIdx = Math.max(0, curMatches.length - 1);
+        if (!curMatches.length) {
+          listBox.innerHTML = '<div class="stg-find-empty">По этому запросу карточек не нашлось</div>';
+          return;
+        }
+        listBox.innerHTML = curMatches.map((it, i) => `
+          <button type="button" class="stg-find-item${i === activeIdx ? ' is-active' : ''}"
+                  role="option" aria-selected="${i === activeIdx ? 'true' : 'false'}"
+                  data-sec="${esc(it.sec)}" data-open="${esc(it.id)}">
+            ${it.ico ? `<span class="stg-find-ico" aria-hidden="true">${esc(it.ico)}</span>` : ''}
+            <span class="stg-find-body">
+              <span class="stg-find-title">${esc(it.label)}</span>
+              ${it.hint ? `<span class="stg-find-hint">${esc(it.hint)}</span>` : ''}
+            </span>
+            <span class="stg-find-sec">${esc(it.secTitle)}</span>
+          </button>`).join('');
+        listBox.querySelectorAll('.stg-find-item').forEach((btn) => {
+          btn.onclick = () => {
+            const sec = btn.getAttribute('data-sec') || '';
+            const id = btn.getAttribute('data-open') || '';
+            close();
+            jumpToSettingsCard(sec, id);
+          };
+        });
+      };
+      renderList();
+      if (inp) {
+        inp.oninput = () => { activeIdx = 0; renderList(); };
+        inp.onkeydown = (ev) => {
+          if (!curMatches.length) return;
+          if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            activeIdx = (activeIdx + 1) % curMatches.length;
+            renderList();
+          } else if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            activeIdx = (activeIdx - 1 + curMatches.length) % curMatches.length;
+            renderList();
+          } else if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const pick = curMatches[activeIdx];
+            if (pick) {
+              close();
+              jumpToSettingsCard(pick.sec, pick.id);
+            }
+          }
+        };
+        setTimeout(() => inp.focus(), 20);
+      }
+    };
+
     // карточки раздела -> пункты выпадающей панели таба
     const cardsAll = Array.from(container.querySelectorAll('.settings-grid > .glass.card'))
       .filter((c) => !c.classList.contains('hidden'));
@@ -13274,15 +13413,7 @@ async function viewSettings(container, alive = routeGuard()) {
       const key = panel.getAttribute('data-sec');
       const items = cardsAll
         .filter((c) => c.getAttribute('data-sec') === key)
-        .map((c) => {
-          const ttl = c.querySelector('.card-title');
-          const raw = (ttl && ttl.childNodes[0] ? ttl.childNodes[0].textContent
-                       : (ttl ? ttl.textContent : '')).trim();
-          const cp0 = raw.codePointAt(0) || 0;
-          const ico = cp0 >= 0x2190 ? String.fromCodePoint(cp0) : '';
-          const label = (ico ? raw.slice(String.fromCodePoint(cp0).length).trim() : raw) || raw;
-          return { id: c.id || '', ico: ico, label: label };
-        })
+        .map(extractSettingsCardMeta)
         .filter((it) => it.id);
       panel.innerHTML = items.length ? items.map((it) =>
         `<button type="button" class="snav-item" data-open="${esc(it.id)}">` +
@@ -13292,17 +13423,7 @@ async function viewSettings(container, alive = routeGuard()) {
       const tab = snav.querySelector(`.stg-tab[data-sec="${key}"]`);
       if (tab) tab.setAttribute('data-count', String(items.length || ''));
       panel.querySelectorAll('.snav-item').forEach((btn) => {
-        btn.onclick = () => {
-          const id = btn.getAttribute('data-open');
-          if (!id) return;
-          document.body.classList.remove('settings-all');
-          try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
-          settingsApply(snav, { group: key, card: id });
-          try { history.replaceState(null, '', '#/settings/' + key + '/' + id); } catch (e) { /* no history */ }
-          closeSettingsPanels();
-          const el = document.getElementById(id);
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        };
+        btn.onclick = () => jumpToSettingsCard(key, btn.getAttribute('data-open'));
       });
     });
 
@@ -13311,7 +13432,9 @@ async function viewSettings(container, alive = routeGuard()) {
     tabs.forEach((tab) => {
       tab.onclick = () => {
         const key = tab.getAttribute('data-sec');
+        const wasActive = tab.classList.contains('active') && !document.body.classList.contains('settings-all');
         const wasOpen = tab.getAttribute('aria-expanded') === 'true';
+        closeMoreMenu();
         document.body.classList.remove('settings-all');
         try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
         settingsApply(snav, { group: key, card: '' });
@@ -13320,7 +13443,7 @@ async function viewSettings(container, alive = routeGuard()) {
         // раскрывается в потоке (CSS) и накрывала карточки раздела — со
         // стороны это выглядело как сломанная страница. После тапа человек
         // сразу видит карточки, а список карточек открывает повторным тапом.
-        const phoneTabs = window.matchMedia('(max-width: 767px)').matches;
+        const phoneTabs = window.matchMedia('(max-width: 767px)').matches && !wasActive;
         if (phoneTabs || wasOpen) closeSettingsPanels(); else openSettingsPanel(key);
         scrollSettingsTop();
       };
@@ -13334,7 +13457,7 @@ async function viewSettings(container, alive = routeGuard()) {
         if (ev.key in keys) next = (curIdx + keys[ev.key] + vis.length) % vis.length;
         else if (ev.key === 'Home') next = 0;
         else if (ev.key === 'End') next = vis.length - 1;
-        else if (ev.key === 'Escape') { closeSettingsPanels(); return; }
+        else if (ev.key === 'Escape') { closeSettingsPanels(); closeMoreMenu(); return; }
         if (next === null) return;
         ev.preventDefault();
         vis[next].focus();
@@ -13342,35 +13465,109 @@ async function viewSettings(container, alive = routeGuard()) {
       };
     });
 
-    // меню «⋯ Ещё»: все настройки и сворачивание
-    const moreBtn = $('#snav-more');
-    const moreMenu = $('#snav-more-menu');
+    // v1.74.2: меню «⋯ Ещё» — поиск, оглавление раздела, все настройки, сворачивание/разворачивание и ссылка
     if (moreBtn && moreMenu) {
+      const menuItems = () => Array.from(moreMenu.querySelectorAll('[role="menuitem"]'));
       moreBtn.onclick = () => {
         const open = moreMenu.hidden;
+        closeSettingsPanels();
         moreMenu.hidden = !open;
         moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      moreBtn.onkeydown = (ev) => {
+        if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+        ev.preventDefault();
         closeSettingsPanels();
+        moreMenu.hidden = false;
+        moreBtn.setAttribute('aria-expanded', 'true');
+        const items = menuItems();
+        if (items.length) (ev.key === 'ArrowUp' ? items[items.length - 1] : items[0]).focus();
+      };
+      moreMenu.onkeydown = (ev) => {
+        const items = menuItems();
+        if (!items.length) return;
+        const idx = items.indexOf(document.activeElement);
+        if (ev.key === 'ArrowDown') {
+          ev.preventDefault();
+          items[(idx + 1 + items.length) % items.length].focus();
+        } else if (ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          items[(idx - 1 + items.length) % items.length].focus();
+        } else if (ev.key === 'Home') {
+          ev.preventDefault();
+          items[0].focus();
+        } else if (ev.key === 'End') {
+          ev.preventDefault();
+          items[items.length - 1].focus();
+        }
       };
     }
+    const bSearch = $('#snav-search');
+    if (bSearch) bSearch.onclick = () => {
+      closeMoreMenu();
+      closeSettingsPanels();
+      openSettingsSearchModal();
+    };
+    const bToc = $('#snav-toc');
+    if (bToc) bToc.onclick = () => {
+      closeMoreMenu();
+      const firstVis = tabs.find((t) => !t.hidden);
+      const activeTab = snav.querySelector('.stg-tab.active');
+      const secKey = (activeTab ? activeTab.getAttribute('data-sec') : '')
+        || lastActiveSec
+        || (firstVis ? firstVis.getAttribute('data-sec') : '');
+      if (!secKey) return;
+      document.body.classList.remove('settings-all');
+      try { localStorage.setItem('settings_all', ''); } catch (e) { /* приватный режим */ }
+      settingsApply(snav, { group: secKey, card: '' });
+      openSettingsPanel(secKey);
+      try { snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* старые браузеры */ }
+    };
     const bAll = $('#snav-all');
     if (bAll) bAll.onclick = () => {
       const on = !document.body.classList.contains('settings-all');
       document.body.classList.toggle('settings-all', on);
       try { localStorage.setItem('settings_all', on ? '1' : ''); } catch (e) { /* приватный режим */ }
-      moreMenu.hidden = true;
-      moreBtn.setAttribute('aria-expanded', 'false');
+      closeMoreMenu();
       closeSettingsPanels();
-      settingsApply(snav, { group: '', card: '' });
-      try { history.replaceState(null, '', '#/settings'); } catch (e) { /* no history */ }
+      if (on) {
+        settingsApply(snav, { group: '', card: '' });
+        try { history.replaceState(null, '', '#/settings'); } catch (e) { /* no history */ }
+      } else {
+        const firstVis = tabs.find((t) => !t.hidden);
+        const backSec = lastActiveSec || (firstVis ? firstVis.getAttribute('data-sec') : '');
+        settingsApply(snav, { group: backSec, card: '' });
+        try { history.replaceState(null, '', backSec ? '#/settings/' + backSec : '#/settings'); } catch (e) { /* no history */ }
+      }
       scrollSettingsTop();
+    };
+    const bExpand = $('#snav-expand');
+    if (bExpand) bExpand.onclick = () => {
+      closeSettingsPanels();
+      closeMoreMenu();
+      const cards = visibleSettingsCards();
+      cards.forEach((c) => setSettingsCardCollapsed(c, false));
+      toast(`Развёрнуто карточек: ${cards.length}`, 'ok', '▼');
     };
     const bCollapse = $('#snav-collapse');
     if (bCollapse) bCollapse.onclick = () => {
       closeSettingsPanels();
-      if (moreMenu) moreMenu.hidden = true;
-      if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
+      closeMoreMenu();
+      const cards = visibleSettingsCards();
+      cards.forEach((c) => setSettingsCardCollapsed(c, true));
       try { snav.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* старые браузеры */ }
+      toast(`Свёрнуто карточек: ${cards.length}`, 'ok', '✕');
+    };
+    const bCopyLink = $('#snav-copy-link');
+    if (bCopyLink) bCopyLink.onclick = async () => {
+      closeSettingsPanels();
+      closeMoreMenu();
+      const activeTab = snav.querySelector('.stg-tab.active');
+      const secKey = !document.body.classList.contains('settings-all') && activeTab
+        ? activeTab.getAttribute('data-sec') : '';
+      const url = `${location.origin}${location.pathname}${secKey ? '#/settings/' + secKey : '#/settings'}`;
+      await copyCmd(url);
+      toast('Ссылка на раздел скопирована', 'ok', '🔗');
     };
 
     if (_settingsNavAbort) _settingsNavAbort.abort();
@@ -13382,16 +13579,14 @@ async function viewSettings(container, alive = routeGuard()) {
       if (!document.body.contains(snav)) { _settingsNavAbort.abort(); return; }
       if (!snav.contains(ev.target)) {
         closeSettingsPanels();
-        if (moreMenu && !moreMenu.hidden) {
-          moreMenu.hidden = true;
-          moreBtn.setAttribute('aria-expanded', 'false');
-        }
+        closeMoreMenu();
       }
     }, { signal: navSig });
     // смена ширины (поворот телефона, окно рядом) закрывает выпадающие панели
     window.addEventListener('resize', () => {
       if (!document.body.contains(snav)) { _settingsNavAbort.abort(); return; }
       closeSettingsPanels();
+      closeMoreMenu();
       const onTab = snav.querySelector('.stg-tab.active');
       settingsApply(snav, { group: onTab ? onTab.getAttribute('data-sec') : '', card: '' });
     }, { signal: navSig });
@@ -13400,9 +13595,8 @@ async function viewSettings(container, alive = routeGuard()) {
       if (ev.key !== 'Escape') return;
       closeSettingsPanels();
       if (moreMenu && !moreMenu.hidden) {
-        moreMenu.hidden = true;
-        moreBtn.setAttribute('aria-expanded', 'false');
-        moreBtn.focus();
+        closeMoreMenu();
+        if (moreBtn) moreBtn.focus();
       }
     }, { signal: navSig });
 
@@ -14050,6 +14244,10 @@ async function viewSettings(container, alive = routeGuard()) {
   // v1.72.37: разделы появляются только сейчас — пересчитываем активный таб
   // и видимость раздела уже после сборки <section class="stg-section">
   if (snavFinal) settingsApply(snavFinal, _cur);
+  if (_cur.card) {
+    const elTarget = document.getElementById(_cur.card);
+    if (elTarget) setSettingsCardCollapsed(elTarget, false);
+  }
   bindAppearance();                 // v1.25.0: «Спокойный час» (уведомления)
   if (isAdmin()) {
     bindAdminBillingCard(container, state._focusBillingCompany || '');

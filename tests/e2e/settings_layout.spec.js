@@ -310,5 +310,50 @@ test.describe('настройки: состояния и телефонные с
     await sel.selectOption(secondVal);
     await expect(page.locator('#pol-company')).toHaveValue(secondVal, { timeout: 10000 });
   });
+
+  test('меню «⋯ Ещё» на телефоне (390×844) не обрезается и выполняет поиск, оглавление и сворачивание', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openSettings(page);
+
+    const moreBtn = page.locator('#snav-more');
+    const moreMenu = page.locator('#snav-more-menu');
+    await expect(moreBtn).toBeVisible();
+    const btnBox = await moreBtn.boundingBox();
+    expect(btnBox.x).toBeGreaterThanOrEqual(0);
+    expect(btnBox.x + btnBox.width).toBeLessThanOrEqual(390 + 1);
+
+    // Открытие меню: не обрезано overflow-контейнером и полностью внутри экрана 390×844
+    await moreBtn.click();
+    await expect(moreMenu).toBeVisible();
+    const menuBox = await moreMenu.boundingBox();
+    expect(menuBox.height).toBeGreaterThan(180);
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(390 + 1);
+
+    // Сворачивание и разворачивание карточек активного раздела
+    await page.locator('#snav-collapse').click();
+    await expect(moreMenu).toBeHidden();
+    await expect(page.locator('#st-backups')).toHaveClass(/collapsed/);
+
+    await moreBtn.click();
+    await page.locator('#snav-expand').click();
+    await expect(page.locator('#st-backups')).not.toHaveClass(/collapsed/);
+
+    // Оглавление карточек раздела с телефона
+    await moreBtn.click();
+    await page.locator('#snav-toc').click();
+    await expect(page.locator('#stg-panel-data')).toBeVisible();
+
+    // Быстрый поиск настройки с переходом на другой раздел и авто-разворачиванием
+    await moreBtn.click();
+    await page.locator('#snav-search').click();
+    const findInput = page.locator('#stg-find-input');
+    await expect(findInput).toBeVisible();
+    await findInput.fill('Быстрый вход');
+    await page.locator('#stg-find-list .stg-find-item[data-open="wa-card"]').click();
+    await expect(page.locator('.stg-tab[data-sec="personal"]')).toHaveClass(/active/);
+    await expect(page.locator('#wa-card')).toBeVisible();
+    await expect(page.locator('#wa-card')).not.toHaveClass(/collapsed/);
+  });
 });
 

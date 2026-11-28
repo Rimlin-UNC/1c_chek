@@ -152,3 +152,42 @@ export function pageSlice(items, limit) {
     hasMore: arr.length > n,
   };
 }
+
+function normSearchText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * v1.74.2: чистая фильтрация карточек настроек для быстрого поиска из меню «⋯ Ещё».
+ * Ищет все слова запроса по заголовку карточки, подсказке, разделу и идентификатору;
+ * совпадения в заголовке поднимаются выше совпадений в описании.
+ * @param {Array<{id?: string, label?: string, hint?: string, secTitle?: string}>} cards
+ * @param {string} query
+ */
+export function filterSettingsCards(cards, query) {
+  const list = Array.isArray(cards) ? cards : [];
+  const q = normSearchText(query);
+  if (!q) return list.slice();
+  const tokens = q.split(' ').filter(Boolean);
+  const scored = [];
+  for (let idx = 0; idx < list.length; idx++) {
+    const item = list[idx];
+    if (!item) continue;
+    const title = normSearchText(item.label);
+    const hint = normSearchText(item.hint);
+    const sec = normSearchText(item.secTitle);
+    const id = normSearchText(item.id);
+    const hay = `${title} ${sec} ${hint} ${id}`;
+    if (!tokens.every((t) => hay.includes(t))) continue;
+    let rank = 2;
+    if (title.startsWith(q)) rank = 0;
+    else if (tokens.every((t) => title.includes(t))) rank = 1;
+    scored.push({ item, rank, idx });
+  }
+  scored.sort((a, b) => (a.rank - b.rank) || (a.idx - b.idx));
+  return scored.map((s) => s.item);
+}
